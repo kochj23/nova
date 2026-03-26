@@ -1,0 +1,47 @@
+# Nova runtime data — do not commit
+cron/
+devices/
+statsig/
+history.jsonl
+stats-cache.json
+settings.json
+settings.old
+*.log
+
+# Workspace runtime/generated content
+workspace/node_modules/
+workspace/__pycache__/
+workspace/*.png
+workspace/*.jpg
+workspace/*.jpeg
+workspace/images/
+workspace/media/
+workspace/emails/
+workspace/journal/
+workspace/blompie_herd_game.json
+workspace/meeting_notes.json
+workspace/pending_delivery.json
+workspace/spanish_phrases.txt
+workspace/line61
+workspace/md
+workspace/package-lock.json
+workspace/package.json
+
+# Script cache/compiled
+scripts/__pycache__/
+scripts/*.pyc
+scripts/*.retired
+
+# Sensitive
+openclaw.json
+backups/
+cache/
+paste-cache/
+shell-snapshots/
+debug/
+file-history/
+
+# Misc
+.DS_Store
+*.bak
+*.backup
