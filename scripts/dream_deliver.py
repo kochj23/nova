@@ -8,6 +8,7 @@ Written by Jordan Koch.
 
 import json
 import os
+import subprocess
 import sys
 import urllib.parse
 import urllib.request
@@ -157,34 +158,29 @@ def post_dream(narrative, image_path, entry_date):
 # ── Herd Distribution ─────────────────────────────────────────────────────────
 
 def email_herd(narrative, image_path, entry_date):
-    """Email the dream journal to each herd member individually."""
-    try:
-        from nova_send_mail import send_mail
-    except ImportError:
-        sys.path.insert(0, str(SCRIPTS))
-        from nova_send_mail import send_mail
-
+    """Email the dream journal to each herd member via herd-mail."""
     subject = "Nova Dream Journal -- " + entry_date
-
-    body_lines = [
+    body = "\n".join([
         "Dream Journal -- " + entry_date,
         "Written at 2am, delivered with the morning.",
         "",
         narrative,
         "",
         "-- Nova",
-    ]
-    body = "\n".join(body_lines)
+    ])
 
-    img = image_path if (image_path and Path(image_path).exists()) else None
-
+    herd_mail = str(Path.home() / ".openclaw/scripts/nova_herd_mail.sh")
     ok_count = 0
     for recipient in HERD_RECIPIENTS:
-        ok = send_mail(recipient, subject, body, image_path=img)
-        if ok:
-            ok_count += 1
-        else:
-            log("Herd email failed for: " + recipient)
+        try:
+            args = [herd_mail, "send", "--to", recipient, "--subject", subject, "--body", body]
+            result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+            if result.returncode == 0:
+                ok_count += 1
+            else:
+                log(f"Herd email failed for {recipient}: {result.stderr.strip()[:100]}")
+        except Exception as e:
+            log(f"Herd email error for {recipient}: {e}")
 
     log("Herd emails sent: " + str(ok_count) + "/" + str(len(HERD_RECIPIENTS)))
 
