@@ -166,10 +166,17 @@ def github_digest():
 
 # ── 3. Email Action Items ─────────────────────────────────────────────────────
 
-KNOWN_SENDERS = [
-    "kochj23" + "@gmail.com", "kochj" + "@digitalnoise.net",  # noqa
-    "amy.mccain@gmail.com",
-    "sam@jasonacox.com", "marey@makehorses.org", "digitalnoise.net",
+# Load known senders from local config (gitignored)
+try:
+    import sys as _sys2
+    from pathlib import Path as _Path2
+    _sys2.path.insert(0, str(_Path2.home() / ".openclaw"))
+    from known_senders import KNOWN_SENDERS as _ks
+    KNOWN_SENDERS = list(_ks)
+except ImportError:
+    KNOWN_SENDERS = []
+KNOWN_SENDERS += [
+    "digitalnoise.net",
     "apple.com", "americanexpress.com", "adt.com",
     "partnersfcu.org", "networksolutions.com", "wellsfargo.com"
 ]
@@ -236,7 +243,7 @@ def email_action_items():
                     ["security", "alert", "warning", "unauthorized", "verify", "password",
                      "2fa", "login", "breach", "adt", "low battery"])
                 is_question = "?" in current_msg["subject"]
-                is_nova_msg = "nova@digitalnoise.net" in sender_lower
+                is_nova_msg = "nova" in sender_lower and "digitalnoise" in sender_lower
 
                 if not is_noise and not is_nova_msg:
                     priority = None
@@ -817,7 +824,7 @@ def burbank_reddit():
     try:
         req = urllib.request.Request(
             "https://www.reddit.com/r/burbank/.json?limit=10",
-            headers={"User-Agent": "Nova/1.0 (nova@digitalnoise.net) nova_nightly_report.py"}
+            headers={"User-Agent": "Nova/1.0 nova_nightly_report.py"}
         )
         with urllib.request.urlopen(req, timeout=15) as resp:
             data = json.loads(resp.read())

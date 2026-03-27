@@ -35,6 +35,7 @@ scripts/*.retired
 # Sensitive — never commit
 openclaw.json
 known_senders.py
+herd_config.py
 backups/
 cache/
 paste-cache/
@@ -46,3 +47,4 @@ file-history/
 .DS_Store
 *.bak
 *.backup
+scripts/*.applescript

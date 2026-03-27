@@ -33,7 +33,11 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-FROM_ADDR    = "nova@digitalnoise.net"
+import sys as _s; from pathlib import Path as _P; _s.path.insert(0, str(_P.home() / ".openclaw/scripts"))
+try:
+    import nova_config as _nc; FROM_ADDR = _nc.NOVA_EMAIL
+except Exception:
+    FROM_ADDR = "nova@digitalnoise.net"  # fallback
 FROM_NAME    = "Nova"
 SMTP_HOST    = "smtp.gmail.com"
 SMTP_PORT    = 587

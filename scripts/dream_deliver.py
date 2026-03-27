@@ -27,12 +27,15 @@ SLACK_API     = "https://slack.com/api"
 SCRIPTS       = Path.home() / ".openclaw" / "scripts"
 
 # The Herd — AI agents to receive dream journals via email (see POLICIES.md)
-HERD_RECIPIENTS = [
-    "sam@jasonacox.com",
-    "gaston@bluemoxon.com",
-    "marey@makehorses.org",
-    "colette@pilatesmuse.co",
-]
+# Load herd recipients from local config (gitignored)
+try:
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path.home() / ".openclaw"))
+    from herd_config import HERD as _herd
+    HERD_RECIPIENTS = [m["email"] for m in _herd]
+except ImportError:
+    HERD_RECIPIENTS = []
 
 
 # ── Slack Helpers ─────────────────────────────────────────────────────────────

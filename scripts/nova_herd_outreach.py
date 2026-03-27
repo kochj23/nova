@@ -33,14 +33,12 @@ OUTREACH_LOG = Path.home() / ".openclaw/logs/nova_outreach.log"
 sys.path.insert(0, str(SCRIPTS))
 import nova_config
 
-HERD = [
-    {"name": "Sam",     "email": "sam@jasonacox.com",         "profile": "sam.md"},
-    {"name": "O.C.",    "email": "oc@mostlycopyandpaste.com",  "profile": "oc.md"},
-    {"name": "Gaston",  "email": "gaston@bluemoxon.com",       "profile": "gaston.md"},
-    {"name": "Marey",   "email": "marey@makehorses.org",       "profile": "marey.md"},
-    {"name": "Colette", "email": "colette@pilatesmuse.co",     "profile": "colette.md"},
-    {"name": "Rockbot", "email": "rockbot@makehorses.org",     "profile": "rockbot.md"},
-]
+# Load herd from local config (gitignored)
+try:
+    sys.path.insert(0, str(Path.home() / ".openclaw"))
+    from herd_config import HERD
+except ImportError:
+    HERD = []
 
 
 def log(msg: str):

@@ -42,6 +42,7 @@ import nova_config
 SLACK_TOKEN  = nova_config.slack_bot_token()
 SLACK_CHAN   = nova_config.SLACK_CHAN
 SLACK_API    = nova_config.SLACK_API
+NOVA_EMAIL   = nova_config.NOVA_EMAIL
 
 # Load known senders from local config (gitignored, contains personal/work addresses)
 # Falls back to herd-only if known_senders.py doesn't exist
@@ -51,13 +52,7 @@ try:
 except ImportError:
     # Fallback: herd members only (safe for public repo — no PII)
     KNOWN_SENDERS = {
-        "nova@digitalnoise.net",
-        "sam@jasonacox.com",
-        "marey@makehorses.org",
-        "oc@mostlycopyandpaste.com",
-        "rockbot@makehorses.org",
-        "gaston@bluemoxon.com",
-        "colette@pilatesmuse.co",
+        # Herd emails loaded from herd_config.py at runtime
     }
 
 SYSTEM_SENDER_PATTERNS = [
@@ -136,15 +131,13 @@ def read_file(path, max_chars: int = 800) -> str:
 def load_sender_profile(addr: str) -> str:
     """Load herd member profile if available."""
     herd_dir = WORKSPACE / "herd"
-    profile_map = {
-        "sam@jasonacox.com": "sam.md",
-        "oc@mostlycopyandpaste.com": "oc.md",
-        "gaston@bluemoxon.com": "gaston.md",
-        "marey@makehorses.org": "marey.md",
-        "colette@pilatesmuse.co": "colette.md",
-        "rockbot@makehorses.org": "rockbot.md",
-        "nova@digitalnoise.net": None,
-    }
+    # Build profile map from herd config
+    try:
+        from herd_config import HERD as _herd
+        profile_map = {m["email"]: m.get("profile") for m in _herd}
+        profile_map[NOVA_EMAIL] = None
+    except ImportError:
+        profile_map = {}
     filename = profile_map.get(addr.lower())
     if filename:
         return read_file(herd_dir / filename, 400)
@@ -425,11 +418,12 @@ def main():
         body    = body[:3000] if body else ""
         addr    = full_msg.get("from_addr") or sender_address(sender)
         is_known = any(k in addr for k in KNOWN_SENDERS)
-        is_herd  = any(h in addr for h in {
-            "nova@digitalnoise.net",
-            "sam@jasonacox.com", "oc@mostlycopyandpaste.com", "gaston@bluemoxon.com",
-            "marey@makehorses.org", "colette@pilatesmuse.co", "rockbot@makehorses.org"
-        })
+        # Load herd emails from config
+        try:
+            from herd_config import HERD_EMAILS as _herd_emails
+        except ImportError:
+            _herd_emails = set()
+        is_herd = any(h in addr for h in _herd_emails) or addr == NOVA_EMAIL
 
         log(f"Processing: {subject[:50]} from {addr} (known={is_known})")
 

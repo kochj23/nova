@@ -57,7 +57,7 @@ NOISE_PATTERNS = [
 IMPORTANT_PATTERNS = [
     "american express", "amex", "apple developer", "adt security",
     "network solutions", "partners federal", "kevin", "sam@", "amy", "jason.cox",
-    "digitalnoise.net", "nova@digitalnoise.net"
+    "digitalnoise.net"
 ]
 
 

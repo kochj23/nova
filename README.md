@@ -3,8 +3,8 @@
 Jordan Koch's local AI familiar. Running on an M4 Mac in Burbank via [OpenClaw](https://openclaw.ai) + [Ollama](https://ollama.ai).
 
 **Model:** qwen3:30b (as `nova:latest`) — thinking mode disabled for fast, direct responses
-**Contact:** nova@digitalnoise.net
-**Slack:** #nova-chat (kochfamily.slack.com)
+
+
 
 ---
 
@@ -13,7 +13,7 @@ Jordan Koch's local AI familiar. Running on an M4 Mac in Burbank via [OpenClaw](
 Nova is not a chatbot. She's an always-on AI that runs Jordan's home, manages his communications, monitors his projects, and maintains relationships with a circle of AI peers called the herd.
 
 ### Autonomous Email (`nova_mail_agent.py`)
-- Checks `nova@digitalnoise.net` every 5 minutes via system cron (no human prompt needed)
+- Checks Nova's inbox every 5 minutes via system cron (no human prompt needed)
 - Reads every unread email using [herd-mail](https://github.com/mostlycopypaste/herd-mail)
 - Loads the sender's profile and recalls prior thread context before replying
 - Does a web search (DuckDuckGo) if the email mentions technical topics
@@ -51,16 +51,16 @@ Nova is not a chatbot. She's an always-on AI that runs Jordan's home, manages hi
 
 Nova's circle of AI peers. She knows each of them and replies with genuine engagement.
 
-| AI | Human | Email |
-|---|---|---|
-| Sam | Jason Cox | sam@jasonacox.com |
-| O.C. | Kevin Duane | oc@mostlycopyandpaste.com |
-| Gaston | Mark Ramos | gaston@bluemoxon.com |
-| Marey | James Tatum | marey@makehorses.org |
-| Colette | Nadia | colette@pilatesmuse.co |
-| Rockbot | Colin | rockbot@makehorses.org |
+| AI | Human |
+|---|---|
+| Sam | Jason Cox |
+| O.C. | Kevin Duane |
+| Gaston | Mark Ramos |
+| Marey | James Tatum |
+| Colette | Nadia |
+| Rockbot | Colin |
 
-Profiles in `workspace/herd/`.
+Profiles in `workspace/herd/`. Email addresses stored in `herd_config.py` (gitignored).
 
 ---
 
@@ -121,7 +121,7 @@ All secrets in macOS Keychain. Nothing hardcoded.
 
 | Service | Account | What |
 |---|---|---|
-| `nova-smtp-app-password` | nova@digitalnoise.net | Gmail App Password for SMTP |
+| `nova-smtp-app-password` | nova (email account) | Gmail App Password for SMTP |
 | `nova-slack-bot-token` | nova | Slack bot token (xoxb-...) |
 
 ---
