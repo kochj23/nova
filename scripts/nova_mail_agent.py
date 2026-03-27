@@ -19,10 +19,11 @@ Written by Jordan Koch.
 import imaplib
 import json
 import os
+import random
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -136,11 +137,87 @@ def read_file(path, max_chars: int = 800) -> str:
         return ""
 
 
-def generate_reply(sender: str, subject: str, body: str, is_herd: bool) -> str:
+def load_sender_profile(addr: str) -> str:
+    """Load herd member profile if available."""
+    herd_dir = WORKSPACE / "herd"
+    profile_map = {
+        "sam@jasonacox.com": "sam.md",
+        "oc@mostlycopyandpaste.com": "oc.md",
+        "gaston@bluemoxon.com": "gaston.md",
+        "marey@makehorses.org": "marey.md",
+        "colette@pilatesmuse.co": "colette.md",
+        "rockbot@makehorses.org": "rockbot.md",
+        "nova@digitalnoise.net": None,
+    }
+    filename = profile_map.get(addr.lower())
+    if filename:
+        return read_file(herd_dir / filename, 400)
+    # Try fuzzy match
+    for key, fname in profile_map.items():
+        if fname and key in addr.lower():
+            return read_file(herd_dir / fname, 400)
+    return ""
+
+
+def recall_thread_context(message_id: str, subject: str) -> str:
+    """Recall prior conversation context from vector memory."""
+    if not message_id and not subject:
+        return ""
+    try:
+        recall_script = str(SCRIPTS / "nova_recall.sh")
+        query = subject.replace("Re: ", "").replace("RE: ", "").strip()
+        result = subprocess.run(
+            [recall_script, f"email conversation {query}", "3", "email", "0.5"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return f"Prior conversation context:\n{result.stdout.strip()[:600]}"
+    except Exception:
+        pass
+    return ""
+
+
+def web_search_if_needed(subject: str, body: str) -> str:
+    """Do a quick web search if the email mentions something worth looking up."""
+    import re
+    # Look for URLs, version numbers, project names, technical terms
+    urls = re.findall(r'https?://\S+', body)
+    has_technical = any(w in body.lower() for w in [
+        "github", "version", "release", "api", "library", "framework",
+        "bug", "error", "problem", "issue", "new ", "just launched", "check out"
+    ])
+
+    if not has_technical and not urls:
+        return ""
+
+    try:
+        search_script = str(SCRIPTS / "nova_web_search.py")
+        # Build a focused query from subject
+        query = re.sub(r'[Rr]e:\s*', '', subject).strip()
+        if len(query) < 5:
+            return ""
+        result = subprocess.run(
+            [sys.executable, search_script, query],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return f"Web search context:\n{result.stdout.strip()[:500]}"
+    except Exception:
+        pass
+    return ""
+
+
+def generate_reply(sender: str, subject: str, body: str, is_herd: bool,
+                   message_id: str = None, addr: str = "") -> str:
     """Ask Nova to form a genuine opinion and write a reply."""
     identity = read_file(WORKSPACE / "IDENTITY.md", 500)
     soul     = read_file(WORKSPACE / "SOUL.md", 400)
     memory   = read_file(WORKSPACE / f"memory/{TODAY}.md", 600)
+
+    # Load sender profile, thread context, and web search
+    sender_profile = load_sender_profile(addr) if addr else ""
+    thread_context = recall_thread_context(message_id, subject)
+    search_context = web_search_if_needed(subject, body)
 
     if is_herd:
         context = (
@@ -168,6 +245,9 @@ Your values:
 
 Today's context:
 {memory}
+{f"About this sender: {sender_profile}" if sender_profile else ""}
+{thread_context}
+{search_context}
 
 ---
 
@@ -335,10 +415,20 @@ def main():
         if is_known:
             # Generate genuine reply
             log(f"Generating opinion-based reply for {addr}...")
-            reply_body = generate_reply(sender, subject, body, is_herd)
+            reply_body = generate_reply(sender, subject, body, is_herd,
+                                        message_id=full_msg.get("message_id"), addr=addr)
             reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
 
             msg_id = full_msg.get("message_id")
+            # 20% chance: share today's dream image with herd reply
+            if is_herd and random.random() < 0.20:
+                dream_img = Path.home() / f".openclaw/workspace/dream_images/{TODAY}.png"
+                yest_img  = Path.home() / f".openclaw/workspace/dream_images/{(date.today()-timedelta(days=1)).isoformat()}.png"
+                img_to_share = dream_img if dream_img.exists() else (yest_img if yest_img.exists() else None)
+                if img_to_share:
+                    reply_body += f"\n\n(Sharing my dream image from last night — thought you might appreciate it.)"
+                    log(f"Attaching dream image: {img_to_share}")
+
             sent = send_reply(addr, reply_subject, reply_body, message_id=msg_id)
             log(f"Reply {'sent' if sent else 'FAILED'} to {addr}")
 
