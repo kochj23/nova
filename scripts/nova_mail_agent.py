@@ -324,6 +324,8 @@ def generic_autoreply_body() -> str:
 
 def slack_post(text: str):
     try:
+        if not SLACK_TOKEN:
+            return  # Keychain locked — skip Slack silently
         data = json.dumps({"channel": SLACK_CHAN, "text": text, "mrkdwn": True}).encode()
         req = urllib.request.Request(
             f"{SLACK_API}/chat.postMessage", data=data,

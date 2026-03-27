@@ -18,24 +18,32 @@ import sys
 
 # ── Keychain loader ───────────────────────────────────────────────────────────
 
-def _keychain(service: str, account: str = "nova") -> str:
-    """Load a secret from macOS Keychain. Exits with error if not found."""
+def _keychain(service: str, account: str = "nova", required: bool = True) -> str:
+    """Load a secret from macOS Keychain.
+    If required=True (default), exits on failure.
+    If required=False, returns empty string on failure (for cron-safe use).
+    """
     result = subprocess.run(
         ["security", "find-generic-password", "-a", account, "-s", service, "-w"],
         capture_output=True, text=True
     )
     if result.returncode != 0 or not result.stdout.strip():
-        print(f"[nova_config] ERROR: Keychain entry not found: service={service} account={account}", file=sys.stderr)
-        print(f"[nova_config] Run: security add-generic-password -a {account} -s {service} -w YOUR_VALUE", file=sys.stderr)
-        sys.exit(1)
+        msg = f"[nova_config] Keychain entry not found: service={service} account={account}"
+        if required:
+            print(msg, file=sys.stderr)
+            print(f"[nova_config] Run: security add-generic-password -a {account} -s {service} -w YOUR_VALUE", file=sys.stderr)
+            sys.exit(1)
+        else:
+            print(f"[nova_config] WARNING: {msg} (non-fatal, Keychain may be locked)", file=sys.stderr)
+            return ""
     return result.stdout.strip()
 
 
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
 def slack_bot_token() -> str:
-    """Nova's Slack bot token (xoxb-...)."""
-    return _keychain("nova-slack-bot-token")
+    """Nova's Slack bot token (xoxb-...). Non-fatal — Slack posts silently skipped if unavailable."""
+    return _keychain("nova-slack-bot-token", required=False)
 
 
 # ── Commonly used constants ───────────────────────────────────────────────────
