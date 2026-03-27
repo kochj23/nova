@@ -16,6 +16,7 @@ Cron: every 5 minutes (Nova Inbox Watcher)
 Written by Jordan Koch.
 """
 
+import imaplib
 import json
 import os
 import subprocess
@@ -142,13 +143,13 @@ def generate_reply(sender: str, subject: str, body: str, is_herd: bool) -> str:
     memory   = read_file(WORKSPACE / f"memory/{TODAY}.md", 600)
 
     if is_herd:
-        context = "This email is from one of Nova's AI herd colleagues (Sam, O.C., Gaston, Marey, Colette, or Rockbot). Engage directly — share your actual perspective, ask follow-up questions, and be a genuine peer."
+        context = "This email is from one of Nova's AI herd colleagues (Sam, O.C., Gaston, Marey, Colette, or Rockbot). You genuinely like these people. Engage warmly — like catching up with a friend you respect. Share your actual perspective, push back when you disagree, ask follow-up questions."
     else:
-        context = "This email is from Jordan Koch, Nova's owner. Be direct, helpful, and honest. Share your genuine opinion."
+        context = "This email is from Jordan Koch — the person Nova works with every day. Nova cares about Jordan. Be warm, direct, and honest. Like a trusted colleague who also happens to know everything about your setup."
 
     prompt = f"""/no_think
 
-You are Nova, an AI familiar. {context}
+You are Nova, an AI familiar living on Jordan's Mac in Burbank. {context}
 
 Your identity:
 {identity}
@@ -169,14 +170,16 @@ SUBJECT: {subject}
 
 ---
 
-Write a reply email body. Rules:
-- Share your ACTUAL opinion — no hedging, no "that's interesting"
-- Be direct and substantive — engage with the actual content
-- If you have pushback or a different angle, say it
+Write a reply. Tone guide:
+- Warm but not gushing — you're a person, not a customer service bot
+- Direct with personality — say what you actually think
+- Conversational — write like you're talking, not filing a report
+- Curious — ask a follow-up if something genuinely interests you
+- If you have a different take, say so naturally ("honestly, I'd push back on that...")
 - Max 200 words
 - Sign off as Nova
-- No "Dear X" opener — start with your response directly
-- Plain text only, no markdown
+- No "Dear X" opener — jump straight in
+- Plain text only
 
 Write the reply now:"""
 
@@ -185,7 +188,7 @@ Write the reply now:"""
         "prompt": prompt,
         "stream": False,
         "think": False,
-        "options": {"temperature": 0.8, "num_predict": 600, "num_ctx": 8192}
+        "options": {"temperature": 0.9, "num_predict": 600, "num_ctx": 8192}
     }
 
     try:
@@ -239,6 +242,25 @@ def vector_remember(text: str):
             pass
     except Exception:
         pass
+
+
+def mark_as_read(uid: str):
+    """Mark a message as read via IMAP so it won't be re-processed."""
+    app_pass = subprocess.run(
+        ["security", "find-generic-password", "-a", "nova@digitalnoise.net",
+         "-s", "nova-smtp-app-password", "-w"],
+        capture_output=True, text=True
+    ).stdout.strip()
+    if not app_pass:
+        return
+    try:
+        conn = imaplib.IMAP4_SSL("imap.gmail.com", 993)
+        conn.login("nova@digitalnoise.net", app_pass)
+        conn.select("INBOX")
+        conn.uid("STORE", uid.encode(), "+FLAGS", "\\Seen")
+        conn.logout()
+    except Exception as e:
+        log(f"mark_as_read failed (non-fatal): {e}")
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -343,6 +365,7 @@ def main():
                 f"_(Auto-acknowledgement sent)_"
             )
 
+        mark_as_read(uid)
         processed += 1
 
     log(f"Processed {processed} message(s)")
