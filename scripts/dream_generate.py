@@ -101,8 +101,8 @@ Write the full dream now. Start immediately with the dream — no preamble, no h
     response = result.get("response", "").strip()
 
     # Strip any thinking block that leaked through
-    if "</think>" in response:
-        response = response.split("</think>", 1)[-1].strip()
+    from nova_strip_thinking import strip_thinking
+    response = strip_thinking(response)
 
     word_count = len(response.split())
     log(f"Generated {word_count} words ({result.get('eval_count', 0)} tokens)")

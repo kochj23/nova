@@ -131,7 +131,8 @@ If nothing feels genuine, reply: {{"skip": true, "reason": "why"}}"""
             result = json.loads(r.read())
         response = result.get("response", "").strip()
         if "</think>" in response:
-            response = response.split("</think>", 1)[-1].strip()
+            from nova_strip_thinking import strip_thinking
+            response = strip_thinking(response)
         # Extract JSON
         import re
         m = re.search(r'\{.*\}', response, re.DOTALL)
@@ -192,7 +193,8 @@ Write it now:"""
             result = json.loads(r.read())
         response = result.get("response", "").strip()
         if "</think>" in response:
-            response = response.split("</think>", 1)[-1].strip()
+            from nova_strip_thinking import strip_thinking
+            response = strip_thinking(response)
         return response
     except Exception as e:
         log(f"generate_outreach error: {e}")

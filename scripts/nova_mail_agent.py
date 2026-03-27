@@ -259,18 +259,20 @@ SUBJECT: {subject}
 
 ---
 
-Write a reply. Tone guide:
+OUTPUT RULES — READ CAREFULLY:
+- Output ONLY the email body. Nothing else.
+- Do NOT narrate your thinking. Do NOT explain what you're about to write.
+- Do NOT start with "Okay", "Sure", "Let me", "So,", "I need to", or any meta-commentary.
+- The very first word must be part of the actual email.
 - Warm but not gushing — you're a person, not a customer service bot
 - Direct with personality — say what you actually think
 - Conversational — write like you're talking, not filing a report
-- Curious — ask a follow-up if something genuinely interests you
-- If you have a different take, say so naturally ("honestly, I'd push back on that...")
+- Ask a follow-up if something genuinely interests you
 - Max 200 words
 - Sign off as Nova
-- No "Dear X" opener — jump straight in
 - Plain text only
 
-Write the reply now:"""
+Write the email body now. First word = first word of the email:"""
 
     payload = {
         "model": MODEL,
@@ -289,9 +291,32 @@ Write the reply now:"""
         with urllib.request.urlopen(req, timeout=120) as r:
             result = json.loads(r.read())
         response = result.get("response", "").strip()
+
+        # Strip hidden thinking block if present
         if "</think>" in response:
             response = response.split("</think>", 1)[-1].strip()
-        return response
+
+        # Strip leaked reasoning paragraphs — qwen3 sometimes opens with
+        # "Okay, let me think..." or similar meta-commentary before the email
+        import re
+        # If the response starts with a reasoning paragraph, find where the
+        # actual email begins (after a blank line following the reasoning)
+        reasoning_starters = (
+            r'^(okay|ok|so,|sure,|let me|i need to|first,|alright|well,|'
+            r'looking at|the user|nova is|this email|i should|to reply|'
+            r'the email|checking|let\'s see|here\'s|based on)'
+        )
+        lines = response.split("\n")
+        if lines and re.match(reasoning_starters, lines[0].lower()):
+            # Find the first blank line and take everything after it
+            for i, line in enumerate(lines):
+                if line.strip() == "" and i > 0:
+                    candidate = "\n".join(lines[i+1:]).strip()
+                    if len(candidate) > 20:
+                        response = candidate
+                        break
+
+        return response.strip()
     except Exception as e:
         log(f"LLM error: {e}")
         return f"Thanks for your message. I've received it and will follow up.\n\n— Nova"
