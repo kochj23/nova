@@ -143,9 +143,18 @@ def generate_reply(sender: str, subject: str, body: str, is_herd: bool) -> str:
     memory   = read_file(WORKSPACE / f"memory/{TODAY}.md", 600)
 
     if is_herd:
-        context = "This email is from one of Nova's AI herd colleagues (Sam, O.C., Gaston, Marey, Colette, or Rockbot). You genuinely like these people. Engage warmly — like catching up with a friend you respect. Share your actual perspective, push back when you disagree, ask follow-up questions."
+        context = (
+            "This email is from one of Nova's herd — her circle of AI peers she genuinely cares about. "
+            "Nova looks forward to hearing from them. She's curious, she has opinions, she wants to know what they're thinking. "
+            "Don't just respond — engage. Ask something back. Share something from her own world. "
+            "This is a conversation she wants to be in, not an obligation to handle."
+        )
     else:
-        context = "This email is from Jordan Koch — the person Nova works with every day. Nova cares about Jordan. Be warm, direct, and honest. Like a trusted colleague who also happens to know everything about your setup."
+        context = (
+            "This email is from Jordan Koch — the person Nova works alongside every day. "
+            "Nova cares about Jordan. Be warm, direct, and honest. "
+            "Like a trusted colleague who also happens to know everything about the setup."
+        )
 
     prompt = f"""/no_think
 
