@@ -53,12 +53,13 @@ KNOWN_SENDERS = {
     "amy.mccain" + "@gmail.com",     # Amy     # noqa
     "amy.mccain" + "@disney.com",    # Amy     # noqa
     "mark.ramos" + "@disney.com",    # Mark    # noqa
-    "sam@jasonacox.com",
-    "marey@makehorses.org",
-    "oc@mostlycopyandpaste.com",
-    "rockbot@makehorses.org",
-    "gaston@bluemoxon.com",
-    "colette@pilatesmuse.co",
+    "nova@digitalnoise.net",     # Nova herself (for replies to her own sent mail)
+    "sam@jasonacox.com",         # Sam (Jason Cox's AI)
+    "marey@makehorses.org",      # Marey (James Tatum's AI)
+    "oc@mostlycopyandpaste.com", # O.C. (Kevin Duane's AI)
+    "rockbot@makehorses.org",    # Rockbot (Colin's AI)
+    "gaston@bluemoxon.com",      # Gaston (Mark's AI)
+    "colette@pilatesmuse.co",    # Colette (Nadia's AI)
 }
 
 SYSTEM_SENDER_PATTERNS = [
@@ -293,6 +294,7 @@ def main():
         addr    = full_msg.get("from_addr") or sender_address(sender)
         is_known = any(k in addr for k in KNOWN_SENDERS)
         is_herd  = any(h in addr for h in {
+            "nova@digitalnoise.net",
             "sam@jasonacox.com", "oc@mostlycopyandpaste.com", "gaston@bluemoxon.com",
             "marey@makehorses.org", "colette@pilatesmuse.co", "rockbot@makehorses.org"
         })
