@@ -167,10 +167,10 @@ def github_digest():
 # ── 3. Email Action Items ─────────────────────────────────────────────────────
 
 KNOWN_SENDERS = [
-    "kochj23" + "@gmail.com", "kochj" + "@digitalnoise.net", "mjramos76" + "@gmail.com",  # noqa
-    "jason.cox@disney.com", "james.tatum@disney.com", "amy.mccain@gmail.com",
+    "kochj23" + "@gmail.com", "kochj" + "@digitalnoise.net",  # noqa
+    "amy.mccain@gmail.com",
     "sam@jasonacox.com", "marey@makehorses.org", "digitalnoise.net",
-    "disney.com", "apple.com", "americanexpress.com", "adt.com",
+    "apple.com", "americanexpress.com", "adt.com",
     "partnersfcu.org", "networksolutions.com", "wellsfargo.com"
 ]
 

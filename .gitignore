@@ -32,8 +32,9 @@ scripts/__pycache__/
 scripts/*.pyc
 scripts/*.retired
 
-# Sensitive
+# Sensitive — never commit
 openclaw.json
+known_senders.py
 backups/
 cache/
 paste-cache/

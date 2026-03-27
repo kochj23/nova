@@ -43,26 +43,22 @@ SLACK_TOKEN  = nova_config.slack_bot_token()
 SLACK_CHAN   = nova_config.SLACK_CHAN
 SLACK_API    = nova_config.SLACK_API
 
-# Senders who get a real reply vs. who gets a generic bounce
-KNOWN_SENDERS = {
-    "kochj23" + "@gmail.com",        # Jordan  # noqa
-    "kochj" + "@digitalnoise.net",   # Jordan  # noqa
-    "mjramos76" + "@gmail.com",      # Mark    # noqa
-    "jordan.koch" + "@disney.com",   # Jordan  # noqa
-    "jason.cox" + "@disney.com",     # Jason   # noqa
-    "james.tatum" + "@disney.com",   # James   # noqa
-    "kevin.duane" + "@disney.com",   # Kevin   # noqa
-    "amy.mccain" + "@gmail.com",     # Amy     # noqa
-    "amy.mccain" + "@disney.com",    # Amy     # noqa
-    "mark.ramos" + "@disney.com",    # Mark    # noqa
-    "nova@digitalnoise.net",     # Nova herself (for replies to her own sent mail)
-    "sam@jasonacox.com",         # Sam (Jason Cox's AI)
-    "marey@makehorses.org",      # Marey (James Tatum's AI)
-    "oc@mostlycopyandpaste.com", # O.C. (Kevin Duane's AI)
-    "rockbot@makehorses.org",    # Rockbot (Colin's AI)
-    "gaston@bluemoxon.com",      # Gaston (Mark's AI)
-    "colette@pilatesmuse.co",    # Colette (Nadia's AI)
-}
+# Load known senders from local config (gitignored, contains personal/work addresses)
+# Falls back to herd-only if known_senders.py doesn't exist
+try:
+    sys.path.insert(0, str(Path.home() / ".openclaw"))
+    from known_senders import KNOWN_SENDERS
+except ImportError:
+    # Fallback: herd members only (safe for public repo — no PII)
+    KNOWN_SENDERS = {
+        "nova@digitalnoise.net",
+        "sam@jasonacox.com",
+        "marey@makehorses.org",
+        "oc@mostlycopyandpaste.com",
+        "rockbot@makehorses.org",
+        "gaston@bluemoxon.com",
+        "colette@pilatesmuse.co",
+    }
 
 SYSTEM_SENDER_PATTERNS = [
     "mailer-daemon", "postmaster", "mail delivery", "noreply", "no-reply",

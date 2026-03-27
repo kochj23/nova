@@ -8,7 +8,8 @@
 
 set novaAccount to "nova@digitalnoise.net"
 set jordanEmail to "kochj23@gmail.com"
-set knownSenders to {"kochj23@gmail.com", "kochj@digitalnoise.net", "mjramos76@gmail.com", "jason.cox@disney.com", "james.tatum@disney.com", "jordan.koch@disney.com", "kevin.duane@disney.com", "amy.mccain@gmail.com", "amy.mccain@disney.com", "mark.ramos@disney.com", "sam@jasonacox.com", "marey@makehorses.org", "oc@mostlycopyandpaste.com", "rockbot@makehorses.org", "gaston@bluemoxon.com", "colette@pilatesmuse.co"}
+-- Known senders loaded from local config. Add your own addresses here.
+set knownSenders to {"nova@digitalnoise.net", "sam@jasonacox.com", "marey@makehorses.org", "oc@mostlycopyandpaste.com", "rockbot@makehorses.org", "gaston@bluemoxon.com", "colette@pilatesmuse.co"}
 
 set repliedCount to 0
 set emailList to ""

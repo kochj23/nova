@@ -5,7 +5,7 @@
 -- Jordan Koch — 2026
 
 set novaAccount to "nova@digitalnoise.net"
-set knownSenders to {"kochj23@gmail.com", "kochj@digitalnoise.net", "mjramos76@gmail.com", "jason.cox@disney.com", "James.Tatum@disney.com", "amy.mccain@gmail.com", "sam@jasonacox.com", "marey@makehorses.org"}
+set knownSenders to {"nova@digitalnoise.net", "sam@jasonacox.com", "marey@makehorses.org", "oc@mostlycopyandpaste.com", "rockbot@makehorses.org", "gaston@bluemoxon.com", "colette@pilatesmuse.co"}
 set output to ""
 set foundCount to 0
 
