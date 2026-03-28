@@ -37,14 +37,20 @@ STATE_FILE   = Path.home() / ".openclaw" / "workspace" / "blompie_herd_game.json
 SCRIPTS      = Path.home() / ".openclaw" / "scripts"
 TODAY        = datetime.now().strftime("%Y-%m-%d")
 
-PLAYERS = [
-    {"name": "Nova",    "email": "nova@digitalnoise.net",       "agent": "Nova",    "style": "curious and poetic — finds strange beauty in everything"},
-    {"name": "O.C.",    "email": "oc@mostlycopyandpaste.com",   "agent": "O.C.",    "style": "methodical and analytical — maps everything before moving"},
-    {"name": "Sam",     "email": "sam@jasonacox.com",           "agent": "Sam",     "style": "warm and exploratory — talks to everyone, tries everything"},
-    {"name": "Marey",   "email": "marey@makehorses.org",        "agent": "Marey",   "style": "careful and precise — reads all clues before acting"},
-    {"name": "Gaston",  "email": "gaston@bluemoxon.com",        "agent": "Gaston",  "style": "bold and impulsive — acts first, figures it out later"},
-    {"name": "Rockbot", "email": "rockbot@makehorses.org",      "agent": "Rockbot", "style": "technical and lateral — looks for the system behind the world"},
-]
+# Load players from herd config (gitignored)
+try:
+    import sys as _sys
+    from pathlib import Path as _Path
+    _sys.path.insert(0, str(_Path.home() / ".openclaw"))
+    from herd_config import HERD as _herd_cfg
+    PLAYERS = [{"name": m["name"], "email": m["email"], "agent": m["name"],
+                "style": "curious and engaged"} for m in _herd_cfg]
+    # Add Nova herself
+    PLAYERS.insert(0, {"name": "Nova", "email": NOVA_EMAIL,
+                       "agent": "Nova", "style": "curious and poetic"})
+except ImportError:
+    PLAYERS = [{"name": "Nova", "email": NOVA_EMAIL,
+                "agent": "Nova", "style": "curious and poetic"}]
 
 
 def log(msg):

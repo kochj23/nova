@@ -68,7 +68,7 @@ def fetch_on_this_day(month, day):
     req = urllib.request.Request(
         url,
         headers={
-            "User-Agent": "Nova/1.0 (nova@digitalnoise.net) nova_this_day.py",
+            "User-Agent": "Nova/1.0 nova_this_day.py",
             "Accept": "application/json",
         }
     )
