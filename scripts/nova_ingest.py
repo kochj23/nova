@@ -233,6 +233,8 @@ def download_slack_file(file_id: str = None, url: str = None,
 
     if file_id and not url:
         # Get file info to find download URL
+        # Requires files:read scope on the bot token.
+        # If missing, add it at api.slack.com → OAuth & Permissions → Bot Token Scopes
         req = urllib.request.Request(
             f"https://slack.com/api/files.info?file={file_id}",
             headers={"Authorization": f"Bearer {token}"}
@@ -240,7 +242,14 @@ def download_slack_file(file_id: str = None, url: str = None,
         with urllib.request.urlopen(req, timeout=15) as r:
             info = json.loads(r.read())
         if not info.get("ok"):
-            raise ValueError(f"files.info failed: {info.get('error')}")
+            error = info.get("error", "unknown")
+            if error == "missing_scope":
+                raise ValueError(
+                    "Bot token missing 'files:read' scope.\n"
+                    "Fix: go to api.slack.com → Your Apps → Nova → "
+                    "OAuth & Permissions → Bot Token Scopes → add files:read → Reinstall App"
+                )
+            raise ValueError(f"files.info failed: {error}")
         file_info = info["file"]
         url = file_info.get("url_private_download") or file_info.get("url_private")
         filename = file_info.get("name", filename)
@@ -251,7 +260,16 @@ def download_slack_file(file_id: str = None, url: str = None,
     with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
         tmp_path = tmp.name
         with urllib.request.urlopen(req, timeout=60) as r:
-            tmp.write(r.read())
+            content = r.read()
+        tmp.write(content)
+
+    # Sanity check — Slack redirects to HTML auth page if scope missing
+    if content[:15].lower().startswith(b"<!doctype html>") or content[:6] == b"<html>":
+        os.unlink(tmp_path)
+        raise ValueError(
+            "Downloaded an HTML page instead of the file — token missing 'files:read' scope.\n"
+            "Fix: api.slack.com → Your Apps → Nova → OAuth & Permissions → add files:read → Reinstall"
+        )
 
     return tmp_path, filename
 

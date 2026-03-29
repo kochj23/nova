@@ -28,7 +28,29 @@ CHANNEL    = "C0AMNQ5GX70"   # #nova-chat
 sys.path.insert(0, str(SCRIPTS))
 import nova_config
 
-SLACK_TOKEN = nova_config.slack_bot_token()
+_TOKEN_CACHE = Path.home() / ".openclaw/.slack_token_cache"
+
+def _get_token() -> str:
+    """Get Slack token from Keychain, falling back to cache file."""
+    token = nova_config.slack_bot_token()
+    if token:
+        # Cache it for when Keychain is locked
+        try:
+            _TOKEN_CACHE.write_text(token)
+            _TOKEN_CACHE.chmod(0o600)
+        except Exception:
+            pass
+        return token
+    # Keychain locked — try cache
+    try:
+        cached = _TOKEN_CACHE.read_text().strip()
+        if cached:
+            return cached
+    except Exception:
+        pass
+    return ""
+
+SLACK_TOKEN = _get_token()
 SLACK_API   = nova_config.SLACK_API
 
 

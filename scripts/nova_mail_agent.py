@@ -39,7 +39,27 @@ TODAY        = date.today().isoformat()
 # Load Slack token from nova_config
 sys.path.insert(0, str(SCRIPTS))
 import nova_config
-SLACK_TOKEN  = nova_config.slack_bot_token()
+_TOKEN_CACHE = Path.home() / ".openclaw/.slack_token_cache"
+
+def _get_slack_token() -> str:
+    """Get Slack token, caching to file for when Keychain is locked."""
+    token = nova_config.slack_bot_token()
+    if token:
+        try:
+            _TOKEN_CACHE.write_text(token)
+            _TOKEN_CACHE.chmod(0o600)
+        except Exception:
+            pass
+        return token
+    try:
+        cached = _TOKEN_CACHE.read_text().strip()
+        if cached:
+            return cached
+    except Exception:
+        pass
+    return ""
+
+SLACK_TOKEN  = _get_slack_token()
 SLACK_CHAN   = nova_config.SLACK_CHAN
 SLACK_API    = nova_config.SLACK_API
 NOVA_EMAIL   = nova_config.NOVA_EMAIL
