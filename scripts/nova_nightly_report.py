@@ -655,6 +655,8 @@ def write_dream_context(results: dict):
     hb_lines = [
         f"# Nova Heartbeat — {TODAY} {NOW.strftime('%H:%M')}",
         f"",
+        f"⚠️ This file is a nightly snapshot. It may be hours old. For live status check: `openclaw cron list`",
+        f"",
         f"Today is {NOW.strftime('%A, %B %d %Y')}. It is {NOW.strftime('%I:%M %p')} in Burbank.",
         f"",
         f"## Right now",
