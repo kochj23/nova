@@ -438,7 +438,7 @@ def main():
 
         body    = full_msg.get("body_plain") or full_msg.get("body", full_msg.get("text", ""))
         body    = body[:3000] if body else ""
-        addr    = full_msg.get("from_addr") or sender_address(sender)
+        addr    = (full_msg.get("from_addr") or sender_address(sender)).lower()
         is_known = any(k in addr for k in KNOWN_SENDERS)
         # Load herd emails from config
         try:
