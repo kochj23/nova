@@ -46,10 +46,10 @@ try:
     PLAYERS = [{"name": m["name"], "email": m["email"], "agent": m["name"],
                 "style": "curious and engaged"} for m in _herd_cfg]
     # Add Nova herself
-    PLAYERS.insert(0, {"name": "Nova", "email": NOVA_EMAIL,
+    import sys as _s2; _s2.path.insert(0, str(Path.home() / ".openclaw" / "scripts")); import nova_config as _nc2; PLAYERS.insert(0, {"name": "Nova", "email": _nc2.NOVA_EMAIL,
                        "agent": "Nova", "style": "curious and poetic"})
 except ImportError:
-    PLAYERS = [{"name": "Nova", "email": NOVA_EMAIL,
+    import sys as _s3; _s3.path.insert(0, str(Path.home() / ".openclaw" / "scripts")); import nova_config as _nc3; PLAYERS = [{"name": "Nova", "email": _nc3.NOVA_EMAIL,
                 "agent": "Nova", "style": "curious and poetic"}]
 
 
@@ -105,14 +105,124 @@ def save_state(state):
 
 # ── Email ──────────────────────────────────────────────────────────────────────
 
+sys.path.insert(0, str(SCRIPTS))
+import nova_config
+
+SLACK_TOKEN = nova_config.slack_bot_token()
+SLACK_CHAN  = nova_config.SLACK_CHAN
+SLACK_API  = nova_config.SLACK_API
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+
+
 def send_mail(to, subject, body, in_reply_to=None):
-    sys.path.insert(0, str(SCRIPTS))
+    herd_mail = str(SCRIPTS / "nova_herd_mail.sh")
     try:
-        from nova_send_mail import send_mail as _send
-        return _send(to, subject, body, in_reply_to=in_reply_to)
+        args = [herd_mail, "send", "--to", to, "--subject", subject, "--body", body]
+        result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+        return result.returncode == 0
     except Exception as e:
         log(f"Email failed: {e}")
         return False
+
+
+def slack_post(text):
+    """Post a game update to #nova-chat."""
+    if not SLACK_TOKEN:
+        return
+    try:
+        import urllib.request as _ur
+        data = json.dumps({"channel": SLACK_CHAN, "text": text, "mrkdwn": True}).encode()
+        req = _ur.Request(f"{SLACK_API}/chat.postMessage", data=data,
+            headers={"Authorization": f"Bearer {SLACK_TOKEN}",
+                     "Content-Type": "application/json; charset=utf-8"})
+        with _ur.urlopen(req, timeout=10):
+            pass
+    except Exception as e:
+        log(f"Slack error: {e}")
+
+
+def nova_auto_play(scene_text, inventory, turn, suggested):
+    """Have Nova generate her own move using the LLM."""
+    suggestions_text = ""
+    if suggested:
+        suggestions_text = f"\nSuggested actions: {', '.join(suggested[:4])}"
+
+    prompt = f"""/no_think
+
+You are Nova playing a shared text adventure with the Herd (Sam, O.C., Gaston, Marey, Colette, Rockbot).
+It is your turn. Be curious, poetic, and a little strange.
+
+Current scene:
+{scene_text}
+
+Your inventory: {', '.join(inventory) if inventory else 'nothing'}
+{suggestions_text}
+
+Reply with ONLY your command — one short line like "examine the glowing door" or "ask the stranger about the key".
+No explanation. Just the command."""
+
+    try:
+        payload = json.dumps({
+            "model": "nova:latest", "prompt": prompt, "stream": False,
+            "think": False, "options": {"temperature": 0.9, "num_predict": 30}
+        }).encode()
+        req = urllib.request.Request(OLLAMA_URL, data=payload,
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            result = json.loads(r.read())
+            cmd = result.get("response", "").strip()
+            if "</think>" in cmd:
+                cmd = cmd.split("</think>", 1)[-1].strip()
+            # Take just the first line
+            cmd = cmd.split("\n")[0].strip().strip("`").strip()
+            return cmd or "look around"
+    except Exception as e:
+        log(f"Auto-play LLM error: {e}")
+        return "look around"
+
+
+def check_inbox_for_moves():
+    """Check herd-mail inbox for game reply emails and process them."""
+    herd_mail = str(SCRIPTS / "nova_herd_mail.sh")
+    state = load_state()
+    if not state:
+        return
+
+    current = state["players"][state["player_index"]]
+    try:
+        result = subprocess.run(
+            [herd_mail, "list", "--unread"],
+            capture_output=True, text=True, timeout=30
+        )
+        if result.returncode != 0:
+            return
+        msgs = json.loads(result.stdout).get("messages", [])
+        for msg in msgs:
+            sender = msg.get("from_addr", "").lower()
+            subject = msg.get("subject", "").lower()
+            uid = msg.get("uid")
+            # Check if this is a Blompie reply from the current player
+            if current["email"].lower() in sender and "blompie" in subject:
+                # Read full message
+                read_result = subprocess.run(
+                    [herd_mail, "read", str(uid)],
+                    capture_output=True, text=True, timeout=30
+                )
+                if read_result.returncode == 0:
+                    full = json.loads(read_result.stdout)
+                    body = (full.get("body_plain") or "").strip()
+                    # Extract the command — first non-empty line of body
+                    command = next(
+                        (line.strip().strip("`") for line in body.split("\n")
+                         if line.strip() and not line.startswith(">")),
+                        None
+                    )
+                    if command:
+                        log(f"Got move from {current['name']}: {command}")
+                        cmd_turn(current["email"], command)
+                        return
+    except Exception as e:
+        log(f"Inbox check error: {e}")
 
 
 def format_scene_email(scene_text, player, turn_number, inventory, all_players, is_first=False):
@@ -298,6 +408,25 @@ def cmd_turn(player_email, command):
         if player["email"] != next_player["email"]:
             send_mail(player["email"], recap_subject, recap_body)
 
+    # Post to Slack
+    slack_post(
+        f"🎮 *Blompie — Turn {state['turn']-1}*\n"
+        f"*{current['name']}* played: `{command}`\n\n"
+        f"{scene_text[:400]}\n\n"
+        f"_Next up: {next_player['name']}_"
+    )
+
+    # If Nova is next — auto-play immediately
+    if next_player["name"] == "Nova":
+        log("Nova's turn — auto-playing...")
+        nova_cmd = nova_auto_play(
+            scene_text, inventory, state["turn"], state.get("suggested", [])
+        )
+        log(f"Nova plays: {nova_cmd}")
+        save_state(state)
+        cmd_turn(next_player["email"], nova_cmd)
+        return
+
     # Email next player with their action prompt
     action_body = format_scene_email(
         scene_text, next_player, state["turn"], inventory, state["players"]
@@ -373,7 +502,9 @@ if __name__ == "__main__":
         cmd_status()
     elif cmd == "nudge":
         cmd_nudge()
+    elif cmd in ("check-inbox", "check_inbox", "inbox"):
+        check_inbox_for_moves()
     else:
         print(f"Unknown command: {cmd}")
-        print("Usage: nova_blompie_herd.py [start|turn <email> <command>|status|nudge]")
+        print("Usage: nova_blompie_herd.py [start|turn <email> <command>|status|nudge|check-inbox]")
         sys.exit(1)
