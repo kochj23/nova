@@ -48,3 +48,4 @@ file-history/
 *.bak
 *.backup
 scripts/*.applescript
+.slack_token_cache

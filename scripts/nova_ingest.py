@@ -19,6 +19,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.request
 from pathlib import Path
 
@@ -203,7 +204,10 @@ def store_chunks(chunks: list[str], source: str, topic: str = "") -> int:
         metadata["topic"] = topic
 
     stored = 0
-    for chunk in chunks:
+    for i, chunk in enumerate(chunks):
+        # Small delay every 10 chunks to avoid overwhelming the memory server
+        if i > 0 and i % 10 == 0:
+            time.sleep(0.3)
         try:
             payload = json.dumps({
                 "text": chunk,
@@ -218,6 +222,7 @@ def store_chunks(chunks: list[str], source: str, topic: str = "") -> int:
                 stored += 1
         except Exception as e:
             print(f"[nova_ingest] store error: {e}", file=sys.stderr)
+            time.sleep(0.5)  # Back off on error
 
     return stored
 
