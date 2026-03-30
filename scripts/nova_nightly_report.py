@@ -328,7 +328,7 @@ def nova_memory_log():
 
         # Check which apps are running
         running_apps = []
-        for port in [37421, 37422, 37423, 37424, 37432, 37443]:
+        for port in [37400, 37422]:  # 37400=NovaControl (unified), 37422=MLXCode
             try:
                 r = subprocess.run(
                     ["curl", "-s", "--connect-timeout", "0.5", f"http://127.0.0.1:{port}/api/status"],
@@ -506,7 +506,7 @@ def homekit_status():
     try:
         # Check if HomekitControl is running
         r = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "1", "http://127.0.0.1:37432/api/status"],
+            ["curl", "-s", "--connect-timeout", "1", "http://127.0.0.1:37400/api/status"],
             capture_output=True, text=True, timeout=3
         )
 
@@ -519,7 +519,7 @@ def homekit_status():
 
         # Get accessories
         r2 = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "1", "http://127.0.0.1:37432/api/accessories"],
+            ["curl", "-s", "--connect-timeout", "1", "http://127.0.0.1:37400/api/oneonone/meetings?limit=5"],
             capture_output=True, text=True, timeout=5
         )
         raw_acc = json.loads(r2.stdout) if r2.returncode == 0 and r2.stdout.strip() else {}
@@ -858,7 +858,7 @@ def meeting_notes():
     try:
         r = subprocess.run(
             ["curl", "-s", "--connect-timeout", "1",
-             "http://127.0.0.1:37421/api/meetings?limit=20"],
+             "http://127.0.0.1:37400/api/oneonone/meetings?limit=20"],
             capture_output=True, text=True, timeout=5
         )
         if r.returncode != 0 or not r.stdout.strip():

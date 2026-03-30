@@ -123,7 +123,7 @@ def get_email_priorities():
 def get_meetings():
     try:
         r = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "2", "http://127.0.0.1:37421/api/meetings?limit=5"],
+            ["curl", "-s", "--connect-timeout", "2", "http://127.0.0.1:37400/api/oneonone/meetings?limit=5"],
             capture_output=True, text=True, timeout=5
         )
         if r.returncode != 0 or not r.stdout.strip():
@@ -182,7 +182,7 @@ def get_system_health():
         issues.append("vector memory server is down")
         mem_count = 0
 
-    for port, name in [(37432, "HomekitControl"), (37421, "OneOnOne")]:
+    for port, name in [(37400, "NovaControl")]:
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=2)
         except Exception:

@@ -3,7 +3,7 @@
 #
 # Checks every 15 minutes:
 #   - Vector memory server (port 18790) — restarts if down
-#   - Key app APIs (HomeKit 37432, OneOnOne 37421)
+#   - Key app APIs (HomeKit 37400, OneOnOne 37421)
 #   - Last run time of critical crons (nightly report, morning brief)
 #   - Disk space on home volume
 #
@@ -75,10 +75,10 @@ else
 fi
 
 # ── 2. HomeKit app ────────────────────────────────────────────────────────────
-if ! curl -sf "http://127.0.0.1:37432/api/status" > /dev/null 2>&1; then
+if ! curl -sf "http://127.0.0.1:37400/api/status" > /dev/null 2>&1; then
     log "HomekitControl app not responding"
     if should_alert "homekit_down"; then
-        slack_alert "⚠️ *Nova alert:* HomekitControl app (port 37432) is not responding."
+        slack_alert "⚠️ *Nova alert:* HomekitControl app (port 37400) is not responding."
     fi
 else
     log "HomekitControl OK"
