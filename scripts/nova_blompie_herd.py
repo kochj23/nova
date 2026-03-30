@@ -61,7 +61,7 @@ def log(msg):
 
 def blompie_new_session():
     payload = json.dumps({
-        "model":  "qwen2.5:72b",
+        "model": "qwen3:8b",
         "tone":   "balanced",
         "detail": "normal"
     }).encode()
@@ -163,7 +163,7 @@ No explanation. Just the command."""
 
     try:
         payload = json.dumps({
-            "model": "nova:latest", "prompt": prompt, "stream": False,
+            "model": "qwen3:8b", "prompt": prompt, "stream": False,
             "think": False, "options": {"temperature": 0.9, "num_predict": 30}
         }).encode()
         req = urllib.request.Request(OLLAMA_URL, data=payload,
