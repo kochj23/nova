@@ -183,7 +183,7 @@ OpenClaw Gateway (ws://127.0.0.1:18789)
     └── agent: main
          ├── model: deepseek/deepseek-chat (OpenRouter)
          ├── fallback: qwen2.5:72b (Ollama, local)
-         ├── channels: Slack (kochfamily.slack.com)
+         ├── channels: Slack
          └── tools: exec, fs, process, HTTP APIs
 
 Vector Memory Server (localhost:18790)
