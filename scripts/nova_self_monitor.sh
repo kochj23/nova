@@ -85,14 +85,49 @@ else
 fi
 
 # ── 3. Disk space ────────────────────────────────────────────────────────────
-DISK_PCT=$(df -h "$HOME" | awk 'NR==2{gsub(/%/,"",$5); print $5}')
-if [ -n "$DISK_PCT" ] && [ "$DISK_PCT" -ge 90 ] 2>/dev/null; then
+DISK_INFO=$(df -h "$HOME" | awk 'NR==2{print $2, $3, $4, $5}')
+DISK_SIZE=$(echo $DISK_INFO | awk '{print $1}')
+DISK_USED=$(echo $DISK_INFO | awk '{print $2}')
+DISK_FREE=$(echo $DISK_INFO | awk '{print $3}')
+DISK_PCT=$(echo $DISK_INFO | awk '{gsub(/%/,"",$4); print $4}')
+
+if [ -n "$DISK_PCT" ] && [ "$DISK_PCT" -ge 95 ] 2>/dev/null; then
     log "Disk space low: ${DISK_PCT}%"
     if should_alert "disk_space"; then
-        slack_alert "⚠️ *Nova alert:* Home volume is ${DISK_PCT}% full. You may want to clean up."
+        ALERT_MSG="⚠️ *Nova alert:* Home volume is ${DISK_PCT}% full\n"
+        ALERT_MSG="${ALERT_MSG}• Total: ${DISK_SIZE}\n"
+        ALERT_MSG="${ALERT_MSG}• Used: ${DISK_USED}\n"
+        ALERT_MSG="${ALERT_MSG}• Free: ${DISK_FREE}\n"
+        ALERT_MSG="${ALERT_MSG}Please review and clean up."
+        slack_alert "$ALERT_MSG"
     fi
 else
     log "Disk space OK (${DISK_PCT}%)"
+fi
+
+# ── 3b. Check all volumes ────────────────────────────────────────────────────
+# Check /Volumes/Data if it exists
+if [ -d "/Volumes/Data" ]; then
+    DATA_INFO=$(df -h "/Volumes/Data" 2>/dev/null | awk 'NR==2{print $2, $3, $4, $5}')
+    if [ -n "$DATA_INFO" ]; then
+        DATA_SIZE=$(echo $DATA_INFO | awk '{print $1}')
+        DATA_USED=$(echo $DATA_INFO | awk '{print $2}')
+        DATA_FREE=$(echo $DATA_INFO | awk '{print $3}')
+        DATA_PCT=$(echo $DATA_INFO | awk '{gsub(/%/,"",$4); print $4}')
+        
+        log "Data volume: ${DATA_PCT}% full (${DATA_USED}/${DATA_SIZE})"
+        
+        if [ "$DATA_PCT" -ge 95 ] 2>/dev/null; then
+            if should_alert "data_volume"; then
+                ALERT_MSG="⚠️ *Nova alert:* /Volumes/Data is ${DATA_PCT}% full\n"
+                ALERT_MSG="${ALERT_MSG}• Total: ${DATA_SIZE}\n"
+                ALERT_MSG="${ALERT_MSG}• Used: ${DATA_USED}\n"
+                ALERT_MSG="${ALERT_MSG}• Free: ${DATA_FREE}\n"
+                ALERT_MSG="${ALERT_MSG}Please clean up."
+                slack_alert "$ALERT_MSG"
+            fi
+        fi
+    fi
 fi
 
 # ── 4. Check if launchd plist for memory server is loaded ────────────────────

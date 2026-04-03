@@ -42,8 +42,24 @@ def _keychain(service: str, account: str = "nova", required: bool = True) -> str
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
 def slack_bot_token() -> str:
-    """Nova's Slack bot token (xoxb-...). Non-fatal — Slack posts silently skipped if unavailable."""
-    return _keychain("nova-slack-bot-token", required=False)
+    """Nova's Slack bot token (xoxb-...). Tries Keychain first, falls back to openclaw.json
+    for cron/non-interactive sessions where Keychain prompts are unavailable."""
+    token = _keychain("nova-slack-bot-token", required=False)
+    if token:
+        return token
+    # Fallback: openclaw.json already stores this token for the gateway process
+    try:
+        import json
+        from pathlib import Path
+        config_path = Path.home() / ".openclaw/openclaw.json"
+        with open(config_path) as f:
+            config = json.load(f)
+        fallback = config.get("channels", {}).get("slack", {}).get("botToken", "")
+        if fallback:
+            print("[nova_config] INFO: slack_bot_token loaded from openclaw.json fallback", file=sys.stderr)
+        return fallback
+    except Exception:
+        return ""
 
 
 # ── Commonly used constants ───────────────────────────────────────────────────

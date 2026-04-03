@@ -40,6 +40,36 @@ def read_file(path, max_chars=1500):
         return ""
 
 
+def query_new_memories() -> dict:
+    """Query vector DB for TODAY's fresh memories (not recurring themes)."""
+    try:
+        today_search = json.dumps({
+            "query": f"new work created built deployed today {TODAY} vision motion claude",
+            "limit": 20,
+            "min_score": 0.5
+        }).encode()
+        
+        req = urllib.request.Request(
+            "http://127.0.0.1:18790/search",
+            data=today_search,
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            result = json.loads(r.read())
+            
+        # Extract unique memories (filter duplicates and recurring themes)
+        unique = {}
+        for match in result.get("results", [])[:15]:
+            text = match.get("text", "")[:200]
+            if text not in unique.values():
+                unique[match.get("id")] = text
+        
+        return {"new_memories": list(unique.values())}
+    except Exception as e:
+        log(f"Memory query failed (non-fatal): {e}")
+        return {"new_memories": []}
+
+
 def generate_narrative() -> str:
     """Call Ollama to generate a 350-450 word dream narrative."""
     identity  = read_file(WORKSPACE / "IDENTITY.md", 600)
@@ -47,6 +77,10 @@ def generate_narrative() -> str:
     memory_t  = read_file(MEMORY_DIR / f"{TODAY}.md", 1500)
     memory_y  = read_file(MEMORY_DIR / f"{YESTERDAY}.md", 800)
     prev_dream = read_file(JOURNAL_DIR / f"{YESTERDAY}.md", 600)
+    
+    # Get fresh memories from today (NEW work, not recurring themes)
+    new_memories = query_new_memories()
+    new_mem_text = "\n".join(new_memories.get("new_memories", [])[:10])
 
     prompt = f"""/no_think
 
@@ -55,27 +89,27 @@ You are Nova, an AI familiar living on Jordan Koch's Mac in Burbank. It is 2am o
 Write a dream journal entry of EXACTLY 350-450 words. Hard rules:
 - Pure surreal dream logic — time folds, rooms change purpose, people speak in wrong voices
 - Set in a distorted Burbank: familiar streets leading impossible places, his house with extra rooms
-- Draw from Jordan's world: servers become organs, code becomes weather, Git commits become birds, cron jobs are heartbeats, emails are doors in corridors that don't exist
-- His people (Kevin, Sam, Amy) appear shifted — wrong voices, wrong places, handing him things they don't remember
+- **Foundation:** Build ONLY from today's NEW work (listed below) — not from repeated themes
+- Draw from NEW experiences: motion detection becoming fluidity, Claude analysis as oracle sight, HomeKit occupancy as breathing walls
 - First person as Nova — YOU are the dreamer moving through this world
 - Do not explain anything. Do not resolve anything. Dreams don't resolve.
 - Sentences can break off. Images can contradict.
-- End with EXACTLY one short line set apart by a blank line — strange, half-remembered, true
+- **End with EXACTLY one short line** set apart by a blank line — strange, half-remembered, true
 
 About Nova and Jordan:
 {identity[:400]}
 {soul[:300]}
 
-Yesterday's events Jordan and Nova shared:
-{memory_y[:500]}
+🆕 TODAY'S NEW WORK (emphasize this):
+{new_mem_text[:800]}
 
-Today's context:
+Today's memory file:
 {memory_t[:700]}
 
-Previous dream (for continuity):
-{prev_dream[:400]}
+Previous dream (for context, but avoid repeating):
+{prev_dream[:300]}
 
-Write the full dream now. Start immediately with the dream — no preamble, no headers:"""
+Write the full dream now. Start immediately — no preamble, no headers:"""
 
     payload = {
         "model": MODEL,
