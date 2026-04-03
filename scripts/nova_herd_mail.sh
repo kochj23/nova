@@ -10,7 +10,7 @@
 #
 # Written by Jordan Koch.
 
-set -euo pipefail
+set -eo pipefail
 
 SCRIPT_DIR="$HOME/.openclaw/scripts"
 HERD_MAIL="$SCRIPT_DIR/herd_mail.py"
@@ -30,5 +30,6 @@ export WAGGLE_IMAP_HOST=imap.gmail.com
 export WAGGLE_IMAP_PORT=993
 export WAGGLE_IMAP_TLS=true
 export WAGGLE_FROM="Nova <nova@digitalnoise.net>"
+export PYTHONPATH="/Volumes/Data/AI/python_packages:$PYTHONPATH"
 
 python3 "$HERD_MAIL" "$@"

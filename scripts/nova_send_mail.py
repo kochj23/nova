@@ -1,31 +1,15 @@
 #!/usr/bin/env python3
 """
-nova_send_mail.py -- Send email from nova@digitalnoise.net via waggle-mail.
+nova_send_mail.py — Thin wrapper around nova_herd_mail.sh (herd-mail).
 
-waggle-mail renders the body as Markdown -> plain text + styled HTML multipart.
-When replying (in_reply_to provided), fetches the original via IMAP and appends
-a properly quoted block -- real email threading.
+All outbound mail from Nova MUST go through nova_herd_mail.sh, which loads
+credentials from macOS Keychain. This file exists solely to preserve the
+send_mail() import API used by other scripts (e.g. nova_mail_deliver.py).
 
-Send path priority:
-  1. waggle-mail via SMTP (smtp.gmail.com:587, Google App Password from Keychain)
-  2. Fallback: macOS Mail.app via AppleScript (OAuth, always works)
+Do NOT add direct SMTP, smtplib, waggle, or Mail.app logic here.
+If nova_herd_mail.sh ever needs a new capability, add it to herd_mail.py.
 
-Keychain entry (for waggle path):
-  security add-generic-password \
-    -a "nova@digitalnoise.net" \
-    -s "nova-smtp-app-password" \
-    -w "<16-char Google App Password>"
-
-Usage (script):
-  python3 nova_send_mail.py <to> <subject> <body_md> [image_path] [in_reply_to_msgid]
-
-Usage (import):
-  from nova_send_mail import send_mail
-  send_mail("to@example.com", "Subject", "**Hello** from Nova")
-  send_mail("to@example.com", "Re: Topic", "Sure!", in_reply_to="<msgid@gmail.com>")
-  send_mail(["a@x.com","b@y.com"], "Subject", "body", bcc=True)
-
-Written by Jordan Koch.
+Author: Jordan Koch
 """
 
 import subprocess
@@ -33,153 +17,68 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-import sys as _s; from pathlib import Path as _P; _s.path.insert(0, str(_P.home() / ".openclaw/scripts"))
-try:
-    import nova_config as _nc; FROM_ADDR = _nc.NOVA_EMAIL
-except Exception:
-    FROM_ADDR = "nova@digitalnoise.net"  # fallback
-FROM_NAME    = "Nova"
-SMTP_HOST    = "smtp.gmail.com"
-SMTP_PORT    = 587
-IMAP_HOST    = "imap.gmail.com"
-IMAP_PORT    = 993
-KEYCHAIN_SVC = "nova-smtp-app-password"
-APPLESCRIPT  = str(Path(__file__).parent / "nova_send_mail.applescript")
+HERD_MAIL = str(Path(__file__).parent / "nova_herd_mail.sh")
 
 
 def log(msg):
     print(f"[nova_send_mail {datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def get_app_password():
-    try:
-        result = subprocess.run(
-            ["security", "find-generic-password",
-             "-a", FROM_ADDR, "-s", KEYCHAIN_SVC, "-w"],
-            capture_output=True, text=True, timeout=10
-        )
-        pwd = result.stdout.strip()
-        return pwd if result.returncode == 0 and pwd else None
-    except Exception:
-        return None
+def send_mail(to, subject, body, image_path=None, bcc=False, in_reply_to=None,
+              references=None, rich=False):
+    """
+    Send email via nova_herd_mail.sh (credentials loaded from macOS Keychain).
 
-
-def _waggle_config(password):
-    return {
-        "host": SMTP_HOST, "port": SMTP_PORT, "tls": False,
-        "user": FROM_ADDR, "password": password,
-        "from_addr": FROM_ADDR, "from_name": FROM_NAME,
-        "imap_host": IMAP_HOST, "imap_port": IMAP_PORT, "imap_tls": True,
-    }
-
-
-def _send_via_applescript(to, subject, body):
-    """Send via macOS Mail.app (OAuth) -- always works as fallback."""
+    Args:
+        to:          str or list of str — recipient address(es)
+        subject:     str
+        body:        str — plain text or Markdown
+        image_path:  str | None — path to attach as a file
+        bcc:         bool — if True and to is a list, sends individually per recipient
+        in_reply_to: str | None — IMAP Message-ID for thread continuation
+        references:  ignored (herd-mail handles thread headers internally)
+        rich:        bool — pass --rich for HTML rendering
+    Returns:
+        bool — True if all sends succeeded
+    """
     recipients = [to] if isinstance(to, str) else list(to)
     success = True
+
     for recipient in recipients:
+        args = [HERD_MAIL, "send", "--to", recipient, "--subject", subject, "--body", body]
+
+        if image_path:
+            args += ["--attachment", str(image_path)]
+        if in_reply_to:
+            args += ["--message-id", in_reply_to]
+        if rich:
+            args.append("--rich")
+
+        log(f"Sending to {recipient}: {subject}")
         try:
-            result = subprocess.run(
-                ["osascript", APPLESCRIPT, recipient, subject, body],
-                capture_output=True, text=True, timeout=30
-            )
-            if result.returncode == 0 and "SENT:" in result.stdout:
-                log(f"[applescript] Sent to {recipient}: {subject}")
+            result = subprocess.run(args, capture_output=True, text=True, timeout=60)
+            if result.returncode == 0:
+                log(f"Sent OK to {recipient}")
             else:
-                log(f"[applescript] Failed to {recipient}: {result.stderr.strip() or result.stdout.strip()}")
+                log(f"FAILED to {recipient}: {result.stderr.strip() or result.stdout.strip()}")
                 success = False
         except Exception as e:
-            log(f"[applescript] Error: {e}")
+            log(f"ERROR sending to {recipient}: {e}")
             success = False
+
     return success
 
 
-def send_mail(to, subject, body, image_path=None, bcc=False, in_reply_to=None, references=None, rich=False):
-    """
-    Send email from nova@digitalnoise.net.
-
-    Body is treated as Markdown -- rendered to plain text + styled HTML.
-    Existing plain-text callers work unchanged (plain text is valid Markdown).
-
-    Args:
-        to:           str or list -- recipient(s)
-        subject:      str -- subject (use -- not em-dash per POLICIES.md)
-        body:         str -- Markdown body
-        image_path:   str or Path -- optional attachment
-        bcc:          bool -- send each recipient as BCC
-        in_reply_to:  str -- Message-ID for reply threading + IMAP quote fetch
-        references:   str -- References header
-        rich:         bool -- rich HTML rendering (opt-in)
-
-    Returns: True on success, False on failure.
-    """
-    try:
-        from waggle import send_email as waggle_send
-        waggle_available = True
-    except ImportError:
-        waggle_available = False
-
-    password = get_app_password() if waggle_available else None
-    recipients = [to] if isinstance(to, str) else list(to)
-
-    attachments = []
-    if image_path:
-        path = Path(image_path)
-        if path.exists():
-            attachments.append(str(path))
-            log(f"Attachment: {path.name} ({path.stat().st_size} bytes)")
-        else:
-            log(f"Attachment not found: {image_path} -- skipping")
-
-    # Try waggle (SMTP) if available and have credentials
-    if waggle_available and password:
-        cfg = _waggle_config(password)
-
-        if bcc and len(recipients) > 1:
-            success = True
-            for recipient in recipients:
-                try:
-                    waggle_send(to=recipient, subject=subject, body_md=body,
-                                in_reply_to=in_reply_to, references=references,
-                                attachments=attachments or None, rich=rich, config=cfg)
-                    log(f"BCC sent to {recipient}: {subject}")
-                except Exception as e:
-                    log(f"waggle failed for {recipient}: {e}")
-                    success = _send_via_applescript(recipient, subject, body) and success
-            return success
-
-        to_str = recipients[0] if len(recipients) == 1 else ", ".join(recipients)
-        try:
-            waggle_send(to=to_str, subject=subject, body_md=body,
-                        in_reply_to=in_reply_to, references=references,
-                        attachments=attachments or None, rich=rich, config=cfg)
-            log(f"Sent to {to_str}: {subject}")
-            return True
-        except Exception as e:
-            log(f"waggle SMTP failed ({e}) -- falling back to Mail.app")
-
-    # Fallback: macOS Mail.app via AppleScript (OAuth, no app password needed)
-    return _send_via_applescript(
-        recipients[0] if len(recipients) == 1 else recipients,
-        subject,
-        body
-    )
-
-
-def main():
+if __name__ == "__main__":
     if len(sys.argv) < 4:
         print("Usage: nova_send_mail.py <to> <subject> <body> [image_path] [in_reply_to]")
         sys.exit(1)
 
-    to          = sys.argv[1]
-    subject     = sys.argv[2]
-    body        = sys.argv[3]
-    image_path  = sys.argv[4] if len(sys.argv) > 4 else None
-    in_reply_to = sys.argv[5] if len(sys.argv) > 5 else None
-
-    ok = send_mail(to, subject, body, image_path=image_path, in_reply_to=in_reply_to)
+    ok = send_mail(
+        to          = sys.argv[1],
+        subject     = sys.argv[2],
+        body        = sys.argv[3],
+        image_path  = sys.argv[4] if len(sys.argv) > 4 else None,
+        in_reply_to = sys.argv[5] if len(sys.argv) > 5 else None,
+    )
     sys.exit(0 if ok else 1)
-
-
-if __name__ == "__main__":
-    main()

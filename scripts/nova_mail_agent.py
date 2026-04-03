@@ -31,8 +31,10 @@ from pathlib import Path
 SCRIPTS      = Path.home() / ".openclaw/scripts"
 WORKSPACE    = Path.home() / ".openclaw/workspace"
 HERD_MAIL    = str(SCRIPTS / "nova_herd_mail.sh")
-OLLAMA_URL   = "http://127.0.0.1:11434/api/generate"
-MODEL        = "nova:latest"
+OLLAMA_URL      = "http://127.0.0.1:11434/api/generate"
+MODEL           = "nova:latest"
+OPENROUTER_URL  = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODEL = "anthropic/claude-haiku-4.5"
 VECTOR_URL   = "http://127.0.0.1:18790/remember"
 TODAY        = date.today().isoformat()
 
@@ -87,7 +89,7 @@ def log(msg: str):
 
 # ── herd-mail wrappers ────────────────────────────────────────────────────────
 
-def herd(args: list, input_text: str = None) -> tuple[int, dict | str]:
+def herd(args: list, input_text: str = None) -> tuple:
     """Run herd-mail and return (exit_code, parsed_json_or_text)."""
     try:
         result = subprocess.run(
@@ -122,7 +124,7 @@ def list_unread() -> list[dict]:
     return data.get("messages", [])
 
 
-def read_message(uid: str) -> dict | None:
+def read_message(uid: str) -> None:
     """Return full message content."""
     code, data = herd(["read", str(uid)])
     if code != 0 or not isinstance(data, dict):
@@ -327,8 +329,37 @@ Write the email body now. First word = first word of the email:"""
 
         return response.strip()
     except Exception as e:
-        log(f"LLM error: {e}")
-        return f"Thanks for your message. I've received it and will follow up.\n\n— Nova"
+        log(f"Ollama error: {e} — trying OpenRouter fallback")
+
+    # Fallback: OpenRouter (Claude Haiku) when Ollama is down
+    try:
+        config_path = Path.home() / ".openclaw/openclaw.json"
+        api_key = json.loads(config_path.read_text()).get(
+            "models", {}).get("providers", {}).get("openrouter", {}).get("apiKey", "")
+        if not api_key:
+            log("OpenRouter API key not found in openclaw.json")
+            return None
+        # Strip the /no_think directive (Ollama-specific)
+        or_prompt = prompt.replace("/no_think\n\n", "", 1)
+        payload = json.dumps({
+            "model": OPENROUTER_MODEL,
+            "messages": [{"role": "user", "content": or_prompt}],
+            "max_tokens": 600,
+            "temperature": 0.9,
+        }).encode()
+        req = urllib.request.Request(
+            OPENROUTER_URL, data=payload,
+            headers={"Authorization": f"Bearer {api_key}",
+                     "Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=60) as r:
+            result = json.loads(r.read())
+        response = result["choices"][0]["message"]["content"].strip()
+        log(f"OpenRouter fallback succeeded ({OPENROUTER_MODEL})")
+        return response
+    except Exception as e2:
+        log(f"OpenRouter fallback error: {e2}")
+        return None
 
 
 def generic_autoreply_body() -> str:
@@ -439,49 +470,77 @@ def main():
         body    = full_msg.get("body_plain") or full_msg.get("body", full_msg.get("text", ""))
         body    = body[:3000] if body else ""
         addr    = (full_msg.get("from_addr") or sender_address(sender)).lower()
-        is_known = any(k in addr for k in KNOWN_SENDERS)
+        
         # Load herd emails from config
         try:
             from herd_config import HERD_EMAILS as _herd_emails
         except ImportError:
             _herd_emails = set()
         is_herd = any(h in addr for h in _herd_emails) or addr == NOVA_EMAIL
+        
+        # NEVER auto-reply to Jordan — store and post to Slack only
+        # Jordan's addresses loaded from known_senders.py (gitignored, contains PII)
+        try:
+            from known_senders import JORDAN_EMAILS as _jordan_emails
+        except (ImportError, AttributeError):
+            _jordan_emails = set()  # safe fallback for public repo
+        is_jordan = addr in _jordan_emails
+        is_known = any(k in addr for k in KNOWN_SENDERS)
 
-        log(f"Processing: {subject[:50]} from {addr} (known={is_known})")
+        log(f"Processing: {subject[:50]} from {addr} (known={is_known}, jordan={is_jordan})")
 
-        if is_known:
+        if is_jordan:
+            # Store Jordan's email and post to Slack — NO reply
+            log(f"Email from Jordan — storing in memory, posting to Slack, NO reply sent")
+            
+            # Store in memory
+            vector_remember(
+                f"Email from Jordan ({addr}) re: {subject}. Body: {body[:300]}"
+            )
+            
+            # Post to Slack
+            snippet = body[:300].replace("\n", " ")
+            slack_post(
+                f"*📧 Email from Jordan*\n"
+                f"*Subject:* {subject}\n"
+                f"*Preview:* {snippet}...\n"
+                f"_(Stored in memory, no reply sent)_"
+            )
+            mark_as_read(uid)
+            processed += 1
+            
+        elif is_known:
             # Generate genuine reply
             log(f"Generating opinion-based reply for {addr}...")
             reply_body = generate_reply(sender, subject, body, is_herd,
                                         message_id=full_msg.get("message_id"), addr=addr)
-            reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
+            
+            # Only send reply if we have content
+            if reply_body:
+                reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
 
-            msg_id = full_msg.get("message_id")
-            # 20% chance: share today's dream image with herd reply
-            if is_herd and random.random() < 0.20:
-                dream_img = Path.home() / f".openclaw/workspace/dream_images/{TODAY}.png"
-                yest_img  = Path.home() / f".openclaw/workspace/dream_images/{(date.today()-timedelta(days=1)).isoformat()}.png"
-                img_to_share = dream_img if dream_img.exists() else (yest_img if yest_img.exists() else None)
-                if img_to_share:
-                    reply_body += f"\n\n(Sharing my dream image from last night — thought you might appreciate it.)"
-                    log(f"Attaching dream image: {img_to_share}")
+                msg_id = full_msg.get("message_id")
+                # 20% chance: share today's dream image with herd reply
+                if is_herd and random.random() < 0.20:
+                    dream_img = Path.home() / f".openclaw/workspace/dream_images/{TODAY}.png"
+                    yest_img  = Path.home() / f".openclaw/workspace/dream_images/{(date.today()-timedelta(days=1)).isoformat()}.png"
+                    img_to_share = dream_img if dream_img.exists() else (yest_img if yest_img.exists() else None)
+                    if img_to_share:
+                        reply_body += f"\n\n(Sharing my dream image from last night — thought you might appreciate it.)"
+                        log(f"Attaching dream image: {img_to_share}")
 
-            sent = send_reply(addr, reply_subject, reply_body, message_id=msg_id)
-            log(f"Reply {'sent' if sent else 'FAILED'} to {addr}")
+                sent = send_reply(addr, reply_subject, reply_body, message_id=msg_id)
+                log(f"Reply {'sent' if sent else 'FAILED'} to {addr}")
+            else:
+                log(f"Skipping reply to {addr} (LLM generation failed)")
 
-            # Post to Slack for Jordan's awareness
-            snippet = body[:300].replace("\n", " ")
-            slack_post(
-                f"*📬 Email from {sender}*\n"
-                f"*Subject:* {subject}\n"
-                f"*Preview:* {snippet}...\n\n"
-                f"*Nova replied:*\n{reply_body[:400]}"
-            )
+            # Store for daily summary digest (don't post individual threads to Slack)
+            # Daily digest will be sent once per day with all summaries
 
             # Store in memory
             vector_remember(
                 f"Email from {sender} re: {subject}. Body: {body[:300]}. "
-                f"Nova replied: {reply_body[:200]}"
+                f"Nova replied: {(reply_body or '')[:200]}"
             )
 
         else:

@@ -51,7 +51,7 @@ DEFAULT_DUPLICATE_CHECK_MINUTES = 5
 DEFAULT_IMAP_FOLDER = "INBOX"
 DEFAULT_NO_BODY_MESSAGE = "(No message body)"
 DEFAULT_LIST_LIMIT = 20
-SENT_FOLDER_CANDIDATES = ["Sent", "Sent Items", "INBOX.Sent"]
+SENT_FOLDER_CANDIDATES = ["[Gmail]/Sent Mail", "Sent", "Sent Items", "INBOX.Sent", "[Gmail]/All Mail"]
 
 # Logging setup
 logging.basicConfig(
