@@ -66,33 +66,16 @@ def log(msg: str):
 
 # ── Scene extraction ──────────────────────────────────────────────────────────
 
-SCENE_PROMPT = """You are a film director reading Nova's dream journal. Extract exactly 6 cinematic scenes.
+SCENE_PROMPT = """You are a film director. Read this dream and extract exactly 7 scenes that tell its story in sequence — like a short film explaining what happened.
 
-For each scene, output ONLY valid JSON (no markdown, no commentary):
+Each scene must cover a specific narrative beat from the dream, in order. Together they should give a viewer who hasn't read the dream a clear sense of what happened and how it felt.
 
-{{
-  "scenes": [
-    {{
-      "visual": "one precise visual description for a painting — specific objects, light, space",
-      "camera": "push_in|pull_back|pan_right|pan_left|drift_up|drift_down|static|vertiginous",
-      "duration": 5,
-      "mood": "one word"
-    }}
-  ]
-}}
+Output ONLY this JSON structure. No markdown. No explanation. No preamble. Start your response with the opening brace.
 
-Camera rules:
-- push_in: intimacy, dread, a face, a door, something important
-- pull_back: reveal, isolation, waking, something vast
-- pan_right or pan_left: movement, pursuit, drifting through space
-- drift_up or drift_down: ascent/descent, dreams within dreams
-- static: stillness, dread, held breath
-- vertiginous: sudden shift, time fold, wrong
+{{"scenes":[{{"visual":"detailed painting description — specific objects, lighting, space, color","camera":"push_in","title":"short scene title","mood":"one word"}},{{"visual":"...","camera":"pull_back","title":"...","mood":"..."}}]}}
 
-Duration rules (seconds):
-- 4-5: quick beat, transition
-- 6-7: important moment
-- 8-9: climax or anchor scene
+Camera:
+push_in=intimacy/dread/revelation  pull_back=reveal/isolation/waking  pan_right=movement/pursuit  pan_left=drifting/searching  drift_up=ascent/escape  drift_down=descent/falling  static=stillness/dread  vertiginous=time fold/disorientation
 
 The dream:
 {dream_text}"""
@@ -112,18 +95,33 @@ def extract_scenes(dream_text: str) -> list[dict]:
             return _fallback_scenes(dream_text)
 
         response = result["response"].strip()
-        # Strip markdown code blocks if present
-        response = re.sub(r"```(?:json)?\s*", "", response)
-        response = re.sub(r"```\s*$", "", response).strip()
 
-        # Find the JSON object
-        match = re.search(r'\{.*"scenes"\s*:\s*\[.*\]\s*\}', response, re.DOTALL)
-        if match:
-            data = json.loads(match.group())
-            scenes = data.get("scenes", [])
-            if scenes and len(scenes) >= 3:
-                log(f"Extracted {len(scenes)} scenes from dream")
-                return scenes[:7]
+        # Strip <think>...</think> blocks (Qwen3 chain-of-thought)
+        response = re.sub(r"<think>.*?</think>", "", response, flags=re.DOTALL).strip()
+        # Strip markdown code fences
+        response = re.sub(r"```(?:json)?\s*", "", response)
+        response = re.sub(r"```\s*", "", response).strip()
+        # Strip any preamble before the first {
+        brace = response.find("{")
+        if brace > 0:
+            response = response[brace:]
+
+        # Try to parse JSON — find the outermost { ... } block
+        for pattern in [
+            r'\{"scenes"\s*:\s*\[.*?\]\s*\}',   # tight match
+            r'\{.*?"scenes"\s*:\s*\[.*?\]\s*\}', # with other keys
+            r'\{.*\}',                            # anything
+        ]:
+            match = re.search(pattern, response, re.DOTALL)
+            if match:
+                try:
+                    data = json.loads(match.group())
+                    scenes = data.get("scenes", [])
+                    if scenes and len(scenes) >= 3:
+                        log(f"Extracted {len(scenes)} scenes from dream")
+                        return scenes[:8]
+                except json.JSONDecodeError:
+                    continue
 
         log(f"Could not parse scenes from LLM response — using fallback")
         return _fallback_scenes(dream_text)
@@ -136,12 +134,12 @@ def extract_scenes(dream_text: str) -> list[dict]:
 def _fallback_scenes(dream_text: str) -> list[dict]:
     """Split dream into segments when LLM fails."""
     sentences = [s.strip() for s in re.split(r'[.!?—]+', dream_text) if len(s.strip()) > 20]
-    # Pick 5-6 evenly spaced sentences
-    step = max(1, len(sentences) // 6)
-    picks = sentences[::step][:6]
-    moves = ["push_in", "pan_right", "drift_up", "pull_back", "static", "vertiginous"]
+    # Pick 7 evenly spaced sentences
+    step = max(1, len(sentences) // 7)
+    picks = sentences[::step][:7]
+    moves = ["push_in", "pan_right", "drift_up", "pull_back", "pan_left", "static", "vertiginous"]
     return [
-        {"visual": pick[:180], "camera": moves[i % len(moves)], "duration": 6, "mood": "dreamlike"}
+        {"visual": pick[:180], "camera": moves[i % len(moves)], "title": f"Scene {i+1}", "duration": 4, "mood": "dreamlike"}
         for i, pick in enumerate(picks)
     ]
 
@@ -391,7 +389,7 @@ def post_movie_to_slack(movie_path: str, title: str) -> bool:
 
 LTX_CHECKPOINT = "ltx-video-2b-v0.9.5.safetensors"
 LTX_LORA       = "ltx-2-19b-distilled-lora-384.safetensors"
-LTX_FRAMES     = 49    # ~2s at 24fps — keeps VRAM reasonable
+LTX_FRAMES     = 97    # ~4s at 24fps — 7 scenes × 4s + crossfades ≈ 30s total
 LTX_FPS        = 24
 
 
@@ -675,7 +673,7 @@ def generate_dream_movie(dream_text: str, post_to_slack: bool = True) -> str | N
     movie_path = str(MOVIE_DIR / f"dream_movie_{timestamp}.mp4")
 
     log(f"Assembling {len(clips)} clips into movie...")
-    if not assemble_movie(clips, movie_path):
+    if not assemble_movie(clips, movie_path, dissolve_frames=18):  # 0.75s crossfades
         return None
 
     # Clean up intermediate clips
