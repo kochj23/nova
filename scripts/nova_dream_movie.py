@@ -389,15 +389,16 @@ def post_movie_to_slack(movie_path: str, title: str) -> bool:
 
 # ── LTX-Video animation ───────────────────────────────────────────────────────
 
-LTX_CHECKPOINT = "ltx-2-19b-distilled-fp8.safetensors"
+LTX_CHECKPOINT = "ltx-video-2b-v0.9.5.safetensors"
 LTX_LORA       = "ltx-2-19b-distilled-lora-384.safetensors"
 LTX_FRAMES     = 49    # ~2s at 24fps — keeps VRAM reasonable
 LTX_FPS        = 24
 
 
 def ltx_available() -> bool:
-    """Returns True if the T5 encoder is downloaded and LTX-Video is usable."""
-    return LTX_ENCODER.exists()
+    """Returns True if T5 encoder + LTX-Video 2B model are both present."""
+    model_path = Path("/Volumes/Data/AI/SwarmUI/dlbackend/ComfyUI/models/checkpoints") / LTX_CHECKPOINT
+    return LTX_ENCODER.exists() and model_path.exists()
 
 
 def animate_with_ltx(image_path: str, prompt: str, scene_num: int) -> str | None:
@@ -439,7 +440,11 @@ def animate_with_ltx(image_path: str, prompt: str, scene_num: int) -> str | None
         log(f"Scene {scene_num}: image upload failed: {e}")
         return None
 
-    # Build the LTX-Video workflow
+    # Build the LTX-Video workflow — matches the official ltxv_image_to_video template
+    # Key: SamplerCustom + KSamplerSelect + LTXVScheduler (not KSampler)
+    #      strength=0.15 (preserve image, let motion happen)
+    #      VAEDecode not VAEDecodeTiled
+    prefix = f"dream_ltx_{scene_num:02d}"
     workflow = {
         "1": {
             "class_type": "CheckpointLoaderSimple",
@@ -472,12 +477,12 @@ def animate_with_ltx(image_path: str, prompt: str, scene_num: int) -> str | None
             "inputs": {
                 "positive": ["3", 0],
                 "negative": ["4", 0],
-                "frame_rate": LTX_FPS,
+                "frame_rate": float(LTX_FPS),
             },
         },
         "6": {
             "class_type": "LoadImage",
-            "inputs": {"image": uploaded_name, "upload": "image"},
+            "inputs": {"image": uploaded_name},
         },
         "7": {
             "class_type": "LTXVImgToVideo",
@@ -490,43 +495,53 @@ def animate_with_ltx(image_path: str, prompt: str, scene_num: int) -> str | None
                 "height": 512,
                 "length": LTX_FRAMES,
                 "batch_size": 1,
-                "strength": 0.85,
+                "strength": 0.15,
             },
         },
         "8": {
-            "class_type": "KSampler",
+            "class_type": "LTXVScheduler",
             "inputs": {
-                "model": ["1", 0],
-                "positive": ["7", 0],
-                "negative": ["7", 1],
-                "latent_image": ["7", 2],
-                "sampler_name": "euler",
-                "scheduler": "linear",
-                "steps": 6,
-                "cfg": 3.0,
-                "denoise": 0.9,
-                "seed": -1,
+                "steps": 20,
+                "max_shift": 2.05,
+                "base_shift": 0.95,
+                "stretch": True,
+                "terminal": 0.1,
             },
         },
         "9": {
-            "class_type": "VAEDecodeTiled",
-            "inputs": {
-                "samples": ["8", 0],
-                "vae": ["1", 2],
-                "tile_size": 256,
-                "overlap": 64,
-                "temporal_size": 64,
-                "temporal_overlap": 8,
-            },
+            "class_type": "KSamplerSelect",
+            "inputs": {"sampler_name": "euler"},
         },
         "10": {
+            "class_type": "SamplerCustom",
+            "inputs": {
+                "model": ["1", 0],
+                "add_noise": True,
+                "noise_seed": 0,
+                "cfg": 3.0,
+                "positive": ["7", 0],
+                "negative": ["7", 1],
+                "sampler": ["9", 0],
+                "sigmas": ["8", 0],
+                "latent_image": ["7", 2],
+            },
+        },
+        "11": {
+            "class_type": "VAEDecode",
+            "inputs": {
+                "samples": ["10", 0],
+                "vae": ["1", 2],
+            },
+        },
+        "12": {
             "class_type": "VHS_VideoCombine",
             "inputs": {
-                "images": ["9", 0],
+                "images": ["11", 0],
                 "frame_rate": LTX_FPS,
                 "loop_count": 0,
-                "filename_prefix": f"dream_ltx_{scene_num:02d}",
+                "filename_prefix": prefix,
                 "format": "video/h264-mp4",
+                "pingpong": False,
                 "save_output": True,
             },
         },
@@ -551,8 +566,8 @@ def animate_with_ltx(image_path: str, prompt: str, scene_num: int) -> str | None
 
         log(f"Scene {scene_num}: LTX queued ({prompt_id[:8]}...) — waiting")
 
-        # Poll for completion (up to 5 minutes)
-        for attempt in range(150):
+        # Poll for completion (up to 10 minutes — 2B model takes ~2min on MPS)
+        for attempt in range(300):
             time.sleep(2)
             req = urllib.request.Request(f"{COMFYUI_LTX}/history/{prompt_id}")
             with urllib.request.urlopen(req, timeout=10) as r:
@@ -562,14 +577,18 @@ def animate_with_ltx(image_path: str, prompt: str, scene_num: int) -> str | None
                 continue
 
             outputs = history[prompt_id].get("outputs", {})
-            # VHS_VideoCombine output is in node "10"
-            video_outputs = outputs.get("10", {}).get("gifs", [])
+            # VHS_VideoCombine output is in node "12"
+            video_outputs = outputs.get("12", {}).get("gifs", [])
             if not video_outputs:
-                video_outputs = outputs.get("10", {}).get("videos", [])
+                video_outputs = outputs.get("12", {}).get("videos", [])
 
             if video_outputs:
                 video_info = video_outputs[0]
-                src = Path("/Volumes/Data/AI/SwarmUI/dlbackend/ComfyUI/output") / video_info.get("filename", "")
+                # Use fullpath if available (ComfyUI provides it)
+                if video_info.get("fullpath"):
+                    src = Path(video_info["fullpath"])
+                else:
+                    src = Path("/Volumes/Data/AI/SwarmUI/dlbackend/ComfyUI/output") / video_info.get("filename", "")
                 if not src.exists():
                     src = Path.home() / "AI/SwarmUI/dlbackend/ComfyUI/output" / video_info.get("filename", "")
 
