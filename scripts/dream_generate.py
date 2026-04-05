@@ -29,8 +29,39 @@ TODAY       = date.today().isoformat()
 YESTERDAY   = (date.today() - timedelta(days=1)).isoformat()
 
 
+FALLBACK_MODELS = ["qwen3-30b-a3b", "deepseek-r1:8b", "qwen3-vl:4b"]
+
+
 def log(msg):
     print(f"[dream_generate {datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def get_available_model() -> str:
+    """Verify MODEL exists in Ollama. Falls back to FALLBACK_MODELS if not.
+    Returns the model name to use, or exits if nothing is available."""
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/tags",
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as r:
+            data = json.loads(r.read())
+        available = {m["name"] for m in data.get("models", [])}
+        # Strip tags for comparison (qwen3-coder:30b matches qwen3-coder:30b)
+        if MODEL in available:
+            log(f"Model verified: {MODEL}")
+            return MODEL
+        # Try fallbacks
+        for fallback in FALLBACK_MODELS:
+            if fallback in available:
+                log(f"WARNING: {MODEL} not found — falling back to {fallback}")
+                return fallback
+        # Nothing available
+        log(f"ERROR: {MODEL} not in Ollama. Available: {sorted(available)}")
+        sys.exit(1)
+    except Exception as e:
+        log(f"WARNING: Cannot verify model (Ollama may be starting): {e} — using {MODEL}")
+        return MODEL
 
 
 def read_file(path, max_chars=1500):
@@ -199,6 +230,10 @@ def store_memory(narrative: str):
 
 def main():
     log(f"Starting dream generation for {TODAY}")
+
+    # Verify model exists before spending time on anything else
+    global MODEL
+    MODEL = get_available_model()
 
     # Check if already done
     if PENDING.exists():

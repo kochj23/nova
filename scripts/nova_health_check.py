@@ -24,6 +24,7 @@ SLACK_CHANNEL = "C0AMNQ5GX70"
 SLACK_API     = "https://slack.com/api/chat.postMessage"
 JOBS_FILE     = Path.home() / ".openclaw/cron/jobs.json"
 LOG_DIR       = Path.home() / ".openclaw/logs"
+NOVA_BOT_ID   = "U0ANKLR3SUQ"   # novaslackintegation bot user ID
 
 # Thresholds
 MAX_CONSECUTIVE_ERRORS  = 2       # alert after this many consecutive failures
@@ -34,6 +35,15 @@ FAST_RUN_EXEMPT         = {       # jobs that legitimately run fast
     "Nova Gateway Watchdog",
     "Nova Home Watchdog",
 }
+
+# Key deliveries that should appear in Slack within the last 20 hours
+# (label, search_text_fragment)
+EXPECTED_SLACK_DELIVERIES = [
+    ("Morning Brief",      "Morning Brief"),
+    ("Mail Summary",       "Mail Summary"),
+    ("Dream Journal",      "Dream Journal"),
+    ("Nightly Report",     "Nightly Report"),
+]
 
 
 def log(msg):
@@ -57,6 +67,46 @@ def slack_post(text: str):
                 log(f"Slack post failed: {result.get('error')}")
     except Exception as e:
         log(f"Slack post error: {e}")
+
+
+def fetch_recent_slack_messages(hours: int = 20) -> list[dict]:
+    """Fetch recent messages from #nova-chat posted by the Nova bot."""
+    import time
+    oldest = str(time.time() - hours * 3600)
+    url = (f"https://slack.com/api/conversations.history"
+           f"?channel={SLACK_CHANNEL}&oldest={oldest}&limit=200")
+    req = urllib.request.Request(
+        url,
+        headers={"Authorization": f"Bearer {SLACK_TOKEN}"}
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read())
+        if not data.get("ok"):
+            log(f"Slack history error: {data.get('error')}")
+            return []
+        return [m for m in data.get("messages", []) if m.get("user") == NOVA_BOT_ID
+                or m.get("bot_id")]
+    except Exception as e:
+        log(f"Could not fetch Slack history: {e}")
+        return []
+
+
+def audit_slack_deliveries() -> list[dict]:
+    """Check that expected bot messages appeared in Slack in the last 20 hours."""
+    issues = []
+    messages = fetch_recent_slack_messages(hours=20)
+    all_text = " ".join(m.get("text", "") for m in messages).lower()
+
+    for label, fragment in EXPECTED_SLACK_DELIVERIES:
+        if fragment.lower() not in all_text:
+            issues.append({
+                "severity": "warning",
+                "name": f"Slack delivery: {label}",
+                "reason": f"No '{fragment}' message found in #nova-chat in last 20h",
+            })
+
+    return issues
 
 
 def audit_jobs() -> list[dict]:
@@ -159,6 +209,7 @@ def format_message(issues: list[dict]) -> str:
 def main():
     log("Starting health check")
     issues = audit_jobs()
+    issues += audit_slack_deliveries()
 
     error_count   = sum(1 for i in issues if i["severity"] in ("error", "critical"))
     warning_count = sum(1 for i in issues if i["severity"] == "warning")
