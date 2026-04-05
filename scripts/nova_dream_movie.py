@@ -84,11 +84,13 @@ The dream:
 def extract_scenes(dream_text: str) -> list[dict]:
     """Call the LLM to extract narrative scenes from the dream text."""
     try:
-        from nova_intent_router import route
-        result = route(
-            intent="dream_journal",
+        from nova_intent_router import query_cloud
+        # Use cloud directly — local models (deepseek-r1) produce thinking blocks
+        # that overflow before the JSON is generated. Cloud Qwen3 is fast and clean.
+        result = query_cloud(
             prompt=SCENE_PROMPT.format(dream_text=dream_text[:2000]),
             system="You are a film director. Output ONLY the JSON. No markdown. No explanation.",
+            intent="creative_writing",
         )
         if not result.get("success"):
             log(f"LLM failed: {result.get('error')} — using fallback")
