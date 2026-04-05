@@ -397,7 +397,7 @@ def post_movie_to_slack(movie_path: str, title: str) -> bool:
 
 LTX_CHECKPOINT = "ltx-video-2b-v0.9.5.safetensors"
 LTX_LORA       = "ltx-2-19b-distilled-lora-384.safetensors"
-LTX_FRAMES     = 97    # ~4s at 24fps — 7 scenes × 4s + crossfades ≈ 30s total
+LTX_FRAMES     = 121   # ~5s at 24fps — 7 scenes × 5s - 6 × 0.75s crossfades ≈ 30.5s
 LTX_FPS        = 24
 
 
