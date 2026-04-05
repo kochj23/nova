@@ -6,14 +6,13 @@ Two tiers:
   CLOUD (OpenRouter Qwen3 80B free → Qwen3 235B paid fallback)
     — Nova's voice, personality, external comms
 
-  LOCAL (Nova-NextGen :34750) — All compute: 7 backends, intent-matched
+  LOCAL (Nova-NextGen :34750) — All compute: 6 backends, intent-matched
     tinychat  :8000  → quick/classify — fastest, qwen3:4b, low overhead
     mlxcode   :37422 → coding/swift   — Apple Neural Engine, Swift-specialised
     mlxchat   :5000  → general/creative/summarize — fast ANE general inference
     openwebui :3000  → document/research — RAG-capable, doc grounding
     ollama    :11434 → reasoning/analysis/vision/long_context — deepseek-r1, qwen3-vl
-    swarmui   :7801  → image           — primary image generation
-    comfyui   :8188  → image           — image fallback
+    swarmui   :7801  → image + video   — all generation (manages its own ComfyUI)
 
 Intent → Route mapping:
   CLOUD:
