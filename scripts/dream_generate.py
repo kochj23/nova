@@ -24,7 +24,7 @@ JOURNAL_DIR = WORKSPACE / "journal/dreams"
 PENDING     = WORKSPACE / "journal/pending_delivery.json"
 MEMORY_DIR  = WORKSPACE / "memory"
 OLLAMA_URL  = "http://127.0.0.1:11434/api/generate"
-MODEL       = "nova:latest"
+MODEL       = "qwen3-coder:30b"
 TODAY       = date.today().isoformat()
 YESTERDAY   = (date.today() - timedelta(days=1)).isoformat()
 

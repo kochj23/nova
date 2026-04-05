@@ -49,3 +49,20 @@ file-history/
 *.backup
 scripts/*.applescript
 .slack_token_cache
+
+# Personal workspace files — contain Jordan's identity/PII
+workspace/MEMORY.md
+workspace/USER.md
+workspace/SOUL.md
+workspace/IDENTITY.md
+workspace/HEARTBEAT.md
+workspace/STATUS.md
+workspace/BOOTSTRAP.md
+workspace/memory/
+workspace/herd/
+workspace/dream_images/
+workspace/web-search-cache/
+workspace/tmp/
+workspace/camera_frames/
+workspace/software-inventory/
+workspace/Nova-NextGen/
