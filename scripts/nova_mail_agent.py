@@ -34,7 +34,7 @@ HERD_MAIL    = str(SCRIPTS / "nova_herd_mail.sh")
 OLLAMA_URL      = "http://127.0.0.1:11434/api/generate"
 MODEL           = "nova:latest"
 OPENROUTER_URL  = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "anthropic/claude-haiku-4.5"
+OPENROUTER_MODEL = "deepseek/deepseek-chat"        # DeepSeek V3 — Nova's primary voice
 VECTOR_URL   = "http://127.0.0.1:18790/remember"
 TODAY        = date.today().isoformat()
 
@@ -133,8 +133,12 @@ def read_message(uid: str) -> None:
 
 
 def send_reply(to: str, subject: str, body: str, message_id: str = None) -> bool:
-    """Send an email, optionally as a reply (with threading) to a message-id."""
-    args = ["send", "--to", to, "--subject", subject, "--body", body]
+    """Send an email, optionally as a reply (with threading) to a message-id.
+
+    Auto-replies are automated system emails — --skip-haiku is intentional.
+    Human-composed herd emails (via nova_herd_broadcast.sh) require haiku.
+    """
+    args = ["send", "--to", to, "--subject", subject, "--body", body, "--skip-haiku"]
     if message_id:
         args += ["--message-id", str(message_id)]
     code, out = herd(args)

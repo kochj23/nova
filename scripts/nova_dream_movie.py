@@ -159,7 +159,7 @@ def swarmui_session() -> str:
 
 
 def generate_keyframe(session: str, scene: dict, scene_num: int,
-                      prev_image: str | None = None) -> str | None:
+                      prev_image: Optional[str] = None) -> Optional[str]:
     """Generate scene keyframe. Optionally uses prev_image for visual continuity."""
     prompt = f"{DREAM_STYLE}, {scene['visual']}"
     payload = {

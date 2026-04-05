@@ -33,7 +33,7 @@ WORKSPACE    = Path.home() / ".openclaw" / "workspace"
 MEMORY_DIR   = WORKSPACE / "memory"
 TODAY        = date.today().isoformat()
 NOW          = datetime.now()
-OLLAMA_URL   = "http://127.0.0.1:11434/api/generate"
+NOVA_NEXTGEN_URL = "http://127.0.0.1:34750/api/ai/query"
 
 
 def log(msg):
@@ -96,23 +96,22 @@ def read_recent_memory_files(days=7):
 # ── LLM synthesis ────────────────────────────────────────────────────────────
 
 def llm_synthesize(prompt, max_tokens=600):
-    """Call Ollama qwen3 to synthesize memories."""
+    """Route memory synthesis through Nova-NextGen → deepseek-r1:8b (reasoning task)."""
     try:
         payload = json.dumps({
-            "model": "qwen2.5:72b",
-            "prompt": prompt,
-            "stream": False,
-            "options": {"num_predict": max_tokens, "temperature": 0.3}
+            "query": prompt,
+            "task_type": "reasoning",
+            "options": {"max_tokens": max_tokens, "temperature": 0.3},
         }).encode()
         req = urllib.request.Request(
-            OLLAMA_URL, data=payload,
+            NOVA_NEXTGEN_URL, data=payload,
             headers={"Content-Type": "application/json"}
         )
         with urllib.request.urlopen(req, timeout=300) as r:
             data = json.loads(r.read())
         return data.get("response", "").strip()
     except Exception as e:
-        log(f"LLM error: {e}")
+        log(f"LLM error (Nova-NextGen): {e}")
         return ""
 
 
