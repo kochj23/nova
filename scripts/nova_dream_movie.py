@@ -387,11 +387,207 @@ def post_movie_to_slack(movie_path: str, title: str) -> bool:
         return False
 
 
-# ── LTX-Video upgrade path ────────────────────────────────────────────────────
+# ── LTX-Video animation ───────────────────────────────────────────────────────
+
+LTX_CHECKPOINT = "ltx-2-19b-distilled-fp8.safetensors"
+LTX_LORA       = "ltx-2-19b-distilled-lora-384.safetensors"
+LTX_FRAMES     = 49    # ~2s at 24fps — keeps VRAM reasonable
+LTX_FPS        = 24
+
 
 def ltx_available() -> bool:
     """Returns True if the T5 encoder is downloaded and LTX-Video is usable."""
     return LTX_ENCODER.exists()
+
+
+def animate_with_ltx(image_path: str, prompt: str, scene_num: int) -> str | None:
+    """
+    Feed a keyframe into LTX-Video image-to-video via ComfyUI on port 7824.
+    Returns path to the generated video clip, or None on failure.
+    """
+    import base64, uuid
+
+    client_id = str(uuid.uuid4())
+    output_path = str(MOVIE_DIR / f"ltx_clip_{scene_num:02d}.mp4")
+
+    # Load the image as base64 — ComfyUI accepts this via LoadImage node
+    with open(image_path, "rb") as f:
+        img_b64 = base64.b64encode(f.read()).decode()
+
+    # Upload image to ComfyUI first
+    img_filename = f"dream_scene_{scene_num:02d}.png"
+    try:
+        import io
+        boundary = "----FormBoundary"
+        body = (
+            f"--{boundary}\r\n"
+            f'Content-Disposition: form-data; name="image"; filename="{img_filename}"\r\n'
+            f"Content-Type: image/png\r\n\r\n"
+        ).encode() + Path(image_path).read_bytes() + f"\r\n--{boundary}--\r\n".encode()
+
+        req = urllib.request.Request(
+            f"{COMFYUI_LTX}/upload/image",
+            data=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            upload_result = json.loads(r.read())
+        uploaded_name = upload_result.get("name", img_filename)
+        log(f"Scene {scene_num}: image uploaded as {uploaded_name}")
+    except Exception as e:
+        log(f"Scene {scene_num}: image upload failed: {e}")
+        return None
+
+    # Build the LTX-Video workflow
+    workflow = {
+        "1": {
+            "class_type": "CheckpointLoaderSimple",
+            "inputs": {"ckpt_name": LTX_CHECKPOINT},
+        },
+        "2": {
+            "class_type": "CLIPLoader",
+            "inputs": {
+                "clip_name": "t5xxl_fp8_e4m3fn.safetensors",
+                "type": "ltxv",
+                "device": "default",
+            },
+        },
+        "3": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "text": f"{DREAM_STYLE}, {prompt}",
+                "clip": ["2", 0],
+            },
+        },
+        "4": {
+            "class_type": "CLIPTextEncode",
+            "inputs": {
+                "text": "blurry, distorted, watermark, text, low quality, static, frozen",
+                "clip": ["2", 0],
+            },
+        },
+        "5": {
+            "class_type": "LTXVConditioning",
+            "inputs": {
+                "positive": ["3", 0],
+                "negative": ["4", 0],
+                "frame_rate": LTX_FPS,
+            },
+        },
+        "6": {
+            "class_type": "LoadImage",
+            "inputs": {"image": uploaded_name, "upload": "image"},
+        },
+        "7": {
+            "class_type": "LTXVImgToVideo",
+            "inputs": {
+                "positive": ["5", 0],
+                "negative": ["5", 1],
+                "vae": ["1", 2],
+                "image": ["6", 0],
+                "width": 768,
+                "height": 512,
+                "length": LTX_FRAMES,
+                "batch_size": 1,
+                "strength": 0.85,
+            },
+        },
+        "8": {
+            "class_type": "KSampler",
+            "inputs": {
+                "model": ["1", 0],
+                "positive": ["7", 0],
+                "negative": ["7", 1],
+                "latent_image": ["7", 2],
+                "sampler_name": "euler",
+                "scheduler": "linear",
+                "steps": 6,
+                "cfg": 3.0,
+                "denoise": 0.9,
+                "seed": -1,
+            },
+        },
+        "9": {
+            "class_type": "VAEDecodeTiled",
+            "inputs": {
+                "samples": ["8", 0],
+                "vae": ["1", 2],
+                "tile_size": 256,
+                "overlap": 64,
+                "temporal_size": 64,
+                "temporal_overlap": 8,
+            },
+        },
+        "10": {
+            "class_type": "VHS_VideoCombine",
+            "inputs": {
+                "images": ["9", 0],
+                "frame_rate": LTX_FPS,
+                "loop_count": 0,
+                "filename_prefix": f"dream_ltx_{scene_num:02d}",
+                "format": "video/h264-mp4",
+                "save_output": True,
+            },
+        },
+    }
+
+    try:
+        # Queue the workflow
+        payload = json.dumps({"prompt": workflow, "client_id": client_id}).encode()
+        req = urllib.request.Request(
+            f"{COMFYUI_LTX}/prompt",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as r:
+            queue_result = json.loads(r.read())
+
+        prompt_id = queue_result.get("prompt_id")
+        if not prompt_id:
+            log(f"Scene {scene_num}: no prompt_id in queue response")
+            return None
+
+        log(f"Scene {scene_num}: LTX queued ({prompt_id[:8]}...) — waiting")
+
+        # Poll for completion (up to 5 minutes)
+        for attempt in range(150):
+            time.sleep(2)
+            req = urllib.request.Request(f"{COMFYUI_LTX}/history/{prompt_id}")
+            with urllib.request.urlopen(req, timeout=10) as r:
+                history = json.loads(r.read())
+
+            if prompt_id not in history:
+                continue
+
+            outputs = history[prompt_id].get("outputs", {})
+            # VHS_VideoCombine output is in node "10"
+            video_outputs = outputs.get("10", {}).get("gifs", [])
+            if not video_outputs:
+                video_outputs = outputs.get("10", {}).get("videos", [])
+
+            if video_outputs:
+                video_info = video_outputs[0]
+                src = Path("/Volumes/Data/AI/SwarmUI/dlbackend/ComfyUI/output") / video_info.get("filename", "")
+                if not src.exists():
+                    src = Path.home() / "AI/SwarmUI/dlbackend/ComfyUI/output" / video_info.get("filename", "")
+
+                if src.exists():
+                    import shutil
+                    shutil.copy2(src, output_path)
+                    log(f"Scene {scene_num}: LTX animation done ({LTX_FRAMES} frames)")
+                    return output_path
+                else:
+                    log(f"Scene {scene_num}: video file not found at {src}")
+                    return None
+
+        log(f"Scene {scene_num}: LTX timed out after 5 minutes")
+        return None
+
+    except Exception as e:
+        log(f"Scene {scene_num}: LTX error: {e}")
+        return None
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -403,12 +599,8 @@ def generate_dream_movie(dream_text: str, post_to_slack: bool = True) -> str | N
     """
     log(f"Starting dream movie — {len(dream_text.split())} word dream")
 
-    if ltx_available():
-        log("LTX-Video encoder found — animation mode active")
-    else:
-        log("LTX-Video encoder not found — using Ken Burns mode")
-        log(f"  (to unlock real animation: download t5xxl_fp8_e4m3fn.safetensors to")
-        log(f"   /Volumes/Data/AI/SwarmUI/dlbackend/ComfyUI/models/text_encoders/)")
+    mode = "LTX-Video animation" if ltx_available() else "Ken Burns"
+    log(f"Mode: {mode}")
 
     # Step 1: Extract scenes
     log("Extracting narrative scenes...")
@@ -440,11 +632,18 @@ def generate_dream_movie(dream_text: str, post_to_slack: bool = True) -> str | N
         log(f"Only {len(images)} image(s) generated — need at least 2")
         return None
 
-    # Step 3: Build clips
-    log("Applying camera moves...")
+    # Step 3: Build clips — LTX-Video animation or Ken Burns fallback
+    use_ltx = ltx_available()
+    log(f"Building clips via {'LTX-Video animation' if use_ltx else 'Ken Burns'}...")
     clips = []
     for i, (img, scene) in enumerate(images):
-        clip = build_scene_clip(img, scene, i + 1)
+        if use_ltx:
+            clip = animate_with_ltx(img, scene.get("visual", ""), i + 1)
+            if not clip:
+                log(f"Scene {i+1}: LTX failed — falling back to Ken Burns")
+                clip = build_scene_clip(img, scene, i + 1)
+        else:
+            clip = build_scene_clip(img, scene, i + 1)
         if clip:
             clips.append(clip)
 
