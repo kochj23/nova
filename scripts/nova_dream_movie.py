@@ -269,29 +269,35 @@ def assemble_movie(clips: list[str], output_path: str,
     for c in clips:
         inputs += ["-i", c]
 
-    # Chain xfade transitions
-    filter_parts = []
-    current = "[0:v]"
-    for i in range(1, len(clips)):
-        # Get duration of the previous clip to calculate offset
+    # Get duration of every clip upfront
+    xfade_sec = dissolve_frames / 24.0
+    clip_durations = []
+    for c in clips:
         probe = subprocess.run(
-            ["ffprobe", "-v", "quiet", "-print_format", "json",
-             "-show_streams", clips[i - 1]],
+            ["ffprobe", "-v", "quiet", "-print_format", "json", "-show_streams", c],
             capture_output=True, text=True
         )
-        duration = 6.0  # default
+        dur = 4.04  # default (97 frames @ 24fps)
         try:
             stream_info = json.loads(probe.stdout)
-            duration = float(stream_info["streams"][0].get("duration", 6.0))
+            dur = float(stream_info["streams"][0].get("duration", dur))
         except Exception:
             pass
+        clip_durations.append(dur)
 
-        offset = max(0.1, duration - dissolve_frames / 24.0)
+    # Chain xfade transitions — offset MUST be cumulative from output start
+    # After each xfade the running timeline advances by (clip_duration - xfade_sec)
+    filter_parts = []
+    current = "[0:v]"
+    cumulative = 0.0
+    for i in range(1, len(clips)):
+        cumulative += clip_durations[i - 1] - xfade_sec
+        offset = max(0.1, cumulative)
         output_label = f"[v{i}]" if i < len(clips) - 1 else "[vout]"
         filter_parts.append(
             f"{current}[{i}:v]xfade=transition=dissolve:"
-            f"duration={dissolve_frames/24:.2f}:"
-            f"offset={offset:.2f}{output_label}"
+            f"duration={xfade_sec:.3f}:"
+            f"offset={offset:.3f}{output_label}"
         )
         current = f"[v{i}]"
 
