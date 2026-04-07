@@ -45,20 +45,51 @@ def remember(text: str, source: str = "email", metadata: dict = None) -> str:
         log(f"Error storing memory: {e}")
         return None
 
+import re as _re
+
+# Patterns that indicate content should be skipped entirely (not stored)
+_SKIP_PATTERNS = [
+    _re.compile(p, _re.IGNORECASE) for p in [
+        r'\b(porn|pornograph|sex tape|nude photo|naked photo|explicit video)\b',
+        r'\b(incest|bestiality|underage|teen porn|child porn)\b',
+        r'\b(horny-scrubbers|adult site|adult content|xxx)\b',
+        r'(http[s]?://[^\s]*(?:porn|xxx|adult|sex|nude|cam|escort)[^\s]*)',
+    ]
+]
+
+# Patterns to redact from body before storing
+_REDACT_PATTERNS = [
+    (_re.compile(r'\b\d{3}[-.\s]\d{3}[-.\s]\d{4}\b'), '[PHONE]'),
+    (_re.compile(r'\b\d{3}-\d{2}-\d{4}\b'), '[SSN]'),
+    (_re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b'), '[EMAIL]'),
+    (_re.compile(r'\b(?:erotic|aroused|naked|nude|masturbat\w+|orgasm\w*|horny|lust\w*|cum\b|cumming|fucking|fucked|sex\b|sexy\b|sensual)\b', _re.IGNORECASE), '[REDACTED]'),
+]
+
+def _is_sensitive(subject: str, body: str) -> bool:
+    """Return True if this email should be skipped entirely."""
+    text = f"{subject} {body}"
+    return any(p.search(text) for p in _SKIP_PATTERNS)
+
+def _redact_body(body: str) -> str:
+    """Redact PII and explicit content from body before storing."""
+    for pattern, replacement in _REDACT_PATTERNS:
+        body = pattern.sub(replacement, body)
+    return body
+
 def parse_email(msg, folder_name: str = "unknown"):
     """Extract key data from email message."""
     try:
         sender = msg.get("From", "unknown")
         subject = msg.get("Subject", "(no subject)")
         date_str = msg.get("Date", "unknown")
-        
+
         # Parse date
         try:
             date_dt = parsedate_to_datetime(date_str)
             date_iso = date_dt.isoformat()
         except:
             date_iso = date_str
-        
+
         # Extract body
         body = ""
         if msg.is_multipart():
@@ -74,10 +105,16 @@ def parse_email(msg, folder_name: str = "unknown"):
                 body = msg.get_payload(decode=True).decode('utf-8', errors='ignore')
             except:
                 body = msg.get_payload()
-        
-        # Truncate body
-        body = (body or "")[:1000]
-        
+
+        body = (body or "")[:500]  # Tighter limit — subject is what matters
+
+        # Skip emails with explicit/sensitive content entirely
+        if _is_sensitive(subject, body):
+            return None
+
+        # Redact PII from body before storing
+        body = _redact_body(body)
+
         return {
             "sender": sender,
             "subject": subject,
