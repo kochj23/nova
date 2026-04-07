@@ -58,16 +58,17 @@ Nova is not a chatbot. She's an always-on AI familiar that runs Jordan's home, m
 - OneOnOne meeting notes checked hourly
 
 ### Memory System
-- **106,000+ memories** across email archives, documents, world knowledge, and domain expertise
-- **PostgreSQL 17 + pgvector 0.8.2** backend — production-grade, concurrent-safe
-- **HNSW index** — 23ms warm recall on 100K+ vectors
-- **Redis async write queue** — bulk imports fire-and-forget at 8ms, worker embeds + stores
+- **153,000+ memories** across email archives, documents, world knowledge, and domain expertise
+- **PostgreSQL 16 + pgvector 0.8.2** backend — production-grade, concurrent-safe
+- **HNSW index** — millisecond recall on 150K+ vectors (m=16, ef_construction=64, cosine ops)
+- **Redis 8.6.2 async write queue** — bulk imports fire-and-forget at 8ms, worker embeds + stores
 - Embeddings via `nomic-embed-text` (Ollama, 768 dims)
 - Endpoints: `/remember[?async=1]`, `/recall`, `/random`, `/health`, `/stats`, `/queue/stats`
 - `nova_nightly_memory_summary.py` — nightly memory consolidation
 - `nova_slack_memory_ingest.py` — ingest Slack history into vector memory
+- `nova_ingest.py` — ingest arbitrary files (PDF, DOCX, TXT, MD, CSV, XLSX, PPTX) into memory
 
-**Knowledge indexed:** CIA World Factbook (262 countries), Jordan's email archives (40K+), GitHub READMEs (374 projects), JAGMAN + TM-21-210, Disney (2.5K facts), jungle/DnB/IDM/turntablism history (5K facts), home gardening (2.5K), health (diabetes, rosacea, BP, depression), cooking, astronomy, philosophy, Swift/iOS dev, network security, Burbank/LA local knowledge, Corvette manual + facts, and more.
+**Knowledge indexed:** CIA World Factbook (262 countries), Jordan's email archives (83K+), PiHKAL Part 2 — all 179 phenethylamine compounds (Shulgin), Corvette workshop manual (9.6K chunks), music history — jungle/DnB/IDM/turntablism (7.2K), GitHub READMEs, JAGMAN + TM-21-210, Disney (2.5K facts), home gardening (2.5K), health (diabetes, rosacea, BP, depression), cooking, astronomy, philosophy, gnostic texts, Swift/iOS dev, network security, Burbank/LA local knowledge, and more.
 
 ### Daily Rhythm (OpenClaw Crons)
 
@@ -130,11 +131,11 @@ OpenClaw Gateway (ws://127.0.0.1:18789)
          └── tools: exec, fs, process, HTTP APIs
 
 Vector Memory Server (localhost:18790)
-    ├── 106,000+ memories
+    ├── 153,000+ memories (1,168 MB)
     ├── embeddings: nomic-embed-text (Ollama, 768 dims)
-    ├── backend: PostgreSQL 17 + pgvector 0.8.2 (HNSW index)
+    ├── backend: PostgreSQL 16 + pgvector 0.8.2 (HNSW index)
     ├── write queue: Redis 8.6.2 (async bulk ingest)
-    └── recall: ~23ms warm (HNSW cosine similarity)
+    └── recall: millisecond warm (HNSW cosine, m=16)
 
 Local App APIs (ports 37421–37449)
     ├── OneOnOne        :37421  (always running)
@@ -164,6 +165,7 @@ Nova-NextGen AI Gateway (localhost:34750)
 | `dream_deliver.py` | 9am dream delivery to Slack + herd |
 | `nova_home_watchdog.py` | HomeKit monitoring + alerts |
 | `nova_config.py` | Central config — loads secrets from macOS Keychain |
+| `nova_ingest.py` | Ingest files (PDF/DOCX/TXT/MD/CSV/XLSX) into vector memory |
 | `migrate_sqlite_to_postgres.py` | One-time SQLite → PostgreSQL migration |
 
 ---
@@ -177,7 +179,19 @@ Nova-NextGen AI Gateway (localhost:34750)
 
 ---
 
+## Documentation
+
+Full end-to-end technical documentation (architecture diagrams, all API endpoints, vector DB schema, cron jobs, app port map) is maintained at `nova-documentation.html` — generated April 7, 2026.
+
+---
+
 ## Changelog
+
+### Apr 7, 2026
+- **PiHKAL ingested** — all 179 phenethylamine compound entries from Shulgin's PiHKAL Part 2 scraped from Erowid and stored as 2,233 vector chunks (source: `pihkal`)
+- Memory total: **153,667** vectors (+2,233)
+- Added `nova_ingest.py` to key scripts table (supports PDF, DOCX, TXT, MD, CSV, XLSX, PPTX)
+- End-to-end documentation generated: architecture, models, gateway, channels, app APIs, cron schedule, vector DB schema
 
 ### Apr 6, 2026 — Production Memory System Upgrade
 - **PostgreSQL 17 + pgvector 0.8.2** replaces SQLite+FAISS
@@ -202,3 +216,4 @@ Nova-NextGen AI Gateway (localhost:34750)
 - Vector memory recall in email threads
 
 Written by Jordan Koch.
+
