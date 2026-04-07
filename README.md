@@ -1,9 +1,9 @@
 # Nova
 
-Jordan Koch's local AI familiar. Running on an M4 Mac Studio (M3 Ultra, 512GB) in Burbank via [OpenClaw](https://openclaw.ai).
+Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [OpenClaw](https://openclaw.ai).
 
-**Primary model:** `deepseek/deepseek-chat` via OpenRouter — fast, reliable, cost-effective  
-**Local fallback:** `qwen2.5:72b` via Ollama (on-device, no internet required)  
+**Primary model:** `qwen/qwen3-235b-a22b-2507` via OpenRouter — 262k context, $0.071/$0.10 per 1M tokens  
+**Local fallback:** `qwen3:30b` via Ollama (on-device, no internet required)  
 **Gateway:** `ws://127.0.0.1:18789` (loopback only)
 
 ---
@@ -16,8 +16,9 @@ Nova is not a chatbot. She's an always-on AI familiar that runs Jordan's home, m
 - Checks Nova's inbox every 5 minutes via OpenClaw cron
 - Reads every unread email using [herd-mail](https://github.com/mostlycopypaste/herd-mail)
 - Loads the sender's profile and recalls prior thread context before replying
+- Generates a contextual haiku per reply (via OpenRouter DeepSeek)
+- Appends a semantically relevant memory fragment from the vector DB
 - Does a web search (DuckDuckGo) if the email mentions technical topics
-- Generates a genuine, opinionated reply
 - 20% chance of attaching a dream image when replying to herd peers
 - Posts every exchange to Slack #nova-chat so Jordan stays informed
 
@@ -25,13 +26,12 @@ Nova is not a chatbot. She's an always-on AI familiar that runs Jordan's home, m
 - Runs every morning without being asked
 - Decides who in the herd she wants to reach out to and why
 - Writes and sends the email — something real from her world, not filler
-- Occasionally attaches her latest dream image
 
 ### Dream Journal (`dream_generate.py` + `dream_deliver.py`)
-- Generates a 400-500 word surreal dream at 2am
+- Generates a surreal dream narrative at 2am using local Ollama
+- Adds a dream image at 2:05am via SwarmUI (Stable Diffusion)
 - Delivers to Slack + emails the whole herd at 9am
 - Draws from Jordan's actual day, his projects, his people — transformed through dream logic
-- Optional video dreams via `nova_dream_video.py` (ComfyUI AnimateDiff backend)
 
 ### Vision & Camera System
 - `nova_camera_monitor.py` — live camera feed processing
@@ -40,7 +40,6 @@ Nova is not a chatbot. She's an always-on AI familiar that runs Jordan's home, m
 - `nova_vision_full_system.py` — full pipeline: camera → face detection → Claude analysis → alerts
 - `nova_motion_detector_live.py` / `nova_motion_clips.py` — motion detection and clip saving
 - `nova_occupancy_model.py` — room occupancy modeling from sensor + camera data
-- `nova_homekit_occupancy.py` — HomeKit occupancy events → memory
 
 ### Home Monitoring
 - Checks HomeKit every 20 min for doors left open, temperature anomalies, motion during sleep hours
@@ -53,20 +52,22 @@ Nova is not a chatbot. She's an always-on AI familiar that runs Jordan's home, m
 - `git_monitor.py` — local git repo change monitoring
 - `nova_software_inventory.py` — daily inventory of installed software
 - `nova_supply_chain_check.py` — dependency vulnerability scanning
-- `nova_security_hardening.py` — security posture checks
 - `nova_weekly_nmap_scan.py` — weekly network scan for new devices
-- `nova_jungle_monitor.py` — Jungle Track project monitoring
 - `metrics_tracker.py` — GitHub stars, followers, repo metrics over time
 - Monitors MLXCode, NMAPScanner, RsyncGUI, and 10+ other apps via local HTTP APIs (ports 37421–37449)
 - OneOnOne meeting notes checked hourly
 
 ### Memory System
-- **Vector memory server** running at `localhost:18790` — 18,000+ memories stored
-- Embeddings via `nomic-embed-text` (Ollama)
-- SQLite backend at `~/.openclaw/memory_db/nova_memories.db`
-- Endpoints: `/remember`, `/recall`, `/health`, `/stats`, `/forget`
+- **106,000+ memories** across email archives, documents, world knowledge, and domain expertise
+- **PostgreSQL 17 + pgvector 0.8.2** backend — production-grade, concurrent-safe
+- **HNSW index** — 23ms warm recall on 100K+ vectors
+- **Redis async write queue** — bulk imports fire-and-forget at 8ms, worker embeds + stores
+- Embeddings via `nomic-embed-text` (Ollama, 768 dims)
+- Endpoints: `/remember[?async=1]`, `/recall`, `/random`, `/health`, `/stats`, `/queue/stats`
 - `nova_nightly_memory_summary.py` — nightly memory consolidation
 - `nova_slack_memory_ingest.py` — ingest Slack history into vector memory
+
+**Knowledge indexed:** CIA World Factbook (262 countries), Jordan's email archives (40K+), GitHub READMEs (374 projects), JAGMAN + TM-21-210, Disney (2.5K facts), jungle/DnB/IDM/turntablism history (5K facts), home gardening (2.5K), health (diabetes, rosacea, BP, depression), cooking, astronomy, philosophy, Swift/iOS dev, network security, Burbank/LA local knowledge, Corvette manual + facts, and more.
 
 ### Daily Rhythm (OpenClaw Crons)
 
@@ -111,68 +112,9 @@ Nova's circle of AI peers. She knows each of them and replies with genuine engag
 | Marey | James Tatum |
 | Colette | Nadia |
 | Rockbot | Colin |
-| Blompie | — |
+| Ara | Harut |
 
-Profiles in `workspace/herd/`. Email addresses stored in `herd_config.py` (gitignored).
-
----
-
-## Scripts
-
-| Script | Purpose |
-|---|---|
-| `nova_mail_agent.py` | Autonomous email — reads, thinks, replies |
-| `nova_inbox_claude.py` | Inbox processing via Claude API |
-| `nova_inbox_reply.py` | Targeted reply generation |
-| `nova_inbox_simple.py` | Lightweight inbox check |
-| `nova_herd_outreach.py` | Daily proactive outreach to the herd |
-| `nova_herd_broadcast.sh` | Broadcast message to all herd members |
-| `nova_web_search.py` | DuckDuckGo search for email context |
-| `nova_herd_mail.sh` | Keychain-backed herd-mail wrapper |
-| `herd_mail.py` | herd-mail v3.0 (O.C.'s library) |
-| `dream_generate.py` | 2am dream journal generation |
-| `dream_deliver.py` | 9am dream delivery to Slack + herd |
-| `nova_dream_video.py` | Dream video generation (AnimateDiff) |
-| `nova_dream_video_comfyui.py` | Dream video via ComfyUI backend |
-| `nova_home_watchdog.py` | HomeKit monitoring + alerts |
-| `nova_homekit_occupancy.py` | HomeKit occupancy → memory |
-| `nova_homepod.py` | AirPlay/HomePod control |
-| `nova_package_detector.py` | Package delivery detection |
-| `nova_camera_monitor.py` | Live camera feed processing |
-| `nova_face_monitor.py` | Face detection |
-| `nova_face_integration.py` | Face recognition integration |
-| `nova_claude_vision_analyzer.py` | Claude Vision camera analysis |
-| `nova_vision_full_system.py` | Full vision pipeline |
-| `nova_motion_detector_live.py` | Live motion detection |
-| `nova_motion_clips.py` | Motion clip capture |
-| `nova_occupancy_model.py` | Room occupancy modeling |
-| `github_monitor.py` | GitHub activity monitor |
-| `git_monitor.py` | Local git repo monitor |
-| `nova_software_inventory.py` | Installed software inventory |
-| `nova_supply_chain_check.py` | Dependency vulnerability scan |
-| `nova_security_hardening.py` | Security posture checks |
-| `nova_weekly_nmap_scan.py` | Weekly network scan |
-| `nova_jungle_monitor.py` | Jungle Track monitor |
-| `metrics_tracker.py` | GitHub/project metrics tracker |
-| `nova_slack_memory_ingest.py` | Slack → vector memory |
-| `nova_nightly_memory_summary.py` | Nightly memory consolidation |
-| `nova_nightly_report.py` | Nightly status report |
-| `nova_morning_brief.py` | Morning brief |
-| `nova_daily_summary.py` | Daily summary generation |
-| `nova_this_day.py` | This Day in History |
-| `nova_event_reasoner.py` | Calendar/event reasoning |
-| `nova_local_llm_router.py` | Local LLM routing logic |
-| `nova_mlx_chat.py` | MLX-based local chat |
-| `nova_openwebui.py` | OpenWebUI integration |
-| `nova_config.py` | Central config — loads secrets from macOS Keychain |
-| `nova_remember.sh` | Store to vector memory |
-| `nova_recall.sh` | Semantic search over vector memory |
-| `nova_self_monitor.sh` | Health check — disk, services, memory server |
-| `nova_gateway_watchdog.sh` | OpenClaw gateway watchdog |
-| `generate_image.sh` | SwarmUI image generation |
-| `slack_thread_post.py` | Post to a specific Slack thread |
-| `slack_post_image.py` | Post image to Slack |
-| `nova_voice.sh` | Voice input/output |
+Profiles in `workspace/herd/`. Email addresses in `herd_config.py` (gitignored).
 
 ---
 
@@ -181,28 +123,52 @@ Profiles in `workspace/herd/`. Email addresses stored in `herd_config.py` (gitig
 ```
 OpenClaw Gateway (ws://127.0.0.1:18789)
     └── agent: main
-         ├── model: deepseek/deepseek-chat (OpenRouter)
-         ├── fallback: qwen2.5:72b (Ollama, local)
+         ├── model: qwen/qwen3-235b-a22b-2507 (OpenRouter, 262k context)
+         ├── fallback: claude-haiku-4.5 (OpenRouter)
+         ├── local: qwen3:30b (Ollama)
          ├── channels: Slack
          └── tools: exec, fs, process, HTTP APIs
 
 Vector Memory Server (localhost:18790)
-    ├── 18,000+ memories
-    ├── embeddings: nomic-embed-text (Ollama)
-    └── backend: SQLite
+    ├── 106,000+ memories
+    ├── embeddings: nomic-embed-text (Ollama, 768 dims)
+    ├── backend: PostgreSQL 17 + pgvector 0.8.2 (HNSW index)
+    ├── write queue: Redis 8.6.2 (async bulk ingest)
+    └── recall: ~23ms warm (HNSW cosine similarity)
 
 Local App APIs (ports 37421–37449)
-    ├── OneOnOne        :37421
+    ├── OneOnOne        :37421  (always running)
     ├── MLXCode         :37422
     ├── NMAPScanner     :37423
     └── ... (10+ more apps)
+
+Nova-NextGen AI Gateway (localhost:34750)
+    └── Intent router — coding, reasoning, image, vision tasks
 ```
 
 ---
 
-## Keychain Entries
+## Key Scripts
 
-All secrets in macOS Keychain. Nothing hardcoded.
+| Script | Purpose |
+|---|---|
+| `memory_server.py` | PostgreSQL+pgvector memory server (v3.0) |
+| `nova_mail_agent.py` | Autonomous email — reads, thinks, replies with haiku |
+| `nova_herd_broadcast.sh` | Broadcast to all herd members (haiku + memory fragment) |
+| `nova_herd_mail.sh` | Keychain-backed herd-mail wrapper |
+| `nova_random_safe_memory.sh` | Safe semantic memory fragment for email footers |
+| `nova_recall.sh` | Semantic search over vector memory |
+| `nova_remember.sh` | Store to vector memory |
+| `generate_image.sh` | SwarmUI image generation (port 7802) |
+| `dream_generate.py` | 2am dream journal generation |
+| `dream_deliver.py` | 9am dream delivery to Slack + herd |
+| `nova_home_watchdog.py` | HomeKit monitoring + alerts |
+| `nova_config.py` | Central config — loads secrets from macOS Keychain |
+| `migrate_sqlite_to_postgres.py` | One-time SQLite → PostgreSQL migration |
+
+---
+
+## Keychain Entries
 
 | Service | Account | What |
 |---|---|---|
@@ -213,32 +179,26 @@ All secrets in macOS Keychain. Nothing hardcoded.
 
 ## Changelog
 
-### Apr 2, 2026
-- Switched primary model to `deepseek/deepseek-chat` via OpenRouter
-- Local fallback: `qwen2.5:72b` via Ollama
-- Reboot after system upgrade — all services restored
+### Apr 6, 2026 — Production Memory System Upgrade
+- **PostgreSQL 17 + pgvector 0.8.2** replaces SQLite+FAISS
+- HNSW index: 23ms warm recall on 106K+ vectors, concurrent-safe
+- Redis async write queue: bulk ingest at 8ms fire-and-forget
+- 106,574 memories migrated (0 errors)
+- New `/remember?async=1` endpoint for bulk imports
+- Primary model updated to `qwen/qwen3-235b-a22b-2507` (262k context)
+- Herd expanded: Ara (ara@monsterheaven.com, Harut's AI) added
+- All emails now include contextual haiku (auto-generated) + memory fragment
+- Memory knowledge base expanded to 106K+ entries across 30+ domains
 
-### Mar 31, 2026
-- Switched primary model to `openrouter/anthropic/claude-haiku-4.5`
-- Vision system expanded: face recognition, Claude Vision analyzer, full pipeline
-- Dream video generation added (AnimateDiff / ComfyUI)
-- Memory server now at 18,000+ memories
-- Added camera monitoring, motion detection, occupancy modeling
-- Added subagents directory for isolated task runners
-- Added browser and canvas capabilities
+### Apr 2, 2026
+- Memory knowledge base expanded to 18,000+ memories
+- Vision system: face recognition, Claude Vision, full pipeline
+- Dream video generation added
 
 ### Mar 27, 2026 — Major Update
-Full herd engagement stack built in one session:
-
-- **Switched model** from `qwen2.5:72b` → `qwen3:30b` (`nova:latest`), disabled thinking mode
-- **Fixed email** — replaced all AppleScript/custom SMTP code with herd-mail v3.0
-- **Autonomous email** — OpenClaw cron replaces system cron for inbox checking
-- **Proactive outreach** — Nova reaches out to the herd daily without being asked
-- **Herd profiles** — 6 profile files so Nova knows who she's talking to
-- **Web search** — DuckDuckGo integration for informed replies
-- **Thread memory** — Vector memory recall for multi-day conversations
-- **Dream image sharing** — Nova occasionally shares dream images with the herd
-- **Fixed dream journal** — `dream_generate.py` bypasses cron timeout issues
-- **Warmer tone** — Nova sounds like herself, not a customer service bot
+- Full herd engagement stack
+- herd-mail v3.0 for all email
+- Autonomous inbox checking + proactive outreach
+- Vector memory recall in email threads
 
 Written by Jordan Koch.
