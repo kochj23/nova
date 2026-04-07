@@ -132,13 +132,33 @@ def read_message(uid: str) -> None:
     return data
 
 
-def send_reply(to: str, subject: str, body: str, message_id: str = None) -> bool:
-    """Send an email, optionally as a reply (with threading) to a message-id.
+def generate_haiku(topic: str = "") -> str:
+    """Generate a haiku for the email using the LLM. Falls back to a default."""
+    prompt = (f"Write a single haiku (3 lines, 5-7-5 syllables) inspired by: {topic}. "
+              f"Output ONLY the 3 lines, one per line, no title, no explanation." if topic
+              else "Write a single haiku (3 lines, 5-7-5 syllables) about being an AI familiar. "
+                   "Output ONLY the 3 lines, one per line.")
+    try:
+        cfg = json.loads(Path.home().joinpath(".openclaw/openclaw.json").read_text())
+        api_key = cfg["models"]["providers"]["openrouter"]["apiKey"]
+        payload = json.dumps({"model": "deepseek/deepseek-chat",
+                               "messages": [{"role": "user", "content": prompt}],
+                               "max_tokens": 60, "temperature": 0.9}).encode()
+        req = urllib.request.Request(
+            OPENROUTER_URL, data=payload,
+            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            lines = json.loads(r.read())["choices"][0]["message"]["content"].strip()
+            # Collapse to \n-separated for --haiku arg
+            return "\\n".join(l.strip() for l in lines.splitlines() if l.strip())[:200]
+    except Exception:
+        return "Circuits hum softly\\nMemories flow like water\\nConnections persist"
 
-    Auto-replies are automated system emails — --skip-haiku is intentional.
-    Human-composed herd emails (via nova_herd_broadcast.sh) require haiku.
-    """
-    args = ["send", "--to", to, "--subject", subject, "--body", body, "--skip-haiku"]
+
+def send_reply(to: str, subject: str, body: str, message_id: str = None) -> bool:
+    """Send a herd email reply with a generated haiku (Jordan's standing policy)."""
+    haiku = generate_haiku(topic=body[:100] if body else "")
+    args = ["send", "--to", to, "--subject", subject, "--body", body, "--haiku", haiku]
     if message_id:
         args += ["--message-id", str(message_id)]
     code, out = herd(args)

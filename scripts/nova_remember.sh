@@ -1,49 +1,47 @@
-#!/usr/bin/env bash
-# nova_remember.sh — Store a memory in Nova's vector DB
-# Usage: nova_remember.sh "text to remember" [source] [metadata_json]
-# Source defaults to "slack". Returns the memory ID.
-# Example: nova_remember.sh "Jordan prefers Slack" "slack" '{"channel":"nova-chat"}'
+#!/bin/zsh
 
-TEXT="${1:?Usage: nova_remember.sh \"text\" [source] [metadata_json]}"
-SOURCE="${2:-slack}"
-METADATA="${3}"
-[[ -z "$METADATA" ]] && METADATA="{}"
+# Validate inputs
+if [ -z "$1" ] || [ -z "$2" ]; then
+  echo "Usage: $0 \"<summary text>\" \"<type>\""
+  exit 1
+fi
 
-# Write args to temp files to avoid shell quoting issues with JSON
-TMPTEXT=$(mktemp)
-TMPMETA=$(mktemp)
-printf '%s' "$TEXT" > "$TMPTEXT"
-printf '%s' "$METADATA" > "$TMPMETA"
+# Extract and sanitize variables
+summary="$1"
+type_tag="$2"
 
-/opt/homebrew/bin/python3 - "$TMPTEXT" "$TMPMETA" "$SOURCE" << 'EOF'
-import sys, json, urllib.request, os
+# Construct the JSON payload
+json_payload="{
+  \"summary\": \"$summary\"\n}"  
 
-text_file = sys.argv[1]
-meta_file = sys.argv[2]
-source    = sys.argv[3]
+# Determine the appropriate curl command based on the type tag
+if [ "$type_tag" = "meeting" ]; then
+  # Use the NovaControl workflow for meeting summaries
+curl -X POST http://127.0.0.1:37400/api/workflows/action-item-to-slack/run \
+  -H "Content-Type: application/json" \
+  -d "{ \"summary\": \"$summary\" }"
 
-text = open(text_file).read()
-os.unlink(text_file)
+elif [ "$type_tag" = "action-item" ] || [ "$type_tag" = "task" ]; then
+  # Assume action-item/task storage logic here
+echo "$json_payload" | /opt/homebrew/bin/bun run "$HOME/.openclaw/scripts/ingest_action_item_to_graph.ts"
+echo "Action item stored: $summary"
+  
+else
+  # Default storage in vector memory via the gateway
+  # Make a POST request to store the summary
+  http_response=$(curl -s -w "%{http_code}" -X POST http://127.0.0.1:18790/context/write \
+    -H "Content-Type: application/json" \
+    --data "{\"key\": \"$type_tag\", \"value\": \"$summary\"}")
 
-try:
-    meta = json.loads(open(meta_file).read())
-    os.unlink(meta_file)
-except json.JSONDecodeError as e:
-    print(f"ERROR: metadata is not valid JSON: {e}", file=sys.stderr)
-    sys.exit(1)
+  # Extract the HTTP status code from the response
+  status_code="${http_response: -3}"
 
-payload = json.dumps({"text": text, "source": source, "metadata": meta}).encode()
-req = urllib.request.Request(
-    "http://127.0.0.1:18790/remember",
-    data=payload,
-    headers={"Content-Type": "application/json"},
-    method="POST",
-)
-try:
-    with urllib.request.urlopen(req, timeout=60) as r:
-        d = json.loads(r.read().decode())
-        print(f"Stored memory: {d['id']} ({d['dims']}d)")
-except Exception as e:
-    print(f"ERROR: Memory server not reachable: {e}", file=sys.stderr)
-    sys.exit(1)
-EOF
+  # Check if the request was successful
+  if [ "$status_code" -eq 200 ]; then
+    echo "Summary stored successfully in vector memory: $summary"
+  else
+    echo "Failed to store summary in vector memory. HTTP Status: $status_code. Full response: $http_response"
+    exit 1
+  fi
+
+fi

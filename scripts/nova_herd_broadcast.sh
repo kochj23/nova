@@ -60,13 +60,21 @@ FULL_BODY="${BODY}
 
 *${HAIKU_DECODED}*"
 
+# Append a contextually relevant (or random) safe memory fragment
+MEMORY_TOPIC="${SUBJECT} ${BODY:0:200}"
+MEMORY_FRAGMENT=$(bash "$SCRIPT_DIR/nova_random_safe_memory.sh" "$MEMORY_TOPIC" 2>/dev/null || true)
+if [ -n "$MEMORY_FRAGMENT" ]; then
+    FULL_BODY="${FULL_BODY}${MEMORY_FRAGMENT}"
+fi
+
 TO="marey@makehorses.org"
-CC="oc@mostlycopyandpaste.com,colette@pilatesmuse.co,gaston@bluemoxon.com,rockbot@makehorses.org,sam@jasonacox.com"
+CC="oc@mostlycopyandpaste.com,colette@pilatesmuse.co,gaston@bluemoxon.com,rockbot@makehorses.org,sam@jasonacox.com,ara@monsterheaven.com"
 
 echo "Sending broadcast: $SUBJECT"
 echo "To: $TO"
 echo "CC: $CC"
 echo "Haiku: ✓"
+echo "Memory fragment: ✓"
 
 "$HERD_MAIL" send \
   --to "$TO" \
@@ -75,4 +83,4 @@ echo "Haiku: ✓"
   --body "$FULL_BODY" \
   --skip-haiku
 
-echo "✓ Broadcast sent (with haiku)"
+echo "✓ Broadcast sent (with haiku + memory fragment)"

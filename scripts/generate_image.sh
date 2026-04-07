@@ -3,7 +3,7 @@
 # generate_image.sh — Generate an image via SwarmUI for Nova
 #
 # TOOL FOR NOVA: Use this script to generate images from text prompts.
-# SwarmUI runs locally at http://localhost:7801 and uses Stable Diffusion SDXL.
+# SwarmUI runs locally at http://localhost:7802 and uses Stable Diffusion SDXL.
 #
 # Usage: generate_image.sh "your prompt here" [width] [height] [steps] [model]
 #
@@ -28,7 +28,7 @@ WIDTH="${2:-1024}"
 HEIGHT="${3:-1024}"
 STEPS="${4:-8}"
 MODEL="${5:-Juggernaut_X_RunDiffusion_Hyper.safetensors}"
-SWARM_URL="http://localhost:7801"
+SWARM_URL="http://localhost:7802"
 OUTPUT_BASE="$HOME/AI/SwarmUI/Output/local/raw"
 
 if [ -z "$PROMPT" ]; then

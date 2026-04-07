@@ -52,8 +52,9 @@ SKIP_HAIKU=false
 BODY_ARG=""
 BODY_FILE_ARG=""
 REMAINING_ARGS=()
+SUBJECT_ARG=""
 
-# Parse args to extract --haiku, --skip-haiku, and --body / --body-file
+# Parse args to extract --haiku, --skip-haiku, --subject, and --body / --body-file
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --haiku)
@@ -70,6 +71,11 @@ while [[ $# -gt 0 ]]; do
             ;;
         --body-file)
             BODY_FILE_ARG="$2"
+            shift 2
+            ;;
+        --subject)
+            SUBJECT_ARG="$2"
+            REMAINING_ARGS+=("$1" "$2")
             shift 2
             ;;
         *)
@@ -106,6 +112,13 @@ if [ "$SKIP_HAIKU" = false ] && [ -n "$HAIKU" ]; then
 *${HAIKU_DECODED}*"
 else
     FINAL_BODY="$ORIGINAL_BODY"
+fi
+
+# Append a contextually relevant (or random) safe memory fragment
+MEMORY_TOPIC="${SUBJECT_ARG} ${ORIGINAL_BODY:0:200}"
+MEMORY_FRAGMENT=$(bash "$SCRIPT_DIR/nova_random_safe_memory.sh" "$MEMORY_TOPIC" 2>/dev/null || true)
+if [ -n "$MEMORY_FRAGMENT" ]; then
+    FINAL_BODY="${FINAL_BODY}${MEMORY_FRAGMENT}"
 fi
 
 # Call herd_mail.py with the assembled body (always use --body now, not --body-file)
