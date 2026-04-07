@@ -58,7 +58,7 @@ Nova is not a chatbot. She's an always-on AI familiar that runs Jordan's home, m
 - OneOnOne meeting notes checked hourly
 
 ### Memory System
-- **153,000+ memories** across email archives, documents, world knowledge, and domain expertise
+- **154,000+ memories** across email archives, documents, world knowledge, and domain expertise
 - **PostgreSQL 16 + pgvector 0.8.2** backend — production-grade, concurrent-safe
 - **HNSW index** — millisecond recall on 150K+ vectors (m=16, ef_construction=64, cosine ops)
 - **Redis 8.6.2 async write queue** — bulk imports fire-and-forget at 8ms, worker embeds + stores
@@ -68,7 +68,7 @@ Nova is not a chatbot. She's an always-on AI familiar that runs Jordan's home, m
 - `nova_slack_memory_ingest.py` — ingest Slack history into vector memory
 - `nova_ingest.py` — ingest arbitrary files (PDF, DOCX, TXT, MD, CSV, XLSX, PPTX) into memory
 
-**Knowledge indexed:** CIA World Factbook (262 countries), Jordan's email archives (83K+), PiHKAL Part 2 — all 179 phenethylamine compounds (Shulgin), Corvette workshop manual (9.6K chunks), music history — jungle/DnB/IDM/turntablism (7.2K), GitHub READMEs, JAGMAN + TM-21-210, Disney (2.5K facts), home gardening (2.5K), health (diabetes, rosacea, BP, depression), cooking, astronomy, philosophy, gnostic texts, Swift/iOS dev, network security, Burbank/LA local knowledge, and more.
+**Knowledge indexed:** CIA World Factbook (262 countries), Jordan's email archives (83K+), PiHKAL Part 2 — all 179 phenethylamine compounds (Shulgin), TiHKAL Part 2 — all 55 tryptamine compounds (Shulgin), Corvette workshop manual (9.6K chunks), music history — jungle/DnB/IDM/turntablism (7.2K), GitHub READMEs, JAGMAN + TM-21-210, Disney (2.5K facts), home gardening (2.5K), health (diabetes, rosacea, BP, depression), cooking, astronomy, philosophy, gnostic texts, Swift/iOS dev, network security, Burbank/LA local knowledge, and more.
 
 ### Daily Rhythm (OpenClaw Crons)
 
@@ -131,7 +131,7 @@ OpenClaw Gateway (ws://127.0.0.1:18789)
          └── tools: exec, fs, process, HTTP APIs
 
 Vector Memory Server (localhost:18790)
-    ├── 153,000+ memories (1,168 MB)
+    ├── 154,000+ memories (1,168 MB)
     ├── embeddings: nomic-embed-text (Ollama, 768 dims)
     ├── backend: PostgreSQL 16 + pgvector 0.8.2 (HNSW index)
     ├── write queue: Redis 8.6.2 (async bulk ingest)
@@ -188,8 +188,9 @@ Full end-to-end technical documentation (architecture diagrams, all API endpoint
 ## Changelog
 
 ### Apr 7, 2026
+- **TiHKAL ingested** — all 55 tryptamine compound entries from Shulgin's TiHKAL Part 2 scraped from Erowid and stored as 947 vector chunks (source: `tihkal`)
 - **PiHKAL ingested** — all 179 phenethylamine compound entries from Shulgin's PiHKAL Part 2 scraped from Erowid and stored as 2,233 vector chunks (source: `pihkal`)
-- Memory total: **153,667** vectors (+2,233)
+- Memory total: **154,614** vectors (+3,180 from both books)
 - Added `nova_ingest.py` to key scripts table (supports PDF, DOCX, TXT, MD, CSV, XLSX, PPTX)
 - End-to-end documentation generated: architecture, models, gateway, channels, app APIs, cron schedule, vector DB schema
 
