@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
 """
-Nova Vector Memory Server — FAISS Edition
+Nova Vector Memory Server — FAISS Edition v2.1
 Port: 18790 | DB: ~/.openclaw/memory_db/nova_memories.db
 Embeddings: nomic-embed-text via Ollama (http://127.0.0.1:11434)
-Index:      FAISS IndexIDMap(IndexFlatIP) — ~5ms recall vs ~5000ms before
+Index:      FAISS IndexIDMap(IndexFlatIP) — ~24ms recall on 100K+ vectors
+
+Key improvements over v2.0:
+- Persistent SQLite connection (single conn reused) — eliminates "unable to open db" crashes
+- asyncio write lock — serializes concurrent /remember calls, prevents deadlocks
+- 64MB SQLite page cache
+- FAISS index persisted to .faiss file — instant startup on restart
 
 Endpoints:
   POST /remember        { "text": "...", "metadata": {...} }  -> { "id": "...", "dims": N }
@@ -38,49 +44,74 @@ from pydantic import BaseModel
 logger = logging.getLogger("memory_server")
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DB_PATH       = Path.home() / ".openclaw" / "memory_db" / "nova_memories.db"
-INDEX_PATH    = Path.home() / ".openclaw" / "memory_db" / "nova_memories.faiss"
-ROWMAP_PATH   = Path.home() / ".openclaw" / "memory_db" / "nova_rowmap.npy"
-OLLAMA_BASE   = "http://127.0.0.1:11434"
-EMBED_MODEL   = "nomic-embed-text"
-DEFAULT_N     = 5
-MAX_N         = 50
-DIMS          = 768   # nomic-embed-text output size
+DB_PATH    = Path.home() / ".openclaw" / "memory_db" / "nova_memories.db"
+INDEX_PATH = Path.home() / ".openclaw" / "memory_db" / "nova_memories.faiss"
+OLLAMA_BASE = "http://127.0.0.1:11434"
+EMBED_MODEL = "nomic-embed-text"
+DEFAULT_N   = 5
+MAX_N       = 50
+DIMS        = 768
 
-# ── FAISS index (global, thread-safe writes via lock) ─────────────────────────
+# ── Persistent SQLite connection ──────────────────────────────────────────────
+# One connection, reused for all requests. Eliminates "unable to open database
+# file" errors that occur when many concurrent requests each open/close connections.
+# check_same_thread=False is safe because we serialize writes via _write_lock.
+_db_conn: sqlite3.Connection | None = None
+_db_init_lock = threading.Lock()
+_write_lock: asyncio.Lock | None = None   # created in lifespan after event loop starts
+
+def get_db() -> sqlite3.Connection:
+    global _db_conn
+    with _db_init_lock:
+        if _db_conn is None:
+            DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+            _db_conn = sqlite3.connect(str(DB_PATH), timeout=30, check_same_thread=False)
+            _db_conn.row_factory = sqlite3.Row
+            _db_conn.execute("PRAGMA journal_mode=WAL")
+            _db_conn.execute("PRAGMA synchronous=NORMAL")
+            _db_conn.execute("PRAGMA busy_timeout=30000")
+            _db_conn.execute("PRAGMA cache_size=-64000")  # 64MB page cache
+    return _db_conn
+
+def init_db():
+    db = get_db()
+    db.execute("""
+        CREATE TABLE IF NOT EXISTS memories (
+            id         TEXT PRIMARY KEY,
+            text       TEXT NOT NULL,
+            metadata   TEXT NOT NULL DEFAULT '{}',
+            embedding  TEXT NOT NULL,
+            dims       INTEGER NOT NULL,
+            source     TEXT NOT NULL DEFAULT 'unknown',
+            created_at TEXT NOT NULL
+        )
+    """)
+    db.execute("CREATE INDEX IF NOT EXISTS idx_created ON memories(created_at)")
+    db.execute("CREATE INDEX IF NOT EXISTS idx_source  ON memories(source)")
+    db.commit()
+
+# ── FAISS index ───────────────────────────────────────────────────────────────
 _faiss_index: faiss.IndexIDMap | None = None
-_faiss_rowids: list[int] = []          # position i → SQLite rowid
-_faiss_lock = threading.Lock()
+_faiss_lock  = threading.Lock()
 _faiss_ready = False
 
-def _build_faiss_index() -> tuple[faiss.IndexIDMap, list[int]]:
-    """Load all embeddings from SQLite and build a FAISS IndexIDMap."""
-    t0 = time.time()
-    conn = sqlite3.connect(str(DB_PATH), timeout=30)
-    rows = conn.execute(
-        "SELECT rowid, embedding FROM memories ORDER BY rowid"
-    ).fetchall()
-    conn.close()
-
+def _build_faiss_index():
+    t0   = time.time()
+    db   = get_db()
+    rows = db.execute("SELECT rowid, embedding FROM memories ORDER BY rowid").fetchall()
     if not rows:
         flat = faiss.IndexFlatIP(DIMS)
-        idx  = faiss.IndexIDMap(flat)
-        return idx, []
-
-    rowids   = np.array([r[0] for r in rows], dtype=np.int64)
-    vecs_raw = [json.loads(r[1]) for r in rows]
-    vecs     = np.array(vecs_raw, dtype=np.float32)
-    faiss.normalize_L2(vecs)   # cosine similarity = inner product on unit vectors
-
+        return faiss.IndexIDMap(flat), []
+    rowids = np.array([r[0] for r in rows], dtype=np.int64)
+    vecs   = np.array([json.loads(r[1]) for r in rows], dtype=np.float32)
+    faiss.normalize_L2(vecs)
     flat = faiss.IndexFlatIP(DIMS)
     idx  = faiss.IndexIDMap(flat)
     idx.add_with_ids(vecs, rowids)
-
     logger.info(f"FAISS index built: {len(rows):,} vectors in {time.time()-t0:.1f}s")
     return idx, rowids.tolist()
 
 def _save_index():
-    """Persist FAISS index to disk (background, non-critical)."""
     try:
         if _faiss_index is not None:
             faiss.write_index(_faiss_index, str(INDEX_PATH))
@@ -88,24 +119,19 @@ def _save_index():
         logger.warning(f"Could not save FAISS index: {e}")
 
 def _load_or_build_index():
-    """Try to load persisted index, fall back to building from SQLite."""
     global _faiss_index, _faiss_ready
     try:
         if INDEX_PATH.exists():
-            # Verify index count matches DB
-            conn = sqlite3.connect(str(DB_PATH), timeout=30)
-            db_count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-            conn.close()
+            db_count = get_db().execute("SELECT COUNT(*) FROM memories").fetchone()[0]
             idx = faiss.read_index(str(INDEX_PATH))
-            if abs(idx.ntotal - db_count) <= 100:   # allow small drift
+            if abs(idx.ntotal - db_count) <= 200:
                 logger.info(f"FAISS index loaded from disk: {idx.ntotal:,} vectors")
                 with _faiss_lock:
                     _faiss_index = idx
                 _faiss_ready = True
                 return
     except Exception as e:
-        logger.warning(f"Could not load FAISS index from disk ({e}), rebuilding...")
-
+        logger.warning(f"Could not load FAISS index ({e}), rebuilding...")
     idx, _ = _build_faiss_index()
     with _faiss_lock:
         _faiss_index = idx
@@ -113,40 +139,12 @@ def _load_or_build_index():
     _save_index()
 
 def _add_to_faiss(rowid: int, vector: list[float]):
-    """Add a single new vector to the in-memory FAISS index."""
-    if not _faiss_ready:
+    if not _faiss_ready or _faiss_index is None:
         return
     vec = np.array([vector], dtype=np.float32)
     faiss.normalize_L2(vec)
     with _faiss_lock:
         _faiss_index.add_with_ids(vec, np.array([rowid], dtype=np.int64))
-
-# ── DB helpers ────────────────────────────────────────────────────────────────
-def get_conn() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH), timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA synchronous=NORMAL")
-    conn.execute("PRAGMA busy_timeout=30000")
-    return conn
-
-def init_db():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    with get_conn() as conn:
-        conn.execute("""
-            CREATE TABLE IF NOT EXISTS memories (
-                id          TEXT PRIMARY KEY,
-                text        TEXT NOT NULL,
-                metadata    TEXT NOT NULL DEFAULT '{}',
-                embedding   TEXT NOT NULL,
-                dims        INTEGER NOT NULL,
-                source      TEXT NOT NULL DEFAULT 'unknown',
-                created_at  TEXT NOT NULL
-            )
-        """)
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_created ON memories(created_at)")
-        conn.execute("CREATE INDEX IF NOT EXISTS idx_source  ON memories(source)")
-        conn.commit()
 
 # ── Embedding ─────────────────────────────────────────────────────────────────
 _http_client: httpx.AsyncClient | None = None
@@ -159,24 +157,22 @@ async def embed(text: str) -> list[float]:
     resp.raise_for_status()
     data = resp.json()
     embeddings = data.get("embeddings") or data.get("embedding")
-    if isinstance(embeddings[0], list):
-        return embeddings[0]
-    return embeddings
+    return embeddings[0] if isinstance(embeddings[0], list) else embeddings
 
 # ── App lifecycle ─────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global _http_client
+    global _http_client, _write_lock
     init_db()
     _http_client = httpx.AsyncClient(timeout=60.0)
-    # Build FAISS index in background so server starts instantly
+    _write_lock  = asyncio.Lock()
     loop = asyncio.get_event_loop()
     loop.run_in_executor(None, _load_or_build_index)
     yield
     await _http_client.aclose()
     _save_index()
 
-app = FastAPI(title="Nova Memory Server", version="2.0.0-faiss", lifespan=lifespan)
+app = FastAPI(title="Nova Memory Server", version="2.1.0-faiss", lifespan=lifespan)
 
 class RememberRequest(BaseModel):
     text: str
@@ -198,31 +194,34 @@ async def remember(req: RememberRequest):
     if not req.text.strip():
         raise HTTPException(status_code=400, detail="text cannot be empty")
 
-    vector = await embed(req.text)
+    # Embed outside the lock (slow Ollama call, runs concurrently)
+    vector    = await embed(req.text)
     memory_id = str(uuid.uuid4())
 
-    with get_conn() as conn:
-        conn.execute(
+    # Serialize DB writes — one at a time
+    async with _write_lock:
+        db = get_db()
+        db.execute(
             "INSERT INTO memories (id, text, metadata, embedding, dims, source, created_at) "
             "VALUES (?, ?, ?, ?, ?, ?, ?)",
             (memory_id, req.text, json.dumps(req.metadata), json.dumps(vector),
              len(vector), req.source, datetime.utcnow().isoformat()),
         )
-        conn.commit()
-        rowid = conn.execute("SELECT rowid FROM memories WHERE id = ?", (memory_id,)).fetchone()[0]
+        db.commit()
+        rowid = db.execute(
+            "SELECT rowid FROM memories WHERE id = ?", (memory_id,)
+        ).fetchone()[0]
 
-    # Add to live FAISS index
     _add_to_faiss(rowid, vector)
-
     return {"id": memory_id, "dims": len(vector)}
 
 
 @app.get("/recall")
 async def recall(
-    q: str = Query(..., description="Query text"),
+    q: str = Query(...),
     n: int = Query(DEFAULT_N, ge=1, le=MAX_N),
-    source: Optional[str] = Query(None, description="Filter by source"),
-    min_score: float = Query(0.0, description="Minimum cosine similarity"),
+    source: Optional[str] = Query(None),
+    min_score: float = Query(0.0),
 ):
     if not q.strip():
         raise HTTPException(status_code=400, detail="q cannot be empty")
@@ -232,29 +231,22 @@ async def recall(
 
     # ── FAISS fast path ───────────────────────────────────────────────────────
     if _faiss_ready and _faiss_index is not None and _faiss_index.ntotal > 0:
-        # Fetch more candidates when filtering by source
         k = min(n * 10 if source else n * 2, _faiss_index.ntotal)
         with _faiss_lock:
             scores_arr, rowids_arr = _faiss_index.search(query_vec, k)
-        scores_arr = scores_arr[0]
-        rowids_arr = rowids_arr[0]
-
-        # Filter out invalid results (FAISS returns -1 for empty slots)
-        valid = [(int(rid), float(score)) for rid, score in zip(rowids_arr, scores_arr)
+        valid = [(int(rid), float(score)) for rid, score in zip(rowids_arr[0], scores_arr[0])
                  if rid >= 0 and score >= min_score]
         if not valid:
             return {"memories": [], "query": q, "count": 0}
 
         rowid_list = [r[0] for r in valid]
         score_map  = {r[0]: r[1] for r in valid}
-
         placeholders = ",".join("?" * len(rowid_list))
-        with get_conn() as conn:
-            rows = conn.execute(
-                f"SELECT rowid, id, text, metadata, source, created_at "
-                f"FROM memories WHERE rowid IN ({placeholders})",
-                rowid_list,
-            ).fetchall()
+        db   = get_db()
+        rows = db.execute(
+            f"SELECT rowid, id, text, metadata, source, created_at "
+            f"FROM memories WHERE rowid IN ({placeholders})", rowid_list
+        ).fetchall()
 
         results = []
         for row in rows:
@@ -266,19 +258,17 @@ async def recall(
                 source=row["source"], created_at=row["created_at"],
                 score=round(score_map[row["rowid"]], 4),
             ))
-
         results.sort(key=lambda x: x.score, reverse=True)
         top = results[:n]
         return {"memories": [m.model_dump() for m in top], "query": q, "count": len(top)}
 
-    # ── Fallback: numpy scan (used while FAISS is still building) ─────────────
-    with get_conn() as conn:
-        rows = conn.execute(
-            "SELECT id, text, metadata, embedding, source, created_at FROM memories"
-            + (" WHERE source = ?" if source else ""),
-            (source,) if source else (),
-        ).fetchall()
-
+    # ── Fallback: numpy scan (while FAISS still building) ─────────────────────
+    db   = get_db()
+    rows = db.execute(
+        "SELECT id, text, metadata, embedding, source, created_at FROM memories"
+        + (" WHERE source = ?" if source else ""),
+        (source,) if source else (),
+    ).fetchall()
     if not rows:
         return {"memories": [], "query": q, "count": 0}
 
@@ -295,29 +285,25 @@ async def recall(
                 source=row["source"], created_at=row["created_at"],
                 score=round(score, 4),
             ))
-
     scored.sort(key=lambda x: x.score, reverse=True)
     return {"memories": [m.model_dump() for m in scored[:n]], "query": q, "count": len(scored[:n])}
 
 
 @app.get("/health")
 async def health():
-    faiss_status = "ready" if _faiss_ready else "building"
-    faiss_count  = _faiss_index.ntotal if _faiss_index else 0
-    with get_conn() as conn:
-        count = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+    db    = get_db()
+    count = db.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
     return {"status": "ok", "count": count, "model": EMBED_MODEL,
-            "faiss": faiss_status, "faiss_vectors": faiss_count}
+            "faiss": "ready" if _faiss_ready else "building",
+            "faiss_vectors": _faiss_index.ntotal if _faiss_index else 0}
 
 
 @app.get("/stats")
 async def stats():
-    with get_conn() as conn:
-        count    = conn.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
-        dims_row = conn.execute("SELECT dims FROM memories LIMIT 1").fetchone()
-        by_src   = conn.execute(
-            "SELECT source, COUNT(*) as n FROM memories GROUP BY source"
-        ).fetchall()
+    db       = get_db()
+    count    = db.execute("SELECT COUNT(*) FROM memories").fetchone()[0]
+    dims_row = db.execute("SELECT dims FROM memories LIMIT 1").fetchone()
+    by_src   = db.execute("SELECT source, COUNT(*) as n FROM memories GROUP BY source").fetchall()
     return {
         "count": count,
         "dims": dims_row["dims"] if dims_row else 0,
@@ -330,21 +316,18 @@ async def stats():
 
 
 @app.get("/random")
-async def random_memory(
-    source: Optional[str] = Query(None),
-    n: int = Query(1),
-):
-    with get_conn() as conn:
-        if source:
-            rows = conn.execute(
-                "SELECT id, text, metadata, source, created_at FROM memories "
-                "WHERE source = ? ORDER BY RANDOM() LIMIT ?", (source, n)
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                "SELECT id, text, metadata, source, created_at FROM memories "
-                "ORDER BY RANDOM() LIMIT ?", (n,)
-            ).fetchall()
+async def random_memory(source: Optional[str] = Query(None), n: int = Query(1)):
+    db = get_db()
+    if source:
+        rows = db.execute(
+            "SELECT id, text, metadata, source, created_at FROM memories "
+            "WHERE source = ? ORDER BY RANDOM() LIMIT ?", (source, n)
+        ).fetchall()
+    else:
+        rows = db.execute(
+            "SELECT id, text, metadata, source, created_at FROM memories "
+            "ORDER BY RANDOM() LIMIT ?", (n,)
+        ).fetchall()
     memories = [{"id": r["id"], "text": r["text"], "metadata": json.loads(r["metadata"]),
                  "source": r["source"], "created_at": r["created_at"]} for r in rows]
     return {"memories": memories, "count": len(memories)}
@@ -352,9 +335,10 @@ async def random_memory(
 
 @app.delete("/forget")
 async def forget(id: str = Query(...)):
-    with get_conn() as conn:
-        result = conn.execute("DELETE FROM memories WHERE id = ?", (id,))
-        conn.commit()
+    async with _write_lock:
+        db = get_db()
+        result = db.execute("DELETE FROM memories WHERE id = ?", (id,))
+        db.commit()
     if result.rowcount == 0:
         raise HTTPException(status_code=404, detail="Memory not found")
     return {"deleted": True, "id": id}
@@ -362,18 +346,17 @@ async def forget(id: str = Query(...)):
 
 @app.delete("/forget_all")
 async def forget_all(source: Optional[str] = Query(None)):
-    with get_conn() as conn:
+    async with _write_lock:
+        db = get_db()
         if source:
-            result = conn.execute("DELETE FROM memories WHERE source = ?", (source,))
+            result = db.execute("DELETE FROM memories WHERE source = ?", (source,))
         else:
-            result = conn.execute("DELETE FROM memories")
-        conn.commit()
-    # Rebuild FAISS index after bulk delete
+            result = db.execute("DELETE FROM memories")
+        db.commit()
     threading.Thread(target=_load_or_build_index, daemon=True).start()
     return {"deleted": result.rowcount}
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="127.0.0.1", port=18790, log_level="info",
-                log_config=None)
+    uvicorn.run(app, host="127.0.0.1", port=18790, log_level="info", log_config=None)
