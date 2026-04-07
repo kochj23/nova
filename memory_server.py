@@ -33,7 +33,7 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 import asyncpg
@@ -90,12 +90,16 @@ async def _ingest_worker():
             try:
                 vector = await embed(text)
                 vec_str = "[" + ",".join(str(v) for v in vector) + "]"
+                try:
+                    created_dt = datetime.fromisoformat(created).replace(tzinfo=timezone.utc)
+                except Exception:
+                    created_dt = datetime.now(timezone.utc)
                 async with _pg_pool.acquire() as conn:
                     await conn.execute(
                         """INSERT INTO memories (id, text, metadata, embedding, source, created_at)
                            VALUES ($1, $2, $3, $4::vector, $5, $6)
                            ON CONFLICT (id) DO NOTHING""",
-                        memory_id, text, json.dumps(metadata), vec_str, source, created
+                        memory_id, text, json.dumps(metadata), vec_str, source, created_dt
                     )
             except Exception as e:
                 logger.warning(f"Worker failed to ingest {memory_id}: {e}")
@@ -211,13 +215,18 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
 
     # Sync path: embed + insert immediately
     vector = await embed(req.text)
+    # Parse created_at — PostgreSQL needs a datetime object, not an ISO string
+    try:
+        created_dt = datetime.fromisoformat(created).replace(tzinfo=timezone.utc)
+    except Exception:
+        created_dt = datetime.now(timezone.utc)
     async with _pg_pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO memories (id, text, metadata, embedding, source, created_at)
                VALUES ($1, $2, $3, $4::vector, $5, $6)
                ON CONFLICT (id) DO NOTHING""",
             memory_id, req.text, json.dumps(req.metadata),
-            _vec_str(vector), req.source, created,
+            _vec_str(vector), req.source, created_dt,
         )
     return {"id": memory_id, "dims": len(vector), "status": "stored"}
 
