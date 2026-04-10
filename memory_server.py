@@ -17,6 +17,7 @@ Architecture:
 Endpoints:
   POST /remember[?async=1]  { "text": "...", "source": "...", "metadata": {...} }
   GET  /recall?q=...&n=5[&source=...&min_score=0.0]
+  GET  /search?q=...&n=10[&source=...]   <- full-text ILIKE, best for proper names
   GET  /random[?n=1&source=...]
   GET  /health
   GET  /stats
@@ -116,7 +117,11 @@ async def lifespan(app: FastAPI):
     global _pg_pool, _redis, _http, _worker_task
 
     _http    = httpx.AsyncClient(timeout=60.0)
-    _pg_pool = await asyncpg.create_pool(PG_DSN, min_size=2, max_size=10)
+    async def _pg_init(conn):
+        # Increase HNSW ef_search for better recall accuracy at 200K+ rows
+        await conn.execute("SET hnsw.ef_search = 400")
+
+    _pg_pool = await asyncpg.create_pool(PG_DSN, min_size=2, max_size=10, init=_pg_init)
     _redis   = aioredis.from_url(REDIS_URL, decode_responses=True)
 
     # Ensure pgvector extension and table exist
@@ -245,8 +250,10 @@ async def recall(
     query_vec = await embed(q)
     vec_str   = _vec_str(query_vec)
 
-    # Fetch more candidates when filtering by source (post-filter)
-    k = n * 5 if source else n * 2
+    # Fetch many more candidates when filtering by source (HNSW post-filter).
+    # With 200K+ records, the desired source may be <2% of total, so we need
+    # to scan deeply enough that post-filtering still yields n results.
+    k = n * 100 if source else n * 3
 
     async with _pg_pool.acquire() as conn:
         # pgvector cosine distance: 1 - cosine_similarity
@@ -277,6 +284,35 @@ async def recall(
     results.sort(key=lambda x: x.score, reverse=True)
     top = results[:n]
     return {"memories": [m.model_dump() for m in top], "query": q, "count": len(top)}
+
+
+@app.get("/search")
+async def text_search(
+    q: str = Query(...),
+    n: int = Query(10, ge=1, le=50),
+    source: Optional[str] = Query(None),
+):
+    """Text search (ILIKE) — useful for name lookups where semantic search misses."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="q cannot be empty")
+    pattern = f"%{q}%"
+    async with _pg_pool.acquire() as conn:
+        if source:
+            rows = await conn.fetch(
+                "SELECT id, text, metadata, source, created_at FROM memories "
+                "WHERE text ILIKE $1 AND source = $2 ORDER BY created_at DESC LIMIT $3",
+                pattern, source, n
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT id, text, metadata, source, created_at FROM memories "
+                "WHERE text ILIKE $1 ORDER BY created_at DESC LIMIT $2",
+                pattern, n
+            )
+    memories = [{"id": r["id"], "text": r["text"],
+                 "metadata": r["metadata"] if isinstance(r["metadata"], dict) else json.loads(r["metadata"]),
+                 "source": r["source"], "created_at": str(r["created_at"])} for r in rows]
+    return {"memories": memories, "query": q, "count": len(memories)}
 
 
 @app.get("/random")
@@ -333,6 +369,35 @@ async def stats():
 async def queue_stats():
     queue_len = await _redis.llen(REDIS_QUEUE)
     return {"queue": REDIS_QUEUE, "pending": queue_len}
+
+
+@app.get("/search")
+async def search(q: str = Query(...), n: int = Query(10), source: Optional[str] = Query(None)):
+    """Full-text keyword search using PostgreSQL ILIKE. Use for proper names, exact phrases.
+    Complements /recall (semantic) — better for names like 'Dan Mick' or 'Jesse Smith'."""
+    like = f"%{q}%"
+    async with _pg_pool.acquire() as conn:
+        if source:
+            rows = await conn.fetch(
+                "SELECT id, text, source, metadata, created_at FROM memories "
+                "WHERE text ILIKE $1 AND source = $2 ORDER BY created_at DESC LIMIT $3",
+                like, source, n
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT id, text, source, metadata, created_at FROM memories "
+                "WHERE text ILIKE $1 ORDER BY created_at DESC LIMIT $2",
+                like, n
+            )
+    results = [
+        {
+            "id": r["id"], "text": r["text"], "source": r["source"],
+            "metadata": r["metadata"] if isinstance(r["metadata"], dict) else json.loads(r["metadata"]),
+            "created_at": str(r["created_at"]),
+        }
+        for r in rows
+    ]
+    return {"results": results, "count": len(results), "query": q}
 
 
 @app.delete("/forget")
