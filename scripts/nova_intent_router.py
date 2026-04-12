@@ -211,6 +211,14 @@ INTENT_MAP: dict[str, tuple[Backend, str, str]] = {
     "health_alert":             (Backend.LOCAL, "reasoner",   "private"),
     "health_ingest":            (Backend.LOCAL, "mlx_general", "private"),
 
+    # ═══════════════════════════════════════════════════════════════════════════
+    # PRIVATE — Face recognition / iMessage. Local only, hard-fail.
+    # ═══════════════════════════════════════════════════════════════════════════
+    "face_recognition":         (Backend.LOCAL, "vision",     "private"),
+    "face_identify":            (Backend.LOCAL, "vision",     "private"),
+    "imessage_read":            (Backend.LOCAL, "mlx_general", "private"),
+    "imessage_compose":         (Backend.LOCAL, "mlx_general", "private"),
+
     "homekit_summary":          (Backend.LOCAL, "mlx_general",    "sensitive"),
     "camera_analysis":          (Backend.LOCAL, "vision",     "sensitive"),
     "vision_analysis":          (Backend.LOCAL, "vision",     "sensitive"),
