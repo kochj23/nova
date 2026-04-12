@@ -1,0 +1,13 @@
+# Xcode
+build/
+DerivedData/
+*.xcarchive
+*.xcuserstate
+xcuserdata/
+*.moved-aside
+*.pbxuser
+.DS_Store
+
+# Sensitive — never commit
+*.plist.bak
+secrets.*

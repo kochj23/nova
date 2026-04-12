@@ -66,3 +66,18 @@ workspace/tmp/
 workspace/camera_frames/
 workspace/software-inventory/
 workspace/Nova-NextGen/
+
+# Gateway (Nova-NextGen) — runtime artifacts
+gateway/.venv/
+gateway/__pycache__/
+gateway/nova_gateway/__pycache__/
+gateway/nova_gateway/backends/__pycache__/
+gateway/nova_gateway/context/__pycache__/
+gateway/nova_gateway/validation/__pycache__/
+gateway/*.log
+
+# Apps — build artifacts
+apps/*/build/
+apps/*/DerivedData/
+apps/*/*.xcodeproj/xcuserdata/
+apps/*/*.xcodeproj/project.xcworkspace/xcuserdata/

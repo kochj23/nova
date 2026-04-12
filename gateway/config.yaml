@@ -1,0 +1,192 @@
+gateway:
+  port: 34750
+  host: "127.0.0.1"   # Loopback only. Change to 0.0.0.0 for LAN — read SECURITY.md first.
+  log_level: "INFO"
+  db_path: "~/.nova_gateway/context.db"
+  version: "2.1.0"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# INTENT ROUTER — Specialized model per AI engine
+#
+# Each engine has ONE specialized model chosen for its primary strength.
+# The gateway routes tasks to the engine that is best for that task type.
+#
+# Engine          | Model              | Strength
+# ────────────────────────────────────────────────────────────────────────────
+# TinyChat  :8000 | gpt-oss:20b        | Lightweight chat, quick responses
+# MLXCode   :37422| mlx-local          | Code generation, debugging (Apple ANE)
+# MLX Chat  :5000 | Qwen2.5-7B (MLX)  | Fast general inference (Apple ANE)
+# OpenWebUI :3000 | qwen3-vl:4b        | Vision, UI, multimodal
+# Ollama    :11434| deepseek-r1:8b     | Reasoning, analysis — generalist default
+# SwarmUI   :7801 | Juggernaut XL      | Image generation (Stable Diffusion)
+# ComfyUI   :8188 | (custom workflows) | Advanced image pipelines
+#
+# Real-time chat with Nova → OpenRouter DeepSeek V3 (cloud, not in this gateway)
+# ─────────────────────────────────────────────────────────────────────────────
+
+backends:
+
+  # TinyChat — lightweight OpenAI-compatible proxy (port 8000)
+  # Specialized model: gpt-oss:20b — low-latency, efficient for quick tasks
+  # NOTE: Pull into TinyChat's Docker: docker exec -it tinychat ollama pull gpt-oss:20b
+  tinychat:
+    url: "http://localhost:8000"
+    enabled: true
+    default_model: "gpt-oss:20b"
+    fallback_models:
+      - "qwen3:8b"      # Available in TinyChat's Docker now
+      - "qwen3:30b"
+
+  # MLXCode — Apple Neural Engine coding app (port 37422)
+  # Specialized model: mlx-local (Jordan's custom MLX coding model)
+  # Best for: Swift, coding, debugging, PR review — uses Apple ANE hardware
+  mlxcode:
+    url: "http://localhost:37422"
+    enabled: true
+
+  # MLX Chat — Apple Neural Engine general inference (port 5000)
+  # Fast general text on Apple Silicon — fallback for coding/general tasks
+  mlxchat:
+    url: "http://localhost:5000"
+    enabled: true
+    default_model: "mlx-community/Qwen2.5-7B-Instruct-4bit"
+
+  # OpenWebUI — RAG-capable frontend with vision support (port 3000)
+  # Specialized model: qwen3-vl:4b — vision, UI interactions, multimodal
+  # NOTE: Set WEBUI_AUTH=False to disable auth, or add api_key below
+  openwebui:
+    url: "http://localhost:3000"
+    enabled: true
+    default_model: "qwen3-vl:4b"
+    api_key: ""   # Set your OpenWebUI API key here if auth is enabled
+
+  # Ollama — local LLM server (port 11434)
+  # Specialized model: deepseek-r1:8b — reasoning, analysis, generalist default
+  # Also serves: qwen3-coder:30b (coding fallback), qwen3-vl:4b (vision fallback)
+  ollama:
+    url: "http://localhost:11434"
+    enabled: true
+    default_model: "deepseek-r1:8b"
+    models:
+      reasoning:    "deepseek-r1:8b"
+      analysis:     "deepseek-r1:8b"
+      general:      "deepseek-r1:8b"     # deepseek-r1 as generalist default
+      summarize:    "deepseek-r1:8b"
+      research:     "deepseek-r1:8b"
+      coding:       "qwen3-coder:30b"    # fallback when MLXCode is down
+      swift:        "qwen3-coder:30b"    # fallback when MLXCode is down
+      vision:       "qwen3-vl:4b"        # fallback when OpenWebUI is down
+      quick:        "gpt-oss:20b"        # fallback when TinyChat is down
+      long_context: "deepseek-v3.1:671b-cloud"
+      creative:     "deepseek-r1:8b"
+
+  # SwarmUI — primary image generation (port 7801)
+  # Specialized model: Juggernaut XL — Stable Diffusion SDXL image generation
+  swarmui:
+    url: "http://localhost:7801"
+    enabled: true
+    default_model: "Juggernaut XL"   # Confirm exact filename in your SwarmUI models dir
+
+  # ComfyUI — advanced image workflows, fallback for SwarmUI (port 8188)
+  # Uses custom node-based workflows — model set per workflow
+  comfyui:
+    url: "http://localhost:8188"
+    enabled: true
+    default_model: ""   # Uses workflow-defined model
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Routing rules — intent → engine + model
+# ─────────────────────────────────────────────────────────────────────────────
+
+routing:
+  default_backend: "ollama"
+  default_model: "deepseek-r1:8b"   # deepseek-r1 as generalist when no rule matches
+
+  rules:
+    # Quick / lightweight — TinyChat (gpt-oss:20b), Ollama fallback
+    - task_type: "quick"
+      preferred: "tinychat"
+      model: "gpt-oss:20b"
+      fallback: "ollama"
+      fallback_model: "gpt-oss:20b"
+
+    # Coding — MLXCode (Apple ANE), Ollama qwen3-coder:30b fallback
+    - task_type: "coding"
+      preferred: "mlxcode"
+      fallback: "mlxchat"
+      fallback2: "ollama"
+      fallback2_model: "qwen3-coder:30b"
+
+    # Swift — MLXCode (Apple ANE), Ollama qwen3-coder:30b fallback
+    - task_type: "swift"
+      preferred: "mlxcode"
+      fallback: "ollama"
+      fallback_model: "qwen3-coder:30b"
+
+    # Vision / multimodal — OpenWebUI (qwen3-vl:4b), Ollama fallback
+    - task_type: "vision"
+      preferred: "openwebui"
+      model: "qwen3-vl:4b"
+      fallback: "ollama"
+      fallback_model: "qwen3-vl:4b"
+
+    # General text — Ollama deepseek-r1 (generalist default)
+    - task_type: "general"
+      preferred: "ollama"
+      model: "deepseek-r1:8b"
+
+    # Summarize — Ollama deepseek-r1
+    - task_type: "summarize"
+      preferred: "ollama"
+      model: "deepseek-r1:8b"
+
+    # Creative — Ollama deepseek-r1
+    - task_type: "creative"
+      preferred: "ollama"
+      model: "deepseek-r1:8b"
+
+    # Document / RAG — OpenWebUI (qwen3-vl:4b), Ollama fallback
+    - task_type: "document"
+      preferred: "openwebui"
+      model: "qwen3-vl:4b"
+      fallback: "ollama"
+      fallback_model: "deepseek-r1:8b"
+
+    # Research — OpenWebUI, Ollama deepseek-r1 fallback
+    - task_type: "research"
+      preferred: "openwebui"
+      model: "qwen3-vl:4b"
+      fallback: "ollama"
+      fallback_model: "deepseek-r1:8b"
+
+    # Reasoning — Ollama deepseek-r1:8b (purpose-built for logic)
+    - task_type: "reasoning"
+      preferred: "ollama"
+      model: "deepseek-r1:8b"
+
+    # Analysis — Ollama deepseek-r1:8b
+    - task_type: "analysis"
+      preferred: "ollama"
+      model: "deepseek-r1:8b"
+
+    # Image generation — SwarmUI (Juggernaut XL), ComfyUI fallback
+    - task_type: "image"
+      preferred: "swarmui"
+      model: "Juggernaut XL"
+      fallback: "comfyui"
+
+    # Long context — Ollama cloud-routed model
+    - task_type: "long_context"
+      preferred: "ollama"
+      model: "deepseek-v3.1:671b-cloud"
+
+context:
+  ttl_seconds: 3600
+  max_entries_per_session: 200
+  cleanup_interval_seconds: 300
+
+validation:
+  enabled: true
+  consensus_threshold: 0.7
+  max_validators: 2
+  timeout_seconds: 30

@@ -1,0 +1,405 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		096E0DDECCAD4EB7BFAB5593 /* SystemStatsReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE6CCD454AA2773FB883E74B /* SystemStatsReader.swift */; };
+		0F87BDBFE9FFEBF39187DD18 /* DataManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5C4C76841118DC9CB8E389 /* DataManager.swift */; };
+		1B8D1E48A9573F18932944B6 /* ServiceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = F3DCDA8C6F876D585F48FEFC /* ServiceModels.swift */; };
+		4742CFE946EC48AFCE72EA11 /* NovaReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 755C33F71A4D361ACF3A01E2 /* NovaReader.swift */; };
+		50F94FD110E839EDE6CA29D8 /* NovaAPIServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A296C3A5EB2693A8AC15C753 /* NovaAPIServer.swift */; };
+		69557E2DD01CE9312C3FB00A /* RsyncReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = D5C3EE0E08A946C0527A3F81 /* RsyncReader.swift */; };
+		76C84F6941929AB8A7474734 /* OneOnOneReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E01F37A38EBADAD85E2BC764 /* OneOnOneReader.swift */; };
+		7FE6401696EF19333E3E6BBF /* NewsSummaryReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 411D79BCF4B02EC2F1038FCC /* NewsSummaryReader.swift */; };
+		8D6197314BAEACA145D657D4 /* MLXCodeReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4D6D1C4648F18FE85594493B /* MLXCodeReader.swift */; };
+		8FE8D35F447C93F1BEA737D5 /* NovaControlApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 60508F126E68C7A5109B2BE2 /* NovaControlApp.swift */; };
+		B3A3181C605DFB17081072CF /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 86F58176921801959333C12F /* IOKit.framework */; };
+		B89C4467B809069A5C0C2832 /* NMAPReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBD791C1FD27ECC9AFA3185F /* NMAPReader.swift */; };
+		D70E7C85821F85491FD6B54C /* WorkflowEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8E9F0F3EC7774CB1146964F0 /* WorkflowEngine.swift */; };
+		E3C88C45BA35DA4CF0B6502B /* StatusWindowView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 939FBBCC25F92AA1ECFE6535 /* StatusWindowView.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		0E5C4C76841118DC9CB8E389 /* DataManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DataManager.swift; sourceTree = "<group>"; };
+		411D79BCF4B02EC2F1038FCC /* NewsSummaryReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewsSummaryReader.swift; sourceTree = "<group>"; };
+		4D6D1C4648F18FE85594493B /* MLXCodeReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MLXCodeReader.swift; sourceTree = "<group>"; };
+		60508F126E68C7A5109B2BE2 /* NovaControlApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaControlApp.swift; sourceTree = "<group>"; };
+		755C33F71A4D361ACF3A01E2 /* NovaReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaReader.swift; sourceTree = "<group>"; };
+		86F58176921801959333C12F /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
+		8E9F0F3EC7774CB1146964F0 /* WorkflowEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkflowEngine.swift; sourceTree = "<group>"; };
+		90A30D3290D5F150B5BCAF55 /* NovaControl.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = NovaControl.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		939FBBCC25F92AA1ECFE6535 /* StatusWindowView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusWindowView.swift; sourceTree = "<group>"; };
+		A296C3A5EB2693A8AC15C753 /* NovaAPIServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaAPIServer.swift; sourceTree = "<group>"; };
+		CE6CCD454AA2773FB883E74B /* SystemStatsReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemStatsReader.swift; sourceTree = "<group>"; };
+		D5C3EE0E08A946C0527A3F81 /* RsyncReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RsyncReader.swift; sourceTree = "<group>"; };
+		E01F37A38EBADAD85E2BC764 /* OneOnOneReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OneOnOneReader.swift; sourceTree = "<group>"; };
+		F3DCDA8C6F876D585F48FEFC /* ServiceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceModels.swift; sourceTree = "<group>"; };
+		FBD791C1FD27ECC9AFA3185F /* NMAPReader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NMAPReader.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		90208C9266516D64F33DB58A /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				B3A3181C605DFB17081072CF /* IOKit.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		087E2460D802EE693D4B082F = {
+			isa = PBXGroup;
+			children = (
+				5FEE539179D91A594360D822 /* NovaControl */,
+				CC77404338427D5BCB67A91B /* Frameworks */,
+				79995E3E9A6C17FB21415898 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		2A856CDFE7C2FD976519F590 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				0E5C4C76841118DC9CB8E389 /* DataManager.swift */,
+				A296C3A5EB2693A8AC15C753 /* NovaAPIServer.swift */,
+				8E9F0F3EC7774CB1146964F0 /* WorkflowEngine.swift */,
+				92E100079B61C8AC562D3B10 /* Readers */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		555C11015F7DFBBB71599B2E /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				939FBBCC25F92AA1ECFE6535 /* StatusWindowView.swift */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		5FEE539179D91A594360D822 /* NovaControl */ = {
+			isa = PBXGroup;
+			children = (
+				60508F126E68C7A5109B2BE2 /* NovaControlApp.swift */,
+				DD289A468198C60B197DF172 /* Models */,
+				2A856CDFE7C2FD976519F590 /* Services */,
+				555C11015F7DFBBB71599B2E /* Views */,
+			);
+			path = NovaControl;
+			sourceTree = "<group>";
+		};
+		79995E3E9A6C17FB21415898 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				90A30D3290D5F150B5BCAF55 /* NovaControl.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		92E100079B61C8AC562D3B10 /* Readers */ = {
+			isa = PBXGroup;
+			children = (
+				4D6D1C4648F18FE85594493B /* MLXCodeReader.swift */,
+				411D79BCF4B02EC2F1038FCC /* NewsSummaryReader.swift */,
+				FBD791C1FD27ECC9AFA3185F /* NMAPReader.swift */,
+				755C33F71A4D361ACF3A01E2 /* NovaReader.swift */,
+				E01F37A38EBADAD85E2BC764 /* OneOnOneReader.swift */,
+				D5C3EE0E08A946C0527A3F81 /* RsyncReader.swift */,
+				CE6CCD454AA2773FB883E74B /* SystemStatsReader.swift */,
+			);
+			path = Readers;
+			sourceTree = "<group>";
+		};
+		CC77404338427D5BCB67A91B /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				86F58176921801959333C12F /* IOKit.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		DD289A468198C60B197DF172 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				F3DCDA8C6F876D585F48FEFC /* ServiceModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		1264D72F5BF16179ADF55C7D /* NovaControl */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = A927251A1E6D5A7E333150B0 /* Build configuration list for PBXNativeTarget "NovaControl" */;
+			buildPhases = (
+				45EB6F4EFCA82437D57F54CF /* Sources */,
+				90208C9266516D64F33DB58A /* Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = NovaControl;
+			packageProductDependencies = (
+			);
+			productName = NovaControl;
+			productReference = 90A30D3290D5F150B5BCAF55 /* NovaControl.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		0B0A35CD52D2566CB00AF462 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					1264D72F5BF16179ADF55C7D = {
+						DevelopmentTeam = QRRCB8HB3W;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = DC7C4B4FA376CD463A22497F /* Build configuration list for PBXProject "NovaControl" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 087E2460D802EE693D4B082F;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				1264D72F5BF16179ADF55C7D /* NovaControl */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		45EB6F4EFCA82437D57F54CF /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				0F87BDBFE9FFEBF39187DD18 /* DataManager.swift in Sources */,
+				8D6197314BAEACA145D657D4 /* MLXCodeReader.swift in Sources */,
+				B89C4467B809069A5C0C2832 /* NMAPReader.swift in Sources */,
+				7FE6401696EF19333E3E6BBF /* NewsSummaryReader.swift in Sources */,
+				50F94FD110E839EDE6CA29D8 /* NovaAPIServer.swift in Sources */,
+				8FE8D35F447C93F1BEA737D5 /* NovaControlApp.swift in Sources */,
+				4742CFE946EC48AFCE72EA11 /* NovaReader.swift in Sources */,
+				76C84F6941929AB8A7474734 /* OneOnOneReader.swift in Sources */,
+				69557E2DD01CE9312C3FB00A /* RsyncReader.swift in Sources */,
+				1B8D1E48A9573F18932944B6 /* ServiceModels.swift in Sources */,
+				E3C88C45BA35DA4CF0B6502B /* StatusWindowView.swift in Sources */,
+				096E0DDECCAD4EB7BFAB5593 /* SystemStatsReader.swift in Sources */,
+				D70E7C85821F85491FD6B54C /* WorkflowEngine.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		03C4B1B1DA28C8A8507A6531 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		08C64E690FDA000D9AAF04BE /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				BUNDLE_IDENTIFIER = net.digitalnoise.NovaControl;
+				CODE_SIGN_ENTITLEMENTS = Resources/NovaControl.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "NovaControl provides a unified local API for Nova and Claude.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaControl;
+				PRODUCT_NAME = NovaControl;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		6DEF4AAA985E97E702004EA0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		E0F5510C9C3EF1393CD0FAD3 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				BUNDLE_IDENTIFIER = net.digitalnoise.NovaControl;
+				CODE_SIGN_ENTITLEMENTS = Resources/NovaControl.entitlements;
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 2;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSUIElement = YES;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "NovaControl provides a unified local API for Nova and Claude.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = net.digitalnoise.NovaControl;
+				PRODUCT_NAME = NovaControl;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		A927251A1E6D5A7E333150B0 /* Build configuration list for PBXNativeTarget "NovaControl" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				E0F5510C9C3EF1393CD0FAD3 /* Debug */,
+				08C64E690FDA000D9AAF04BE /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		DC7C4B4FA376CD463A22497F /* Build configuration list for PBXProject "NovaControl" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6DEF4AAA985E97E702004EA0 /* Debug */,
+				03C4B1B1DA28C8A8507A6531 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 0B0A35CD52D2566CB00AF462 /* Project object */;
+}

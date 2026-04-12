@@ -1,0 +1,26 @@
+name: NovaControl
+options:
+  bundleIdPrefix: net.digitalnoise
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  SWIFT_VERSION: "5.9"
+targets:
+  NovaControl:
+    type: application
+    platform: macOS
+    sources: [NovaControl]
+    dependencies:
+      - sdk: IOKit.framework
+    settings:
+      PRODUCT_NAME: NovaControl
+      BUNDLE_IDENTIFIER: net.digitalnoise.NovaControl
+      CODE_SIGN_ENTITLEMENTS: Resources/NovaControl.entitlements
+      CODE_SIGN_IDENTITY: "Apple Development"
+      CODE_SIGN_STYLE: Automatic
+      DEVELOPMENT_TEAM: QRRCB8HB3W
+      INFOPLIST_KEY_LSUIElement: YES
+      GENERATE_INFOPLIST_FILE: YES
+      INFOPLIST_KEY_NSLocalNetworkUsageDescription: "NovaControl provides a unified local API for Nova and Claude."
+      MARKETING_VERSION: "1.1.0"
+      CURRENT_PROJECT_VERSION: "2"

@@ -1,0 +1,408 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		095A8E5A8049E9A8EEF38A73 /* NovaAPIServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A3F6567C4A3A384945336ACD /* NovaAPIServer.swift */; };
+		10D9389B59C05A4755DD393F /* NovaMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DE0F376A206504A75E2ECADB /* NovaMonitor.swift */; };
+		2B7AD09062446CF3C384CD42 /* OpenClawSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 56D345BF31545C4197D7C89F /* OpenClawSection.swift */; };
+		49C9BFF87CE08E591F13ADDE /* ServiceCard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 44A520257B4861B2BBDBC3E1 /* ServiceCard.swift */; };
+		4BC037E4280318B7512D7894 /* ServiceController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97C8193D5F7449F6F194B418 /* ServiceController.swift */; };
+		4D1C6850542C0838BCBC4C86 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6D75D5E09B1CC6BAD6A392C6 /* ContentView.swift */; };
+		7FF10A9E617144016DF48557 /* SystemSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7930AAB383815AA31D2D3CAA /* SystemSection.swift */; };
+		8647625A6B47C2AA8D8B26CA /* AppsSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 36728C453911A2515D60A935 /* AppsSection.swift */; };
+		8855D886A89E075E94341688 /* ServiceModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 21F286086DC05A8BDC4BA3AB /* ServiceModels.swift */; };
+		8F6D2C548C412D10ABA38D5D /* ModernDesign.swift in Sources */ = {isa = PBXBuildFile; fileRef = BF3F5F7A86B9B56358AE8437 /* ModernDesign.swift */; };
+		B1A839F834501F49EE24AB0B /* Nova-DesktopApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B729361E6F988641C8A301B /* Nova-DesktopApp.swift */; };
+		C5740143B07FED48589E9E0D /* AIServicesSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = C64ACD819BDCCD4620EDE676 /* AIServicesSection.swift */; };
+		FF666202BA5959E4874191F5 /* GitHubSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BF9927ACFECE48B0DA25B46 /* GitHubSection.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		21F286086DC05A8BDC4BA3AB /* ServiceModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceModels.swift; sourceTree = "<group>"; };
+		2BF9927ACFECE48B0DA25B46 /* GitHubSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GitHubSection.swift; sourceTree = "<group>"; };
+		36728C453911A2515D60A935 /* AppsSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppsSection.swift; sourceTree = "<group>"; };
+		44A520257B4861B2BBDBC3E1 /* ServiceCard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceCard.swift; sourceTree = "<group>"; };
+		56D345BF31545C4197D7C89F /* OpenClawSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpenClawSection.swift; sourceTree = "<group>"; };
+		5B729361E6F988641C8A301B /* Nova-DesktopApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Nova-DesktopApp.swift"; sourceTree = "<group>"; };
+		64A91482547FFD2099B4E16F /* Nova-Desktop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Nova-Desktop.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		6D75D5E09B1CC6BAD6A392C6 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		7930AAB383815AA31D2D3CAA /* SystemSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SystemSection.swift; sourceTree = "<group>"; };
+		97C8193D5F7449F6F194B418 /* ServiceController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceController.swift; sourceTree = "<group>"; };
+		A3F6567C4A3A384945336ACD /* NovaAPIServer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaAPIServer.swift; sourceTree = "<group>"; };
+		BF3F5F7A86B9B56358AE8437 /* ModernDesign.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ModernDesign.swift; sourceTree = "<group>"; };
+		C64ACD819BDCCD4620EDE676 /* AIServicesSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIServicesSection.swift; sourceTree = "<group>"; };
+		DE0F376A206504A75E2ECADB /* NovaMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NovaMonitor.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXGroup section */
+		10403F0118BC8A84BE114F7E /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				6D75D5E09B1CC6BAD6A392C6 /* ContentView.swift */,
+				97FD1C27959639205D2C9048 /* Components */,
+				9F4531FCCD3DA805BA652720 /* Sections */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		13A5CF1021F09DCA753A7A2B /* Nova-Desktop */ = {
+			isa = PBXGroup;
+			children = (
+				5B729361E6F988641C8A301B /* Nova-DesktopApp.swift */,
+				43002842B1658C2D2280E032 /* API */,
+				B3AC1449B9FAE364446C8A2C /* Design */,
+				F50E15DF5D11D391761F9707 /* Models */,
+				BD03377D0B4F3B1496A25A84 /* Services */,
+				10403F0118BC8A84BE114F7E /* Views */,
+			);
+			path = "Nova-Desktop";
+			sourceTree = "<group>";
+		};
+		30DD6C33323662392AEACADF /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				64A91482547FFD2099B4E16F /* Nova-Desktop.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		43002842B1658C2D2280E032 /* API */ = {
+			isa = PBXGroup;
+			children = (
+				A3F6567C4A3A384945336ACD /* NovaAPIServer.swift */,
+			);
+			path = API;
+			sourceTree = "<group>";
+		};
+		804348B59E4DD4AE609BE4E5 = {
+			isa = PBXGroup;
+			children = (
+				13A5CF1021F09DCA753A7A2B /* Nova-Desktop */,
+				30DD6C33323662392AEACADF /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		97FD1C27959639205D2C9048 /* Components */ = {
+			isa = PBXGroup;
+			children = (
+				44A520257B4861B2BBDBC3E1 /* ServiceCard.swift */,
+			);
+			path = Components;
+			sourceTree = "<group>";
+		};
+		9F4531FCCD3DA805BA652720 /* Sections */ = {
+			isa = PBXGroup;
+			children = (
+				C64ACD819BDCCD4620EDE676 /* AIServicesSection.swift */,
+				36728C453911A2515D60A935 /* AppsSection.swift */,
+				2BF9927ACFECE48B0DA25B46 /* GitHubSection.swift */,
+				56D345BF31545C4197D7C89F /* OpenClawSection.swift */,
+				7930AAB383815AA31D2D3CAA /* SystemSection.swift */,
+			);
+			path = Sections;
+			sourceTree = "<group>";
+		};
+		B3AC1449B9FAE364446C8A2C /* Design */ = {
+			isa = PBXGroup;
+			children = (
+				BF3F5F7A86B9B56358AE8437 /* ModernDesign.swift */,
+			);
+			path = Design;
+			sourceTree = "<group>";
+		};
+		BD03377D0B4F3B1496A25A84 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				DE0F376A206504A75E2ECADB /* NovaMonitor.swift */,
+				97C8193D5F7449F6F194B418 /* ServiceController.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		F50E15DF5D11D391761F9707 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				21F286086DC05A8BDC4BA3AB /* ServiceModels.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		702E602D52C7D4A388564ED5 /* Nova-Desktop */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 336495D653C81FBE13880541 /* Build configuration list for PBXNativeTarget "Nova-Desktop" */;
+			buildPhases = (
+				B78024FEB67D612457A44928 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = "Nova-Desktop";
+			packageProductDependencies = (
+			);
+			productName = "Nova-Desktop";
+			productReference = 64A91482547FFD2099B4E16F /* Nova-Desktop.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		44BBC495FE759C6CA2BCBD48 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					702E602D52C7D4A388564ED5 = {
+						DevelopmentTeam = QRRCB8HB3W;
+						ProvisioningStyle = Automatic;
+					};
+				};
+			};
+			buildConfigurationList = E10B893899BE2686EF9CE39F /* Build configuration list for PBXProject "Nova-Desktop" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 804348B59E4DD4AE609BE4E5;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				702E602D52C7D4A388564ED5 /* Nova-Desktop */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B78024FEB67D612457A44928 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				C5740143B07FED48589E9E0D /* AIServicesSection.swift in Sources */,
+				8647625A6B47C2AA8D8B26CA /* AppsSection.swift in Sources */,
+				4D1C6850542C0838BCBC4C86 /* ContentView.swift in Sources */,
+				FF666202BA5959E4874191F5 /* GitHubSection.swift in Sources */,
+				8F6D2C548C412D10ABA38D5D /* ModernDesign.swift in Sources */,
+				B1A839F834501F49EE24AB0B /* Nova-DesktopApp.swift in Sources */,
+				095A8E5A8049E9A8EEF38A73 /* NovaAPIServer.swift in Sources */,
+				10D9389B59C05A4755DD393F /* NovaMonitor.swift in Sources */,
+				2B7AD09062446CF3C384CD42 /* OpenClawSection.swift in Sources */,
+				49C9BFF87CE08E591F13ADDE /* ServiceCard.swift in Sources */,
+				4BC037E4280318B7512D7894 /* ServiceController.swift in Sources */,
+				8855D886A89E075E94341688 /* ServiceModels.swift in Sources */,
+				7FF10A9E617144016DF48557 /* SystemSection.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		07E9D59184FC10B190368C69 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Debug;
+		};
+		47B55BA223081722D26BB4CD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				BUNDLE_IDENTIFIER = "net.digitalnoise.Nova-Desktop";
+				CODE_SIGN_ENTITLEMENTS = "Resources/Nova-Desktop.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Nova Desktop";
+				INFOPLIST_KEY_LSUIElement = NO;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Nova Desktop monitors local AI services and app APIs.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "net.digitalnoise.Nova-Desktop";
+				PRODUCT_NAME = "Nova-Desktop";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		708BE005B1A370516966975D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.9;
+			};
+			name = Release;
+		};
+		89AA5EE5C2CDC819A7EBD3E5 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				BUNDLE_IDENTIFIER = "net.digitalnoise.Nova-Desktop";
+				CODE_SIGN_ENTITLEMENTS = "Resources/Nova-Desktop.entitlements";
+				CODE_SIGN_IDENTITY = "Apple Development";
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = QRRCB8HB3W;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Nova Desktop";
+				INFOPLIST_KEY_LSUIElement = NO;
+				INFOPLIST_KEY_NSLocalNetworkUsageDescription = "Nova Desktop monitors local AI services and app APIs.";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MARKETING_VERSION = 1.0.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "net.digitalnoise.Nova-Desktop";
+				PRODUCT_NAME = "Nova-Desktop";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		336495D653C81FBE13880541 /* Build configuration list for PBXNativeTarget "Nova-Desktop" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				89AA5EE5C2CDC819A7EBD3E5 /* Debug */,
+				47B55BA223081722D26BB4CD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		E10B893899BE2686EF9CE39F /* Build configuration list for PBXProject "Nova-Desktop" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				07E9D59184FC10B190368C69 /* Debug */,
+				708BE005B1A370516966975D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 44BBC495FE759C6CA2BCBD48 /* Project object */;
+}

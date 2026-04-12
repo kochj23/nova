@@ -1,0 +1,25 @@
+name: Nova-Desktop
+options:
+  bundleIdPrefix: net.digitalnoise
+  deploymentTarget:
+    macOS: "14.0"
+settings:
+  SWIFT_VERSION: "5.9"
+targets:
+  Nova-Desktop:
+    type: application
+    platform: macOS
+    sources: [Nova-Desktop]
+    settings:
+      PRODUCT_NAME: Nova-Desktop
+      BUNDLE_IDENTIFIER: net.digitalnoise.Nova-Desktop
+      CODE_SIGN_ENTITLEMENTS: Resources/Nova-Desktop.entitlements
+      CODE_SIGN_IDENTITY: "Apple Development"
+      CODE_SIGN_STYLE: Automatic
+      DEVELOPMENT_TEAM: QRRCB8HB3W
+      INFOPLIST_KEY_LSUIElement: NO
+      GENERATE_INFOPLIST_FILE: YES
+      INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Nova Desktop monitors local AI services and app APIs."
+      INFOPLIST_KEY_CFBundleDisplayName: "Nova Desktop"
+      MARKETING_VERSION: "1.0.0"
+      CURRENT_PROJECT_VERSION: "1"
