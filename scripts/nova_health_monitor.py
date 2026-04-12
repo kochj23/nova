@@ -2,13 +2,17 @@
 """
 nova_health_monitor.py — Apple Health data ingestion for Nova.
 
-Reads health data from Apple Health via the compiled Swift reader
-(nova_health_reader), stores readings in Nova's vector memory, and
-provides trend analysis.
+Reads health data exported from an iPhone Shortcut via iCloud Drive.
+The Shortcut runs daily on the iPhone, queries HealthKit, and saves
+a JSON file to iCloud Drive/Nova/health/. This script picks it up.
 
 PRIVACY: All health queries are routed through the intent router as
 "private" intents — they NEVER leave the machine. Health data is stored
 in vector memory with source="apple_health" for semantic recall.
+
+Data flow:
+  iPhone HealthKit → Shortcut → iCloud Drive → this script → vector memory
+  (never touches OpenRouter — health intents are hard-fail local only)
 
 Cron: every 4 hours (ingest new readings)
 Manual: --trends (7-day trend report), --ingest (force ingest)
@@ -16,6 +20,7 @@ Manual: --trends (7-day trend report), --ingest (force ingest)
 Written by Jordan Koch.
 """
 
+import glob
 import json
 import subprocess
 import sys
@@ -34,7 +39,7 @@ VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
 TODAY = date.today().isoformat()
 SCRIPTS = Path(__file__).parent
-READER_BIN = SCRIPTS / "nova_health_reader"
+ICLOUD_HEALTH = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs/Nova/health"
 STATE_FILE = Path("/tmp/nova_health_monitor_state.json")
 
 # Thresholds for concerning readings (alert Jordan's DM)
@@ -104,37 +109,86 @@ def vector_remember_async(text, metadata=None):
         pass
 
 
-# ── Health data reader ───────────────────────────────────────────────────────
+# ── Health data reader (iCloud Drive) ────────────────────────────────────────
 
 def read_health_data(hours=24, data_type=None):
-    """Call the compiled Swift health reader and return parsed JSON."""
-    if not READER_BIN.exists():
-        log(f"Health reader not found at {READER_BIN}")
-        log("Build it with:")
-        log(f"  cd {SCRIPTS}")
-        log("  swiftc nova_health_reader.swift -o nova_health_reader -framework HealthKit")
-        log("  codesign --sign 'Apple Development' --entitlements nova_health_reader.entitlements nova_health_reader")
+    """Read health data from iCloud Drive JSON files dropped by iPhone Shortcut.
+
+    The iPhone Shortcut saves files as:
+      iCloud Drive/Nova/health/health-YYYY-MM-DD.json
+      iCloud Drive/Nova/health/health-YYYY-MM-DDTHH-MM-SS.json
+
+    Each file contains:
+      {"date": "...", "readings": {"heart_rate": [...], "blood_pressure_sys": [...], ...}}
+    """
+    if not ICLOUD_HEALTH.exists():
+        log(f"iCloud health folder not found: {ICLOUD_HEALTH}")
+        log("Create it with: mkdir -p ~/Library/Mobile\\ Documents/com~apple~CloudDocs/Nova/health")
         return None
 
-    cmd = [str(READER_BIN), "--hours", str(hours)]
-    if data_type:
-        cmd.extend(["--type", data_type])
+    # Find JSON files within the time window
+    cutoff = (NOW - timedelta(hours=hours)).isoformat()[:10]
+    files = sorted(ICLOUD_HEALTH.glob("health-*.json"))
 
-    try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            log(f"Health reader error: {result.stderr.strip()[:200]}")
-            return None
-        return json.loads(result.stdout)
-    except json.JSONDecodeError as e:
-        log(f"JSON parse error: {e}")
+    if not files:
+        # Also check for .icloud placeholder files (not yet downloaded)
+        placeholders = list(ICLOUD_HEALTH.glob(".health-*.json.icloud"))
+        if placeholders:
+            log(f"Found {len(placeholders)} iCloud placeholder(s) — files not downloaded yet.")
+            log("Open the Nova/health folder in Finder to trigger download, or run:")
+            log(f"  brctl download {ICLOUD_HEALTH}/")
+            # Try to trigger download
+            try:
+                for p in placeholders:
+                    subprocess.run(["brctl", "download", str(p)],
+                                   capture_output=True, timeout=5)
+            except Exception:
+                pass
+        else:
+            log("No health data files found in iCloud Drive/Nova/health/")
+            log("Set up the iPhone Shortcut to export health data.")
         return None
-    except subprocess.TimeoutExpired:
-        log("Health reader timed out")
+
+    # Merge readings from all files in the time window
+    merged_readings = {}
+    files_read = 0
+
+    for f in files:
+        # Extract date from filename: health-YYYY-MM-DD.json
+        fname = f.stem  # health-2026-04-12
+        file_date = fname.replace("health-", "")[:10]
+
+        if file_date < cutoff:
+            continue
+
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            readings = data.get("readings", {})
+
+            for rtype, entries in readings.items():
+                if data_type and rtype != data_type:
+                    continue
+                merged_readings.setdefault(rtype, []).extend(
+                    entries if isinstance(entries, list) else [entries]
+                )
+            files_read += 1
+        except json.JSONDecodeError as e:
+            log(f"Skipping {f.name}: JSON error: {e}")
+        except Exception as e:
+            log(f"Skipping {f.name}: {e}")
+
+    if not merged_readings:
+        log(f"No readings found in {len(files)} file(s) within last {hours}h")
         return None
-    except Exception as e:
-        log(f"Health reader error: {e}")
-        return None
+
+    log(f"Read {files_read} file(s), {sum(len(v) for v in merged_readings.values())} total readings")
+
+    return {
+        "period_hours": hours,
+        "start": cutoff,
+        "end": TODAY,
+        "readings": merged_readings,
+    }
 
 
 # ── Data processing ──────────────────────────────────────────────────────────
