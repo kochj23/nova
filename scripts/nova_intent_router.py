@@ -117,6 +117,12 @@ INTENT_TEMPERATURE: dict[str, float] = {
     "threat_analysis":      0.20,
     "logic_check":          0.25,
     "deep_analysis":        0.40,
+    # Health — precise, factual
+    "health_query":             0.25,
+    "health_summary":           0.35,
+    "health_trend":             0.30,
+    "health_alert":             0.20,
+    "health_ingest":            0.30,
     # Memory / personal — conservative
     "memory_consolidation": 0.40,
     "memory_recall":        0.35,
@@ -196,6 +202,15 @@ INTENT_MAP: dict[str, tuple[Backend, str, str]] = {
     # ═══════════════════════════════════════════════════════════════════════════
     # SENSITIVE — Home/personal context. Local only, softer error.
     # ═══════════════════════════════════════════════════════════════════════════
+    # ═══════════════════════════════════════════════════════════════════════════
+    # PRIVATE — Health data. NEVER leaves the machine. Hard-fail if local down.
+    # ═══════════════════════════════════════════════════════════════════════════
+    "health_query":             (Backend.LOCAL, "reasoner",   "private"),
+    "health_summary":           (Backend.LOCAL, "mlx_general", "private"),
+    "health_trend":             (Backend.LOCAL, "reasoner",   "private"),
+    "health_alert":             (Backend.LOCAL, "reasoner",   "private"),
+    "health_ingest":            (Backend.LOCAL, "mlx_general", "private"),
+
     "homekit_summary":          (Backend.LOCAL, "mlx_general",    "sensitive"),
     "camera_analysis":          (Backend.LOCAL, "vision",     "sensitive"),
     "vision_analysis":          (Backend.LOCAL, "vision",     "sensitive"),
