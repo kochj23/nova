@@ -109,6 +109,75 @@ def audit_slack_deliveries() -> list[dict]:
     return issues
 
 
+def _load_run_history(job_id: str) -> dict:
+    """Read the JSONL run file for a job and return last-run info.
+
+    Returns dict with keys: lastRunAtMs, lastRunStatus, lastDurationMs,
+    lastError, consecutiveErrors.  Falls back to empty/zero values.
+    """
+    runs_dir = JOBS_FILE.parent / "runs"
+    jsonl = runs_dir / f"{job_id}.jsonl"
+    if not jsonl.exists():
+        return {}
+
+    last_ts = 0
+    last_status = ""
+    last_dur = 0
+    last_err = ""
+    consecutive_errors = 0
+
+    try:
+        with open(jsonl) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ts = entry.get("ts", 0)
+                if ts >= last_ts:
+                    action = entry.get("action", "")
+                    if action == "finished":
+                        last_ts = ts
+                        last_status = entry.get("status", "ok")
+                        last_dur = entry.get("durationMs", 0)
+                        last_err = entry.get("error", "")
+                    elif action == "started":
+                        # update ts even for starts so we know it attempted
+                        if ts > last_ts:
+                            last_ts = ts
+
+        # Count consecutive errors from end of file
+        entries = []
+        with open(jsonl) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+        for entry in reversed(entries):
+            if entry.get("action") == "finished":
+                if entry.get("status") == "error":
+                    consecutive_errors += 1
+                else:
+                    break
+    except Exception:
+        pass
+
+    return {
+        "lastRunAtMs": last_ts,
+        "lastRunStatus": last_status,
+        "lastDurationMs": last_dur,
+        "lastError": last_err,
+        "consecutiveErrors": consecutive_errors,
+    }
+
+
 def audit_jobs() -> list[dict]:
     """Return list of issues found across all cron jobs."""
     issues = []
@@ -124,12 +193,16 @@ def audit_jobs() -> list[dict]:
             continue
 
         name   = job.get("name", "unknown")
+        job_id = job.get("id", "")
+
+        # Read state from JSONL run history (primary) with jobs.json state as fallback
+        run_info = _load_run_history(job_id) if job_id else {}
         state  = job.get("state", {})
-        errors = state.get("consecutiveErrors", 0)
-        status = state.get("lastRunStatus", "")
-        dur    = state.get("lastDurationMs", 0)
-        last   = state.get("lastRunAtMs", 0)
-        err    = state.get("lastError", "")
+        errors = run_info.get("consecutiveErrors", state.get("consecutiveErrors", 0))
+        status = run_info.get("lastRunStatus", state.get("lastRunStatus", ""))
+        dur    = run_info.get("lastDurationMs", state.get("lastDurationMs", 0))
+        last   = run_info.get("lastRunAtMs", state.get("lastRunAtMs", 0))
+        err    = run_info.get("lastError", state.get("lastError", ""))
         hours_since = (now_ms - last) / 3_600_000 if last else 999
 
         # Consecutive failures

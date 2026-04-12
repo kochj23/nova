@@ -141,10 +141,15 @@ TASK_ROUTING = {
     "extract_keywords": TaskComplexity.SIMPLE,      # Tag extraction
     "format_output": TaskComplexity.SIMPLE,         # Simple formatting
     
+    # Local: email memory/recall — personal data must not leave the machine
+    "summarize_emails":   TaskComplexity.MEDIUM,   # Email summaries — keep local (privacy)
+    "email_recall":       TaskComplexity.MEDIUM,   # Email memory recall — keep local (privacy)
+    "memory_recall":      TaskComplexity.MEDIUM,   # Any memory recall — keep local (privacy)
+    "memory_query":       TaskComplexity.MEDIUM,   # Any memory query  — keep local (privacy)
+
     # Cloud Claude (keep reserved for quality-critical work)
-    # EMAIL, SLACK, DREAMS, & IMAGE/CAMERA ANALYSIS — These stay on cloud
-    "generate_reply": None,         # EMAIL — Use cloud
-    "summarize_emails": None,       # EMAIL — Use cloud
+    # SLACK, DREAMS, & IMAGE/CAMERA ANALYSIS — These stay on cloud
+    "generate_reply": None,         # EMAIL REPLY — Use cloud for quality
     "slack_reply": None,            # SLACK — Use cloud
     "slack_thread_reply": None,     # SLACK — Use cloud
     "dream_journal_generate": None, # DREAM JOURNAL — Use cloud

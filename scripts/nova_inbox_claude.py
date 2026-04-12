@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-nova_inbox_claude.py — Herd email processor with Claude reasoning
-Reads emails, calls Claude API via OpenRouter for thoughtful replies.
+nova_inbox_claude.py — Herd email processor (local LLM only)
+Reads emails, generates replies using local Ollama. Email content never leaves the machine.
 
-Cron: every 5 minutes
+Legacy script — nova_mail_agent.py is the primary inbox processor.
 """
 
 import subprocess
@@ -17,21 +17,12 @@ import urllib.error
 # Ensure PYTHONPATH is set for waggle module
 os.environ["PYTHONPATH"] = "/Volumes/Data/AI/python_packages:" + os.environ.get("PYTHONPATH", "")
 
+from pathlib import Path
+
 HERD_MAIL = str(Path.home() / ".openclaw/scripts/nova_herd_mail.sh")
 MEMORY_URL = "http://127.0.0.1:18790"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-# Get OpenRouter API key from OpenClaw config
-def get_openrouter_key():
-    config_path = os.path.expanduser("~/.openclaw/openclaw.json")
-    try:
-        with open(config_path) as f:
-            config = json.load(f)
-            return config.get("openrouter", {}).get("apiKey", "")
-    except:
-        return os.environ.get("OPENROUTER_API_KEY", "")
-
-OPENROUTER_KEY = get_openrouter_key()
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+OLLAMA_MODEL = "qwen3-coder:30b"
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
@@ -80,39 +71,31 @@ def remember(text, source="herd"):
     except Exception:
         return None
 
-def call_claude(prompt):
-    """Call Claude API via OpenRouter."""
-    if not OPENROUTER_KEY:
-        log("ERROR: OPENROUTER_API_KEY not set")
-        return None
-    
+def call_local_llm(prompt):
+    """Call local Ollama — email content never leaves the machine."""
     try:
         data = json.dumps({
-            "model": "anthropic/claude-3.5-sonnet",
-            "messages": [{"role": "user", "content": prompt}],
-            "temperature": 0.7,
-            "max_tokens": 300
+            "model": OLLAMA_MODEL,
+            "prompt": f"/no_think\n\n{prompt}",
+            "stream": False,
+            "think": False,
+            "options": {"temperature": 0.7, "num_predict": 300}
         }).encode()
-        
+
         req = urllib.request.Request(
-            OPENROUTER_URL,
+            OLLAMA_URL,
             data=data,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {OPENROUTER_KEY}"
-            }
+            headers={"Content-Type": "application/json"}
         )
-        
-        with urllib.request.urlopen(req, timeout=30) as resp:
+
+        with urllib.request.urlopen(req, timeout=120) as resp:
             result = json.loads(resp.read())
-            if result.get("choices"):
-                return result["choices"][0]["message"]["content"].strip()
-            return None
-    except urllib.error.HTTPError as e:
-        log(f"Claude API error: {e.code}")
-        return None
+            response = result.get("response", "").strip()
+            if "</think>" in response:
+                response = response.split("</think>", 1)[-1].strip()
+            return response if response else None
     except Exception as e:
-        log(f"Error calling Claude: {e}")
+        log(f"Local LLM error: {e} — email content will NOT be sent to cloud (privacy policy)")
         return None
 
 def generate_reply(sender, subject, body):
@@ -140,7 +123,7 @@ Body: {body[:400]}
 Generate a brief, genuine reply. Be warm but direct. Show you've read and understood what they said.
 Keep it under 100 words. Sign with "—Nova". No markdown, just plain text."""
 
-    return call_claude(prompt)
+    return call_local_llm(prompt)
 
 def process_email(msg):
     """Process one email: read, reason with Claude, reply, send."""

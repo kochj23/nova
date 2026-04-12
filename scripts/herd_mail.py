@@ -641,56 +641,65 @@ def cmd_send(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
             logger.warning(f"Unexpected error fetching message: {e}")
             logger.info("  Continuing without threading headers...")
 
-    # Send the email
-    try:
-        to_display = sanitize_for_display(args.to, max_length=50)
-        logger.info(f"Sending email to {to_display}...")
+    # Send the email — with retry for transient failures
+    import time as _time
+    RETRY_DELAYS = [0, 5, 15, 45]  # first attempt immediate, then 5s, 15s, 45s
+    to_display = sanitize_for_display(args.to, max_length=50)
 
-        send_email(
-            to=args.to,
-            subject=args.subject,
-            body_md=body,
-            cc=args.cc,
-            reply_to=args.reply_to,
-            in_reply_to=in_reply_to,
-            references=references,
-            attachments=args.attachment,
-            rich=args.rich,
-            config=build_waggle_config(cfg),
-        )
+    for attempt, delay in enumerate(RETRY_DELAYS):
+        if delay > 0:
+            logger.info(f"  Retrying in {delay}s (attempt {attempt + 1}/{len(RETRY_DELAYS)})...")
+            _time.sleep(delay)
 
-        saved = False
-        if cfg.get("imap_host"):
-            saved = save_to_sent(
-                cfg, args.to, args.subject, body,
-                cc=args.cc, reply_to=args.reply_to,
-                in_reply_to=in_reply_to, references=references,
+        try:
+            logger.info(f"Sending email to {to_display}..." + (f" (attempt {attempt + 1})" if attempt > 0 else ""))
+
+            send_email(
+                to=args.to,
+                subject=args.subject,
+                body_md=body,
+                cc=args.cc,
+                reply_to=args.reply_to,
+                in_reply_to=in_reply_to,
+                references=references,
+                attachments=args.attachment,
+                rich=args.rich,
+                config=build_waggle_config(cfg),
             )
 
-        logger.info("Email sent successfully!")
-        if saved:
-            logger.info("  (Saved to Sent folder via IMAP)")
-        elif cfg.get("imap_host"):
-            logger.warning("  (Could not save to Sent folder)")
+            saved = False
+            if cfg.get("imap_host"):
+                saved = save_to_sent(
+                    cfg, args.to, args.subject, body,
+                    cc=args.cc, reply_to=args.reply_to,
+                    in_reply_to=in_reply_to, references=references,
+                )
 
-        return 0
+            logger.info("Email sent successfully!")
+            if saved:
+                logger.info("  (Saved to Sent folder via IMAP)")
+            elif cfg.get("imap_host"):
+                logger.warning("  (Could not save to Sent folder)")
 
-    except ConnectionError as e:
-        logger.error(f"Connection error: {e}")
-        return 1
-    except TimeoutError as e:
-        logger.error(f"Timeout error: {e}")
-        return 1
-    except ValueError as e:
-        logger.error(f"Invalid input: {e}")
-        return 1
-    except OSError as e:
-        logger.error(f"I/O error: {e}")
-        return 1
-    except Exception as e:
-        logger.error(f"Unexpected error: {e}")
-        logger.debug("", exc_info=True)
-        return 1
+            return 0
+
+        except ValueError as e:
+            # Input errors won't be fixed by retrying
+            logger.error(f"Invalid input: {e}")
+            return 1
+        except (ConnectionError, TimeoutError, OSError) as e:
+            logger.warning(f"Transient error (attempt {attempt + 1}): {e}")
+            if attempt == len(RETRY_DELAYS) - 1:
+                logger.error(f"All {len(RETRY_DELAYS)} send attempts failed: {e}")
+                return 1
+        except Exception as e:
+            logger.warning(f"Unexpected error (attempt {attempt + 1}): {e}")
+            logger.debug("", exc_info=True)
+            if attempt == len(RETRY_DELAYS) - 1:
+                logger.error(f"All {len(RETRY_DELAYS)} send attempts failed: {e}")
+                return 1
+
+    return 1
 
 
 def cmd_config(args: argparse.Namespace, cfg: dict[str, Any]) -> int:

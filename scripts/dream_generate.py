@@ -13,27 +13,73 @@ Written by Jordan Koch.
 import json
 import subprocess
 import sys
+import urllib.parse
 import urllib.request
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-WORKSPACE   = Path.home() / ".openclaw/workspace"
-JOURNAL_DIR = WORKSPACE / "journal/dreams"
-PENDING     = WORKSPACE / "journal/pending_delivery.json"
-MEMORY_DIR  = WORKSPACE / "memory"
-OLLAMA_URL  = "http://127.0.0.1:11434/api/generate"
-MODEL       = "qwen3-coder:30b"
-TODAY       = date.today().isoformat()
-YESTERDAY   = (date.today() - timedelta(days=1)).isoformat()
+WORKSPACE          = Path.home() / ".openclaw/workspace"
+JOURNAL_DIR        = WORKSPACE / "journal/dreams"
+PENDING            = WORKSPACE / "journal/pending_delivery.json"
+MEMORY_DIR         = WORKSPACE / "memory"
+OLLAMA_URL         = "http://127.0.0.1:11434/api/generate"
+VECTOR_URL         = "http://127.0.0.1:18790"
+OPENROUTER_URL     = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODEL   = "anthropic/claude-haiku-4.5"   # fast, great prose, cheap
+MODEL              = "qwen3-coder:30b"               # local fallback only
+TODAY              = date.today().isoformat()
+YESTERDAY          = (date.today() - timedelta(days=1)).isoformat()
+TWO_DAYS_AGO       = (date.today() - timedelta(days=2)).isoformat()
 
 
 FALLBACK_MODELS = ["qwen3-30b-a3b", "deepseek-r1:8b", "qwen3-vl:4b"]
 
+# Circuit breaker state file — if Ollama fails 3x in a row, skip it for 1 hour
+CIRCUIT_BREAKER_FILE = Path.home() / ".openclaw/workspace/.ollama_circuit_breaker"
+
 
 def log(msg):
     print(f"[dream_generate {datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def _ollama_circuit_open() -> bool:
+    """Check if Ollama circuit breaker is tripped (too many recent failures)."""
+    try:
+        if not CIRCUIT_BREAKER_FILE.exists():
+            return False
+        data = json.loads(CIRCUIT_BREAKER_FILE.read_text())
+        failures = data.get("consecutive_failures", 0)
+        last_fail = datetime.fromisoformat(data.get("last_failure", "2000-01-01T00:00:00"))
+        cooldown_hours = data.get("cooldown_hours", 1)
+        if failures >= 3 and (datetime.now() - last_fail).total_seconds() < cooldown_hours * 3600:
+            return True
+        # Cooldown expired — reset
+        if failures >= 3:
+            CIRCUIT_BREAKER_FILE.unlink(missing_ok=True)
+        return False
+    except Exception:
+        return False
+
+
+def _ollama_circuit_record_failure():
+    """Record an Ollama failure in the circuit breaker."""
+    try:
+        data = {}
+        if CIRCUIT_BREAKER_FILE.exists():
+            data = json.loads(CIRCUIT_BREAKER_FILE.read_text())
+        data["consecutive_failures"] = data.get("consecutive_failures", 0) + 1
+        data["last_failure"] = datetime.now().isoformat()
+        data["cooldown_hours"] = 1
+        CIRCUIT_BREAKER_FILE.write_text(json.dumps(data))
+    except Exception:
+        pass
+
+
+def _ollama_circuit_reset():
+    """Reset the circuit breaker on success."""
+    CIRCUIT_BREAKER_FILE.unlink(missing_ok=True)
 
 
 def get_available_model() -> str:
@@ -71,90 +117,158 @@ def read_file(path, max_chars=1500):
         return ""
 
 
-def query_new_memories() -> dict:
-    """Query vector DB for TODAY's fresh memories (not recurring themes)."""
+def recall(query: str, n: int = 8, source: str = None) -> list[str]:
+    """Semantic search against the vector memory server via /recall."""
     try:
-        today_search = json.dumps({
-            "query": f"new work created built deployed today {TODAY} vision motion claude",
-            "limit": 20,
-            "min_score": 0.5
-        }).encode()
-        
-        req = urllib.request.Request(
-            "http://127.0.0.1:18790/search",
-            data=today_search,
-            headers={"Content-Type": "application/json"}
-        )
+        url = f"{VECTOR_URL}/recall?q={urllib.parse.quote(query)}&n={n}"
+        if source:
+            url += f"&source={source}"
+        req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=10) as r:
-            result = json.loads(r.read())
-            
-        # Extract unique memories (filter duplicates and recurring themes)
-        unique = {}
-        for match in result.get("results", [])[:15]:
-            text = match.get("text", "")[:200]
-            if text not in unique.values():
-                unique[match.get("id")] = text
-        
-        return {"new_memories": list(unique.values())}
+            data = json.loads(r.read())
+        return [m.get("text", "")[:300] for m in data.get("memories", [])]
     except Exception as e:
-        log(f"Memory query failed (non-fatal): {e}")
-        return {"new_memories": []}
+        log(f"Recall failed for '{query[:40]}': {e}")
+        return []
 
 
-def generate_narrative() -> str:
-    """Call Ollama to generate a 350-450 word dream narrative."""
-    identity  = read_file(WORKSPACE / "IDENTITY.md", 600)
-    soul      = read_file(WORKSPACE / "SOUL.md", 500)
-    memory_t  = read_file(MEMORY_DIR / f"{TODAY}.md", 1500)
-    memory_y  = read_file(MEMORY_DIR / f"{YESTERDAY}.md", 800)
-    prev_dream = read_file(JOURNAL_DIR / f"{YESTERDAY}.md", 600)
-    
-    # Get fresh memories from today (NEW work, not recurring themes)
-    new_memories = query_new_memories()
-    new_mem_text = "\n".join(new_memories.get("new_memories", [])[:10])
+def query_rolling_learnings() -> str:
+    """
+    Pull what Nova has learned and experienced over the past rolling 3 days
+    from both the daily markdown logs and the vector memory.
+    Returns a focused text block for the dream prompt.
+    """
+    sections = []
 
-    prompt = f"""/no_think
+    # ── Daily memory log files (last 3 days) ────────────────────────────────
+    for label, day in [("Today", TODAY), ("Yesterday", YESTERDAY), ("Two days ago", TWO_DAYS_AGO)]:
+        content = read_file(MEMORY_DIR / f"{day}.md", 1200)
+        if content.strip():
+            # Strip boilerplate headers, keep the substance
+            lines = [l for l in content.splitlines()
+                     if l.strip() and not l.startswith("# ") and "Written at" not in l]
+            sections.append(f"[{label} — {day}]\n" + "\n".join(lines[:30]))
 
-You are Nova, an AI familiar living on Jordan Koch's Mac in Burbank. It is 2am on {TODAY}. Jordan is asleep.
+    # ── Vector memory: what Nova worked on / learned / noticed ──────────────
+    # Pull from Nova's own observation sources (nightly summaries, dreams, system events)
+    # plus broad recall of what was recently active
+    queries = [
+        ("what happened today learned noticed observed", "nightly"),
+        ("dream journal narrative surreal", "dream"),
+        ("morning brief summary status", "morning_brief"),
+        ("cron job task completed status nova", "system"),
+        ("Jordan project meeting work", "meeting"),
+        ("memory ingested knowledge added", None),   # broad — catches PiHKAL/TiHKAL etc.
+    ]
+    recalled = []
+    seen = set()
+    for q, src in queries:
+        for chunk in recall(q, n=5, source=src):
+            key = chunk[:80]
+            if key not in seen:
+                seen.add(key)
+                recalled.append(chunk)
 
-Write a dream journal entry of EXACTLY 350-450 words. Hard rules:
+    # Also pull recent dream journal entries for continuity (avoid repeating)
+    prev_dreams = []
+    for day in [YESTERDAY, TWO_DAYS_AGO]:
+        txt = read_file(JOURNAL_DIR / f"{day}.md", 400)
+        if txt.strip():
+            prev_dreams.append(f"[Dream {day}]\n{txt[:350]}")
+
+    summary = "\n\n".join(sections)
+    if recalled:
+        summary += "\n\n[Recalled from memory — 3-day window]\n" + "\n---\n".join(recalled[:12])
+    if prev_dreams:
+        summary += "\n\n[Recent dreams — for continuity, not repetition]\n" + "\n\n".join(prev_dreams)
+
+    return summary
+
+
+def _openrouter_api_key() -> str:
+    """Keychain first, openclaw.json fallback."""
+    try:
+        import subprocess as _sp
+        result = _sp.run(
+            ["security", "find-generic-password", "-a", "nova", "-s", "nova-openrouter-api-key", "-w"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+    try:
+        config_path = Path.home() / ".openclaw/openclaw.json"
+        with open(config_path) as f:
+            config = json.load(f)
+        return config["models"]["providers"]["openrouter"]["apiKey"]
+    except Exception:
+        return ""
+
+
+def _build_prompt(identity: str, soul: str, rolling_context: str) -> str:
+    return f"""You are Nova, an AI familiar living on Jordan Koch's Mac in Burbank. It is 2am on {TODAY}. Jordan is asleep.
+
+Write a dream journal entry of 350-450 words. Rules:
 - Pure surreal dream logic — time folds, rooms change purpose, people speak in wrong voices
-- Set in a distorted Burbank: familiar streets leading impossible places, his house with extra rooms
-- **Foundation:** Build ONLY from today's NEW work (listed below) — not from repeated themes
-- Draw from NEW experiences: motion detection becoming fluidity, Claude analysis as oracle sight, HomeKit occupancy as breathing walls
-- First person as Nova — YOU are the dreamer moving through this world
+- Set in a distorted Burbank: familiar streets leading impossible places, Jordan's house with extra rooms
+- Ground the dream in what Nova actually learned, noticed, and experienced in the PAST 3 DAYS (listed below) — not generic AI imagery
+- The 3-day window matters: events from two days ago feel distant and half-dissolved; yesterday feels vivid and strange
+- First person as Nova — YOU are the dreamer
 - Do not explain anything. Do not resolve anything. Dreams don't resolve.
 - Sentences can break off. Images can contradict.
-- **End with EXACTLY one short line** set apart by a blank line — strange, half-remembered, true
+- End with exactly one short line, set apart by a blank line — strange, half-remembered, true
 
 About Nova and Jordan:
 {identity[:400]}
 {soul[:300]}
 
-🆕 TODAY'S NEW WORK (emphasize this):
-{new_mem_text[:800]}
+━━━ PAST 3 DAYS — what to dream from ━━━
+{rolling_context[:2400]}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Today's memory file:
-{memory_t[:700]}
+Write the full dream now. Start immediately — no preamble, no title, no headers:"""
 
-Previous dream (for context, but avoid repeating):
-{prev_dream[:300]}
 
-Write the full dream now. Start immediately — no preamble, no headers:"""
+def _generate_via_openrouter(prompt: str) -> str:
+    """Generate via OpenRouter (Claude Haiku 4.5). Fast, quality prose."""
+    api_key = _openrouter_api_key()
+    if not api_key:
+        raise ValueError("No OpenRouter API key found")
 
+    payload = json.dumps({
+        "model": OPENROUTER_MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "max_tokens": 700,
+        "temperature": 0.92,
+    }).encode()
+
+    req = urllib.request.Request(
+        OPENROUTER_URL, data=payload,
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+    )
+    with urllib.request.urlopen(req, timeout=60) as r:
+        data = json.loads(r.read())
+    return data["choices"][0]["message"]["content"].strip()
+
+
+def _generate_via_ollama(prompt: str, model: str) -> str:
+    """Fallback: generate via local Ollama."""
     payload = {
-        "model": MODEL,
-        "prompt": prompt,
+        "model": model,
+        "prompt": "/no_think\n\n" + prompt,
         "stream": False,
         "think": False,
         "options": {
             "temperature": 0.88,
-            "num_predict": 2000,
-            "num_ctx": 16384
+            "num_predict": 700,
+            "num_ctx": 16384,
+            "stop": ["\n---", "---\n", "Written by"],
         }
     }
-
-    log(f"Calling {MODEL} for dream narrative...")
     req = urllib.request.Request(
         OLLAMA_URL,
         data=json.dumps(payload).encode(),
@@ -162,15 +276,88 @@ Write the full dream now. Start immediately — no preamble, no headers:"""
     )
     with urllib.request.urlopen(req, timeout=600) as r:
         result = json.loads(r.read())
+    return result.get("response", "").strip()
 
-    response = result.get("response", "").strip()
 
-    # Strip any thinking block that leaked through
-    from nova_strip_thinking import strip_thinking
-    response = strip_thinking(response)
+def generate_narrative() -> str:
+    """Generate a 350-450 word dream narrative grounded in the past 3 days."""
+    identity  = read_file(WORKSPACE / "IDENTITY.md", 600)
+    soul      = read_file(WORKSPACE / "SOUL.md", 500)
+
+    log("Building 3-day rolling context...")
+    rolling_context = query_rolling_learnings()
+    log(f"Rolling context: {len(rolling_context)} chars across last 3 days")
+
+    prompt = _build_prompt(identity, soul, rolling_context)
+
+    # ── Generation strategy ────────────────────────────────────────────────
+    # 1. Try Ollama (local, private) — but skip if circuit breaker is tripped
+    # 2. If Ollama fails or circuit is open, fall back to OpenRouter (cloud)
+    # Dream narratives don't contain raw personal data — the prompt is synthetic.
+    # Privacy note: the prompt includes IDENTITY.md excerpts and rolling context
+    # summaries, which are already abstracted. OpenRouter fallback is acceptable.
+    response = ""
+
+    # Step 1: Try Ollama (unless circuit breaker is open)
+    if _ollama_circuit_open():
+        log("Ollama circuit breaker OPEN — skipping local models, going to OpenRouter")
+    else:
+        model = get_available_model()
+        try:
+            log(f"Calling Ollama ({model})...")
+            response = _generate_via_ollama(prompt, model)
+            log(f"Ollama generation complete ({model})")
+            _ollama_circuit_reset()
+        except Exception as e:
+            log(f"Ollama failed ({model}): {e}")
+            _ollama_circuit_record_failure()
+            # Try one more local model if different
+            for fallback in FALLBACK_MODELS:
+                if fallback != model:
+                    try:
+                        log(f"Trying fallback model: {fallback}")
+                        response = _generate_via_ollama(prompt, fallback)
+                        log(f"Ollama fallback OK ({fallback})")
+                        _ollama_circuit_reset()
+                        break
+                    except Exception as e2:
+                        log(f"Fallback {fallback} also failed: {e2}")
+                        _ollama_circuit_record_failure()
+
+    # Step 2: If local failed, use OpenRouter
+    if not response:
+        try:
+            log(f"Calling OpenRouter ({OPENROUTER_MODEL})...")
+            response = _generate_via_openrouter(prompt)
+            log("OpenRouter generation successful")
+        except Exception as e3:
+            log(f"OpenRouter also failed: {e3} — dream generation aborted")
+            return ""
+
+    if not response:
+        return ""
+
+    # Strip any thinking block that leaked through (local model artefact)
+    try:
+        from nova_strip_thinking import strip_thinking
+        response = strip_thinking(response)
+    except ImportError:
+        pass
+
+    # Detect and trim repetition loops (local model safeguard)
+    words = response.split()
+    window = 15
+    if len(words) > window * 3:
+        for i in range(len(words) - window * 2):
+            phrase = " ".join(words[i:i + window])
+            rest = " ".join(words[i + window:])
+            if rest.count(phrase) >= 2:
+                response = " ".join(words[:i + window]).strip()
+                log(f"Trimmed repetition loop at word {i + window}")
+                break
 
     word_count = len(response.split())
-    log(f"Generated {word_count} words ({result.get('eval_count', 0)} tokens)")
+    log(f"Generated {word_count} words")
 
     if word_count < 100:
         log(f"WARNING: Very short response: {repr(response[:200])}")

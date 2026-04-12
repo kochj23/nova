@@ -14,7 +14,7 @@ def run_nmap_scan():
     """Trigger NMAPScanner network scan via Nova-Control API"""
     try:
         response = requests.post(
-            "http://127.0.0.1:37400/api/nmap/scan",
+            "http://127.0.0.1:37423/api/nmap/scan",
             json={"full": True, "threat_check": True},
             timeout=300
         )

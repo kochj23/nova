@@ -85,9 +85,11 @@ def save_state(state):
 
 
 def get_accessories():
-    """Query HomeKit via the Shortcuts CLI — no app launch or network scan needed.
+    """Query HomeKit — tries HomekitControl API first, falls back to Shortcuts CLI.
 
-    Requires the 'Nova HomeKit Status' Shortcut to be installed in the Shortcuts app.
+    Primary: HomekitControl HTTP API on port 37432
+    Fallback: 'Nova HomeKit Status' Shortcut via Shortcuts CLI
+
     The Shortcut should:
       1. Find Home Accessories (all)
       2. Repeat with each item:
@@ -100,6 +102,23 @@ def get_accessories():
            - Add to list
       3. Output list as JSON text (Stop and Output)
     """
+    # Try HomekitControl API first (faster, no Shortcuts overhead)
+    try:
+        result = subprocess.run(
+            ["curl", "-s", "--connect-timeout", "3", "http://127.0.0.1:37432/api/accessories"],
+            capture_output=True, text=True, timeout=15
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout.strip())
+            accessories = data if isinstance(data, list) else data.get("accessories", [])
+            if accessories:
+                log(f"Got {len(accessories)} accessories from HomekitControl API")
+                return accessories
+    except Exception as e:
+        log(f"HomekitControl API unavailable: {e}")
+
+    # Fallback to Shortcuts CLI
+    log("Falling back to Shortcuts CLI...")
     try:
         result = subprocess.run(
             [str(HOMEKIT_SCRIPT)],

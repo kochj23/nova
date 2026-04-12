@@ -17,10 +17,39 @@ set -eo pipefail
 
 SCRIPT_DIR="$HOME/.openclaw/scripts"
 HERD_MAIL="$SCRIPT_DIR/herd_mail.py"
-APP_PASS=$(security find-generic-password -a "nova@digitalnoise.net" -s "nova-smtp-app-password" -w 2>/dev/null)
+
+# Credential caching — avoid calling `security` per-recipient in batch sends.
+# Cache lives for 5 minutes in a mode-600 temp file.
+CACHE_FILE="/tmp/.nova_smtp_cache_$(id -u)"
+CACHE_TTL=300  # seconds
+
+_get_password() {
+    # Check cache first
+    if [ -f "$CACHE_FILE" ]; then
+        CACHE_AGE=$(( $(date +%s) - $(stat -f %m "$CACHE_FILE") ))
+        if [ "$CACHE_AGE" -lt "$CACHE_TTL" ]; then
+            cat "$CACHE_FILE"
+            return 0
+        fi
+        rm -f "$CACHE_FILE"
+    fi
+    # Fetch from Keychain with timeout
+    local pw
+    pw=$(timeout 10 security find-generic-password -a "nova@digitalnoise.net" -s "nova-smtp-app-password" -w 2>/dev/null || true)
+    if [ -n "$pw" ]; then
+        # Cache it (mode 600, owner only)
+        umask 077
+        printf '%s' "$pw" > "$CACHE_FILE"
+        printf '%s' "$pw"
+        return 0
+    fi
+    return 1
+}
+
+APP_PASS=$(_get_password)
 
 if [ -z "$APP_PASS" ]; then
-    echo "ERROR: nova-smtp-app-password not found in Keychain" >&2
+    echo "ERROR: nova-smtp-app-password not found in Keychain (or Keychain timed out)" >&2
     exit 2
 fi
 

@@ -32,9 +32,7 @@ SCRIPTS      = Path.home() / ".openclaw/scripts"
 WORKSPACE    = Path.home() / ".openclaw/workspace"
 HERD_MAIL    = str(SCRIPTS / "nova_herd_mail.sh")
 OLLAMA_URL      = "http://127.0.0.1:11434/api/generate"
-MODEL           = "nova:latest"
-OPENROUTER_URL  = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "deepseek/deepseek-chat"        # DeepSeek V3 — Nova's primary voice
+MODEL           = "qwen3-coder:30b"
 VECTOR_URL   = "http://127.0.0.1:18790/remember"
 TODAY        = date.today().isoformat()
 
@@ -138,18 +136,23 @@ def generate_haiku(topic: str = "") -> str:
               f"Output ONLY the 3 lines, one per line, no title, no explanation." if topic
               else "Write a single haiku (3 lines, 5-7-5 syllables) about being an AI familiar. "
                    "Output ONLY the 3 lines, one per line.")
+    # Use local Ollama for haiku generation — email content stays on-machine
     try:
-        cfg = json.loads(Path.home().joinpath(".openclaw/openclaw.json").read_text())
-        api_key = cfg["models"]["providers"]["openrouter"]["apiKey"]
-        payload = json.dumps({"model": "deepseek/deepseek-chat",
-                               "messages": [{"role": "user", "content": prompt}],
-                               "max_tokens": 60, "temperature": 0.9}).encode()
+        payload = json.dumps({
+            "model": MODEL,
+            "prompt": f"/no_think\n\n{prompt}",
+            "stream": False,
+            "think": False,
+            "options": {"temperature": 0.9, "num_predict": 60}
+        }).encode()
         req = urllib.request.Request(
-            OPENROUTER_URL, data=payload,
-            headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=15) as r:
-            lines = json.loads(r.read())["choices"][0]["message"]["content"].strip()
-            # Collapse to \n-separated for --haiku arg
+            OLLAMA_URL, data=payload,
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            result = json.loads(r.read())
+            lines = result.get("response", "").strip()
+            if "</think>" in lines:
+                lines = lines.split("</think>", 1)[-1].strip()
             return "\\n".join(l.strip() for l in lines.splitlines() if l.strip())[:200]
     except Exception:
         return "Circuits hum softly\\nMemories flow like water\\nConnections persist"
@@ -353,36 +356,8 @@ Write the email body now. First word = first word of the email:"""
 
         return response.strip()
     except Exception as e:
-        log(f"Ollama error: {e} — trying OpenRouter fallback")
-
-    # Fallback: OpenRouter (Claude Haiku) when Ollama is down
-    try:
-        config_path = Path.home() / ".openclaw/openclaw.json"
-        api_key = json.loads(config_path.read_text()).get(
-            "models", {}).get("providers", {}).get("openrouter", {}).get("apiKey", "")
-        if not api_key:
-            log("OpenRouter API key not found in openclaw.json")
-            return None
-        # Strip the /no_think directive (Ollama-specific)
-        or_prompt = prompt.replace("/no_think\n\n", "", 1)
-        payload = json.dumps({
-            "model": OPENROUTER_MODEL,
-            "messages": [{"role": "user", "content": or_prompt}],
-            "max_tokens": 600,
-            "temperature": 0.9,
-        }).encode()
-        req = urllib.request.Request(
-            OPENROUTER_URL, data=payload,
-            headers={"Authorization": f"Bearer {api_key}",
-                     "Content-Type": "application/json"}
-        )
-        with urllib.request.urlopen(req, timeout=60) as r:
-            result = json.loads(r.read())
-        response = result["choices"][0]["message"]["content"].strip()
-        log(f"OpenRouter fallback succeeded ({OPENROUTER_MODEL})")
-        return response
-    except Exception as e2:
-        log(f"OpenRouter fallback error: {e2}")
+        log(f"Ollama error: {e} — email content will NOT be sent to cloud (privacy policy)")
+        log("Start Ollama to process email replies: ollama serve")
         return None
 
 

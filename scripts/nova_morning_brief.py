@@ -30,7 +30,7 @@ VECTOR_URL   = "http://127.0.0.1:18790/remember"
 TODAY        = date.today().isoformat()
 NOW          = datetime.now()
 
-HOMEPOD_ROOM = "Master Bedroom (2)"  # Jordan's bedroom HomePod
+# Voice output disabled — was randomly triggering during meetings (2026-04-09)
 
 
 def log(msg):
@@ -53,21 +53,7 @@ def slack_post(text):
         log(f"Slack error: {e}")
 
 
-# ── HomePod TTS ───────────────────────────────────────────────────────────────
-
-def speak(text, room=HOMEPOD_ROOM):
-    """Speak text through a HomePod via nova_homepod.py."""
-    # Strip markdown for spoken text
-    clean = re.sub(r"[*_`]", "", text)
-    clean = re.sub(r"\n+", ". ", clean).strip()
-    log(f"Speaking to {room}: {clean[:80]}...")
-    try:
-        subprocess.run(
-            ["python3", str(SCRIPTS / "nova_homepod.py"), "say", room, clean],
-            timeout=30, capture_output=True
-        )
-    except Exception as e:
-        log(f"HomePod TTS error: {e}")
+# ── HomePod TTS (DISABLED 2026-04-09 — randomly triggering during meetings) ──
 
 
 # ── Weather ───────────────────────────────────────────────────────────────────
@@ -118,12 +104,36 @@ def get_email_priorities():
         return []
 
 
-# ── Meetings today ────────────────────────────────────────────────────────────
+# ── Calendar events today (via nova_calendar.py) ────────────────────────────
 
-def get_meetings():
+def get_calendar_events():
+    """Pull today's events from all calendar accounts via nova_calendar.py."""
+    try:
+        from nova_calendar import get_todays_events, format_time
+        events = get_todays_events()
+        formatted = []
+        for e in events:
+            if e.get("raw"):
+                formatted.append(e.get("title", "")[:60])
+                continue
+            title = e.get("title", "Untitled")
+            if e.get("allDay"):
+                formatted.append(f"(all day) {title[:55]}")
+            else:
+                start = e.get("start", "")
+                time_str = format_time(start) if start else ""
+                formatted.append(f"{time_str} {title[:50]}".strip())
+        return formatted
+    except Exception as e:
+        log(f"Calendar import error: {e} — falling back to OneOnOne")
+        return get_meetings_oneonone()
+
+
+def get_meetings_oneonone():
+    """Fallback: get meetings from OneOnOne app."""
     try:
         r = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "2", "http://127.0.0.1:37400/api/oneonone/meetings?limit=5"],
+            ["curl", "-s", "--connect-timeout", "2", "http://127.0.0.1:37421/api/oneonone/meetings?limit=5"],
             capture_output=True, text=True, timeout=5
         )
         if r.returncode != 0 or not r.stdout.strip():
@@ -140,6 +150,10 @@ def get_meetings():
         return today_meetings[:3]
     except Exception:
         return []
+
+
+# Legacy alias for backward compatibility
+get_meetings = get_calendar_events
 
 
 # ── GitHub overnight ──────────────────────────────────────────────────────────
@@ -182,7 +196,7 @@ def get_system_health():
         issues.append("vector memory server is down")
         mem_count = 0
 
-    for port, name in [(37400, "NovaControl")]:
+    for port, name in [(37432, "HomekitControl"), (37421, "OneOnOne")]:
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=2)
         except Exception:
@@ -214,7 +228,7 @@ def main():
 
     weather    = get_weather()
     emails     = get_email_priorities()
-    meetings   = get_meetings()
+    meetings   = get_calendar_events()
     gh_notes   = get_github_overnight()
     issues, mem_count = get_system_health()
 
@@ -285,8 +299,7 @@ def main():
     log("Posting to Slack...")
     slack_post("\n".join(slack_lines))
 
-    log(f"Speaking to {HOMEPOD_ROOM}...")
-    speak(spoken_brief)
+    # Voice output disabled (2026-04-09)
 
     # Store brief in vector memory
     summary = f"Morning brief {TODAY}: {weather}. Emails: {len(emails)} urgent. Meetings: {', '.join(meetings) or 'none'}. GitHub: {'; '.join(gh_notes) or 'no activity'}."

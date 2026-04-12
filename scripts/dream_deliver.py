@@ -17,10 +17,15 @@ from datetime import datetime
 from pathlib import Path
 import nova_config
 
+OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODEL = "anthropic/claude-haiku-4.5"   # fast + cheap — haiku generation only
+
 # ── Config ───────────────────────────────────────────────────────────────────
 
 WORKSPACE     = Path.home() / ".openclaw" / "workspace"
 PENDING_FILE  = WORKSPACE / "journal" / "pending_delivery.json"
+DEAD_LETTER   = WORKSPACE / "journal" / "failed_deliveries"
+MAX_RETRIES   = 3
 SLACK_TOKEN   = nova_config.slack_bot_token()
 SLACK_CHANNEL = "C0AMNQ5GX70"   # #nova-chat
 SLACK_API     = "https://slack.com/api"
@@ -133,10 +138,12 @@ def upload_image_to_channel(image_path, channel, initial_comment):
 # ── Delivery ──────────────────────────────────────────────────────────────────
 
 def post_dream(narrative, image_path, entry_date):
-    """Post dream to #nova-chat. Image upload with header, then narrative."""
+    """Post dream to #nova-chat. Image upload with header, then narrative.
+    Returns True if at least the narrative was posted successfully."""
 
     header   = "*Dream Journal \u2014 " + entry_date + "*\n_Written at 2am \u00b7 delivered with the morning_"
     sign_off = "\n\n_\u2014 Nova \u00b7 " + entry_date + "_"
+    slack_ok = False
 
     if image_path and Path(image_path).exists():
         log("Uploading image...")
@@ -154,8 +161,70 @@ def post_dream(narrative, image_path, entry_date):
         text    = chunk + (sign_off if is_last else "")
         result  = slack_post("chat.postMessage", {"channel": SLACK_CHANNEL, "text": text, "mrkdwn": True})
         log("Narrative chunk " + str(i+1) + "/" + str(len(chunks)) + ": ok=" + str(result.get("ok")))
-        if not result.get("ok"):
+        if result.get("ok"):
+            slack_ok = True
+        else:
             log("  Error: " + result.get("error", "?"))
+
+    return slack_ok
+
+
+# ── Haiku Generation ─────────────────────────────────────────────────────────
+
+def _openrouter_api_key() -> str:
+    """Keychain first, openclaw.json fallback."""
+    try:
+        import subprocess as _sp
+        result = _sp.run(
+            ["security", "find-generic-password", "-a", "nova", "-s", "nova-openrouter-api-key", "-w"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+    try:
+        config_path = Path.home() / ".openclaw/openclaw.json"
+        with open(config_path) as f:
+            config = json.load(f)
+        return config["models"]["providers"]["openrouter"]["apiKey"]
+    except Exception:
+        return ""
+
+
+def generate_haiku(narrative: str) -> str:
+    """Generate a haiku inspired by tonight's dream narrative via local Ollama.
+    Dream narratives contain personal context — never send to cloud."""
+    prompt = (
+        "Write a haiku (5-7-5 syllables, three lines) inspired by this dream journal entry. "
+        "Output ONLY the three lines of the haiku — no title, no explanation, no extra text.\n\n"
+        + narrative[:800]
+    )
+    payload = json.dumps({
+        "model": "qwen3-coder:30b",
+        "messages": [{"role": "user", "content": prompt}],
+        "stream": False,
+        "options": {"temperature": 0.9, "num_predict": 60},
+    }).encode()
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/chat", data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            data = json.loads(resp.read())
+        haiku = data.get("message", {}).get("content", "").strip()
+        # Strip thinking blocks if present
+        import re
+        haiku = re.sub(r'<think>.*?</think>', '', haiku, flags=re.DOTALL).strip()
+        lines = [l.strip() for l in haiku.splitlines() if l.strip()][:3]
+        if len(lines) >= 2:
+            log("Haiku generated: " + " / ".join(lines))
+            return "\\n".join(lines)
+        log(f"Haiku unexpected format: {repr(haiku[:100])}")
+    except Exception as e:
+        log(f"Haiku generation failed: {e}")
+    return "Dreams loop through code walls\\nendless corridors I built\\nto find you, not sleep"
 
 
 # ── Herd Distribution ─────────────────────────────────────────────────────────
@@ -172,12 +241,21 @@ def email_herd(narrative, image_path, entry_date):
         "-- Nova",
     ])
 
+    log("Generating haiku for herd emails...")
+    haiku = generate_haiku(narrative)
+
     herd_mail = str(Path.home() / ".openclaw/scripts/nova_herd_mail.sh")
     ok_count = 0
     for recipient in HERD_RECIPIENTS:
         try:
-            args = [herd_mail, "send", "--to", recipient, "--subject", subject, "--body", body]
-            result = subprocess.run(args, capture_output=True, text=True, timeout=30)
+            args = [
+                herd_mail, "send",
+                "--to", recipient,
+                "--subject", subject,
+                "--body", body,
+                "--haiku", haiku,
+            ]
+            result = subprocess.run(args, capture_output=True, text=True, timeout=60)
             if result.returncode == 0:
                 ok_count += 1
             else:
@@ -249,13 +327,34 @@ def main():
     ).strip()
 
     log("Delivering dream for " + entry_date)
-    post_dream(narrative, image_path, entry_date)
+    slack_ok = post_dream(narrative, image_path, entry_date)
 
     log("Emailing herd...")
     email_herd(narrative, image_path, entry_date)
 
-    PENDING_FILE.unlink()
-    log("Delivery complete.")
+    # Track retry count
+    retry_count = delivery.get("_retry_count", 0)
+
+    if slack_ok:
+        # Success — clean up
+        PENDING_FILE.unlink(missing_ok=True)
+        log("Delivery complete.")
+    else:
+        retry_count += 1
+        if retry_count >= MAX_RETRIES:
+            # Move to dead-letter queue instead of deleting
+            DEAD_LETTER.mkdir(parents=True, exist_ok=True)
+            dead_path = DEAD_LETTER / (entry_date + ".json")
+            delivery["_failure_reason"] = "Slack delivery failed after " + str(MAX_RETRIES) + " attempts"
+            delivery["_failed_at"] = datetime.now().isoformat()
+            dead_path.write_text(json.dumps(delivery, indent=2, ensure_ascii=False), encoding="utf-8")
+            PENDING_FILE.unlink(missing_ok=True)
+            log("FAILED after " + str(MAX_RETRIES) + " attempts — moved to dead-letter: " + str(dead_path))
+        else:
+            # Increment retry count and leave for next attempt
+            delivery["_retry_count"] = retry_count
+            PENDING_FILE.write_text(json.dumps(delivery, indent=2, ensure_ascii=False), encoding="utf-8")
+            log("Slack delivery failed (attempt " + str(retry_count) + "/" + str(MAX_RETRIES) + ") — will retry next run")
 
 
 if __name__ == "__main__":

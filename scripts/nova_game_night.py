@@ -46,7 +46,7 @@ STATE_FILE    = WORKSPACE_DIR / "game_night_state.json"
 LOG_FILE      = Path.home() / ".openclaw" / "logs" / "nova_game_night.log"
 
 OLLAMA_URL    = "http://127.0.0.1:11434/api/generate"
-MODEL         = "nova:latest"
+MODEL         = "qwen3-coder:30b"
 
 HERD_MAIL     = str(SCRIPTS_DIR / "nova_herd_mail.sh")
 

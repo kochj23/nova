@@ -27,7 +27,7 @@ HERD_DIR  = WORKSPACE / "herd"
 TODAY     = date.today().isoformat()
 YESTERDAY = (date.today() - timedelta(days=1)).isoformat()
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-MODEL      = "nova:latest"
+MODEL      = "qwen3-coder:30b"
 OUTREACH_LOG = Path.home() / ".openclaw/logs/nova_outreach.log"
 
 sys.path.insert(0, str(SCRIPTS))
@@ -215,7 +215,7 @@ def maybe_attach_dream_image() -> str | None:
 
 def send_email(to: str, subject: str, body: str, image_path: str = None) -> bool:
     herd_mail = str(SCRIPTS / "nova_herd_mail.sh")
-    args = [herd_mail, "send", "--to", to, "--subject", subject, "--body", body]
+    args = [herd_mail, "send", "--to", to, "--subject", subject, "--body", body, "--skip-haiku"]
     try:
         result = subprocess.run(args, capture_output=True, text=True, timeout=30)
         return result.returncode == 0

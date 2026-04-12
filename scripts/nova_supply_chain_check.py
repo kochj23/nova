@@ -143,7 +143,7 @@ def scan_installed_packages() -> dict:
     
     # Check pip packages (if applicable)
     try:
-        output = subprocess.run(["pip", "list", "--format=json"],
+        output = subprocess.run(["python3", "-m", "pip", "list", "--format=json"],
                               capture_output=True, text=True, timeout=10)
         if output.returncode == 0:
             packages = json.loads(output.stdout)

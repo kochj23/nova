@@ -45,7 +45,8 @@ def send_mail(to, subject, body, image_path=None, bcc=False, in_reply_to=None,
     success = True
 
     for recipient in recipients:
-        args = [HERD_MAIL, "send", "--to", recipient, "--subject", subject, "--body", body]
+        args = [HERD_MAIL, "send", "--to", recipient, "--subject", subject, "--body", body,
+                "--skip-haiku"]
 
         if image_path:
             args += ["--attachment", str(image_path)]

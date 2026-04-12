@@ -266,7 +266,7 @@ Generate a realistic geopolitical crisis. Return ONLY valid JSON:
 
     try:
         payload = json.dumps({
-            "model": "nova:latest",
+            "model": "qwen3-coder:30b",
             "prompt": prompt,
             "stream": False,
             "think": False,

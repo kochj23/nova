@@ -71,3 +71,43 @@ JORDAN_EMAIL  = "kochj23" + "@gmail.com"     # noqa: avoid scanner false-positiv
 NOVA_EMAIL    = "nova@digitalnoise.net"
 VECTOR_URL    = "http://127.0.0.1:18790/remember"
 SCRIPTS_DIR   = str(__import__('pathlib').Path.home() / ".openclaw/scripts")
+
+
+# ── OpenRouter ───────────────────────────────────────────────────────────────
+
+def openrouter_api_key() -> str:
+    """OpenRouter API key. Keychain first, openclaw.json fallback for gateway process."""
+    key = _keychain("nova-openrouter-api-key", required=False)
+    if key:
+        return key
+    try:
+        import json
+        from pathlib import Path
+        config_path = Path.home() / ".openclaw/openclaw.json"
+        with open(config_path) as f:
+            config = json.load(f)
+        fallback = config.get("models", {}).get("providers", {}).get("openrouter", {}).get("apiKey", "")
+        if fallback:
+            print("[nova_config] INFO: openrouter_api_key loaded from openclaw.json fallback", file=__import__('sys').stderr)
+        return fallback
+    except Exception:
+        return ""
+
+
+def slack_app_token() -> str:
+    """Slack app-level token (xapp-...). Keychain first, openclaw.json fallback."""
+    token = _keychain("nova-slack-app-token", required=False)
+    if token:
+        return token
+    try:
+        import json
+        from pathlib import Path
+        config_path = Path.home() / ".openclaw/openclaw.json"
+        with open(config_path) as f:
+            config = json.load(f)
+        fallback = config.get("channels", {}).get("slack", {}).get("appToken", "")
+        if fallback:
+            print("[nova_config] INFO: slack_app_token loaded from openclaw.json fallback", file=__import__('sys').stderr)
+        return fallback
+    except Exception:
+        return ""
