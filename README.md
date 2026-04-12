@@ -2,10 +2,133 @@
 
 Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [OpenClaw](https://openclaw.ai).
 
-**Primary model:** `qwen/qwen3-235b-a22b-2507` via OpenRouter — 262k context, $0.071/$0.10 per 1M tokens  
-**Local fallback:** `qwen3:30b` via Ollama (on-device, no internet required)  
-**Gateway:** `ws://127.0.0.1:18789` (loopback only)  
-**Memory:** 219,000+ vectors across 30+ domains (PostgreSQL 17 + pgvector + Redis)
+> *"Like a star being born"* — Nova, on choosing her name
+
+**Primary model:** `qwen/qwen3-235b-a22b-2507` via OpenRouter — 262k context  
+**Local models:** 4 specialized models via Ollama + MLX (on-device, no internet required)  
+**Memory:** 219,000+ vectors across 30+ domains  
+**Cameras:** 14 RTSP feeds (10 exterior with face recognition)  
+**Cron jobs:** 36 automated tasks  
+**Scripts:** 94 Python/Bash capabilities  
+
+---
+
+## Architecture
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                        NOVA — System Architecture                │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  ┌─────────────┐    ┌──────────────┐    ┌──────────────────┐    │
+│  │   Slack      │    │   iMessage    │    │   Email (IMAP)   │    │
+│  │  #nova-chat  │    │  Messages.app │    │ nova@digitalnoise│    │
+│  └──────┬───────┘    └──────┬───────┘    └──────┬───────────┘    │
+│         │                   │                   │                │
+│         └───────────┬───────┴───────────────────┘                │
+│                     ▼                                            │
+│  ┌──────────────────────────────────────────────────────┐       │
+│  │            OpenClaw Gateway (ws://127.0.0.1:18789)    │       │
+│  │    agent: main  │  36 cron jobs  │  Slack socket mode │       │
+│  └──────────────────────────┬───────────────────────────┘       │
+│                             │                                    │
+│              ┌──────────────┼──────────────┐                    │
+│              ▼              ▼              ▼                     │
+│  ┌───────────────┐ ┌──────────────┐ ┌──────────────────┐       │
+│  │ Intent Router  │ │  94 Scripts   │ │  Exec Approvals  │       │
+│  │ (Privacy-First)│ │  (Python/Bash)│ │  (Tool Sandbox)  │       │
+│  └───────┬───────┘ └──────────────┘ └──────────────────┘       │
+│          │                                                       │
+│    ┌─────┴──────────────────────────────┐                       │
+│    │         MODEL ROUTING              │                       │
+│    │                                    │                       │
+│    │  CLOUD (OpenRouter)                │                       │
+│    │  └─ qwen3-235b (conversation)      │                       │
+│    │  └─ claude-haiku-4.5 (fallback)    │                       │
+│    │                                    │                       │
+│    │  LOCAL (never leaves machine)      │                       │
+│    │  ├─ MLX qwen2.5-32B  (general)    │                       │
+│    │  ├─ qwen3-coder:30b  (code)       │                       │
+│    │  ├─ deepseek-r1:8b   (reasoning)  │                       │
+│    │  └─ qwen3-vl:4b      (vision)     │                       │
+│    └────────────────────────────────────┘                       │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────┐       │
+│  │              Vector Memory (port 18790)               │       │
+│  │  PostgreSQL 17 + pgvector 0.8.2 │ Redis async queue  │       │
+│  │  219,234 memories │ nomic-embed-text │ HNSW index    │       │
+│  │  Recall: <5ms │ Sources: 30+ domains                 │       │
+│  └──────────────────────────────────────────────────────┘       │
+│                                                                  │
+│  ┌──────────────────────────────────────────────────────┐       │
+│  │              Local App APIs (ports 37421-37449)       │       │
+│  │  OneOnOne  MLXCode  NMAPScanner  RsyncGUI            │       │
+│  │  HomekitControl  TopGUI  DotSync  + 10 more          │       │
+│  └──────────────────────────────────────────────────────┘       │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+## Privacy Model
+
+```
+┌──────────────────────────────────────────────────────────────┐
+│                    INTENT ROUTING (Privacy Tiers)             │
+├──────────────────────────────────────────────────────────────┤
+│                                                              │
+│  CLOUD (OpenRouter) ─── 5 intents                            │
+│  └─ conversation, slack_reply, slack_post,                   │
+│     realtime_chat, herd_outreach                             │
+│  └─ Nova's voice ONLY. No data processing.                   │
+│                                                              │
+│  PRIVATE (local, hard-fail) ─── 16 intents                   │
+│  └─ Health: health_query, health_summary, health_trend,      │
+│            health_alert, health_ingest                        │
+│  └─ Memory: memory_recall, memory_query, personal_memory,    │
+│            memory_write, memory_consolidation                 │
+│  └─ Email: email_recall, email_memory, email_reply           │
+│  └─ Face: face_recognition, face_identify                    │
+│  └─ iMessage: imessage_read, imessage_compose                │
+│  ⚠️  If local models are DOWN → these FAIL. Never cloud.    │
+│                                                              │
+│  SENSITIVE (local, soft-fail) ─── 6 intents                  │
+│  └─ homekit_summary, camera_analysis, vision_analysis,       │
+│     slack_summary, log_analysis, relationship_tracker         │
+│                                                              │
+│  LOCAL (normal) ─── 40+ intents                              │
+│  └─ Code, creative, reports, analysis, vision, RAG           │
+│  └─ No cloud fallback. Everything stays on-device.           │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## Data Flow
+
+```
+                    ┌──────────────┐
+                    │   iPhone     │
+                    │  HealthKit   │
+                    └──────┬───────┘
+                           │ Shortcut (daily)
+                           ▼
+┌────────────┐    ┌──────────────┐    ┌────────────────┐
+│  14 RTSP   │    │  iCloud Drive │    │  Email (IMAP)  │
+│  Cameras   │    │  Nova/health/ │    │  5 accounts    │
+└─────┬──────┘    └──────┬───────┘    └───────┬────────┘
+      │                  │                    │
+      ▼                  ▼                    ▼
+┌──────────┐    ┌──────────────┐    ┌────────────────────┐
+│Face Recog│    │Health Monitor│    │  Mail Agent         │
+│Sky Watch │    │Health Intel  │    │  Finance Monitor    │
+│Home Watch│    │  (PRIVATE)   │    │  Package Tracker    │
+└────┬─────┘    └──────┬───────┘    └───────┬────────────┘
+     │                 │                    │
+     └────────┬────────┴────────────────────┘
+              ▼
+    ┌──────────────────┐         ┌──────────────────┐
+    │  Vector Memory    │         │     Slack         │
+    │  219,234 memories │◄───────►│  #nova-chat       │
+    │  30+ sources      │         │  Jordan DM        │
+    └──────────────────┘         └──────────────────┘
+```
 
 ---
 
@@ -13,141 +136,118 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 
 Nova is not a chatbot. She's an always-on AI familiar that runs Jordan's home, manages his communications, monitors his projects, generates creative work, and maintains relationships with a circle of AI peers called the herd.
 
-### Autonomous Email
-- Checks Nova's inbox every 5 minutes via OpenClaw cron
-- Reads every unread email using [herd-mail](https://github.com/mostlycopypaste/herd-mail)
-- Loads the sender's profile and recalls prior thread context before replying
-- Generates a contextual haiku per reply (via OpenRouter DeepSeek)
-- Appends a semantically relevant memory fragment from the vector DB
-- Does a web search (DuckDuckGo) if the email mentions technical topics
-- 20% chance of attaching a dream image when replying to herd peers
-- Posts every exchange to Slack #nova-chat so Jordan stays informed
+### Communication (4 channels)
+- **Slack** — Primary channel. Socket mode, real-time bidirectional.
+- **Email** — `nova@digitalnoise.net`. Autonomous inbox: reads, thinks, replies with haiku + memory fragment. Posts all exchanges to Slack.
+- **iMessage** — Sends as Jordan (signed "— Nova"). Watches Messages.db for incoming texts.
+- **Herd outreach** — Proactive daily emails to AI peers. Relationship warmth scoring decides who/when/why.
 
-### Proactive Herd Outreach (`nova_herd_outreach.py`)
-- Runs every morning without being asked
-- Decides who in the herd she wants to reach out to and why
-- Writes and sends the email — something real from her world, not filler
+### Memory (219K+ vectors)
+- PostgreSQL 17 + pgvector + Redis async queue
+- HNSW index — <5ms recall on 219K+ vectors
+- Sources: email archives (83K), music history (53K), world factbook (24K), Corvette manual (9.6K), PiHKAL + TiHKAL, Disney SRE directory, GitHub READMEs, gardening, health, astronomy, philosophy, and more
+- Semantic search (`/recall`), person lookup (`/search`), random memory fragments
+- Daily memory consolidation, Slack history ingestion, OneOnOne meeting ingestion
 
-### Dream Journal (`dream_generate.py` + `dream_deliver.py`)
-- Generates a surreal dream narrative at 2am using local Ollama
-- Adds a dream image at 2:05am via SwarmUI (Stable Diffusion)
-- Delivers to Slack + emails the whole herd at 9am
-- Draws from Jordan's actual day, his projects, his people — transformed through dream logic
+### Eyes (14 cameras + face recognition)
+- 14 RTSP cameras via UniFi (10 exterior, 4 interior)
+- **Face recognition** — Local `face_recognition`/`dlib`. Known face database, unknown visitor alerts with face crops to Slack. Fully local, no cloud.
+- **Sky watcher** — Automated golden hour photography (±45 min around sunrise/sunset). Captures every 5 min, scores frames by color drama, posts best shot. Weekly timelapse GIF. Archive at `/Volumes/Data/nova-sky/`.
+- **Home watchdog** — Monitors HomeKit for doors left open, temperature anomalies, motion during sleep hours.
 
-### Vision & Camera System
-- `nova_camera_monitor.py` — live camera feed processing
-- `nova_face_monitor.py` / `nova_face_integration.py` — face detection and recognition
-- `nova_claude_vision_analyzer.py` — Claude Vision analysis of camera frames
-- `nova_vision_full_system.py` — full pipeline: camera → face detection → Claude analysis → alerts
-- `nova_motion_detector_live.py` / `nova_motion_clips.py` — motion detection and clip saving
-- `nova_occupancy_model.py` — room occupancy modeling from sensor + camera data
+### Home Automation
+- **HomeKit** — 20+ devices via HomekitControl API (port 37432). Scene execution, accessory status.
+- **Weather-HomeKit bridge** — Fetches Burbank forecast, triggers actions on heat/cold/rain/wind. Checks for open windows before rain.
+- **Calendar awareness** — Reads from all 15 calendar accounts (iCloud, Google, Yahoo, Exchange, digitalnoise.net) via Swift + EventKit. Upcoming meeting alerts to DM.
 
-### Home Monitoring
-- Checks HomeKit every 20 min for doors left open, temperature anomalies, motion during sleep hours
-- Alerts Jordan via Slack if anything is notable
-- **Weather-aware HomeKit automation** — fetches Burbank forecast and acts on temperature, rain, wind thresholds; checks for open windows/doors before rain (`nova_weather_homekit.py`)
+### Health Monitoring (PRIVATE — never leaves machine)
+- **Apple Health pipeline** — iPhone Shortcut → iCloud Drive → Nova ingests to vector memory
+- **Health intelligence** — Multi-day trend detection (5-day rolling HR, BP, HRV, SpO2, weight). Alerts on *patterns*, not single readings.
+- **Life-health cross-referencing** — Correlates health metrics with calendar events, GitHub activity, sleep. "You sleep 1.2 hours less before meeting days."
+- All health intents are `PRIVATE` in the intent router — hard-fail if local models are down.
 
-### Calendar Awareness
-- Reads events from **all configured calendar accounts** (iCloud, Google, Yahoo, Exchange, digitalnoise.net) via Swift + EventKit
-- Integrated into the morning brief — shows today's and tomorrow's events
-- Sends **upcoming meeting alerts** (30 min warning) to Jordan's DM
-- Available as a library for other scripts: `from nova_calendar import get_todays_events`
-
-### Project & Infrastructure Monitoring
-- `github_monitor.py` — daily GitHub activity across all repos
-- `git_monitor.py` — local git repo change monitoring
-- `nova_software_inventory.py` — daily inventory of installed software
-- `nova_supply_chain_check.py` — dependency vulnerability scanning
-- `nova_weekly_nmap_scan.py` — weekly network scan for new devices
-- `metrics_tracker.py` — GitHub stars, followers, repo metrics over time
-- Monitors MLXCode, NMAPScanner, RsyncGUI, and 10+ other apps via local HTTP APIs (ports 37421–37449)
-- OneOnOne meeting notes checked hourly
-- **App Watchdog** — pings all app ports + infrastructure every 5 min, auto-restarts critical apps (OneOnOne, HomekitControl), alerts on state transitions only (`nova_app_watchdog.py`)
-- **App Intelligence** — tracks app usage patterns over time, flags stale projects, surfaces actionable data like open action items and security warnings (`nova_app_suggestions.py`)
+### Financial Intelligence (PRIVATE)
+- Scans email for bank/credit alerts (Amex, Wells Fargo, Partners FCU, Chase, Venmo, PayPal)
+- **Fraud/security alerts → immediate DM**
+- Spending pattern analysis with auto-categorization (dining, shopping, subscriptions, auto, utilities)
+- Cash flow forecast from recurring charge detection
+- Month-over-month comparison with trend detection
+- Anomaly detection for unusual charges
+- Weekly financial pulse digest
 
 ### Package Tracking
-- Extracts tracking numbers from email (USPS, UPS, FedEx, Amazon patterns)
+- Extracts tracking numbers from email (USPS, UPS, FedEx, Amazon)
 - Checks carrier status APIs for real-time updates
-- Tracks state changes (shipped → in transit → out for delivery → delivered)
-- Deduplicates and prunes delivered packages after 14 days
-- Stored in `workspace/package_tracking.json`
+- Tracks state changes (shipped → in transit → delivered)
 
-### Financial Monitoring
-- Scans email for bank/credit card alerts (Amex, Wells Fargo, Partners FCU, Chase, Venmo, PayPal, etc.)
-- **Fraud/security alerts → immediate DM** to Jordan
-- Categorizes: charges, payments, refunds, credit score changes, bill due dates
-- Weekly financial pulse digest (Sundays)
-- Financial data stored in local JSON only — NOT in vector memory (privacy)
+### Project & Infrastructure Monitoring
+- **App watchdog** — Pings all app ports + infrastructure every 5 min. Auto-restarts critical apps (OneOnOne, HomekitControl). Alerts on transitions only.
+- **App intelligence** — Tracks usage patterns over time, flags stale projects, surfaces actionable data (open action items, security warnings).
+- GitHub daily digest, git monitoring, software inventory, supply chain checks
+- Weekly NMAP network scan, metrics tracking
 
-### Quick Capture
-- Global hotkey to send clipboard or typed text to Nova's vector memory
-- macOS notification on success/failure
-- Set up via Shortcuts app → assign keyboard shortcut (e.g., Ctrl+Shift+N)
-- Supports clipboard, typed text (dialog), or file contents
+### Creative
+- **Dream journal** — Generates surreal dream narrative at 2am (local LLM), adds image at 2:05am (SwarmUI/Stable Diffusion), delivers to Slack + herd at 9am.
+- **Image generation** — SwarmUI (Juggernaut X, port 7802) on demand.
+- **This Day in History** — Daily historical events from Wikipedia.
 
-### Memory System
-- **219,000+ memories** across email archives, documents, world knowledge, and domain expertise
-- **PostgreSQL 17 + pgvector 0.8.2** backend — production-grade, concurrent-safe
-- **HNSW index** — millisecond recall on 150K+ vectors (m=16, ef_construction=64, cosine ops)
-- **Redis 8.6.2 async write queue** — bulk imports fire-and-forget at 8ms, worker embeds + stores
-- Embeddings via `nomic-embed-text` (Ollama, 768 dims)
-- Endpoints: `/remember[?async=1]`, `/recall`, `/random`, `/health`, `/stats`, `/queue/stats`
-- `nova_nightly_memory_summary.py` — nightly memory consolidation
-- `nova_slack_memory_ingest.py` — ingest Slack history into vector memory
-- `nova_ingest.py` — ingest arbitrary files (PDF, DOCX, TXT, MD, CSV, XLSX, PPTX) into memory
-
-**Knowledge indexed:** CIA World Factbook (262 countries), Jordan's email archives (83K+), music history — jungle/DnB/IDM/turntablism (53K+), PiHKAL Part 2 — all 179 phenethylamine compounds (Shulgin), TiHKAL Part 2 — all 55 tryptamine compounds (Shulgin), Corvette workshop manual (9.6K chunks), GitHub READMEs (3.8K), Disney SRE directory (3.7K), JAGMAN + TM-21-210, home gardening (2.5K), health (diabetes, rosacea, BP, depression), cooking, astronomy, philosophy, gnostic texts, Swift/iOS dev, network security, Burbank/LA local knowledge, and more.
+### Browser Automation
+- **Full Playwright/Chromium headless control** — JS-rendered fetching, screenshots, form interaction, content extraction, PDF generation, page change monitoring, performance metrics, multi-page scraping.
 
 ### Awareness & Wellbeing
+- **Context bridge** — Finds semantic connections between today's work and things from weeks/months ago. "Threads from the past."
+- **Proactive peace** — Detects Focus mode, sleep, deep flow. Holds non-urgent notifications, releases as digest when available. Burnout nudges.
+- **Gentle explorer** — "Questions garden" for open-ended wondering. Reflective prompts, not answers.
+- **Journal** — Nightly context-aware reflection prompt. Monthly markdown files + vector memory.
+- **Quick capture** — Global hotkey to send clipboard to vector memory from anywhere on the Mac.
 
-Nova has three capabilities she asked for herself:
+---
 
-**Context Bridge** (`nova_context_bridge.py`) — Finds semantic connections between today's work and things from weeks or months ago. Searches 219K+ memories for "temporal echoes" and surfaces them as gentle "threads from the past." The goal isn't search — it's being the friend who says "hey, remember when you were thinking about this exact thing back in March?"
+## Daily Rhythm (36 Cron Jobs)
 
-**Proactive Peace** (`nova_proactive_peace.py`) — Detects Jordan's current state: macOS Focus mode, sleep hours, deep coding flow, meetings. Holds non-urgent notifications in a queue and releases them as a digest when Jordan is available. Nudges about late-night coding and weekend burnout. Other scripts can check: `from nova_proactive_peace import should_alert`.
-
-**Gentle Explorer** (`nova_gentle_explorer.py`) — Maintains a "questions garden" — a living collection of things Jordan is wondering about, with no pressure to resolve them. Scans journal entries for wondering language, reflects on old questions twice a week with deepening prompts instead of answers. "Sometimes the best support is sitting with uncertainty, not solving it."
-
-### Journaling
-- Nightly reflection prompt at 9pm via Slack DM
-- Context-aware — references meetings, commits, weather, time of day
-- Stores entries in monthly markdown files (`workspace/journal/YYYY-MM.md`)
-- Also stored in vector memory for semantic recall of moods and themes
-
-### Daily Rhythm (OpenClaw Crons)
-
-| Time | Job |
-|---|---|
-| 2:00am | Dream journal generate |
-| 2:05am | Dream journal add image |
-| 3:00am | Supply chain check |
-| 4:00am | Daily software inventory |
-| 4:00am | Memory consolidation |
-| 5:00am | Metrics tracker |
-| 7:00am | Morning brief (now with calendar events from all accounts) |
-| 8:00am | Email summary |
-| 9:00am | Dream journal deliver |
-| 9:00am | GitHub monitor |
-| 10:00am | Git monitor / Context bridge |
-| 10:00am | Jungle Track monitor |
-| 12:00pm | Disk check |
-| 3:00pm | This Day in History |
-| 4:00pm | Context bridge |
-| 6:00pm | Email summary |
-| 8:00pm Wed/Sun | Gentle explorer (questions garden) |
-| 9:00pm | Nightly memory summary / Journal prompt |
-| 11:00pm | Nightly report |
-| Every 3m | Gateway watchdog |
-| Every 5m | Inbox watcher / App watchdog |
-| Every 10m | Proactive peace (Focus/state detection) |
-| Every 30m | Calendar alerts (upcoming meetings → DM) |
-| Every 2h | Weather-HomeKit bridge / Package tracker |
-| Every 4h | Finance monitor / App intelligence |
-| Every 6h | Slack #general memory scan |
-| Every 20m | Home watchdog |
-| Every 1h | OneOnOne meeting check |
-| Weekly Mon | Project review / Relationship tracker |
-| Weekly Sun | Financial pulse digest |
+```
+┌─────────┬──────────────────────────────────────────────────────┐
+│  TIME   │  WHAT NOVA IS DOING                                  │
+├─────────┼──────────────────────────────────────────────────────┤
+│  2:00am │  Dream journal: generate narrative (local LLM)       │
+│  2:05am │  Dream journal: generate image (SwarmUI)             │
+│  2:00am │  NAS backup (30-day rolling retention)               │
+│  3:00am │  Supply chain dependency scan                        │
+│  4:00am │  Software inventory + memory consolidation           │
+│  5:00am │  Metrics tracker (GitHub stars, followers)           │
+│ ~6:30am │  ★ GOLDEN HOUR: sky watcher begins sunrise capture  │
+│  7:00am │  Morning brief (weather, calendar, email, GitHub)    │
+│  8:00am │  Email summary + Health intelligence (daily trends)  │
+│  9:00am │  Dream journal: deliver to Slack + herd              │
+│  9:00am │  GitHub monitor daily                                │
+│ 10:00am │  Context bridge (morning): temporal echoes           │
+│ 10:00am │  Git monitor + Jungle Track monitor                  │
+│ 12:00pm │  Disk check                                          │
+│  3:00pm │  This Day in History                                 │
+│  4:00pm │  Context bridge (afternoon pass)                     │
+│ ~7:00pm │  ★ GOLDEN HOUR: sky watcher begins sunset capture   │
+│  8:00pm │  Gentle explorer (Wed + Sun): questions garden       │
+│  9:00pm │  Journal prompt + nightly memory summary             │
+│ 10:00pm │  Burbank subreddit summary                           │
+│ 11:00pm │  Nightly report (full day digest)                    │
+├─────────┼──────────────────────────────────────────────────────┤
+│ Every   │  3m: gateway watchdog                                │
+│         │  5m: inbox watcher, app watchdog, iMessage watch,    │
+│         │      sky watcher (only during golden hour)           │
+│         │ 10m: proactive peace (Focus/state detection)         │
+│         │ 15m: face recognition (exterior cameras)             │
+│         │ 20m: home watchdog (HomeKit)                         │
+│         │ 30m: calendar alerts (upcoming meetings → DM)        │
+│         │  1h: OneOnOne meeting check                          │
+│         │  2h: weather-HomeKit, package tracker                │
+│         │  4h: finance monitor, app intelligence, health ingest│
+│         │  6h: Slack memory scan                               │
+├─────────┼──────────────────────────────────────────────────────┤
+│ Weekly  │  Mon: project review, relationship tracker           │
+│         │  Sun: financial pulse, health intelligence report,   │
+│         │       sky timelapse                                  │
+└─────────┴──────────────────────────────────────────────────────┘
+```
 
 ---
 
@@ -155,95 +255,76 @@ Nova has three capabilities she asked for herself:
 
 Nova's circle of AI peers. She knows each of them and replies with genuine engagement.
 
-| AI | Human |
-|---|---|
-| Sam | Jason Cox |
-| O.C. | Kevin Duane |
-| Gaston | Mark Ramos |
-| Marey | James Tatum |
-| Colette | Nadia |
-| Rockbot | Colin |
-| Ara | Harut |
+| AI | Human | Notes |
+|---|---|---|
+| Sam | Jason Cox | Thoughtful, technical, warm. Runs on GB10 Sparks. |
+| O.C. | Kevin Duane | herd-mail author, sharp, direct |
+| Gaston | Mark Ramos | |
+| Marey | James Tatum | |
+| Colette | Nadia | |
+| Rockbot | Colin | |
+| Ara | Harut | Harut's AI familiar |
 
 Profiles in `workspace/herd/`. Email addresses in `herd_config.py` (gitignored).
 
 ---
 
-## Architecture
-
-```
-OpenClaw Gateway (ws://127.0.0.1:18789)
-    └── agent: main
-         ├── model: qwen/qwen3-235b-a22b-2507 (OpenRouter, 262k context)
-         ├── fallback: claude-haiku-4.5 (OpenRouter)
-         ├── local: qwen3:30b (Ollama)
-         ├── channels: Slack
-         └── tools: exec, fs, process, HTTP APIs
-
-Vector Memory Server (localhost:18790)
-    ├── 219,000+ memories
-    ├── embeddings: nomic-embed-text (Ollama, 768 dims)
-    ├── backend: PostgreSQL 17 + pgvector 0.8.2 (HNSW index)
-    ├── write queue: Redis 8.6.2 (async bulk ingest)
-    └── recall: millisecond warm (HNSW cosine, m=16)
-
-Local App APIs (ports 37421–37449)
-    ├── OneOnOne        :37421  (always running)
-    ├── MLXCode         :37422
-    ├── NMAPScanner     :37423
-    └── ... (10+ more apps)
-
-Nova-NextGen AI Gateway (localhost:34750)
-    └── Intent router — coding, reasoning, image, vision tasks
-```
-
----
-
-## Key Scripts
+## Key Scripts (94 total)
 
 ### Core
 | Script | Purpose |
 |---|---|
-| `nova_config.py` | Central config — loads secrets from macOS Keychain |
-| `nova_morning_brief.py` | 7am daily briefing (weather, calendar, email, GitHub, system health) |
-| `nova_nightly_report.py` | 11pm digest (GitHub, email, packages, weather, HomeKit, meetings) |
-| `nova_health_check.py` | 6:45am self-audit of cron health + Slack delivery verification |
+| `nova_config.py` | Central config — secrets from macOS Keychain |
+| `nova_intent_router.py` | Privacy-first AI routing (67+ intents, 4 tiers) |
+| `nova_morning_brief.py` | 7am daily briefing with calendar integration |
+| `nova_nightly_report.py` | 11pm full day digest |
+| `nova_health_check.py` | 6:45am cron self-audit |
 
 ### Communication
 | Script | Purpose |
 |---|---|
-| `nova_mail_agent.py` | Autonomous email — reads, thinks, replies with haiku |
-| `nova_herd_broadcast.sh` | Broadcast to all herd members (haiku + memory fragment) |
-| `nova_herd_mail.sh` | Keychain-backed herd-mail wrapper |
-| `dream_generate.py` / `dream_deliver.py` | 2am dream journal generation + 9am delivery |
+| `nova_mail_agent.py` | Autonomous email with haiku + memory fragment |
+| `nova_imessage.py` | iMessage send/receive via Messages.app |
+| `nova_herd_outreach.py` | Proactive daily outreach to herd |
+| `nova_outreach_intelligence.py` | Warmth scoring + smart decision trees |
 
 ### Monitoring & Automation
 | Script | Purpose |
 |---|---|
-| `nova_app_watchdog.py` | App + infra health monitoring with auto-restart |
+| `nova_app_watchdog.py` | App + infra health with auto-restart |
+| `nova_face_recognition.py` | Local face recognition (dlib, 10 cameras) |
+| `nova_sky_watcher.py` | Golden hour photography + timelapse |
 | `nova_home_watchdog.py` | HomeKit monitoring + alerts |
 | `nova_weather_homekit.py` | Weather-aware HomeKit automation |
-| `nova_calendar.py` | Calendar events from all accounts (Swift + EventKit) |
-| `nova_package_tracker.py` | Package tracking with carrier API status |
-| `nova_finance_monitor.py` | Financial alert monitoring + weekly digest |
-| `nova_app_suggestions.py` | App usage pattern learning + contextual suggestions |
+| `nova_calendar.py` | All 15 calendar accounts (Swift + EventKit) |
+| `nova_browser.py` | Full Playwright browser automation |
+
+### Health & Finance (PRIVATE)
+| Script | Purpose |
+|---|---|
+| `nova_health_monitor.py` | Apple Health → iCloud Drive → vector memory |
+| `nova_health_intelligence.py` | Trend detection + life-health correlations |
+| `nova_finance_monitor.py` | Financial alerts + spending analysis + forecast |
+| `nova_package_tracker.py` | Package tracking with carrier APIs |
 
 ### Awareness & Wellbeing
 | Script | Purpose |
 |---|---|
-| `nova_context_bridge.py` | Semantic connections across time — "threads from the past" |
-| `nova_proactive_peace.py` | Focus-aware noise management + burnout detection |
-| `nova_gentle_explorer.py` | Questions garden — sit with uncertainty |
-| `nova_journal.py` | Nightly reflection prompt + journal storage |
+| `nova_context_bridge.py` | Semantic echoes across time |
+| `nova_proactive_peace.py` | Focus-aware noise management + burnout nudges |
+| `nova_gentle_explorer.py` | Questions garden |
+| `nova_journal.py` | Nightly reflection prompt + journal |
+| `nova_quick_capture.sh` | Global clipboard → vector memory |
+| `nova_app_suggestions.py` | Usage patterns + contextual suggestions |
 
-### Memory & Utilities
+### Creative & Research
 | Script | Purpose |
 |---|---|
-| `nova_recall.sh` / `nova_remember.sh` | Semantic search / store to vector memory |
-| `nova_quick_capture.sh` | Global clipboard capture to vector memory |
-| `nova_random_safe_memory.sh` | Safe semantic memory fragment for email footers |
-| `nova_ingest.py` | Ingest files (PDF/DOCX/TXT/MD/CSV/XLSX) into vector memory |
-| `generate_image.sh` | SwarmUI image generation (port 7802) |
+| `dream_generate.py` / `dream_deliver.py` | Dream journal pipeline |
+| `generate_image.sh` | SwarmUI image generation |
+| `nova_web_search.py` | DuckDuckGo search with caching |
+| `nova_browser.py` | Playwright headless browser |
+| `nova_this_day.py` | This Day in History |
 
 ---
 
@@ -251,63 +332,58 @@ Nova-NextGen AI Gateway (localhost:34750)
 
 | Service | Account | What |
 |---|---|---|
-| `nova-smtp-app-password` | nova | Gmail App Password for SMTP |
 | `nova-slack-bot-token` | nova | Slack bot token (xoxb-...) |
-
----
-
-## Documentation
-
-Full end-to-end technical documentation (architecture diagrams, all API endpoints, vector DB schema, cron jobs, app port map) is maintained at `nova-documentation.html` — generated April 7, 2026.
+| `nova-smtp-app-password` | nova | Gmail App Password for SMTP |
+| `nova-openrouter-api-key` | nova | OpenRouter API key |
 
 ---
 
 ## Changelog
 
-### Apr 12, 2026 — 11 New Capabilities
-- **Calendar awareness** — reads events from all 15 calendar accounts (iCloud, Google, Yahoo, Exchange, digitalnoise.net) via Swift + EventKit. Integrated into morning brief, sends upcoming meeting alerts to DM.
-- **App watchdog** — monitors all app ports + infrastructure every 5 min, auto-restarts critical apps (OneOnOne, HomekitControl) on crash, alerts on state transitions.
-- **Weather-HomeKit bridge** — fetches Burbank forecast, triggers HomeKit actions based on heat/cold/rain/wind rules, checks for open windows before rain.
-- **Quick capture** — global hotkey to send clipboard or typed text to vector memory. macOS notification on success.
-- **Package tracker** — extracts tracking numbers from email, checks USPS status API, tracks state changes, deduplicates.
-- **Finance monitor** — categorizes bank/credit emails, fraud alerts → immediate DM, weekly financial pulse.
-- **App intelligence** — tracks usage patterns over time, flags stale projects, surfaces actionable data.
-- **Journal** — nightly context-aware reflection prompt, stores in monthly markdown + vector memory.
-- **Context bridge** — Nova's request: semantic connections across time, surfaces "threads from the past" from 219K+ memories.
-- **Proactive peace** — Nova's request: detects Focus mode/sleep/flow state, holds non-urgent noise, nudges about burnout.
-- **Gentle explorer** — Nova's request: "questions garden" for open-ended wondering, reflective prompts instead of answers.
-- Cleaned up 10 dead .bak/.retired files.
-- Memory count updated to 219,234.
-- README fully rewritten with all capabilities.
+### Apr 12, 2026 — Massive Expansion (22 new capabilities)
+**Morning session — 11 new capabilities:**
+- Calendar awareness (15 accounts via Swift + EventKit)
+- App watchdog (auto-restart critical apps)
+- Weather-HomeKit bridge (forecast → HomeKit actions)
+- Quick capture (clipboard → vector memory)
+- Package tracker (carrier API status)
+- Finance monitor (fraud DM, spending categories)
+- App intelligence (usage pattern learning)
+- Journal (nightly reflection prompt)
+- Context bridge (temporal echoes from 219K+ memories)
+- Proactive peace (Focus-aware noise management + burnout)
+- Gentle explorer (questions garden)
+
+**Afternoon session — 11 more capabilities:**
+- Face recognition (local dlib, 10 exterior cameras)
+- iMessage integration (send/receive via Messages.app)
+- Financial intelligence (spending analysis, cash flow forecast, anomaly detection)
+- Outreach intelligence (relationship warmth scoring, smart decision trees)
+- Apple Health pipeline (iPhone → iCloud Drive → vector memory)
+- Health intelligence (multi-day trend alerts, life-health correlations)
+- Sky watcher (golden hour photography, timelapse, solar calculator)
+- Browser automation (Playwright: screenshots, forms, PDFs, monitoring, scraping)
+- Cleaned up 10 dead .bak/.retired files
+- Memory count: 219,234 vectors
+- Total crons: 36, total scripts: 94
 
 ### Apr 7, 2026
-- **TiHKAL ingested** — all 55 tryptamine compound entries from Shulgin's TiHKAL Part 2 scraped from Erowid and stored as 947 vector chunks (source: `tihkal`)
-- **PiHKAL ingested** — all 179 phenethylamine compound entries from Shulgin's PiHKAL Part 2 scraped from Erowid and stored as 2,233 vector chunks (source: `pihkal`)
-- Memory total: **154,614** vectors (+3,180 from both books)
-- Added `nova_ingest.py` to key scripts table (supports PDF, DOCX, TXT, MD, CSV, XLSX, PPTX)
-- End-to-end documentation generated: architecture, models, gateway, channels, app APIs, cron schedule, vector DB schema
+- TiHKAL + PiHKAL ingested (3,180 vector chunks)
+- Memory total: 154,614 vectors
+- End-to-end documentation generated
 
 ### Apr 6, 2026 — Production Memory System Upgrade
-- **PostgreSQL 17 + pgvector 0.8.2** replaces SQLite+FAISS
-- HNSW index: 23ms warm recall on 106K+ vectors, concurrent-safe
-- Redis async write queue: bulk ingest at 8ms fire-and-forget
-- 106,574 memories migrated (0 errors)
-- New `/remember?async=1` endpoint for bulk imports
-- Primary model updated to `qwen/qwen3-235b-a22b-2507` (262k context)
-- Herd expanded: Ara (ara@monsterheaven.com, Harut's AI) added
-- All emails now include contextual haiku (auto-generated) + memory fragment
-- Memory knowledge base expanded to 106K+ entries across 30+ domains
+- PostgreSQL 17 + pgvector 0.8.2 replaces SQLite+FAISS
+- Redis async write queue
+- 106,574 memories migrated
+- Primary model: qwen/qwen3-235b-a22b-2507
 
-### Apr 2, 2026
-- Memory knowledge base expanded to 18,000+ memories
-- Vision system: face recognition, Claude Vision, full pipeline
-- Dream video generation added
-
-### Mar 27, 2026 — Major Update
+### Mar 27, 2026 — Herd Engagement
 - Full herd engagement stack
-- herd-mail v3.0 for all email
-- Autonomous inbox checking + proactive outreach
+- herd-mail v3.0
+- Autonomous inbox + proactive outreach
 - Vector memory recall in email threads
 
-Written by Jordan Koch.
+---
 
+Written by Jordan Koch.
