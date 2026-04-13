@@ -141,15 +141,19 @@ SOURCE_RULES = [
         "sources": ["world_factbook"],
         "label": "world knowledge",
     },
-    # Meetings / presentations / all-hands / videos
+    # Meetings / presentations / all-hands / videos / work projects
     {
         "patterns": [
             r"\b(meeting|all.?hands|presentation|talk|lightning.?talk|conference)\b",
             r"\b(discussed|presented|talked about|agenda|slides)\b",
             r"\b(video|recording|transcript|watch)\b",
+            r"\b(migration|deploy|deployment|infrastructure|pipeline|platform)\b",
+            r"\b(ddm|matterhorn|gke|kubernetes|terraform|vault|jenkins|gitlab)\b",
+            r"\b(chef|ansible|puppet|docker|container|aws|cloud)\b",
+            r"\b(wdi|dtss|dcpi|parks|studios|media.?networks)\b",
         ],
         "sources": ["video", "email_archive", "oneonone"],
-        "label": "meetings/video",
+        "label": "meetings/video/work",
     },
     # Projects / GitHub
     {
@@ -181,7 +185,8 @@ SOURCE_RULES = [
 ]
 
 # Default sources when no pattern matches — search broadly
-DEFAULT_SOURCES = ["email_archive", "music", "socal_rave", "document"]
+# video is always included because transcripts contain diverse topics
+DEFAULT_SOURCES = ["video", "email_archive", "music", "document"]
 
 
 def classify_query(query):
