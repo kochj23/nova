@@ -455,7 +455,7 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 |---------|--------|---------|
 | Slack | Socket mode (real-time) | Primary channel. #nova-chat + Jordan DM |
 | Email | IMAP read + SMTP send | nova@digitalnoise.net. Auto-reply with haiku + memory fragment |
-| iMessage | AppleScript send, SQLite read | Sends as Jordan (signed "-- Nova"). 109K+ messages searchable |
+| iMessage | AppleScript send, SQLite read, macOS Contacts resolution | Sends as Jordan (signed "-- Nova"). All messages (in + out) stored in memory with contact names resolved from 599 macOS Contacts entries. Search by name ("messages with Amy"), not phone numbers. |
 | Herd outreach | LLM-decided daily | Warmth scoring, topic matching, dream image attachments (35% chance) |
 
 ### Memory
@@ -493,7 +493,7 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 All health intents are **PRIVATE** -- hard-fail if local models are down. Never touches OpenRouter.
 
 ```
-iPhone HealthKit → Shortcut (daily) → iCloud Drive/Nova/health/ → nova_health_monitor.py
+iPhone HealthKit → Health Auto Export app → iCloud Drive/Nova/health/ → nova_health_monitor.py
                                                                          │
                                               ┌──────────────────────────┤
                                               ▼                          ▼
@@ -670,7 +670,7 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 | Script | Purpose |
 |---|---|
 | `nova_mail_agent.py` | Autonomous email: read, think, reply with haiku + memory fragment + web search |
-| `nova_imessage.py` | iMessage: send via AppleScript, read from Messages.db, watch for new |
+| `nova_imessage.py` | iMessage: send/read, contact name resolution (599 macOS Contacts), all messages to memory |
 | `nova_herd_outreach.py` | Proactive daily outreach -- LLM picks who and why |
 | `nova_outreach_intelligence.py` | Warmth scoring, topic matching, diversity enforcement |
 | `nova_herd_mail.sh` | Keychain-backed herd-mail wrapper with haiku enforcement |
@@ -691,7 +691,7 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 ### Health and Finance (PRIVATE)
 | Script | Purpose |
 |---|---|
-| `nova_health_monitor.py` | iPhone → iCloud Drive → vector memory ingestion |
+| `nova_health_monitor.py` | iPhone Health Auto Export → iCloud Drive → vector memory (handles both file formats) |
 | `nova_health_intelligence.py` | Multi-day trends, life-health correlations, proactive alerts |
 | `nova_finance_monitor.py` | Bank alerts, spending analysis, cash flow forecast, anomaly detection |
 | `nova_package_tracker.py` | Tracking numbers + carrier API status, state change alerts |
