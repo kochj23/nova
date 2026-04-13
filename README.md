@@ -486,6 +486,7 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 
 - **HomeKit** (port 37432) -- 20+ devices. Scene execution via API or Shortcuts CLI.
 - **ADT+ / Nest** -- Planned via Starling Home Hub ($99, starlinghome.io). Bridges all Nest cameras, ADT sensors, and Nest Guard to HomeKit without GCP API setup. Nova sees them through the existing HomekitControl pipeline.
+- **UniFi Network Monitoring** -- Full read-only API integration with UDM Pro (API key in Keychain). 11 capabilities: rogue device detection (100 devices baselined), WAN outage tracking, bandwidth hog alerts, WiFi optimization analysis, family presence detection (auto-learned from hostnames), firmware monitoring, switch port utilization, VPN status, DPI traffic analysis, daily network snapshots with 7-day trends, and HomeKit-compatible presence JSON. Runs via launchd every 30 min ($0 cloud cost).
 - **Weather-HomeKit bridge** -- Fetches Burbank forecast (wttr.in), evaluates rules for heat (>90F), cold (<50F), rain (>60%), wind (>30mph), pleasant weather. Checks open contacts before rain.
 - **Calendar** -- 15 accounts (iCloud, Google, Yahoo, Exchange, digitalnoise.net) via Swift + EventKit. Upcoming meeting alerts (30 min warning) to DM.
 
