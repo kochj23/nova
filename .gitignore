@@ -83,3 +83,7 @@ apps/*/build/
 apps/*/DerivedData/
 apps/*/*.xcodeproj/xcuserdata/
 apps/*/*.xcodeproj/project.xcworkspace/xcuserdata/
+venv/
+agents/
+__pycache__/
+workspace

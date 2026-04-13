@@ -564,6 +564,62 @@ Full Playwright/Chromium headless control:
 
 ---
 
+## Cost-Optimized Execution Model
+
+Nova uses a two-tier execution model to minimize cloud API costs while maintaining quality:
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│              EXECUTION TIERS (Cost Optimization)                  │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  TIER 1: launchd (direct Python — $0 cloud cost)                │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  These scripts run directly via macOS launchd.             │ │
+│  │  No LLM agent wrapper. No OpenRouter round-trip.           │ │
+│  │                                                            │ │
+│  │  Gateway Watchdog      every 10 min                        │ │
+│  │  App Watchdog           every 10 min (auto-restart)        │ │
+│  │  Sky Watcher            every 5 min (golden hours only)    │ │
+│  │  iMessage Watch         every 5 min (contact resolution)   │ │
+│  │  Inbox Watcher          every 5 min (autonomous email)     │ │
+│  │  Proactive Peace        every 15 min (Focus detection)     │ │
+│  │  Face Recognition       every 30 min (10 cameras)          │ │
+│  │  Home Watchdog          every 30 min (HomeKit)             │ │
+│  │                                                            │ │
+│  │  Cost: $0/day (runs locally, no cloud API calls)           │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  TIER 2: OpenClaw cron (agent + OpenRouter — quality tasks)     │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  These run through the OpenClaw agent because they need    │ │
+│  │  LLM reasoning, Slack delivery, or complex tool use.       │ │
+│  │                                                            │ │
+│  │  29 remaining cron jobs (daily, hourly, bi-hourly)         │ │
+│  │  Morning brief, nightly report, context bridge,            │ │
+│  │  journal prompts, GitHub digest, health intelligence,      │ │
+│  │  financial analysis, etc.                                  │ │
+│  │                                                            │ │
+│  │  Cost: ~$8-10/day ($250-300/month)                         │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  TIER 3: Slack conversation (OpenRouter — real-time)            │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │  Direct conversation with Jordan in Slack.                 │ │
+│  │  Uses Qwen3 235B or Claude Haiku 4.5 via OpenRouter.      │ │
+│  │  This is where quality matters most.                       │ │
+│  │                                                            │ │
+│  │  Cost: variable, depends on conversation volume            │ │
+│  └────────────────────────────────────────────────────────────┘ │
+│                                                                  │
+│  Previously: 2,067 agent invocations/day = ~$30/day ($900/mo)  │
+│  Now: ~480 agent invocations/day = ~$8-10/day ($250-300/mo)    │
+│  Savings: ~$600/month                                            │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## Desktop Apps
 
 Both apps are now part of this monorepo (under `apps/`).
@@ -613,12 +669,11 @@ SwiftUI macOS app providing a single API endpoint (port 37400) that aggregates d
 │ 10:00pm │  Burbank subreddit                                       │
 │ 11:00pm │  Nightly report                                          │
 ├─────────┼──────────────────────────────────────────────────────────┤
-│  3 min  │  Gateway watchdog                                        │
-│  5 min  │  Inbox, app watchdog, iMessage, sky watcher (golden hr)  │
-│ 10 min  │  Proactive peace (Focus/state detection)                 │
-│ 15 min  │  Face recognition (10 exterior cameras)                  │
-│ 20 min  │  Home watchdog (HomeKit)                                 │
-│ 30 min  │  Calendar alerts (upcoming meetings)                     │
+│  5 min  │  Inbox, iMessage, sky watcher (launchd — $0 cloud)       │
+│ 10 min  │  Gateway watchdog, app watchdog (launchd — $0 cloud)    │
+│ 15 min  │  Proactive peace (launchd — $0 cloud)                   │
+│ 30 min  │  Face recognition, home watchdog (launchd — $0 cloud)   │
+│ 30 min  │  Calendar alerts (OpenClaw cron)                         │
 │  1 hr   │  OneOnOne meeting check                                  │
 │  2 hr   │  Weather-HomeKit bridge, package tracker                 │
 │  4 hr   │  Finance monitor, app intelligence, health ingest        │
@@ -749,7 +804,7 @@ All secrets loaded at runtime via `nova_config.py`. Nothing hardcoded in source.
 
 ## Changelog
 
-### Apr 13, 2026 -- Memory-First Architecture + 1.2M Memories
+### Apr 13, 2026 -- Memory-First Architecture + 1.2M Memories + Cost Optimization
 
 - **Memory-first query system** (`nova_memory_first.py`): Nova now checks 1.2M memories BEFORE falling back to LLM/web. Auto-classifies queries into 12 categories with source-specific filters. Jordan never has to say "from your memories."
 - **Email ingest**: 336K personal Home emails ingested (Work/tax/divorce excluded). Memory count: 164K -> 1,218,131.
@@ -761,6 +816,10 @@ All secrets loaded at runtime via `nova_config.py`. Nothing hardcoded in source.
 - **SRE knowledge**: 13 memory chunks covering fundamentals through modern practices.
 - **Devo knowledge**: 10 memory chunks covering band, philosophy, discography, members, Jordan's personal connection.
 - **Synology RS1221+ NAS**: Full hardware specs and contents ingested.
+- **Cost optimization**: 8 high-frequency crons moved from OpenClaw (OpenRouter, ~$20/day) to launchd (direct Python, $0). Frequencies reduced where appropriate. OpenRouter spend: $900/month -> ~$250-300/month projected.
+- **iMessage contact resolution**: 599 macOS Contacts entries resolved via Swift + CNContactStore. Messages stored as "iMessage to CONTACT_NAME_REDACTED" not "PHONE_REDACTED".
+- **66,252 iMessages bulk imported** into vector memory with contact names.
+- **Health Auto Export format**: nova_health_monitor.py now handles both daily Shortcut exports and HealthAutoExport-*.json bulk files.
 
 ### Apr 12, 2026 -- Massive Expansion + Repo Consolidation
 
