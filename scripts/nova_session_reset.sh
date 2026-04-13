@@ -18,7 +18,7 @@
 set -euo pipefail
 
 SESSIONS_DIR="$HOME/.openclaw/agents/main/sessions"
-THRESHOLD_MB=5
+THRESHOLD_MB=20
 FORCE=false
 CHECK_ONLY=false
 SLACK_CHAN="C0AMNQ5GX70"
