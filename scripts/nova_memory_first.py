@@ -141,6 +141,16 @@ SOURCE_RULES = [
         "sources": ["world_factbook"],
         "label": "world knowledge",
     },
+    # Meetings / presentations / all-hands / videos
+    {
+        "patterns": [
+            r"\b(meeting|all.?hands|presentation|talk|lightning.?talk|conference)\b",
+            r"\b(discussed|presented|talked about|agenda|slides)\b",
+            r"\b(video|recording|transcript|watch)\b",
+        ],
+        "sources": ["video", "email_archive", "oneonone"],
+        "label": "meetings/video",
+    },
     # Projects / GitHub
     {
         "patterns": [

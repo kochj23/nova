@@ -179,7 +179,7 @@ def describe_frame(frame_path):
         req = urllib.request.Request(
             f"{OLLAMA_URL}/api/generate", data=payload,
             headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=60) as r:
+        with urllib.request.urlopen(req, timeout=180) as r:
             result = json.loads(r.read())
             response = result.get("response", "").strip()
             if "</think>" in response:
@@ -200,7 +200,7 @@ def extract_audio(video_path, tmpdir):
             FFMPEG, "-i", str(video_path),
             "-vn", "-acodec", "pcm_s16le", "-ar", "16000", "-ac", "1",
             "-y", str(audio_path)
-        ], capture_output=True, timeout=120)
+        ], capture_output=True, timeout=600)  # 10 min for large videos
 
         if audio_path.exists() and audio_path.stat().st_size > 1000:
             return str(audio_path)
