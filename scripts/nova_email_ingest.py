@@ -230,7 +230,7 @@ def parse_emlx(filepath):
 # ── Processing ───────────────────────────────────────────────────────────────
 
 def should_exclude(parsed):
-    """Check if this email should be excluded (tax, divorce, financial docs, Disney work email)."""
+    """Check if this email should be excluded (tax, divorce, financial docs, work email)."""
     subject = parsed.get("subject", "")
     sender = parsed.get("sender", "")
     to = parsed.get("to", "")
