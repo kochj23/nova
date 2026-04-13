@@ -49,7 +49,7 @@ KNOWN_DIR = FACES_DIR / "known"
 UNKNOWN_DIR = FACES_DIR / "unknown"
 ENCODINGS_FILE = FACES_DIR / "encodings.json"
 CAMERA_FRAMES = WORKSPACE / "camera_frames"
-STATE_FILE = Path("/tmp/nova_face_state.json")
+STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_face_state.json"
 
 # Exterior cameras only — Nova doesn't need to see Jordan in his underwear
 EXTERIOR_CAMERAS = [

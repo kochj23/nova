@@ -33,7 +33,7 @@ SLACK_API = nova_config.SLACK_API
 VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
 TODAY = date.today().isoformat()
-STATE_FILE = Path("/tmp/nova_app_watchdog_state.json")
+STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_app_watchdog_state.json"
 
 # Apps to monitor: (port, app_name, bundle_name_for_open, critical)
 # critical=True means auto-restart, critical=False means alert-only

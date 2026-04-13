@@ -47,7 +47,7 @@ NOW = datetime.now()
 TODAY = date.today().isoformat()
 
 MESSAGES_DB = Path.home() / "Library/Messages/chat.db"
-STATE_FILE = Path("/tmp/nova_imessage_state.json")
+STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_imessage_state.json"
 
 # Nova's signature — appended to all outgoing messages
 NOVA_SIGNATURE = "\n— Nova"

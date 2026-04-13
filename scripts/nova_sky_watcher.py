@@ -49,11 +49,15 @@ LONGITUDE = -118.3090
 TIMEZONE_OFFSET = -7  # PDT (adjust for DST manually or use tz)
 
 # Sky-facing cameras (ordered by preference — front yard has the widest sky view)
-SKY_CAMERAS = [
-    ("front_yard", "RTSP_URL_REDACTED"),
-    ("front_yard_alt", "RTSP_URL_REDACTED"),
-    ("back_patio", "RTSP_URL_REDACTED"),
-]
+# URLs loaded from camera_config.py (gitignored)
+try:
+    from camera_config import CAMERAS as _ALL_CAMERAS
+    SKY_CAMERAS = [
+        (name, _ALL_CAMERAS[name]) for name in ["front_yard", "front_yard_alt", "back_patio"]
+        if name in _ALL_CAMERAS
+    ]
+except ImportError:
+    SKY_CAMERAS = []
 
 # Golden hour window: capture from this many minutes before to after
 GOLDEN_BEFORE = 45  # minutes before sunrise/sunset
@@ -66,7 +70,7 @@ FRAME_RESOLUTION = "1920x1080"  # Request higher res for sky shots
 # Storage
 SKY_ARCHIVE = Path("/Volumes/Data/nova-sky")
 BEST_DIR = SKY_ARCHIVE / "best"
-STATE_FILE = Path("/tmp/nova_sky_watcher_state.json")
+STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_sky_watcher_state.json"
 CAMERA_FRAMES = Path.home() / ".openclaw/workspace/camera_frames"
 
 
@@ -383,7 +387,7 @@ def generate_timelapse(days=7):
 
     # Use ffmpeg to create GIF
     # Create a temp file list
-    list_file = Path("/tmp/nova_sky_frames.txt")
+    list_file = Path.home() / ".openclaw/workspace/state/nova_sky_frames.txt"
     with open(list_file, "w") as f:
         for frame in recent:
             f.write(f"file '{frame}'\n")

@@ -39,7 +39,7 @@ NOW = datetime.now()
 TODAY = date.today().isoformat()
 MEMORY_DIR = Path.home() / ".openclaw" / "workspace" / "memory"
 JOURNAL_DIR = Path.home() / ".openclaw" / "workspace" / "journal"
-STATE_FILE = Path("/tmp/nova_context_bridge_state.json")
+STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_context_bridge_state.json"
 
 # Minimum age (in days) for a memory to be considered an "echo"
 # Too recent = not interesting. The magic is in the distant connections.

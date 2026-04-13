@@ -42,8 +42,8 @@ JORDAN_DM = nova_config.JORDAN_DM
 NOW = datetime.now()
 HOUR = NOW.hour
 TODAY = date.today().isoformat()
-STATE_FILE = Path("/tmp/nova_peace_state.json")
-HOLD_QUEUE = Path("/tmp/nova_peace_hold_queue.json")
+STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_peace_state.json"
+HOLD_QUEUE = Path.home() / ".openclaw/workspace/state/nova_peace_hold_queue.json"
 
 # ── State definitions ────────────────────────────────────────────────────────
 

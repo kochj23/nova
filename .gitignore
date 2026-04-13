@@ -34,6 +34,8 @@ scripts/*.retired
 
 # Sensitive — never commit
 openclaw.json
+scripts/camera_config.py
+.slack_token_cache
 known_senders.py
 herd_config.py
 backups/

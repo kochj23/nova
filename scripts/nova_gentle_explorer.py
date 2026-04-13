@@ -39,7 +39,7 @@ NOW = datetime.now()
 TODAY = date.today().isoformat()
 GARDEN_FILE = Path.home() / ".openclaw" / "workspace" / "questions_garden.json"
 JOURNAL_DIR = Path.home() / ".openclaw" / "workspace" / "journal"
-STATE_FILE = Path("/tmp/nova_gentle_explorer_state.json")
+STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_gentle_explorer_state.json"
 
 # ── Reflective prompt templates ──────────────────────────────────────────────
 

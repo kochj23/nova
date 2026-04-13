@@ -46,7 +46,7 @@ NOW = datetime.now()
 TODAY = date.today().isoformat()
 
 ICLOUD_HEALTH = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs/Nova/health"
-STATE_FILE = Path("/tmp/nova_health_intelligence_state.json")
+STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_health_intelligence_state.json"
 
 # ── Trend thresholds ─────────────────────────────────────────────────────────
 # These define when a TREND (not a single reading) becomes concerning.

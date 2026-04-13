@@ -1,26 +1,28 @@
 #!/usr/bin/env python3
+"""
+nova_camera_monitor.py — Capture frames from all RTSP cameras.
+
+Camera URLs are loaded from camera_config.py (GITIGNORED).
+Uses absolute ffmpeg path for launchd compatibility.
+
+Written by Jordan Koch.
+"""
 import subprocess
 import json
 import os
+import sys
 from datetime import datetime
+from pathlib import Path
 
-cameras = {
-    "front_door": "RTSP_URL_REDACTED",
-    "front_yard": "RTSP_URL_REDACTED",
-    "front_yard_alt": "RTSP_URL_REDACTED",
-    "front_door_patio": "RTSP_URL_REDACTED",
-    "alley_north": "RTSP_URL_REDACTED",
-    "alley_south": "RTSP_URL_REDACTED",
-    "garage": "RTSP_URL_REDACTED",
-    "carport": "RTSP_URL_REDACTED",
-    "side_yard": "RTSP_URL_REDACTED",
-    "back_patio": "RTSP_URL_REDACTED",
-    "patio_1": "RTSP_URL_REDACTED",
-    "patio_2": "RTSP_URL_REDACTED",
-    "3d_printers": "RTSP_URL_REDACTED",
-    "abundio_boundary": "RTSP_URL_REDACTED",
-}
+sys.path.insert(0, str(Path(__file__).parent))
 
+try:
+    from camera_config import CAMERAS as cameras
+except ImportError:
+    print("ERROR: camera_config.py not found. Create it with CAMERAS dict.", flush=True)
+    sys.exit(1)
+
+FFMPEG = "/opt/homebrew/bin/ffmpeg"
 storage_dir = os.path.expanduser("~/.openclaw/workspace/camera_frames")
 os.makedirs(storage_dir, exist_ok=True)
 
@@ -28,25 +30,22 @@ status = {}
 
 for name, rtsp_url in cameras.items():
     try:
-        # Capture video frame (primary)
         output_file = f"{storage_dir}/{name}_latest.jpg"
         cmd = [
-            "ffmpeg", "-rtsp_transport", "tcp", "-i", rtsp_url,
+            FFMPEG, "-rtsp_transport", "tcp", "-i", rtsp_url,
             "-frames:v", "1", "-update", "1", "-y", output_file
         ]
-        result = subprocess.run(cmd, capture_output=True, timeout=5)
+        result = subprocess.run(cmd, capture_output=True, timeout=10)
         status[name] = "ok" if result.returncode == 0 else "error"
-        
     except subprocess.TimeoutExpired:
         status[name] = "timeout"
     except Exception as e:
         status[name] = f"error: {e}"
 
-# Log results
 timestamp = datetime.now().isoformat()
 success_count = len([s for s in status.values() if s == "ok"])
-print(f"[{timestamp}] Camera monitor: {success_count}/{len(cameras)} online (video + audio available)")
+print(f"[{timestamp}] Camera monitor: {success_count}/{len(cameras)} online")
 
 for camera, state in status.items():
     if state != "ok":
-        print(f"  ⚠️  {camera}: {state}")
+        print(f"  {camera}: {state}")

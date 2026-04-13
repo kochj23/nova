@@ -132,7 +132,7 @@ def save_tracking_data(data):
 
 def get_mail_data():
     """Get cached mail data from the nightly report's cache."""
-    summary_file = Path("/tmp/nova_mail_fetch.txt")
+    summary_file = Path.home() / ".openclaw/workspace/state/nova_mail_fetch.txt"
     if summary_file.exists():
         age_hours = (time.time() - summary_file.stat().st_mtime) / 3600
         if age_hours < 24:

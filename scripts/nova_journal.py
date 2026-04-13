@@ -224,7 +224,7 @@ def save_journal_entry(text, prompt_used=None):
 def send_prompt():
     """Send the nightly journal prompt to Jordan's DM."""
     # Check if we already sent a prompt today
-    state_file = Path("/tmp/nova_journal_state.json")
+    state_file = Path.home() / ".openclaw/workspace/state/nova_journal_state.json"
     if state_file.exists():
         try:
             state = json.loads(state_file.read_text())
@@ -286,7 +286,7 @@ if __name__ == "__main__":
         recent_entries(args.recent)
     elif args.save_response:
         # Load today's prompt for context
-        state_file = Path("/tmp/nova_journal_state.json")
+        state_file = Path.home() / ".openclaw/workspace/state/nova_journal_state.json"
         prompt_used = None
         if state_file.exists():
             try:

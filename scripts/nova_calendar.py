@@ -31,7 +31,7 @@ SLACK_API = nova_config.SLACK_API
 VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
 TODAY = date.today().isoformat()
-STATE_FILE = Path("/tmp/nova_calendar_state.json")
+STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_calendar_state.json"
 
 
 def log(msg):
@@ -139,7 +139,7 @@ if let data = try? JSONSerialization.data(withJSONObject: result),
 def fetch_calendar_events():
     """Run Swift EventKit script and return parsed events."""
     # Write Swift source to a temp file and compile/run
-    swift_file = Path("/tmp/nova_calendar_events.swift")
+    swift_file = Path.home() / ".openclaw/workspace/state/nova_calendar_events.swift"
     swift_file.write_text(CALENDAR_SWIFT)
     try:
         result = subprocess.run(

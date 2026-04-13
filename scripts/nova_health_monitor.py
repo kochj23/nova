@@ -40,7 +40,7 @@ NOW = datetime.now()
 TODAY = date.today().isoformat()
 SCRIPTS = Path(__file__).parent
 ICLOUD_HEALTH = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs/Nova/health"
-STATE_FILE = Path("/tmp/nova_health_monitor_state.json")
+STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_health_monitor_state.json"
 
 # Thresholds for concerning readings (alert Jordan's DM)
 ALERT_THRESHOLDS = {
