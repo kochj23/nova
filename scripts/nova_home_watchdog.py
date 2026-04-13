@@ -169,15 +169,24 @@ def analyze_accessories(accessories, state):
                         if key in state:
                             del state[key]
 
-                # Temperature anomaly
-                elif "temperature" in char_type and value is not None:
+                # Temperature anomaly — ONLY actual room temperature sensors
+                # Skip "colortemperature" (Hue bulb Kelvin/mired values, not room temp)
+                elif ("temperature" in char_type
+                      and "color" not in char_type
+                      and "colour" not in char_type
+                      and value is not None):
                     try:
-                        temp_f = float(value) * 9/5 + 32
-                        key = f"temp_{acc_id}_alert"
-                        if temp_f > 85 or temp_f < 55:
-                            if key not in state or (now_ts - state.get(key, 0)) > 3600:
-                                alerts.append(f"🌡️ *{name}* ({room}) temperature: {temp_f:.0f}°F")
-                                state[key] = now_ts
+                        temp_val = float(value)
+                        # Sanity check: real room temps are -20 to 60°C
+                        # Color temperature mireds (140-500) or Kelvin (2000-6500)
+                        # will be WAY outside this range
+                        if -20 <= temp_val <= 60:
+                            temp_f = temp_val * 9/5 + 32
+                            key = f"temp_{acc_id}_alert"
+                            if temp_f > 85 or temp_f < 55:
+                                if key not in state or (now_ts - state.get(key, 0)) > 3600:
+                                    alerts.append(f"🌡️ *{name}* ({room}) temperature: {temp_f:.0f}°F")
+                                    state[key] = now_ts
                     except (TypeError, ValueError):
                         pass
 
