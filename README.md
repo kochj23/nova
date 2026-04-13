@@ -845,7 +845,8 @@ All secrets loaded at runtime via `nova_config.py`. Nothing hardcoded in source.
 - **BOOT.md**: Memory-first protocol loaded on every gateway startup via boot-md hook. Nova checks 1.2M memories before answering any question.
 - **Session watchdog**: launchd agent checks hourly, resets if >20MB.
 - **SOUL.md privacy fix**: Nova was refusing to share video transcripts and work meeting content because privacy rules said "never surface content verbatim." Clarified: only email bodies are restricted. Video, SRE, music, iMessage, health, infrastructure — all shareable with Jordan. His data, his questions.
-- **systemPromptOverride**: Memory-first instruction injected at the API level (not just markdown) so the model cannot ignore it.
+- **systemPromptOverride**: Memory-first + zero-restriction instruction injected at the API level.
+- **Two-audience privacy model**: Jordan has ZERO content restrictions (work, personal, health, intimate, financial — share everything). Privacy rules only apply to external sharing (herd, Slack channels, emails to others). "The privacy rules exist to protect Jordan FROM OTHERS, not to protect Jordan from himself."
 
 ### Apr 12, 2026 -- Massive Expansion + Repo Consolidation
 
