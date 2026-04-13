@@ -319,48 +319,131 @@ def save_state(state):
 
 # ── Watch mode (cron) ────────────────────────────────────────────────────────
 
+def get_all_new_messages():
+    """Get ALL new messages (incoming AND outgoing) since last check for memory storage."""
+    state = load_state()
+    last_check_ts = state.get("last_check_ts", 0)
+
+    # If first run, start from 24h ago to avoid flooding
+    if last_check_ts == 0:
+        first_run_cutoff = datetime.now() - timedelta(hours=24)
+        last_check_ts = int((first_run_cutoff.timestamp() - 978307200) * 1_000_000_000)
+
+    if not MESSAGES_DB.exists():
+        return [], last_check_ts
+
+    try:
+        conn = sqlite3.connect(f"file:{MESSAGES_DB}?mode=ro", uri=True)
+        conn.row_factory = sqlite3.Row
+
+        query = """
+            SELECT
+                m.text,
+                m.is_from_me,
+                m.date,
+                m.service,
+                h.id as handle_id
+            FROM message m
+            LEFT JOIN handle h ON m.handle_id = h.ROWID
+            WHERE m.text IS NOT NULL
+              AND m.date > ?
+              AND m.item_type = 0
+            ORDER BY m.date ASC
+            LIMIT 200
+        """
+        cursor = conn.execute(query, [last_check_ts])
+        messages = []
+
+        max_ts = last_check_ts
+        for row in cursor:
+            dt = _mac_timestamp_to_datetime(row["date"])
+            messages.append({
+                "sender": "Jordan" if row["is_from_me"] else (row["handle_id"] or "Unknown"),
+                "text": row["text"][:500] if row["text"] else "",
+                "date": dt.strftime("%Y-%m-%d %H:%M") if dt else "",
+                "is_from_me": bool(row["is_from_me"]),
+                "service": row["service"] or "iMessage",
+                "handle": row["handle_id"] or "",
+                "raw_date": row["date"],
+            })
+            if row["date"] > max_ts:
+                max_ts = row["date"]
+
+        conn.close()
+
+        # Update state
+        state["last_check_ts"] = max_ts
+        save_state(state)
+
+        return messages, max_ts
+
+    except Exception as e:
+        log(f"DB read error: {e}")
+        return [], last_check_ts
+
+
+def is_spam(msg):
+    """Filter out spam/noise messages."""
+    text = msg.get("text", "")
+    sender = msg.get("sender", "")
+    if not text or len(text) < 2:
+        return True
+    if "@" in sender and "gmail" not in sender and "icloud" not in sender:
+        return True  # Email-address senders are usually RCS spam
+    if sender.isdigit() and len(sender) <= 6:
+        return True  # Short codes (verification, alerts) — still store but don't alert
+    return False
+
+
 def watch():
-    """Check for new incoming iMessages and post to Slack."""
-    messages = get_unread_messages()
+    """Check for new iMessages, store ALL in memory, alert on real conversations."""
+    messages, _ = get_all_new_messages()
 
     if not messages:
         log("No new messages.")
         return
 
-    # Filter out spam/noise
-    real_messages = [m for m in messages if
-                     m["text"] and
-                     len(m["text"]) > 1 and
-                     not m["text"].startswith("http") and
-                     "@" not in m.get("sender", "")]  # Skip email-address senders (usually spam)
-
-    if not real_messages:
-        log(f"Filtered {len(messages)} messages (all noise).")
-        return
-
-    lines = [f"*iMessage — {len(real_messages)} new*"]
-    for m in real_messages[:10]:
-        sender = m["sender"]
-        # Try to match to a known contact name
+    # Store ALL messages in vector memory (Jordan's preferred communication channel)
+    stored = 0
+    for m in messages:
+        direction = "to" if m["is_from_me"] else "from"
+        contact = m["handle"] if not m["is_from_me"] else m.get("handle", "")
+        # Match to known contact name
+        display_name = contact
         for name, contact_id in ALLOWED_CONTACTS.items():
-            if contact_id in sender:
-                sender = name
+            if contact_id and contact_id in str(contact):
+                display_name = name
                 break
-        text_preview = m["text"][:100]
-        if len(m["text"]) > 100:
-            text_preview += "..."
-        lines.append(f"  *{sender}* ({m['date']}): {text_preview}")
 
-    slack_post("\n".join(lines), channel=JORDAN_DM)
+        text = f"iMessage {direction} {display_name} on {m['date']}: {m['text'][:300]}"
+        vector_remember(text, {
+            "date": TODAY,
+            "type": "imessage",
+            "direction": direction,
+            "contact": display_name,
+        })
+        stored += 1
 
-    # Store in vector memory
-    for m in real_messages[:5]:
-        vector_remember(
-            f"iMessage from {m['sender']} on {m['date']}: {m['text'][:200]}",
-            {"date": TODAY, "type": "imessage_received", "sender": m["sender"]}
-        )
+    # Post notable incoming messages to Slack DM (not spam, not from Jordan)
+    incoming = [m for m in messages if not m["is_from_me"] and not is_spam(m)]
 
-    log(f"Posted {len(real_messages)} new messages to Slack")
+    if incoming:
+        lines = [f"*iMessage — {len(incoming)} new*"]
+        for m in incoming[:10]:
+            sender = m.get("handle", "Unknown")
+            for name, contact_id in ALLOWED_CONTACTS.items():
+                if contact_id and contact_id in str(sender):
+                    sender = name
+                    break
+            text_preview = m["text"][:100]
+            if len(m["text"]) > 100:
+                text_preview += "..."
+            lines.append(f"  *{sender}* ({m['date']}): {text_preview}")
+
+        slack_post("\n".join(lines), channel=JORDAN_DM)
+        log(f"Posted {len(incoming)} incoming messages to Slack")
+
+    log(f"Stored {stored} messages in memory ({len(incoming)} incoming alerts)")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────

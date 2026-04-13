@@ -126,18 +126,21 @@ def read_health_data(hours=24, data_type=None):
         log("Create it with: mkdir -p ~/Library/Mobile\\ Documents/com~apple~CloudDocs/Nova/health")
         return None
 
-    # Find JSON files within the time window
+    # Find JSON files — support both naming conventions:
+    #   health-YYYY-MM-DD.json (daily Shortcut export)
+    #   HealthAutoExport-YYYY-MM-DD-YYYY-MM-DD.json (Health Auto Export app)
     cutoff = (NOW - timedelta(hours=hours)).isoformat()[:10]
     files = sorted(ICLOUD_HEALTH.glob("health-*.json"))
+    files += sorted(ICLOUD_HEALTH.glob("HealthAutoExport-*.json"))
+    files += sorted(ICLOUD_HEALTH.glob("HealthAutoExport*.json"))
+
+    # Deduplicate
+    files = list(dict.fromkeys(files))
 
     if not files:
-        # Also check for .icloud placeholder files (not yet downloaded)
-        placeholders = list(ICLOUD_HEALTH.glob(".health-*.json.icloud"))
+        placeholders = list(ICLOUD_HEALTH.glob(".*icloud"))
         if placeholders:
-            log(f"Found {len(placeholders)} iCloud placeholder(s) — files not downloaded yet.")
-            log("Open the Nova/health folder in Finder to trigger download, or run:")
-            log(f"  brctl download {ICLOUD_HEALTH}/")
-            # Try to trigger download
+            log(f"Found {len(placeholders)} iCloud placeholder(s) — not downloaded yet.")
             try:
                 for p in placeholders:
                     subprocess.run(["brctl", "download", str(p)],
@@ -146,19 +149,43 @@ def read_health_data(hours=24, data_type=None):
                 pass
         else:
             log("No health data files found in iCloud Drive/Nova/health/")
-            log("Set up the iPhone Shortcut to export health data.")
         return None
 
-    # Merge readings from all files in the time window
+    # Merge readings from all files
     merged_readings = {}
     files_read = 0
 
     for f in files:
-        # Extract date from filename: health-YYYY-MM-DD.json
-        fname = f.stem  # health-2026-04-12
-        file_date = fname.replace("health-", "")[:10]
+        fname = f.stem
 
-        if file_date < cutoff:
+        # Try to parse the Health Auto Export format: {data: {metrics: [...], medications: [...]}}
+        try:
+            raw = json.loads(f.read_text(encoding="utf-8"))
+            if "data" in raw and "metrics" in raw.get("data", {}):
+                # Health Auto Export format
+                for metric in raw["data"]["metrics"]:
+                    metric_name = metric.get("name", "unknown")
+                    if data_type and metric_name != data_type:
+                        continue
+                    for entry in metric.get("data", []):
+                        entry_date = entry.get("date", "")[:10]
+                        value = entry.get("qty")
+                        if value is not None:
+                            merged_readings.setdefault(metric_name, []).append({
+                                "value": value,
+                                "unit": metric.get("units", ""),
+                                "date": entry.get("date", ""),
+                                "source": entry.get("source", ""),
+                            })
+                files_read += 1
+                log(f"Parsed Health Auto Export file: {f.name} ({len(raw['data']['metrics'])} metrics)")
+                continue
+        except (json.JSONDecodeError, KeyError):
+            pass
+
+        # Standard format: {date: "...", readings: {...}}
+        file_date = fname.replace("health-", "")[:10]
+        if len(file_date) == 10 and file_date < cutoff:
             continue
 
         try:
