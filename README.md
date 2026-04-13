@@ -840,6 +840,10 @@ All secrets loaded at runtime via `nova_config.py`. Nothing hardcoded in source.
 - **Health Auto Export format**: nova_health_monitor.py now handles both daily Shortcut exports and HealthAutoExport-*.json bulk files.
 - **Home watchdog fix**: Was reporting Hue bulb color temperature (mireds/Kelvin) as room temperature in Fahrenheit (784°F alerts). Now skips color temperature characteristics and sanity-checks values are in the -20 to 60°C range.
 - **Network infrastructure ingested**: Full topology (UDM Pro, Agg switch, 8 PoE switches, 3 U6 Enterprise APs, UBB bridge, NVR on 10GbE), all 51 devices with IPs, bands, traffic, and known issues.
+- **Video ingestion pipeline**: nova_video_ingest.py — keyframe vision (qwen3-vl) + MLX Whisper transcription (43x realtime on M4). Batch processing 1,317 videos from /Volumes/external/videos/yt/.
+- **Bootstrap limits raised**: bootstrapMaxChars 20K→50K, bootstrapTotalMaxChars 150K→250K, session threshold 5MB→20MB. Qwen3 262K context was being wasted by aggressive truncation.
+- **BOOT.md**: Memory-first protocol loaded on every gateway startup via boot-md hook. Nova checks 1.2M memories before answering any question.
+- **Session watchdog**: launchd agent checks hourly, resets if >20MB.
 
 ### Apr 12, 2026 -- Massive Expansion + Repo Consolidation
 
