@@ -485,6 +485,7 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 ### Home Automation
 
 - **HomeKit** (port 37432) -- 20+ devices. Scene execution via API or Shortcuts CLI.
+- **ADT+ / Nest** -- Planned via Starling Home Hub ($99, starlinghome.io). Bridges all Nest cameras, ADT sensors, and Nest Guard to HomeKit without GCP API setup. Nova sees them through the existing HomekitControl pipeline.
 - **Weather-HomeKit bridge** -- Fetches Burbank forecast (wttr.in), evaluates rules for heat (>90F), cold (<50F), rain (>60%), wind (>30mph), pleasant weather. Checks open contacts before rain.
 - **Calendar** -- 15 accounts (iCloud, Google, Yahoo, Exchange, digitalnoise.net) via Swift + EventKit. Upcoming meeting alerts (30 min warning) to DM.
 
