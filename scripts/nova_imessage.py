@@ -48,6 +48,7 @@ TODAY = date.today().isoformat()
 
 MESSAGES_DB = Path.home() / "Library/Messages/chat.db"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_imessage_state.json"
+CONTACTS_CACHE = Path.home() / ".openclaw/workspace/state/contacts_cache.json"
 
 # Nova's signature — appended to all outgoing messages
 NOVA_SIGNATURE = "\n— Nova"
@@ -70,6 +71,114 @@ except ImportError:
 
 def log(msg):
     print(f"[nova_imessage {NOW.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+# ── Contact resolution ───────────────────────────────────────────────────────
+
+CONTACTS_SWIFT = r'''
+import Contacts
+import Foundation
+let store = CNContactStore()
+let sem = DispatchSemaphore(value: 0)
+store.requestAccess(for: .contacts) { _, _ in sem.signal() }
+_ = sem.wait(timeout: .now() + 5)
+let keys = [CNContactGivenNameKey, CNContactFamilyNameKey,
+            CNContactOrganizationNameKey, CNContactPhoneNumbersKey,
+            CNContactEmailAddressesKey] as [CNKeyDescriptor]
+let request = CNContactFetchRequest(keysToFetch: keys)
+var entries: [[String: String]] = []
+try? store.enumerateContacts(with: request) { contact, _ in
+    let name = [contact.givenName, contact.familyName].filter { !$0.isEmpty }.joined(separator: " ")
+    let displayName = name.isEmpty ? contact.organizationName : name
+    guard !displayName.isEmpty else { return }
+    for phone in contact.phoneNumbers {
+        let digits = phone.value.stringValue.filter { $0.isNumber || $0 == "+" }
+        entries.append(["phone": digits, "name": displayName])
+    }
+    for email in contact.emailAddresses {
+        entries.append(["email": (email.value as String).lowercased(), "name": displayName])
+    }
+}
+if let data = try? JSONSerialization.data(withJSONObject: entries),
+   let str = String(data: data, encoding: .utf8) { print(str) }
+'''
+
+_contact_lookup = None
+
+
+def _normalize_phone(number):
+    """Normalize a phone number for matching: strip everything except digits, drop leading 1."""
+    digits = re.sub(r'[^\d]', '', str(number))
+    if digits.startswith('1') and len(digits) == 11:
+        digits = digits[1:]
+    return digits[-10:] if len(digits) >= 10 else digits
+
+
+def _build_contact_cache():
+    """Build or load the phone/email → name lookup cache."""
+    # Use cache if < 24h old
+    if CONTACTS_CACHE.exists():
+        try:
+            age = time.time() - CONTACTS_CACHE.stat().st_mtime
+            if age < 86400:
+                return json.loads(CONTACTS_CACHE.read_text())
+        except Exception:
+            pass
+
+    # Dump contacts via Swift
+    swift_file = Path.home() / ".openclaw/workspace/state/contacts_dump.swift"
+    swift_file.write_text(CONTACTS_SWIFT)
+    try:
+        result = subprocess.run(["swift", str(swift_file)],
+                                capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            log(f"Contacts dump failed: {result.stderr[:100]}")
+            return {}
+        entries = json.loads(result.stdout)
+    except Exception as e:
+        log(f"Contacts error: {e}")
+        return {}
+
+    # Build lookup: normalized_phone → name, email → name
+    lookup = {}
+    for entry in entries:
+        name = entry.get("name", "").strip()
+        if not name:
+            continue
+        if "phone" in entry:
+            normalized = _normalize_phone(entry["phone"])
+            if normalized:
+                lookup[normalized] = name
+        if "email" in entry:
+            lookup[entry["email"].lower()] = name
+
+    # Cache to disk
+    CONTACTS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+    CONTACTS_CACHE.write_text(json.dumps(lookup))
+    log(f"Contact cache built: {len(lookup)} entries")
+    return lookup
+
+
+def resolve_contact(handle):
+    """Resolve a phone number or email to a contact name."""
+    global _contact_lookup
+    if _contact_lookup is None:
+        _contact_lookup = _build_contact_cache()
+
+    if not handle:
+        return "Unknown"
+
+    # Try exact match (email addresses)
+    if handle.lower() in _contact_lookup:
+        return _contact_lookup[handle.lower()]
+
+    # Try normalized phone match
+    normalized = _normalize_phone(handle)
+    if normalized in _contact_lookup:
+        return _contact_lookup[normalized]
+
+    # No match — return the raw handle
+    return handle
 
 
 def slack_post(text, channel=None):
@@ -403,24 +512,20 @@ def watch():
         log("No new messages.")
         return
 
-    # Store ALL messages in vector memory (Jordan's preferred communication channel)
+    # Store ALL messages in vector memory with resolved contact names
     stored = 0
     for m in messages:
         direction = "to" if m["is_from_me"] else "from"
-        contact = m["handle"] if not m["is_from_me"] else m.get("handle", "")
-        # Match to known contact name
-        display_name = contact
-        for name, contact_id in ALLOWED_CONTACTS.items():
-            if contact_id and contact_id in str(contact):
-                display_name = name
-                break
+        raw_handle = m.get("handle", "")
+        contact_name = resolve_contact(raw_handle)
 
-        text = f"iMessage {direction} {display_name} on {m['date']}: {m['text'][:300]}"
+        text = f"iMessage {direction} {contact_name} on {m['date']}: {m['text'][:300]}"
         vector_remember(text, {
             "date": TODAY,
             "type": "imessage",
             "direction": direction,
-            "contact": display_name,
+            "contact": contact_name,
+            "handle": raw_handle,
         })
         stored += 1
 
@@ -430,15 +535,11 @@ def watch():
     if incoming:
         lines = [f"*iMessage — {len(incoming)} new*"]
         for m in incoming[:10]:
-            sender = m.get("handle", "Unknown")
-            for name, contact_id in ALLOWED_CONTACTS.items():
-                if contact_id and contact_id in str(sender):
-                    sender = name
-                    break
+            contact_name = resolve_contact(m.get("handle", ""))
             text_preview = m["text"][:100]
             if len(m["text"]) > 100:
                 text_preview += "..."
-            lines.append(f"  *{sender}* ({m['date']}): {text_preview}")
+            lines.append(f"  *{contact_name}* ({m['date']}): {text_preview}")
 
         slack_post("\n".join(lines), channel=JORDAN_DM)
         log(f"Posted {len(incoming)} incoming messages to Slack")
