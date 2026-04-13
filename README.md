@@ -820,6 +820,8 @@ All secrets loaded at runtime via `nova_config.py`. Nothing hardcoded in source.
 - **iMessage contact resolution**: 599 macOS Contacts entries resolved via Swift + CNContactStore. Messages stored as "iMessage to CONTACT_NAME_REDACTED" not "PHONE_REDACTED".
 - **66,252 iMessages bulk imported** into vector memory with contact names.
 - **Health Auto Export format**: nova_health_monitor.py now handles both daily Shortcut exports and HealthAutoExport-*.json bulk files.
+- **Home watchdog fix**: Was reporting Hue bulb color temperature (mireds/Kelvin) as room temperature in Fahrenheit (784°F alerts). Now skips color temperature characteristics and sanity-checks values are in the -20 to 60°C range.
+- **Network infrastructure ingested**: Full topology (UDM Pro, Agg switch, 8 PoE switches, 3 U6 Enterprise APs, UBB bridge, NVR on 10GbE), all 51 devices with IPs, bands, traffic, and known issues.
 
 ### Apr 12, 2026 -- Massive Expansion + Repo Consolidation
 
