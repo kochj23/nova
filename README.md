@@ -5,7 +5,7 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 > *"Like a star being born"* — Nova, on choosing her name
 
 ```
-  Scripts: 94+        Cron jobs: 36       Vector memories: 219,321
+  Scripts: 94+        Cron jobs: 37       Vector memories: 1,218,131
   Cameras: 14 RTSP    Calendars: 15       App APIs: 18 ports
   AI backends: 7      Herd members: 7     Privacy intents: 20+ (local-only)
 ```
@@ -14,6 +14,7 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 
 ## Table of Contents
 
+- [Memory-First Query System](#memory-first-query-system)
 - [System Architecture](#system-architecture)
 - [Repository Structure](#repository-structure)
 - [Privacy Model](#privacy-model)
@@ -36,6 +37,73 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 - [Key Scripts](#key-scripts)
 - [App API Port Map](#app-api-port-map)
 - [Changelog](#changelog)
+
+---
+
+## Memory-First Query System
+
+Nova checks her own 1.2 million memories **before** anything else. Always. Her lived experience comes first — LLM training data, web searches, and cloud APIs are fallbacks, not defaults.
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                    QUERY RESOLUTION ORDER                         │
+│                 (nova_memory_first.py middleware)                 │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                  │
+│  User asks: "What raves do you remember from 2002?"              │
+│                          │                                       │
+│                          ▼                                       │
+│  ┌─ 1. CLASSIFY QUERY ────────────────────────────────────────┐ │
+│  │  Pattern match → "rave" + "2002" → music/rave + email      │ │
+│  │  Sources: music, email_archive, socal_rave, music_history   │ │
+│  └────────────────────────────────────────────────┬───────────┘ │
+│                                                   ▼             │
+│  ┌─ 2. MEMORY RECALL (vector similarity) ─────────────────────┐ │
+│  │  /recall?q=rave+2002&source=email_archive → SCR emails     │ │
+│  │  /recall?q=rave+2002&source=music → Devo, jungle, raves    │ │
+│  │  Found 8 results → USE THESE                               │ │
+│  └────────────────────────────────────────────────┬───────────┘ │
+│                                                   ▼             │
+│  ┌─ 3. MEMORY SEARCH (text keywords) ────────────────────────┐ │
+│  │  /search?q=socal-raves+2002 → additional matches          │ │
+│  │  Used for names, exact phrases, UIDs                       │ │
+│  └────────────────────────────────────────────────┬───────────┘ │
+│                                                   ▼             │
+│  ┌─ 4. LOCAL LLM ────────────────────────────────────────────┐ │
+│  │  If memory has nothing → reason from what Nova knows       │ │
+│  │  Intent router picks the right model for the task          │ │
+│  └────────────────────────────────────────────────┬───────────┘ │
+│                                                   ▼             │
+│  ┌─ 5. WEB SEARCH ───────────────────────────────────────────┐ │
+│  │  Only if memory AND local LLM have nothing                 │ │
+│  │  DuckDuckGo or Playwright browser automation               │ │
+│  └────────────────────────────────────────────────┬───────────┘ │
+│                                                   ▼             │
+│  ┌─ 6. CLOUD ────────────────────────────────────────────────┐ │
+│  │  NEVER for private data. Only for conversation.            │ │
+│  │  Health, email, financial → hard-fail if local is down.    │ │
+│  └────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+**Source classification** (12 categories, automatic):
+
+| Query Pattern | Memory Sources Searched |
+|---|---|
+| Personal email, conversations, mailing lists | `email_archive`, `email` |
+| Music, raves, DJs, Devo, jungle, events | `music`, `email_archive`, `socal_rave`, `music_history` |
+| Health, vitals, medications, sleep | `apple_health`, `health` |
+| SRE, incidents, SLOs, error budgets | `sre` |
+| People by name (herd, contacts) | `email_archive`, `email`, `disney` |
+| Corvette, car repair, engine specs | `corvette_workshop_manual` |
+| Home, Burbank, HomeKit, local | `local`, `california`, `home_repair` |
+| Gardening, plants, soil | `gardening` |
+| Countries, world facts | `world_factbook` |
+| Projects, GitHub, code | `project_docs` |
+| Food, recipes, cocktails | `cooking`, `cocktails` |
+| Network, NAS, infrastructure | `infrastructure`, `networking`, `unifi` |
+
+Jordan never has to say "from your memories" — Nova checks automatically.
 
 ---
 
@@ -106,7 +174,7 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 │   │  Index:      HNSW (m=16, ef=64, cosine) — recall <5ms           │      │
 │   │  Embeddings: nomic-embed-text via Ollama (768 dimensions)        │      │
 │   │  Queue:      Redis 8.6.2 async write (bulk ingest at 8ms)       │      │
-│   │  Count:      219,321 memories across 30+ source domains          │      │
+│   │  Count:      1,218,131 memories across 30+ source domains          │      │
 │   │  Endpoints:  /remember  /recall  /search  /random  /health      │      │
 │   │                                                                   │      │
 │   │  Top sources:                                                     │      │
@@ -324,7 +392,7 @@ This is a unified monorepo. Previously split across 4 repos (nova, Nova-NextGen,
                ▼             ▼
 ┌──────────────────┐  ┌────────────────┐  ┌─────────────────────┐
 │  Vector Memory   │  │    Slack       │  │  Awareness Layer    │
-│  219,321 memories│  │  #nova-chat    │  │                     │
+│  1,218,131 memories│  │  #nova-chat    │  │                     │
 │  30+ sources     │  │  Jordan DM     │  │  Context bridge     │
 │  <5ms recall     │◄─┤  (urgent only) │  │  Proactive peace    │
 │                  │  │               │  │  Gentle explorer    │
@@ -392,11 +460,11 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 
 ### Memory
 
-219,321 vectors across 30+ domains. PostgreSQL 17 + pgvector 0.8.2 + Redis async queue.
+1,218,131 vectors across 70+ domains. PostgreSQL 17 + pgvector 0.8.2 + Redis async queue.
 
 | Source | Count | Content |
 |--------|-------|---------|
-| email_archive | 83,890 | Jordan's email history |
+| email_archive | 600,000+ | Jordan's personal email (2000-2026, SCR mailing list, all accounts) |
 | music + music_history | 60,292 | Jungle, DnB, IDM, turntablism, Devo |
 | world_factbook | 24,327 | CIA World Factbook (262 countries) |
 | corvette_workshop_manual | 9,664 | Full C6 Corvette workshop manual |
@@ -591,6 +659,7 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 ### Core Infrastructure
 | Script | Purpose |
 |---|---|
+| `nova_memory_first.py` | **Memory-first middleware** -- auto-classifies queries, searches 1.2M memories before LLM/web |
 | `nova_config.py` | Central config -- secrets from macOS Keychain, never hardcoded |
 | `nova_intent_router.py` | Privacy-first AI routing (67+ intents, 4 tiers, per-intent temperature) |
 | `nova_morning_brief.py` | 7am briefing: weather, 15 calendars, email priorities, GitHub, system health |
@@ -680,6 +749,19 @@ All secrets loaded at runtime via `nova_config.py`. Nothing hardcoded in source.
 
 ## Changelog
 
+### Apr 13, 2026 -- Memory-First Architecture + 1.2M Memories
+
+- **Memory-first query system** (`nova_memory_first.py`): Nova now checks 1.2M memories BEFORE falling back to LLM/web. Auto-classifies queries into 12 categories with source-specific filters. Jordan never has to say "from your memories."
+- **Email ingest**: 336K personal Home emails ingested (Work/tax/divorce excluded). Memory count: 164K -> 1,218,131.
+- **PostgreSQL scaled**: Moved to /Volumes/MoreData, 8GB shared_buffers, 2GB maintenance_work_mem, HNSW rebuilt m=32/ef=200. 421K duplicates cleaned. text_hash dedup column backfilled.
+- **Security fixes**: RTSP camera URLs scrubbed from git history (BFG), .slack_token_cache deleted, pre-push hooks scan for rtsps://, camera_config.py gitignored.
+- **Reliability fixes**: 14 scripts' state files moved from /tmp to persistent workspace/state/, camera monitor ffmpeg PATH fixed, 9 orphaned scripts deleted, 1.6GB legacy SQLite/FAISS deleted, TOOLS.md trimmed to <20K (gateway truncation fixed).
+- **Inbox watcher**: Recreated with forceful exec instruction (Nova was philosophically refusing to read email).
+- **Health data ingested**: 89 health memories from iPhone Health Auto Export (20 metric types, Jan-Apr 2026).
+- **SRE knowledge**: 13 memory chunks covering fundamentals through modern practices.
+- **Devo knowledge**: 10 memory chunks covering band, philosophy, discography, members, Jordan's personal connection.
+- **Synology RS1221+ NAS**: Full hardware specs and contents ingested.
+
 ### Apr 12, 2026 -- Massive Expansion + Repo Consolidation
 
 **Repo merge:** Nova-NextGen, Nova-Desktop, NovaControl merged into this unified repo. Old repos archived on GitHub.
@@ -687,7 +769,7 @@ All secrets loaded at runtime via `nova_config.py`. Nothing hardcoded in source.
 **22 new capabilities built:**
 - Calendar awareness (15 accounts), app watchdog (auto-restart), weather-HomeKit bridge, quick capture (clipboard), package tracker (carrier APIs), finance monitor (fraud DM), app intelligence (patterns), journal (nightly reflection), context bridge (temporal echoes), proactive peace (Focus-aware), gentle explorer (questions garden), face recognition (local dlib, 10 cameras), iMessage (send/receive), financial intelligence (spending, forecast, anomalies), outreach intelligence (warmth scoring), Apple Health pipeline (iPhone → iCloud), health intelligence (trends + correlations), sky watcher (golden hour + timelapse), browser automation (Playwright)
 
-**Stats:** 94+ scripts, 36 cron jobs, 219,321 memories, 67+ intent router entries
+**Stats:** 94+ scripts, 36 cron jobs, 1,218,131 memories, 67+ intent router entries
 
 ### Apr 7, 2026
 - TiHKAL + PiHKAL ingested (3,180 vector chunks)
