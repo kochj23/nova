@@ -536,6 +536,22 @@ Financial data stored in local JSON only -- NOT in vector memory (privacy).
 - **Image generation** -- SwarmUI on demand (port 7801)
 - **This Day in History** -- Wikipedia historical events daily
 
+### Video Ingestion
+
+Full local video analysis pipeline — no cloud APIs:
+
+```
+Video file → ffprobe (metadata) → duration, resolution, codec
+           → ffmpeg (keyframes) → qwen3-vl:4b (local vision) → scene descriptions
+           → ffmpeg (audio) → MLX Whisper large-v3-turbo → transcript
+           → All stored in vector memory (source: "video")
+```
+
+- **Keyframe analysis**: Extract 1 frame per N seconds, describe each with local vision model
+- **Audio transcription**: MLX Whisper on Apple Silicon — fast, accurate, free
+- **Batch processing**: Point at a folder, process all videos
+- **Configurable**: `--interval 30` for 1 frame per 30s, `--frames-only`, `--transcript-only`
+
 ### Browser Automation
 
 Full Playwright/Chromium headless control:
@@ -765,6 +781,7 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 | Script | Purpose |
 |---|---|
 | `dream_generate.py` + `dream_deliver.py` | Dream narrative + image + delivery pipeline |
+| `nova_video_ingest.py` | Video analysis: keyframe vision (qwen3-vl) + MLX Whisper transcription |
 | `generate_image.sh` | SwarmUI image generation on demand |
 | `nova_web_search.py` | DuckDuckGo with 24h cache + memory integration |
 | `nova_this_day.py` | This Day in History from Wikipedia |
