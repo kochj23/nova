@@ -487,6 +487,7 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 - **HomeKit** (port 37432) -- 20+ devices. Scene execution via API or Shortcuts CLI.
 - **ADT+ / Nest** -- Planned via Starling Home Hub ($99, starlinghome.io). Bridges all Nest cameras, ADT sensors, and Nest Guard to HomeKit without GCP API setup. Nova sees them through the existing HomekitControl pipeline.
 - **UniFi Network Monitoring** -- Full read-only API integration with UDM Pro (API key in Keychain). 11 capabilities: rogue device detection (100 devices baselined), WAN outage tracking, bandwidth hog alerts, WiFi optimization analysis, family presence detection (auto-learned from hostnames), firmware monitoring, switch port utilization, VPN status, DPI traffic analysis, daily network snapshots with 7-day trends, and HomeKit-compatible presence JSON. Runs via launchd every 30 min ($0 cloud cost).
+- **Synology NAS Monitoring** -- Full session-based API integration with RS1221+ (credentials in Keychain). 14 modes: system status (CPU/RAM/temps), storage health (RAID-5, 37/50.7 TB), disk SMART data (8x 8TB Seagate + 2x 1TB NVMe cache at 93% hit rate), services (20 packages), security (connections, scan status), network (10 Gbps eth4), shared folders, UPS, snapshots with 7-day trends. Problem detection: disk failure, RAID degradation, SMART alerts, temp anomalies. Runs via launchd every 30 min ($0 cloud cost).
 - **Weather-HomeKit bridge** -- Fetches Burbank forecast (wttr.in), evaluates rules for heat (>90F), cold (<50F), rain (>60%), wind (>30mph), pleasant weather. Checks open contacts before rain.
 - **Calendar** -- 15 accounts (iCloud, Google, Yahoo, Exchange, digitalnoise.net) via Swift + EventKit. Upcoming meeting alerts (30 min warning) to DM.
 
@@ -848,6 +849,7 @@ All secrets loaded at runtime via `nova_config.py`. Nothing hardcoded in source.
 - **SOUL.md privacy fix**: Nova was refusing to share video transcripts and work meeting content because privacy rules said "never surface content verbatim." Clarified: only email bodies are restricted. Video, SRE, music, iMessage, health, infrastructure — all shareable with Jordan. His data, his questions.
 - **systemPromptOverride**: Memory-first + zero-restriction instruction injected at the API level.
 - **Two-audience privacy model**: Jordan has ZERO content restrictions (work, personal, health, intimate, financial — share everything). Privacy rules only apply to external sharing (herd, Slack channels, emails to others). "The privacy rules exist to protect Jordan FROM OTHERS, not to protect Jordan from himself."
+- **Synology NAS monitor**: 14 modes, session auth via Keychain, RAID/disk/storage/service/security health, 7-day trend snapshots. 1,635 lines.
 
 ### Apr 12, 2026 -- Massive Expansion + Repo Consolidation
 
