@@ -455,7 +455,7 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 |---------|--------|---------|
 | Slack | Socket mode (real-time) | Primary channel. #nova-chat + Jordan DM |
 | Email | IMAP read + SMTP send | nova@digitalnoise.net. Auto-reply with haiku + memory fragment |
-| iMessage | AppleScript send, SQLite read, macOS Contacts resolution | Sends as Jordan (signed "-- Nova"). All messages (in + out) stored in memory with contact names resolved from 599 macOS Contacts entries. Search by name ("messages with Amy"), not phone numbers. |
+| iMessage | AppleScript send, SQLite read, macOS Contacts resolution | Sends as Jordan (signed "-- Nova"). All messages (in + out) stored in memory with contact names resolved from 599 macOS Contacts entries. Search by name, not phone numbers. |
 | Herd outreach | LLM-decided daily | Warmth scoring, topic matching, dream image attachments (35% chance) |
 
 ### Memory
@@ -837,7 +837,7 @@ All secrets loaded at runtime via `nova_config.py`. Nothing hardcoded in source.
 - **Devo knowledge**: 10 memory chunks covering band, philosophy, discography, members, Jordan's personal connection.
 - **Synology RS1221+ NAS**: Full hardware specs and contents ingested.
 - **Cost optimization**: 8 high-frequency crons moved from OpenClaw (OpenRouter, ~$20/day) to launchd (direct Python, $0). Frequencies reduced where appropriate. OpenRouter spend: $900/month -> ~$250-300/month projected.
-- **iMessage contact resolution**: 599 macOS Contacts entries resolved via Swift + CNContactStore. Messages stored as "iMessage to CONTACT_NAME_REDACTED" not "PHONE_REDACTED".
+- **iMessage contact resolution**: 599 macOS Contacts entries resolved via Swift + CNContactStore. Messages stored with contact names instead of raw phone numbers.
 - **66,252 iMessages bulk imported** into vector memory with contact names.
 - **Health Auto Export format**: nova_health_monitor.py now handles both daily Shortcut exports and HealthAutoExport-*.json bulk files.
 - **Home watchdog fix**: Was reporting Hue bulb color temperature (mireds/Kelvin) as room temperature in Fahrenheit (784°F alerts). Now skips color temperature characteristics and sanity-checks values are in the -20 to 60°C range.
