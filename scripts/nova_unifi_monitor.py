@@ -250,7 +250,8 @@ def find_problems(health, devices, clients):
         if dev.get("type") == "uap":
             for radio in dev.get("radio_table_stats", []):
                 satisfaction = radio.get("satisfaction", 100)
-                if satisfaction < 50:
+                # -1 means no clients on that radio — not a problem
+                if 0 <= satisfaction < 50:
                     channel = radio.get("channel", "?")
                     problems.append({
                         "severity": "medium",
@@ -1303,9 +1304,11 @@ def full_check_v2():
 
     problems = find_problems(health, devices, clients)
 
-    # 3. Bandwidth hog detection — add to problems
-    hogs = find_bandwidth_hogs(clients)
-    problems.extend(hogs)
+    # 3. Bandwidth hog detection — DISABLED from regular checks
+    # Bandwidth report runs nightly at 23:50 via nova_bandwidth_report.py
+    # Cameras routinely use 50-100GB which is normal, not a problem
+    # hogs = find_bandwidth_hogs(clients)
+    # problems.extend(hogs)
 
     # 8. VPN monitoring — add to problems
     vpn_problems = vpn_status(health)
