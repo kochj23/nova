@@ -36,7 +36,7 @@ def post_to_slack(summary):
     # Use message tool via subprocess to post
     subprocess.run([
         "python3", "-c",
-        f"from openclaw import message; message.send(action='send', channel='slack', target='C0AMNQ5GX70', message={repr(message)})"
+        f"from openclaw import message; message.send(action='send', channel='slack', target='C0ATAF7NZG9', message={repr(message)})"
     ], capture_output=True)
 
 def format_summary(memory_content):

@@ -11,7 +11,7 @@ PENDING="$HOME/.openclaw/workspace/journal/pending_delivery.json"
 DEAD_LETTER="$HOME/.openclaw/workspace/journal/failed_deliveries/${TODAY}.json"
 LOG="$HOME/.openclaw/logs/dream-pipeline.log"
 SLACK_TOKEN=$(python3 -c "import sys; sys.path.insert(0,'$HOME/.openclaw/scripts'); import nova_config; print(nova_config.slack_bot_token())" 2>/dev/null || echo "")
-SLACK_CHANNEL="C0AMNQ5GX70"
+SLACK_CHANNEL="C0ATAF7NZG9"
 
 failures=()
 

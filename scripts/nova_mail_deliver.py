@@ -40,7 +40,7 @@ def vector_remember(text: str, metadata: dict = None):
 
 SCRIPTS      = Path.home() / ".openclaw" / "scripts"
 SLACK_TOKEN  = nova_config.slack_bot_token()
-SLACK_CHAN   = "C0AMNQ5GX70"
+SLACK_CHAN   = "C0ATAF7NZG9"
 JORDAN_EMAIL = "kochj23" + "@gmail.com"  # noqa
 SUMMARY_FILE = Path("/tmp/nova_mail_fetch.txt")
 SLACK_API    = "https://slack.com/api"

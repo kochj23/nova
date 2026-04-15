@@ -14,7 +14,7 @@
 # Written by Jordan Koch.
 
 SLACK_TOKEN=$(security find-generic-password -a nova -s nova-slack-bot-token -w)
-SLACK_CHAN="C0AMNQ5GX70"
+SLACK_CHAN="C0ATAF7NZG9"
 VECTOR_PORT=18790
 ALERT_FILE="/tmp/nova_monitor_last_alert"
 ALERT_COOLDOWN=3600  # Only re-alert same issue after 1 hour

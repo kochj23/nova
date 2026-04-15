@@ -65,7 +65,8 @@ def slack_bot_token() -> str:
 # ── Commonly used constants ───────────────────────────────────────────────────
 
 SLACK_API     = "https://slack.com/api"
-SLACK_CHAN     = "C0AMNQ5GX70"   # #nova-chat
+SLACK_CHAN     = "C0AMNQ5GX70"   # #nova-chat (interactive conversations with Jordan)
+SLACK_NOTIFY  = "C0ATAF7NZG9"   # #nova-notifications (cron output, status, automated posts)
 JORDAN_DM     = "D0AMPB3F4T0"   # Jordan's DM channel with Nova
 JORDAN_EMAIL  = "kochj23" + "@gmail.com"     # noqa: avoid scanner false-positive
 NOVA_EMAIL    = "nova@digitalnoise.net"

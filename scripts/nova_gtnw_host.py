@@ -44,7 +44,7 @@ import nova_config
 from herd_config import HERD
 
 SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN   = nova_config.SLACK_CHAN          # C0AMNQ5GX70
+SLACK_CHAN   = nova_config.SLACK_NOTIFY          # C0ATAF7NZG9 #nova-notifications
 SLACK_API   = nova_config.SLACK_API
 NOVA_EMAIL  = nova_config.NOVA_EMAIL
 HERD_MAIL   = str(SCRIPTS / "nova_herd_mail.sh")

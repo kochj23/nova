@@ -17,9 +17,6 @@ from datetime import datetime
 from pathlib import Path
 import nova_config
 
-OPENROUTER_URL   = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "anthropic/claude-haiku-4.5"   # fast + cheap — haiku generation only
-
 # ── Config ───────────────────────────────────────────────────────────────────
 
 WORKSPACE     = Path.home() / ".openclaw" / "workspace"
@@ -170,27 +167,6 @@ def post_dream(narrative, image_path, entry_date):
 
 
 # ── Haiku Generation ─────────────────────────────────────────────────────────
-
-def _openrouter_api_key() -> str:
-    """Keychain first, openclaw.json fallback."""
-    try:
-        import subprocess as _sp
-        result = _sp.run(
-            ["security", "find-generic-password", "-a", "nova", "-s", "nova-openrouter-api-key", "-w"],
-            capture_output=True, text=True
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except Exception:
-        pass
-    try:
-        config_path = Path.home() / ".openclaw/openclaw.json"
-        with open(config_path) as f:
-            config = json.load(f)
-        return config["models"]["providers"]["openrouter"]["apiKey"]
-    except Exception:
-        return ""
-
 
 def generate_haiku(narrative: str) -> str:
     """Generate a haiku inspired by tonight's dream narrative via local Ollama.

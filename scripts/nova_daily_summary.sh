@@ -34,7 +34,7 @@ subprocess.run([
   "python3", "-m", "openclaw.tools.message",
   "--action", "send",
   "--channel", "slack", 
-  "--target", "C0AMNQ5GX70",
+  "--target", "C0ATAF7NZG9",
   "--message", message
 ], capture_output=True)
 

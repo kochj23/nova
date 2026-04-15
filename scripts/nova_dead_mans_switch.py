@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
 SLACK_TOKEN   = nova_config.slack_bot_token()
-SLACK_CHANNEL = "C0AMNQ5GX70"
+SLACK_CHANNEL = "C0ATAF7NZG9"
 SLACK_API     = "https://slack.com/api/chat.postMessage"
 SCRIPTS       = Path(__file__).parent
 LOGS          = Path.home() / ".openclaw/logs"

@@ -265,7 +265,7 @@ One sentence each.
                     f"""
 import subprocess
 msg = '🚨 HIGH SEVERITY ANOMALY: {description}\\n\\n{response}'
-subprocess.run(['python3', '-c', f'message("send", channel="slack", target="C0AMNQ5GX70", message={repr(msg)})'])
+subprocess.run(['python3', '-c', f'message("send", channel="slack", target="C0ATAF7NZG9", message={repr(msg)})'])
 """
                 ], check=False)
             except:

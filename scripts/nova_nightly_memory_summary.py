@@ -14,7 +14,7 @@ from pathlib import Path
 
 WORKSPACE = Path.home() / ".openclaw/workspace"
 MEMORY_DIR = WORKSPACE / "memory"
-CHANNEL = "C0AMNQ5GX70"  # #nova-chat
+CHANNEL = "C0ATAF7NZG9  # #nova-notifications
 
 def log(msg: str):
     print(f"[nova_nightly_summary {datetime.now().isoformat()}] {msg}")

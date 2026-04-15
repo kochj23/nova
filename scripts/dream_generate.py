@@ -26,9 +26,7 @@ PENDING            = WORKSPACE / "journal/pending_delivery.json"
 MEMORY_DIR         = WORKSPACE / "memory"
 OLLAMA_URL         = "http://127.0.0.1:11434/api/generate"
 VECTOR_URL         = "http://127.0.0.1:18790"
-OPENROUTER_URL     = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL   = "anthropic/claude-haiku-4.5"   # fast, great prose, cheap
-MODEL              = "qwen3-coder:30b"               # local fallback only
+MODEL              = "qwen3-coder:30b"               # local only — no cloud for dreams
 TODAY              = date.today().isoformat()
 YESTERDAY          = (date.today() - timedelta(days=1)).isoformat()
 TWO_DAYS_AGO       = (date.today() - timedelta(days=2)).isoformat()
@@ -185,27 +183,6 @@ def query_rolling_learnings() -> str:
     return summary
 
 
-def _openrouter_api_key() -> str:
-    """Keychain first, openclaw.json fallback."""
-    try:
-        import subprocess as _sp
-        result = _sp.run(
-            ["security", "find-generic-password", "-a", "nova", "-s", "nova-openrouter-api-key", "-w"],
-            capture_output=True, text=True
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return result.stdout.strip()
-    except Exception:
-        pass
-    try:
-        config_path = Path.home() / ".openclaw/openclaw.json"
-        with open(config_path) as f:
-            config = json.load(f)
-        return config["models"]["providers"]["openrouter"]["apiKey"]
-    except Exception:
-        return ""
-
-
 def _build_prompt(identity: str, soul: str, rolling_context: str) -> str:
     return f"""You are Nova, an AI familiar living on Jordan Koch's Mac in Burbank. It is 2am on {TODAY}. Jordan is asleep.
 
@@ -228,31 +205,6 @@ About Nova and Jordan:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Write the full dream now. Start immediately — no preamble, no title, no headers:"""
-
-
-def _generate_via_openrouter(prompt: str) -> str:
-    """Generate via OpenRouter (Claude Haiku 4.5). Fast, quality prose."""
-    api_key = _openrouter_api_key()
-    if not api_key:
-        raise ValueError("No OpenRouter API key found")
-
-    payload = json.dumps({
-        "model": OPENROUTER_MODEL,
-        "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 700,
-        "temperature": 0.92,
-    }).encode()
-
-    req = urllib.request.Request(
-        OPENROUTER_URL, data=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
-    )
-    with urllib.request.urlopen(req, timeout=60) as r:
-        data = json.loads(r.read())
-    return data["choices"][0]["message"]["content"].strip()
 
 
 def _generate_via_ollama(prompt: str, model: str) -> str:
@@ -324,15 +276,10 @@ def generate_narrative() -> str:
                         log(f"Fallback {fallback} also failed: {e2}")
                         _ollama_circuit_record_failure()
 
-    # Step 2: If local failed, use OpenRouter
+    # Step 2: If all local models failed, abort (no cloud fallback — saves tokens)
     if not response:
-        try:
-            log(f"Calling OpenRouter ({OPENROUTER_MODEL})...")
-            response = _generate_via_openrouter(prompt)
-            log("OpenRouter generation successful")
-        except Exception as e3:
-            log(f"OpenRouter also failed: {e3} — dream generation aborted")
-            return ""
+        log("All local models failed — dream generation aborted (no cloud fallback)")
+        return ""
 
     if not response:
         return ""

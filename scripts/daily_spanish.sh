@@ -5,4 +5,4 @@ if [ ! -f "$PHRASE_FILE" ]; then
   exit 1
 fi
 PHRASE=$(shuf -n 1 "$PHRASE_FILE")
-/opt/homebrew/bin/openclaw message send --target "C0AMNQ5GX70" --message "Daily Spanish phrase: $PHRASE"
+/opt/homebrew/bin/openclaw message send --target "C0ATAF7NZG9" --message "Daily Spanish phrase: $PHRASE"

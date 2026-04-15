@@ -21,7 +21,7 @@ SESSIONS_DIR="$HOME/.openclaw/agents/main/sessions"
 THRESHOLD_MB=20
 FORCE=false
 CHECK_ONLY=false
-SLACK_CHAN="C0AMNQ5GX70"
+SLACK_CHAN="C0ATAF7NZG9"
 
 # ── Parse args ────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do

@@ -151,10 +151,8 @@ Jordan never has to say "from your memories" — Nova checks automatically.
 │   ┌──────┴──────────────────────────────────────────────────────────┐      │
 │   │                     MODEL ROUTING                                │      │
 │   │                                                                  │      │
-│   │  ┌─ CLOUD (OpenRouter) ────────────────────────────────────┐    │      │
-│   │  │  qwen/qwen3-235b-a22b-2507 (primary, 262K context)     │    │      │
-│   │  │  anthropic/claude-haiku-4.5 (fallback)                  │    │      │
-│   │  │  deepseek/deepseek-chat (budget fallback)               │    │      │
+│   │  ┌─ CLOUD (OpenRouter) — Slack only ────────────────────────┐    │      │
+│   │  │  qwen/qwen3-235b-a22b-2507 (#nova-chat + Jordan DM)    │    │      │
 │   │  └─────────────────────────────────────────────────────────┘    │      │
 │   │                                                                  │      │
 │   │  ┌─ LOCAL (never leaves machine) ──────────────────────────┐    │      │
@@ -585,55 +583,55 @@ Full Playwright/Chromium headless control:
 
 ## Cost-Optimized Execution Model
 
-Nova uses a two-tier execution model to minimize cloud API costs while maintaining quality:
+Nova uses a three-tier execution model. As of Apr 14 2026, **only Slack conversations hit OpenRouter**. Everything else runs locally at $0.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
 │              EXECUTION TIERS (Cost Optimization)                  │
 ├──────────────────────────────────────────────────────────────────┤
 │                                                                  │
-│  TIER 1: launchd (direct Python — $0 cloud cost)                │
+│  TIER 1: launchd (direct Python — $0)                           │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │  These scripts run directly via macOS launchd.             │ │
-│  │  No LLM agent wrapper. No OpenRouter round-trip.           │ │
+│  │  Scripts run directly via macOS launchd.                   │ │
+│  │  No LLM agent wrapper. No cloud round-trip.                │ │
 │  │                                                            │ │
-│  │  Gateway Watchdog      every 10 min                        │ │
-│  │  App Watchdog           every 10 min (auto-restart)        │ │
-│  │  Sky Watcher            every 5 min (golden hours only)    │ │
-│  │  iMessage Watch         every 5 min (contact resolution)   │ │
-│  │  Inbox Watcher          every 5 min (autonomous email)     │ │
-│  │  Proactive Peace        every 15 min (Focus detection)     │ │
-│  │  Face Recognition       every 30 min (10 cameras)          │ │
-│  │  Home Watchdog          every 30 min (HomeKit)             │ │
+│  │  Gateway Watchdog, App Watchdog, Sky Watcher,              │ │
+│  │  iMessage Watch, Inbox Watcher, Proactive Peace,           │ │
+│  │  Face Recognition, Home Watchdog                           │ │
 │  │                                                            │ │
-│  │  Cost: $0/day (runs locally, no cloud API calls)           │ │
+│  │  Cost: $0/day                                              │ │
 │  └────────────────────────────────────────────────────────────┘ │
 │                                                                  │
-│  TIER 2: OpenClaw cron (agent + OpenRouter — quality tasks)     │
+│  TIER 2: OpenClaw cron (agent + local Ollama — $0)              │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │  These run through the OpenClaw agent because they need    │ │
-│  │  LLM reasoning, Slack delivery, or complex tool use.       │ │
+│  │  Crons run through the OpenClaw agent using local          │ │
+│  │  Ollama (nova:latest / qwen3 30B) — not OpenRouter.        │ │
+│  │  Output goes to #nova-notifications channel.               │ │
 │  │                                                            │ │
-│  │  29 remaining cron jobs (daily, hourly, bi-hourly)         │ │
 │  │  Morning brief, nightly report, context bridge,            │ │
 │  │  journal prompts, GitHub digest, health intelligence,      │ │
-│  │  financial analysis, etc.                                  │ │
+│  │  financial analysis, game night, dream journal, etc.       │ │
 │  │                                                            │ │
-│  │  Cost: ~$8-10/day ($250-300/month)                         │ │
+│  │  Cost: $0/day (local inference on M4 Mac Studio)           │ │
 │  └────────────────────────────────────────────────────────────┘ │
 │                                                                  │
 │  TIER 3: Slack conversation (OpenRouter — real-time)            │
 │  ┌────────────────────────────────────────────────────────────┐ │
-│  │  Direct conversation with Jordan in Slack.                 │ │
-│  │  Uses Qwen3 235B or Claude Haiku 4.5 via OpenRouter.      │ │
-│  │  This is where quality matters most.                       │ │
+│  │  Direct conversation with Jordan in #nova-chat + DMs.      │ │
+│  │  Uses Qwen3 235B via OpenRouter (262K context).            │ │
+│  │  modelByChannel routes only these to cloud.                │ │
 │  │                                                            │ │
-│  │  Cost: variable, depends on conversation volume            │ │
+│  │  Session auto-resets after 2hr idle or daily at 4am.       │ │
+│  │  Bootstrap context capped at 50K chars (was 250K).         │ │
+│  │                                                            │ │
+│  │  Cost: ~$1-2/day (~$50/month)                              │ │
 │  └────────────────────────────────────────────────────────────┘ │
 │                                                                  │
-│  Previously: 2,067 agent invocations/day = ~$30/day ($900/mo)  │
-│  Now: ~480 agent invocations/day = ~$8-10/day ($250-300/mo)    │
-│  Savings: ~$600/month                                            │
+│  History:                                                        │
+│    Mar 29: ~$106/day ($3,184/mo) — all sessions on OpenRouter  │
+│    Apr 13: ~$8-10/day ($250-300/mo) — crons moved to launchd   │
+│    Apr 14: ~$1-2/day (~$50/mo) — Slack-only on OpenRouter      │
+│  Total savings: ~$3,100/month (98% reduction)                    │
 └──────────────────────────────────────────────────────────────────┘
 ```
 
@@ -823,6 +821,20 @@ All secrets loaded at runtime via `nova_config.py`. Nothing hardcoded in source.
 ---
 
 ## Changelog
+
+### Apr 14, 2026 -- Slack-Only Cloud + 98% Cost Reduction + Notifications Channel
+
+- **OpenRouter usage cut 98%**: Default agent model changed from `openrouter/qwen/qwen3-235b-a22b-2507` to `ollama/nova:latest` (local, $0). Only `#nova-chat` and Jordan's DM use OpenRouter via `modelByChannel` config. All crons, reminders, and automated tasks now run on local Ollama.
+- **Projected cost: ~$50/month** (down from ~$3,184/month peak). Savings: ~$3,100/month.
+- **Token analysis**: Diagnosed 207M tokens/day burn — root causes were: (1) main agent session growing to 838+ messages without reset, (2) 250K char bootstrap context re-sent every turn, (3) all crons/reminders routing through OpenRouter, (4) dream generation falling back to Claude Haiku 4.5 on cloud.
+- **Session auto-reset**: Added idle timeout (2hr) + daily reset (4am). Sessions no longer grow indefinitely. Bootstrap context capped at 50K chars (was 250K).
+- **`#nova-notifications` channel**: New Slack channel (`C0ATAF7NZG9`) for all automated/cron output. 21 scripts updated to post here instead of `#nova-chat`. Interactive conversations (dream delivery, Slack ingest, preprocessor) stay in `#nova-chat`.
+- **`nova_config.py`**: Added `SLACK_NOTIFY` constant for the notifications channel.
+- **`dream_generate.py`**: Removed OpenRouter/Haiku fallback — local Ollama only. Removed dead code (`_openrouter_api_key`, `_generate_via_openrouter`).
+- **`dream_deliver.py`**: Removed OpenRouter references and unused `_openrouter_api_key` function.
+- **Session maintenance**: Auto-prune sessions older than 30 days, cap at 500 entries.
+- **Compaction notifications**: Enabled `notifyUser: true` so compaction events are visible.
+- **iMessage contact resolution**: Cross-referenced 243 unresolved phone numbers against macOS Contacts. Identified Roberto (`+16268336995`), Nikhil (`+14246725533`), and Tricia Riordan (`+18184455538`). 242 numbers remain unresolved (mostly delivery services, 2FA codes, and old coworkers).
 
 ### Apr 13, 2026 -- Memory-First Architecture + 1.2M Memories + Cost Optimization
 

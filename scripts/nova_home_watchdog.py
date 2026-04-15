@@ -25,7 +25,7 @@ from pathlib import Path
 import nova_config
 
 SLACK_TOKEN   = nova_config.slack_bot_token()
-SLACK_CHAN    = "C0AMNQ5GX70"
+SLACK_CHAN    = "C0ATAF7NZG9"
 SLACK_API    = "https://slack.com/api"
 HOMEKIT_SCRIPT = Path.home() / ".openclaw/scripts/nova_homekit_query.sh"
 VECTOR_URL   = "http://127.0.0.1:18790/remember"

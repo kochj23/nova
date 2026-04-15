@@ -21,7 +21,7 @@ from pathlib import Path
 import nova_config
 
 SLACK_TOKEN  = nova_config.slack_bot_token()
-SLACK_CHAN   = "C0AMNQ5GX70"
+SLACK_CHAN   = "C0ATAF7NZG9"
 SLACK_API    = "https://slack.com/api"
 SCRIPTS      = Path.home() / ".openclaw" / "scripts"
 WORKSPACE    = Path.home() / ".openclaw" / "workspace"

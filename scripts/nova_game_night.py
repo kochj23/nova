@@ -51,7 +51,7 @@ MODEL         = "qwen3-coder:30b"
 HERD_MAIL     = str(SCRIPTS_DIR / "nova_herd_mail.sh")
 
 # Slack channel: #nova-chat
-SLACK_CHAN     = "C0AMNQ5GX70"
+SLACK_CHAN     = "C0ATAF7NZG9"
 SLACK_API     = "https://slack.com/api"
 
 # Token from nova_config

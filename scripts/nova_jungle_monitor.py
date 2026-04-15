@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 WORKSPACE = Path.home() / ".openclaw/workspace"
-CHANNEL = "C0AMNQ5GX70"  # #nova-chat
+CHANNEL = "C0ATAF7NZG9"  # #nova-chat
 CACHE_FILE = WORKSPACE / "jungle_tracks_cache.json"
 
 def log(msg: str):
