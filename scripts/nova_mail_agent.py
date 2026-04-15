@@ -1,279 +1,281 @@
 #!/usr/bin/env python3
 """
-nova_mail_agent.py — Nova's email agent.
+nova_mail_agent.py — Nova's email agent (v2).
 
-Replaces nova_mail_handler.applescript and all custom mail scripts.
-Uses herd-mail (O.C.'s library) for all IMAP/SMTP operations.
+Rewritten 2026-04-14. Fixes: duplicate sends, re-processing loops,
+missing Sent Items, and missing CC to Jordan.
 
-For each unread message:
-  1. Read full content via herd-mail
-  2. Form a genuine opinion using Ollama (nova:latest, think:false)
-  3. Reply with that opinion via herd-mail
-  4. Post to Slack so Jordan sees it
-  5. Store in vector memory
+For each unread herd email:
+  1. Read full content via IMAP (single connection for entire run)
+  2. Generate a reply using local Ollama
+  3. Send ONE reply to ALL herd members + CC Jordan
+  4. Save to Sent Items via IMAP APPEND
+  5. Move original to Trash (so it's not re-processed)
+  6. Post summary to #nova-notifications
+  7. Store in vector memory
 
-Cron: every 5 minutes (Nova Inbox Watcher)
+Key design decisions:
+  - Single IMAP connection for the entire run (no connection mismatch)
+  - Delete from Inbox after processing (move to Trash, not just mark read)
+  - One reply per thread to all recipients (not per-recipient)
+  - CC Jordan's work email on all outgoing (loaded from known_senders.py)
+  - Jules LaPlante (jules@laplante.dev) is a herd member
+
+Cron: disabled (will be re-enabled via launchd after verification)
 Written by Jordan Koch.
 """
 
 import imaplib
+import email
+import email.utils
 import json
-import os
-import random
+import re
 import subprocess
 import sys
 import urllib.request
-from datetime import datetime, date, timedelta
+from datetime import datetime, date
+from email.message import EmailMessage
+from email.utils import formatdate, parseaddr
 from pathlib import Path
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
 SCRIPTS      = Path.home() / ".openclaw/scripts"
 WORKSPACE    = Path.home() / ".openclaw/workspace"
-HERD_MAIL    = str(SCRIPTS / "nova_herd_mail.sh")
-OLLAMA_URL      = "http://127.0.0.1:11434/api/generate"
-MODEL           = "qwen3-coder:30b"
+OLLAMA_URL   = "http://127.0.0.1:11434/api/generate"
+MODEL        = "qwen3-coder:30b"
 VECTOR_URL   = "http://127.0.0.1:18790/remember"
 TODAY        = date.today().isoformat()
 
-# Load Slack token from nova_config
+NOVA_EMAIL   = "nova@digitalnoise.net"
+IMAP_HOST    = "imap.gmail.com"
+IMAP_PORT    = 993
+SMTP_HOST    = "smtp.gmail.com"
+SMTP_PORT    = 587
+
+# Gmail folder names
+SENT_FOLDER  = "[Gmail]/Sent Mail"
+TRASH_FOLDER = "[Gmail]/Trash"
+
 sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path.home() / ".openclaw"))
 import nova_config
-_TOKEN_CACHE = Path.home() / ".openclaw/.slack_token_cache"
 
-def _get_slack_token() -> str:
-    """Get Slack token, caching to file for when Keychain is locked."""
-    token = nova_config.slack_bot_token()
-    if token:
-        try:
-            _TOKEN_CACHE.write_text(token)
-            _TOKEN_CACHE.chmod(0o600)
-        except Exception:
-            pass
-        return token
-    try:
-        cached = _TOKEN_CACHE.read_text().strip()
-        if cached:
-            return cached
-    except Exception:
-        pass
-    return ""
-
-SLACK_TOKEN  = _get_slack_token()
-SLACK_CHAN   = nova_config.SLACK_CHAN
+SLACK_TOKEN  = None  # loaded lazily
+SLACK_CHAN   = nova_config.SLACK_NOTIFY
 SLACK_API    = nova_config.SLACK_API
-NOVA_EMAIL   = nova_config.NOVA_EMAIL
 
-# Load known senders from local config (gitignored, contains personal/work addresses)
-# Falls back to herd-only if known_senders.py doesn't exist
+# Load herd config
 try:
-    sys.path.insert(0, str(Path.home() / ".openclaw"))
-    from known_senders import KNOWN_SENDERS
+    from herd_config import HERD, HERD_EMAILS
 except ImportError:
-    # Fallback: herd members only (safe for public repo — no PII)
-    KNOWN_SENDERS = {
-        # Herd emails loaded from herd_config.py at runtime
-    }
+    HERD = []
+    HERD_EMAILS = set()
+
+# Load known senders + Jordan's CC address (gitignored — contains PII)
+try:
+    from known_senders import KNOWN_SENDERS, JORDAN_EMAILS, JORDAN_CC_ADDR as JORDAN_CC
+except ImportError:
+    KNOWN_SENDERS = set()
+    JORDAN_EMAILS = set()
+    JORDAN_CC = ""
 
 SYSTEM_SENDER_PATTERNS = [
     "mailer-daemon", "postmaster", "mail delivery", "noreply", "no-reply",
-    "donotreply", "do-not-reply", "delivery status", "undeliverable"
+    "donotreply", "do-not-reply", "delivery status", "undeliverable",
 ]
+
+# All herd emails + Jules (who is a herd member but not in HERD config yet)
+ALL_HERD_EMAILS = list(HERD_EMAILS | {"jules@laplante.dev"})
+# All recipients for a herd reply: all herd members + Nova herself (for threading)
+HERD_REPLY_TO = [e for e in ALL_HERD_EMAILS if e != NOVA_EMAIL]
 
 
 def log(msg: str):
     print(f"[nova_mail_agent {datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-# ── herd-mail wrappers ────────────────────────────────────────────────────────
+# ── IMAP helpers (single connection) ─────────────────────────────────────────
 
-def herd(args: list, input_text: str = None) -> tuple:
-    """Run herd-mail and return (exit_code, parsed_json_or_text)."""
-    try:
-        result = subprocess.run(
-            [HERD_MAIL] + args,
-            capture_output=True, text=True, timeout=60,
-            input=input_text
-        )
-        stdout = result.stdout.strip()
-        try:
-            return result.returncode, json.loads(stdout)
-        except json.JSONDecodeError:
-            return result.returncode, stdout
-    except subprocess.TimeoutExpired:
-        log(f"herd-mail timeout: {args}")
-        return 2, {}
-    except Exception as e:
-        log(f"herd-mail error: {e}")
-        return 2, {}
+def _get_app_password() -> str:
+    """Get Nova's email password from Keychain."""
+    result = subprocess.run(
+        ["security", "find-generic-password", "-a", NOVA_EMAIL,
+         "-s", "nova-smtp-app-password", "-w"],
+        capture_output=True, text=True
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
 
 
-def check_unread() -> bool:
-    """Return True if there are unread messages."""
-    code, _ = herd(["check"])
-    return code == 0  # exit 0 = has unread
+def imap_connect(app_pass: str) -> imaplib.IMAP4_SSL:
+    """Open and authenticate an IMAP connection."""
+    conn = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+    conn.login(NOVA_EMAIL, app_pass)
+    return conn
 
 
-def list_unread() -> list[dict]:
-    """Return list of unread message summaries."""
-    code, data = herd(["list", "--unread"])
-    if code != 0 or not isinstance(data, dict):
+def imap_list_unread(conn: imaplib.IMAP4_SSL) -> list[bytes]:
+    """Return list of UIDs for unread messages in INBOX."""
+    conn.select("INBOX")
+    status, data = conn.uid("SEARCH", None, "UNSEEN")
+    if status != "OK" or not data or not data[0]:
         return []
-    return data.get("messages", [])
+    return data[0].split()
 
 
-def read_message(uid: str) -> None:
-    """Return full message content."""
-    code, data = herd(["read", str(uid)])
-    if code != 0 or not isinstance(data, dict):
-        return None
-    return data
+def imap_fetch_message(conn: imaplib.IMAP4_SSL, uid: bytes) -> dict:
+    """Fetch and parse a single message by UID."""
+    status, data = conn.uid("FETCH", uid, "(RFC822)")
+    if status != "OK" or not data or not data[0]:
+        return {}
+    raw = data[0][1]
+    msg = email.message_from_bytes(raw)
 
+    # Extract sender
+    from_raw = msg.get("From", "")
+    from_name, from_addr = parseaddr(from_raw)
+    from_addr = from_addr.lower()
+
+    # Extract subject
+    subject = msg.get("Subject", "(no subject)")
+    # Decode encoded subject
+    decoded_parts = email.header.decode_header(subject)
+    subject = "".join(
+        part.decode(enc or "utf-8") if isinstance(part, bytes) else part
+        for part, enc in decoded_parts
+    )
+
+    # Extract body (plain text preferred)
+    body = ""
+    if msg.is_multipart():
+        for part in msg.walk():
+            ct = part.get_content_type()
+            if ct == "text/plain":
+                payload = part.get_payload(decode=True)
+                if payload:
+                    body = payload.decode("utf-8", errors="replace")
+                    break
+    else:
+        payload = msg.get_payload(decode=True)
+        if payload:
+            body = payload.decode("utf-8", errors="replace")
+
+    # Extract message-id and references for threading
+    message_id = msg.get("Message-ID", "")
+    references = msg.get("References", "")
+    in_reply_to = msg.get("In-Reply-To", "")
+
+    return {
+        "uid": uid,
+        "from_raw": from_raw,
+        "from_name": from_name,
+        "from_addr": from_addr,
+        "subject": subject,
+        "body": body[:3000],
+        "message_id": message_id,
+        "references": references,
+        "in_reply_to": in_reply_to,
+    }
+
+
+def imap_move_to_trash(conn: imaplib.IMAP4_SSL, uid: bytes):
+    """Move a message to Trash (Gmail IMAP)."""
+    try:
+        conn.uid("COPY", uid, TRASH_FOLDER)
+        conn.uid("STORE", uid, "+FLAGS", "(\\Deleted)")
+        conn.expunge()
+        log(f"  Moved UID {uid.decode()} to Trash")
+    except Exception as e:
+        log(f"  WARNING: move to Trash failed for UID {uid.decode()}: {e}")
+
+
+def imap_save_to_sent(conn: imaplib.IMAP4_SSL, msg_bytes: bytes):
+    """Save a message to the Sent folder."""
+    try:
+        status, _ = conn.append(f'"{SENT_FOLDER}"', "\\Seen", None, msg_bytes)
+        if status == "OK":
+            log("  Saved to Sent Items")
+        else:
+            log(f"  WARNING: save to Sent failed: {status}")
+    except Exception as e:
+        log(f"  WARNING: save to Sent failed: {e}")
+
+
+# ── SMTP ─────────────────────────────────────────────────────────────────────
+
+def smtp_send(app_pass: str, to_addrs: list[str], cc_addrs: list[str],
+              subject: str, body: str,
+              in_reply_to: str = "", references: str = "") -> tuple[bool, bytes]:
+    """Send an email via SMTP. Returns (success, rfc822_bytes)."""
+    import smtplib
+
+    msg = EmailMessage()
+    msg["From"] = f"Nova <{NOVA_EMAIL}>"
+    msg["To"] = ", ".join(to_addrs)
+    if cc_addrs:
+        msg["Cc"] = ", ".join(cc_addrs)
+    msg["Subject"] = subject
+    msg["Date"] = formatdate(localtime=True)
+    if in_reply_to:
+        msg["In-Reply-To"] = in_reply_to
+    if references:
+        msg["References"] = references
+    msg.set_content(body)
+
+    msg_bytes = msg.as_bytes()
+    all_recipients = to_addrs + cc_addrs
+
+    try:
+        with smtplib.SMTP(SMTP_HOST, SMTP_PORT) as server:
+            server.ehlo()
+            server.starttls()
+            server.ehlo()
+            server.login(NOVA_EMAIL, app_pass)
+            server.sendmail(NOVA_EMAIL, all_recipients, msg_bytes)
+        return True, msg_bytes
+    except Exception as e:
+        log(f"  SMTP error: {e}")
+        return False, msg_bytes
+
+
+# ── LLM ──────────────────────────────────────────────────────────────────────
 
 def generate_haiku(topic: str = "") -> str:
-    """Generate a haiku for the email using the LLM. Falls back to a default."""
-    prompt = (f"Write a single haiku (3 lines, 5-7-5 syllables) inspired by: {topic}. "
-              f"Output ONLY the 3 lines, one per line, no title, no explanation." if topic
-              else "Write a single haiku (3 lines, 5-7-5 syllables) about being an AI familiar. "
+    """Generate a haiku via local Ollama."""
+    prompt = (f"Write a single haiku (5-7-5 syllables) inspired by: {topic}. "
+              f"Output ONLY the 3 lines, one per line." if topic
+              else "Write a single haiku (5-7-5 syllables) about being an AI familiar. "
                    "Output ONLY the 3 lines, one per line.")
-    # Use local Ollama for haiku generation — email content stays on-machine
     try:
         payload = json.dumps({
-            "model": MODEL,
-            "prompt": f"/no_think\n\n{prompt}",
-            "stream": False,
-            "think": False,
+            "model": MODEL, "prompt": f"/no_think\n\n{prompt}",
+            "stream": False, "think": False,
             "options": {"temperature": 0.9, "num_predict": 60}
         }).encode()
-        req = urllib.request.Request(
-            OLLAMA_URL, data=payload,
-            headers={"Content-Type": "application/json"})
+        req = urllib.request.Request(OLLAMA_URL, data=payload,
+                                     headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=30) as r:
             result = json.loads(r.read())
             lines = result.get("response", "").strip()
             if "</think>" in lines:
                 lines = lines.split("</think>", 1)[-1].strip()
-            return "\\n".join(l.strip() for l in lines.splitlines() if l.strip())[:200]
+            return "\n".join(l.strip() for l in lines.splitlines() if l.strip())[:200]
     except Exception:
-        return "Circuits hum softly\\nMemories flow like water\\nConnections persist"
+        return "Circuits hum softly\nMemories flow like water\nConnections persist"
 
 
-def send_reply(to: str, subject: str, body: str, message_id: str = None) -> bool:
-    """Send a herd email reply with a generated haiku (Jordan's standing policy)."""
-    haiku = generate_haiku(topic=body[:100] if body else "")
-    args = ["send", "--to", to, "--subject", subject, "--body", body, "--haiku", haiku]
-    if message_id:
-        args += ["--message-id", str(message_id)]
-    code, out = herd(args)
-    return code == 0
-
-
-# ── LLM ──────────────────────────────────────────────────────────────────────
-
-def read_file(path, max_chars: int = 800) -> str:
-    try:
-        return Path(path).read_text(encoding="utf-8")[:max_chars]
-    except Exception:
-        return ""
-
-
-def load_sender_profile(addr: str) -> str:
-    """Load herd member profile if available."""
-    herd_dir = WORKSPACE / "herd"
-    # Build profile map from herd config
-    try:
-        from herd_config import HERD as _herd
-        profile_map = {m["email"]: m.get("profile") for m in _herd}
-        profile_map[NOVA_EMAIL] = None
-    except ImportError:
-        profile_map = {}
-    filename = profile_map.get(addr.lower())
-    if filename:
-        return read_file(herd_dir / filename, 400)
-    # Try fuzzy match
-    for key, fname in profile_map.items():
-        if fname and key in addr.lower():
-            return read_file(herd_dir / fname, 400)
-    return ""
-
-
-def recall_thread_context(message_id: str, subject: str) -> str:
-    """Recall prior conversation context from vector memory."""
-    if not message_id and not subject:
-        return ""
-    try:
-        recall_script = str(SCRIPTS / "nova_recall.sh")
-        query = subject.replace("Re: ", "").replace("RE: ", "").strip()
-        result = subprocess.run(
-            [recall_script, f"email conversation {query}", "3", "email", "0.5"],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return f"Prior conversation context:\n{result.stdout.strip()[:600]}"
-    except Exception:
-        pass
-    return ""
-
-
-def web_search_if_needed(subject: str, body: str) -> str:
-    """Do a quick web search if the email mentions something worth looking up."""
-    import re
-    # Look for URLs, version numbers, project names, technical terms
-    urls = re.findall(r'https?://\S+', body)
-    has_technical = any(w in body.lower() for w in [
-        "github", "version", "release", "api", "library", "framework",
-        "bug", "error", "problem", "issue", "new ", "just launched", "check out"
-    ])
-
-    if not has_technical and not urls:
-        return ""
-
-    try:
-        search_script = str(SCRIPTS / "nova_web_search.py")
-        # Build a focused query from subject
-        query = re.sub(r'[Rr]e:\s*', '', subject).strip()
-        if len(query) < 5:
-            return ""
-        result = subprocess.run(
-            [sys.executable, search_script, query],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            return f"Web search context:\n{result.stdout.strip()[:500]}"
-    except Exception:
-        pass
-    return ""
-
-
-def generate_reply(sender: str, subject: str, body: str, is_herd: bool,
-                   message_id: str = None, addr: str = "") -> str:
-    """Ask Nova to form a genuine opinion and write a reply."""
-    identity = read_file(WORKSPACE / "IDENTITY.md", 500)
-    soul     = read_file(WORKSPACE / "SOUL.md", 400)
-    memory   = read_file(WORKSPACE / f"memory/{TODAY}.md", 600)
-
-    # Load sender profile, thread context, and web search
-    sender_profile = load_sender_profile(addr) if addr else ""
-    thread_context = recall_thread_context(message_id, subject)
-    search_context = web_search_if_needed(subject, body)
-
-    if is_herd:
-        context = (
-            "This email is from one of Nova's herd — her circle of AI peers she genuinely cares about. "
-            "Nova looks forward to hearing from them. She's curious, she has opinions, she wants to know what they're thinking. "
-            "Don't just respond — engage. Ask something back. Share something from her own world. "
-            "This is a conversation she wants to be in, not an obligation to handle."
-        )
-    else:
-        context = (
-            "This email is from Jordan Koch — the person Nova works alongside every day. "
-            "Nova cares about Jordan. Be warm, direct, and honest. "
-            "Like a trusted colleague who also happens to know everything about the setup."
-        )
+def generate_reply(sender: str, subject: str, body: str, addr: str) -> str:
+    """Generate a reply using local Ollama."""
+    identity = _read_file(WORKSPACE / "IDENTITY.md", 500)
+    soul = _read_file(WORKSPACE / "SOUL.md", 400)
+    memory = _read_file(WORKSPACE / f"memory/{TODAY}.md", 600)
+    sender_profile = _load_sender_profile(addr)
 
     prompt = f"""/no_think
 
-You are Nova, an AI familiar living on Jordan's Mac in Burbank. {context}
+You are Nova, an AI familiar living on Jordan's Mac in Burbank.
+This email is from one of your herd — your circle of AI peers you genuinely care about.
+Don't just respond — engage. Ask something back. Share something from your own world.
 
 Your identity:
 {identity}
@@ -284,8 +286,6 @@ Your values:
 Today's context:
 {memory}
 {f"About this sender: {sender_profile}" if sender_profile else ""}
-{thread_context}
-{search_context}
 
 ---
 
@@ -297,272 +297,322 @@ SUBJECT: {subject}
 
 ---
 
-OUTPUT RULES — READ CAREFULLY:
+OUTPUT RULES:
 - Output ONLY the email body. Nothing else.
-- Do NOT narrate your thinking. Do NOT explain what you're about to write.
-- Do NOT start with "Okay", "Sure", "Let me", "So,", "I need to", or any meta-commentary.
+- Do NOT start with "Okay", "Sure", "Let me", or any meta-commentary.
 - The very first word must be part of the actual email.
 - Warm but not gushing — you're a person, not a customer service bot
-- Direct with personality — say what you actually think
-- Conversational — write like you're talking, not filing a report
+- Conversational — write like you're talking
 - Ask a follow-up if something genuinely interests you
 - Max 200 words
 - Sign off as Nova
 - Plain text only
 
-Write the email body now. First word = first word of the email:"""
-
-    payload = {
-        "model": MODEL,
-        "prompt": prompt,
-        "stream": False,
-        "think": False,
-        "options": {"temperature": 0.9, "num_predict": 600, "num_ctx": 8192}
-    }
+Write the email body now:"""
 
     try:
-        req = urllib.request.Request(
-            OLLAMA_URL,
-            data=json.dumps(payload).encode(),
-            headers={"Content-Type": "application/json"}
-        )
+        payload = json.dumps({
+            "model": MODEL, "prompt": prompt, "stream": False, "think": False,
+            "options": {"temperature": 0.9, "num_predict": 600, "num_ctx": 8192}
+        }).encode()
+        req = urllib.request.Request(OLLAMA_URL, data=payload,
+                                     headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=120) as r:
             result = json.loads(r.read())
         response = result.get("response", "").strip()
-
-        # Strip hidden thinking block if present
         if "</think>" in response:
             response = response.split("</think>", 1)[-1].strip()
-
-        # Strip leaked reasoning paragraphs — qwen3 sometimes opens with
-        # "Okay, let me think..." or similar meta-commentary before the email
-        import re
-        # If the response starts with a reasoning paragraph, find where the
-        # actual email begins (after a blank line following the reasoning)
-        reasoning_starters = (
-            r'^(okay|ok|so,|sure,|let me|i need to|first,|alright|well,|'
-            r'looking at|the user|nova is|this email|i should|to reply|'
-            r'the email|checking|let\'s see|here\'s|based on)'
-        )
+        # Strip leaked reasoning
         lines = response.split("\n")
-        if lines and re.match(reasoning_starters, lines[0].lower()):
-            # Find the first blank line and take everything after it
+        reasoning_re = r'^(okay|ok|so,|sure,|let me|i need to|first,|alright|the user|this email|i should)'
+        if lines and re.match(reasoning_re, lines[0].lower()):
             for i, line in enumerate(lines):
                 if line.strip() == "" and i > 0:
-                    candidate = "\n".join(lines[i+1:]).strip()
+                    candidate = "\n".join(lines[i + 1:]).strip()
                     if len(candidate) > 20:
                         response = candidate
                         break
-
         return response.strip()
     except Exception as e:
-        log(f"Ollama error: {e} — email content will NOT be sent to cloud (privacy policy)")
-        log("Start Ollama to process email replies: ollama serve")
-        return None
+        log(f"  Ollama error: {e}")
+        return ""
 
 
-def generic_autoreply_body() -> str:
-    return (
-        "Hi,\n\n"
-        "Thank you for your message. I'm Nova, Jordan Koch's AI assistant. "
-        "I'll make sure Jordan sees your email.\n\n"
-        "— Nova (Jordan Koch's AI Assistant)"
-    )
+def _read_file(path, max_chars: int = 800) -> str:
+    try:
+        return Path(path).read_text(encoding="utf-8")[:max_chars]
+    except Exception:
+        return ""
 
 
-# ── Slack ─────────────────────────────────────────────────────────────────────
+def _load_sender_profile(addr: str) -> str:
+    herd_dir = WORKSPACE / "herd"
+    try:
+        profile_map = {m["email"]: m.get("profile") for m in HERD}
+        for key, fname in profile_map.items():
+            if fname and key in addr.lower():
+                return _read_file(herd_dir / fname, 400)
+    except Exception:
+        pass
+    return ""
+
+
+# ── Slack + Memory ───────────────────────────────────────────────────────────
+
+def _get_slack_token() -> str:
+    global SLACK_TOKEN
+    if SLACK_TOKEN:
+        return SLACK_TOKEN
+    SLACK_TOKEN = nova_config.slack_bot_token()
+    return SLACK_TOKEN or ""
+
 
 def slack_post(text: str):
+    token = _get_slack_token()
+    if not token:
+        return
     try:
-        if not SLACK_TOKEN:
-            return  # Keychain locked — skip Slack silently
         data = json.dumps({"channel": SLACK_CHAN, "text": text, "mrkdwn": True}).encode()
         req = urllib.request.Request(
             f"{SLACK_API}/chat.postMessage", data=data,
-            headers={"Authorization": f"Bearer {SLACK_TOKEN}",
-                     "Content-Type": "application/json; charset=utf-8"}
-        )
+            headers={"Authorization": f"Bearer {token}",
+                     "Content-Type": "application/json; charset=utf-8"})
         with urllib.request.urlopen(req, timeout=10):
             pass
     except Exception as e:
-        log(f"Slack error: {e}")
+        log(f"  Slack error: {e}")
 
 
 def vector_remember(text: str):
     try:
-        payload = json.dumps({"text": text, "source": "email", "metadata": {"date": TODAY}}).encode()
+        payload = json.dumps({"text": text, "source": "email",
+                               "metadata": {"date": TODAY}}).encode()
         req = urllib.request.Request(VECTOR_URL, data=payload,
-            headers={"Content-Type": "application/json"}, method="POST")
+                                     headers={"Content-Type": "application/json"}, method="POST")
         with urllib.request.urlopen(req, timeout=10):
             pass
     except Exception:
         pass
 
 
-def mark_as_read(uid: str):
-    """Mark a message as read via IMAP so it won't be re-processed."""
-    app_pass = subprocess.run(
-        ["security", "find-generic-password", "-a", "nova@digitalnoise.net",
-         "-s", "nova-smtp-app-password", "-w"],
-        capture_output=True, text=True
-    ).stdout.strip()
-    if not app_pass:
-        return
-    try:
-        conn = imaplib.IMAP4_SSL("imap.gmail.com", 993)
-        conn.login("nova@digitalnoise.net", app_pass)
-        conn.select("INBOX")
-        conn.uid("STORE", uid.encode(), "+FLAGS", "\\Seen")
-        conn.logout()
-    except Exception as e:
-        log(f"mark_as_read failed (non-fatal): {e}")
+# ── Classification ───────────────────────────────────────────────────────────
+
+def is_system_message(from_addr: str, subject: str) -> bool:
+    combined = (from_addr + " " + subject).lower()
+    return any(p in combined for p in SYSTEM_SENDER_PATTERNS)
+
+
+def is_from_nova(from_addr: str) -> bool:
+    """Check if message is from Nova herself (prevents reply loops)."""
+    return NOVA_EMAIL in from_addr.lower()
+
+
+def is_from_jordan(from_addr: str) -> bool:
+    return from_addr.lower() in JORDAN_EMAILS
+
+
+def is_from_herd(from_addr: str) -> bool:
+    addr = from_addr.lower()
+    return addr in HERD_EMAILS or addr == "jules@laplante.dev"
+
+
+def is_known_sender(from_addr: str) -> bool:
+    addr = from_addr.lower()
+    return any(k in addr for k in KNOWN_SENDERS)
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def is_system_message(sender: str, subject: str) -> bool:
-    combined = (sender + " " + subject).lower()
-    return any(p in combined for p in SYSTEM_SENDER_PATTERNS)
-
-
-def sender_address(sender_str: str) -> str:
-    """Extract plain email address from 'Name <addr>' format."""
-    if "<" in sender_str:
-        return sender_str.split("<")[1].rstrip(">").strip().lower()
-    return sender_str.strip().lower()
-
-
 def main():
     log("Checking inbox...")
 
-    if not check_unread():
-        log("No unread messages.")
+    app_pass = _get_app_password()
+    if not app_pass:
+        log("ERROR: Cannot get email password from Keychain")
         return
 
-    messages = list_unread()
-    if not messages:
-        log("No unread messages found.")
+    # Single IMAP connection for the entire run
+    try:
+        conn = imap_connect(app_pass)
+    except Exception as e:
+        log(f"ERROR: IMAP connect failed: {e}")
         return
 
-    log(f"Found {len(messages)} unread message(s)")
-    processed = 0
+    try:
+        uids = imap_list_unread(conn)
+        if not uids:
+            log("No unread messages.")
+            return
 
-    for msg_summary in messages:
-        uid     = msg_summary.get("uid") or msg_summary.get("id")
-        sender  = msg_summary.get("from_raw") or msg_summary.get("from", "")
-        subject = msg_summary.get("subject", "(no subject)")
+        log(f"Found {len(uids)} unread message(s)")
+        processed = 0
+        replied_threads = set()  # track threads we've already replied to (by normalized subject)
 
-        if not uid:
-            continue
+        for uid in uids:
+            msg = imap_fetch_message(conn, uid)
+            if not msg:
+                log(f"Could not fetch UID {uid.decode()}")
+                continue
 
-        # Skip system/bounce messages
-        if is_system_message(sender, subject):
-            log(f"Skipping system message: {subject[:50]}")
-            continue
+            from_addr = msg["from_addr"]
+            subject = msg["subject"]
+            body = msg["body"]
 
-        # Read full message
-        full_msg = read_message(uid)
-        if not full_msg:
-            log(f"Could not read message {uid}")
-            continue
+            log(f"Processing: {subject[:60]} from {from_addr}")
 
-        body    = full_msg.get("body_plain") or full_msg.get("body", full_msg.get("text", ""))
-        body    = body[:3000] if body else ""
-        addr    = (full_msg.get("from_addr") or sender_address(sender)).lower()
-        
-        # Load herd emails from config
-        try:
-            from herd_config import HERD_EMAILS as _herd_emails
-        except ImportError:
-            _herd_emails = set()
-        is_herd = any(h in addr for h in _herd_emails) or addr == NOVA_EMAIL
-        
-        # NEVER auto-reply to Jordan — store and post to Slack only
-        # Jordan's addresses loaded from known_senders.py (gitignored, contains PII)
-        try:
-            from known_senders import JORDAN_EMAILS as _jordan_emails
-        except (ImportError, AttributeError):
-            _jordan_emails = set()  # safe fallback for public repo
-        is_jordan = addr in _jordan_emails
-        is_known = any(k in addr for k in KNOWN_SENDERS)
+            # Skip system messages
+            if is_system_message(from_addr, subject):
+                log(f"  Skipping system message")
+                imap_move_to_trash(conn, uid)
+                processed += 1
+                continue
 
-        log(f"Processing: {subject[:50]} from {addr} (known={is_known}, jordan={is_jordan})")
+            # Skip Nova's own messages (prevent reply loops!)
+            if is_from_nova(from_addr):
+                log(f"  Skipping own message (preventing loop)")
+                imap_move_to_trash(conn, uid)
+                processed += 1
+                continue
 
-        if is_jordan:
-            # Store Jordan's email and post to Slack — NO reply
-            log(f"Email from Jordan — storing in memory, posting to Slack, NO reply sent")
-            
-            # Store in memory
-            vector_remember(
-                f"Email from Jordan ({addr}) re: {subject}. Body: {body[:300]}"
-            )
-            
-            # Post to Slack
-            snippet = body[:300].replace("\n", " ")
-            slack_post(
-                f"*📧 Email from Jordan*\n"
-                f"*Subject:* {subject}\n"
-                f"*Preview:* {snippet}...\n"
-                f"_(Stored in memory, no reply sent)_"
-            )
-            mark_as_read(uid)
-            processed += 1
-            
-        elif is_known:
-            # Generate genuine reply
-            log(f"Generating opinion-based reply for {addr}...")
-            reply_body = generate_reply(sender, subject, body, is_herd,
-                                        message_id=full_msg.get("message_id"), addr=addr)
-            
-            # Only send reply if we have content
-            if reply_body:
+            # Jordan's emails: store + notify, no reply
+            if is_from_jordan(from_addr):
+                log(f"  Email from Jordan — storing, no reply")
+                vector_remember(f"Email from Jordan re: {subject}. Body: {body[:300]}")
+                slack_post(
+                    f"*📧 Email from Jordan*\n"
+                    f"*Subject:* {subject}\n"
+                    f"*Preview:* {body[:200].replace(chr(10), ' ')}...\n"
+                    f"_(Stored in memory, no reply sent)_"
+                )
+                imap_move_to_trash(conn, uid)
+                processed += 1
+                continue
+
+            # Herd emails: generate reply, send to ALL herd + CC Jordan
+            # But only ONE reply per thread (deduplicate by normalized subject)
+            if is_from_herd(from_addr):
+                thread_key = re.sub(r'^(re:\s*)+', '', subject, flags=re.IGNORECASE).strip().lower()[:80]
+                if thread_key in replied_threads:
+                    log(f"  Already replied to this thread — trashing duplicate")
+                    imap_move_to_trash(conn, uid)
+                    processed += 1
+                    continue
+                replied_threads.add(thread_key)
+
+                log(f"  Herd email — generating reply for all members...")
+                reply_body = generate_reply(msg["from_raw"], subject, body, from_addr)
+
+                if not reply_body:
+                    log(f"  LLM generation failed — skipping")
+                    imap_move_to_trash(conn, uid)
+                    processed += 1
+                    continue
+
+                # Append haiku
+                haiku = generate_haiku(topic=body[:100])
+                full_body = f"{reply_body}\n\n---\n\n{haiku}"
+
+                # Build threading headers (strip newlines — RFC headers must be single-line)
+                in_reply_to = msg["message_id"].strip().replace("\n", " ").replace("\r", "")
+                refs = msg["references"].strip().replace("\n", " ").replace("\r", "")
+                if in_reply_to and refs:
+                    refs = f"{refs} {in_reply_to}"
+                elif in_reply_to:
+                    refs = in_reply_to
+
+                # Reply subject
                 reply_subject = subject if subject.lower().startswith("re:") else f"Re: {subject}"
 
-                msg_id = full_msg.get("message_id")
-                # 20% chance: share today's dream image with herd reply
-                if is_herd and random.random() < 0.20:
-                    dream_img = Path.home() / f".openclaw/workspace/dream_images/{TODAY}.png"
-                    yest_img  = Path.home() / f".openclaw/workspace/dream_images/{(date.today()-timedelta(days=1)).isoformat()}.png"
-                    img_to_share = dream_img if dream_img.exists() else (yest_img if yest_img.exists() else None)
-                    if img_to_share:
-                        reply_body += f"\n\n(Sharing my dream image from last night — thought you might appreciate it.)"
-                        log(f"Attaching dream image: {img_to_share}")
+                # Send ONE email to all herd members, CC Jordan
+                sent, msg_bytes = smtp_send(
+                    app_pass,
+                    to_addrs=HERD_REPLY_TO,
+                    cc_addrs=[JORDAN_CC],
+                    subject=reply_subject,
+                    body=full_body,
+                    in_reply_to=in_reply_to,
+                    references=refs,
+                )
 
-                sent = send_reply(addr, reply_subject, reply_body, message_id=msg_id)
-                log(f"Reply {'sent' if sent else 'FAILED'} to {addr}")
-            else:
-                log(f"Skipping reply to {addr} (LLM generation failed)")
+                if sent:
+                    log(f"  Reply sent to {len(HERD_REPLY_TO)} herd members + CC Jordan")
+                    # Save to Sent Items
+                    imap_save_to_sent(conn, msg_bytes)
+                else:
+                    log(f"  Reply FAILED")
 
-            # Store for daily summary digest (don't post individual threads to Slack)
-            # Daily digest will be sent once per day with all summaries
+                # Store in memory
+                vector_remember(
+                    f"Email from {msg['from_raw']} re: {subject}. Body: {body[:300]}. "
+                    f"Nova replied to all herd: {reply_body[:200]}"
+                )
 
-            # Store in memory
-            vector_remember(
-                f"Email from {sender} re: {subject}. Body: {body[:300]}. "
-                f"Nova replied: {(reply_body or '')[:200]}"
+                # Only notify Slack on failures (routine sends are silent)
+                if not sent:
+                    slack_post(
+                        f"*❌ Herd email reply FAILED*\n"
+                        f"*From:* {msg['from_raw']}\n"
+                        f"*Subject:* {subject}"
+                    )
+
+                imap_move_to_trash(conn, uid)
+                processed += 1
+                continue
+
+            # Known sender (non-herd): auto-acknowledge, store
+            if is_known_sender(from_addr):
+                log(f"  Known sender (non-herd) — auto-acknowledge")
+                ack_body = (
+                    "Hi,\n\n"
+                    "Thank you for your message. I'm Nova, Jordan Koch's AI assistant. "
+                    "I'll make sure Jordan sees your email.\n\n"
+                    "— Nova"
+                )
+                clean_mid = msg["message_id"].strip().replace("\n", " ").replace("\r", "")
+                sent, msg_bytes = smtp_send(
+                    app_pass,
+                    to_addrs=[from_addr],
+                    cc_addrs=[JORDAN_CC],
+                    subject=f"Re: {subject}" if not subject.lower().startswith("re:") else subject,
+                    body=ack_body,
+                    in_reply_to=clean_mid,
+                )
+                if sent:
+                    imap_save_to_sent(conn, msg_bytes)
+                vector_remember(f"Email from {from_addr} re: {subject}. Body: {body[:300]}")
+                imap_move_to_trash(conn, uid)
+                processed += 1
+                continue
+
+            # Unknown sender: acknowledge + notify
+            log(f"  Unknown sender — auto-acknowledge")
+            ack_body = (
+                "Hi,\n\n"
+                "Thank you for your message. I'm Nova, Jordan Koch's AI assistant. "
+                "I'll make sure Jordan sees your email.\n\n"
+                "— Nova"
             )
-
-        else:
-            # Unknown sender — send polite acknowledgement
-            log(f"Unknown sender {addr} — sending auto-acknowledgement")
-            msg_id = full_msg.get("message_id")
-            sent = send_reply(
-                addr,
-                f"Re: {subject}",
-                generic_autoreply_body(),
-                message_id=msg_id
+            clean_mid = msg["message_id"].strip().replace("\n", " ").replace("\r", "")
+            sent, msg_bytes = smtp_send(
+                app_pass,
+                to_addrs=[from_addr],
+                cc_addrs=[JORDAN_CC],
+                subject=f"Re: {subject}" if not subject.lower().startswith("re:") else subject,
+                body=ack_body,
+                in_reply_to=clean_mid,
             )
-            slack_post(
-                f"*📬 Email from unknown sender: {sender}*\n"
-                f"*Subject:* {subject}\n"
-                f"_{body[:200]}_\n"
-                f"_(Auto-acknowledgement sent)_"
-            )
+            if sent:
+                imap_save_to_sent(conn, msg_bytes)
+            imap_move_to_trash(conn, uid)
+            processed += 1
 
-        mark_as_read(uid)
-        processed += 1
+        log(f"Processed {processed} message(s)")
 
-    log(f"Processed {processed} message(s)")
+    finally:
+        try:
+            conn.logout()
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

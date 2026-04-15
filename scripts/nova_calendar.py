@@ -68,131 +68,154 @@ def vector_remember(text, metadata=None):
         pass
 
 
-# ── Calendar via AppleScript (EventKit) ──────────────────────────────────────
+# ── Calendar via ICS feed (Office 365) ───────────────────────────────────────
 
-CALENDAR_SWIFT = r'''
-import EventKit
-import Foundation
+# ICS URL loaded from Keychain (contains secret publishing key — never hardcode)
+def _get_ics_url() -> str:
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-a", "nova", "-s", "nova-calendar-ics-url", "-w"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except Exception:
+        pass
+    return ""
 
-let store = EKEventStore()
-let sem = DispatchSemaphore(value: 0)
+ICS_URL = _get_ics_url()
 
-// Request access synchronously
-if #available(macOS 14.0, *) {
-    store.requestFullAccessToEvents { granted, error in
-        sem.signal()
-    }
-} else {
-    store.requestAccess(to: .event) { granted, error in
-        sem.signal()
-    }
-}
-_ = sem.wait(timeout: .now() + 5)
+# Cache the ICS fetch for 15 minutes to avoid hammering the server
+_ICS_CACHE_FILE = Path.home() / ".openclaw/workspace/state/nova_calendar_cache.json"
+_ICS_CACHE_TTL = 900  # seconds
 
-// Date range: today 00:00 to day-after-tomorrow 00:00
-let cal = Calendar.current
-let startOfDay = cal.startOfDay(for: Date())
-guard let endDate = cal.date(byAdding: .day, value: 2, to: startOfDay) else {
-    print("{\"events\":[],\"calendars\":[]}")
-    exit(0)
-}
 
-// Calendars
-let allCalendars = store.calendars(for: .event)
-var calendarList: [[String: String]] = []
-for c in allCalendars {
-    calendarList.append(["calendar": c.title, "account": c.source.title])
-}
+def _parse_ics_datetime(dtstr: str) -> datetime:
+    """Parse ICS datetime formats: 20260414T143000Z or 20260414T143000 or 20260414."""
+    dtstr = dtstr.strip()
+    # Strip TZID parameter if present (e.g., TZID=America/Los_Angeles:20260414T090000)
+    if ":" in dtstr and not dtstr.startswith("20"):
+        dtstr = dtstr.split(":", 1)[-1]
+    try:
+        if dtstr.endswith("Z"):
+            # UTC — convert to local
+            from datetime import timezone
+            utc_dt = datetime.strptime(dtstr, "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+            return utc_dt.astimezone().replace(tzinfo=None)
+        elif "T" in dtstr:
+            return datetime.strptime(dtstr, "%Y%m%dT%H%M%S")
+        else:
+            return datetime.strptime(dtstr, "%Y%m%d")
+    except ValueError:
+        return None
 
-// Events
-let predicate = store.predicateForEvents(withStart: startOfDay, end: endDate, calendars: nil)
-let events = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
 
-let fmt = DateFormatter()
-fmt.dateFormat = "yyyy-MM-dd'T'HH:mm:ss"
-fmt.timeZone = TimeZone.current
+def _parse_ics(ics_text: str) -> list[dict]:
+    """Parse ICS text into a list of event dicts."""
+    events = []
+    in_event = False
+    current = {}
 
-var eventList: [[String: Any]] = []
-for e in events {
-    var dict: [String: Any] = [
-        "title": e.title ?? "Untitled",
-        "calendar": e.calendar.title,
-        "account": e.calendar.source.title,
-        "allDay": e.isAllDay,
-        "start": fmt.string(from: e.startDate),
-        "end": fmt.string(from: e.endDate),
-    ]
-    if let loc = e.location, !loc.isEmpty { dict["location"] = loc }
-    eventList.append(dict)
-}
+    # Unfold ICS continuation lines (lines starting with space/tab are continuations)
+    lines = []
+    for line in ics_text.splitlines():
+        if line.startswith((" ", "\t")) and lines:
+            lines[-1] += line[1:]
+        else:
+            lines.append(line)
 
-let result: [String: Any] = ["events": eventList, "calendars": calendarList]
-if let data = try? JSONSerialization.data(withJSONObject: result),
-   let str = String(data: data, encoding: .utf8) {
-    print(str)
-} else {
-    print("{\"events\":[],\"calendars\":[]}")
-}
-'''
+    for line in lines:
+        line = line.strip()
+        if line == "BEGIN:VEVENT":
+            in_event = True
+            current = {}
+        elif line == "END:VEVENT":
+            in_event = False
+            if current:
+                events.append(current)
+        elif in_event and ":" in line:
+            key, _, value = line.partition(":")
+            # Strip parameters (e.g., DTSTART;TZID=America/Los_Angeles)
+            base_key = key.split(";")[0].upper()
+            if base_key == "SUMMARY":
+                current["title"] = value.replace("\\,", ",").replace("\\n", " ").strip()
+            elif base_key == "DTSTART":
+                # Reattach TZID if present for parsing
+                tzid_param = ""
+                if "TZID=" in key:
+                    tzid_param = key.split("TZID=", 1)[1].split(";")[0] + ":"
+                dt = _parse_ics_datetime(tzid_param + value)
+                if dt:
+                    current["start"] = dt.strftime("%Y-%m-%dT%H:%M:%S")
+                    current["allDay"] = "T" not in value
+            elif base_key == "DTEND":
+                tzid_param = ""
+                if "TZID=" in key:
+                    tzid_param = key.split("TZID=", 1)[1].split(";")[0] + ":"
+                dt = _parse_ics_datetime(tzid_param + value)
+                if dt:
+                    current["end"] = dt.strftime("%Y-%m-%dT%H:%M:%S")
+            elif base_key == "LOCATION":
+                loc = value.replace("\\,", ",").replace("\\n", " ").strip()
+                if loc:
+                    current["location"] = loc
+            elif base_key == "X-MICROSOFT-CDO-BUSYSTATUS":
+                current["busystatus"] = value.strip().upper()
+
+    return events
 
 
 def fetch_calendar_events():
-    """Run Swift EventKit script and return parsed events."""
-    # Write Swift source to a temp file and compile/run
-    swift_file = Path.home() / ".openclaw/workspace/state/nova_calendar_events.swift"
-    swift_file.write_text(CALENDAR_SWIFT)
+    """Fetch events from the Office 365 ICS feed. Cached for 15 min."""
+    import os
+    import time as _time
+
+    # Check cache
+    if _ICS_CACHE_FILE.exists():
+        try:
+            cache = json.loads(_ICS_CACHE_FILE.read_text())
+            age = _time.time() - cache.get("ts", 0)
+            if age < _ICS_CACHE_TTL:
+                return cache.get("data", {"events": [], "calendars": []})
+        except Exception:
+            pass
+
+    # Fetch ICS
     try:
-        result = subprocess.run(
-            ["swift", str(swift_file)],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode != 0:
-            log(f"Swift error: {result.stderr.strip()[:200]}")
-            return fetch_calendar_icalbuddy()
-        raw = result.stdout.strip()
-        if not raw:
-            return {"events": [], "calendars": []}
-        return json.loads(raw)
-    except json.JSONDecodeError as e:
-        log(f"JSON parse error: {e}")
-        return fetch_calendar_icalbuddy()
-    except subprocess.TimeoutExpired:
-        log("Swift script timed out")
-        return {"events": [], "calendars": []}
+        req = urllib.request.Request(ICS_URL, headers={
+            "User-Agent": "Mozilla/5.0 (Macintosh) Nova/1.0",
+            "Accept": "text/calendar, */*",
+        })
+        with urllib.request.urlopen(req, timeout=30) as r:
+            ics_text = r.read().decode("utf-8", errors="replace")
     except Exception as e:
-        log(f"Calendar fetch error: {e}")
+        log(f"ICS fetch error: {e}")
+        # Return cached data if available (even if stale)
+        if _ICS_CACHE_FILE.exists():
+            try:
+                return json.loads(_ICS_CACHE_FILE.read_text()).get("data", {"events": [], "calendars": []})
+            except Exception:
+                pass
         return {"events": [], "calendars": []}
 
+    events = _parse_ics(ics_text)
 
-def fetch_calendar_icalbuddy():
-    """Fallback: use icalBuddy CLI tool if AppleScript/EventKit fails."""
+    # Sort by start time
+    events.sort(key=lambda e: e.get("start", ""))
+
+    result = {
+        "events": events,
+        "calendars": [{"calendar": "Jordan Koch", "account": "Office 365"}],
+    }
+
+    # Write cache
     try:
-        result = subprocess.run(
-            ["icalBuddy", "-b", "", "-nc", "-nrd",
-             "-df", "%Y-%m-%dT%H:%M:%S", "-tf", "",
-             "-iep", "title,datetime,location,calendar",
-             "-po", "datetime,title,location,calendar",
-             "eventsFrom:today", "to:tomorrow"],
-            capture_output=True, text=True, timeout=15
-        )
-        if result.returncode != 0:
-            log("icalBuddy not available")
-            return {"events": [], "calendars": []}
+        _ICS_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        _ICS_CACHE_FILE.write_text(json.dumps({"ts": _time.time(), "data": result}))
+    except Exception:
+        pass
 
-        events = []
-        for line in result.stdout.strip().splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            # icalBuddy outputs: "datetime - datetime title (calendar)"
-            events.append({"title": line, "raw": True})
-        return {"events": events, "calendars": []}
-    except FileNotFoundError:
-        log("icalBuddy not installed — install with: brew install ical-buddy")
-        return {"events": [], "calendars": []}
-    except Exception as e:
-        log(f"icalBuddy error: {e}")
-        return {"events": [], "calendars": []}
+    return result
 
 
 # ── Event processing ─────────────────────────────────────────────────────────
@@ -232,6 +255,39 @@ def minutes_until(iso_str):
 
 # ── Public API (for morning brief import) ────────────────────────────────────
 
+def _is_junk_event(e):
+    """Filter out 'busy' blocks, availability placeholders, and cancelled events."""
+    title = (e.get("title") or "").strip().lower()
+    busystatus = (e.get("busystatus") or "").upper()
+    # Skip availability-only events
+    if title in ("busy", "free", "tentative", "out of office", "oof",
+                 "working elsewhere", "away", ""):
+        return True
+    # Skip events marked as FREE (not actually blocking your time)
+    if busystatus == "FREE":
+        return True
+    return False
+
+
+def _deduplicate_events(events):
+    """Remove duplicate events (same title + same start time)."""
+    seen = set()
+    unique = []
+    for e in events:
+        title = (e.get("title") or "").strip()
+        start = e.get("start", "")
+        key = f"{title}|{start}".lower()
+        # Also deduplicate forwarded meetings (strip "FW: " / "RE: " prefix)
+        clean_title = re.sub(r'^(fw|fwd|re):\s*', '', title, flags=re.IGNORECASE).strip()
+        clean_key = f"{clean_title}|{start}".lower()
+        if key in seen or clean_key in seen:
+            continue
+        seen.add(key)
+        seen.add(clean_key)
+        unique.append(e)
+    return unique
+
+
 def get_todays_events():
     """Return list of today's events as dicts. Used by morning brief."""
     data = fetch_calendar_events()
@@ -242,16 +298,18 @@ def get_todays_events():
             today_events.append(e)
             continue
         start = e.get("start", "")
-        if is_today(start):
+        if is_today(start) and not _is_junk_event(e):
             today_events.append(e)
-    return today_events
+    return _deduplicate_events(today_events)
 
 
 def get_tomorrows_events():
     """Return list of tomorrow's events."""
     data = fetch_calendar_events()
     events = data.get("events", [])
-    return [e for e in events if not e.get("raw") and is_tomorrow(e.get("start", ""))]
+    tomorrow = [e for e in events
+                if not e.get("raw") and is_tomorrow(e.get("start", "")) and not _is_junk_event(e)]
+    return _deduplicate_events(tomorrow)
 
 
 def get_calendars():
