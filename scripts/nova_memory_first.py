@@ -195,6 +195,18 @@ SOURCE_RULES = [
         "sources": ["demonology", "music", "document"],
         "label": "demonology/occult",
     },
+    # Comedy / stand-up / comedians
+    {
+        "patterns": [
+            r"\b(comedy|comedian|stand.?up|special|bit|routine|joke)\b",
+            r"\b(louis\s*c\.?k|dave\s*chappelle|eddie\s*izzard|lewis\s*black)\b",
+            r"\b(patton\s*oswalt|katt\s*williams|kevin\s*smith|bill\s*cosby)\b",
+            r"\b(john\s*waters|filthy\s*world)\b",
+            r"\b(killing.*softly|chewed\s*up|dress\s*to\s*kill|shameless)\b",
+        ],
+        "sources": ["comedy", "video", "document"],
+        "label": "comedy",
+    },
 ]
 
 # Default sources when no pattern matches — search broadly
