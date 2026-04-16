@@ -55,4 +55,11 @@ python3 "$SCRIPTS/nova_tvshow_ingest.py" \
     --source religion \
     >> "$LOGS/tvshow-ingest-batch5-knowledge.log" 2>&1
 
-echo "[$(date '+%H:%M:%S')] Batch 5 (knowledge) complete. All batches done."
+echo "[$(date '+%H:%M:%S')] Batch 5 (knowledge) complete. Starting batch 6 (documentaries)..."
+
+python3 "$SCRIPTS/nova_tvshow_ingest.py" \
+    "/Volumes/external/videos/Documentary" \
+    --source history \
+    >> "$LOGS/tvshow-ingest-batch6-documentary.log" 2>&1
+
+echo "[$(date '+%H:%M:%S')] Batch 6 (documentaries) complete. All batches done."
