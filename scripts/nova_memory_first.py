@@ -182,6 +182,19 @@ SOURCE_RULES = [
         "sources": ["infrastructure", "networking", "unifi"],
         "label": "infrastructure",
     },
+    # Demonology / occult / mythology / folklore
+    {
+        "patterns": [
+            r"\b(demon|demonology|devil|satan|lucifer|hell)\b",
+            r"\b(goetia|grimoire|occult|exorcis[mt]|possession)\b",
+            r"\b(jinn|djinn|ifrit|oni|yokai|asura|rakshasa)\b",
+            r"\b(witch.?craft|witch.?trial|sabbath|familiar)\b",
+            r"\b(folklore|mythology|spirit|supernatural)\b",
+            r"\b(vodou|voodoo|candombl|shaman)\b",
+        ],
+        "sources": ["demonology", "music", "document"],
+        "label": "demonology/occult",
+    },
 ]
 
 # Default sources when no pattern matches — search broadly
