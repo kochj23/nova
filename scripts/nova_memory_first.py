@@ -196,6 +196,36 @@ SOURCE_RULES = [
         "sources": ["demonology", "music", "document"],
         "label": "demonology/occult",
     },
+    # History / connections / civilizations
+    {
+        "patterns": [
+            r"\b(history|historical|ancient|medieval|century|civilization)\b",
+            r"\b(connections|james\s*burke|invention|innovation)\b",
+            r"\b(war|revolution|empire|dynasty|colonial)\b",
+        ],
+        "sources": ["history", "world_factbook", "document"],
+        "label": "history",
+    },
+    # Religion / Christianity / theology
+    {
+        "patterns": [
+            r"\b(religion|christian|church|bible|gospel|theology)\b",
+            r"\b(catholic|protestant|orthodox|reformation|crusade)\b",
+            r"\b(jesus|apostle|saint|monastery|pope|bishop)\b",
+        ],
+        "sources": ["religion", "demonology", "document"],
+        "label": "religion",
+    },
+    # Trivia / Jeopardy / quiz / general knowledge
+    {
+        "patterns": [
+            r"\b(trivia|jeopardy|quiz|game\s*show|general\s*knowledge)\b",
+            r"\b(who\s*(is|was|wrote|invented|discovered))\b",
+            r"\b(what\s*(year|country|city|capital|language))\b",
+        ],
+        "sources": ["trivia", "world_factbook", "history"],
+        "label": "trivia",
+    },
     # Home repair / renovation / DIY / plumbing / electrical
     {
         "patterns": [

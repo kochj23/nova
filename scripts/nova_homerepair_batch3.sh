@@ -32,4 +32,21 @@ python3 "$SCRIPTS/nova_tvshow_ingest.py" \
     --source cooking \
     >> "$LOGS/tvshow-ingest-batch4-cooking.log" 2>&1
 
-echo "[$(date '+%H:%M:%S')] Batch 4 (cooking) complete."
+echo "[$(date '+%H:%M:%S')] Batch 4 (cooking) complete. Starting batch 5 (knowledge)..."
+
+python3 "$SCRIPTS/nova_tvshow_ingest.py" \
+    "$TVSHOWS/Connections" \
+    --source history \
+    >> "$LOGS/tvshow-ingest-batch5-knowledge.log" 2>&1
+
+python3 "$SCRIPTS/nova_tvshow_ingest.py" \
+    "$TVSHOWS/Jeopardy (1984)" \
+    --source trivia \
+    >> "$LOGS/tvshow-ingest-batch5-knowledge.log" 2>&1
+
+python3 "$SCRIPTS/nova_tvshow_ingest.py" \
+    "$TVSHOWS/History of Christianity" \
+    --source religion \
+    >> "$LOGS/tvshow-ingest-batch5-knowledge.log" 2>&1
+
+echo "[$(date '+%H:%M:%S')] Batch 5 (knowledge) complete. All batches done."
