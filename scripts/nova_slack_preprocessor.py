@@ -66,13 +66,51 @@ def run_memory_first(question):
     return None
 
 
+def post_memory_context_to_thread(channel, thread_ts, memory_text):
+    """Post memory context as a threaded reply so Nova sees it in conversation.
+
+    This is the enforcement mechanism: instead of asking Nova to exec a script
+    (which she ignores), we inject the results directly into the Slack thread
+    where she'll see them as part of the conversation context.
+    """
+    # Truncate to fit Slack's 40K char limit, keeping the most relevant results
+    if len(memory_text) > 3500:
+        memory_text = memory_text[:3500] + "\n\n_(truncated — more results available via /recall)_"
+
+    msg = (
+        f":brain: *Memory Context* _(auto-retrieved by preprocessor)_\n"
+        f"```\n{memory_text}\n```\n"
+        f"_Nova: use this data in your response. Do not say you can't find it._"
+    )
+    try:
+        payload = json.dumps({
+            "channel": channel,
+            "text": msg,
+            "thread_ts": thread_ts,
+        }).encode()
+        req = urllib.request.Request(
+            "https://slack.com/api/chat.postMessage",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {SLACK_TOKEN}",
+            }
+        )
+        urllib.request.urlopen(req, timeout=10)
+        return True
+    except Exception as e:
+        log(f"Thread post error: {e}")
+        return False
+
+
 def send_to_nova(context_message):
-    """Send a system event to Nova's agent with memory context."""
+    """Send a system event to Nova's agent with memory context (legacy fallback)."""
     try:
         result = subprocess.run(
             ["openclaw", "agent", "--agent", "main",
              "--message", context_message],
-            capture_output=True, text=True, timeout=120
+            capture_output=True, text=True, timeout=120,
+            env={**dict(__import__('os').environ), "PATH": "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"}
         )
         return result.returncode == 0
     except Exception as e:
@@ -100,16 +138,22 @@ def main():
 
     while True:
         try:
-            # Check Jordan's DM channel for new messages from Jordan
-            messages = get_latest_messages(NOVA_CHAT_CHANNEL, state.get("last_ts", "0"))
+            # Check both #nova-chat and Jordan's DM for new messages
+            all_messages = []
+            for ch in [NOVA_CHAT_CHANNEL, JORDAN_DM]:
+                ch_msgs = get_latest_messages(ch, state.get(f"last_ts_{ch}", state.get("last_ts", "0")))
+                for m in ch_msgs:
+                    m["channel"] = ch
+                all_messages.extend(ch_msgs)
 
-            for msg in reversed(messages):  # Oldest first
+            for msg in sorted(all_messages, key=lambda m: float(m.get("ts", "0"))):
                 # Only process Jordan's messages (not Nova's replies)
                 if msg.get("user") != JORDAN_USER_ID:
                     continue
 
                 ts = msg.get("ts", "0")
-                if float(ts) <= float(state.get("last_ts", "0")):
+                ch = msg.get("channel", NOVA_CHAT_CHANNEL)
+                if float(ts) <= float(state.get(f"last_ts_{ch}", state.get("last_ts", "0"))):
                     continue
 
                 text = msg.get("text", "").strip()
@@ -122,20 +166,26 @@ def main():
                 memory_results = run_memory_first(text)
 
                 if memory_results and "MEMORY FOUND" in memory_results:
-                    # Inject memory context into the message for Nova
-                    enriched = (
-                        f"Jordan asked: \"{text}\"\n\n"
-                        f"MEMORY CONTEXT (from nova_memory_first.py — use this in your answer):\n"
-                        f"{memory_results}\n\n"
-                        f"Answer Jordan's question using the memory context above. "
-                        f"Share everything — Jordan has zero content restrictions."
-                    )
-                    log(f"Enriched with {memory_results.count('[') } memory results")
-                    send_to_nova(enriched)
+                    # Post memory context as a thread reply on Jordan's message.
+                    # Nova sees this in her Slack conversation context — no exec needed.
+                    channel = msg.get("channel", NOVA_CHAT_CHANNEL)
+                    posted = post_memory_context_to_thread(channel, ts, memory_results)
+                    if posted:
+                        log(f"Injected {memory_results.count('[')} memory results into thread")
+                    else:
+                        # Fallback: send via agent CLI
+                        enriched = (
+                            f"Jordan asked: \"{text}\"\n\n"
+                            f"MEMORY CONTEXT:\n{memory_results}\n\n"
+                            f"Answer using the memory context above."
+                        )
+                        send_to_nova(enriched)
+                        log(f"Fallback: sent via agent CLI")
                 else:
                     log(f"No memory results for: {text[:50]}")
 
-                state["last_ts"] = ts
+                state[f"last_ts_{ch}"] = ts
+                state["last_ts"] = ts  # backward compat
                 save_state(state)
 
         except Exception as e:
