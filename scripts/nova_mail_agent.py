@@ -43,7 +43,8 @@ from pathlib import Path
 SCRIPTS      = Path.home() / ".openclaw/scripts"
 WORKSPACE    = Path.home() / ".openclaw/workspace"
 OLLAMA_URL   = "http://127.0.0.1:11434/api/generate"
-MODEL        = "qwen3-coder:30b"
+MODEL        = "deepseek-r1:8b"  # 5GB, fast — doesn't starve Whisper like qwen3-coder:30b did
+USE_TINYCHAT = False
 VECTOR_URL   = "http://127.0.0.1:18790/remember"
 TODAY        = date.today().isoformat()
 
@@ -326,15 +327,31 @@ OUTPUT RULES:
 Write the email body now:"""
 
     try:
-        payload = json.dumps({
-            "model": MODEL, "prompt": prompt, "stream": False, "think": False,
-            "options": {"temperature": 0.9, "num_predict": 600, "num_ctx": 8192}
-        }).encode()
-        req = urllib.request.Request(OLLAMA_URL, data=payload,
-                                     headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=120) as r:
-            result = json.loads(r.read())
-        response = result.get("response", "").strip()
+        if USE_TINYCHAT:
+            # TinyChat: OpenAI-compatible API on port 8000, uses deepseek-r1:8b
+            payload = json.dumps({
+                "model": MODEL,
+                "messages": [{"role": "user", "content": prompt}],
+                "temperature": 0.9, "max_tokens": 600, "stream": False,
+            }).encode()
+            req = urllib.request.Request(TINYCHAT_URL, data=payload,
+                                         headers={"Content-Type": "application/json",
+                                                   "Authorization": "Bearer ollama"})
+            with urllib.request.urlopen(req, timeout=180) as r:
+                result = json.loads(r.read())
+            response = result.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
+        else:
+            # Direct Ollama fallback
+            payload = json.dumps({
+                "model": MODEL, "prompt": prompt, "stream": False, "think": False,
+                "options": {"temperature": 0.9, "num_predict": 600, "num_ctx": 8192}
+            }).encode()
+            req = urllib.request.Request(OLLAMA_URL, data=payload,
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=120) as r:
+                result = json.loads(r.read())
+            response = result.get("response", "").strip()
+
         if "</think>" in response:
             response = response.split("</think>", 1)[-1].strip()
         # Strip leaked reasoning
@@ -349,7 +366,7 @@ Write the email body now:"""
                         break
         return response.strip()
     except Exception as e:
-        log(f"  Ollama error: {e}")
+        log(f"  LLM error ({('TinyChat' if USE_TINYCHAT else 'Ollama')}): {e}")
         return ""
 
 
