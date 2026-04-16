@@ -81,6 +81,15 @@ SOURCE_RULES = [
         "sources": ["apple_health", "health"],
         "label": "health",
     },
+    # Music lyrics / song words
+    {
+        "patterns": [
+            r"\b(lyric|verse|chorus|song\s*words)\b",
+            r"\b(what\s*(are|is)\s*the\s*(lyrics|words)\s*(to|of))\b",
+        ],
+        "sources": ["music_lyrics", "music", "music_history"],
+        "label": "lyrics",
+    },
     # SRE / work knowledge (not work emails — just SRE concepts)
     {
         "patterns": [
