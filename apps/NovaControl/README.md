@@ -5,7 +5,7 @@
 ![Swift](https://img.shields.io/badge/Swift-5.9-orange)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![API Port](https://img.shields.io/badge/API-port%2037400-purple)
-![Version](https://img.shields.io/badge/version-1.1.0-brightgreen)
+![Version](https://img.shields.io/badge/version-1.1.1-brightgreen)
 
 A macOS menu bar application that consolidates the HTTP APIs of multiple local
 applications into a single unified endpoint. NovaControl reads each app's data
@@ -157,8 +157,8 @@ Built-in workflows:
 
 | Workflow | Trigger | Steps |
 |----------|---------|-------|
-| New Action Item to Slack Alert | `newActionItem(priority: "high")` | Post to `#nova-chat` |
-| Completed Action Item to Jira Ticket | `actionItemCompleted` | Create Jira issue via JiraSummary API, then notify Slack |
+| New Action Item to Slack Alert | `newActionItem(priority: "high")` | Post to `#nova-notifications` |
+| Completed Action Item to Jira Ticket | `actionItemCompleted` | Create Jira issue via JiraSummary API, then notify `#nova-notifications` |
 | Daily Open Actions Summary Email | `manual` | Send digest via `nova_herd_mail.sh` |
 
 Workflow definitions persist in
@@ -459,8 +459,11 @@ Each workflow consists of:
   proceeds past a failed step
 
 Template variables in step configs use `{{key}}` syntax. The engine
-automatically fills `{{date}}` with today's date. Additional context variables
-can be passed via the POST body when running a workflow manually.
+automatically fills `{{date}}` with today's date and maps `summary` to
+`title` as a fallback alias. Any unresolved `{{placeholder}}` variables are
+stripped before posting to prevent literal template text from appearing in
+Slack messages. Additional context variables can be passed via the POST body
+when running a workflow manually.
 
 ### Prometheus / Grafana
 
@@ -476,6 +479,19 @@ and POST to `/api/graph/ingest` to populate the database.
 ---
 
 ## Changelog
+
+### v1.1.1 (April 15, 2026)
+
+- **Fix**: All workflow Slack notifications now route to `#nova-notifications`
+  instead of `#nova-chat`. Automated alerts no longer pollute the interactive
+  conversation channel.
+- **Fix**: Template rendering strips unresolved `{{placeholder}}` variables
+  instead of posting them as literal text. Prevents template spam in Slack.
+- **Fix**: Added `summary` → `title` alias mapping in `renderTemplate` so
+  callers passing `summary` in the context body still resolve `{{title}}`
+  templates correctly.
+- **Fix**: Default fallback channel for `postToSlack` steps changed from
+  `#nova-chat` to `#nova-notifications`.
 
 ### v1.1.0 (April 2026)
 
