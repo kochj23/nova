@@ -293,9 +293,10 @@ def ingest_folders(folder_paths):
             log(f"Not a directory: {folder}")
             continue
         parent_name = folder.name
+        # Recursive search to handle Season subdirectories
         videos = sorted([
-            (f, parent_name) for f in folder.iterdir()
-            if f.suffix.lower() in VIDEO_EXTENSIONS
+            (f, parent_name) for f in folder.rglob("*")
+            if f.is_file() and f.suffix.lower() in VIDEO_EXTENSIONS
         ])
         all_videos.extend(videos)
         log(f"  {parent_name}: {len(videos)} episodes")
