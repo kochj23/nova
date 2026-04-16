@@ -32,7 +32,13 @@ python3 "$SCRIPTS/nova_tvshow_ingest.py" \
     --source cooking \
     >> "$LOGS/tvshow-ingest-batch4-cooking.log" 2>&1
 
-echo "[$(date '+%H:%M:%S')] Batch 4 (cooking) complete. Starting batch 5 (knowledge)..."
+python3 "$SCRIPTS/nova_tvshow_ingest.py" \
+    "$TVSHOWS/Oz & James Drink to Britain" \
+    "$TVSHOWS/Oz and Jame's Big Wine Adventure " \
+    --source cocktails \
+    >> "$LOGS/tvshow-ingest-batch4-cooking.log" 2>&1
+
+echo "[$(date '+%H:%M:%S')] Batch 4 (cooking/drinks) complete. Starting batch 5 (knowledge)..."
 
 python3 "$SCRIPTS/nova_tvshow_ingest.py" \
     "$TVSHOWS/Connections" \
