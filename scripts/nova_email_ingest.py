@@ -9,7 +9,7 @@ Designed for 3M+ emails with:
   - Checkpoint/resume (survives interruption)
   - Deduplication via text_hash
   - 5-minute Slack status reports
-  - Automatic tax/financial document exclusion
+  - Work email exclusion only (tax/divorce/intimacy now included per Apr 16 2026)
   - Progress tracking and ETA
 
 Usage:
@@ -51,44 +51,20 @@ MAIL_DIR = Path.home() / "Library/Mail/V10"
 EXCLUDE_PATHS = ["/Work/", "/Work -", "Work%20-"]
 VECTOR_URL = "http://127.0.0.1:18790/remember?async=1"
 SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN = nova_config.SLACK_CHAN
+SLACK_CHAN = nova_config.SLACK_NOTIFY   # #nova-notifications for status updates
 CHECKPOINT_FILE = Path.home() / ".openclaw/workspace/email_ingest_checkpoint.json"
 WORKERS = 8
 BATCH_SIZE = 100
 STATUS_INTERVAL = 300  # 5 minutes
 MAX_TEXT_LENGTH = 2000  # Truncate long emails for embedding
 
-# Exclusion patterns — skip tax/financial documents
-EXCLUDE_SUBJECTS = re.compile(
-    r"(tax\s*(return|document|form|filing|statement|receipt|1099|W-?2|1040|schedule\s*[a-z])|"
-    r"(w-?2|1099|1040|schedule\s*[a-z])\b|"
-    r"turbotax|h&r\s*block|tax\s*prep|"
-    r"(bank|credit)\s*statement|account\s*statement|"
-    r"(mortgage|loan)\s*(statement|document)|"
-    r"social\s*security\s*(number|statement)|"
-    r"(irs|internal\s*revenue)|"
-    r"financial\s*statement|"
-    r"divorce|dissolution|custody|child\s*support|spousal\s*support|"
-    r"alimony|marital\s*(settlement|agreement)|family\s*law|"
-    r"(decree|petition)\s*(of|for)\s*(divorce|dissolution)|"
-    r"parenting\s*plan|visitation|mediator|mediation)",
-    re.IGNORECASE
-)
-
-EXCLUDE_SENDERS_DIVORCE = re.compile(
-    r"(family\s*law|divorce|dissolution|mediator|family\s*court)",
-    re.IGNORECASE
-)
+# Content exclusions REMOVED (Apr 16, 2026) — Jordan authorized ingesting
+# tax, divorce, and intimacy emails. Only WORK emails remain excluded.
+# The text_hash dedup ensures already-ingested emails are skipped.
 
 # STRICT: Any email to/from jordan.koch@work is off limits
 # Work email loaded from env or config — never hardcoded in tracked files
 EXCLUDE_WORK_EMAIL = os.environ.get("NOVA_WORK_EMAIL", "").lower()
-
-EXCLUDE_SENDERS = re.compile(
-    r"(turbotax|hrblock|taxact|taxslayer|irs\.gov|"
-    r"fidelity.*statement|schwab.*statement|vanguard.*statement)",
-    re.IGNORECASE
-)
 
 # ── Globals ──────────────────────────────────────────────────────────────────
 
@@ -143,7 +119,7 @@ def post_status():
         f"*Email Ingest Status — {pct:.1f}%*\n"
         f"  Processed: {s['processed']:,} / {s['total_found']:,}\n"
         f"  Ingested: {s['ingested']:,}\n"
-        f"  Skipped: {s['skipped_tax']:,} tax, {s['skipped_dup']:,} dup, {s['skipped_empty']:,} empty\n"
+        f"  Skipped: {s['skipped_tax']:,} work, {s['skipped_dup']:,} dup, {s['skipped_empty']:,} empty\n"
         f"  Errors: {s['errors']:,}\n"
         f"  Rate: {rate:.0f}/sec\n"
         f"  ETA: {eta}\n"
@@ -230,26 +206,16 @@ def parse_emlx(filepath):
 # ── Processing ───────────────────────────────────────────────────────────────
 
 def should_exclude(parsed):
-    """Check if this email should be excluded (tax, divorce, financial docs, work email)."""
-    subject = parsed.get("subject", "")
+    """Check if this email should be excluded. Only Work emails are excluded now."""
+    if not EXCLUDE_WORK_EMAIL:
+        return False
     sender = parsed.get("sender", "")
     to = parsed.get("to", "")
-    body = parsed.get("body", "")[:500]
+    subject = parsed.get("subject", "")
+    body = parsed.get("body", "")[:200]
 
-    # STRICT: jordan.koch@work in ANY field = skip
-    work_check = (sender + " " + to + " " + subject + " " + body[:200]).lower()
+    work_check = (sender + " " + to + " " + subject + " " + body).lower()
     if EXCLUDE_WORK_EMAIL in work_check:
-        return True
-
-    if EXCLUDE_SUBJECTS.search(subject):
-        return True
-    if EXCLUDE_SUBJECTS.search(body[:200]):
-        return True
-    if EXCLUDE_SENDERS.search(sender):
-        return True
-    if EXCLUDE_SENDERS_DIVORCE.search(sender):
-        return True
-    if EXCLUDE_SENDERS_DIVORCE.search(subject):
         return True
     return False
 
@@ -411,7 +377,7 @@ def main():
         f"  Files found: {len(all_files):,}\n"
         f"  Workers: {WORKERS}\n"
         f"  Status updates every 5 minutes\n"
-        f"  Excluding: tax returns, financial statements"
+        f"  Excluding: Work emails only (tax/divorce/intimacy now included)"
     )
 
     # Start status reporter thread
@@ -451,7 +417,7 @@ def main():
         f"*Email Ingest Complete*\n"
         f"  Total processed: {s['processed']:,}\n"
         f"  Ingested: {s['ingested']:,}\n"
-        f"  Skipped: {s['skipped_tax']:,} tax, {s['skipped_dup']:,} dup, {s['skipped_empty']:,} empty\n"
+        f"  Skipped: {s['skipped_tax']:,} work, {s['skipped_dup']:,} dup, {s['skipped_empty']:,} empty\n"
         f"  Errors: {s['errors']:,}\n"
         f"  Duration: {str(timedelta(seconds=int(elapsed)))}"
     )
