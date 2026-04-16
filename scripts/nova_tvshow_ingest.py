@@ -34,7 +34,7 @@ FFPROBE = "/opt/homebrew/bin/ffprobe"
 VECTOR_URL = "http://127.0.0.1:18790/remember"
 SLACK_TOKEN = nova_config.slack_bot_token()
 SLACK_CHAN = nova_config.SLACK_NOTIFY
-VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm", ".ts"}
 STATUS_INTERVAL = 300
 
 shutdown = Event()

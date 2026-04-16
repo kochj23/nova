@@ -195,6 +195,19 @@ SOURCE_RULES = [
         "sources": ["demonology", "music", "document"],
         "label": "demonology/occult",
     },
+    # Home repair / renovation / DIY / plumbing / electrical
+    {
+        "patterns": [
+            r"\b(home\s*repair|renovation|remodel|this\s*old\s*house)\b",
+            r"\b(plumbing|electrical|wiring|drywall|framing|roofing)\b",
+            r"\b(deck|patio|fence|foundation|insulation|siding)\b",
+            r"\b(water\s*heater|furnace|hvac|duct|pipe|drain)\b",
+            r"\b(tile|flooring|hardwood|cabinet|countertop|backsplash)\b",
+            r"\b(contractor|building\s*code|permit|inspection)\b",
+        ],
+        "sources": ["home_repair", "gardening", "local"],
+        "label": "home repair/DIY",
+    },
     # Vehicles / cars / motorcycles / planes / builds
     {
         "patterns": [
