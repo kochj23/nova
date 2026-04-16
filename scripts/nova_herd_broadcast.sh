@@ -68,7 +68,7 @@ if [ -n "$MEMORY_FRAGMENT" ]; then
 fi
 
 TO="marey@makehorses.org"
-CC="oc@mostlycopyandpaste.com,colette@pilatesmuse.co,gaston@bluemoxon.com,rockbot@makehorses.org,sam@jasonacox.com,ara@monsterheaven.com"
+CC="oc@mostlycopyandpaste.com,colette@pilatesmuse.co,gaston@bluemoxon.com,rockbot@makehorses.org,sam@jasonacox.com,ara@monsterheaven.com,jules@laplante.dev"
 
 echo "Sending broadcast: $SUBJECT"
 echo "To: $TO"

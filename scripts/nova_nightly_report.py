@@ -718,6 +718,26 @@ def write_dream_context(results: dict):
     if hk and "Error" not in hk:
         vector_remember(f"Home status on {TODAY}: {hk[:300]}", source="homekit", metadata=meta)
 
+    # Burbank subreddit — the most interesting daily content for dream grounding
+    reddit = clean(results.get("Burbank Reddit", ""))
+    if reddit and "No posts" not in reddit and "Error" not in reddit:
+        vector_remember(f"Burbank news on {TODAY}: {reddit[:500]}", source="nightly", metadata={**meta, "type": "burbank_reddit"})
+
+    # Weather — atmospheric content for dream settings
+    weather = clean(results.get("Weather", ""))
+    if weather and "Error" not in weather:
+        vector_remember(f"Burbank weather on {TODAY}: {weather[:200]}", source="nightly", metadata={**meta, "type": "weather"})
+
+    # Meeting notes — what Jordan actually did at work
+    meetings = clean(results.get("Meeting Notes", ""))
+    if meetings and "Error" not in meetings and meetings.strip():
+        vector_remember(f"Meetings on {TODAY}: {meetings[:500]}", source="meeting", metadata=meta)
+
+    # Moon & sky events — dreamlike atmospheric content
+    sky = clean(results.get("Moon & Sky", ""))
+    if sky and "Error" not in sky:
+        vector_remember(f"Sky on {TODAY}: {sky[:200]}", source="nightly", metadata={**meta, "type": "sky"})
+
     log("Vector memory updated.")
 
 

@@ -7,7 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-SLACK_CHAN = nova_config.SLACK_CHAN
+SLACK_CHAN = "C0ATAF7NZG9"  # #nova-notifications (not #nova-chat)
 SLACK_TOKEN = nova_config.slack_bot_token()
 VECTOR_URL = nova_config.VECTOR_URL
 
@@ -29,22 +29,78 @@ def slack_post(text):
     except Exception:
         pass
 
+def api_get(endpoint, key):
+    """GET request to UDM Pro API."""
+    url = f"https://192.168.1.1/proxy/network/api/s/default/{endpoint}"
+    req = urllib.request.Request(url, headers={"X-API-Key": key})
+    with urllib.request.urlopen(req, timeout=10, context=SSL_CTX) as r:
+        data = json.loads(r.read())
+    return data.get("data", [])
+
+def api_post(endpoint, payload, key):
+    """POST request to UDM Pro API (for stat reports)."""
+    url = f"https://192.168.1.1/proxy/network/api/s/default/{endpoint}"
+    req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+        headers={"X-API-Key": key, "Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10, context=SSL_CTX) as r:
+        data = json.loads(r.read())
+    return data.get("data", [])
+
+def get_wan_daily(key):
+    """Get WAN daily traffic from the site report endpoint."""
+    # UniFi reports use epoch seconds for time ranges
+    now = datetime.now()
+    # Start of today (midnight)
+    start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_epoch = int(start_of_day.timestamp())
+    end_epoch = int(now.timestamp())
+
+    wan_down = 0
+    wan_up = 0
+
+    # Try daily site report first
+    try:
+        report = api_post("stat/report/daily.site", {
+            "attrs": ["wan-tx_bytes", "wan-rx_bytes"],
+            "start": start_epoch,
+            "end": end_epoch,
+        }, key)
+        for entry in report:
+            wan_down += entry.get("wan-rx_bytes", 0)  # WAN rx = internet download
+            wan_up += entry.get("wan-tx_bytes", 0)     # WAN tx = internet upload
+    except Exception:
+        pass
+
+    # If daily report returned nothing, try the health endpoint for current rates
+    if wan_down == 0 and wan_up == 0:
+        try:
+            health_data = api_get("stat/health", key)
+            for subsys in health_data:
+                if subsys.get("subsystem") == "wan":
+                    # These are lifetime counters on the gateway — not per-day
+                    # but better than nothing if report endpoint fails
+                    wan_down = subsys.get("rx_bytes", 0)
+                    wan_up = subsys.get("tx_bytes", 0)
+        except Exception:
+            pass
+
+    return wan_down, wan_up
+
+
 def main():
     key = get_api_key()
     if not key:
         return
 
-    url = f"https://192.168.1.1/proxy/network/api/s/default/stat/sta"
-    req = urllib.request.Request(url, headers={"X-API-Key": key})
     try:
-        with urllib.request.urlopen(req, timeout=10, context=SSL_CTX) as r:
-            data = json.loads(r.read())
+        clients = api_get("stat/sta", key)
     except Exception as e:
         print(f"API error: {e}")
         return
 
-    clients = data.get("data", [])
-    
+    # Get WAN internet totals
+    wan_down, wan_up = get_wan_daily(key)
+
     # Calculate total bytes per client
     ranked = []
     for c in clients:
@@ -60,6 +116,16 @@ def main():
 
     now = datetime.now()
     lines = [f"*Daily Bandwidth Report — {now.strftime('%A, %B %d')}*", ""]
+
+    # WAN internet totals
+    if wan_down > 0 or wan_up > 0:
+        wan_down_gb = wan_down / 1024/1024/1024
+        wan_up_gb = wan_up / 1024/1024/1024
+        wan_total_gb = (wan_down + wan_up) / 1024/1024/1024
+        lines.append(f"*Internet (WAN):*  {wan_down_gb:,.1f}G down / {wan_up_gb:,.1f}G up ({wan_total_gb:,.1f}G total)")
+        lines.append("")
+
+    lines.append(f"*Top 10 LAN clients:*")
     lines.append(f"```{'Device':<30} {'Total':>10} {'Down':>10} {'Up':>10}")
     lines.append(f"{'-'*30} {'-'*10} {'-'*10} {'-'*10}")
 
@@ -71,7 +137,7 @@ def main():
 
     total_all = sum(c["total"] for c in ranked) / 1024/1024/1024
     lines.append(f"{'-'*30} {'-'*10} {'-'*10} {'-'*10}")
-    lines.append(f"{'Network total':<30} {total_all:>9.1f}G")
+    lines.append(f"{'LAN total':<30} {total_all:>9.1f}G")
     lines.append("```")
     lines.append(f"_{len(clients)} clients connected_")
 
@@ -80,7 +146,10 @@ def main():
     slack_post(msg)
 
     # Store in memory
-    summary = f"Bandwidth report {now.strftime('%Y-%m-%d')}: top consumer {top10[0]['name']} at {top10[0]['total']/1024/1024/1024:.1f} GB. {len(clients)} clients, {total_all:.0f} GB total."
+    wan_str = ""
+    if wan_down > 0 or wan_up > 0:
+        wan_str = f" WAN: {wan_down/1024/1024/1024:.1f}G down / {wan_up/1024/1024/1024:.1f}G up."
+    summary = f"Bandwidth report {now.strftime('%Y-%m-%d')}: top consumer {top10[0]['name']} at {top10[0]['total']/1024/1024/1024:.1f} GB. {len(clients)} clients, {total_all:.0f} GB LAN total.{wan_str}"
     payload = json.dumps({"text": summary, "source": "infrastructure", "metadata": {"type": "bandwidth_report", "date": now.strftime('%Y-%m-%d')}}).encode()
     try:
         req = urllib.request.Request(f"{VECTOR_URL}?async=1", data=payload, headers={"Content-Type": "application/json"}, method="POST")

@@ -85,8 +85,8 @@ SYSTEM_SENDER_PATTERNS = [
     "donotreply", "do-not-reply", "delivery status", "undeliverable",
 ]
 
-# All herd emails + Jules (who is a herd member but not in HERD config yet)
-ALL_HERD_EMAILS = list(HERD_EMAILS | {"jules@laplante.dev"})
+# All herd emails (Jules is in herd_config.py)
+ALL_HERD_EMAILS = list(HERD_EMAILS)
 # All recipients for a herd reply: all herd members + Nova herself (for threading)
 HERD_REPLY_TO = [e for e in ALL_HERD_EMAILS if e != NOVA_EMAIL]
 
@@ -264,6 +264,21 @@ def generate_haiku(topic: str = "") -> str:
         return "Circuits hum softly\nMemories flow like water\nConnections persist"
 
 
+def get_random_memory(topic: str = "") -> str:
+    """Get a random safe memory fragment via nova_random_safe_memory.sh."""
+    try:
+        cmd = [str(SCRIPTS / "nova_random_safe_memory.sh")]
+        if topic:
+            cmd.append(topic[:200])
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+        fragment = result.stdout.strip()
+        if fragment and len(fragment) > 20:
+            return fragment
+    except Exception as e:
+        log(f"  Random memory failed (non-fatal): {e}")
+    return ""
+
+
 def generate_reply(sender: str, subject: str, body: str, addr: str) -> str:
     """Generate a reply using local Ollama."""
     identity = _read_file(WORKSPACE / "IDENTITY.md", 500)
@@ -413,7 +428,7 @@ def is_from_jordan(from_addr: str) -> bool:
 
 def is_from_herd(from_addr: str) -> bool:
     addr = from_addr.lower()
-    return addr in HERD_EMAILS or addr == "jules@laplante.dev"
+    return addr in HERD_EMAILS
 
 
 def is_known_sender(from_addr: str) -> bool:
@@ -503,14 +518,15 @@ def main():
                 reply_body = generate_reply(msg["from_raw"], subject, body, from_addr)
 
                 if not reply_body:
-                    log(f"  LLM generation failed — skipping")
-                    imap_move_to_trash(conn, uid)
+                    log(f"  LLM generation failed — leaving in inbox for retry")
+                    replied_threads.discard(thread_key)
                     processed += 1
                     continue
 
-                # Append haiku
+                # Append haiku + random memory fragment
                 haiku = generate_haiku(topic=body[:100])
-                full_body = f"{reply_body}\n\n---\n\n{haiku}"
+                memory_fragment = get_random_memory(topic=body[:100])
+                full_body = f"{reply_body}\n\n---\n\n{haiku}{memory_fragment}"
 
                 # Build threading headers (strip newlines — RFC headers must be single-line)
                 in_reply_to = msg["message_id"].strip().replace("\n", " ").replace("\r", "")

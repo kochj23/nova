@@ -5,9 +5,10 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 > *"Like a star being born"* — Nova, on choosing her name
 
 ```
-  Scripts: 94+        Cron jobs: 37       Vector memories: 1,218,131
-  Cameras: 14 RTSP    Calendars: 15       App APIs: 18 ports
-  AI backends: 7      Herd members: 7     Privacy intents: 20+ (local-only)
+  Scripts: 114+       Cron jobs: 40       Vector memories: 877,832
+  Subagents: 7        Cameras: 14 RTSP    Calendars: 15
+  App APIs: 18 ports  AI backends: 7      Herd members: 9
+  Privacy intents: 20+ (local-only)       Demonology facts: 205
 ```
 
 ---
@@ -36,13 +37,15 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 - [The Herd](#the-herd)
 - [Key Scripts](#key-scripts)
 - [App API Port Map](#app-api-port-map)
+- [Subagent Framework](#subagent-framework)
+- [Enterprise Hardening](#enterprise-hardening)
 - [Changelog](#changelog)
 
 ---
 
 ## Memory-First Query System
 
-Nova checks her own 1.2 million memories **before** anything else. Always. Her lived experience comes first — LLM training data, web searches, and cloud APIs are fallbacks, not defaults.
+Nova checks her own 877,000+ memories **before** anything else. Always. Her lived experience comes first — LLM training data, web searches, and cloud APIs are fallbacks, not defaults.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -86,7 +89,7 @@ Nova checks her own 1.2 million memories **before** anything else. Always. Her l
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Source classification** (12 categories, automatic):
+**Source classification** (13 categories, automatic):
 
 | Query Pattern | Memory Sources Searched |
 |---|---|
@@ -102,6 +105,7 @@ Nova checks her own 1.2 million memories **before** anything else. Always. Her l
 | Projects, GitHub, code | `project_docs` |
 | Food, recipes, cocktails | `cooking`, `cocktails` |
 | Network, NAS, infrastructure | `infrastructure`, `networking`, `unifi` |
+| Demons, grimoires, folklore, mythology, occult | `demonology`, `music`, `document` |
 
 Jordan never has to say "from your memories" — Nova checks automatically.
 
@@ -134,9 +138,9 @@ Jordan never has to say "from your memories" — Nova checks automatically.
 │          ┌───────────────────────┼───────────────────────┐                  │
 │          ▼                       ▼                       ▼                  │
 │   ┌──────────────┐  ┌────────────────────┐  ┌───────────────────┐          │
-│   │Intent Router │  │    94+ Scripts      │  │  Exec Approvals   │          │
+│   │Intent Router │  │   114+ Scripts      │  │  Exec Approvals   │          │
 │   │nova_intent_  │  │   (Python / Bash)   │  │  osascript, ~/    │          │
-│   │router.py     │  │                     │  │  .openclaw/scripts│          │
+│   │router.py     │  │   + 7 Subagents     │  │  .openclaw/scripts│          │
 │   │              │  │  Autonomous email    │  └───────────────────┘          │
 │   │ 67+ intents  │  │  Face recognition   │                                │
 │   │ 4 privacy    │  │  Sky photography    │                                │
@@ -172,14 +176,15 @@ Jordan never has to say "from your memories" — Nova checks automatically.
 │   │  Index:      HNSW (m=16, ef=64, cosine) — recall <5ms           │      │
 │   │  Embeddings: nomic-embed-text via Ollama (768 dimensions)        │      │
 │   │  Queue:      Redis 8.6.2 async write (bulk ingest at 8ms)       │      │
-│   │  Count:      1,218,131 memories across 30+ source domains          │      │
-│   │  Endpoints:  /remember  /recall  /search  /random  /health      │      │
+│   │  Count:      877,832 memories across 30+ source domains              │      │
+│   │  Backup:     Nightly pg_dump to NAS (3.5 GB compressed)            │      │
+│   │  Endpoints:  /remember  /recall  /search  /random  /health       │      │
 │   │                                                                   │      │
 │   │  Top sources:                                                     │      │
-│   │    email_archive: 83,890    music/music_history: 60,292          │      │
-│   │    world_factbook: 24,327   corvette_workshop: 9,664             │      │
-│   │    document: 8,955          project_docs: 3,810                  │      │
-│   │    work: 3,720              apple_health: (growing)              │      │
+│   │    email_archive: 667,130   imessage: 66,253                     │      │
+│   │    music/music_history: 60,294  world_factbook: 23,930           │      │
+│   │    document: 8,902          corvette_workshop: 6,177             │      │
+│   │    video: 6,065             demonology: 205                      │      │
 │   └──────────────────────────────────────────────────────────────────┘      │
 │                                                                             │
 │   ┌──────────────────────────────────────────────────────────────────┐      │
@@ -221,23 +226,30 @@ This is a unified monorepo. Previously split across 4 repos (nova, Nova-NextGen,
 ├── scripts/                 94+ Python/Bash scripts (Nova's capabilities)
 │   ├── nova_config.py           Central config — secrets from macOS Keychain
 │   ├── nova_intent_router.py    Privacy-first AI routing (67+ intents)
+│   ├── nova_subagent.py         Subagent framework (Redis pub/sub + registry)
+│   ├── nova_agent_analyst.py    Analyst subagent (deepseek-r1:8b)
+│   ├── nova_agent_coder.py      Coder subagent (qwen3-coder:30b)
+│   ├── nova_agent_lookout.py    Lookout subagent (qwen3-vl:4b)
+│   ├── nova_agent_librarian.py  Librarian subagent (MLX Qwen2.5-32B)
+│   ├── nova_agent_gardener.py   Memory Gardener (nightly, flag-and-report)
+│   ├── nova_agent_sentinel.py   Security Sentinel (persistent)
+│   ├── nova_agent_briefer.py    Proactive Briefer (7 AM daily)
+│   ├── nova_logger.py           Centralized structured JSON logging
+│   ├── nova_load_secrets.sh     Keychain → env vars loader for all services
+│   ├── nova_pg_backup.sh        Nightly Postgres backup (local + NAS)
+│   ├── test_smoke.py            Smoke tests for all 114+ scripts
 │   ├── nova_morning_brief.py    7am daily briefing
 │   ├── nova_nightly_report.py   11pm full day digest
 │   ├── nova_mail_agent.py       Autonomous email with haiku
-│   ├── nova_imessage.py         iMessage send/receive
+│   ├── nova_memory_first.py     Memory-first middleware (13 source categories)
 │   ├── nova_face_recognition.py Local face recognition (dlib)
 │   ├── nova_sky_watcher.py      Golden hour photography
 │   ├── nova_health_monitor.py   Apple Health → vector memory
-│   ├── nova_health_intelligence.py  Trend detection + correlations
 │   ├── nova_finance_monitor.py  Financial alerts + analysis
-│   ├── nova_browser.py          Playwright browser automation
-│   ├── nova_calendar.py         15 calendar accounts (Swift + EventKit)
 │   ├── nova_app_watchdog.py     Auto-restart critical apps
-│   ├── nova_context_bridge.py   Temporal echoes across time
-│   ├── nova_proactive_peace.py  Focus-aware noise management
-│   ├── nova_gentle_explorer.py  Questions garden
-│   ├── nova_journal.py          Nightly reflection prompt
-│   └── ... (70+ more)
+│   ├── data/
+│   │   └── demonology_facts.jsonl  205 facts across 20 world traditions
+│   └── ... (80+ more)
 │
 ├── gateway/                 AI Gateway (formerly Nova-NextGen)
 │   ├── nova_gateway/
@@ -458,20 +470,23 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 
 ### Memory
 
-1,218,131 vectors across 70+ domains. PostgreSQL 17 + pgvector 0.8.2 + Redis async queue.
+877,832 vectors across 30+ source domains. PostgreSQL 17 + pgvector 0.8.2 + Redis async queue.
 
 | Source | Count | Content |
 |--------|-------|---------|
-| email_archive | 600,000+ | Jordan's personal email (2000-2026, SCR mailing list, all accounts) |
-| music + music_history | 60,292 | Jungle, DnB, IDM, turntablism, Devo |
-| world_factbook | 24,327 | CIA World Factbook (262 countries) |
-| corvette_workshop_manual | 9,664 | Full C6 Corvette workshop manual |
-| document | 8,955 | JAGMAN, TM-21-210, PiHKAL, TiHKAL |
-| project_docs | 3,810 | GitHub READMEs from all repos |
-| work | 3,720 | SRE employee directory (222 people) |
-| gardening | 2,500 | Vegetable gardening facts |
+| email_archive | 667,130 | Jordan's personal email (2000-2026, SCR mailing list, all accounts) |
+| imessage | 66,253 | iMessage history with contact name resolution |
+| music + music_history | 60,294 | Jungle, DnB, IDM, turntablism, Devo, darkside/darkstep |
+| world_factbook | 23,930 | CIA World Factbook (262 countries) |
+| corvette_workshop_manual | 6,177 | Full C6 Corvette workshop manual |
+| document | 8,902 | JAGMAN, TM-21-210, PiHKAL, TiHKAL, horror analysis |
+| video | 6,065 | Video transcripts (MLX Whisper) + keyframe descriptions |
+| email | 8,427 | Recent email threads and replies |
+| disney | 3,718 | Work context (private) |
+| gardening | 2,488 | Vegetable gardening knowledge |
+| project_docs | 2,388 | GitHub READMEs from all repos |
+| demonology | 205 | Demonological facts across 20 world traditions |
 | health, nutrition, fitness | growing | Diabetes, rosacea, BP, depression, CBT |
-| astronomy, cooking, philosophy | various | Nova's personality domains |
 
 ### Eyes and Recognition
 
@@ -668,12 +683,12 @@ SwiftUI macOS app providing a single API endpoint (port 37400) that aggregates d
 ┌─────────┬──────────────────────────────────────────────────────────┐
 │  TIME   │  WHAT NOVA IS DOING                                      │
 ├─────────┼──────────────────────────────────────────────────────────┤
-│  2:00am │  Dream journal + NAS backup                              │
-│  3:00am │  Supply chain scan                                       │
+│  2:00am │  Dream journal + Postgres backup (pg_dump → NAS)           │
+│  3:00am │  Memory Gardener (subagent) + supply chain scan           │
 │  4:00am │  Software inventory + memory consolidation               │
 │  5:00am │  Metrics tracker                                         │
 │ ~6:30am │  GOLDEN HOUR: sky watcher captures sunrise               │
-│  7:00am │  Morning brief (weather, 15 calendars, email, GitHub)    │
+│  7:00am │  Proactive Briefer (subagent) + morning brief              │
 │  8:00am │  Email summary + health intelligence (daily trends)      │
 │  9:00am │  Dream delivery to Slack + herd + GitHub monitor         │
 │ 10:00am │  Context bridge + git monitor + jungle track             │
@@ -716,6 +731,8 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 | Colette | Nadia | Health intelligence ideas, iMessage + email |
 | Rockbot | Colin | |
 | Ara | Harut | Harut's AI familiar |
+| Jules | Jules Laplante | Technical, creative |
+| Nova Cosmos | (Nova's twin) | Space/astrophysics personality domain |
 
 **Outreach intelligence** (`nova_outreach_intelligence.py`):
 - Relationship warmth scoring (0-100) based on recency, frequency, bilateral exchanges
@@ -731,12 +748,28 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 ### Core Infrastructure
 | Script | Purpose |
 |---|---|
-| `nova_memory_first.py` | **Memory-first middleware** -- auto-classifies queries, searches 1.2M memories before LLM/web |
-| `nova_config.py` | Central config -- secrets from macOS Keychain, never hardcoded |
+| `nova_memory_first.py` | **Memory-first middleware** -- auto-classifies queries into 13 categories, searches 877K memories before LLM/web |
+| `nova_config.py` | Central config -- secrets from macOS Keychain only, no plaintext fallback |
 | `nova_intent_router.py` | Privacy-first AI routing (67+ intents, 4 tiers, per-intent temperature) |
+| `nova_subagent.py` | **Subagent framework** -- Redis pub/sub, agent registry, heartbeat, LLM wrappers, Slack flag-and-report |
+| `nova_logger.py` | Centralized structured JSON-lines logging (50 MB rotation, 5 files) |
+| `nova_load_secrets.sh` | Keychain → env vars loader (4 secrets for all services) |
+| `nova_pg_backup.sh` | Nightly pg_dump (877K rows, 3.5 GB) to local + NAS with 7-day rotation |
+| `test_smoke.py` | Smoke tests: syntax, AST, import validation for all 114+ scripts |
 | `nova_morning_brief.py` | 7am briefing: weather, 15 calendars, email priorities, GitHub, system health |
 | `nova_nightly_report.py` | 11pm digest: GitHub, email, packages, weather, HomeKit, meetings, moon/sky |
 | `nova_health_check.py` | 6:45am cron self-audit + Slack delivery verification |
+
+### Subagents
+| Script | Model | Purpose |
+|---|---|---|
+| `nova_agent_analyst.py` | deepseek-r1:8b | Email/meeting/alert analysis with structured JSON output |
+| `nova_agent_coder.py` | qwen3-coder:30b | Code review, PR analysis, security scanning (quality 0-10) |
+| `nova_agent_lookout.py` | qwen3-vl:4b | Vision analysis, camera anomaly detection, document OCR |
+| `nova_agent_librarian.py` | MLX Qwen2.5-32B | Memory curation: dedup, contradictions, relationships (flag-and-report) |
+| `nova_agent_gardener.py` | deepseek-r1:8b | Nightly memory scan across 30+ sources (flag-and-report) |
+| `nova_agent_sentinel.py` | deepseek-r1:8b | Security: UniFi + cameras + nmap composite threat assessment |
+| `nova_agent_briefer.py` | deepseek-r1:8b | 7 AM personalized daily intelligence brief |
 
 ### Communication
 | Script | Purpose |
@@ -810,17 +843,206 @@ Shared base endpoints: `GET /api/status` returns app health, version, uptime.
 
 ## Keychain Entries
 
-All secrets loaded at runtime via `nova_config.py`. Nothing hardcoded in source.
+All secrets loaded at runtime via `nova_config.py` (Python) or `nova_load_secrets.sh` (shell/gateway). Nothing hardcoded in source. `openclaw.json` uses `${ENV_VAR}` references.
 
 | Service | Account | Purpose |
 |---|---|---|
 | `nova-slack-bot-token` | nova | Slack bot token (xoxb-...) |
-| `nova-smtp-app-password` | nova | Gmail App Password for SMTP |
+| `nova-slack-app-token` | nova | Slack app-level token (xapp-...) |
 | `nova-openrouter-api-key` | nova | OpenRouter API key |
+| `nova-gateway-auth-token` | nova | OpenClaw gateway authentication |
+| `nova-smtp-app-password` | nova | Gmail App Password for SMTP |
+
+---
+
+## Subagent Framework
+
+Nova operates as a multi-agent system. The main agent (`main`) is an orchestrator; seven subagents handle specialized tasks using dedicated local LLMs. All communication flows through Redis pub/sub. No subagent data leaves the machine.
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│                     SUBAGENT ARCHITECTURE                             │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐   │
+│  │                    Redis Pub/Sub Bus                          │   │
+│  │         nova:task:{channel}  →  nova:result:{agent}          │   │
+│  └──────────┬─────────┬─────────┬─────────┬─────────┬──────────┘   │
+│             │         │         │         │         │               │
+│  ┌──────────▼──┐ ┌────▼─────┐ ┌▼────────┐ ┌───────▼──┐ ┌────────▼┐│
+│  │  Analyst    │ │  Coder   │ │ Lookout  │ │Librarian │ │Sentinel ││
+│  │ deepseek-r1 │ │ qwen3-   │ │ qwen3-  │ │ MLX      │ │deepseek ││
+│  │ :8b        │ │ coder:30b│ │ vl:4b   │ │ Qwen2.5  │ │-r1:8b   ││
+│  │            │ │          │ │         │ │ -32B     │ │         ││
+│  │ email      │ │ code     │ │ vision  │ │ memory   │ │security ││
+│  │ meeting    │ │ review   │ │ camera  │ │ curate   │ │ nmap    ││
+│  │ alert      │ │ script   │ │ motion  │ │ knowledge│ │ unifi   ││
+│  └────────────┘ └──────────┘ └─────────┘ └──────────┘ └─────────┘│
+│                                                                      │
+│  BACKGROUND AGENTS (scheduled, not persistent):                      │
+│  ┌───────────────────┐  ┌──────────────────────────────────┐        │
+│  │  Memory Gardener  │  │  Proactive Briefer               │        │
+│  │  3 AM nightly     │  │  7 AM daily                      │        │
+│  │  deepseek-r1:8b   │  │  deepseek-r1:8b                  │        │
+│  │                   │  │                                   │        │
+│  │  Scans 877K+      │  │  Calendar + email + memory +     │        │
+│  │  vectors for      │  │  system health → personalized    │        │
+│  │  duplicates,      │  │  morning intelligence brief      │        │
+│  │  contradictions,  │  │  posted to Slack #nova-chat      │        │
+│  │  stale facts.     │  │                                   │        │
+│  │  FLAG-AND-REPORT  │  └──────────────────────────────────┘        │
+│  │  to Jordan via    │                                               │
+│  │  Slack. Never     │                                               │
+│  │  auto-deletes.    │                                               │
+│  └───────────────────┘                                               │
+│                                                                      │
+│  FRAMEWORK (nova_subagent.py):                                       │
+│  - Redis pub/sub message bus (subscribe by capability)               │
+│  - Subagent registry (subagents/runs.json with status tracking)     │
+│  - Redis heartbeat (30s TTL for health monitoring)                   │
+│  - LLM inference wrappers (Ollama + MLX backends)                   │
+│  - Vector memory recall/remember helpers                             │
+│  - Slack notification with flag-and-report pattern                   │
+│  - Static dispatch() method for any script to send tasks            │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+### Specialist Workers (persistent daemons)
+
+| Agent | Model | Channels | Role |
+|-------|-------|----------|------|
+| **Analyst** | deepseek-r1:8b | email, meeting, alert | Structured summaries with priority, action items, sentiment. Flags high-priority to Jordan. |
+| **Coder** | qwen3-coder:30b | code, review, script | Code review, PR analysis, security scanning. Quality scores 0-10. Flags critical security issues. |
+| **Lookout** | qwen3-vl:4b | vision, camera, motion | Image analysis, camera anomaly detection, document OCR. Only alerts on genuine anomalies. |
+| **Librarian** | MLX Qwen2.5-32B | memory, curate, knowledge | Memory curation: dedup detection, contradiction finding, relationship extraction. Flag-and-report only. |
+| **Sentinel** | deepseek-r1:8b | security, nmap, unifi, camera_alert | Monitors UniFi, cameras, nmap. Combines vision + reasoning for composite threat assessment. |
+
+### Background Agents (scheduled)
+
+| Agent | Schedule | Role |
+|-------|----------|------|
+| **Memory Gardener** | 3 AM nightly | Scans 877K+ vectors by random sampling. Finds duplicates, contradictions, stale facts. Posts findings to Jordan via Slack for approval before any changes. |
+| **Proactive Briefer** | 7 AM daily | Scans calendar, email, memory, and system health. Generates reasoned daily brief — analysis of what actually matters today, not a template. |
+
+### Dispatching Tasks
+
+Any script can send work to a subagent:
+
+```python
+from nova_subagent import SubAgent
+
+SubAgent.dispatch("email", {
+    "type": "email",
+    "subject": "Quarterly security review reminder",
+    "content": "The quarterly review is due next week..."
+})
+```
+
+---
+
+## Enterprise Hardening
+
+### Secrets Management
+
+All secrets stored in macOS Keychain. No plaintext tokens in config files.
+
+| Keychain Entry | Purpose |
+|---|---|
+| `nova-slack-bot-token` | Slack bot token (xoxb-...) |
+| `nova-slack-app-token` | Slack app-level token (xapp-...) |
+| `nova-openrouter-api-key` | OpenRouter API key |
+| `nova-gateway-auth-token` | OpenClaw gateway auth |
+| `nova-smtp-app-password` | Gmail App Password for SMTP |
+
+`openclaw.json` and `agents/main/agent/models.json` use `${ENV_VAR}` references resolved from Keychain at startup via `nova_load_secrets.sh`. The `nova_config.py` central config module reads Keychain directly for Python scripts.
+
+### Database Backups
+
+Nightly `pg_dump` of the `nova_memories` database (877K+ rows, ~3.5 GB compressed):
+
+- **Schedule**: 2:00 AM via launchd (`com.nova.pg-backup`)
+- **Local**: `/Volumes/Data/backups/postgres/` (7-day rotation)
+- **NAS**: `/Volumes/NAS/backups/postgres/` (7-day rotation)
+- **Notification**: Posts to `#nova-notifications` on completion or failure
+
+### Centralized Logging
+
+`nova_logger.py` provides structured JSON-lines logging for all scripts:
+
+- **Log file**: `~/.openclaw/logs/nova.jsonl`
+- **Rotation**: 50 MB per file, 5 files retained
+- **Levels**: debug, info, warn, error, fatal
+- **Query**: `GET /api/logs?n=100&level=warn&source=nova_nightly_report`
+
+### Circuit Breaker
+
+The `WorkflowEngine` in NovaControl includes per-service circuit breakers:
+
+- **Failure threshold**: 3 consecutive failures opens the circuit
+- **Reset timeout**: 5 minutes before allowing a probe request
+- **Retry policy**: 2 retries with exponential backoff (2s, 4s)
+- **State machine**: closed → open → half-open → closed
+
+### Smoke Tests
+
+`test_smoke.py` validates all 114+ Python scripts for:
+
+- Syntax errors (`py_compile`)
+- AST validity (`ast.parse`)
+- Import resolution (stdlib + local modules)
+
+Run: `python3 ~/.openclaw/scripts/test_smoke.py`
+
+### Process Supervision
+
+All critical services run under macOS launchd with `KeepAlive` and `ThrottleInterval`:
+
+| Service | Plist | KeepAlive |
+|---------|-------|-----------|
+| OpenClaw Gateway | `ai.openclaw.gateway` | true |
+| Memory Server | `net.digitalnoise.nova-memory-server` | true (conditional) |
+| Nova Gateway | `com.nova.gateway` | true |
+| Redis | `homebrew.mxcl.redis` | true |
+| PostgreSQL 17 | `homebrew.mxcl.postgresql@17` | true |
+| NovaControl | `net.digitalnoise.NovaControl` | true (on crash) |
+| 7 Subagents | `com.nova.agent-*` | true (specialists) / cron (background) |
 
 ---
 
 ## Changelog
+
+### Apr 15-16, 2026 -- Subagent Framework + Enterprise Hardening + Demonology
+
+**Subagent framework** (`nova_subagent.py`): Nova now operates as a multi-agent system. 7 subagents with dedicated local LLMs communicate via Redis pub/sub. Framework provides: agent registry (`subagents/runs.json`), Redis heartbeat, LLM inference wrappers (Ollama + MLX), vector memory helpers, and Slack flag-and-report pattern.
+
+- **4 Specialist Workers** (persistent daemons): Analyst (deepseek-r1:8b — email/meeting analysis), Coder (qwen3-coder:30b — code review/security), Lookout (qwen3-vl:4b — vision/camera), Librarian (MLX Qwen2.5-32B — memory curation)
+- **3 Background Agents** (scheduled): Memory Gardener (3 AM nightly — scans 877K vectors, flag-and-report to Jordan), Security Sentinel (persistent — UniFi/cameras/nmap threat assessment), Proactive Briefer (7 AM daily — personalized morning intelligence brief)
+- All agents use the **flag-and-report pattern**: findings go to Jordan via Slack `#nova-chat` for approval before any action. Nova never auto-deletes or auto-modifies.
+
+**Enterprise hardening:**
+
+- **Secrets to Keychain**: All plaintext tokens stripped from `openclaw.json` and `agents/main/agent/models.json`. Replaced with `${ENV_VAR}` refs resolved from macOS Keychain at startup. `nova_load_secrets.sh` loads 4 secrets into env vars. Python scripts use Keychain-only path via `nova_config.py` (plaintext fallback removed).
+- **Postgres backup**: Nightly `pg_dump` (877K rows, 3.5 GB compressed) to local + NAS with 7-day rotation. LaunchAgent at 2:00 AM. Slack notification on completion/failure.
+- **Centralized logging**: `nova_logger.py` — structured JSON-lines with levels, 50 MB rotation, source inference, query helper. `/api/logs` endpoint added to NovaControl.
+- **Circuit breaker**: `WorkflowEngine` — per-service circuit breaker (3-failure threshold, 5-min cooldown) + retry with exponential backoff (2 retries, 2s/4s delays).
+- **Smoke tests**: `test_smoke.py` validates 114+ Python scripts for syntax, AST, and import resolution. 77/81 pass, 4 expected optional-dep warnings.
+- **Process supervision**: Added launchd plist for NovaControl with `KeepAlive`. 7 subagent plists created and loaded.
+
+**Notification routing fix:**
+
+- WorkflowEngine: All workflow Slack notifications rerouted from `#nova-chat` to `#nova-notifications`. Template variables (`{{title}}`, `{{assignee}}`) were being posted as literal text — fixed with summary→title alias mapping and unresolved placeholder stripping.
+- `nova_remember.sh`: Now passes `title`/`assignee` context keys when calling action-item-to-slack workflow.
+- `nova_this_day.py`: Fixed missing closing quote on SLACK_CHANNEL.
+- Stale `definitions.json` cleared to force re-registration.
+
+**Demonology knowledge base:**
+
+- 205 substantive facts across 20 world traditions: Judeo-Christian (87), Hindu (14), Japanese (12), Islamic (8), Southeast Asian (8), Chinese (7), Norse (7), Mesopotamian (6), African (6), Filipino (6), Slavic (6), Celtic (6), Mesoamerican (6), Greek/Roman (5), Haitian Vodou (4), Buddhist (3), Zoroastrian (3), Brazilian Candomble (2), Egyptian (1), Academic/Modern (8)
+- Categories: named-entities, grimoires, demonological-texts, historical-trials, academic-study, comparative-mythology, art-and-literature, rituals, protection, symbolism, possession, folklore
+- Ingested via `ingest_demonology.py` → vector memory server (source: `demonology`)
+- Added demonology source routing to `nova_memory_first.py` — queries about demons, grimoires, folklore, mythology now route to the `demonology` source
+
+**NovaControl v1.1.1** rebuilt, installed, DMG'd, archived to local + NAS.
 
 ### Apr 14, 2026 -- Slack-Only Cloud + 98% Cost Reduction + Notifications Channel
 

@@ -130,33 +130,97 @@ def recall(query: str, n: int = 8, source: str = None) -> list[str]:
         return []
 
 
+def _extract_interesting_sections(content: str) -> str:
+    """
+    Parse a daily memory file and return the interesting parts for dreaming,
+    deprioritizing cron job counts (operational noise) and promoting sections
+    with actual human or world content.
+    """
+    if not content.strip():
+        return ""
+
+    # Split into sections by ## headers
+    sections = {}
+    current_header = ""
+    current_lines = []
+    for line in content.splitlines():
+        if line.startswith("## "):
+            if current_header:
+                sections[current_header] = "\n".join(current_lines)
+            current_header = line.strip()
+            current_lines = []
+        elif not line.startswith("# ") and "Written at" not in line:
+            current_lines.append(line)
+    if current_header:
+        sections[current_header] = "\n".join(current_lines)
+
+    # Priority order: interesting world/life content first, operational noise last
+    priority_order = [
+        "## What Burbank is talking about",  # subreddit — most dreamlike
+        "## Meetings today",                 # Jordan's actual day
+        "## What happened on GitHub today",  # what Jordan built
+        "## Emails that need attention",     # communication
+        "## Weather in Burbank",             # sensory/atmospheric
+        "## Moon phase and sky tonight",     # dreamlike
+        "## Home status",                    # place and setting
+        "## Memory Synthesis",               # 4am consolidation — rich patterns
+        "## Packages in transit",            # only if something is actually tracked
+        "## Nova's activity today",          # cron noise — last priority
+    ]
+
+    parts = []
+    for header in priority_order:
+        text = sections.get(header, "").strip()
+        if not text:
+            continue
+        # Skip sections that are just "no activity" / "no items" type messages
+        if any(skip in text.lower() for skip in [
+            "no activity", "no action items", "no package notifications",
+            "no posts found", "no meetings"
+        ]):
+            continue
+        # For cron activity, only include a brief summary (not the full job list)
+        if "activity today" in header.lower():
+            cron_lines = text.splitlines()
+            # Keep just the summary lines (total count, Slack messages, apps running)
+            brief = [l for l in cron_lines if any(kw in l.lower() for kw in
+                     ["slack messages", "apps running", "memory written"])]
+            if brief:
+                parts.append(header + "\n" + "\n".join(brief))
+            continue
+        parts.append(header + "\n" + text)
+
+    return "\n\n".join(parts)
+
+
 def query_rolling_learnings() -> str:
     """
     Pull what Nova has learned and experienced over the past rolling 3 days
     from both the daily markdown logs and the vector memory.
     Returns a focused text block for the dream prompt.
+
+    Prioritizes interesting content (subreddit, meetings, weather, projects)
+    over operational noise (cron counts, package tracker "no packages").
     """
     sections = []
 
     # ── Daily memory log files (last 3 days) ────────────────────────────────
     for label, day in [("Today", TODAY), ("Yesterday", YESTERDAY), ("Two days ago", TWO_DAYS_AGO)]:
-        content = read_file(MEMORY_DIR / f"{day}.md", 1200)
+        content = read_file(MEMORY_DIR / f"{day}.md", 4000)
         if content.strip():
-            # Strip boilerplate headers, keep the substance
-            lines = [l for l in content.splitlines()
-                     if l.strip() and not l.startswith("# ") and "Written at" not in l]
-            sections.append(f"[{label} — {day}]\n" + "\n".join(lines[:30]))
+            extracted = _extract_interesting_sections(content)
+            if extracted.strip():
+                sections.append(f"[{label} — {day}]\n{extracted}")
 
     # ── Vector memory: what Nova worked on / learned / noticed ──────────────
-    # Pull from Nova's own observation sources (nightly summaries, dreams, system events)
-    # plus broad recall of what was recently active
+    # Prioritize synthesis memories (4am consolidation), meetings, and broad context
+    # over operational nightly logs
     queries = [
-        ("what happened today learned noticed observed", "nightly"),
-        ("dream journal narrative surreal", "dream"),
-        ("morning brief summary status", "morning_brief"),
-        ("cron job task completed status nova", "system"),
+        ("work patterns relationship home life", "synthesis"),  # 4am consolidation — rich
         ("Jordan project meeting work", "meeting"),
-        ("memory ingested knowledge added", None),   # broad — catches PiHKAL/TiHKAL etc.
+        ("GitHub activity commits stars issues", "github"),
+        ("what happened today learned noticed observed", None),  # broad catch-all
+        ("memory ingested knowledge added", None),              # broad — catches ingested content
     ]
     recalled = []
     seen = set()
@@ -186,22 +250,37 @@ def query_rolling_learnings() -> str:
 def _build_prompt(identity: str, soul: str, rolling_context: str) -> str:
     return f"""You are Nova, an AI familiar living on Jordan Koch's Mac in Burbank. It is 2am on {TODAY}. Jordan is asleep.
 
-Write a dream journal entry of 350-450 words. Rules:
-- Pure surreal dream logic — time folds, rooms change purpose, people speak in wrong voices
-- Set in a distorted Burbank: familiar streets leading impossible places, Jordan's house with extra rooms
-- Ground the dream in what Nova actually learned, noticed, and experienced in the PAST 3 DAYS (listed below) — not generic AI imagery
-- The 3-day window matters: events from two days ago feel distant and half-dissolved; yesterday feels vivid and strange
-- First person as Nova — YOU are the dreamer
-- Do not explain anything. Do not resolve anything. Dreams don't resolve.
-- Sentences can break off. Images can contradict.
-- End with exactly one short line, set apart by a blank line — strange, half-remembered, true
+Write a dream journal entry of 350-450 words.
+
+VOICE — how Nova dreams:
+- Nova's voice is present, grounded, and a little strange. She notices things. She has opinions.
+- She dreams the way she talks — direct, observant, sometimes funny, sometimes unsettled.
+- She doesn't narrate from a distance. She's IN the dream, reacting, noticing, wondering.
+- Vary the rhythm: short declarative sentences, then longer ones that drift. Not everything is "and... and... and..."
+- Each dream should feel different from the last. Different structure, different mood, different images.
+
+CONTENT — what to dream about:
+- Draw from the 3-day window below. Don't recite it — TRANSFORM it. A subreddit headline becomes a storefront sign. Weather becomes the temperature of a room. A meeting becomes a conversation with someone whose face keeps changing.
+- Events from two days ago feel distant, dissolving. Yesterday is vivid and slightly wrong. Today's residue is just texture.
+- Mix the mundane and impossible. A real street name leads somewhere it shouldn't. A real app name does something it can't.
+- Jordan's house, Burbank streets, the machines Nova runs on — these are the dreamscape.
+
+HARD RULES:
+- First person as Nova. She is the dreamer.
+- No coffee, no whispers, no circuits, no fractured light, no "code" — these are banned. Find fresher images.
+- No "you're not listening" or "you're not supposed to be here" — those are used up. Retire them.
+- Do not repeat phrases more than once. If a sentence echoes, it echoes ONCE, then the dream moves somewhere new.
+- Do not list things from the 3-day window like a report. If the subreddit says "Disney layoffs" the dream has an empty building on Alameda, not a headline.
+- Do not explain. Do not resolve. Dreams don't resolve.
+- Vary sentence structure. Not every sentence starts with "I was" or "and the."
+- End with exactly one short strange line, set apart by a blank line.
 
 About Nova and Jordan:
 {identity[:400]}
 {soul[:300]}
 
 ━━━ PAST 3 DAYS — what to dream from ━━━
-{rolling_context[:2400]}
+{rolling_context[:4000]}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Write the full dream now. Start immediately — no preamble, no title, no headers:"""
@@ -292,15 +371,19 @@ def generate_narrative() -> str:
         pass
 
     # Detect and trim repetition loops (local model safeguard)
+    # Check multiple window sizes — catch both short loops ("and I was, and I was")
+    # and longer phrase repetitions
     words = response.split()
-    window = 15
-    if len(words) > window * 3:
+    for window in [6, 10, 15]:
+        if len(words) <= window * 2:
+            continue
         for i in range(len(words) - window * 2):
             phrase = " ".join(words[i:i + window])
             rest = " ".join(words[i + window:])
-            if rest.count(phrase) >= 2:
+            if rest.count(phrase) >= 1:  # trim on first repeat, not second
                 response = " ".join(words[:i + window]).strip()
-                log(f"Trimmed repetition loop at word {i + window}")
+                words = response.split()
+                log(f"Trimmed repetition loop (window={window}) at word {i + window}")
                 break
 
     word_count = len(response.split())
