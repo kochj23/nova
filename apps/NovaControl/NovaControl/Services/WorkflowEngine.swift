@@ -60,6 +60,49 @@ struct WorkflowRun: Identifiable, Codable {
     }
 }
 
+// MARK: - Circuit Breaker
+
+/// Per-service circuit breaker to prevent cascading failures when external
+/// APIs (Slack, Jira, webhooks) are down. State machine: closed → open → half-open.
+private struct CircuitBreaker {
+    enum State: String { case closed, open, halfOpen }
+
+    var state: State = .closed
+    var failureCount: Int = 0
+    var lastFailure: Date?
+    var lastSuccess: Date?
+
+    /// Failures before the circuit opens.
+    let failureThreshold: Int = 3
+    /// How long the circuit stays open before allowing a probe request.
+    let resetTimeout: TimeInterval = 300   // 5 minutes
+
+    var shouldAllow: Bool {
+        switch state {
+        case .closed:   return true
+        case .open:
+            guard let last = lastFailure else { return true }
+            return Date().timeIntervalSince(last) >= resetTimeout   // transition to half-open
+        case .halfOpen: return true
+        }
+    }
+
+    mutating func recordSuccess() {
+        failureCount = 0
+        state = .closed
+        lastSuccess = Date()
+    }
+
+    mutating func recordFailure() {
+        failureCount += 1
+        lastFailure = Date()
+        if failureCount >= failureThreshold {
+            state = .open
+            NSLog("[CircuitBreaker] OPEN — \(failureCount) consecutive failures, pausing for \(Int(resetTimeout))s")
+        }
+    }
+}
+
 // MARK: - Workflow Engine
 
 @MainActor
@@ -69,6 +112,10 @@ final class WorkflowEngine {
     private(set) var definitions: [WorkflowDefinition] = []
     private(set) var recentRuns: [WorkflowRun] = []
     private let maxRunHistory = 50
+    /// Per-service circuit breakers keyed by step type.
+    private var circuitBreakers: [String: CircuitBreaker] = [:]
+    /// Max retries per step (with exponential backoff).
+    private let maxRetries = 2
     private let storageURL: URL = {
         let support = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
         let dir = support.appendingPathComponent("NovaControl/Workflows", isDirectory: true)
@@ -165,7 +212,8 @@ final class WorkflowEngine {
 
         for step in def.steps {
             let start = Date()
-            let result = await executeStep(step, context: context, workflowName: def.name)
+            let cbKey = step.type_.rawValue
+            let result = await executeStepWithRetry(step, context: context, workflowName: def.name, cbKey: cbKey)
             let ms = Int(Date().timeIntervalSince(start) * 1000)
             let sr = WorkflowRun.StepResult(stepId: step.id, status: result.ok ? "ok" : "failed",
                                              output: result.output, durationMs: ms)
@@ -188,9 +236,46 @@ final class WorkflowEngine {
         return run
     }
 
-    // MARK: - Step Execution
+    // MARK: - Step Execution (with Circuit Breaker + Retry)
 
     private struct StepResult { let ok: Bool; let output: String }
+
+    /// Execute a step with circuit breaker check and exponential backoff retry.
+    private func executeStepWithRetry(_ step: WorkflowDefinition.WorkflowStep,
+                                       context: [String: String],
+                                       workflowName: String,
+                                       cbKey: String) async -> StepResult {
+        // Circuit breaker check
+        if var cb = circuitBreakers[cbKey], !cb.shouldAllow {
+            NSLog("[WorkflowEngine] Circuit OPEN for \(cbKey) — skipping step '\(step.name)'")
+            return StepResult(ok: false, output: "Circuit breaker open for \(cbKey) — try again later")
+        }
+
+        var lastResult = StepResult(ok: false, output: "")
+        for attempt in 0...maxRetries {
+            if attempt > 0 {
+                let delay = UInt64(pow(2.0, Double(attempt))) * 1_000_000_000  // 2s, 4s
+                NSLog("[WorkflowEngine] Retry \(attempt)/\(maxRetries) for '\(step.name)' after \(Int(delay / 1_000_000_000))s")
+                try? await Task.sleep(nanoseconds: delay)
+            }
+
+            lastResult = await executeStep(step, context: context, workflowName: workflowName)
+
+            if lastResult.ok {
+                if circuitBreakers[cbKey] != nil {
+                    circuitBreakers[cbKey]!.recordSuccess()
+                }
+                return lastResult
+            }
+        }
+
+        // All retries exhausted — record failure in circuit breaker
+        if circuitBreakers[cbKey] == nil {
+            circuitBreakers[cbKey] = CircuitBreaker()
+        }
+        circuitBreakers[cbKey]!.recordFailure()
+        return lastResult
+    }
 
     private func executeStep(_ step: WorkflowDefinition.WorkflowStep,
                              context: [String: String],

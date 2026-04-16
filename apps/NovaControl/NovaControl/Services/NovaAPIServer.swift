@@ -314,6 +314,11 @@ final class NovaAPIServer {
             return await handleWorkflowRuns()
         }
 
+        // Centralized logs
+        if method == "GET" && path == "/api/logs" {
+            return handleLogs(query: query)
+        }
+
         // OpenAPI documentation
         if method == "GET" && path == "/api/docs" {
             return handleDocs()
@@ -580,6 +585,37 @@ final class NovaAPIServer {
             "stepCount": r.stepResults.count, "error": r.error as Any
         ]}
         return (200, ["runs": list, "total": total])
+    }
+
+    // MARK: - Logs Handler
+
+    // GET /api/logs?n=100&level=warn&source=nova_nightly_report&since=2026-04-15T00:00:00
+    private func handleLogs(query: [String: String]) -> (Int, Any) {
+        let n = Int(query["n"] ?? "100") ?? 100
+        let logDir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".openclaw/logs", isDirectory: true)
+        let logFile = logDir.appendingPathComponent("nova.jsonl")
+        guard let data = try? String(contentsOf: logFile, encoding: .utf8) else {
+            return (200, ["entries": [] as [Any], "total": 0])
+        }
+        let lines = data.split(separator: "\n").suffix(n).reversed()
+        var entries: [[String: Any]] = []
+        let levelFilter = query["level"]
+        let sourceFilter = query["source"]
+        let sinceFilter = query["since"]
+        let levelOrder = ["debug": 0, "info": 1, "warn": 2, "error": 3, "fatal": 4]
+        let minLevel = levelOrder[levelFilter ?? ""] ?? 0
+
+        for line in lines {
+            guard let lineData = line.data(using: .utf8),
+                  let entry = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any] else { continue }
+            if let lvl = entry["level"] as? String, (levelOrder[lvl] ?? 0) < minLevel { continue }
+            if let src = sourceFilter, (entry["source"] as? String) != src { continue }
+            if let since = sinceFilter, let ts = entry["ts"] as? String, ts < since { continue }
+            entries.append(entry)
+            if entries.count >= n { break }
+        }
+        return (200, ["entries": entries, "total": entries.count])
     }
 
     // MARK: - Documentation & Graph Handlers

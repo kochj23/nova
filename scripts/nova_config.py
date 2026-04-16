@@ -42,24 +42,17 @@ def _keychain(service: str, account: str = "nova", required: bool = True) -> str
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
 def slack_bot_token() -> str:
-    """Nova's Slack bot token (xoxb-...). Tries Keychain first, falls back to openclaw.json
-    for cron/non-interactive sessions where Keychain prompts are unavailable."""
+    """Nova's Slack bot token (xoxb-...). Keychain only — no plaintext fallback."""
     token = _keychain("nova-slack-bot-token", required=False)
     if token:
         return token
-    # Fallback: openclaw.json already stores this token for the gateway process
-    try:
-        import json
-        from pathlib import Path
-        config_path = Path.home() / ".openclaw/openclaw.json"
-        with open(config_path) as f:
-            config = json.load(f)
-        fallback = config.get("channels", {}).get("slack", {}).get("botToken", "")
-        if fallback:
-            print("[nova_config] INFO: slack_bot_token loaded from openclaw.json fallback", file=sys.stderr)
-        return fallback
-    except Exception:
-        return ""
+    # Check environment (set by nova_load_secrets.sh)
+    import os
+    env_token = os.environ.get("NOVA_SLACK_BOT_TOKEN", "")
+    if env_token and not env_token.startswith("${"):
+        return env_token
+    print("[nova_config] ERROR: slack_bot_token unavailable — not in Keychain or env", file=sys.stderr)
+    return ""
 
 
 # ── Commonly used constants ───────────────────────────────────────────────────
@@ -77,38 +70,26 @@ SCRIPTS_DIR   = str(__import__('pathlib').Path.home() / ".openclaw/scripts")
 # ── OpenRouter ───────────────────────────────────────────────────────────────
 
 def openrouter_api_key() -> str:
-    """OpenRouter API key. Keychain first, openclaw.json fallback for gateway process."""
+    """OpenRouter API key. Keychain only — no plaintext fallback."""
     key = _keychain("nova-openrouter-api-key", required=False)
     if key:
         return key
-    try:
-        import json
-        from pathlib import Path
-        config_path = Path.home() / ".openclaw/openclaw.json"
-        with open(config_path) as f:
-            config = json.load(f)
-        fallback = config.get("models", {}).get("providers", {}).get("openrouter", {}).get("apiKey", "")
-        if fallback:
-            print("[nova_config] INFO: openrouter_api_key loaded from openclaw.json fallback", file=__import__('sys').stderr)
-        return fallback
-    except Exception:
-        return ""
+    import os
+    env_key = os.environ.get("NOVA_OPENROUTER_API_KEY", "")
+    if env_key and not env_key.startswith("${"):
+        return env_key
+    print("[nova_config] ERROR: openrouter_api_key unavailable — not in Keychain or env", file=sys.stderr)
+    return ""
 
 
 def slack_app_token() -> str:
-    """Slack app-level token (xapp-...). Keychain first, openclaw.json fallback."""
+    """Slack app-level token (xapp-...). Keychain only — no plaintext fallback."""
     token = _keychain("nova-slack-app-token", required=False)
     if token:
         return token
-    try:
-        import json
-        from pathlib import Path
-        config_path = Path.home() / ".openclaw/openclaw.json"
-        with open(config_path) as f:
-            config = json.load(f)
-        fallback = config.get("channels", {}).get("slack", {}).get("appToken", "")
-        if fallback:
-            print("[nova_config] INFO: slack_app_token loaded from openclaw.json fallback", file=__import__('sys').stderr)
-        return fallback
-    except Exception:
-        return ""
+    import os
+    env_token = os.environ.get("NOVA_SLACK_APP_TOKEN", "")
+    if env_token and not env_token.startswith("${"):
+        return env_token
+    print("[nova_config] ERROR: slack_app_token unavailable — not in Keychain or env", file=sys.stderr)
+    return ""
