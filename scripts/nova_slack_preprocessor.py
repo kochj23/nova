@@ -40,7 +40,7 @@ def get_latest_messages(channel, since_ts="0"):
     """Get messages from a Slack channel since a timestamp."""
     try:
         url = (f"https://slack.com/api/conversations.history"
-               f"?channel={channel}&oldest={since_ts}&limit=5")
+               f"?channel={channel}&oldest={since_ts}&limit=20")
         req = urllib.request.Request(url,
             headers={"Authorization": f"Bearer {SLACK_TOKEN}"})
         with urllib.request.urlopen(req, timeout=10) as r:
