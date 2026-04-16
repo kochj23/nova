@@ -32,6 +32,8 @@ python3 "$SCRIPTS/nova_tvshow_ingest.py" \
     "$TVSHOWS/Two Guys Garage" \
     "$TVSHOWS/Victory By Design" \
     "$TVSHOWS/Wheeler Dealers" \
+    "$TVSHOWS/MotorWeek (1992)" \
+    "$TVSHOWS/Super 2NR TV" \
     --source vehicles \
     >> "$LOGS/tvshow-ingest-batch2.log" 2>&1
 
