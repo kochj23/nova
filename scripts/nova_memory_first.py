@@ -195,6 +195,19 @@ SOURCE_RULES = [
         "sources": ["demonology", "music", "document"],
         "label": "demonology/occult",
     },
+    # Vehicles / cars / motorcycles / planes / builds
+    {
+        "patterns": [
+            r"\b(vehicle|car\s*build|chopper|motorcycle|4x4|off.?road)\b",
+            r"\b(racing\s*car|race\s*car|formula|drag\s*racing)\b",
+            r"\b(plane|aircraft|aviation|airplane)\b",
+            r"\b(engine\s*swap|rebuild|restoration|custom\s*build)\b",
+            r"\b(a\s+(car|chopper|plane|4x4|racing\s*car)\s+is\s+(born|reborn))\b",
+            r"\b(fabricat|weld|chassis|suspension|turbo|supercharg)\b",
+        ],
+        "sources": ["vehicles", "corvette_workshop_manual", "video"],
+        "label": "vehicles/builds",
+    },
     # Comedy / stand-up / comedians
     {
         "patterns": [
