@@ -17,9 +17,9 @@ json_payload="{
 # Determine the appropriate curl command based on the type tag
 if [ "$type_tag" = "meeting" ]; then
   # Use the NovaControl workflow for meeting summaries
-curl -X POST http://127.0.0.1:37400/api/workflows/action-item-to-slack/run \
+curl -s -X POST http://127.0.0.1:37400/api/workflows/action-item-to-slack/run \
   -H "Content-Type: application/json" \
-  -d "{ \"summary\": \"$summary\" }"
+  -d "{ \"title\": \"$summary\", \"assignee\": \"Jordan\", \"trigger\": \"meeting\" }"
 
 elif [ "$type_tag" = "action-item" ] || [ "$type_tag" = "task" ]; then
   # Assume action-item/task storage logic here
@@ -27,20 +27,19 @@ echo "$json_payload" | /opt/homebrew/bin/bun run "$HOME/.openclaw/scripts/ingest
 echo "Action item stored: $summary"
   
 else
-  # Default storage in vector memory via the gateway
-  # Make a POST request to store the summary
-  http_response=$(curl -s -w "%{http_code}" -X POST http://127.0.0.1:18790/context/write \
+  # Default storage in vector memory via the /remember endpoint
+  http_response=$(curl -s -w "\n%{http_code}" -X POST http://127.0.0.1:18790/remember \
     -H "Content-Type: application/json" \
-    --data "{\"key\": \"$type_tag\", \"value\": \"$summary\"}")
+    --data "{\"text\": \"$summary\", \"source\": \"$type_tag\", \"metadata\": {}}")
 
-  # Extract the HTTP status code from the response
-  status_code="${http_response: -3}"
+  # Extract the HTTP status code (last line)
+  status_code=$(echo "$http_response" | tail -1)
+  body=$(echo "$http_response" | sed '$d')
 
-  # Check if the request was successful
   if [ "$status_code" -eq 200 ]; then
-    echo "Summary stored successfully in vector memory: $summary"
+    echo "Stored in vector memory (source=$type_tag): ${summary:0:80}..."
   else
-    echo "Failed to store summary in vector memory. HTTP Status: $status_code. Full response: $http_response"
+    echo "Failed to store in vector memory. HTTP $status_code: $body"
     exit 1
   fi
 

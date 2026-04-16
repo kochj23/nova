@@ -31,7 +31,7 @@ struct WorkflowDefinition: Identifiable, Codable {
         let continueOnFailure: Bool
 
         enum StepType: String, Codable {
-            case postToSlack        // POST a message to #nova-chat
+            case postToSlack        // POST a message to #nova-notifications (default)
             case createJiraTicket   // Create a Jira issue via JiraSummary API (port 37425)
             case sendEmail          // Send summary email via NovaControl → nova_herd_mail.sh
             case webhook            // POST to arbitrary URL
@@ -93,8 +93,8 @@ final class WorkflowEngine {
                 name: "New Action Item → Slack Alert",
                 trigger: .newActionItem(priority: "high"),
                 steps: [
-                    .init(id: "notify", name: "Post to #nova-chat", type_: .postToSlack,
-                          config: ["channel": "C0AMNQ5GX70",
+                    .init(id: "notify", name: "Post to #nova-notifications", type_: .postToSlack,
+                          config: ["channel": "C0ATAF7NZG9",
                                    "messageTemplate": "🎯 New high-priority action item: *{{title}}* assigned to {{assignee}}"],
                           continueOnFailure: false)
                 ],
@@ -116,7 +116,7 @@ final class WorkflowEngine {
                                    "targetPort": "37425"],
                           continueOnFailure: true),
                     .init(id: "notify", name: "Notify via Slack", type_: .postToSlack,
-                          config: ["channel": "C0AMNQ5GX70",
+                          config: ["channel": "C0ATAF7NZG9",
                                    "messageTemplate": "✅ Action item completed + Jira ticket queued: *{{title}}*"],
                           continueOnFailure: true)
                 ],
@@ -199,7 +199,7 @@ final class WorkflowEngine {
 
         case .postToSlack:
             let token   = step.config["token"] ?? loadSlackTokenFromOpenClaw()
-            let channel = step.config["channel"] ?? "C0AMNQ5GX70"
+            let channel = step.config["channel"] ?? "C0ATAF7NZG9"
             let message = renderTemplate(step.config["messageTemplate"] ?? "", context: context)
             guard !token.isEmpty else { return StepResult(ok: false, output: "No Slack token") }
             do {
@@ -299,11 +299,20 @@ final class WorkflowEngine {
         for (key, value) in context {
             result = result.replacingOccurrences(of: "{{\(key)}}", with: value)
         }
+        // Map common aliases: "summary" → "title" if {{title}} still unresolved
+        if result.contains("{{title}}"), let summary = context["summary"] {
+            result = result.replacingOccurrences(of: "{{title}}", with: summary)
+        }
         // Fill {{date}} with today
         let dateFmt = DateFormatter()
         dateFmt.dateStyle = .medium
         result = result.replacingOccurrences(of: "{{date}}", with: dateFmt.string(from: Date()))
-        return result
+        // Remove any remaining unresolved placeholders to prevent literal template spam
+        let regex = try? NSRegularExpression(pattern: "\\{\\{[a-zA-Z_]+\\}\\}")
+        if let regex = regex {
+            result = regex.stringByReplacingMatches(in: result, range: NSRange(result.startIndex..., in: result), withTemplate: "")
+        }
+        return result.trimmingCharacters(in: .whitespaces)
     }
 
     // MARK: - Helpers

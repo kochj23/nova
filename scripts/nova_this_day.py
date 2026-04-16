@@ -45,7 +45,7 @@ def vector_remember(text: str, metadata: dict = None):
 
 
 SLACK_TOKEN   = nova_config.slack_bot_token()
-SLACK_CHANNEL = "C0ATAF7NZG9  # #nova-notifications
+SLACK_CHANNEL = "C0ATAF7NZG9"  # #nova-notifications
 SLACK_API     = "https://slack.com/api"
 MEMORY_DIR    = Path.home() / ".openclaw" / "workspace" / "memory"
 
