@@ -169,6 +169,7 @@ SOURCE_RULES = [
         "patterns": [
             r"\b(recipe|cook|bake|ingredient|meal|dinner|lunch|breakfast)\b",
             r"\b(cocktail|drink|whiskey|bourbon|beer|wine)\b",
+            r"\b(iron\s*chef|kitchen\s*stadium|cuisine|chef)\b",
         ],
         "sources": ["cooking", "cocktails"],
         "label": "food/drink",
