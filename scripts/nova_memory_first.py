@@ -192,7 +192,7 @@ SOURCE_RULES = [
         "sources": ["infrastructure", "networking", "unifi"],
         "label": "infrastructure",
     },
-    # Demonology / occult / mythology / folklore
+    # Demonology / occult / mythology / folklore / Kabbalah
     {
         "patterns": [
             r"\b(demon|demonology|devil|satan|lucifer|hell)\b",
@@ -201,8 +201,12 @@ SOURCE_RULES = [
             r"\b(witch.?craft|witch.?trial|sabbath|familiar)\b",
             r"\b(folklore|mythology|spirit|supernatural)\b",
             r"\b(vodou|voodoo|candombl|shaman)\b",
+            r"\b(kabbalah|kabbalistic|sephir|zohar|sefer|talmud)\b",
+            r"\b(solomon|solomonic|lilith|metatron|dybbuk)\b",
+            r"\b(angel\s*magic|incantation|amulet|mysticism)\b",
+            r"\b(enoch|hekhalot|merkabah|qliphoth|klippot)\b",
         ],
-        "sources": ["demonology", "music", "document"],
+        "sources": ["demonology", "occult", "religion", "document"],
         "label": "demonology/occult",
     },
     # History / connections / civilizations
