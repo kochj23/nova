@@ -112,7 +112,7 @@ def get_metadata(video_path):
             "width": video_stream.get("width", 0),
             "height": video_stream.get("height", 0),
             "codec": video_stream.get("codec_name", "?"),
-            "fps": eval(video_stream.get("r_frame_rate", "0/1")) if "/" in str(video_stream.get("r_frame_rate", "")) else 0,
+            "fps": (lambda r: int(r.split("/")[0]) / int(r.split("/")[1]) if "/" in r and r.split("/")[1] != "0" else 0)(str(video_stream.get("r_frame_rate", "0/1"))),
             "audio_codec": audio_stream.get("codec_name", "none"),
             "creation_time": fmt.get("tags", {}).get("creation_time", ""),
         }

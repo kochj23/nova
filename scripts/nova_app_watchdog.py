@@ -173,8 +173,9 @@ def restart_infra(name, command):
     """Attempt to restart an infrastructure service."""
     try:
         log(f"Restarting infra: {name} via: {command}")
+        import shlex
         result = subprocess.run(
-            command, shell=True,
+            shlex.split(command) if isinstance(command, str) else command,
             capture_output=True, text=True, timeout=30
         )
         return result.returncode == 0

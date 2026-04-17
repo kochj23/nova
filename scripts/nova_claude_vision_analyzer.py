@@ -260,15 +260,13 @@ One sentence each.
         # Send to Slack if high severity
         if severity == "high":
             try:
+                import json as _json
+                safe_desc = _json.dumps(f":rotating_light: HIGH SEVERITY ANOMALY: {description}\n\n{response}")
                 subprocess.run([
-                    "python3", "-c",
-                    f"""
-import subprocess
-msg = '🚨 HIGH SEVERITY ANOMALY: {description}\\n\\n{response}'
-subprocess.run(['python3', '-c', f'message("send", channel="slack", target="C0ATAF7NZG9", message={repr(msg)})'])
-"""
+                    str(Path.home() / ".openclaw/scripts/nova_slack_post.sh"),
+                    _json.loads(safe_desc), "C0ATAF7NZG9"
                 ], check=False)
-            except:
+            except Exception:
                 pass
 
 def main():

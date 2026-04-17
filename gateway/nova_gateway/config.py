@@ -38,7 +38,7 @@ def gateway_port() -> int:
 
 
 def gateway_host() -> str:
-    return get()["gateway"].get("host", "0.0.0.0")
+    return get()["gateway"].get("host", "127.0.0.1")
 
 
 def db_path() -> str:

@@ -6,7 +6,7 @@ NovaControl binds exclusively to `127.0.0.1` (loopback). It is not exposed to th
 
 ## Reporting a Vulnerability
 
-Report security issues to: kochj@digitalnoise.net
+Report security issues via GitHub Issues on this repository.
 
 Please include:
 - Description of the vulnerability
