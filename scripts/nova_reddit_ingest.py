@@ -210,7 +210,7 @@ def ingest_subreddit(name, config, state):
         comments = []
         if num_comments > 0:
             comments = fetch_comments(name, post_id, limit=5)
-            time.sleep(3)  # Rate limit (Reddit enforces ~1 req/2s)
+            time.sleep(30)  # Rate limit between comment fetches
 
         # Build full context memory
         parts = [f"Reddit r/{name}: {title}"]
@@ -290,7 +290,7 @@ def main():
         if count:
             log(f"  r/{name}: {count} new posts", level=LOG_INFO, source="reddit_ingest")
         total += count
-        time.sleep(5)  # Rate limit between subreddits (Reddit 429s at <3s)
+        time.sleep(30)  # Rate limit between subreddits
 
     save_state(state)
     generate_dream_context(state)
