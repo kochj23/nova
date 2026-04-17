@@ -1,0 +1,247 @@
+# nova_scheduler.yaml — Unified task scheduler for Nova
+# One persistent daemon replaces 30+ fragile launchd StartInterval/Calendar jobs.
+#
+# Schedule types:
+#   every: "5m", "4h", "30s"         — interval-based
+#   cron:  "0 23 * * *"              — standard 5-field cron (min hr day mon dow)
+#
+# Overlap:
+#   skip  — if already running, skip this cycle (default)
+#   queue — wait for current to finish, then run once
+#
+# Written by Jordan Koch.
+
+scheduler:
+  tick_interval: 1
+  max_concurrent: 6
+  status_port: 37460
+  heartbeat_interval: 3600
+  stale_threshold: 2.0
+  python: /opt/homebrew/bin/python3
+  shell: /bin/zsh
+  tz: America/Los_Angeles
+
+slack:
+  channel: C0ATAF7NZG9
+  alerts: true
+  heartbeat: true
+  startup: true
+
+tasks:
+
+  # ── Every 5 minutes ─────────────────────────────────────────────────────
+
+  protect_monitor:
+    script: nova_protect_monitor.py
+    schedule: every 5m
+    timeout: 120
+    overlap: skip
+
+  app_watchdog:
+    script: nova_app_watchdog.py
+    schedule: every 5m
+    timeout: 60
+    overlap: skip
+
+  sky_watcher:
+    script: nova_sky_watcher.py
+    schedule: every 5m
+    timeout: 90
+    overlap: skip
+
+  imessage_watch:
+    script: nova_imessage.py
+    schedule: every 5m
+    timeout: 30
+    overlap: skip
+
+  # ── Every 10 minutes ────────────────────────────────────────────────────
+
+  mail_agent:
+    script: nova_mail_agent.py
+    schedule: every 10m
+    timeout: 300
+    overlap: skip
+
+  proactive_peace:
+    script: nova_proactive_peace.py
+    schedule: every 10m
+    timeout: 60
+    overlap: skip
+
+  gateway_watchdog:
+    script: nova_gateway_watchdog.sh
+    schedule: every 10m
+    timeout: 30
+    overlap: skip
+
+  # ── Every 15-30 minutes ────────────────────────────────────────────────
+
+  face_recognition:
+    script: nova_face_recognition.py
+    schedule: every 15m
+    timeout: 120
+    overlap: skip
+
+  home_watchdog:
+    script: nova_home_watchdog.py
+    schedule: every 30m
+    timeout: 60
+    overlap: skip
+
+  synology_monitor:
+    script: nova_synology_monitor.py
+    schedule: every 30m
+    timeout: 60
+    overlap: skip
+
+  unifi_monitor:
+    script: nova_unifi_monitor.py
+    schedule: every 30m
+    timeout: 60
+    overlap: skip
+
+  # ── Every 1-4 hours ────────────────────────────────────────────────────
+
+  session_watchdog:
+    script: nova_session_reset.sh
+    args: ["--threshold", "8"]
+    schedule: every 1h
+    timeout: 30
+    overlap: skip
+
+  reddit_ingest:
+    script: nova_reddit_ingest.py
+    schedule: every 4h
+    timeout: 600
+    overlap: skip
+
+  # ── Daily: overnight ───────────────────────────────────────────────────
+
+  dream_generate:
+    script: dream_generate.py
+    schedule: cron 0 2 * * *
+    timeout: 600
+    overlap: skip
+
+  pg_backup:
+    script: nova_pg_backup.sh
+    schedule: cron 0 2 * * *
+    timeout: 1200
+    overlap: queue
+
+  agent_gardener:
+    script: nova_agent_gardener.py
+    args: ["--cron"]
+    schedule: cron 0 3 * * *
+    timeout: 300
+    overlap: skip
+
+  log_rotate:
+    script: nova_log_rotate.py
+    schedule: cron 30 3 * * *
+    timeout: 120
+    overlap: skip
+
+  # ── Daily: morning ─────────────────────────────────────────────────────
+
+  health_check:
+    script: nova_health_check.py
+    schedule: cron 45 6 * * *
+    timeout: 120
+    overlap: skip
+
+  morning_brief:
+    script: nova_morning_brief.py
+    schedule: cron 0 7 * * *
+    timeout: 300
+    overlap: skip
+
+  agent_briefer:
+    script: nova_agent_briefer.py
+    args: ["--cron"]
+    schedule: cron 5 7 * * *
+    timeout: 300
+    overlap: skip
+
+  dream_deliver:
+    script: dream_deliver.py
+    schedule: cron 0 9 * * *
+    timeout: 300
+    overlap: skip
+
+  dead_mans_switch:
+    script: nova_dead_mans_switch.py
+    schedule: cron 15 9 * * *
+    timeout: 120
+    overlap: skip
+
+  sam_blog_ingest:
+    script: nova_sam_blog_ingest.py
+    schedule: cron 30 9 * * *
+    timeout: 120
+    overlap: skip
+
+  # ── Daily: daytime ─────────────────────────────────────────────────────
+
+  context_bridge_am:
+    script: nova_context_bridge.py
+    schedule: cron 0 10 * * *
+    timeout: 120
+    overlap: skip
+
+  this_day:
+    script: nova_this_day.py
+    schedule: cron 0 15 * * *
+    timeout: 120
+    overlap: skip
+
+  memory_time_machine:
+    script: nova_memory_time_machine.py
+    schedule: cron 15 15 * * *
+    timeout: 120
+    overlap: skip
+
+  context_bridge_pm:
+    script: nova_context_bridge.py
+    schedule: cron 0 16 * * *
+    timeout: 120
+    overlap: skip
+
+  # ── Daily: evening/night ───────────────────────────────────────────────
+
+  daily_journal:
+    script: nova_daily_journal.py
+    schedule: cron 0 21 * * *
+    timeout: 120
+    overlap: skip
+
+  nightly_memory_summary:
+    script: nova_nightly_memory_summary.py
+    schedule: cron 0 21 * * *
+    timeout: 300
+    overlap: skip
+
+  nightly_report:
+    script: nova_nightly_report.py
+    schedule: cron 0 23 * * *
+    timeout: 600
+    overlap: skip
+
+  nightly_synology:
+    script: nova_nightly_synology.py
+    schedule: cron 30 23 * * *
+    timeout: 300
+    overlap: skip
+
+  nightly_protect:
+    script: nova_nightly_protect.py
+    schedule: cron 45 23 * * *
+    timeout: 300
+    overlap: skip
+
+  bandwidth_report:
+    script: nova_bandwidth_report.py
+    schedule: cron 50 23 * * *
+    timeout: 120
+    overlap: skip
