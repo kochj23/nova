@@ -357,7 +357,7 @@ Write the email body now:"""
             }).encode()
             req = urllib.request.Request(OLLAMA_URL, data=payload,
                                          headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=120) as r:
+            with urllib.request.urlopen(req, timeout=300) as r:
                 result = json.loads(r.read())
             response = result.get("response", "").strip()
 
