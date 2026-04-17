@@ -156,6 +156,7 @@ def _extract_interesting_sections(content: str) -> str:
 
     # Priority order: interesting world/life content first, operational noise last
     priority_order = [
+        "## What Reddit is talking about",   # multi-subreddit — rich dream material
         "## What Burbank is talking about",  # subreddit — most dreamlike
         "## Meetings today",                 # Jordan's actual day
         "## What happened on GitHub today",  # what Jordan built
@@ -211,6 +212,11 @@ def query_rolling_learnings() -> str:
             extracted = _extract_interesting_sections(content)
             if extracted.strip():
                 sections.append(f"[{label} — {day}]\n{extracted}")
+
+        # Reddit context file (written by nova_reddit_ingest.py)
+        reddit_content = read_file(MEMORY_DIR / f"{day}.reddit.md", 2000)
+        if reddit_content.strip():
+            sections.append(f"[Reddit — {day}]\n{reddit_content}")
 
     # ── Vector memory: what Nova worked on / learned / noticed ──────────────
     # Prioritize synthesis memories (4am consolidation), meetings, and broad context
