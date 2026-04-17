@@ -48,15 +48,21 @@ LATITUDE = 34.1808
 LONGITUDE = -118.3090
 TIMEZONE_OFFSET = -7  # PDT (adjust for DST manually or use tz)
 
-# Sky-facing cameras (ordered by preference — front yard has the widest sky view)
+# Outdoor cameras for sky/golden hour capture — rotates each session
 # URLs loaded from camera_config.py (gitignored)
 try:
     from camera_config import CAMERAS as _ALL_CAMERAS
-    SKY_CAMERAS = [
-        (name, _ALL_CAMERAS[name]) for name in ["front_yard", "front_yard_alt", "back_patio"]
+    OUTDOOR_CAMERAS = [
+        name for name in [
+            "front_yard", "front_yard_alt", "back_patio",
+            "carport", "alley_north", "alley_south",
+            "side_yard", "front_door_patio", "abundio_boundary",
+        ]
         if name in _ALL_CAMERAS
     ]
+    SKY_CAMERAS = [(name, _ALL_CAMERAS[name]) for name in OUTDOOR_CAMERAS]
 except ImportError:
+    OUTDOOR_CAMERAS = []
     SKY_CAMERAS = []
 
 # Golden hour window: capture from this many minutes before to after
@@ -231,8 +237,31 @@ def capture_frame(camera_name, rtsp_url, output_path):
         return False
 
 
+def _pick_session_camera():
+    """Pick a different outdoor camera for each sunrise/sunset session.
+
+    Uses day-of-year + session type to rotate through all outdoor cameras
+    so Nova sees the sky from a different perspective every session.
+    """
+    if not OUTDOOR_CAMERAS:
+        return SKY_CAMERAS  # fallback to default order
+
+    session, _ = current_session()
+    day_of_year = NOW.timetuple().tm_yday
+    # Sunrise = even index, sunset = odd index (so same day gets two different cameras)
+    offset = day_of_year * 2 + (1 if session == "sunset" else 0)
+    primary_idx = offset % len(OUTDOOR_CAMERAS)
+
+    # Reorder: primary camera first, then the rest as fallbacks
+    ordered = []
+    for i in range(len(OUTDOOR_CAMERAS)):
+        name = OUTDOOR_CAMERAS[(primary_idx + i) % len(OUTDOOR_CAMERAS)]
+        ordered.append((name, _ALL_CAMERAS[name]))
+    return ordered
+
+
 def capture_sky_frame():
-    """Capture a frame from the best available sky camera."""
+    """Capture a frame from a rotating outdoor camera (different each session)."""
     today_dir = SKY_ARCHIVE / NOW.strftime("%Y/%m/%d")
     today_dir.mkdir(parents=True, exist_ok=True)
 
@@ -240,7 +269,11 @@ def capture_sky_frame():
     session, _ = current_session()
     prefix = session or "sky"
 
-    for camera_name, rtsp_url in SKY_CAMERAS:
+    cameras = _pick_session_camera()
+    primary_name = cameras[0][0] if cameras else "unknown"
+    log(f"Session camera: {primary_name} (rotating through {len(cameras)} outdoor cameras)")
+
+    for camera_name, rtsp_url in cameras:
         filename = f"{prefix}_{camera_name}_{timestamp}.jpg"
         output_path = today_dir / filename
 
@@ -248,7 +281,7 @@ def capture_sky_frame():
             log(f"Captured: {filename} ({output_path.stat().st_size // 1024}KB)")
             return output_path, camera_name
 
-    log("All sky cameras failed")
+    log("All outdoor cameras failed")
     return None, None
 
 
