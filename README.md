@@ -964,7 +964,64 @@ SubAgent.dispatch("email", {
 
 ---
 
-## Enterprise Hardening
+## Reliability Architecture
+
+Nova is designed to run unattended for weeks. Every component has self-healing, monitoring, and alerting. If something breaks at 3 AM, it fixes itself and tells you about it in the morning.
+
+### Unified Scheduler (replaces 31 launchd jobs)
+
+One persistent daemon (`nova_scheduler.py`) manages all 36 recurring tasks. It replaced 31 fragile macOS `launchd` `StartInterval` jobs that chronically stalled after sleep/wake cycles.
+
+```
+com.nova.watchdog (launchd, 5 min)
+  └─ watches → com.nova.scheduler (port 37460, KeepAlive)
+                  └─ 36 tasks: mail (10m), protect (5m), reports (daily), etc.
+                  └─ nova_watchdog.py (every 5 min)
+                        └─ monitors + auto-restarts:
+                            ├─ Gateway (18789)
+                            ├─ Memory Server (18790)
+                            ├─ Redis (6379)
+                            ├─ PostgreSQL (5432)
+                            ├─ Ollama (11434)
+                            ├─ 5 subagent heartbeats
+                            └─ PG idle connection cleanup
+```
+
+**Why it doesn't break:**
+- **Wall-clock timing** — checks `time.time()` every second, not OS timers. Immune to sleep/wake.
+- **Sleep detection** — gaps >30s trigger immediate recalculation and Slack notification.
+- **Overlap prevention** — same task can't run twice simultaneously.
+- **Failure escalation** — 3 consecutive failures → Slack alert. Watchdog auto-restarts services.
+- **Self-watchdog** — a tiny launchd job checks the scheduler itself every 5 minutes.
+- **HTTP API** — `curl http://127.0.0.1:37460/tasks` shows every task's health.
+- **Weekly reliability report** — Sunday 10 PM digest: success rate, failing tasks, error counts.
+
+### Self-Healing Watchdog
+
+`nova_watchdog.py` runs every 5 minutes inside the scheduler. It checks all critical services and auto-restarts anything that's down:
+
+| Service | Port | Restart Method |
+|---------|------|----------------|
+| Scheduler | 37460 | launchd kickstart (via external watchdog plist) |
+| Gateway | 18789 | launchd kickstart + wrapper script fallback |
+| Memory Server | 18790 | launchd kickstart |
+| Redis | 6379 | launchd kickstart |
+| PostgreSQL | 5432 | launchd kickstart |
+| Ollama | 11434 | Managed by Ollama.app |
+| Subagents (5) | Redis heartbeat | `nova_subagent_ctl.sh restart` |
+
+PostgreSQL idle connections cleaned every cycle (>2 hours idle = terminated).
+
+### Security Hardening
+
+- 7 vulnerabilities found and fixed in security audit (2 critical, 3 high, 2 medium)
+- Command injection in vision analyzer → sanitized with json.dumps
+- eval() on video metadata → safe integer arithmetic
+- Gateway bound to 127.0.0.1 (was 0.0.0.0 exposing LAN)
+- Sensitive config files chmod 600
+- shell=True replaced with shlex.split()
+- All state files migrated from /tmp to persistent storage (survives reboot)
+- Gateway startup validates Keychain with 5-retry loop for locked-at-boot
 
 ### Secrets Management
 
