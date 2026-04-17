@@ -5,10 +5,11 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 > *"Like a star being born"* — Nova, on choosing her name
 
 ```
-  Scripts: 114+       Cron jobs: 40       Vector memories: 877,832
+  Scripts: 123+       Cron jobs: 40       Vector memories: 1,248,414
   Subagents: 7        Cameras: 14 RTSP    Calendars: 15
   App APIs: 18 ports  AI backends: 7      Herd members: 9
-  Privacy intents: 20+ (local-only)       Demonology facts: 205
+  Memory sources: 84  Privacy intents: 20+ (local-only)
+  Knowledge: demonology (205), drag racing (169+), comedy (2,083)
 ```
 
 ---
@@ -45,7 +46,7 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 
 ## Memory-First Query System
 
-Nova checks her own 877,000+ memories **before** anything else. Always. Her lived experience comes first — LLM training data, web searches, and cloud APIs are fallbacks, not defaults.
+Nova checks her own 1.25 million memories **before** anything else. Always. Her lived experience comes first — LLM training data, web searches, and cloud APIs are fallbacks, not defaults.
 
 ```
 ┌──────────────────────────────────────────────────────────────────┐
@@ -89,7 +90,7 @@ Nova checks her own 877,000+ memories **before** anything else. Always. Her live
 └──────────────────────────────────────────────────────────────────┘
 ```
 
-**Source classification** (13 categories, automatic):
+**Source classification** (19 categories, automatic):
 
 | Query Pattern | Memory Sources Searched |
 |---|---|
@@ -106,6 +107,14 @@ Nova checks her own 877,000+ memories **before** anything else. Always. Her live
 | Food, recipes, cocktails | `cooking`, `cocktails` |
 | Network, NAS, infrastructure | `infrastructure`, `networking`, `unifi` |
 | Demons, grimoires, folklore, mythology, occult | `demonology`, `music`, `document` |
+| Drag racing, NHRA, quarter mile, street racing | `drag_racing`, `vehicles`, `corvette_workshop_manual` |
+| Vehicles, car builds, choppers, planes, restoration | `vehicles`, `corvette_workshop_manual`, `video` |
+| Home repair, plumbing, electrical, renovation | `home_repair`, `gardening`, `local` |
+| Comedy, stand-up, comedians, specials | `comedy`, `video`, `document` |
+| History, civilizations, inventions | `history`, `world_factbook`, `document` |
+| Religion, Christianity, theology | `religion`, `demonology`, `document` |
+| Trivia, Jeopardy, general knowledge | `trivia`, `world_factbook`, `history` |
+| Music lyrics, song words, verses | `music_lyrics`, `music`, `music_history` |
 
 Jordan never has to say "from your memories" — Nova checks automatically.
 
@@ -176,15 +185,15 @@ Jordan never has to say "from your memories" — Nova checks automatically.
 │   │  Index:      HNSW (m=16, ef=64, cosine) — recall <5ms           │      │
 │   │  Embeddings: nomic-embed-text via Ollama (768 dimensions)        │      │
 │   │  Queue:      Redis 8.6.2 async write (bulk ingest at 8ms)       │      │
-│   │  Count:      877,832 memories across 30+ source domains              │      │
-│   │  Backup:     Nightly pg_dump to NAS (3.5 GB compressed)            │      │
+│   │  Count:      1,248,414 memories across 84 source domains             │      │
+│   │  Backup:     Nightly pg_dump to NAS (compressed)                   │      │
 │   │  Endpoints:  /remember  /recall  /search  /random  /health       │      │
 │   │                                                                   │      │
 │   │  Top sources:                                                     │      │
-│   │    email_archive: 667,130   imessage: 66,253                     │      │
-│   │    music/music_history: 60,294  world_factbook: 23,930           │      │
-│   │    document: 8,902          corvette_workshop: 6,177             │      │
-│   │    video: 6,065             demonology: 205                      │      │
+│   │    email_archive: 1,007,970 imessage: 66,253                     │      │
+│   │    music/music_history: 60,294  vehicles: 23,899                 │      │
+│   │    world_factbook: 23,930   document: 8,902                      │      │
+│   │    home_repair: 3,293       comedy: 2,083                        │      │
 │   └──────────────────────────────────────────────────────────────────┘      │
 │                                                                             │
 │   ┌──────────────────────────────────────────────────────────────────┐      │
@@ -470,22 +479,26 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 
 ### Memory
 
-877,832 vectors across 30+ source domains. PostgreSQL 17 + pgvector 0.8.2 + Redis async queue.
+1,248,414 vectors across 84 source domains. PostgreSQL 17 + pgvector 0.8.2 + Redis async queue.
 
 | Source | Count | Content |
 |--------|-------|---------|
-| email_archive | 667,130 | Jordan's personal email (2000-2026, SCR mailing list, all accounts) |
+| email_archive | 1,007,970 | Jordan's personal email 2000-2026 (incl. tax, divorce, intimacy — Work excluded) |
 | imessage | 66,253 | iMessage history with contact name resolution |
 | music + music_history | 60,294 | Jungle, DnB, IDM, turntablism, Devo, darkside/darkstep |
 | world_factbook | 23,930 | CIA World Factbook (262 countries) |
-| corvette_workshop_manual | 6,177 | Full C6 Corvette workshop manual |
+| vehicles | 23,899 | TV show transcripts: Wheeler Dealers, Hot Rod Garage/TV, MotorWeek, FourWheeler, and 12+ more |
 | document | 8,902 | JAGMAN, TM-21-210, PiHKAL, TiHKAL, horror analysis |
+| email | 8,506 | Recent email threads and replies |
+| corvette_workshop_manual | 6,177 | Full C6 Corvette workshop manual |
 | video | 6,065 | Video transcripts (MLX Whisper) + keyframe descriptions |
-| email | 8,427 | Recent email threads and replies |
 | disney | 3,718 | Work context (private) |
+| home_repair | 3,293 | This Old House, Ask This Old House, Holmes On Homes transcripts |
 | gardening | 2,488 | Vegetable gardening knowledge |
+| comedy | 2,083 | 39 stand-up specials: Louis C.K., Lewis Black, Patton Oswalt, Chappelle, Izzard, Katt Williams, Kevin Smith, John Waters, Bill Cosby |
 | project_docs | 2,388 | GitHub READMEs from all repos |
 | demonology | 205 | Demonological facts across 20 world traditions |
+| drag_racing | 169+ | NHRA history, SoCal 90s street racing, Kevin's Burgers, technology, legends (generating to 1,000) |
 | health, nutrition, fitness | growing | Diabetes, rosacea, BP, depression, CBT |
 
 ### Eyes and Recognition
@@ -819,6 +832,17 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 | `nova_web_search.py` | DuckDuckGo with 24h cache + memory integration |
 | `nova_this_day.py` | This Day in History from Wikipedia |
 
+### Bulk Ingest Pipelines
+| Script | Purpose |
+|---|---|
+| `nova_email_ingest.py` | Bulk .emlx ingest (1M+ emails). Work-only exclusion. 8-worker parallel, text_hash dedup |
+| `nova_comedy_ingest.py` | Comedy special transcription: filename→comedian/show parsing, MLX Whisper, 5-min Slack status |
+| `nova_tvshow_ingest.py` | TV show transcription: recursive season folders, episode parsing, multi-source tagging |
+| `ingest_demonology.py` | JSONL→vector memory ingest for demonology facts |
+| `nova_generate_drag_facts.sh` | Autonomous drag racing fact generator (deepseek-r1:8b → JSONL → vector memory, target: 1,000) |
+| `nova_queue_monitor.py` | Redis ingest queue monitor with 15-min Slack status updates |
+| `nova_ingest_watchdog.sh` | Pipeline safety net: restarts stalled batches, monitors queue, self-terminates when done |
+
 ---
 
 ## App API Port Map
@@ -885,7 +909,7 @@ Nova operates as a multi-agent system. The main agent (`main`) is an orchestrato
 │  │  3 AM nightly     │  │  7 AM daily                      │        │
 │  │  deepseek-r1:8b   │  │  deepseek-r1:8b                  │        │
 │  │                   │  │                                   │        │
-│  │  Scans 877K+      │  │  Calendar + email + memory +     │        │
+│  │  Scans 1.25M+      │  │  Calendar + email + memory +     │        │
 │  │  vectors for      │  │  system health → personalized    │        │
 │  │  duplicates,      │  │  morning intelligence brief      │        │
 │  │  contradictions,  │  │  posted to Slack #nova-chat      │        │
@@ -921,7 +945,7 @@ Nova operates as a multi-agent system. The main agent (`main`) is an orchestrato
 
 | Agent | Schedule | Role |
 |-------|----------|------|
-| **Memory Gardener** | 3 AM nightly | Scans 877K+ vectors by random sampling. Finds duplicates, contradictions, stale facts. Posts findings to Jordan via Slack for approval before any changes. |
+| **Memory Gardener** | 3 AM nightly | Scans 1.25M+ vectors by random sampling. Finds duplicates, contradictions, stale facts. Posts findings to Jordan via Slack for approval before any changes. |
 | **Proactive Briefer** | 7 AM daily | Scans calendar, email, memory, and system health. Generates reasoned daily brief — analysis of what actually matters today, not a template. |
 
 ### Dispatching Tasks
@@ -958,7 +982,7 @@ All secrets stored in macOS Keychain. No plaintext tokens in config files.
 
 ### Database Backups
 
-Nightly `pg_dump` of the `nova_memories` database (877K+ rows, ~3.5 GB compressed):
+Nightly `pg_dump` of the `nova_memories` database (1.25M+ rows, ~3.5 GB compressed):
 
 - **Schedule**: 2:00 AM via launchd (`com.nova.pg-backup`)
 - **Local**: `/Volumes/Data/backups/postgres/` (7-day rotation)
@@ -1011,7 +1035,7 @@ All critical services run under macOS launchd with `KeepAlive` and `ThrottleInte
 
 ## Changelog
 
-### Apr 15-16, 2026 -- Subagent Framework + Enterprise Hardening + Demonology
+### Apr 15-17, 2026 -- Subagent Framework + Enterprise Hardening + Massive Knowledge Ingest
 
 **Subagent framework** (`nova_subagent.py`): Nova now operates as a multi-agent system. 7 subagents with dedicated local LLMs communicate via Redis pub/sub. Framework provides: agent registry (`subagents/runs.json`), Redis heartbeat, LLM inference wrappers (Ollama + MLX), vector memory helpers, and Slack flag-and-report pattern.
 
@@ -1041,6 +1065,37 @@ All critical services run under macOS launchd with `KeepAlive` and `ThrottleInte
 - Categories: named-entities, grimoires, demonological-texts, historical-trials, academic-study, comparative-mythology, art-and-literature, rituals, protection, symbolism, possession, folklore
 - Ingested via `ingest_demonology.py` → vector memory server (source: `demonology`)
 - Added demonology source routing to `nova_memory_first.py` — queries about demons, grimoires, folklore, mythology now route to the `demonology` source
+
+**Massive knowledge ingest pipeline (Apr 16-17):**
+
+Memories grew from 877,832 → 1,248,414 (+370,582, 42% increase in one session):
+
+- **Email re-ingest**: Removed tax/divorce/intimacy content exclusions per Jordan's request. Only Work emails remain excluded. 340K files processed, +340,840 new memories from previously-excluded personal content. 100% local, zero cloud.
+- **Comedy specials** (39 specials, 9 comedians): Louis C.K. (11), Lewis Black (9), Patton Oswalt (6), Dave Chappelle (3), Eddie Izzard (3), Katt Williams (3), Kevin Smith, John Waters, Bill Cosby. Full MLX Whisper transcriptions → 2,083 memory chunks.
+- **Vehicle shows** (967+ episodes across 14 shows): Wheeler Dealers, Hot Rod Garage, Hot Rod TV, MotorWeek, Victory By Design, Dream Car Garage, Two Guys Garage, JDM Legends, Classic Car Restoration, FourWheeler, Super 2NR, plus all "Born/Reborn" series.
+- **Home repair** (315 episodes): Ask This Old House (76), This Old House (168), Holmes On Homes (71).
+- **Cooking/drinks** (63 episodes): Iron Chef (40), Oz & James Drink to Britain (8), Oz & James's Big Wine Adventure (15).
+- **Knowledge** (80 episodes): Connections (10, James Burke), Jeopardy (64), History of Christianity (6).
+- **Documentaries** (15): American Hardcore, Devo, Dead Kennedys, Enron, Punk Attitude, Modulations, Scratch.
+- **Music lyrics** (692 YouTube music videos): Full Whisper transcription for lyrics extraction.
+- **Drag racing shows** (363 episodes): Roadkill (162), Engine Masters (157), NHRA (7), Supercuda (6), Build or Bust (12), Modified (7).
+- **Drag racing facts** (169+ handcrafted, autonomous generator running to 1,000): NHRA history 1940-present, SoCal 90s street racing scene (Kevin's Burgers, San Fernando Road under the 118, 25+ specific locations), technology deep-dives, legends, JDM/import culture.
+- **Demonology facts** (205 across 20 world traditions): Judeo-Christian grimoires, Islamic Jinn, Hindu Asuras, Japanese yokai, African spirits, historical witch trials, academic study.
+
+Pipeline infrastructure: `nova_tvshow_ingest.py` (generic, recursive), `nova_comedy_ingest.py` (comedian parsing), `nova_queue_monitor.py` (15-min Slack updates), `nova_ingest_watchdog.sh` (auto-restarts stalled batches), chained launchd execution across 8 batches.
+
+**Memory-first enforcement (Apr 16):**
+
+- Rewrote `nova_slack_preprocessor.py` to inject memory context as threaded Slack replies. Nova sees the data in her conversation — no exec instruction needed.
+- Fixed stale state timestamp (3 days old) and message limit (5→20).
+- Added 19 source routing categories to `nova_memory_first.py`: vehicles, home_repair, comedy, drag_racing, history, religion, trivia, music_lyrics, and more.
+
+**Mail agent fixes (Apr 16-17):**
+
+- Switched LLM from `qwen3-coder:30b` (18 GB, code model) to `deepseek-r1:8b` (5 GB, reasoning model) — better for email writing, doesn't starve Whisper.
+- Added Jordan's comedic styling rules: self-deprecating humor, gentle kidding, dry wit, observational honesty, no sycophancy, max one joke per email.
+- Increased Ollama timeout from 120s to 300s for heavy-load conditions.
+- Gateway secrets fix: created `nova_gateway_start.sh` wrapper to load Keychain env vars before starting OpenClaw gateway.
 
 **NovaControl v1.1.1** rebuilt, installed, DMG'd, archived to local + NAS.
 

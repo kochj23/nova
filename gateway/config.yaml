@@ -13,7 +13,7 @@ gateway:
 #
 # Engine          | Model              | Strength
 # ────────────────────────────────────────────────────────────────────────────
-# TinyChat  :8000 | gpt-oss:20b        | Lightweight chat, quick responses
+# TinyChat  :8000 | deepseek-r1:8b        | Lightweight chat, quick responses
 # MLXCode   :37422| mlx-local          | Code generation, debugging (Apple ANE)
 # MLX Chat  :5000 | Qwen2.5-7B (MLX)  | Fast general inference (Apple ANE)
 # OpenWebUI :3000 | qwen3-vl:4b        | Vision, UI, multimodal
@@ -27,15 +27,11 @@ gateway:
 backends:
 
   # TinyChat — lightweight OpenAI-compatible proxy (port 8000)
-  # Specialized model: gpt-oss:20b — low-latency, efficient for quick tasks
-  # NOTE: Pull into TinyChat's Docker: docker exec -it tinychat ollama pull gpt-oss:20b
+  # Uses deepseek-r1:8b via Ollama — fast reasoning for quick tasks and email
   tinychat:
     url: "http://localhost:8000"
     enabled: true
-    default_model: "gpt-oss:20b"
-    fallback_models:
-      - "qwen3:8b"      # Available in TinyChat's Docker now
-      - "qwen3:30b"
+    default_model: "deepseek-r1:8b"
 
   # MLXCode — Apple Neural Engine coding app (port 37422)
   # Specialized model: mlx-local (Jordan's custom MLX coding model)
@@ -76,7 +72,7 @@ backends:
       coding:       "qwen3-coder:30b"    # fallback when MLXCode is down
       swift:        "qwen3-coder:30b"    # fallback when MLXCode is down
       vision:       "qwen3-vl:4b"        # fallback when OpenWebUI is down
-      quick:        "gpt-oss:20b"        # fallback when TinyChat is down
+      quick:        "deepseek-r1:8b"        # fallback when TinyChat is down
       long_context: "deepseek-v3.1:671b-cloud"
       creative:     "deepseek-r1:8b"
 
@@ -103,12 +99,12 @@ routing:
   default_model: "deepseek-r1:8b"   # deepseek-r1 as generalist when no rule matches
 
   rules:
-    # Quick / lightweight — TinyChat (gpt-oss:20b), Ollama fallback
+    # Quick / lightweight — TinyChat (deepseek-r1:8b), Ollama fallback
     - task_type: "quick"
       preferred: "tinychat"
-      model: "gpt-oss:20b"
+      model: "deepseek-r1:8b"
       fallback: "ollama"
-      fallback_model: "gpt-oss:20b"
+      fallback_model: "deepseek-r1:8b"
 
     # Coding — MLXCode (Apple ANE), Ollama qwen3-coder:30b fallback
     - task_type: "coding"
