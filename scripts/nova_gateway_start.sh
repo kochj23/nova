@@ -12,6 +12,23 @@ export NOVA_SLACK_BOT_TOKEN="$(_kc nova-slack-bot-token)"
 export NOVA_SLACK_APP_TOKEN="$(_kc nova-slack-app-token)"
 export NOVA_GATEWAY_AUTH_TOKEN="$(_kc nova-gateway-auth-token)"
 
+# Validate secrets loaded — if Keychain is locked, wait and retry
+RETRIES=0
+while [ -z "$NOVA_SLACK_BOT_TOKEN" ] && [ $RETRIES -lt 5 ]; do
+    echo "[gateway_start] Keychain not ready, retry $((RETRIES+1))/5..." >&2
+    sleep 10
+    export NOVA_SLACK_BOT_TOKEN="$(_kc nova-slack-bot-token)"
+    export NOVA_OPENROUTER_API_KEY="$(_kc nova-openrouter-api-key)"
+    export NOVA_SLACK_APP_TOKEN="$(_kc nova-slack-app-token)"
+    export NOVA_GATEWAY_AUTH_TOKEN="$(_kc nova-gateway-auth-token)"
+    RETRIES=$((RETRIES + 1))
+done
+
+if [ -z "$NOVA_SLACK_BOT_TOKEN" ]; then
+    echo "[gateway_start] FATAL: Keychain still locked after 5 retries" >&2
+    exit 1
+fi
+
 exec /opt/homebrew/opt/node/bin/node \
     /opt/homebrew/lib/node_modules/openclaw/dist/entry.js \
     gateway --port 18789

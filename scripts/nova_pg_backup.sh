@@ -17,7 +17,7 @@ RETENTION_DAYS=7
 DATE=$(date +%Y-%m-%d)
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 DUMP_FILE="nova_memories_${TIMESTAMP}.sql.gz"
-LOG_FILE="/tmp/nova_pg_backup.log"
+LOG_FILE="$HOME/.openclaw/logs/nova_pg_backup.log"
 
 # Slack notification via nova_slack_post.sh
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

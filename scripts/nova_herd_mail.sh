@@ -20,7 +20,7 @@ HERD_MAIL="$SCRIPT_DIR/herd_mail.py"
 
 # Credential caching — avoid calling `security` per-recipient in batch sends.
 # Cache lives for 5 minutes in a mode-600 temp file.
-CACHE_FILE="/tmp/.nova_smtp_cache_$(id -u)"
+CACHE_FILE="$HOME/.openclaw/workspace/state/.nova_smtp_cache"
 CACHE_TTL=300  # seconds
 
 _get_password() {

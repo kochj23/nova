@@ -16,7 +16,7 @@
 SLACK_TOKEN=$(security find-generic-password -a nova -s nova-slack-bot-token -w)
 SLACK_CHAN="C0ATAF7NZG9"
 VECTOR_PORT=18790
-ALERT_FILE="/tmp/nova_monitor_last_alert"
+ALERT_FILE="$HOME/.openclaw/workspace/state/nova_monitor_last_alert"
 ALERT_COOLDOWN=3600  # Only re-alert same issue after 1 hour
 
 log() { echo "[nova_self_monitor $(date '+%H:%M:%S')] $*"; }
@@ -46,7 +46,7 @@ should_alert() {
     if [ $((now - last)) -ge $ALERT_COOLDOWN ]; then
         # Update timestamp
         if [ -f "$ALERT_FILE" ]; then
-            grep -v "^$key=" "$ALERT_FILE" > /tmp/nova_monitor_tmp && mv /tmp/nova_monitor_tmp "$ALERT_FILE"
+            grep -v "^$key=" "$ALERT_FILE" > $HOME/.openclaw/workspace/state/nova_monitor_tmp && mv /tmp/nova_monitor_tmp "$ALERT_FILE"
         fi
         echo "$key=$now" >> "$ALERT_FILE"
         return 0  # Should alert

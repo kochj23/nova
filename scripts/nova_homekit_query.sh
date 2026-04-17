@@ -9,7 +9,7 @@
 set -euo pipefail
 
 SHORTCUT_NAME="Nova HomeKit Status"
-OUTPUT_FILE="/tmp/nova_homekit_status.json"
+OUTPUT_FILE="$HOME/.openclaw/workspace/state/nova_homekit_status.json"
 
 # Run the shortcut and capture output
 shortcuts run "$SHORTCUT_NAME" --output-type public.plain-text --output "$OUTPUT_FILE" 2>/dev/null

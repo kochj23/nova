@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 
 SCRIPTS  = Path.home() / ".openclaw" / "scripts"
-OUT_FILE = Path("/tmp/nova_mail_fetch.txt")
+OUT_FILE = Path.home() / ".openclaw/workspace/state/nova_mail_fetch.txt"
 
 
 def run_applescript():

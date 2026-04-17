@@ -190,7 +190,7 @@ NOISE_SENDERS = [
 
 def get_mail_data():
     """Return mail summary content, using cache if < 12h old, else re-fetching."""
-    summary_file = Path("/tmp/nova_mail_fetch.txt")
+    summary_file = Path.home() / ".openclaw/workspace/state/nova_mail_fetch.txt"
     import time
     if summary_file.exists():
         age_hours = (time.time() - summary_file.stat().st_mtime) / 3600

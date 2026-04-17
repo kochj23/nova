@@ -42,6 +42,6 @@ print('1' if found else '0')
 " 2>/dev/null)
 
 if [ "$FOUND" = "1" ]; then
-    echo "[watchdog $(date)] EPERM detected on workspace-state.json — restarting gateway" >> /tmp/nova_watchdog.log
-    openclaw gateway restart >> /tmp/nova_watchdog.log 2>&1
+    echo "[watchdog $(date)] EPERM detected on workspace-state.json — restarting gateway" >> $HOME/.openclaw/logs/nova_watchdog.log
+    openclaw gateway restart >> $HOME/.openclaw/logs/nova_watchdog.log 2>&1
 fi

@@ -55,6 +55,13 @@ tasks:
     timeout: 30
     overlap: skip
 
+  subagent_health:
+    script: nova_subagent_ctl.sh
+    args: ["health"]
+    schedule: every 10m
+    timeout: 30
+    overlap: skip
+
   # ── Every 10 minutes ────────────────────────────────────────────────────
 
   mail_agent:
