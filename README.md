@@ -5,11 +5,11 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 > *"Like a star being born"* — Nova, on choosing her name
 
 ```
-  Scripts: 123+       Cron jobs: 40       Vector memories: 1,248,414
-  Subagents: 7        Cameras: 14 RTSP    Calendars: 15
-  App APIs: 18 ports  AI backends: 7      Herd members: 9
-  Memory sources: 84  Privacy intents: 20+ (local-only)
-  Knowledge: demonology (205), drag racing (169+), comedy (2,083)
+  Scripts: 130+       Scheduler tasks: 36  Vector memories: 1,258,055
+  Subagents: 7        Cameras: 15 Protect  Calendars: 15
+  App APIs: 18 ports  AI backends: 7       Herd members: 9
+  Memory sources: 85  Privacy intents: 20+ (local-only)
+  Self-healing: unified scheduler + watchdog + weekly reliability report
 ```
 
 ---
