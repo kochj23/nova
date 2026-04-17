@@ -102,7 +102,7 @@ class ProtectClient:
         return self._get("bootstrap")
 
     def get_events(self, since_ms=None, limit=30):
-        path = f"events?limit={limit}&orderDirection=DESC"
+        path = f"events?limit={limit}"
         if since_ms:
             path += f"&start={since_ms}"
         return self._get(path)
