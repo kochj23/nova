@@ -29,6 +29,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN
 
+try:
+    from nova_package_clairvoyance import handle_package_detection
+except ImportError:
+    handle_package_detection = None
+
 PROTECT_HOST = "192.168.1.9"
 PROTECT_USER = "api"
 VECTOR_URL = "http://127.0.0.1:18790/remember"
@@ -412,6 +417,15 @@ def check_motion_events(client, state):
 
         if not uploaded_image:
             slack_post(alert_text)
+
+        # Package clairvoyance: if "package" detected, cross-reference with tracking
+        if smart and handle_package_detection:
+            all_smart_types = set()
+            for e in smart:
+                all_smart_types.update(e.get("smart_types", []))
+            if "package" in all_smart_types:
+                best = max(smart, key=lambda e: e.get("timestamp", 0))
+                handle_package_detection(cam_name, best.get("event_id", ""), client)
 
         # Store in memory
         vector_remember(
