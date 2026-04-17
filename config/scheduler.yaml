@@ -55,6 +55,12 @@ tasks:
     timeout: 30
     overlap: skip
 
+  watchdog:
+    script: nova_watchdog.py
+    schedule: every 5m
+    timeout: 60
+    overlap: skip
+
   subagent_health:
     script: nova_subagent_ctl.sh
     args: ["health"]
