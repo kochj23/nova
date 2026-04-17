@@ -21,6 +21,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.parse
 import http.cookiejar
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -153,42 +154,37 @@ def _get_event_thumbnail(client, event_id, output_path):
 
 
 def slack_upload_image(filepath, channel, title="", comment=""):
-    """Upload an image to Slack using files.uploadV2."""
+    """Upload an image to Slack using files.getUploadURLExternal (form-encoded)."""
     token = nova_config.slack_bot_token()
     if not token:
         return False
     try:
-        import mimetypes
-        mime = mimetypes.guess_type(filepath)[0] or "image/jpeg"
         filename = os.path.basename(filepath)
+        file_size = os.path.getsize(filepath)
 
-        # Step 1: Get upload URL
-        payload = json.dumps({
-            "filename": filename,
-            "length": os.path.getsize(filepath),
-        }).encode()
+        # Step 1: Get upload URL (must use form-encoded, not JSON)
+        params = urllib.parse.urlencode({"filename": filename, "length": file_size})
         req = urllib.request.Request(
-            "https://slack.com/api/files.getUploadURLExternal",
-            data=payload,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+            f"https://slack.com/api/files.getUploadURLExternal?{params}",
+            headers={"Authorization": f"Bearer {token}"}
         )
         resp = urllib.request.urlopen(req, timeout=10)
         url_data = json.loads(resp.read())
         if not url_data.get("ok"):
-            # Fallback: post as text with note about image
+            log(f"Slack getUploadURL failed: {url_data.get('error','?')}", level=LOG_WARN, source="protect")
             return False
 
-        upload_url = url_data.get("upload_url", "")
-        file_id = url_data.get("file_id", "")
+        upload_url = url_data["upload_url"]
+        file_id = url_data["file_id"]
 
-        # Step 2: Upload file
+        # Step 2: Upload file bytes to the presigned URL
         with open(filepath, "rb") as f:
             file_data = f.read()
         req2 = urllib.request.Request(upload_url, data=file_data,
-                                       headers={"Content-Type": mime})
+                                       headers={"Content-Type": "application/octet-stream"})
         urllib.request.urlopen(req2, timeout=15)
 
-        # Step 3: Complete upload
+        # Step 3: Complete upload (JSON is fine here)
         complete = json.dumps({
             "files": [{"id": file_id, "title": title or filename}],
             "channel_id": channel,
@@ -200,9 +196,12 @@ def slack_upload_image(filepath, channel, title="", comment=""):
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
         )
         resp3 = urllib.request.urlopen(req3, timeout=10)
-        return json.loads(resp3.read()).get("ok", False)
+        result = json.loads(resp3.read())
+        if not result.get("ok"):
+            log(f"Slack completeUpload failed: {result.get('error','?')}", level=LOG_WARN, source="protect")
+        return result.get("ok", False)
     except Exception as e:
-        log(f"Slack image upload failed: {e}", level=LOG_WARN, source="protect")
+        log(f"Slack image upload error: {e}", level=LOG_WARN, source="protect")
         return False
 
 
@@ -354,6 +353,7 @@ def check_motion_events(client, state):
                 "camera": cam_name,
                 "type": event_type,
                 "timestamp": event_ts,
+                "event_id": event.get("id", ""),
             })
 
     state["last_event_ts"] = max_ts
@@ -377,8 +377,11 @@ def check_motion_events(client, state):
             types_seen = set()
             for e in smart:
                 types_seen.update(e["smart_types"])
-            emoji_map = {"person": ":bust_in_silhouette:",
-                         "animal": ":dog:", "package": ":package:"}
+            emoji_map = {"person": ":bust_in_silhouette:", "animal": ":dog:",
+                         "package": ":package:", "licensePlate": ":car:",
+                         "alrmSpeak": ":speaking_head_in_silhouette:",
+                         "alrmBark": ":dog2:", "alrmSmoke": ":fire:",
+                         "alrmSiren": ":rotating_light:", "alrmCmonx": ":warning:"}
             filtered_types = {t for t in types_seen if t != "vehicle"}
             for t in sorted(filtered_types):
                 parts.append(f"  {emoji_map.get(t, ':grey_question:')} {t} detected")
@@ -390,30 +393,35 @@ def check_motion_events(client, state):
 
         alert_text = "\n".join(parts)
 
-        # Try to get event thumbnail for smart detections (person/animal/package)
+        # Try to get event thumbnail for any event with an event_id
         uploaded_image = False
-        if smart:
-            # Use the most recent smart event's thumbnail
-            best_event = max(smart, key=lambda e: e.get("timestamp", 0))
+        all_with_ids = [e for e in cam_events if e.get("event_id")]
+        if all_with_ids:
+            best_event = max(all_with_ids, key=lambda e: e.get("timestamp", 0))
             event_id = best_event.get("event_id", "")
             if event_id:
                 thumb_path = SNAPSHOT_DIR / f"{event_id}.jpg"
                 if _get_event_thumbnail(client, event_id, str(thumb_path)):
-                    detect_types = ", ".join(sorted(filtered_types))
+                    types_label = ", ".join(sorted(filtered_types)) if smart else "motion"
                     uploaded_image = slack_upload_image(
                         str(thumb_path),
                         SLACK_NOTIFY,
-                        title=f"{cam_name} — {detect_types}",
+                        title=f"{cam_name} — {types_label}",
                         comment=alert_text,
                     )
                     if uploaded_image:
-                        log(f"Uploaded thumbnail for {cam_name} ({detect_types})",
+                        log(f"Uploaded thumbnail for {cam_name} ({types_label})",
                             level=LOG_INFO, source="protect")
-                    # Clean up thumbnail
+                    else:
+                        log(f"Slack upload failed for {cam_name}, falling back to text",
+                            level=LOG_WARN, source="protect")
                     try:
                         thumb_path.unlink()
                     except Exception:
                         pass
+                else:
+                    log(f"Thumbnail download failed for event {event_id[:12]}",
+                        level=LOG_WARN, source="protect")
 
         if not uploaded_image:
             slack_post(alert_text)
