@@ -69,4 +69,16 @@ python3 "$SCRIPTS/nova_tvshow_ingest.py" \
     --source music_lyrics \
     >> "$LOGS/tvshow-ingest-batch7-music.log" 2>&1
 
-echo "[$(date '+%H:%M:%S')] Batch 7 (music lyrics) complete. ALL BATCHES DONE."
+echo "[$(date '+%H:%M:%S')] Batch 7 (music lyrics) complete. Starting batch 8 (drag/street racing)..."
+
+python3 "$SCRIPTS/nova_tvshow_ingest.py" \
+    "$TVSHOWS/Roadkill" \
+    "$TVSHOWS/Engine Masters" \
+    "$TVSHOWS/NHRA Drag Racing (2010)" \
+    "$TVSHOWS/Supercuda" \
+    "$TVSHOWS/Build or Bust" \
+    "$TVSHOWS/Modified" \
+    --source drag_racing \
+    >> "$LOGS/tvshow-ingest-batch8-dragracing.log" 2>&1
+
+echo "[$(date '+%H:%M:%S')] Batch 8 (drag/street racing) complete. ALL BATCHES DONE."

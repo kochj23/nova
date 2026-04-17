@@ -261,6 +261,20 @@ SOURCE_RULES = [
         "sources": ["vehicles", "corvette_workshop_manual", "video"],
         "label": "vehicles/builds",
     },
+    # Drag racing / street racing / NHRA / quarter mile
+    {
+        "patterns": [
+            r"\b(drag\s*rac|street\s*rac|quarter\s*mile|1320|eighth\s*mile)\b",
+            r"\b(nhra|pro\s*stock|top\s*fuel|funny\s*car|pro\s*mod)\b",
+            r"\b(burnout|launch|staging|christmas\s*tree|reaction\s*time)\b",
+            r"\b(roadkill|engine\s*masters|hot\s*rod|muscle\s*car)\b",
+            r"\b(nitrous|nos|blower|supercharg|turbo.*boost|dyno)\b",
+            r"\b(wheelie|tire\s*shake|hook|traction|slick)\b",
+            r"\b(elapsed\s*time|e\.?t\.\s*\d|trap\s*speed|mph\s*\d)\b",
+        ],
+        "sources": ["drag_racing", "vehicles", "corvette_workshop_manual"],
+        "label": "drag/street racing",
+    },
     # Comedy / stand-up / comedians
     {
         "patterns": [
