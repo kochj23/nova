@@ -47,42 +47,28 @@ def api_post(endpoint, payload, key):
     return data.get("data", [])
 
 def get_wan_daily(key):
-    """Get WAN daily traffic from the site report endpoint."""
-    # UniFi reports use epoch seconds for time ranges
+    """Get WAN daily traffic from the hourly site report endpoint."""
     now = datetime.now()
-    # Start of today (midnight)
     start_of_day = now.replace(hour=0, minute=0, second=0, microsecond=0)
-    start_epoch = int(start_of_day.timestamp())
-    end_epoch = int(now.timestamp())
+    # UniFi report endpoints require epoch MILLISECONDS
+    start_ms = int(start_of_day.timestamp()) * 1000
+    end_ms = int(now.timestamp()) * 1000
 
     wan_down = 0
     wan_up = 0
 
-    # Try daily site report first
+    # Hourly site report — most reliable for daily totals
     try:
-        report = api_post("stat/report/daily.site", {
+        report = api_post("stat/report/hourly.site", {
             "attrs": ["wan-tx_bytes", "wan-rx_bytes"],
-            "start": start_epoch,
-            "end": end_epoch,
+            "start": start_ms,
+            "end": end_ms,
         }, key)
         for entry in report:
-            wan_down += entry.get("wan-rx_bytes", 0)  # WAN rx = internet download
-            wan_up += entry.get("wan-tx_bytes", 0)     # WAN tx = internet upload
+            wan_down += entry.get("wan-rx_bytes", 0)
+            wan_up += entry.get("wan-tx_bytes", 0)
     except Exception:
         pass
-
-    # If daily report returned nothing, try the health endpoint for current rates
-    if wan_down == 0 and wan_up == 0:
-        try:
-            health_data = api_get("stat/health", key)
-            for subsys in health_data:
-                if subsys.get("subsystem") == "wan":
-                    # These are lifetime counters on the gateway — not per-day
-                    # but better than nothing if report endpoint fails
-                    wan_down = subsys.get("rx_bytes", 0)
-                    wan_up = subsys.get("tx_bytes", 0)
-        except Exception:
-            pass
 
     return wan_down, wan_up
 
@@ -124,6 +110,20 @@ def get_wan_health(key):
                 uptime = dev.get("uptime", 0)
                 if uptime:
                     wan_info.setdefault("uptime_s", uptime)
+                break
+    except Exception:
+        pass
+
+    # Get current throughput rates
+    try:
+        health_data = api_get("stat/health", key)
+        for subsys in health_data:
+            if subsys.get("subsystem") == "wan":
+                rx_rate = subsys.get("rx_bytes-r", 0)  # bytes/sec current
+                tx_rate = subsys.get("tx_bytes-r", 0)
+                wan_info["rx_rate_mbps"] = rx_rate * 8 / 1_000_000  # convert to Mbps
+                wan_info["tx_rate_mbps"] = tx_rate * 8 / 1_000_000
+                wan_info["wan_ip"] = subsys.get("wan_ip", wan_info.get("ip", ""))
                 break
     except Exception:
         pass
@@ -185,6 +185,9 @@ def main():
 
     if wan_health.get("speed_test_down"):
         lines.append(f"  Last speedtest: {wan_health['speed_test_down']:.0f} Mbps down / {wan_health.get('speed_test_up', 0):.0f} Mbps up (ping: {wan_health.get('speed_test_ping', 0):.0f}ms)")
+
+    if wan_health.get("rx_rate_mbps") or wan_health.get("tx_rate_mbps"):
+        lines.append(f"  Current: {wan_health.get('rx_rate_mbps', 0):.1f} Mbps down / {wan_health.get('tx_rate_mbps', 0):.1f} Mbps up")
 
     if wan_down > 0 or wan_up > 0:
         wan_down_gb = wan_down / 1024/1024/1024

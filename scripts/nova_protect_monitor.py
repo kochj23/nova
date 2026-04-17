@@ -259,7 +259,8 @@ def check_motion_events(client, state):
         if event_ts > max_ts:
             max_ts = event_ts
 
-        # Smart detection events (person, vehicle, animal, package)
+        # Smart detection events — person and animal only (vehicle excluded per Jordan)
+        smart_types = [t for t in smart_types if t != "vehicle"]
         if smart_types:
             new_events.append({
                 "camera": cam_name,
