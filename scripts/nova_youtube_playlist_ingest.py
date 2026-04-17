@@ -287,6 +287,9 @@ def main(playlist_url):
                 log(f"  ERROR: {e}")
                 stats["errors"] += 1
             stats["processed"] += 1
+            # Rate limit: pause between videos to avoid hammering YouTube
+            if not shutdown.is_set():
+                time.sleep(60)
 
     shutdown.set()
     elapsed = time.time() - stats["start_time"]
