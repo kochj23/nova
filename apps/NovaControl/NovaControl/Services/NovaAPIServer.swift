@@ -17,6 +17,17 @@ final class NovaAPIServer {
     // In-memory health status (POST /api/health/status)
     private var latestHealthStatus: HealthStatusRecord?
 
+    /// Local-only anti-CSRF bearer token (not a secret — just prevents drive-by POST from browser JS)
+    private let apiToken: String = {
+        let key = "NovaAPIToken"
+        if let existing = UserDefaults.standard.string(forKey: key), !existing.isEmpty {
+            return existing
+        }
+        let token = UUID().uuidString
+        UserDefaults.standard.set(token, forKey: key)
+        return token
+    }()
+
     private init() {}
 
     // MARK: - Start / Stop
@@ -24,9 +35,13 @@ final class NovaAPIServer {
     func start() {
         do {
             let params = NWParameters.tcp
+            guard let nwPort = NWEndpoint.Port(rawValue: port) else {
+                NSLog("[NovaAPIServer] Invalid port: \(port)")
+                return
+            }
             params.requiredLocalEndpoint = NWEndpoint.hostPort(
                 host: NWEndpoint.Host("127.0.0.1"),
-                port: NWEndpoint.Port(rawValue: port)!
+                port: nwPort
             )
             listener = try NWListener(using: params)
         } catch {
@@ -113,11 +128,13 @@ final class NovaAPIServer {
 
         // Parse request headers
         var ifNoneMatch: String?
+        var authorization: String?
         for line in lines.dropFirst() where !line.isEmpty {
             guard let colonIdx = line.firstIndex(of: ":") else { continue }
             let key = String(line[..<colonIdx]).lowercased().trimmingCharacters(in: .whitespaces)
             let value = String(line[line.index(after: colonIdx)...]).trimmingCharacters(in: .whitespaces)
             if key == "if-none-match" { ifNoneMatch = value }
+            if key == "authorization" { authorization = value }
         }
 
         // Parse body for POST requests
@@ -131,16 +148,25 @@ final class NovaAPIServer {
 
         // Route the request
         route(method: method, path: path, query: queryParams, body: body,
-              ifNoneMatch: ifNoneMatch, connection: connection)
+              ifNoneMatch: ifNoneMatch, authorization: authorization, connection: connection)
     }
 
     // MARK: - Router
 
     private func route(method: String, path: String, query: [String: String],
-                       body: Data?, ifNoneMatch: String?, connection: NWConnection) {
+                       body: Data?, ifNoneMatch: String?, authorization: String?,
+                       connection: NWConnection) {
         if method == "OPTIONS" {
             sendResponse(connection: connection, status: 200, body: Data())
             return
+        }
+
+        // Require bearer token for all POST requests (anti-CSRF)
+        if method == "POST" {
+            guard let auth = authorization, auth == "Bearer \(apiToken)" else {
+                sendError(connection: connection, status: 401, message: "Unauthorized — missing or invalid Bearer token")
+                return
+            }
         }
 
         // Prometheus metrics — plain text response
@@ -945,6 +971,7 @@ final class NovaAPIServer {
         case 207: statusText = "Multi-Status"
         case 304: statusText = "Not Modified"
         case 400: statusText = "Bad Request"
+        case 401: statusText = "Unauthorized"
         case 404: statusText = "Not Found"
         case 500: statusText = "Internal Server Error"
         case 503: statusText = "Service Unavailable"
@@ -955,9 +982,6 @@ final class NovaAPIServer {
             "HTTP/1.1 \(status) \(statusText)",
             "Content-Type: \(contentType); charset=utf-8",
             "Content-Length: \(body.count)",
-            "Access-Control-Allow-Origin: *",
-            "Access-Control-Allow-Methods: GET, POST, OPTIONS",
-            "Access-Control-Allow-Headers: Content-Type, If-None-Match",
             "Connection: close",
         ]
         for (key, value) in extraHeaders {
@@ -966,7 +990,11 @@ final class NovaAPIServer {
         headerLines.append(contentsOf: ["", ""])
         let headers = headerLines.joined(separator: "\r\n")
 
-        var responseData = headers.data(using: .utf8)!
+        guard var responseData = headers.data(using: .utf8) else {
+            NSLog("[NovaAPIServer] Failed to encode response headers as UTF-8")
+            connection.cancel()
+            return
+        }
         responseData.append(body)
 
         connection.send(content: responseData, completion: .contentProcessed { error in
