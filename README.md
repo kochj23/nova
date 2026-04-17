@@ -483,7 +483,7 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 
 | Source | Count | Content |
 |--------|-------|---------|
-| email_archive | 1,007,970 | Jordan's personal email 2000-2026 (incl. tax, divorce, intimacy — Work excluded) |
+| email_archive | 1,007,970 | Jordan's personal email 2000-2026 (Work excluded) |
 | imessage | 66,253 | iMessage history with contact name resolution |
 | music + music_history | 60,294 | Jungle, DnB, IDM, turntablism, Devo, darkside/darkstep |
 | world_factbook | 23,930 | CIA World Factbook (262 countries) |
@@ -1070,7 +1070,7 @@ All critical services run under macOS launchd with `KeepAlive` and `ThrottleInte
 
 Memories grew from 877,832 → 1,248,414 (+370,582, 42% increase in one session):
 
-- **Email re-ingest**: Removed tax/divorce/intimacy content exclusions per Jordan's request. Only Work emails remain excluded. 340K files processed, +340,840 new memories from previously-excluded personal content. 100% local, zero cloud.
+- **Email re-ingest**: Expanded personal email coverage. Only Work emails remain excluded. 340K files processed, +340,840 new memories. 100% local, zero cloud.
 - **Comedy specials** (39 specials, 9 comedians): Louis C.K. (11), Lewis Black (9), Patton Oswalt (6), Dave Chappelle (3), Eddie Izzard (3), Katt Williams (3), Kevin Smith, John Waters, Bill Cosby. Full MLX Whisper transcriptions → 2,083 memory chunks.
 - **Vehicle shows** (967+ episodes across 14 shows): Wheeler Dealers, Hot Rod Garage, Hot Rod TV, MotorWeek, Victory By Design, Dream Car Garage, Two Guys Garage, JDM Legends, Classic Car Restoration, FourWheeler, Super 2NR, plus all "Born/Reborn" series.
 - **Home repair** (315 episodes): Ask This Old House (76), This Old House (168), Holmes On Homes (71).
@@ -1116,7 +1116,7 @@ Pipeline infrastructure: `nova_tvshow_ingest.py` (generic, recursive), `nova_com
 ### Apr 13, 2026 -- Memory-First Architecture + 1.2M Memories + Cost Optimization
 
 - **Memory-first query system** (`nova_memory_first.py`): Nova now checks 1.2M memories BEFORE falling back to LLM/web. Auto-classifies queries into 12 categories with source-specific filters. Jordan never has to say "from your memories."
-- **Email ingest**: 336K personal Home emails ingested (Work/tax/divorce excluded). Memory count: 164K -> 1,218,131.
+- **Email ingest**: 336K personal Home emails ingested (Work excluded). Memory count: 164K -> 1,218,131.
 - **PostgreSQL scaled**: Moved to /Volumes/MoreData, 8GB shared_buffers, 2GB maintenance_work_mem, HNSW rebuilt m=32/ef=200. 421K duplicates cleaned. text_hash dedup column backfilled.
 - **Security fixes**: RTSP camera URLs scrubbed from git history (BFG), .slack_token_cache deleted, pre-push hooks scan for rtsps://, camera_config.py gitignored.
 - **Reliability fixes**: 14 scripts' state files moved from /tmp to persistent workspace/state/, camera monitor ffmpeg PATH fixed, 9 orphaned scripts deleted, 1.6GB legacy SQLite/FAISS deleted, TOOLS.md trimmed to <20K (gateway truncation fixed).
