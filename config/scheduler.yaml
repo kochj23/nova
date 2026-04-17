@@ -258,3 +258,9 @@ tasks:
     schedule: cron 50 23 * * *
     timeout: 120
     overlap: skip
+
+  weekly_reliability:
+    script: nova_weekly_reliability.py
+    schedule: cron 0 22 * * 0
+    timeout: 120
+    overlap: skip
