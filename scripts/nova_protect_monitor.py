@@ -210,6 +210,60 @@ def _is_exterior(camera):
     return not camera.get("name", "").startswith(INTERIOR_PREFIX)
 
 
+def _vision_identify(image_path):
+    """Run thumbnail through OpenRouter vision model to identify people/animals."""
+    try:
+        import base64
+        api_key = subprocess.run(
+            ["security", "find-generic-password", "-a", "nova", "-s", "nova-openrouter-api-key", "-w"],
+            capture_output=True, text=True, timeout=10
+        ).stdout.strip()
+        if not api_key:
+            return None
+
+        with open(image_path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+
+        payload = json.dumps({
+            "model": "qwen/qwen3.5-9b",
+            "messages": [{
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": (
+                        "Security camera image. Identify any people or dogs visible. "
+                        "For people: describe appearance, clothing, what they're doing. "
+                        "For dogs: describe breed/size/color. "
+                        "Known people: Abundio (neighbor, gardener). "
+                        "Known dogs: Jeremy (small, dark), Bruno (medium, troublemaker), "
+                        "Sammy (energetic), Preston (larger, limps from stroke). "
+                        "Be concise — 2-3 sentences max. If nobody/nothing notable, say 'No identifiable subjects.'"
+                    )},
+                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
+                ],
+            }],
+            "max_tokens": 200,
+            "temperature": 0.2,
+        }).encode()
+
+        req = urllib.request.Request(
+            "https://openrouter.ai/api/v1/chat/completions",
+            data=payload,
+            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+        )
+        resp = urllib.request.urlopen(req, timeout=30)
+        data = json.loads(resp.read())
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+        # Strip thinking tags if present
+        if "<think>" in content:
+            end = content.rfind("</think>")
+            if end > 0:
+                content = content[end + 8:]
+        return content.strip() or None
+    except Exception as e:
+        log(f"Vision identify failed: {e}", level=LOG_WARN, source="protect")
+        return None
+
+
 def slack_post(text, channel=None):
     token = nova_config.slack_bot_token()
     if not token:
@@ -403,6 +457,7 @@ def check_motion_events(client, state):
 
         # Try to get event thumbnail for any event with an event_id
         uploaded_image = False
+        vision_desc = None
         all_with_ids = [e for e in cam_events if e.get("event_id")]
         if all_with_ids:
             best_event = max(all_with_ids, key=lambda e: e.get("timestamp", 0))
@@ -411,6 +466,11 @@ def check_motion_events(client, state):
                 thumb_path = SNAPSHOT_DIR / f"{event_id}.jpg"
                 if _get_event_thumbnail(client, event_id, str(thumb_path)):
                     types_label = ", ".join(sorted(filtered_types)) if smart else "motion"
+
+                    vision_desc = _vision_identify(str(thumb_path))
+                    if vision_desc and "no identifiable" not in vision_desc.lower():
+                        alert_text += f"\n  :eye: {vision_desc}"
+
                     uploaded_image = slack_upload_image(
                         str(thumb_path),
                         SLACK_NOTIFY,
@@ -443,10 +503,15 @@ def check_motion_events(client, state):
                 best = max(smart, key=lambda e: e.get("timestamp", 0))
                 handle_package_detection(cam_name, best.get("event_id", ""), client)
 
-        # Store in memory
+        # Store in memory (include vision description if available)
+        mem_text = (
+            f"Protect event on {cam_name}: {', '.join(e.get('type','?') for e in cam_events)}. "
+            f"Smart detections: {', '.join(t for e in smart for t in e.get('smart_types',[]))}."
+        )
+        if vision_desc and "no identifiable" not in vision_desc.lower():
+            mem_text += f" Vision: {vision_desc}"
         vector_remember(
-            f"Protect event on {cam_name}: {', '.join(e.get('type','?') for e in events)}. "
-            f"Smart detections: {', '.join(t for e in smart for t in e.get('smart_types',[]))}",
+            mem_text,
             {"type": "protect_event", "camera": cam_name, "date": datetime.now().isoformat()}
         )
 
