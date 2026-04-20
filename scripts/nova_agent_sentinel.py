@@ -111,7 +111,10 @@ class SecuritySentinel(SubAgent):
 
     async def _analyze_camera(self, task: dict) -> dict:
         """Dispatch camera event to Lookout for vision, then assess threat."""
-        # This would normally dispatch to Lookout via Redis, then process result
+        smart_types = task.get("smart_types", [])
+        if smart_types and all(t in ("vehicle", "licensePlate") for t in smart_types):
+            return None
+
         description = task.get("description", task.get("text", ""))
         camera = task.get("camera", "unknown")
 

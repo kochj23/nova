@@ -105,6 +105,13 @@ class LookoutAgent(SubAgent):
         result["camera"] = camera
         result["source_type"] = task_type
 
+        # Skip vehicle/licensePlate detections — too noisy on a busy street
+        anomaly_type = result.get("anomaly_type", "none").lower()
+        if anomaly_type in ("vehicle", "car", "truck", "licenseplate", "license_plate"):
+            log(f"Suppressed vehicle detection on {camera}", level=LOG_INFO, source="subagent.lookout")
+            result["anomaly_detected"] = False
+            return result
+
         # Only notify on actual anomalies
         if result.get("anomaly_detected"):
             severity = result.get("severity", "medium")
