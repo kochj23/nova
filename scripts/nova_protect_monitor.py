@@ -337,8 +337,8 @@ def check_motion_events(client, state):
         if event_ts > max_ts:
             max_ts = event_ts
 
-        # Smart detection events — person and animal only (vehicle excluded per Jordan)
-        smart_types = [t for t in smart_types if t != "vehicle"]
+        # Filter out vehicle and license plate detections (noisy on busy street)
+        smart_types = [t for t in smart_types if t not in ("vehicle", "licensePlate")]
         if smart_types:
             new_events.append({
                 "camera": cam_name,
@@ -378,18 +378,26 @@ def check_motion_events(client, state):
             for e in smart:
                 types_seen.update(e["smart_types"])
             emoji_map = {"person": ":bust_in_silhouette:", "animal": ":dog:",
-                         "package": ":package:", "licensePlate": ":car:",
+                         "package": ":package:",
                          "alrmSpeak": ":speaking_head_in_silhouette:",
                          "alrmBark": ":dog2:", "alrmSmoke": ":fire:",
                          "alrmSiren": ":rotating_light:", "alrmCmonx": ":warning:"}
-            filtered_types = {t for t in types_seen if t != "vehicle"}
+            filtered_types = {t for t in types_seen if t not in ("vehicle", "licensePlate")}
             for t in sorted(filtered_types):
                 parts.append(f"  {emoji_map.get(t, ':grey_question:')} {t} detected")
 
-            if "vehicle" in types_seen:
-                log("Vehicle detection suppressed — ignored on busy street", level=LOG_INFO, source="protect")
+            suppressed = types_seen & {"vehicle", "licensePlate"}
+            if suppressed:
+                log(f"Suppressed: {', '.join(suppressed)} — ignored on busy street", level=LOG_INFO, source="protect")
         if other:
             parts.append(f"  {len(other)} motion event(s)")
+
+        # Skip entirely if only vehicle/licensePlate detections and no other motion
+        has_interesting = (smart and filtered_types) or other
+        if not has_interesting:
+            log(f"All events for {cam_name} were vehicle/licensePlate — skipping notification",
+                level=LOG_INFO, source="protect")
+            continue
 
         alert_text = "\n".join(parts)
 
