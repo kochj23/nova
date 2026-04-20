@@ -34,6 +34,7 @@ scripts/*.retired
 
 # Sensitive — never commit
 openclaw.json
+openclaw.json.bak*
 scripts/camera_config.py
 .slack_token_cache
 known_senders.py
@@ -51,6 +52,35 @@ file-history/
 *.backup
 scripts/*.applescript
 .slack_token_cache
+
+# Runtime state — not source
+browser/
+canvas/
+completions/
+delivery-queue/
+embeddings/
+flows/
+identity/
+logs/
+media/
+memory/
+subagents/
+tasks/
+config/rag.json
+config/scheduler_heartbeat
+config/scheduler_state.json
+exec-approvals.json
+update-check.json
+
+# Compiled binaries and build artifacts
+scripts/nova_healthkit_export
+scripts/Info.plist
+
+# Disabled voice (contains hardcoded user paths)
+scripts/_disabled_voice/
+
+# Test/scratch scripts with hardcoded IPs
+scripts/test_api_connection.py
 
 # Personal workspace files — contain Jordan's identity/PII
 workspace/MEMORY.md
