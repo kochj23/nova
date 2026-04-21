@@ -53,6 +53,17 @@ file-history/
 scripts/*.applescript
 .slack_token_cache
 
+# Debug and temp scripts
+scripts/debug_*
+scripts/test_*
+scripts/.temp_*
+scripts/.search_*
+scripts/.api_*
+scripts/device_tracker.md
+
+# Private data
+private/
+
 # Runtime state — not source
 browser/
 canvas/

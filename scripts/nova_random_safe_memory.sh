@@ -1,8 +1,9 @@
 #!/bin/bash
 # nova_random_safe_memory.sh — Return a safe, non-PII memory for email footers.
 #
-# Tries semantic recall on an optional topic first; falls back to random if
-# nothing relevant is found (score < 0.45) or no topic is given.
+# Tries semantic recall on the email topic first; returns a relevant, safe memory fragment from vector DB.
+# Only consumes memories from pre-approved sources (SAFE_SOURCES) and filters PII (e.g., names, emails).
+# No fallback to random needed — we always want topic match, even if score is lower.
 #
 # Usage:  nova_random_safe_memory.sh [topic text]
 # Output: Formatted memory fragment, or empty string if unavailable.
@@ -55,37 +56,45 @@ def trim(text, max_chars=300):
         if len(out) + len(s) > max_chars:
             break
         out = (out + " " + s).strip()
-    return out if out else text[:max_chars].rsplit(' ', 1)[0] + "…"
+    # Add summary ellipsis
+    if len(out) >= max_chars:
+        out = out[:max_chars-3] + " +"  # " +" means it continues
+    return out
 
 def format_result(source, text):
     label = source.replace("_", " ").title()
     return f"\n---\n\n*Memory Fragment ({label}):* {trim(text)}"
 
-# ── Step 1: Try semantic recall if we have a topic ──────────────────────────
-if TOPIC.strip():
-    try:
-        q = urllib.parse.quote(TOPIC[:200])
-        url = f"{VECTOR_URL}/recall?q={q}&n=10&min_score={MIN_SCORE}"
-        req = urllib.request.Request(url)
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read())
-        candidates = [
-            m for m in data.get("memories", [])
-            if m.get("source") in SAFE_SOURCE_SET
-            and is_safe(m.get("text", ""))
-            and len(m.get("text", "")) > 60
-            and m.get("score", 0) >= MIN_SCORE
-        ]
-        if candidates:
-            # Pick from top 3 for variety
-            pick = random.choice(candidates[:3])
-            print(format_result(pick["source"], pick["text"]))
-            sys.exit(0)
-    except Exception:
-        pass  # fall through to random
+# ── Step 1: Try semantic recall on the email topic only ────────────────────
+# No fallback needed — we require a topic and return blank if no match is found
+try:
+    q = urllib.parse.quote(TOPIC[:200])
+    url = f"{VECTOR_URL}/recall?q={q}&n=10&min_score={MIN_SCORE}"
+    req = urllib.request.Request(url)
+    with urllib.request.urlopen(req, timeout=10) as r:
+        data = json.loads(r.read())
 
-# ── Step 2: Fall back to random ──────────────────────────────────────────────
-random.shuffle(SAFE_SOURCES)
+    candidates = [
+        m for m in data.get("memories", [])
+        if m.get("source") in SAFE_SOURCE_SET
+        and is_safe(m.get("text", ""))
+        and len(m.get("text", "")) > 60
+        and m.get("score", 0) >= MIN_SCORE
+    ]
+
+    if candidates:
+        # Pick top or from top 3 for variety
+        pick = random.choice(candidates[:3]) if len(candidates) > 1 else candidates[0]
+        print(format_result(pick["source"], pick["text"]))
+        sys.exit(0)
+    else:
+        # No match above threshold
+        sys.exit(0)
+
+except Exception as e:
+    print(f"Error in topic search: {e}", file=sys.stderr)
+    sys.exit(0)
+
 candidates = []
 for source in SAFE_SOURCES[:6]:
     try:
