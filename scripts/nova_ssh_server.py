@@ -111,7 +111,14 @@ class NovaSSHServer(asyncssh.SSHServer):
             return False
 
     def password_auth_supported(self):
-        return False
+        return True
+
+    def validate_password(self, username, password):
+        stored = subprocess.run(
+            ["security", "find-generic-password", "-a", "nova", "-s", "nova-ssh-password", "-w"],
+            capture_output=True, text=True, timeout=10
+        ).stdout.strip()
+        return stored and password == stored
 
 
 async def handle_session(process):
