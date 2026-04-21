@@ -43,41 +43,41 @@ class HealthHandler(BaseHTTPRequestHandler):
             return
 
         data["received_at"] = datetime.now().isoformat()
-        today = date.today().isoformat()
+        record_date = data.get("date", date.today().isoformat())
+        is_history = data.get("source") == "healthkit_history"
 
-        latest = HEALTH_DIR / "latest.json"
-        daily = HEALTH_DIR / f"{today}.json"
-        for path in [latest, daily]:
-            path.write_text(json.dumps(data, indent=2))
-            path.chmod(0o600)
+        if not is_history:
+            latest = HEALTH_DIR / "latest.json"
+            latest.write_text(json.dumps(data, indent=2))
+            latest.chmod(0o600)
 
-        summary = []
-        if "sleep_hours" in data:
-            summary.append(f"Sleep: {data['sleep_hours']:.1f}h")
-        if "resting_heart_rate" in data:
-            summary.append(f"Resting HR: {data['resting_heart_rate']} bpm")
-        if "hrv" in data:
-            summary.append(f"HRV: {data['hrv']} ms")
-        if "steps" in data:
-            summary.append(f"Steps: {int(data['steps']):,}")
-        if "active_energy" in data:
-            summary.append(f"Active energy: {data['active_energy']:.0f} kcal")
+        daily = HEALTH_DIR / f"{record_date}.json"
+        if is_history and daily.exists():
+            existing = json.loads(daily.read_text())
+            existing.update({k: v for k, v in data.items() if v and v != 0 and k not in ("received_at", "source", "date", "sample_count")})
+            data = existing
+        daily.write_text(json.dumps(data, indent=2))
+        daily.chmod(0o600)
 
-        memory_text = f"HealthKit data for {today}: {', '.join(summary)}"
+        skip_keys = {"received_at", "source", "date", "sample_count"}
+        metrics = {k: v for k, v in data.items() if k not in skip_keys and v and v != 0}
+        summary = ", ".join(f"{k}={v}" for k, v in sorted(metrics.items()))
+
+        memory_text = f"HealthKit data for {record_date}: {summary}"
 
         try:
             payload = json.dumps({
                 "text": memory_text,
-                "source": "healthkit",
+                "source": "apple_health",
                 "metadata": {
                     "privacy": "local-only",
-                    "origin": "ios-shortcut",
-                    "date": today,
-                    **{k: v for k, v in data.items() if k != "received_at"},
+                    "origin": "healthkit_history" if is_history else "ios-app",
+                    "date": record_date,
+                    **metrics,
                 },
             }).encode()
             req = urllib.request.Request(
-                MEMORY_URL, data=payload,
+                MEMORY_URL + "?async=1", data=payload,
                 headers={"Content-Type": "application/json"},
             )
             urllib.request.urlopen(req, timeout=10)
@@ -87,8 +87,10 @@ class HealthHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "application/json")
         self.end_headers()
-        self.wfile.write(json.dumps({"status": "ok", "date": today}).encode())
-        print(f"[healthkit] Received: {', '.join(summary)}", flush=True)
+        self.wfile.write(json.dumps({"status": "ok", "date": record_date}).encode())
+
+        label = "HISTORY" if is_history else "LIVE"
+        print(f"[healthkit] [{label}] {record_date}: {len(metrics)} metrics", flush=True)
 
     def do_GET(self):
         if self.path == "/health":
