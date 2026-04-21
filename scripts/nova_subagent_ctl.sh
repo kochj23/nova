@@ -78,20 +78,24 @@ case "${1:-help}" in
 
     health)
         echo "=== Subagent Health ==="
-        for key in $(redis-cli --no-auth-warning KEYS "nova:agent:*:meta" 2>/dev/null); do
+        redis-cli --no-auth-warning KEYS "nova:agent:*:meta" 2>/dev/null | while read key; do
+            [[ -z "$key" ]] && continue
             name=$(echo "$key" | sed 's/nova:agent://;s/:meta//')
-            tasks=$(redis-cli --no-auth-warning HGET "$key" tasks_completed 2>/dev/null)
-            uptime=$(redis-cli --no-auth-warning HGET "$key" uptime_s 2>/dev/null)
-            model=$(redis-cli --no-auth-warning HGET "$key" model 2>/dev/null)
-            error=$(redis-cli --no-auth-warning HGET "$key" last_error 2>/dev/null)
-            agent_status=$(redis-cli --no-auth-warning GET "nova:agent:${name}:status" 2>/dev/null)
+            tasks=$(redis-cli --no-auth-warning HGET "$key" tasks_completed 2>/dev/null || echo "0")
+            uptime=$(redis-cli --no-auth-warning HGET "$key" uptime_s 2>/dev/null || echo "0")
+            model=$(redis-cli --no-auth-warning HGET "$key" model 2>/dev/null || echo "?")
+            error=$(redis-cli --no-auth-warning HGET "$key" last_error 2>/dev/null || echo "")
+            agent_status=$(redis-cli --no-auth-warning GET "nova:agent:${name}:status" 2>/dev/null || echo "unknown")
             echo "  $name:"
             echo "    status: ${agent_status:-unknown}"
             echo "    model: ${model:-?}"
             echo "    tasks: ${tasks:-0}"
             echo "    uptime: ${uptime:-0}s"
-            [[ -n "$error" ]] && echo "    last_error: $error"
+            if [[ -n "${error:-}" ]]; then
+                echo "    last_error: $error"
+            fi
         done
+        exit 0
         ;;
 
     *)
