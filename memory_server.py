@@ -49,6 +49,8 @@ logger = logging.getLogger("memory_server")
 PG_DSN      = "postgresql://localhost/nova_memories"
 REDIS_URL   = "redis://localhost:6379"
 REDIS_QUEUE = "nova:memory:ingest"          # list key for write queue
+REDIS_CACHE = "nova:memory:cache"           # hash key for recall cache
+CACHE_TTL   = 900                           # 15-minute recall cache TTL
 OLLAMA_BASE = "http://127.0.0.1:11434"
 EMBED_MODEL = "nomic-embed-text"
 DIMS        = 768
@@ -245,28 +247,31 @@ async def recall(
     source: Optional[str] = Query(None),
     min_score: float = Query(0.0),
 ):
-    """Semantic search using HNSW cosine similarity."""
+    """Semantic search using HNSW cosine similarity with Redis caching."""
     if not q.strip():
         raise HTTPException(status_code=400, detail="q cannot be empty")
+
+    # Check Redis cache first
+    cache_key = f"{REDIS_CACHE}:{q[:100]}:{source or 'all'}:{n}"
+    try:
+        cached = await _redis.get(cache_key)
+        if cached:
+            return json.loads(cached)
+    except Exception:
+        pass
 
     query_vec = await embed(q)
     vec_str   = _vec_str(query_vec)
 
-    # Fetch many more candidates when filtering by source (HNSW post-filter).
-    # With 200K+ records, the desired source may be <2% of total, so we need
-    # to scan deeply enough that post-filtering still yields n results.
     k = n * 20 if source else n * 3
 
     async with _pg_pool.acquire() as conn:
-        # pgvector cosine distance: 1 - cosine_similarity
-        # <=> operator returns distance (0=identical, 2=opposite)
-        # Convert to similarity: 1 - distance
         if source:
             rows = await conn.fetch(
                 """SELECT id, text, metadata, source, created_at,
                           1 - (embedding <=> $1::vector) AS score
                    FROM memories
-                   WHERE source = $2
+                   WHERE source = $2 AND tier IN ('working', 'long_term')
                    ORDER BY embedding <=> $1::vector
                    LIMIT $3""",
                 vec_str, source, k
@@ -276,6 +281,7 @@ async def recall(
                 """SELECT id, text, metadata, source, created_at,
                           1 - (embedding <=> $1::vector) AS score
                    FROM memories
+                   WHERE tier IN ('working', 'long_term')
                    ORDER BY embedding <=> $1::vector
                    LIMIT $2""",
                 vec_str, k
@@ -285,7 +291,15 @@ async def recall(
                if float(r["score"]) >= min_score]
     results.sort(key=lambda x: x.score, reverse=True)
     top = results[:n]
-    return {"memories": [m.model_dump() for m in top], "query": q, "count": len(top)}
+    response = {"memories": [m.model_dump() for m in top], "query": q, "count": len(top)}
+
+    # Cache result in Redis (15-minute TTL)
+    try:
+        await _redis.setex(cache_key, CACHE_TTL, json.dumps(response, default=str))
+    except Exception:
+        pass
+
+    return response
 
 
 @app.get("/search")
@@ -293,28 +307,58 @@ async def text_search(
     q: str = Query(...),
     n: int = Query(10, ge=1, le=50),
     source: Optional[str] = Query(None),
+    mode: str = Query("auto"),
 ):
-    """Text search (ILIKE) — useful for name lookups where semantic search misses."""
+    """Text search. mode=fts uses tsvector (fast), mode=ilike uses pattern match, mode=auto tries FTS first."""
     if not q.strip():
         raise HTTPException(status_code=400, detail="q cannot be empty")
-    pattern = f"%{q}%"
+
     async with _pg_pool.acquire() as conn:
-        if source:
-            rows = await conn.fetch(
-                "SELECT id, text, metadata, source, created_at FROM memories "
-                "WHERE text ILIKE $1 AND source = $2 ORDER BY created_at DESC LIMIT $3",
-                pattern, source, n
-            )
-        else:
-            rows = await conn.fetch(
-                "SELECT id, text, metadata, source, created_at FROM memories "
-                "WHERE text ILIKE $1 ORDER BY created_at DESC LIMIT $2",
-                pattern, n
-            )
+        rows = []
+
+        # Try FTS first (fast, ranked by relevance)
+        if mode in ("fts", "auto"):
+            tsquery = " & ".join(q.strip().split())
+            try:
+                if source:
+                    rows = await conn.fetch(
+                        "SELECT id, text, metadata, source, created_at, "
+                        "ts_rank(tsv, plainto_tsquery('english', $1)) as rank "
+                        "FROM memories WHERE tsv @@ plainto_tsquery('english', $1) AND source = $2 "
+                        "ORDER BY rank DESC LIMIT $3",
+                        q, source, n
+                    )
+                else:
+                    rows = await conn.fetch(
+                        "SELECT id, text, metadata, source, created_at, "
+                        "ts_rank(tsv, plainto_tsquery('english', $1)) as rank "
+                        "FROM memories WHERE tsv @@ plainto_tsquery('english', $1) "
+                        "ORDER BY rank DESC LIMIT $2",
+                        q, n
+                    )
+            except Exception:
+                rows = []
+
+        # Fall back to ILIKE if FTS found nothing or mode=ilike
+        if not rows and mode in ("ilike", "auto"):
+            pattern = f"%{q}%"
+            if source:
+                rows = await conn.fetch(
+                    "SELECT id, text, metadata, source, created_at FROM memories "
+                    "WHERE text ILIKE $1 AND source = $2 ORDER BY created_at DESC LIMIT $3",
+                    pattern, source, n
+                )
+            else:
+                rows = await conn.fetch(
+                    "SELECT id, text, metadata, source, created_at FROM memories "
+                    "WHERE text ILIKE $1 ORDER BY created_at DESC LIMIT $2",
+                    pattern, n
+                )
+
     memories = [{"id": r["id"], "text": r["text"],
                  "metadata": r["metadata"] if isinstance(r["metadata"], dict) else json.loads(r["metadata"]),
                  "source": r["source"], "created_at": str(r["created_at"])} for r in rows]
-    return {"memories": memories, "query": q, "count": len(memories)}
+    return {"memories": memories, "query": q, "count": len(memories), "mode": "fts" if rows and mode != "ilike" else "ilike"}
 
 
 @app.get("/recall/deep")
@@ -360,26 +404,59 @@ async def deep_recall(
 
         results = [r for r in rows if float(r["score"]) >= min_score][:n]
 
-        # Expand cross-links for top results
+        # 2-hop graph traversal: top results → direct links → their links
         linked = []
         if results:
             top_ids = [r["id"] for r in results[:3]]
             placeholders = ", ".join(f"${i+1}" for i in range(len(top_ids)))
-            link_rows = await conn.fetch(
-                f"""SELECT DISTINCT m.id, m.text, m.source, m.created_at, ml.link_type, ml.strength
+
+            # Hop 1: direct links from top results
+            hop1_rows = await conn.fetch(
+                f"""SELECT DISTINCT m.id, m.text, m.source, m.created_at,
+                           ml.link_type, ml.strength, 1 as hop
                     FROM memory_links ml
-                    JOIN memories m ON m.id = ml.target_id
-                    WHERE ml.source_id IN ({placeholders})
+                    JOIN memories m ON m.id = CASE
+                        WHEN ml.source_id = ANY($1::text[]) THEN ml.target_id
+                        ELSE ml.source_id END
+                    WHERE ml.source_id = ANY($1::text[]) OR ml.target_id = ANY($1::text[])
                     ORDER BY ml.strength DESC
                     LIMIT 5""",
-                *top_ids
+                top_ids
             )
-            for lr in link_rows:
+
+            hop1_ids = []
+            for lr in hop1_rows:
                 linked.append({
                     "id": lr["id"], "text": lr["text"], "source": lr["source"],
                     "created_at": str(lr["created_at"]),
                     "link_type": lr["link_type"], "strength": float(lr["strength"]),
+                    "hop": 1,
                 })
+                hop1_ids.append(lr["id"])
+
+            # Hop 2: links from hop-1 results (excluding originals)
+            if hop1_ids:
+                all_seen = set(top_ids + hop1_ids)
+                hop2_rows = await conn.fetch(
+                    """SELECT DISTINCT m.id, m.text, m.source, m.created_at,
+                              ml.link_type, ml.strength, 2 as hop
+                       FROM memory_links ml
+                       JOIN memories m ON m.id = CASE
+                           WHEN ml.source_id = ANY($1::text[]) THEN ml.target_id
+                           ELSE ml.source_id END
+                       WHERE (ml.source_id = ANY($1::text[]) OR ml.target_id = ANY($1::text[]))
+                         AND m.id != ALL($2::text[])
+                       ORDER BY ml.strength DESC
+                       LIMIT 3""",
+                    hop1_ids, list(all_seen)
+                )
+                for lr in hop2_rows:
+                    linked.append({
+                        "id": lr["id"], "text": lr["text"], "source": lr["source"],
+                        "created_at": str(lr["created_at"]),
+                        "link_type": lr["link_type"], "strength": float(lr["strength"]),
+                        "hop": 2,
+                    })
 
     memories = []
     for r in results:
