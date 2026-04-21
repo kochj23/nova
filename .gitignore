@@ -64,6 +64,12 @@ scripts/device_tracker.md
 # Private data
 private/
 
+# Bullet journal (has its own git repo)
+bujo/
+
+# SSH host keys
+ssh/
+
 # Runtime state — not source
 browser/
 canvas/

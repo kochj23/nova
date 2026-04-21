@@ -185,7 +185,7 @@ Jordan never has to say "from your memories" — Nova checks automatically.
 │   │  Index:      HNSW (m=16, ef=64, cosine) — recall <5ms           │      │
 │   │  Embeddings: nomic-embed-text via Ollama (768 dimensions)        │      │
 │   │  Queue:      Redis 8.6.2 async write (bulk ingest at 8ms)       │      │
-│   │  Count:      1,248,414 memories across 84 source domains             │      │
+│   │  Count:      1,272,000+ memories across 75+ source domains             │      │
 │   │  Backup:     Nightly pg_dump to NAS (compressed)                   │      │
 │   │  Endpoints:  /remember  /recall  /search  /random  /health       │      │
 │   │                                                                   │      │
@@ -411,8 +411,8 @@ This is a unified monorepo. Previously split across 4 repos (nova, Nova-NextGen,
                ▼             ▼
 ┌──────────────────┐  ┌────────────────┐  ┌─────────────────────┐
 │  Vector Memory   │  │    Slack       │  │  Awareness Layer    │
-│  1,218,131 memories│  │  #nova-chat    │  │                     │
-│  30+ sources     │  │  Jordan DM     │  │  Context bridge     │
+│  1,272,000+ mem  │  │  #nova-chat    │  │                     │
+│  75+ sources     │  │  Jordan DM     │  │  Context bridge     │
 │  <5ms recall     │◄─┤  (urgent only) │  │  Proactive peace    │
 │                  │  │               │  │  Gentle explorer    │
 │  /recall         │  │  Herd outreach │  │  Journal            │
@@ -479,7 +479,7 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 
 ### Memory
 
-1,248,414 vectors across 84 source domains. PostgreSQL 17 + pgvector 0.8.2 + Redis async queue.
+1,272,000+ vectors across 75+ source domains. PostgreSQL 17 + pgvector 0.8.2 + Redis async queue.
 
 | Source | Count | Content |
 |--------|-------|---------|
@@ -606,6 +606,181 @@ Full Playwright/Chromium headless control:
 - **Context bridge** finds semantic connections between today's work and memories from weeks/months ago. "Threads from the past."
 - **Proactive peace** detects macOS Focus mode, sleep, deep flow. Holds non-urgent notifications and releases as digest. Burnout nudges for late-night coding and weekend work.
 - **Gentle explorer** maintains a "questions garden" -- open-ended things Jordan is wondering about. Reflective prompts, not answers. "Sometimes the best support is sitting with uncertainty, not solving it."
+
+### Bullet Journal (Bujo)
+
+A structured daily task/event/note tracking system inspired by the [Bujo CLI](https://github.com/jefflaplante/bujo), adapted for Nova's memory-first architecture.
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Nova Bullet Journal                          │
+│                                                                 │
+│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
+│  │  Daily   │  │ Monthly  │  │  Future  │  │ Collections  │   │
+│  │  Log     │  │  Goals   │  │   Log    │  │              │   │
+│  │          │  │          │  │          │  │ birthdays    │   │
+│  │ tasks    │  │ goals    │  │ items by │  │ projects     │   │
+│  │ events   │  │ themes   │  │ target   │  │ bills        │   │
+│  │ notes    │  │ reflect  │  │ month    │  │ wish list    │   │
+│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────────────┘   │
+│       │             │             │                             │
+│       └──────┬──────┴─────────────┘                             │
+│              ▼                                                   │
+│  ┌─────────────────────────────────────────────┐               │
+│  │  Stale Detection                            │               │
+│  │  • Tasks open > 5 days = STALE              │               │
+│  │  • Tasks migrated 3+ times = STUCK          │               │
+│  │  • Surfaced in morning brief + weekly review │               │
+│  └──────────────┬──────────────────────────────┘               │
+│                 │                                                │
+│       ┌─────────┼──────────┐                                    │
+│       ▼         ▼          ▼                                    │
+│  ┌────────┐ ┌────────┐ ┌──────────┐                            │
+│  │ Vector │ │ Slack  │ │   Git    │                            │
+│  │ Memory │ │ Digest │ │ History  │                            │
+│  │ (bujo) │ │ #notif │ │ per-write│                            │
+│  └────────┘ └────────┘ └──────────┘                            │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+**Entry Types:**
+
+| Type | Markers | Fields |
+|------|---------|--------|
+| Task | `—` open, `✓` done, `✕` cancelled, `→` migrated | title, priority (🔴🟡⚪), tags, status, migration history |
+| Event | `○` | title, date, tags, notes |
+| Note | `·` | text, tags, date |
+
+**CLI Commands:**
+
+```bash
+# Daily entries
+nova_bujo.py add task "Fix the gate latch" --priority high --tag home
+nova_bujo.py add event "Vet for Bruno" --date 2026-04-25 --tag dogs
+nova_bujo.py add note "Jasmine needs water" --tag garden
+nova_bujo.py complete b68288e1     # 8-char short ID
+nova_bujo.py cancel c7567c82
+nova_bujo.py migrate 168452d1 --to 2026-04-25
+
+# Review
+nova_bujo.py list                  # today's entries
+nova_bujo.py list --status open    # all open tasks
+nova_bujo.py list --tag home       # filter by tag
+nova_bujo.py list --stale          # overdue + stuck
+nova_bujo.py stale                 # stale + stuck summary
+nova_bujo.py digest                # morning brief → Slack
+nova_bujo.py weekly                # weekly review → Slack + memory
+
+# Monthly planning
+nova_bujo.py month --goal "Ship MLXCode v2.0"
+nova_bujo.py month --theme "Focus and depth"
+nova_bujo.py month --reflect "Solid progress, need more rest"
+
+# Future log
+nova_bujo.py future "Learn Rust basics" --month 2026-06
+
+# Collections
+nova_bujo.py collection birthdays add "Sam - October 15"
+nova_bujo.py collection birthdays list
+```
+
+**Integration Points:**
+- **Vector memory**: task summaries stored with `source="bujo"`, `privacy: local-only`
+- **Morning brief**: daily digest includes open tasks, stale alerts, monthly theme
+- **Weekly review**: completion stats, stale/stuck analysis, stored as synthesis memory
+- **REM Sleep**: consolidation reads bujo data to understand what Jordan intended vs what happened
+- **Dream journal**: unfinished tasks feed into dream context ("things weighing on the mind")
+- **Git**: every write auto-commits to `~/.openclaw/bujo/` (separate git repo)
+
+**Data Storage:** `~/.openclaw/bujo/` — JSON files, git versioned:
+- `daily.json` — tasks/events/notes keyed by date
+- `monthly.json` — goals/themes/reflections by month
+- `future.json` — forward-looking items by target month
+- `collections/` — custom categorized lists
+
+### REM Sleep (Memory Consolidation)
+
+Nightly five-phase deep memory consolidation, inspired by [Conduit](https://code.jefflaplante.com/conduit/)'s cognitive memory system.
+
+```
+┌─────────────────────────────────────────────────────────┐
+│               REM Sleep — 3:30am Nightly                │
+│                                                         │
+│  Phase 1: TRIAGE                                        │
+│  │  Scan recent memories by source                      │
+│  │  Find semantic clusters (cosine similarity > 0.85)   │
+│  │  Group near-duplicates into clusters                 │
+│  ▼                                                      │
+│  Phase 2: CONSOLIDATION                                 │
+│  │  For each cluster → LLM synthesis (nova:latest)      │
+│  │  Store synthesis memory (source="synthesis")         │
+│  │  Cross-link originals → synthesis via memory_links   │
+│  ▼                                                      │
+│  Phase 3: LINKING                                       │
+│  │  Find cross-source connections                       │
+│  │  Email about project ↔ GitHub commit about same      │
+│  │  iMessage mention ↔ calendar event                   │
+│  ▼                                                      │
+│  Phase 4: PRUNING                                       │
+│  │  Short (<30 char) memories → scratchpad tier          │
+│  │  Empty memories → scratchpad tier                     │
+│  │  NEVER deletes — only deprioritizes                  │
+│  ▼                                                      │
+│  Phase 5: REPORT                                        │
+│     Post summary to Slack #nova-notifications           │
+│     Record run in consolidation_runs table              │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Three-Tier Brain Architecture:**
+
+| Tier | Purpose | Count | Recall Priority |
+|------|---------|-------|-----------------|
+| `working` | Active conversation context (promoted on use) | dynamic | 1st (highest) |
+| `long_term` | The main 1.27M memory store | 1,271,821 | 2nd |
+| `scratchpad` | Deprioritized low-value (short, empty) | 250+ | excluded from recall |
+
+**New Memory Server Endpoints:**
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| `/recall/deep` | GET | Tier-aware recall: working → long_term, with cross-link expansion |
+| `/memory/working` | POST | Promote a memory to working tier |
+| `/memory/demote` | POST | Demote all working memories back to long_term |
+| `/links` | GET | Get all memories linked to a given ID |
+
+**Cross-Links (memory_links table):**
+
+| Link Type | Meaning |
+|-----------|---------|
+| `synthesis` | Original memory → consolidation summary |
+| `related` | Cross-source semantic similarity (auto-discovered) |
+| `contradiction` | Two memories that say opposite things (future) |
+| `supersedes` | Newer memory replaces older (future) |
+
+### SSH Remote Access
+
+Terminal-based chat with Nova from any device via SSH.
+
+```bash
+# From any terminal on the network
+ssh -p 2222 nova@192.168.1.6
+
+# Nova SSH Terminal
+# Type a message, or 'quit' to disconnect.
+
+nova> What's on my schedule today?
+  One meeting at 2pm (MLXCode review), 3 open bujo tasks,
+  and Bruno has a vet appointment Thursday.
+
+nova> quit
+```
+
+- **Port 2222** — ed25519 host key, auto-generated on first run
+- **Auth**: SSH keys (~/.ssh/authorized_keys) or password (Keychain: `nova-ssh-password`)
+- **Memory recall**: every message checks 1.27M memories for relevant context
+- **Session history**: conversation context maintained during session
+- **Color-coded**: purple for Nova, cyan prompt, "thinking..." indicator
 
 ---
 
@@ -822,6 +997,17 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 | `nova_gentle_explorer.py` | Questions garden: open-ended wondering, reflective prompts |
 | `nova_journal.py` | Nightly context-aware prompt, monthly markdown + vector memory |
 | `nova_quick_capture.sh` | Clipboard/dialog → vector memory, macOS notification |
+
+### Bullet Journal and Memory Architecture
+| Script | Purpose |
+|---|---|
+| `nova_bujo.py` | Structured bullet journal: tasks, events, notes, monthly goals, stale detection, collections |
+| `nova_rem_sleep.py` | REM Sleep: five-phase nightly consolidation (triage → synthesis → linking → pruning → report) |
+| `nova_correction_tracker.py` | Log what Nova got wrong + Jordan's correction, stored in vector memory |
+| `nova_correction_prompt.py` | Pre-response lookup: inject relevant prior corrections into Nova's prompt |
+| `nova_health_correlation.py` | Cross-reference health data with calendar/email/coding, weekly/monthly reports |
+| `nova_safari_ingest.py` | Safari history ingest, grouped by domain/date, filtered for noise |
+| `nova_ssh_server.py` | SSH remote access to Nova on port 2222, key + password auth |
 
 ### Creative and Research
 | Script | Purpose |
@@ -1091,6 +1277,72 @@ All critical services run under macOS launchd with `KeepAlive` and `ThrottleInte
 ---
 
 ## Changelog
+
+### Apr 20-21, 2026 -- Major Recovery, Intelligence Upgrade, Conduit-Inspired Architecture
+
+**Post-reboot recovery and infrastructure hardening:**
+- Full service stack recovery after macOS reboot (PG, Redis, Ollama, Gateway, OpenWebUI, TinyChat)
+- Created `nova` CLI (`nova start/stop/restart/status`) with health verification per service
+- Fixed PostgreSQL data directory (was starting from SSD instead of `/Volumes/MoreData/postgresql@17`)
+- Fixed launchd plist to survive reboots; created plists for Ollama and Redis auto-restart
+- Gateway Keychain retry: 12 attempts with exponential backoff (was 5×10s)
+- Reclaimed 8.7GB from main SSD
+- Memory DB restored to 1,272,000+ memories (was 221K after reboot)
+
+**Vision and camera intelligence:**
+- Switched Slack model to `qwen/qwen3.5-9b` (vision + reasoning, $0.25/M tokens)
+- Built Slack image download + vision analysis pipeline (`nova_slack_image.py`)
+- Camera notifications now identify people and dogs via vision model (`_vision_identify()`)
+- Vision-based vehicle filtering: generic motion events screened by vision model, not just smart detect types
+- Vehicle/license plate filtering across all 3 paths: protect monitor + lookout + sentinel agents
+- Fixed Abundio hallucination (qwen3-235b text model was fabricating image descriptions)
+
+**Data ingestion:**
+- Google Drive: 1,797 memories from NAS backup (privacy:local-only)
+- YouTube: 570 memories from 39 videos via MLX Whisper transcription
+- Safari history: 906 domain/date groups (15K visits, 5 years)
+- HealthKit: 1,826 daily files exported from iPhone (Withings, Dexcom, RingCon)
+- NovaHealth iOS app built and deployed to iPhone (17 metric types, background daily push)
+
+**Conduit-inspired architecture (from [Conduit](https://code.jefflaplante.com/conduit/)):**
+- **REM Sleep consolidation** (`nova_rem_sleep.py`): five-phase nightly cycle — triage, consolidation, linking, pruning, report. Found 53 clusters, created 20 syntheses, 250 low-value memories pruned to scratchpad.
+- **Three-Tier Brain**: `long_term` (1.27M), `working` (active context), `scratchpad` (deprioritized). New `/recall/deep` endpoint with tier-aware priority and cross-link expansion.
+- **Cross-link memory graph**: `memory_links` table tracks synthesis, related, contradiction, supersedes relationships. `/links` endpoint for graph exploration.
+- **SSH remote access** (`nova_ssh_server.py`): port 2222, ed25519 keys + password auth via Keychain, color-coded terminal chat with memory recall.
+
+**Bujo-inspired bullet journal (from [Bujo](https://github.com/jefflaplante/bujo)):**
+- `nova_bujo.py`: 12 CLI commands for tasks, events, notes, monthly goals, future log, collections
+- Stale detection (>5 days open) and stuck detection (migrated 3+ times)
+- Daily digest and weekly review with Slack posting and vector memory synthesis
+- Git auto-commit on every write in `~/.openclaw/bujo/`
+
+**Response accuracy tracking:**
+- `nova_correction_tracker.py`: logs Nova's errors + Jordan's corrections
+- `nova_correction_prompt.py`: pre-response lookup injects relevant prior corrections
+- Both store in vector memory (source="correction") for semantic retrieval
+
+**Health intelligence:**
+- `nova_health_correlation.py`: cross-references sleep/HR/HRV/steps with calendar/email/coding
+- NovaHealth iOS app: 17 metric types, 5-year history export, background daily push at 6am
+- HealthKit receiver expanded to handle Withings, Dexcom G6/G7, RingCon data
+
+**Performance improvements:**
+- HNSW k-multiplier reduced 100x→20x (5x faster source-filtered recalls)
+- Memory server: 4 parallel Redis ingest workers (was 1)
+- Embed timeout: 30s (was unbounded)
+- Email ingest: 4 workers/50 batch (was 8/100)
+- Calendar alerts: 60m interval (was 30m)
+- Early AM cron jobs staggered across 2-5:30am
+
+**Security:**
+- HealthKit receiver bound to 0.0.0.0 (required for iPhone WiFi) with endpoint-level access control
+- Slack bot token updated with `files:read` scope for image downloads
+
+**Apps:**
+- NovaControl v1.2.0 build 4: service start/stop/restart with live per-service progress in Nova tab
+- NovaHealth v1.0.0: iPhone HealthKit bridge, deployed to Jordan's iPhone
+
+**Stats: 22 commits, 8 new scripts, 5,000+ lines of new code, memory count 1,272,000+**
 
 ### Apr 15-17, 2026 -- Subagent Framework + Enterprise Hardening + Massive Knowledge Ingest
 
