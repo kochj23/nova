@@ -49,45 +49,45 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 Nova checks her own 1.25 million memories **before** anything else. Always. Her lived experience comes first — LLM training data, web searches, and cloud APIs are fallbacks, not defaults.
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                    QUERY RESOLUTION ORDER                         │
-│                 (nova_memory_first.py middleware)                 │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  User asks: "What raves do you remember from 2002?"              │
-│                          │                                       │
-│                          ▼                                       │
-│  ┌─ 1. CLASSIFY QUERY ────────────────────────────────────────┐ │
-│  │  Pattern match → "rave" + "2002" → music/rave + email      │ │
-│  │  Sources: music, email_archive, socal_rave, music_history   │ │
-│  └────────────────────────────────────────────────┬───────────┘ │
-│                                                   ▼             │
-│  ┌─ 2. MEMORY RECALL (vector similarity) ─────────────────────┐ │
-│  │  /recall?q=rave+2002&source=email_archive → SCR emails     │ │
-│  │  /recall?q=rave+2002&source=music → Devo, jungle, raves    │ │
-│  │  Found 8 results → USE THESE                               │ │
-│  └────────────────────────────────────────────────┬───────────┘ │
-│                                                   ▼             │
-│  ┌─ 3. MEMORY SEARCH (text keywords) ────────────────────────┐ │
-│  │  /search?q=socal-raves+2002 → additional matches          │ │
-│  │  Used for names, exact phrases, UIDs                       │ │
-│  └────────────────────────────────────────────────┬───────────┘ │
-│                                                   ▼             │
-│  ┌─ 4. LOCAL LLM ────────────────────────────────────────────┐ │
-│  │  If memory has nothing → reason from what Nova knows       │ │
-│  │  Intent router picks the right model for the task          │ │
-│  └────────────────────────────────────────────────┬───────────┘ │
-│                                                   ▼             │
-│  ┌─ 5. WEB SEARCH ───────────────────────────────────────────┐ │
-│  │  Only if memory AND local LLM have nothing                 │ │
-│  │  DuckDuckGo or Playwright browser automation               │ │
-│  └────────────────────────────────────────────────┬───────────┘ │
-│                                                   ▼             │
-│  ┌─ 6. CLOUD ────────────────────────────────────────────────┐ │
-│  │  NEVER for private data. Only for conversation.            │ │
-│  │  Health, email, financial → hard-fail if local is down.    │ │
-│  └────────────────────────────────────────────────────────────┘ │
-└──────────────────────────────────────────────────────────────────┘
++------------------------------------------------------------------+
+|                    QUERY RESOLUTION ORDER                         |
+|                 (nova_memory_first.py middleware)                 |
++------------------------------------------------------------------+
+|                                                                  |
+|  User asks: "What raves do you remember from 2002?"              |
+|                          |                                       |
+|                          v                                       |
+|  +- 1. CLASSIFY QUERY ----------------------------------------+ |
+|  |  Pattern match → "rave" + "2002" → music/rave + email      | |
+|  |  Sources: music, email_archive, socal_rave, music_history   | |
+|  +------------------------------------------------+-----------+ |
+|                                                   v             |
+|  +- 2. MEMORY RECALL (vector similarity) ---------------------+ |
+|  |  /recall?q=rave+2002&source=email_archive → SCR emails     | |
+|  |  /recall?q=rave+2002&source=music → Devo, jungle, raves    | |
+|  |  Found 8 results → USE THESE                               | |
+|  +------------------------------------------------+-----------+ |
+|                                                   v             |
+|  +- 3. MEMORY SEARCH (text keywords) ------------------------+ |
+|  |  /search?q=socal-raves+2002 → additional matches          | |
+|  |  Used for names, exact phrases, UIDs                       | |
+|  +------------------------------------------------+-----------+ |
+|                                                   v             |
+|  +- 4. LOCAL LLM --------------------------------------------+ |
+|  |  If memory has nothing → reason from what Nova knows       | |
+|  |  Intent router picks the right model for the task          | |
+|  +------------------------------------------------+-----------+ |
+|                                                   v             |
+|  +- 5. WEB SEARCH -------------------------------------------+ |
+|  |  Only if memory AND local LLM have nothing                 | |
+|  |  DuckDuckGo or Playwright browser automation               | |
+|  +------------------------------------------------+-----------+ |
+|                                                   v             |
+|  +- 6. CLOUD ------------------------------------------------+ |
+|  |  NEVER for private data. Only for conversation.            | |
+|  |  Health, email, financial → hard-fail if local is down.    | |
+|  +------------------------------------------------------------+ |
++------------------------------------------------------------------+
 ```
 
 **Source classification** (19 categories, automatic):
@@ -123,105 +123,105 @@ Jordan never has to say "from your memories" — Nova checks automatically.
 ## System Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                          NOVA — Unified Architecture                        │
-│                     M4 Mac Studio, Burbank CA (loopback)                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                             │
-│   COMMUNICATION LAYER                                                       │
-│   ┌──────────┐  ┌──────────┐  ┌──────────────┐  ┌──────────────────┐      │
-│   │  Slack    │  │ iMessage │  │ Email (IMAP) │  │ Herd Mail (SMTP) │      │
-│   │ socket   │  │ Messages │  │ nova@digital │  │ haiku + memory   │      │
-│   │ mode     │  │ .app     │  │ noise.net    │  │ fragment per msg  │      │
-│   └────┬─────┘  └────┬─────┘  └──────┬───────┘  └───────┬──────────┘      │
-│        └──────────┬───┴───────────────┴──────────────────┘                  │
-│                   ▼                                                          │
-│   ┌─────────────────────────────────────────────────────────────────┐      │
-│   │              OpenClaw Gateway (ws://127.0.0.1:18789)             │      │
-│   │                                                                  │      │
-│   │   Agent: main          Session: agent:main:main                  │      │
-│   │   Cron engine: 36 jobs Slack: socket mode (bidirectional)        │      │
-│   │   Timeout: 1200s       Compaction: reserve 20K tokens            │      │
-│   └──────────────────────────────┬──────────────────────────────────┘      │
-│                                  │                                          │
-│          ┌───────────────────────┼───────────────────────┐                  │
-│          ▼                       ▼                       ▼                  │
-│   ┌──────────────┐  ┌────────────────────┐  ┌───────────────────┐          │
-│   │Intent Router │  │   114+ Scripts      │  │  Exec Approvals   │          │
-│   │nova_intent_  │  │   (Python / Bash)   │  │  osascript, ~/    │          │
-│   │router.py     │  │   + 7 Subagents     │  │  .openclaw/scripts│          │
-│   │              │  │  Autonomous email    │  └───────────────────┘          │
-│   │ 67+ intents  │  │  Face recognition   │                                │
-│   │ 4 privacy    │  │  Sky photography    │                                │
-│   │   tiers      │  │  Health monitoring  │                                │
-│   │              │  │  Financial intel    │                                │
-│   │ CLOUD: 5     │  │  Calendar events    │                                │
-│   │ PRIVATE: 20  │  │  Browser automation │                                │
-│   │ SENSITIVE: 6 │  │  Package tracking   │                                │
-│   │ LOCAL: 40+   │  │  Journal & wellbeing│                                │
-│   └──────┬───────┘  └────────────────────┘                                 │
-│          │                                                                  │
-│   ┌──────┴──────────────────────────────────────────────────────────┐      │
-│   │                     MODEL ROUTING                                │      │
-│   │                                                                  │      │
-│   │  ┌─ CLOUD (OpenRouter) — Slack only ────────────────────────┐    │      │
-│   │  │  qwen/qwen3-235b-a22b-2507 (#nova-chat + Jordan DM)    │    │      │
-│   │  └─────────────────────────────────────────────────────────┘    │      │
-│   │                                                                  │      │
-│   │  ┌─ LOCAL (never leaves machine) ──────────────────────────┐    │      │
-│   │  │  MLX qwen2.5-32B    port 5050   general (25-30 tok/s)  │    │      │
-│   │  │  qwen3-coder:30b    port 11434  code (64-88 tok/s)     │    │      │
-│   │  │  deepseek-r1:8b     port 11434  reasoning (chain-of-t) │    │      │
-│   │  │  qwen3-vl:4b        port 11434  vision (multimodal)    │    │      │
-│   │  │  nomic-embed-text   port 11434  embeddings (768 dims)  │    │      │
-│   │  └─────────────────────────────────────────────────────────┘    │      │
-│   └──────────────────────────────────────────────────────────────────┘      │
-│                                                                             │
-│   DATA LAYER                                                                │
-│   ┌──────────────────────────────────────────────────────────────────┐      │
-│   │              Vector Memory Server (port 18790)                    │      │
-│   │                                                                   │      │
-│   │  Engine:     PostgreSQL 17 + pgvector 0.8.2                      │      │
-│   │  Index:      HNSW (m=16, ef=64, cosine) — recall <5ms           │      │
-│   │  Embeddings: nomic-embed-text via Ollama (768 dimensions)        │      │
-│   │  Queue:      Redis 8.6.2 async write (bulk ingest at 8ms)       │      │
-│   │  Count:      1,272,000+ memories across 75+ source domains             │      │
-│   │  Backup:     Nightly pg_dump to NAS (compressed)                   │      │
-│   │  Endpoints:  /remember  /recall  /search  /random  /health       │      │
-│   │                                                                   │      │
-│   │  Top sources:                                                     │      │
-│   │    email_archive: 1,007,970 imessage: 66,253                     │      │
-│   │    music/music_history: 60,294  vehicles: 23,899                 │      │
-│   │    world_factbook: 23,930   document: 8,902                      │      │
-│   │    home_repair: 3,293       comedy: 2,083                        │      │
-│   └──────────────────────────────────────────────────────────────────┘      │
-│                                                                             │
-│   ┌──────────────────────────────────────────────────────────────────┐      │
-│   │              Local App APIs (ports 37421-37449)                    │      │
-│   │                                                                   │      │
-│   │  37421 OneOnOne      37432 HomekitControl  37443 TopGUI          │      │
-│   │  37422 MLXCode       37433 JiraSummary     37444 URL-Analysis    │      │
-│   │  37423 NMAPScanner   37435 Icon Creator    37445 ytdlp-gui      │      │
-│   │  37424 RsyncGUI      37436 NewsMobile      37446 DotSync        │      │
-│   │  37425 AIStudio      37437 NewsTV          37447-37449 (private) │      │
-│   │  37426 Blompie       37438 News Summary                         │      │
-│   │  37427 BlompieTV     37439 Mail Summary                         │      │
-│   │  37428 DashboardScr  37440 PatreonTV                             │      │
-│   │  37429 DashboardTV                                               │      │
-│   │  37430 ExcelExplorer   All loopback-only (127.0.0.1)            │      │
-│   │  37431 GTNW            macOS: no auth required                   │      │
-│   │                        iOS/tvOS: X-Nova-Token header             │      │
-│   └──────────────────────────────────────────────────────────────────┘      │
-│                                                                             │
-│   INFRASTRUCTURE                                                            │
-│   ┌──────────────────────────────────────────────────────────────────┐      │
-│   │  14 RTSP cameras (UniFi, 192.168.1.9:7441)                       │      │
-│   │  SwarmUI image gen (port 7801, Juggernaut X / Flux)              │      │
-│   │  iPhone HealthKit → iCloud Drive → Nova/health/                  │      │
-│   │  NAS backup: /Volumes/NAS/ (daily 2am, 30-day retention)        │      │
-│   │  Sky archive: /Volumes/Data/nova-sky/ (golden hour frames)       │      │
-│   └──────────────────────────────────────────────────────────────────┘      │
-└─────────────────────────────────────────────────────────────────────────────┘
++-----------------------------------------------------------------------------+
+|                          NOVA — Unified Architecture                        |
+|                     M4 Mac Studio, Burbank CA (loopback)                    |
++-----------------------------------------------------------------------------+
+|                                                                             |
+|   COMMUNICATION LAYER                                                       |
+|   +----------+  +----------+  +--------------+  +------------------+      |
+|   |  Slack    |  | iMessage |  | Email (IMAP) |  | Herd Mail (SMTP) |      |
+|   | socket   |  | Messages |  | nova@digital |  | haiku + memory   |      |
+|   | mode     |  | .app     |  | noise.net    |  | fragment per msg  |      |
+|   +----+-----+  +----+-----+  +------+-------+  +-------+----------+      |
+|        +----------+---+---------------+------------------+                  |
+|                   v                                                          |
+|   +-----------------------------------------------------------------+      |
+|   |              OpenClaw Gateway (ws://127.0.0.1:18789)             |      |
+|   |                                                                  |      |
+|   |   Agent: main          Session: agent:main:main                  |      |
+|   |   Cron engine: 36 jobs Slack: socket mode (bidirectional)        |      |
+|   |   Timeout: 1200s       Compaction: reserve 20K tokens            |      |
+|   +------------------------------+----------------------------------+      |
+|                                  |                                          |
+|          +-----------------------+-----------------------+                  |
+|          v                       v                       v                  |
+|   +--------------+  +--------------------+  +-------------------+          |
+|   |Intent Router |  |   114+ Scripts      |  |  Exec Approvals   |          |
+|   |nova_intent_  |  |   (Python / Bash)   |  |  osascript, ~/    |          |
+|   |router.py     |  |   + 7 Subagents     |  |  .openclaw/scripts|          |
+|   |              |  |  Autonomous email    |  +-------------------+          |
+|   | 67+ intents  |  |  Face recognition   |                                |
+|   | 4 privacy    |  |  Sky photography    |                                |
+|   |   tiers      |  |  Health monitoring  |                                |
+|   |              |  |  Financial intel    |                                |
+|   | CLOUD: 5     |  |  Calendar events    |                                |
+|   | PRIVATE: 20  |  |  Browser automation |                                |
+|   | SENSITIVE: 6 |  |  Package tracking   |                                |
+|   | LOCAL: 40+   |  |  Journal & wellbeing|                                |
+|   +------+-------+  +--------------------+                                 |
+|          |                                                                  |
+|   +------+----------------------------------------------------------+      |
+|   |                     MODEL ROUTING                                |      |
+|   |                                                                  |      |
+|   |  +- CLOUD (OpenRouter) — Slack only ------------------------+    |      |
+|   |  |  qwen/qwen3-235b-a22b-2507 (#nova-chat + Jordan DM)    |    |      |
+|   |  +---------------------------------------------------------+    |      |
+|   |                                                                  |      |
+|   |  +- LOCAL (never leaves machine) --------------------------+    |      |
+|   |  |  MLX qwen2.5-32B    port 5050   general (25-30 tok/s)  |    |      |
+|   |  |  qwen3-coder:30b    port 11434  code (64-88 tok/s)     |    |      |
+|   |  |  deepseek-r1:8b     port 11434  reasoning (chain-of-t) |    |      |
+|   |  |  qwen3-vl:4b        port 11434  vision (multimodal)    |    |      |
+|   |  |  nomic-embed-text   port 11434  embeddings (768 dims)  |    |      |
+|   |  +---------------------------------------------------------+    |      |
+|   +------------------------------------------------------------------+      |
+|                                                                             |
+|   DATA LAYER                                                                |
+|   +------------------------------------------------------------------+      |
+|   |              Vector Memory Server (port 18790)                    |      |
+|   |                                                                   |      |
+|   |  Engine:     PostgreSQL 17 + pgvector 0.8.2                      |      |
+|   |  Index:      HNSW (m=16, ef=64, cosine) — recall <5ms           |      |
+|   |  Embeddings: nomic-embed-text via Ollama (768 dimensions)        |      |
+|   |  Queue:      Redis 8.6.2 async write (bulk ingest at 8ms)       |      |
+|   |  Count:      1,272,000+ memories across 75+ source domains             |      |
+|   |  Backup:     Nightly pg_dump to NAS (compressed)                   |      |
+|   |  Endpoints:  /remember  /recall  /search  /random  /health       |      |
+|   |                                                                   |      |
+|   |  Top sources:                                                     |      |
+|   |    email_archive: 1,007,970 imessage: 66,253                     |      |
+|   |    music/music_history: 60,294  vehicles: 23,899                 |      |
+|   |    world_factbook: 23,930   document: 8,902                      |      |
+|   |    home_repair: 3,293       comedy: 2,083                        |      |
+|   +------------------------------------------------------------------+      |
+|                                                                             |
+|   +------------------------------------------------------------------+      |
+|   |              Local App APIs (ports 37421-37449)                    |      |
+|   |                                                                   |      |
+|   |  37421 OneOnOne      37432 HomekitControl  37443 TopGUI          |      |
+|   |  37422 MLXCode       37433 JiraSummary     37444 URL-Analysis    |      |
+|   |  37423 NMAPScanner   37435 Icon Creator    37445 ytdlp-gui      |      |
+|   |  37424 RsyncGUI      37436 NewsMobile      37446 DotSync        |      |
+|   |  37425 AIStudio      37437 NewsTV          37447-37449 (private) |      |
+|   |  37426 Blompie       37438 News Summary                         |      |
+|   |  37427 BlompieTV     37439 Mail Summary                         |      |
+|   |  37428 DashboardScr  37440 PatreonTV                             |      |
+|   |  37429 DashboardTV                                               |      |
+|   |  37430 ExcelExplorer   All loopback-only (127.0.0.1)            |      |
+|   |  37431 GTNW            macOS: no auth required                   |      |
+|   |                        iOS/tvOS: X-Nova-Token header             |      |
+|   +------------------------------------------------------------------+      |
+|                                                                             |
+|   INFRASTRUCTURE                                                            |
+|   +------------------------------------------------------------------+      |
+|   |  14 RTSP cameras (UniFi, 192.168.1.9:7441)                       |      |
+|   |  SwarmUI image gen (port 7801, Juggernaut X / Flux)              |      |
+|   |  iPhone HealthKit → iCloud Drive → Nova/health/                  |      |
+|   |  NAS backup: /Volumes/NAS/ (daily 2am, 30-day retention)        |      |
+|   |  Sky archive: /Volumes/Data/nova-sky/ (golden hour frames)       |      |
+|   +------------------------------------------------------------------+      |
++-----------------------------------------------------------------------------+
 ```
 
 ---
@@ -232,92 +232,92 @@ This is a unified monorepo. Previously split across 4 repos (nova, Nova-NextGen,
 
 ```
 ~/.openclaw/
-├── scripts/                 94+ Python/Bash scripts (Nova's capabilities)
-│   ├── nova_config.py           Central config — secrets from macOS Keychain
-│   ├── nova_intent_router.py    Privacy-first AI routing (67+ intents)
-│   ├── nova_subagent.py         Subagent framework (Redis pub/sub + registry)
-│   ├── nova_agent_analyst.py    Analyst subagent (deepseek-r1:8b)
-│   ├── nova_agent_coder.py      Coder subagent (qwen3-coder:30b)
-│   ├── nova_agent_lookout.py    Lookout subagent (qwen3-vl:4b)
-│   ├── nova_agent_librarian.py  Librarian subagent (MLX Qwen2.5-32B)
-│   ├── nova_agent_gardener.py   Memory Gardener (nightly, flag-and-report)
-│   ├── nova_agent_sentinel.py   Security Sentinel (persistent)
-│   ├── nova_agent_briefer.py    Proactive Briefer (7 AM daily)
-│   ├── nova_logger.py           Centralized structured JSON logging
-│   ├── nova_load_secrets.sh     Keychain → env vars loader for all services
-│   ├── nova_pg_backup.sh        Nightly Postgres backup (local + NAS)
-│   ├── test_smoke.py            Smoke tests for all 114+ scripts
-│   ├── nova_morning_brief.py    7am daily briefing
-│   ├── nova_nightly_report.py   11pm full day digest
-│   ├── nova_mail_agent.py       Autonomous email with haiku
-│   ├── nova_memory_first.py     Memory-first middleware (13 source categories)
-│   ├── nova_face_recognition.py Local face recognition (dlib)
-│   ├── nova_sky_watcher.py      Golden hour photography
-│   ├── nova_health_monitor.py   Apple Health → vector memory
-│   ├── nova_finance_monitor.py  Financial alerts + analysis
-│   ├── nova_app_watchdog.py     Auto-restart critical apps
-│   ├── data/
-│   │   └── demonology_facts.jsonl  205 facts across 20 world traditions
-│   └── ... (80+ more)
-│
-├── gateway/                 AI Gateway (formerly Nova-NextGen)
-│   ├── nova_gateway/
-│   │   ├── main.py              FastAPI/Uvicorn gateway server
-│   │   ├── router.py            Task → backend routing with keywords
-│   │   ├── models.py            Request/response schemas
-│   │   ├── config.py            YAML config loader
-│   │   ├── backends/            7 backend implementations
-│   │   │   ├── ollama.py            Ollama (qwen3-coder, deepseek-r1, qwen3-vl)
-│   │   │   ├── mlxchat.py           MLX Chat (qwen2.5-32B via Apple Neural Engine)
-│   │   │   ├── mlxcode.py           MLX Code (coding tasks)
-│   │   │   ├── openwebui.py         OpenWebUI (RAG pipeline)
-│   │   │   ├── tinychat.py          TinyChat (lightweight chat)
-│   │   │   ├── swarmui.py           SwarmUI (image generation)
-│   │   │   └── comfyui.py           ComfyUI (advanced image workflows)
-│   │   ├── context/
-│   │   │   └── store.py             Cross-request context bus
-│   │   └── validation/
-│   │       └── consensus.py         Multi-model consensus scoring
-│   ├── config.yaml              Routing rules, backend config
-│   ├── AIService.swift          Swift client library
-│   ├── requirements.txt         Python dependencies
-│   ├── install.sh               Setup script
-│   └── com.nova.gateway.plist   LaunchAgent config
-│
-├── apps/                    Native macOS applications
-│   ├── Nova-Desktop/            Monitoring dashboard (SwiftUI)
-│   │   ├── Nova-Desktop/
-│   │   │   ├── Services/            NovaMonitor, ServiceController
-│   │   │   ├── Views/               System, AI, Apps, GitHub, OpenClaw sections
-│   │   │   └── API/                 NovaAPIServer (port 37450)
-│   │   └── Nova-Desktop.xcodeproj
-│   │
-│   └── NovaControl/             Unified API (SwiftUI)
-│       ├── NovaControl/
-│       │   ├── Services/
-│       │   │   ├── DataManager.swift     Aggregates all readers
-│       │   │   ├── WorkflowEngine.swift  Automation workflows
-│       │   │   ├── NovaAPIServer.swift   Unified API (port 37400)
-│       │   │   └── Readers/             7 service readers
-│       │   └── Views/
-│       └── NovaControl.xcodeproj
-│
-├── workspace/               Runtime data (mostly gitignored)
-│   ├── memory/                  Daily logs (YYYY-MM-DD.md)
-│   ├── journal/                 Monthly journal files
-│   ├── faces/                   Face recognition database
-│   │   ├── known/<name>/            Photos of enrolled people
-│   │   └── unknown/                 Unidentified face crops
-│   ├── herd/                    Herd member profiles
-│   ├── browser/                 Screenshots, PDFs, monitor state
-│   ├── TOOLS.md                 Nova's local cheat sheet
-│   ├── IDENTITY.md              Nova's identity document
-│   └── SOUL.md                  Nova's values and personality
-│
-├── openclaw.json            Gateway config (gitignored — contains tokens)
-├── .gitignore
-├── LICENSE                  MIT
-└── README.md                This file
++-- scripts/                 94+ Python/Bash scripts (Nova's capabilities)
+|   +-- nova_config.py           Central config — secrets from macOS Keychain
+|   +-- nova_intent_router.py    Privacy-first AI routing (67+ intents)
+|   +-- nova_subagent.py         Subagent framework (Redis pub/sub + registry)
+|   +-- nova_agent_analyst.py    Analyst subagent (deepseek-r1:8b)
+|   +-- nova_agent_coder.py      Coder subagent (qwen3-coder:30b)
+|   +-- nova_agent_lookout.py    Lookout subagent (qwen3-vl:4b)
+|   +-- nova_agent_librarian.py  Librarian subagent (MLX Qwen2.5-32B)
+|   +-- nova_agent_gardener.py   Memory Gardener (nightly, flag-and-report)
+|   +-- nova_agent_sentinel.py   Security Sentinel (persistent)
+|   +-- nova_agent_briefer.py    Proactive Briefer (7 AM daily)
+|   +-- nova_logger.py           Centralized structured JSON logging
+|   +-- nova_load_secrets.sh     Keychain → env vars loader for all services
+|   +-- nova_pg_backup.sh        Nightly Postgres backup (local + NAS)
+|   +-- test_smoke.py            Smoke tests for all 114+ scripts
+|   +-- nova_morning_brief.py    7am daily briefing
+|   +-- nova_nightly_report.py   11pm full day digest
+|   +-- nova_mail_agent.py       Autonomous email with haiku
+|   +-- nova_memory_first.py     Memory-first middleware (13 source categories)
+|   +-- nova_face_recognition.py Local face recognition (dlib)
+|   +-- nova_sky_watcher.py      Golden hour photography
+|   +-- nova_health_monitor.py   Apple Health → vector memory
+|   +-- nova_finance_monitor.py  Financial alerts + analysis
+|   +-- nova_app_watchdog.py     Auto-restart critical apps
+|   +-- data/
+|   |   +-- demonology_facts.jsonl  205 facts across 20 world traditions
+|   +-- ... (80+ more)
+|
++-- gateway/                 AI Gateway (formerly Nova-NextGen)
+|   +-- nova_gateway/
+|   |   +-- main.py              FastAPI/Uvicorn gateway server
+|   |   +-- router.py            Task → backend routing with keywords
+|   |   +-- models.py            Request/response schemas
+|   |   +-- config.py            YAML config loader
+|   |   +-- backends/            7 backend implementations
+|   |   |   +-- ollama.py            Ollama (qwen3-coder, deepseek-r1, qwen3-vl)
+|   |   |   +-- mlxchat.py           MLX Chat (qwen2.5-32B via Apple Neural Engine)
+|   |   |   +-- mlxcode.py           MLX Code (coding tasks)
+|   |   |   +-- openwebui.py         OpenWebUI (RAG pipeline)
+|   |   |   +-- tinychat.py          TinyChat (lightweight chat)
+|   |   |   +-- swarmui.py           SwarmUI (image generation)
+|   |   |   +-- comfyui.py           ComfyUI (advanced image workflows)
+|   |   +-- context/
+|   |   |   +-- store.py             Cross-request context bus
+|   |   +-- validation/
+|   |       +-- consensus.py         Multi-model consensus scoring
+|   +-- config.yaml              Routing rules, backend config
+|   +-- AIService.swift          Swift client library
+|   +-- requirements.txt         Python dependencies
+|   +-- install.sh               Setup script
+|   +-- com.nova.gateway.plist   LaunchAgent config
+|
++-- apps/                    Native macOS applications
+|   +-- Nova-Desktop/            Monitoring dashboard (SwiftUI)
+|   |   +-- Nova-Desktop/
+|   |   |   +-- Services/            NovaMonitor, ServiceController
+|   |   |   +-- Views/               System, AI, Apps, GitHub, OpenClaw sections
+|   |   |   +-- API/                 NovaAPIServer (port 37450)
+|   |   +-- Nova-Desktop.xcodeproj
+|   |
+|   +-- NovaControl/             Unified API (SwiftUI)
+|       +-- NovaControl/
+|       |   +-- Services/
+|       |   |   +-- DataManager.swift     Aggregates all readers
+|       |   |   +-- WorkflowEngine.swift  Automation workflows
+|       |   |   +-- NovaAPIServer.swift   Unified API (port 37400)
+|       |   |   +-- Readers/             7 service readers
+|       |   +-- Views/
+|       +-- NovaControl.xcodeproj
+|
++-- workspace/               Runtime data (mostly gitignored)
+|   +-- memory/                  Daily logs (YYYY-MM-DD.md)
+|   +-- journal/                 Monthly journal files
+|   +-- faces/                   Face recognition database
+|   |   +-- known/<name>/            Photos of enrolled people
+|   |   +-- unknown/                 Unidentified face crops
+|   +-- herd/                    Herd member profiles
+|   +-- browser/                 Screenshots, PDFs, monitor state
+|   +-- TOOLS.md                 Nova's local cheat sheet
+|   +-- IDENTITY.md              Nova's identity document
+|   +-- SOUL.md                  Nova's values and personality
+|
++-- openclaw.json            Gateway config (gitignored — contains tokens)
++-- .gitignore
++-- LICENSE                  MIT
++-- README.md                This file
 ```
 
 ---
@@ -325,59 +325,59 @@ This is a unified monorepo. Previously split across 4 repos (nova, Nova-NextGen,
 ## Privacy Model
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                    INTENT ROUTING — 4 Privacy Tiers                   │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  TIER 1: CLOUD (OpenRouter) ─── 5 intents                           │
-│  ┌────────────────────────────────────────────────────────────┐     │
-│  │  conversation   realtime_chat   slack_reply                │     │
-│  │  slack_post     herd_outreach                              │     │
-│  │                                                            │     │
-│  │  Nova's VOICE only. No personal data. No email content.   │     │
-│  │  No health data. No memory queries. Just conversation.     │     │
-│  └────────────────────────────────────────────────────────────┘     │
-│                                                                      │
-│  TIER 2: PRIVATE (local, HARD-FAIL) ─── 20 intents                  │
-│  ┌────────────────────────────────────────────────────────────┐     │
-│  │  HEALTH     health_query  health_summary  health_trend    │     │
-│  │             health_alert  health_ingest                    │     │
-│  │                                                            │     │
-│  │  MEMORY     memory_recall  memory_query  personal_memory  │     │
-│  │             memory_write   memory_consolidation            │     │
-│  │                                                            │     │
-│  │  EMAIL      email_recall  email_memory  email_reply       │     │
-│  │             summarize_email_thread                         │     │
-│  │                                                            │     │
-│  │  IDENTITY   face_recognition  face_identify               │     │
-│  │             imessage_read     imessage_compose             │     │
-│  │                                                            │     │
-│  │  If local models are DOWN, these FAIL. Never cloud.       │     │
-│  │  No fallback. No exceptions. This is the firewall.        │     │
-│  └────────────────────────────────────────────────────────────┘     │
-│                                                                      │
-│  TIER 3: SENSITIVE (local, soft-fail) ─── 6 intents                  │
-│  ┌────────────────────────────────────────────────────────────┐     │
-│  │  homekit_summary  camera_analysis  vision_analysis        │     │
-│  │  slack_summary    log_analysis     relationship_tracker   │     │
-│  └────────────────────────────────────────────────────────────┘     │
-│                                                                      │
-│  TIER 4: LOCAL (normal) ─── 40+ intents                              │
-│  ┌────────────────────────────────────────────────────────────┐     │
-│  │  Code: code_review, code_generation, swift_code, debug    │     │
-│  │  Creative: dream_journal, creative_writing, haiku         │     │
-│  │  Analysis: architecture, security_analysis, logic_check   │     │
-│  │  Reports: nightly_report, morning_brief, weekly_review    │     │
-│  │  Data: text_summary, data_extraction, classify            │     │
-│  │  Vision: image_describe                                   │     │
-│  │  RAG: document_query, document_summary                    │     │
-│  │                                                            │     │
-│  │  No cloud fallback. Everything stays on-device.           │     │
-│  └────────────────────────────────────────────────────────────┘     │
-│                                                                      │
-│  Temperature control per intent (0.20 for security → 0.92 for       │
-│  creative writing). Not one-size-fits-all.                           │
-└──────────────────────────────────────────────────────────────────────┘
++----------------------------------------------------------------------+
+|                    INTENT ROUTING — 4 Privacy Tiers                   |
++----------------------------------------------------------------------+
+|                                                                      |
+|  TIER 1: CLOUD (OpenRouter) --- 5 intents                           |
+|  +------------------------------------------------------------+     |
+|  |  conversation   realtime_chat   slack_reply                |     |
+|  |  slack_post     herd_outreach                              |     |
+|  |                                                            |     |
+|  |  Nova's VOICE only. No personal data. No email content.   |     |
+|  |  No health data. No memory queries. Just conversation.     |     |
+|  +------------------------------------------------------------+     |
+|                                                                      |
+|  TIER 2: PRIVATE (local, HARD-FAIL) --- 20 intents                  |
+|  +------------------------------------------------------------+     |
+|  |  HEALTH     health_query  health_summary  health_trend    |     |
+|  |             health_alert  health_ingest                    |     |
+|  |                                                            |     |
+|  |  MEMORY     memory_recall  memory_query  personal_memory  |     |
+|  |             memory_write   memory_consolidation            |     |
+|  |                                                            |     |
+|  |  EMAIL      email_recall  email_memory  email_reply       |     |
+|  |             summarize_email_thread                         |     |
+|  |                                                            |     |
+|  |  IDENTITY   face_recognition  face_identify               |     |
+|  |             imessage_read     imessage_compose             |     |
+|  |                                                            |     |
+|  |  If local models are DOWN, these FAIL. Never cloud.       |     |
+|  |  No fallback. No exceptions. This is the firewall.        |     |
+|  +------------------------------------------------------------+     |
+|                                                                      |
+|  TIER 3: SENSITIVE (local, soft-fail) --- 6 intents                  |
+|  +------------------------------------------------------------+     |
+|  |  homekit_summary  camera_analysis  vision_analysis        |     |
+|  |  slack_summary    log_analysis     relationship_tracker   |     |
+|  +------------------------------------------------------------+     |
+|                                                                      |
+|  TIER 4: LOCAL (normal) --- 40+ intents                              |
+|  +------------------------------------------------------------+     |
+|  |  Code: code_review, code_generation, swift_code, debug    |     |
+|  |  Creative: dream_journal, creative_writing, haiku         |     |
+|  |  Analysis: architecture, security_analysis, logic_check   |     |
+|  |  Reports: nightly_report, morning_brief, weekly_review    |     |
+|  |  Data: text_summary, data_extraction, classify            |     |
+|  |  Vision: image_describe                                   |     |
+|  |  RAG: document_query, document_summary                    |     |
+|  |                                                            |     |
+|  |  No cloud fallback. Everything stays on-device.           |     |
+|  +------------------------------------------------------------+     |
+|                                                                      |
+|  Temperature control per intent (0.20 for security → 0.92 for       |
+|  creative writing). Not one-size-fits-all.                           |
++----------------------------------------------------------------------+
 ```
 
 ---
@@ -385,40 +385,40 @@ This is a unified monorepo. Previously split across 4 repos (nova, Nova-NextGen,
 ## Data Flow
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                          INPUT SOURCES                               │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌───────────────────┐  │
-│  │ 14 RTSP  │  │ iPhone   │  │ 5 Email  │  │ 15 Calendar       │  │
-│  │ Cameras  │  │ HealthKit│  │ Accounts │  │ Accounts          │  │
-│  │ (UniFi)  │  │ → iCloud │  │ (IMAP)   │  │ (EventKit)        │  │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └─────┬─────────────┘  │
-│       │              │             │               │                │
-│       ▼              ▼             ▼               ▼                │
-│  ┌─────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────────┐   │
-│  │ Face    │  │ Health   │  │ Mail     │  │ Calendar         │   │
-│  │ Recog   │  │ Monitor  │  │ Agent    │  │ Alerts           │   │
-│  │ Sky     │  │ Health   │  │ Finance  │  │                  │   │
-│  │ Watch   │  │ Intel    │  │ Monitor  │  │ morning brief    │   │
-│  │ Home    │  │          │  │ Package  │  │ meeting DM       │   │
-│  │ Watch   │  │ (PRIVATE)│  │ Tracker  │  │ cross-reference  │   │
-│  └────┬────┘  └────┬─────┘  └────┬─────┘  └──────┬───────────┘   │
-│       │             │             │                │               │
-└───────┼─────────────┼─────────────┼────────────────┼───────────────┘
-        │             │             │                │
-        └──────┬──────┴──────┬──────┴────────────────┘
-               ▼             ▼
-┌──────────────────┐  ┌────────────────┐  ┌─────────────────────┐
-│  Vector Memory   │  │    Slack       │  │  Awareness Layer    │
-│  1,272,000+ mem  │  │  #nova-chat    │  │                     │
-│  75+ sources     │  │  Jordan DM     │  │  Context bridge     │
-│  <5ms recall     │◄─┤  (urgent only) │  │  Proactive peace    │
-│                  │  │               │  │  Gentle explorer    │
-│  /recall         │  │  Herd outreach │  │  Journal            │
-│  /search         │  │  Dream journal │  │  App suggestions    │
-│  /random         │  │  Sky photos    │  │  Quick capture      │
-└──────────────────┘  └────────────────┘  └─────────────────────┘
++---------------------------------------------------------------------+
+|                          INPUT SOURCES                               |
++---------------------------------------------------------------------+
+|                                                                     |
+|  +----------+  +----------+  +----------+  +-------------------+  |
+|  | 14 RTSP  |  | iPhone   |  | 5 Email  |  | 15 Calendar       |  |
+|  | Cameras  |  | HealthKit|  | Accounts |  | Accounts          |  |
+|  | (UniFi)  |  | → iCloud |  | (IMAP)   |  | (EventKit)        |  |
+|  +----+-----+  +----+-----+  +----+-----+  +-----+-------------+  |
+|       |              |             |               |                |
+|       v              v             v               v                |
+|  +---------+  +----------+  +----------+  +------------------+   |
+|  | Face    |  | Health   |  | Mail     |  | Calendar         |   |
+|  | Recog   |  | Monitor  |  | Agent    |  | Alerts           |   |
+|  | Sky     |  | Health   |  | Finance  |  |                  |   |
+|  | Watch   |  | Intel    |  | Monitor  |  | morning brief    |   |
+|  | Home    |  |          |  | Package  |  | meeting DM       |   |
+|  | Watch   |  | (PRIVATE)|  | Tracker  |  | cross-reference  |   |
+|  +----+----+  +----+-----+  +----+-----+  +------+-----------+   |
+|       |             |             |                |               |
++-------+-------------+-------------+----------------+---------------+
+        |             |             |                |
+        +------+------+------+------+----------------+
+               v             v
++------------------+  +----------------+  +---------------------+
+|  Vector Memory   |  |    Slack       |  |  Awareness Layer    |
+|  1,272,000+ mem  |  |  #nova-chat    |  |                     |
+|  75+ sources     |  |  Jordan DM     |  |  Context bridge     |
+|  <5ms recall     |<-+  (urgent only) |  |  Proactive peace    |
+|                  |  |               |  |  Gentle explorer    |
+|  /recall         |  |  Herd outreach |  |  Journal            |
+|  /search         |  |  Dream journal |  |  App suggestions    |
+|  /random         |  |  Sky photos    |  |  Quick capture      |
++------------------+  +----------------+  +---------------------+
 ```
 
 ---
@@ -428,36 +428,36 @@ This is a unified monorepo. Previously split across 4 repos (nova, Nova-NextGen,
 The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly a separate repo (Nova-NextGen), now part of this monorepo.
 
 ```
-                         ┌───────────────┐
-                         │  Incoming Task │
-                         └───────┬───────┘
-                                 │
-                         ┌───────▼───────┐
-                         │    Router     │
-                         │  (keyword +   │
-                         │   task_type)  │
-                         └───────┬───────┘
-                                 │
-          ┌──────────┬───────────┼───────────┬──────────┐
-          ▼          ▼           ▼           ▼          ▼
-    ┌──────────┐┌─────────┐┌─────────┐┌─────────┐┌─────────┐
-    │  Ollama  ││MLX Chat ││MLX Code ││OpenWebUI││TinyChat │
-    │  :11434  ││  :5050  ││  :5050  ││  :3000  ││  :8000  │
-    │ code,    ││ general ││ coding  ││   RAG   ││  quick  │
-    │ reason,  ││ creative││ debug   ││  docs   ││  chat   │
-    │ vision   ││ reports ││ review  ││  search ││         │
-    └──────────┘└─────────┘└─────────┘└─────────┘└─────────┘
-          │                                            │
-          ├────────────────────┬───────────────────────┤
-          ▼                    ▼                        ▼
-    ┌──────────┐        ┌──────────┐             ┌──────────┐
-    │ SwarmUI  │        │ ComfyUI  │             │ Context  │
-    │  :7801   │        │  :8188   │             │   Bus    │
-    │  images  │        │ advanced │             │ (shared  │
-    │  (Flux,  │        │ workflows│             │  state)  │
-    │  Jugger- │        │          │             │          │
-    │  naut X) │        │          │             │          │
-    └──────────┘        └──────────┘             └──────────┘
+                         +---------------+
+                         |  Incoming Task |
+                         +-------+-------+
+                                 |
+                         +-------v-------+
+                         |    Router     |
+                         |  (keyword +   |
+                         |   task_type)  |
+                         +-------+-------+
+                                 |
+          +----------+-----------+-----------+----------+
+          v          v           v           v          v
+    +----------++---------++---------++---------++---------+
+    |  Ollama  ||MLX Chat ||MLX Code ||OpenWebUI||TinyChat |
+    |  :11434  ||  :5050  ||  :5050  ||  :3000  ||  :8000  |
+    | code,    || general || coding  ||   RAG   ||  quick  |
+    | reason,  || creative|| debug   ||  docs   ||  chat   |
+    | vision   || reports || review  ||  search ||         |
+    +----------++---------++---------++---------++---------+
+          |                                            |
+          +--------------------+-----------------------+
+          v                    v                        v
+    +----------+        +----------+             +----------+
+    | SwarmUI  |        | ComfyUI  |             | Context  |
+    |  :7801   |        |  :8188   |             |   Bus    |
+    |  images  |        | advanced |             | (shared  |
+    |  (Flux,  |        | workflows|             |  state)  |
+    |  Jugger- |        |          |             |          |
+    |  naut X) |        |          |             |          |
+    +----------+        +----------+             +----------+
 ```
 
 **API:** `http://127.0.0.1:34750`  
@@ -523,17 +523,17 @@ All health intents are **PRIVATE** -- hard-fail if local models are down. Never 
 
 ```
 iPhone HealthKit → Health Auto Export app → iCloud Drive/Nova/health/ → nova_health_monitor.py
-                                                                         │
-                                              ┌──────────────────────────┤
-                                              ▼                          ▼
-                                    ┌──────────────┐          ┌──────────────────┐
-                                    │Vector Memory │          │Health Intelligence│
-                                    │source:       │          │                  │
-                                    │apple_health  │          │ 5-day trends     │
-                                    └──────────────┘          │ life-health      │
-                                                              │ correlations     │
-                                                              │ proactive alerts │
-                                                              └──────────────────┘
+                                                                         |
+                                              +--------------------------+
+                                              v                          v
+                                    +--------------+          +------------------+
+                                    |Vector Memory |          |Health Intelligence|
+                                    |source:       |          |                  |
+                                    |apple_health  |          | 5-day trends     |
+                                    +--------------+          | life-health      |
+                                                              | correlations     |
+                                                              | proactive alerts |
+                                                              +------------------+
 ```
 
 - **Trend detection** -- 5-day rolling averages for HR, BP, HRV, SpO2, weight. Alerts on *patterns*, not single readings.
@@ -612,35 +612,35 @@ Full Playwright/Chromium headless control:
 A structured daily task/event/note tracking system inspired by the [Bujo CLI](https://github.com/jefflaplante/bujo), adapted for Nova's memory-first architecture.
 
 ```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Nova Bullet Journal                          │
-│                                                                 │
-│  ┌──────────┐  ┌──────────┐  ┌──────────┐  ┌──────────────┐   │
-│  │  Daily   │  │ Monthly  │  │  Future  │  │ Collections  │   │
-│  │  Log     │  │  Goals   │  │   Log    │  │              │   │
-│  │          │  │          │  │          │  │ birthdays    │   │
-│  │ tasks    │  │ goals    │  │ items by │  │ projects     │   │
-│  │ events   │  │ themes   │  │ target   │  │ bills        │   │
-│  │ notes    │  │ reflect  │  │ month    │  │ wish list    │   │
-│  └────┬─────┘  └────┬─────┘  └────┬─────┘  └──────────────┘   │
-│       │             │             │                             │
-│       └──────┬──────┴─────────────┘                             │
-│              ▼                                                   │
-│  ┌─────────────────────────────────────────────┐               │
-│  │  Stale Detection                            │               │
-│  │  • Tasks open > 5 days = STALE              │               │
-│  │  • Tasks migrated 3+ times = STUCK          │               │
-│  │  • Surfaced in morning brief + weekly review │               │
-│  └──────────────┬──────────────────────────────┘               │
-│                 │                                                │
-│       ┌─────────┼──────────┐                                    │
-│       ▼         ▼          ▼                                    │
-│  ┌────────┐ ┌────────┐ ┌──────────┐                            │
-│  │ Vector │ │ Slack  │ │   Git    │                            │
-│  │ Memory │ │ Digest │ │ History  │                            │
-│  │ (bujo) │ │ #notif │ │ per-write│                            │
-│  └────────┘ └────────┘ └──────────┘                            │
-└─────────────────────────────────────────────────────────────────┘
++-----------------------------------------------------------------+
+|                    Nova Bullet Journal                          |
+|                                                                 |
+|  +----------+  +----------+  +----------+  +--------------+   |
+|  |  Daily   |  | Monthly  |  |  Future  |  | Collections  |   |
+|  |  Log     |  |  Goals   |  |   Log    |  |              |   |
+|  |          |  |          |  |          |  | birthdays    |   |
+|  | tasks    |  | goals    |  | items by |  | projects     |   |
+|  | events   |  | themes   |  | target   |  | bills        |   |
+|  | notes    |  | reflect  |  | month    |  | wish list    |   |
+|  +----+-----+  +----+-----+  +----+-----+  +--------------+   |
+|       |             |             |                             |
+|       +------+------+-------------+                             |
+|              v                                                   |
+|  +---------------------------------------------+               |
+|  |  Stale Detection                            |               |
+|  |  • Tasks open > 5 days = STALE              |               |
+|  |  • Tasks migrated 3+ times = STUCK          |               |
+|  |  • Surfaced in morning brief + weekly review |               |
+|  +--------------+------------------------------+               |
+|                 |                                                |
+|       +---------+----------+                                    |
+|       v         v          v                                    |
+|  +--------+ +--------+ +----------+                            |
+|  | Vector | | Slack  | |   Git    |                            |
+|  | Memory | | Digest | | History  |                            |
+|  | (bujo) | | #notif | | per-write|                            |
+|  +--------+ +--------+ +----------+                            |
++-----------------------------------------------------------------+
 ```
 
 **Entry Types:**
@@ -703,33 +703,33 @@ nova_bujo.py collection birthdays list
 Nightly five-phase deep memory consolidation, inspired by [Conduit](https://code.jefflaplante.com/conduit/)'s cognitive memory system.
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│               REM Sleep — 3:30am Nightly                │
-│                                                         │
-│  Phase 1: TRIAGE                                        │
-│  │  Scan recent memories by source                      │
-│  │  Find semantic clusters (cosine similarity > 0.85)   │
-│  │  Group near-duplicates into clusters                 │
-│  ▼                                                      │
-│  Phase 2: CONSOLIDATION                                 │
-│  │  For each cluster → LLM synthesis (nova:latest)      │
-│  │  Store synthesis memory (source="synthesis")         │
-│  │  Cross-link originals → synthesis via memory_links   │
-│  ▼                                                      │
-│  Phase 3: LINKING                                       │
-│  │  Find cross-source connections                       │
-│  │  Email about project ↔ GitHub commit about same      │
-│  │  iMessage mention ↔ calendar event                   │
-│  ▼                                                      │
-│  Phase 4: PRUNING                                       │
-│  │  Short (<30 char) memories → scratchpad tier          │
-│  │  Empty memories → scratchpad tier                     │
-│  │  NEVER deletes — only deprioritizes                  │
-│  ▼                                                      │
-│  Phase 5: REPORT                                        │
-│     Post summary to Slack #nova-notifications           │
-│     Record run in consolidation_runs table              │
-└─────────────────────────────────────────────────────────┘
++---------------------------------------------------------+
+|               REM Sleep — 3:30am Nightly                |
+|                                                         |
+|  Phase 1: TRIAGE                                        |
+|  |  Scan recent memories by source                      |
+|  |  Find semantic clusters (cosine similarity > 0.85)   |
+|  |  Group near-duplicates into clusters                 |
+|  v                                                      |
+|  Phase 2: CONSOLIDATION                                 |
+|  |  For each cluster → LLM synthesis (nova:latest)      |
+|  |  Store synthesis memory (source="synthesis")         |
+|  |  Cross-link originals → synthesis via memory_links   |
+|  v                                                      |
+|  Phase 3: LINKING                                       |
+|  |  Find cross-source connections                       |
+|  |  Email about project ↔ GitHub commit about same      |
+|  |  iMessage mention ↔ calendar event                   |
+|  v                                                      |
+|  Phase 4: PRUNING                                       |
+|  |  Short (<30 char) memories → scratchpad tier          |
+|  |  Empty memories → scratchpad tier                     |
+|  |  NEVER deletes — only deprioritizes                  |
+|  v                                                      |
+|  Phase 5: REPORT                                        |
+|     Post summary to Slack #nova-notifications           |
+|     Record run in consolidation_runs table              |
++---------------------------------------------------------+
 ```
 
 **Three-Tier Brain Architecture:**
@@ -789,53 +789,53 @@ nova> quit
 Nova uses a three-tier execution model. As of Apr 14 2026, **only Slack conversations hit OpenRouter**. Everything else runs locally at $0.
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│              EXECUTION TIERS (Cost Optimization)                  │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                  │
-│  TIER 1: launchd (direct Python — $0)                           │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  Scripts run directly via macOS launchd.                   │ │
-│  │  No LLM agent wrapper. No cloud round-trip.                │ │
-│  │                                                            │ │
-│  │  Gateway Watchdog, App Watchdog, Sky Watcher,              │ │
-│  │  iMessage Watch, Inbox Watcher, Proactive Peace,           │ │
-│  │  Face Recognition, Home Watchdog                           │ │
-│  │                                                            │ │
-│  │  Cost: $0/day                                              │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                  │
-│  TIER 2: OpenClaw cron (agent + local Ollama — $0)              │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  Crons run through the OpenClaw agent using local          │ │
-│  │  Ollama (nova:latest / qwen3 30B) — not OpenRouter.        │ │
-│  │  Output goes to #nova-notifications channel.               │ │
-│  │                                                            │ │
-│  │  Morning brief, nightly report, context bridge,            │ │
-│  │  journal prompts, GitHub digest, health intelligence,      │ │
-│  │  financial analysis, game night, dream journal, etc.       │ │
-│  │                                                            │ │
-│  │  Cost: $0/day (local inference on M4 Mac Studio)           │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                  │
-│  TIER 3: Slack conversation (OpenRouter — real-time)            │
-│  ┌────────────────────────────────────────────────────────────┐ │
-│  │  Direct conversation with Jordan in #nova-chat + DMs.      │ │
-│  │  Uses Qwen3 235B via OpenRouter (262K context).            │ │
-│  │  modelByChannel routes only these to cloud.                │ │
-│  │                                                            │ │
-│  │  Session auto-resets after 2hr idle or daily at 4am.       │ │
-│  │  Bootstrap context capped at 50K chars (was 250K).         │ │
-│  │                                                            │ │
-│  │  Cost: ~$1-2/day (~$50/month)                              │ │
-│  └────────────────────────────────────────────────────────────┘ │
-│                                                                  │
-│  History:                                                        │
-│    Mar 29: ~$106/day ($3,184/mo) — all sessions on OpenRouter  │
-│    Apr 13: ~$8-10/day ($250-300/mo) — crons moved to launchd   │
-│    Apr 14: ~$1-2/day (~$50/mo) — Slack-only on OpenRouter      │
-│  Total savings: ~$3,100/month (98% reduction)                    │
-└──────────────────────────────────────────────────────────────────┘
++------------------------------------------------------------------+
+|              EXECUTION TIERS (Cost Optimization)                  |
++------------------------------------------------------------------+
+|                                                                  |
+|  TIER 1: launchd (direct Python — $0)                           |
+|  +------------------------------------------------------------+ |
+|  |  Scripts run directly via macOS launchd.                   | |
+|  |  No LLM agent wrapper. No cloud round-trip.                | |
+|  |                                                            | |
+|  |  Gateway Watchdog, App Watchdog, Sky Watcher,              | |
+|  |  iMessage Watch, Inbox Watcher, Proactive Peace,           | |
+|  |  Face Recognition, Home Watchdog                           | |
+|  |                                                            | |
+|  |  Cost: $0/day                                              | |
+|  +------------------------------------------------------------+ |
+|                                                                  |
+|  TIER 2: OpenClaw cron (agent + local Ollama — $0)              |
+|  +------------------------------------------------------------+ |
+|  |  Crons run through the OpenClaw agent using local          | |
+|  |  Ollama (nova:latest / qwen3 30B) — not OpenRouter.        | |
+|  |  Output goes to #nova-notifications channel.               | |
+|  |                                                            | |
+|  |  Morning brief, nightly report, context bridge,            | |
+|  |  journal prompts, GitHub digest, health intelligence,      | |
+|  |  financial analysis, game night, dream journal, etc.       | |
+|  |                                                            | |
+|  |  Cost: $0/day (local inference on M4 Mac Studio)           | |
+|  +------------------------------------------------------------+ |
+|                                                                  |
+|  TIER 3: Slack conversation (OpenRouter — real-time)            |
+|  +------------------------------------------------------------+ |
+|  |  Direct conversation with Jordan in #nova-chat + DMs.      | |
+|  |  Uses Qwen3 235B via OpenRouter (262K context).            | |
+|  |  modelByChannel routes only these to cloud.                | |
+|  |                                                            | |
+|  |  Session auto-resets after 2hr idle or daily at 4am.       | |
+|  |  Bootstrap context capped at 50K chars (was 250K).         | |
+|  |                                                            | |
+|  |  Cost: ~$1-2/day (~$50/month)                              | |
+|  +------------------------------------------------------------+ |
+|                                                                  |
+|  History:                                                        |
+|    Mar 29: ~$106/day ($3,184/mo) — all sessions on OpenRouter  |
+|    Apr 13: ~$8-10/day ($250-300/mo) — crons moved to launchd   |
+|    Apr 14: ~$1-2/day (~$50/mo) — Slack-only on OpenRouter      |
+|  Total savings: ~$3,100/month (98% reduction)                    |
++------------------------------------------------------------------+
 ```
 
 ---
@@ -868,40 +868,40 @@ SwiftUI macOS app providing a single API endpoint (port 37400) that aggregates d
 ## Daily Rhythm
 
 ```
-┌─────────┬──────────────────────────────────────────────────────────┐
-│  TIME   │  WHAT NOVA IS DOING                                      │
-├─────────┼──────────────────────────────────────────────────────────┤
-│  2:00am │  Dream journal + Postgres backup (pg_dump → NAS)           │
-│  3:00am │  Memory Gardener (subagent) + supply chain scan           │
-│  4:00am │  Software inventory + memory consolidation               │
-│  5:00am │  Metrics tracker                                         │
-│ ~6:30am │  GOLDEN HOUR: sky watcher captures sunrise               │
-│  7:00am │  Proactive Briefer (subagent) + morning brief              │
-│  8:00am │  Email summary + health intelligence (daily trends)      │
-│  9:00am │  Dream delivery to Slack + herd + GitHub monitor         │
-│ 10:00am │  Context bridge + git monitor + jungle track             │
-│ 12:00pm │  Disk check                                              │
-│  3:00pm │  This Day in History                                     │
-│  4:00pm │  Context bridge (afternoon)                              │
-│ ~7:00pm │  GOLDEN HOUR: sky watcher captures sunset                │
-│  8:00pm │  Gentle explorer (Wed + Sun)                             │
-│  9:00pm │  Journal prompt + nightly memory summary                 │
-│ 10:00pm │  Burbank subreddit                                       │
-│ 11:00pm │  Nightly report                                          │
-├─────────┼──────────────────────────────────────────────────────────┤
-│  5 min  │  Inbox, iMessage, sky watcher (launchd — $0 cloud)       │
-│ 10 min  │  Gateway watchdog, app watchdog (launchd — $0 cloud)    │
-│ 15 min  │  Proactive peace (launchd — $0 cloud)                   │
-│ 30 min  │  Face recognition, home watchdog (launchd — $0 cloud)   │
-│ 30 min  │  Calendar alerts (OpenClaw cron)                         │
-│  1 hr   │  OneOnOne meeting check                                  │
-│  2 hr   │  Weather-HomeKit bridge, package tracker                 │
-│  4 hr   │  Finance monitor, app intelligence, health ingest        │
-│  6 hr   │  Slack memory scan                                       │
-├─────────┼──────────────────────────────────────────────────────────┤
-│  Mon    │  Project review, relationship tracker                    │
-│  Sun    │  Financial pulse, health report, sky timelapse           │
-└─────────┴──────────────────────────────────────────────────────────┘
++---------+----------------------------------------------------------+
+|  TIME   |  WHAT NOVA IS DOING                                      |
++---------+----------------------------------------------------------+
+|  2:00am |  Dream journal + Postgres backup (pg_dump → NAS)           |
+|  3:00am |  Memory Gardener (subagent) + supply chain scan           |
+|  4:00am |  Software inventory + memory consolidation               |
+|  5:00am |  Metrics tracker                                         |
+| ~6:30am |  GOLDEN HOUR: sky watcher captures sunrise               |
+|  7:00am |  Proactive Briefer (subagent) + morning brief              |
+|  8:00am |  Email summary + health intelligence (daily trends)      |
+|  9:00am |  Dream delivery to Slack + herd + GitHub monitor         |
+| 10:00am |  Context bridge + git monitor + jungle track             |
+| 12:00pm |  Disk check                                              |
+|  3:00pm |  This Day in History                                     |
+|  4:00pm |  Context bridge (afternoon)                              |
+| ~7:00pm |  GOLDEN HOUR: sky watcher captures sunset                |
+|  8:00pm |  Gentle explorer (Wed + Sun)                             |
+|  9:00pm |  Journal prompt + nightly memory summary                 |
+| 10:00pm |  Burbank subreddit                                       |
+| 11:00pm |  Nightly report                                          |
++---------+----------------------------------------------------------+
+|  5 min  |  Inbox, iMessage, sky watcher (launchd — $0 cloud)       |
+| 10 min  |  Gateway watchdog, app watchdog (launchd — $0 cloud)    |
+| 15 min  |  Proactive peace (launchd — $0 cloud)                   |
+| 30 min  |  Face recognition, home watchdog (launchd — $0 cloud)   |
+| 30 min  |  Calendar alerts (OpenClaw cron)                         |
+|  1 hr   |  OneOnOne meeting check                                  |
+|  2 hr   |  Weather-HomeKit bridge, package tracker                 |
+|  4 hr   |  Finance monitor, app intelligence, health ingest        |
+|  6 hr   |  Slack memory scan                                       |
++---------+----------------------------------------------------------+
+|  Mon    |  Project review, relationship tracker                    |
+|  Sun    |  Financial pulse, health report, sky timelapse           |
++---------+----------------------------------------------------------+
 ```
 
 ---
@@ -1070,51 +1070,51 @@ All secrets loaded at runtime via `nova_config.py` (Python) or `nova_load_secret
 Nova operates as a multi-agent system. The main agent (`main`) is an orchestrator; seven subagents handle specialized tasks using dedicated local LLMs. All communication flows through Redis pub/sub. No subagent data leaves the machine.
 
 ```
-┌──────────────────────────────────────────────────────────────────────┐
-│                     SUBAGENT ARCHITECTURE                             │
-├──────────────────────────────────────────────────────────────────────┤
-│                                                                      │
-│  ┌──────────────────────────────────────────────────────────────┐   │
-│  │                    Redis Pub/Sub Bus                          │   │
-│  │         nova:task:{channel}  →  nova:result:{agent}          │   │
-│  └──────────┬─────────┬─────────┬─────────┬─────────┬──────────┘   │
-│             │         │         │         │         │               │
-│  ┌──────────▼──┐ ┌────▼─────┐ ┌▼────────┐ ┌───────▼──┐ ┌────────▼┐│
-│  │  Analyst    │ │  Coder   │ │ Lookout  │ │Librarian │ │Sentinel ││
-│  │ deepseek-r1 │ │ qwen3-   │ │ qwen3-  │ │ MLX      │ │deepseek ││
-│  │ :8b        │ │ coder:30b│ │ vl:4b   │ │ Qwen2.5  │ │-r1:8b   ││
-│  │            │ │          │ │         │ │ -32B     │ │         ││
-│  │ email      │ │ code     │ │ vision  │ │ memory   │ │security ││
-│  │ meeting    │ │ review   │ │ camera  │ │ curate   │ │ nmap    ││
-│  │ alert      │ │ script   │ │ motion  │ │ knowledge│ │ unifi   ││
-│  └────────────┘ └──────────┘ └─────────┘ └──────────┘ └─────────┘│
-│                                                                      │
-│  BACKGROUND AGENTS (scheduled, not persistent):                      │
-│  ┌───────────────────┐  ┌──────────────────────────────────┐        │
-│  │  Memory Gardener  │  │  Proactive Briefer               │        │
-│  │  3 AM nightly     │  │  7 AM daily                      │        │
-│  │  deepseek-r1:8b   │  │  deepseek-r1:8b                  │        │
-│  │                   │  │                                   │        │
-│  │  Scans 1.25M+      │  │  Calendar + email + memory +     │        │
-│  │  vectors for      │  │  system health → personalized    │        │
-│  │  duplicates,      │  │  morning intelligence brief      │        │
-│  │  contradictions,  │  │  posted to Slack #nova-chat      │        │
-│  │  stale facts.     │  │                                   │        │
-│  │  FLAG-AND-REPORT  │  └──────────────────────────────────┘        │
-│  │  to Jordan via    │                                               │
-│  │  Slack. Never     │                                               │
-│  │  auto-deletes.    │                                               │
-│  └───────────────────┘                                               │
-│                                                                      │
-│  FRAMEWORK (nova_subagent.py):                                       │
-│  - Redis pub/sub message bus (subscribe by capability)               │
-│  - Subagent registry (subagents/runs.json with status tracking)     │
-│  - Redis heartbeat (30s TTL for health monitoring)                   │
-│  - LLM inference wrappers (Ollama + MLX backends)                   │
-│  - Vector memory recall/remember helpers                             │
-│  - Slack notification with flag-and-report pattern                   │
-│  - Static dispatch() method for any script to send tasks            │
-└──────────────────────────────────────────────────────────────────────┘
++----------------------------------------------------------------------+
+|                     SUBAGENT ARCHITECTURE                             |
++----------------------------------------------------------------------+
+|                                                                      |
+|  +--------------------------------------------------------------+   |
+|  |                    Redis Pub/Sub Bus                          |   |
+|  |         nova:task:{channel}  →  nova:result:{agent}          |   |
+|  +----------+---------+---------+---------+---------+----------+   |
+|             |         |         |         |         |               |
+|  +----------v--+ +----v-----+ +v--------+ +-------v--+ +--------v+|
+|  |  Analyst    | |  Coder   | | Lookout  | |Librarian | |Sentinel ||
+|  | deepseek-r1 | | qwen3-   | | qwen3-  | | MLX      | |deepseek ||
+|  | :8b        | | coder:30b| | vl:4b   | | Qwen2.5  | |-r1:8b   ||
+|  |            | |          | |         | | -32B     | |         ||
+|  | email      | | code     | | vision  | | memory   | |security ||
+|  | meeting    | | review   | | camera  | | curate   | | nmap    ||
+|  | alert      | | script   | | motion  | | knowledge| | unifi   ||
+|  +------------+ +----------+ +---------+ +----------+ +---------+|
+|                                                                      |
+|  BACKGROUND AGENTS (scheduled, not persistent):                      |
+|  +-------------------+  +----------------------------------+        |
+|  |  Memory Gardener  |  |  Proactive Briefer               |        |
+|  |  3 AM nightly     |  |  7 AM daily                      |        |
+|  |  deepseek-r1:8b   |  |  deepseek-r1:8b                  |        |
+|  |                   |  |                                   |        |
+|  |  Scans 1.25M+      |  |  Calendar + email + memory +     |        |
+|  |  vectors for      |  |  system health → personalized    |        |
+|  |  duplicates,      |  |  morning intelligence brief      |        |
+|  |  contradictions,  |  |  posted to Slack #nova-chat      |        |
+|  |  stale facts.     |  |                                   |        |
+|  |  FLAG-AND-REPORT  |  +----------------------------------+        |
+|  |  to Jordan via    |                                               |
+|  |  Slack. Never     |                                               |
+|  |  auto-deletes.    |                                               |
+|  +-------------------+                                               |
+|                                                                      |
+|  FRAMEWORK (nova_subagent.py):                                       |
+|  - Redis pub/sub message bus (subscribe by capability)               |
+|  - Subagent registry (subagents/runs.json with status tracking)     |
+|  - Redis heartbeat (30s TTL for health monitoring)                   |
+|  - LLM inference wrappers (Ollama + MLX backends)                   |
+|  - Vector memory recall/remember helpers                             |
+|  - Slack notification with flag-and-report pattern                   |
+|  - Static dispatch() method for any script to send tasks            |
++----------------------------------------------------------------------+
 ```
 
 ### Specialist Workers (persistent daemons)
@@ -1160,17 +1160,17 @@ One persistent daemon (`nova_scheduler.py`) manages all 36 recurring tasks. It r
 
 ```
 com.nova.watchdog (launchd, 5 min)
-  └─ watches → com.nova.scheduler (port 37460, KeepAlive)
-                  └─ 36 tasks: mail (10m), protect (5m), reports (daily), etc.
-                  └─ nova_watchdog.py (every 5 min)
-                        └─ monitors + auto-restarts:
-                            ├─ Gateway (18789)
-                            ├─ Memory Server (18790)
-                            ├─ Redis (6379)
-                            ├─ PostgreSQL (5432)
-                            ├─ Ollama (11434)
-                            ├─ 5 subagent heartbeats
-                            └─ PG idle connection cleanup
+  +- watches → com.nova.scheduler (port 37460, KeepAlive)
+                  +- 36 tasks: mail (10m), protect (5m), reports (daily), etc.
+                  +- nova_watchdog.py (every 5 min)
+                        +- monitors + auto-restarts:
+                            +- Gateway (18789)
+                            +- Memory Server (18790)
+                            +- Redis (6379)
+                            +- PostgreSQL (5432)
+                            +- Ollama (11434)
+                            +- 5 subagent heartbeats
+                            +- PG idle connection cleanup
 ```
 
 **Why it doesn't break:**
