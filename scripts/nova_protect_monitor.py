@@ -468,6 +468,26 @@ def check_motion_events(client, state):
                     types_label = ", ".join(sorted(filtered_types)) if smart else "motion"
 
                     vision_desc = _vision_identify(str(thumb_path))
+
+                    # If vision sees only a vehicle/car/truck, skip entirely
+                    if vision_desc:
+                        desc_lower = vision_desc.lower()
+                        vehicle_words = ("vehicle", "car ", "cars ", "truck", "van ", "suv", "sedan",
+                                         "pickup", "delivery truck", "fedex", "ups ", "amazon",
+                                         "license plate", "licence plate")
+                        person_words = ("person", "people", "man ", "woman", "child", "dog ", "dogs",
+                                        "cat ", "animal", "abundio", "jeremy", "bruno", "sammy", "preston")
+                        has_vehicle = any(w in desc_lower for w in vehicle_words)
+                        has_person_or_animal = any(w in desc_lower for w in person_words)
+                        if has_vehicle and not has_person_or_animal:
+                            log(f"Vision: vehicle-only on {cam_name}, skipping notification",
+                                level=LOG_INFO, source="protect")
+                            try:
+                                thumb_path.unlink()
+                            except Exception:
+                                pass
+                            continue
+
                     if vision_desc and "no identifiable" not in vision_desc.lower():
                         alert_text += f"\n  :eye: {vision_desc}"
 
