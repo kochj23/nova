@@ -539,8 +539,10 @@ def check_motion_events(client, state):
                     types_label = ", ".join(sorted(filtered_types)) if smart else "motion"
 
                     vision_desc = _vision_identify(str(thumb_path))
+                    is_motion_only = not smart or not filtered_types
 
-                    # If vision sees only a vehicle/car/truck, skip entirely
+                    # Vehicle screening via vision model
+                    skip_image = False
                     if vision_desc:
                         desc_lower = vision_desc.lower()
                         vehicle_words = ("vehicle", "car ", "cars ", "truck", "van ", "suv", "sedan",
@@ -551,13 +553,21 @@ def check_motion_events(client, state):
                         has_vehicle = any(w in desc_lower for w in vehicle_words)
                         has_person_or_animal = any(w in desc_lower for w in person_words)
                         if has_vehicle and not has_person_or_animal:
-                            log(f"Vision: vehicle-only on {cam_name}, skipping notification",
+                            log(f"Vision: vehicle-only on {cam_name}, skipping",
                                 level=LOG_INFO, source="protect")
-                            try:
-                                thumb_path.unlink()
-                            except Exception:
-                                pass
-                            continue
+                            skip_image = True
+                    elif is_motion_only:
+                        # Vision failed AND no smart detect — don't post image (likely a car)
+                        log(f"Vision unavailable for motion-only event on {cam_name}, skipping image",
+                            level=LOG_INFO, source="protect")
+                        skip_image = True
+
+                    if skip_image:
+                        try:
+                            thumb_path.unlink()
+                        except Exception:
+                            pass
+                        continue
 
                     if vision_desc and "no identifiable" not in vision_desc.lower():
                         alert_text += f"\n  :eye: {vision_desc}"
