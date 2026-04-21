@@ -317,6 +317,126 @@ async def text_search(
     return {"memories": memories, "query": q, "count": len(memories)}
 
 
+@app.get("/recall/deep")
+async def deep_recall(
+    q: str = Query(...),
+    n: int = Query(5, ge=1, le=50),
+    source: Optional[str] = Query(None),
+    min_score: float = Query(0.0),
+):
+    """Tier-aware recall with cross-link expansion.
+    Returns working memory first, then long-term, with linked memories attached."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="q cannot be empty")
+
+    query_vec = await embed(q)
+    vec_str = _vec_str(query_vec)
+    k = n * 20 if source else n * 3
+
+    async with _pg_pool.acquire() as conn:
+        # Recall prioritizing working > long_term (exclude scratchpad)
+        if source:
+            rows = await conn.fetch(
+                """SELECT id, text, metadata, source, created_at, tier,
+                          1 - (embedding <=> $1::vector) AS score
+                   FROM memories
+                   WHERE source = $2 AND tier IN ('working', 'long_term')
+                   ORDER BY CASE tier WHEN 'working' THEN 0 ELSE 1 END,
+                            embedding <=> $1::vector
+                   LIMIT $3""",
+                vec_str, source, k
+            )
+        else:
+            rows = await conn.fetch(
+                """SELECT id, text, metadata, source, created_at, tier,
+                          1 - (embedding <=> $1::vector) AS score
+                   FROM memories
+                   WHERE tier IN ('working', 'long_term')
+                   ORDER BY CASE tier WHEN 'working' THEN 0 ELSE 1 END,
+                            embedding <=> $1::vector
+                   LIMIT $2""",
+                vec_str, k
+            )
+
+        results = [r for r in rows if float(r["score"]) >= min_score][:n]
+
+        # Expand cross-links for top results
+        linked = []
+        if results:
+            top_ids = [r["id"] for r in results[:3]]
+            placeholders = ", ".join(f"${i+1}" for i in range(len(top_ids)))
+            link_rows = await conn.fetch(
+                f"""SELECT DISTINCT m.id, m.text, m.source, m.created_at, ml.link_type, ml.strength
+                    FROM memory_links ml
+                    JOIN memories m ON m.id = ml.target_id
+                    WHERE ml.source_id IN ({placeholders})
+                    ORDER BY ml.strength DESC
+                    LIMIT 5""",
+                *top_ids
+            )
+            for lr in link_rows:
+                linked.append({
+                    "id": lr["id"], "text": lr["text"], "source": lr["source"],
+                    "created_at": str(lr["created_at"]),
+                    "link_type": lr["link_type"], "strength": float(lr["strength"]),
+                })
+
+    memories = []
+    for r in results:
+        memories.append({
+            "id": r["id"], "text": r["text"],
+            "metadata": r["metadata"] if isinstance(r["metadata"], dict) else json.loads(r["metadata"]),
+            "source": r["source"], "created_at": str(r["created_at"]),
+            "tier": r["tier"], "score": round(float(r["score"]), 4),
+        })
+
+    return {"memories": memories, "linked": linked, "query": q, "count": len(memories)}
+
+
+@app.post("/memory/working")
+async def set_working_memory(request: Request):
+    """Promote a memory to working tier (active conversation context)."""
+    body = await request.json()
+    memory_id = body.get("id")
+    if not memory_id:
+        raise HTTPException(status_code=400, detail="id required")
+    async with _pg_pool.acquire() as conn:
+        await conn.execute(
+            "UPDATE memories SET tier = 'working' WHERE id = $1 AND tier = 'long_term'",
+            memory_id
+        )
+    return {"status": "ok", "id": memory_id, "tier": "working"}
+
+
+@app.post("/memory/demote")
+async def demote_working_memory():
+    """Demote all working memories back to long_term (call on session reset)."""
+    async with _pg_pool.acquire() as conn:
+        count = await conn.fetchval(
+            "UPDATE memories SET tier = 'long_term' WHERE tier = 'working' RETURNING COUNT(*)"
+        ) or 0
+    return {"status": "ok", "demoted": count}
+
+
+@app.get("/links")
+async def get_links(id: str = Query(...)):
+    """Get all memories linked to a given memory ID."""
+    async with _pg_pool.acquire() as conn:
+        rows = await conn.fetch(
+            """SELECT m.id, m.text, m.source, m.created_at, ml.link_type, ml.strength
+               FROM memory_links ml
+               JOIN memories m ON m.id = CASE WHEN ml.source_id = $1 THEN ml.target_id ELSE ml.source_id END
+               WHERE ml.source_id = $1 OR ml.target_id = $1
+               ORDER BY ml.strength DESC
+               LIMIT 20""",
+            id
+        )
+    links = [{"id": r["id"], "text": r["text"], "source": r["source"],
+              "created_at": str(r["created_at"]), "link_type": r["link_type"],
+              "strength": float(r["strength"])} for r in rows]
+    return {"id": id, "links": links, "count": len(links)}
+
+
 @app.get("/random")
 async def random_memory(source: Optional[str] = Query(None), n: int = Query(1)):
     async with _pg_pool.acquire() as conn:
