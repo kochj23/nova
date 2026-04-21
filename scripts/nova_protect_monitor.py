@@ -205,6 +205,77 @@ def slack_upload_image(filepath, channel, title="", comment=""):
         return False
 
 
+def _face_recognize(image_path, camera_name):
+    """Run face recognition on a thumbnail. Returns description or None."""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, "/Volumes/Data/AI/python_packages")
+        import face_recognition
+        import numpy as np
+        from PIL import Image
+
+        faces_dir = Path.home() / ".openclaw/workspace/faces"
+        known_dir = faces_dir / "known"
+        unknown_dir = faces_dir / "unknown"
+        encodings_file = faces_dir / "encodings.json"
+        unknown_dir.mkdir(parents=True, exist_ok=True)
+
+        image = face_recognition.load_image_file(image_path)
+        face_locations = face_recognition.face_locations(image, model="hog")
+        if not face_locations:
+            return None
+
+        face_encodings = face_recognition.face_encodings(image, face_locations)
+
+        # Load known encodings
+        known_people = {}
+        if encodings_file.exists():
+            try:
+                cache = json.loads(encodings_file.read_text())
+                for name, encs in cache.get("people", {}).items():
+                    known_people[name] = [np.array(e) for e in encs]
+            except Exception:
+                pass
+
+        results = []
+        for i, (face_enc, face_loc) in enumerate(zip(face_encodings, face_locations)):
+            best_name, best_dist = None, 1.0
+            for name, known_encs in known_people.items():
+                distances = face_recognition.face_distance(known_encs, face_enc)
+                min_dist = np.min(distances)
+                if min_dist < best_dist:
+                    best_dist = min_dist
+                    best_name = name
+
+            if best_dist <= 0.55 and best_name:
+                confidence = round((1 - best_dist) * 100, 1)
+                results.append(f"{best_name} ({confidence}%)")
+                log(f"Face: {best_name} ({confidence}%) on {camera_name}", level=LOG_INFO, source="protect")
+            else:
+                # Save unknown face crop
+                top, right, bottom, left = face_loc
+                pad = 40
+                h, w = image.shape[:2]
+                crop = image[max(0,top-pad):min(h,bottom+pad), max(0,left-pad):min(w,right+pad)]
+                ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+                crop_name = f"unknown_{camera_name.replace(' ','_')}_{ts}_{i}.jpg"
+                crop_path = unknown_dir / crop_name
+                try:
+                    Image.fromarray(crop).save(str(crop_path))
+                    results.append(f"Unknown face (saved: {crop_name})")
+                    log(f"Face: unknown on {camera_name}, saved {crop_name}", level=LOG_INFO, source="protect")
+                except Exception:
+                    results.append("Unknown face")
+
+        return " | ".join(results) if results else None
+
+    except ImportError:
+        return None
+    except Exception as e:
+        log(f"Face recognition error: {e}", level=LOG_WARN, source="protect")
+        return None
+
+
 def _is_exterior(camera):
     """Any camera that is NOT Interior. Includes Exterior and External cameras."""
     return not camera.get("name", "").startswith(INTERIOR_PREFIX)
@@ -490,6 +561,12 @@ def check_motion_events(client, state):
 
                     if vision_desc and "no identifiable" not in vision_desc.lower():
                         alert_text += f"\n  :eye: {vision_desc}"
+
+                    # Face recognition on person detections
+                    if filtered_types and "person" in filtered_types:
+                        face_result = _face_recognize(str(thumb_path), cam_name)
+                        if face_result:
+                            alert_text += f"\n  :bust_in_silhouette: {face_result}"
 
                     uploaded_image = slack_upload_image(
                         str(thumb_path),
