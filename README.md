@@ -5,11 +5,14 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 > *"Like a star being born"* — Nova, on choosing her name
 
 ```
-  Scripts: 130+       Scheduler tasks: 36  Vector memories: 1,258,055
-  Subagents: 7        Cameras: 15 Protect  Calendars: 15
-  App APIs: 18 ports  AI backends: 7       Herd members: 9
-  Memory sources: 85  Privacy intents: 20+ (local-only)
-  Self-healing: unified scheduler + watchdog + weekly reliability report
+  Scripts: 172         Scheduler tasks: 39  Vector memories: 1,345,000+
+  Subagents: 7         Cameras: 25 Protect  Calendars: 15
+  App APIs: 18 ports   AI backends: 7       Herd members: 9
+  Memory sources: 93   Privacy intents: 20+ (local-only)
+  Memory tiers: 3 (working / long_term / scratchpad)
+  Cross-links: memory_links graph with 2-hop traversal
+  HealthKit: 1,826 daily files (Withings, Dexcom, RingCon)
+  Self-healing: unified scheduler + watchdog + REM Sleep consolidation
 ```
 
 ---
@@ -479,34 +482,77 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 
 ### Memory
 
-1,272,000+ vectors across 75+ source domains. PostgreSQL 17 + pgvector 0.8.2 + Redis async queue.
+1,345,000+ vectors across 93 source domains. Three-tier architecture with cross-link graph.
+
+**Infrastructure:** PostgreSQL 17 + pgvector 0.8.2 + Redis (cache + async queue) on /Volumes/MoreData
+
+**Three-Tier Brain:**
+
+| Tier | Purpose | Recall Priority |
+|------|---------|-----------------|
+| working | Active conversation context, promoted on use | 1st (highest) |
+| long_term | The main 1.34M memory store | 2nd |
+| scratchpad | Deprioritized low-value (<30 chars, empty) | excluded |
+
+**Scaling Architecture:**
+
+| Feature | Implementation |
+|---------|---------------|
+| FTS search | tsvector + GIN index — instant name/date lookups via `/search` |
+| Redis recall cache | 15-min TTL on `/recall` results — hot queries skip PostgreSQL |
+| Partitioned HNSW | Per-source indexes: email_archive, imessage, music, vehicles, health |
+| Graph traversal | `/recall/deep` does 2-hop link expansion across memory_links |
+| REM Sleep | Nightly 5-phase consolidation: triage, synthesis, linking, pruning, report |
+| Re-embedding | `nova_reembed.py` for model upgrades (768d -> 1024d) |
+
+**API Endpoints:**
+
+| Endpoint | Method | Purpose |
+|----------|--------|---------|
+| /remember | POST | Store memory (sync or async via ?async=1) |
+| /recall | GET | Semantic HNSW search with Redis cache |
+| /recall/deep | GET | Tier-aware recall + 2-hop graph traversal |
+| /search | GET | FTS (tsvector) with ILIKE fallback |
+| /links | GET | Memory graph: all linked memories for an ID |
+| /memory/working | POST | Promote memory to working tier |
+| /memory/demote | POST | Reset all working memories to long_term |
+| /random | GET | Random memory (optionally by source) |
+| /health | GET | Status, count, queue depth |
+| /stats | GET | Source breakdown |
+
+**Top Sources:**
 
 | Source | Count | Content |
 |--------|-------|---------|
 | email_archive | 1,007,970 | Jordan's personal email 2000-2026 (Work excluded) |
-| imessage | 66,253 | iMessage history with contact name resolution |
+| imessage | 73,000+ | Full iMessage history 2008-2026, contact-resolved (599 contacts) |
 | music + music_history | 60,294 | Jungle, DnB, IDM, turntablism, Devo, darkside/darkstep |
 | world_factbook | 23,930 | CIA World Factbook (262 countries) |
-| vehicles | 23,899 | TV show transcripts: Wheeler Dealers, Hot Rod Garage/TV, MotorWeek, FourWheeler, and 12+ more |
+| vehicles | 23,899 | TV show transcripts: Wheeler Dealers, Hot Rod Garage, MotorWeek, 12+ more |
 | document | 8,902 | JAGMAN, TM-21-210, PiHKAL, TiHKAL, horror analysis |
-| email | 8,506 | Recent email threads and replies |
+| email | 9,348 | Recent email threads and replies |
 | corvette_workshop_manual | 6,177 | Full C6 Corvette workshop manual |
 | video | 6,065 | Video transcripts (MLX Whisper) + keyframe descriptions |
-| disney | 3,718 | Work context (private) |
-| home_repair | 3,293 | This Old House, Ask This Old House, Holmes On Homes transcripts |
-| gardening | 2,488 | Vegetable gardening knowledge |
-| comedy | 2,083 | 39 stand-up specials: Louis C.K., Lewis Black, Patton Oswalt, Chappelle, Izzard, Katt Williams, Kevin Smith, John Waters, Bill Cosby |
-| project_docs | 2,388 | GitHub READMEs from all repos |
-| demonology | 205 | Demonological facts across 20 world traditions |
-| drag_racing | 169+ | NHRA history, SoCal 90s street racing, Kevin's Burgers, technology, legends (generating to 1,000) |
-| health, nutrition, fitness | growing | Diabetes, rosacea, BP, depression, CBT |
+| apple_health | 1,826+ | HealthKit: sleep, HR, HRV, glucose, BP, weight (Withings, Dexcom, RingCon) |
+| safari_history | 906 | 5 years of browsing history grouped by domain/date |
+| gdrive-ingest | 1,797 | Google Drive backup (financial, personal docs) |
+| youtube-ingest | 570 | 39 videos transcribed via MLX Whisper |
+| comedy | 2,083 | 39 stand-up specials |
+| home_repair | 9,552 | This Old House, Ask This Old House transcripts |
+| bujo | growing | Bullet journal: tasks, events, notes, goals |
+| correction | growing | Response accuracy tracking (Nova's errors + Jordan's corrections) |
+| synthesis | growing | REM Sleep consolidation outputs |
 
 ### Eyes and Recognition
 
-- **14 RTSP cameras** via UniFi Protect (1024x576, TCP transport)
-- **Face recognition** on 10 exterior cameras every 15 min. Local `face_recognition`/`dlib`. Known face database with auto-enrollment. Unknown visitor alerts with face crop images to Slack.
-- **Sky watcher** captures frames every 5 min during golden hour (+/-45 min around sunrise/sunset). Scores frames by color variance. Posts best shot per session. Weekly timelapse GIF. Archive at `/Volumes/Data/nova-sky/`.
-- **Home watchdog** monitors HomeKit every 20 min for open doors/windows, temperature anomalies, motion during sleep hours (11pm-6am).
+- **25 cameras** via UniFi Protect UNVR at 192.168.1.9 (23 connected, exterior only — interior cameras NEVER accessed)
+- **Four-layer vehicle filtering**: (1) smart detect type filter, (2) notification gate, (3) vision model screening via OpenRouter, (4) motion-only events require vision success to post image
+- **Vision identification**: every person/animal thumbnail analyzed by `qwen3.5-9b` (OpenRouter) or `llama-4-scout` before posting to Slack. Known subjects: Abundio (neighbor/gardener), dogs (Jeremy, Bruno, Sammy, Preston)
+- **Face recognition** integrated into protect monitor. Local `face_recognition`/`dlib` (128-dim encodings, 0.55 tolerance). Unknown faces auto-cropped and saved to `~/.openclaw/workspace/faces/unknown/` for later enrollment. Enrollment: drop photos in `faces/known/<name>/`. Inspired by [sam-faces](https://github.com/jasonacox-sam/sam-faces).
+- **Dog watcher** (`nova_watch_dogs.py`): on-demand or continuous scan of exterior cameras for Chihuahuas. Downloads Protect API snapshots, analyzes via vision model, posts sightings with photos.
+- **Slack image analysis** (`nova_slack_image.py`): downloads Slack file attachments (requires `files:read` scope), sends to vision model, returns description. Fixes the "can't see images" problem.
+- **Sky watcher** captures frames every 5 min during golden hour (+/-45 min around sunrise/sunset). Scores frames by color variance. Posts best shot per session. Weekly timelapse GIF.
+- **Home watchdog** monitors HomeKit every 20 min for open doors/windows, temperature anomalies, motion during sleep hours.
 
 ### Home Automation
 
@@ -519,25 +565,24 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 
 ### Health Monitoring
 
-All health intents are **PRIVATE** -- hard-fail if local models are down. Never touches OpenRouter.
+All health data is **PRIVATE** (`privacy: local-only`) -- never touches cloud APIs.
 
 ```
-iPhone HealthKit → Health Auto Export app → iCloud Drive/Nova/health/ → nova_health_monitor.py
-                                                                         |
-                                              +--------------------------+
-                                              v                          v
-                                    +--------------+          +------------------+
-                                    |Vector Memory |          |Health Intelligence|
-                                    |source:       |          |                  |
-                                    |apple_health  |          | 5-day trends     |
-                                    +--------------+          | life-health      |
-                                                              | correlations     |
-                                                              | proactive alerts |
-                                                              +------------------+
+iPhone HealthKit --> NovaHealth iOS app --> HTTP POST --> nova_healthkit_receiver.py (:37450)
+(Withings, Dexcom,   (background daily     (WiFi LAN)    |
+ RingCon, 23andMe,    push at 6am +                      +--> daily JSON files (~/.openclaw/private/health/)
+ Brightside)           manual Push Now)                   +--> vector memory (source: apple_health)
+                                                          +--> nova_health_correlation.py (weekly/monthly)
 ```
+
+**17 metric types collected:** heart rate, resting HR, HRV, blood pressure (systolic/diastolic), blood glucose, weight, body fat %, SpO2, body temperature, respiratory rate, steps, active energy, basal energy, distance, flights climbed, sleep hours.
+
+**Data sources:** Withings scale + BPM Connect, Dexcom G6/G7 CGM, RingCon, 23andMe, Brightside.
+
+**NovaHealth iOS app** ([github.com/kochj23/NovaHealth](https://github.com/kochj23/NovaHealth)): built in Swift, sideloaded via Xcode. Background daily push + one-tap history export (1,826 daily files covering 5 years). Zero cloud.
 
 - **Trend detection** -- 5-day rolling averages for HR, BP, HRV, SpO2, weight. Alerts on *patterns*, not single readings.
-- **Life-health cross-referencing** -- "You sleep 1.2 hours less before meeting days." "Resting HR rises after coding marathons." "BP is lower on weekends."
+- **Health correlations** (`nova_health_correlation.py`) -- cross-references health with calendar density, email volume, coding activity. Weekly + monthly reports to Slack.
 - **Alert thresholds** -- BP >140/90, HR >120/<50, SpO2 <92, glucose >180/<70, temp >100.4
 
 ### Financial Intelligence
@@ -1021,13 +1066,14 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 ### Bulk Ingest Pipelines
 | Script | Purpose |
 |---|---|
-| `nova_email_ingest.py` | Bulk .emlx ingest (1M+ emails). Work-only exclusion. 8-worker parallel, text_hash dedup |
-| `nova_comedy_ingest.py` | Comedy special transcription: filename→comedian/show parsing, MLX Whisper, 5-min Slack status |
+| `nova_email_ingest.py` | Bulk .emlx ingest (1M+ emails). Work-only exclusion. 4-worker parallel, text_hash dedup |
+| `nova_gdrive_ingest.py` | Google Drive backup from NAS (PDFs, XLSX, DOCX, CSV). 1,797 memories. privacy:local-only |
+| `nova_youtube_ingest.py` | YouTube playlist: yt-dlp download, ffmpeg WAV, MLX Whisper transcription. 570 memories from 39 videos |
+| `nova_safari_ingest.py` | Safari History.db: grouped by domain/date, noise filtered (70+ ad domains). 906 groups |
+| `nova_comedy_ingest.py` | Comedy special transcription: filename to comedian/show parsing, MLX Whisper |
 | `nova_tvshow_ingest.py` | TV show transcription: recursive season folders, episode parsing, multi-source tagging |
-| `ingest_demonology.py` | JSONL→vector memory ingest for demonology facts |
-| `nova_generate_drag_facts.sh` | Autonomous drag racing fact generator (deepseek-r1:8b → JSONL → vector memory, target: 1,000) |
-| `nova_queue_monitor.py` | Redis ingest queue monitor with 15-min Slack status updates |
-| `nova_ingest_watchdog.sh` | Pipeline safety net: restarts stalled batches, monitors queue, self-terminates when done |
+| `nova_reembed.py` | Re-embed all memories with a new model. Supports dimension changes, batch processing, resume |
+| `nova_queue_monitor.py` | Redis ingest queue monitor with Slack status updates |
 
 ---
 
@@ -1342,7 +1388,37 @@ All critical services run under macOS launchd with `KeepAlive` and `ThrottleInte
 - NovaControl v1.2.0 build 4: service start/stop/restart with live per-service progress in Nova tab
 - NovaHealth v1.0.0: iPhone HealthKit bridge, deployed to Jordan's iPhone
 
-**Stats: 22 commits, 8 new scripts, 5,000+ lines of new code, memory count 1,272,000+**
+**Apr 21 additions (same session, continued):**
+
+**Scaling architecture (5 improvements):**
+- FTS: tsvector column + GIN index for instant text search (replaces ILIKE full table scans)
+- Redis recall cache: 15-min TTL on /recall results, hot queries skip PostgreSQL
+- Partitioned HNSW indexes: email_archive, imessage, music, vehicles, health (eliminates post-filtering)
+- Graph traversal: /recall/deep does 2-hop link expansion across memory_links table
+- Re-embedding script: nova_reembed.py for overnight model upgrades (768d -> 1024d)
+
+**Face recognition (inspired by [sam-faces](https://github.com/jasonacox-sam/sam-faces)):**
+- Wired dlib face recognition into protect monitor motion events
+- Unknown faces auto-cropped and saved for later enrollment
+- Enrollment: drop photos in `faces/known/<name>/`, auto-rebuilds encodings
+- Known faces reported with confidence percentage in Slack notifications
+
+**Bullet journal (inspired by [Bujo](https://github.com/jefflaplante/bujo)):**
+- 12 CLI commands: add task/event/note, complete, cancel, migrate, list, stale, month, future, collection, digest, weekly
+- Stale detection (>5 days), stuck detection (migrated 3+), monthly goals/themes
+- Git auto-commit, vector memory synthesis, Slack digest
+
+**Model migration saga (Slack chat model):**
+- qwen3.5-9b: content:null (reasoning-first, unusable for chat)
+- gemma-3-12b-it: no tool use support
+- llama-4-scout: format leaking in tool calls
+- **Final: qwen3-235b (chat) + llama-4-scout (imageModel)** — proven combo
+
+**Vehicle filtering (final fix):**
+- Four-layer filtering: smart detect type, notification gate, vision screening, motion-only guard
+- Critical gap fixed: motion-only events with failed vision calls now skip image instead of posting unscreened
+
+**Stats: 39 commits across 2 days, 15+ new scripts, 8,000+ lines of new code, memory count 1,345,000+, 172 total scripts, 93 source domains**
 
 ### Apr 15-17, 2026 -- Subagent Framework + Enterprise Hardening + Massive Knowledge Ingest
 
