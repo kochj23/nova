@@ -53,8 +53,8 @@ VECTOR_URL = "http://127.0.0.1:18790/remember?async=1"
 SLACK_TOKEN = nova_config.slack_bot_token()
 SLACK_CHAN = nova_config.SLACK_NOTIFY   # #nova-notifications for status updates
 CHECKPOINT_FILE = Path.home() / ".openclaw/workspace/email_ingest_checkpoint.json"
-WORKERS = 8
-BATCH_SIZE = 100
+WORKERS = 4
+BATCH_SIZE = 50
 STATUS_INTERVAL = 300  # 5 minutes
 MAX_TEXT_LENGTH = 2000  # Truncate long emails for embedding
 

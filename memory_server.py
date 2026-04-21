@@ -66,6 +66,7 @@ async def embed(text: str) -> list[float]:
     resp = await _http.post(
         f"{OLLAMA_BASE}/api/embed",
         json={"model": EMBED_MODEL, "input": text},
+        timeout=30.0,
     )
     resp.raise_for_status()
     data = resp.json()
@@ -156,13 +157,14 @@ async def lifespan(app: FastAPI):
             """)
             logger.info("HNSW index created")
 
-    # Start Redis ingest worker
-    _worker_task = asyncio.create_task(_ingest_worker())
-    logger.info("PostgreSQL pool ready, Redis worker started")
+    # Start Redis ingest worker pool (4 parallel workers)
+    _worker_tasks = [asyncio.create_task(_ingest_worker()) for _ in range(4)]
+    logger.info("PostgreSQL pool ready, 4 Redis workers started")
 
     yield
 
-    _worker_task.cancel()
+    for t in _worker_tasks:
+        t.cancel()
     await _pg_pool.close()
     await _redis.aclose()
     await _http.aclose()
@@ -253,7 +255,7 @@ async def recall(
     # Fetch many more candidates when filtering by source (HNSW post-filter).
     # With 200K+ records, the desired source may be <2% of total, so we need
     # to scan deeply enough that post-filtering still yields n results.
-    k = n * 100 if source else n * 3
+    k = n * 20 if source else n * 3
 
     async with _pg_pool.acquire() as conn:
         # pgvector cosine distance: 1 - cosine_similarity

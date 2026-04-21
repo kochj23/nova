@@ -112,7 +112,7 @@ class HealthHandler(BaseHTTPRequestHandler):
 
 
 def main():
-    server = HTTPServer(("0.0.0.0", PORT), HealthHandler)
+    server = HTTPServer(("127.0.0.1", PORT), HealthHandler)
     print(f"[healthkit] Listening on port {PORT}", flush=True)
     try:
         server.serve_forever()
