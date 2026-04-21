@@ -12,7 +12,7 @@ set -euo pipefail
 DB_NAME="nova_memories"
 DB_USER="kochj"
 LOCAL_DIR="/Volumes/Data/backups/postgres"
-NAS_DIR="/Volumes/NAS/backups/postgres"
+NAS_DIR="/Volumes/nas/backups/postgres"
 RETENTION_DAYS=7
 DATE=$(date +%Y-%m-%d)
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
