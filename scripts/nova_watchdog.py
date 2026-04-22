@@ -146,11 +146,14 @@ def main():
     fixes = []
 
     # Check critical services
+    # Canonical launchd labels — verified 2026-04-22
     services = [
         ("Scheduler", "127.0.0.1", 37460, "com.nova.scheduler"),
         ("Gateway", "127.0.0.1", 18789, "ai.openclaw.gateway"),
         ("Memory Server", "127.0.0.1", 18790, "net.digitalnoise.nova-memory-server"),
-        ("Ollama", "127.0.0.1", 11434, None),  # Managed by Ollama.app, not launchd
+        ("Ollama", "127.0.0.1", 11434, None),  # Managed by Ollama.app
+        ("OpenWebUI", "127.0.0.1", 3000, "net.digitalnoise.openwebui"),
+        ("TinyChat", "127.0.0.1", 8000, "net.digitalnoise.tinychat"),
     ]
 
     for name, host, port, label in services:
@@ -183,7 +186,7 @@ def main():
         r.ping()
     except Exception:
         issues.append("Redis DOWN")
-        restart_launchd("homebrew.mxcl.redis")
+        restart_launchd("net.digitalnoise.redis")
         fixes.append("Restarted Redis")
 
     # Check PostgreSQL

@@ -56,8 +56,8 @@ should_alert() {
 
 # ── 1. Vector memory server ───────────────────────────────────────────────────
 if ! curl -sf "http://127.0.0.1:${VECTOR_PORT}/health" > /dev/null 2>&1; then
-    log "Memory server DOWN — attempting restart"
-    /opt/homebrew/bin/python3 $HOME/.openclaw/memory_server.py &
+    log "Memory server DOWN — attempting restart via launchd"
+    launchctl kickstart -k gui/$(id -u)/net.digitalnoise.nova-memory-server
     sleep 4
     if curl -sf "http://127.0.0.1:${VECTOR_PORT}/health" > /dev/null 2>&1; then
         log "Memory server restarted successfully"

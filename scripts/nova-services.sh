@@ -217,7 +217,7 @@ _start_redis() {
         _ok "Redis already running on port 6379"
         return 0
     fi
-    brew services start redis >/dev/null 2>&1
+    launchctl kickstart gui/$(id -u)/net.digitalnoise.redis 2>/dev/null
     _wait_port 6379 15 "Redis"
     sleep 1
     if _health_redis; then
@@ -432,7 +432,7 @@ _stop_redis() {
         _ok "Redis not running"
         return 0
     fi
-    brew services stop redis >/dev/null 2>&1
+    "$REDIS_CLI" shutdown nosave 2>/dev/null
     sleep 2
     _ok "Redis stopped"
 }
