@@ -11,6 +11,7 @@ export NOVA_OPENROUTER_API_KEY="$(_kc nova-openrouter-api-key)"
 export NOVA_SLACK_BOT_TOKEN="$(_kc nova-slack-bot-token)"
 export NOVA_SLACK_APP_TOKEN="$(_kc nova-slack-app-token)"
 export NOVA_GATEWAY_AUTH_TOKEN="$(_kc nova-gateway-auth-token)"
+export NOVA_DISCORD_TOKEN="$(_kc nova-discord-token)"
 
 # Validate secrets loaded — if Keychain is locked, wait with exponential backoff
 MAX_RETRIES=12

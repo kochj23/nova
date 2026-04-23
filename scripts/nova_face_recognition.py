@@ -2,20 +2,18 @@
 """
 nova_face_recognition.py — Local face recognition on exterior cameras.
 
-Uses the face_recognition library (dlib-based) to identify known people
-and detect unknown visitors from camera frames. Fully local — no cloud.
+Uses sam-faces skill (CNN + SQLite) for identification. Fully local — no cloud.
 
 Workflow:
   1. Scans exterior camera frames for faces
-  2. Compares against known face database (~/.openclaw/workspace/faces/known/)
+  2. Compares against sam-faces SQLite database
   3. Known faces → log to vector memory ("Jordan arrived home at 3pm")
   4. Unknown faces → save crop, alert Slack with image, ask "Who is this?"
-  5. Enrollment: save a photo to known/<name>/ and it auto-enrolls
+  5. Enrollment: use sam-faces enroll_face.py or drop photo in known/<name>/
 
 Face database:
-  ~/.openclaw/workspace/faces/known/<name>/   — photos of known people
-  ~/.openclaw/workspace/faces/unknown/        — unidentified face crops
-  ~/.openclaw/workspace/faces/encodings.json  — cached face encodings
+  /Volumes/Data/Nova/skills/sam-faces/faces/people.db  — SQLite (sam-faces)
+  ~/.openclaw/workspace/faces/unknown/                 — unidentified face crops
 
 Cron: every 15 min (or integrated into camera monitor)
 Written by Jordan Koch.
@@ -25,33 +23,29 @@ import json
 import os
 import sys
 import time
+import importlib.util
 import urllib.request
 from datetime import datetime, date
 from pathlib import Path
-
-# face_recognition lives in /Volumes/Data/AI/python_packages
-os.environ["PYTHONPATH"] = "/Volumes/Data/AI/python_packages:" + os.environ.get("PYTHONPATH", "")
-sys.path.insert(0, "/Volumes/Data/AI/python_packages")
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
 SLACK_TOKEN = nova_config.slack_bot_token()
 SLACK_CHAN = nova_config.SLACK_CHAN
+SLACK_NOTIFY = nova_config.SLACK_NOTIFY
 SLACK_API = nova_config.SLACK_API
 VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
 TODAY = date.today().isoformat()
 
 WORKSPACE = Path.home() / ".openclaw/workspace"
-FACES_DIR = WORKSPACE / "faces"
-KNOWN_DIR = FACES_DIR / "known"
-UNKNOWN_DIR = FACES_DIR / "unknown"
-ENCODINGS_FILE = FACES_DIR / "encodings.json"
+UNKNOWN_DIR = WORKSPACE / "faces" / "unknown"
 CAMERA_FRAMES = WORKSPACE / "camera_frames"
-STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_face_state.json"
+STATE_FILE = WORKSPACE / "state" / "nova_face_state.json"
 
-# Exterior cameras only — Nova doesn't need to see Jordan in his underwear
+SAM_FACES_DIR = Path("/Volumes/Data/Nova/skills/sam-faces/sam_faces")
+
 EXTERIOR_CAMERAS = [
     "front_door_latest.jpg",
     "front_door_patio_latest.jpg",
@@ -65,10 +59,7 @@ EXTERIOR_CAMERAS = [
     "abundio_boundary_latest.jpg",
 ]
 
-# Face matching tolerance (lower = stricter, 0.6 is default)
 TOLERANCE = 0.55
-
-# Cooldown: don't re-alert for same person within N seconds
 PERSON_COOLDOWN = 1800  # 30 min
 UNKNOWN_COOLDOWN = 600  # 10 min
 
@@ -77,9 +68,19 @@ def log(msg):
     print(f"[nova_face {NOW.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def _load_sam_faces():
+    """Dynamically import sam-faces identify module."""
+    spec = importlib.util.spec_from_file_location(
+        "identify_faces", SAM_FACES_DIR / "identify_faces.py"
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
 def slack_post(text, channel=None):
     data = json.dumps({
-        "channel": channel or SLACK_CHAN, "text": text, "mrkdwn": True
+        "channel": channel or SLACK_NOTIFY, "text": text, "mrkdwn": True
     }).encode()
     req = urllib.request.Request(
         f"{SLACK_API}/chat.postMessage", data=data,
@@ -94,19 +95,49 @@ def slack_post(text, channel=None):
 
 
 def slack_upload_image(filepath, comment="", channel=None):
-    """Upload an image to Slack."""
-    import subprocess
+    """Upload image to Slack using files.getUploadURLExternal."""
+    import urllib.parse
+    token = SLACK_TOKEN
+    ch = channel or SLACK_NOTIFY
     try:
-        cmd = [
-            "curl", "-s", "-F", f"file=@{filepath}",
-            "-F", f"channels={channel or SLACK_CHAN}",
-            "-F", f"initial_comment={comment}",
-            "-H", f"Authorization: Bearer {SLACK_TOKEN}",
-            "https://slack.com/api/files.upload"
-        ]
-        subprocess.run(cmd, capture_output=True, timeout=15)
+        filename = os.path.basename(filepath)
+        file_size = os.path.getsize(filepath)
+        params = urllib.parse.urlencode({"filename": filename, "length": file_size})
+        req = urllib.request.Request(
+            f"https://slack.com/api/files.getUploadURLExternal?{params}",
+            headers={"Authorization": f"Bearer {token}"}
+        )
+        resp = urllib.request.urlopen(req, timeout=10)
+        url_data = json.loads(resp.read())
+        if not url_data.get("ok"):
+            log(f"Slack getUploadURL failed: {url_data.get('error','?')}")
+            return False
+
+        upload_url = url_data["upload_url"]
+        file_id = url_data["file_id"]
+
+        with open(filepath, "rb") as f:
+            file_data = f.read()
+        req2 = urllib.request.Request(upload_url, data=file_data,
+                                       headers={"Content-Type": "application/octet-stream"})
+        urllib.request.urlopen(req2, timeout=15)
+
+        complete = json.dumps({
+            "files": [{"id": file_id, "title": filename}],
+            "channel_id": ch,
+            "initial_comment": comment,
+        }).encode()
+        req3 = urllib.request.Request(
+            "https://slack.com/api/files.completeUploadExternal",
+            data=complete,
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        )
+        resp3 = urllib.request.urlopen(req3, timeout=10)
+        result = json.loads(resp3.read())
+        return result.get("ok", False)
     except Exception as e:
         log(f"Slack upload error: {e}")
+        return False
 
 
 def vector_remember(text, metadata=None):
@@ -123,103 +154,6 @@ def vector_remember(text, metadata=None):
         pass
 
 
-# ── Face database ────────────────────────────────────────────────────────────
-
-def ensure_dirs():
-    KNOWN_DIR.mkdir(parents=True, exist_ok=True)
-    UNKNOWN_DIR.mkdir(parents=True, exist_ok=True)
-
-
-def load_known_encodings():
-    """Load cached face encodings, or rebuild from known/ directory."""
-    import face_recognition
-    import numpy as np
-
-    # Check if cache is fresh
-    if ENCODINGS_FILE.exists():
-        try:
-            cache = json.loads(ENCODINGS_FILE.read_text())
-            cache_time = cache.get("built_at", "")
-            # Check if any known/ photos are newer than cache
-            newest_photo = 0
-            for person_dir in KNOWN_DIR.iterdir():
-                if person_dir.is_dir():
-                    for photo in person_dir.glob("*.jpg"):
-                        newest_photo = max(newest_photo, photo.stat().st_mtime)
-                    for photo in person_dir.glob("*.png"):
-                        newest_photo = max(newest_photo, photo.stat().st_mtime)
-
-            if cache.get("built_ts", 0) >= newest_photo and cache.get("people"):
-                # Convert lists back to numpy arrays
-                people = {}
-                for name, encs in cache["people"].items():
-                    people[name] = [np.array(e) for e in encs]
-                log(f"Loaded {len(people)} people from encoding cache")
-                return people
-        except Exception:
-            pass
-
-    # Rebuild from photos
-    log("Building face encoding database...")
-    people = {}
-
-    for person_dir in KNOWN_DIR.iterdir():
-        if not person_dir.is_dir():
-            continue
-        name = person_dir.name
-        encodings = []
-
-        for photo_path in sorted(person_dir.iterdir()):
-            if photo_path.suffix.lower() not in (".jpg", ".jpeg", ".png"):
-                continue
-            try:
-                image = face_recognition.load_image_file(str(photo_path))
-                face_encs = face_recognition.face_encodings(image)
-                if face_encs:
-                    encodings.append(face_encs[0])
-                    log(f"  Encoded {name}/{photo_path.name}")
-                else:
-                    log(f"  No face found in {name}/{photo_path.name}")
-            except Exception as e:
-                log(f"  Error encoding {photo_path.name}: {e}")
-
-        if encodings:
-            people[name] = encodings
-            log(f"  {name}: {len(encodings)} encoding(s)")
-
-    # Cache to disk
-    cache = {
-        "built_at": NOW.isoformat(),
-        "built_ts": time.time(),
-        "people": {name: [enc.tolist() for enc in encs] for name, encs in people.items()},
-    }
-    ENCODINGS_FILE.write_text(json.dumps(cache))
-    log(f"Built encodings for {len(people)} people, cached to {ENCODINGS_FILE.name}")
-
-    return people
-
-
-def identify_face(face_encoding, known_people):
-    """Match a face encoding against known people. Returns (name, confidence) or (None, 0)."""
-    import face_recognition
-    import numpy as np
-
-    best_name = None
-    best_distance = 1.0
-
-    for name, known_encodings in known_people.items():
-        distances = face_recognition.face_distance(known_encodings, face_encoding)
-        min_distance = np.min(distances)
-        if min_distance < best_distance:
-            best_distance = min_distance
-            best_name = name
-
-    if best_distance <= TOLERANCE:
-        confidence = round((1 - best_distance) * 100, 1)
-        return best_name, confidence
-    return None, 0
-
-
 # ── State management ─────────────────────────────────────────────────────────
 
 def load_state():
@@ -232,30 +166,26 @@ def load_state():
 
 
 def save_state(state):
+    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
 # ── Main scan ────────────────────────────────────────────────────────────────
 
 def scan_cameras():
-    """Scan all exterior cameras for faces."""
-    import face_recognition
-    from PIL import Image
-
-    ensure_dirs()
-    known_people = load_known_encodings()
+    """Scan all exterior cameras for faces using sam-faces."""
+    sam = _load_sam_faces()
+    UNKNOWN_DIR.mkdir(parents=True, exist_ok=True)
     state = load_state()
     now_ts = time.time()
 
     detections = []
-    unknown_count = 0
 
     for camera_file in EXTERIOR_CAMERAS:
         frame_path = CAMERA_FRAMES / camera_file
         if not frame_path.exists():
             continue
 
-        # Skip if frame is old (>5 min)
         age = now_ts - frame_path.stat().st_mtime
         if age > 300:
             continue
@@ -263,20 +193,18 @@ def scan_cameras():
         camera_name = camera_file.replace("_latest.jpg", "").replace("_", " ").title()
 
         try:
-            image = face_recognition.load_image_file(str(frame_path))
-            face_locations = face_recognition.face_locations(image, model="hog")
+            result = sam.identify(str(frame_path), threshold=TOLERANCE,
+                                  save_unknowns=True, save_crops=True)
 
-            if not face_locations:
+            if result.get("face_count", 0) == 0:
                 continue
 
-            face_encodings = face_recognition.face_encodings(image, face_locations)
-            log(f"{camera_name}: {len(face_locations)} face(s) detected")
+            log(f"{camera_name}: {result['face_count']} face(s) detected")
 
-            for i, (face_enc, face_loc) in enumerate(zip(face_encodings, face_locations)):
-                name, confidence = identify_face(face_enc, known_people)
-
-                if name:
-                    # Known person
+            for face in result.get("faces", []):
+                if not face.get("unknown"):
+                    name = face["name"]
+                    conf = int(face["confidence"] * 100)
                     key = f"known_{name}"
                     last = state.get("last_seen", {}).get(key, 0)
                     if (now_ts - last) > PERSON_COOLDOWN:
@@ -284,40 +212,20 @@ def scan_cameras():
                             "type": "known",
                             "name": name,
                             "camera": camera_name,
-                            "confidence": confidence,
+                            "confidence": conf,
                         })
                         state.setdefault("last_seen", {})[key] = now_ts
                 else:
-                    # Unknown person — save face crop
-                    key = f"unknown_{camera_name}_{i}"
                     last = state.get("unknown_alerts", {}).get(camera_name, 0)
                     if (now_ts - last) > UNKNOWN_COOLDOWN:
-                        top, right, bottom, left = face_loc
-                        # Add padding
-                        pad = 40
-                        h, w = image.shape[:2]
-                        top = max(0, top - pad)
-                        left = max(0, left - pad)
-                        bottom = min(h, bottom + pad)
-                        right = min(w, right + pad)
-
-                        face_crop = image[top:bottom, left:right]
-                        crop_filename = f"unknown_{camera_name}_{NOW.strftime('%Y%m%d_%H%M%S')}_{i}.jpg"
-                        crop_path = UNKNOWN_DIR / crop_filename
-
-                        try:
-                            img = Image.fromarray(face_crop)
-                            img.save(str(crop_path))
-                        except Exception as e:
-                            log(f"Error saving crop: {e}")
-                            crop_path = None
-
+                        bb = face["bounding_box"]
+                        crop_dir = SAM_FACES_DIR.parent / "faces" / "unknown"
+                        crop_path = crop_dir / f"unknown_{frame_path.stem}_{bb['top']}_{bb['left']}.jpg"
                         detections.append({
                             "type": "unknown",
                             "camera": camera_name,
-                            "crop_path": str(crop_path) if crop_path else None,
+                            "crop_path": str(crop_path) if crop_path.exists() else None,
                         })
-                        unknown_count += 1
                         state.setdefault("unknown_alerts", {})[camera_name] = now_ts
 
         except Exception as e:
@@ -343,11 +251,11 @@ def post_detections(detections):
                 f"{d['name']} detected at {d['camera']} on {TODAY} at {NOW.strftime('%H:%M')}",
                 {"date": TODAY, "type": "face_known", "person": d["name"], "camera": d["camera"]}
             )
-        slack_post("*Face Detection*\n" + "\n".join(f"  {l}" for l in lines))
+        slack_post(":bust_in_silhouette: *Face Detection*\n" + "\n".join(f"  {l}" for l in lines))
 
     if unknown:
         for d in unknown:
-            msg = f"*Unknown person* detected at {d['camera']} — {NOW.strftime('%I:%M %p')}"
+            msg = f":question: *Unknown person* at {d['camera']} — {NOW.strftime('%I:%M %p')}. Who is this?"
             if d.get("crop_path") and Path(d["crop_path"]).exists():
                 slack_upload_image(d["crop_path"], msg)
             else:
@@ -356,24 +264,6 @@ def post_detections(detections):
                 f"Unknown person detected at {d['camera']} on {TODAY} at {NOW.strftime('%H:%M')}",
                 {"date": TODAY, "type": "face_unknown", "camera": d["camera"]}
             )
-
-
-# ── Enrollment ───────────────────────────────────────────────────────────────
-
-def enroll(name, photo_path):
-    """Enroll a person by saving their photo to the known faces database."""
-    import shutil
-    person_dir = KNOWN_DIR / name.lower().replace(" ", "_")
-    person_dir.mkdir(parents=True, exist_ok=True)
-
-    dest = person_dir / Path(photo_path).name
-    shutil.copy2(photo_path, dest)
-
-    # Invalidate cache so it rebuilds on next scan
-    ENCODINGS_FILE.unlink(missing_ok=True)
-
-    log(f"Enrolled {name} from {photo_path}")
-    return dest
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
@@ -393,30 +283,20 @@ if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Nova Face Recognition")
     parser.add_argument("--scan", action="store_true", help="Scan cameras (default)")
-    parser.add_argument("--enroll", type=str, nargs=2, metavar=("NAME", "PHOTO"),
-                        help="Enroll a person: --enroll 'Jordan Koch' /path/to/photo.jpg")
-    parser.add_argument("--rebuild", action="store_true", help="Rebuild face encoding cache")
     parser.add_argument("--status", action="store_true", help="Show database status")
     args = parser.parse_args()
 
-    if args.enroll:
-        name, photo = args.enroll
-        dest = enroll(name, photo)
-        print(f"Enrolled: {dest}")
-    elif args.rebuild:
-        ensure_dirs()
-        load_known_encodings()
-        print("Encoding cache rebuilt.")
-    elif args.status:
-        ensure_dirs()
-        people = list(KNOWN_DIR.iterdir()) if KNOWN_DIR.exists() else []
-        unknowns = list(UNKNOWN_DIR.glob("*.jpg")) if UNKNOWN_DIR.exists() else []
-        print(f"Known people: {len([p for p in people if p.is_dir()])}")
+    if args.status:
+        spec = importlib.util.spec_from_file_location("face_db", SAM_FACES_DIR / "face_db.py")
+        db = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(db)
+        db.init_db()
+        people = db.list_people()
+        unknowns = db.list_unknowns()
+        print(f"Known people: {len(people)}")
         for p in people:
-            if p.is_dir():
-                photos = list(p.glob("*.jpg")) + list(p.glob("*.png"))
-                print(f"  {p.name}: {len(photos)} photo(s)")
-        print(f"Unknown crops: {len(unknowns)}")
+            print(f"  {p['name']}: {p['encoding_count']} encoding(s)")
+        print(f"Unresolved unknowns: {len(unknowns)}")
         print(f"Exterior cameras: {len(EXTERIOR_CAMERAS)}")
     else:
         main()

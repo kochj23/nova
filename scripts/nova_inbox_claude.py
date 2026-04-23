@@ -14,9 +14,6 @@ from datetime import datetime
 import urllib.request
 import urllib.error
 
-# Ensure PYTHONPATH is set for waggle module
-os.environ["PYTHONPATH"] = "/Volumes/Data/AI/python_packages:" + os.environ.get("PYTHONPATH", "")
-
 from pathlib import Path
 
 HERD_MAIL = str(Path.home() / ".openclaw/scripts/nova_herd_mail.sh")

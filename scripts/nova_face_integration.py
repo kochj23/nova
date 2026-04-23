@@ -19,7 +19,7 @@ from pathlib import Path
 import urllib.request
 import urllib.error
 
-os.environ["PYTHONPATH"] = "/Volumes/Data/AI/python_packages:" + os.environ.get("PYTHONPATH", "")
+SAM_FACES_DIR = "/Volumes/Data/Nova/skills/sam-faces/sam_faces"
 
 WORKSPACE = Path.home() / ".openclaw/workspace"
 FACES_DIR = WORKSPACE / "faces"
@@ -64,20 +64,22 @@ def run_command(cmd, timeout=30):
 def identify_faces(image_path):
     """Run sam-faces on image."""
     code, stdout, stderr = run_command(
-        f"sam-faces --photo {image_path}",
-        timeout=15
+        f"python3 {SAM_FACES_DIR}/identify_faces.py --photo {image_path} --no-save-unknowns",
+        timeout=30
     )
-    
+
     if code == 0:
         try:
-            return json.loads(stdout)
-        except:
+            lines = stdout.strip().split("\n")
+            json_start = next(i for i, l in enumerate(lines) if l.startswith("{"))
+            return json.loads("\n".join(lines[json_start:]))
+        except Exception:
             return None
     return None
 
 def enroll_person(name, image_path):
     """Enroll a person in the face database."""
-    cmd = f'python3 ~/.openclaw/workspace/skills/sam-faces/scripts/enroll_face.py --name "{name}" --photo {image_path}'
+    cmd = f'python3 {SAM_FACES_DIR}/enroll_face.py --name "{name}" --photo {image_path} --face-index 0'
     code, stdout, stderr = run_command(cmd, timeout=30)
     
     if code == 0:

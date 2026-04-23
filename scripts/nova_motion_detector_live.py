@@ -14,8 +14,6 @@ import urllib.request
 import time
 import sys
 
-os.environ["PYTHONPATH"] = "/Volumes/Data/AI/python_packages:" + os.environ.get("PYTHONPATH", "")
-
 WORKSPACE = Path.home() / ".openclaw/workspace"
 CLIPS_DIR = Path("/Volumes/Data/motion_clips")
 FRAMES_DIR = Path("/Volumes/Data/camera_frames")

@@ -206,74 +206,48 @@ def slack_upload_image(filepath, channel, title="", comment=""):
 
 
 def _face_recognize(image_path, camera_name):
-    """Run face recognition on a thumbnail. Returns description or None."""
+    """Run face recognition via sam-faces skill (CNN + SQLite).
+    Returns (description_string, [unknown_crop_paths]) or (None, [])."""
     try:
-        import sys as _sys
-        _sys.path.insert(0, "/Volumes/Data/AI/python_packages")
-        import face_recognition
-        import numpy as np
-        from PIL import Image
+        sam_faces_dir = Path("/Volumes/Data/Nova/skills/sam-faces/sam_faces")
+        if not sam_faces_dir.exists():
+            log("sam-faces skill not found", level=LOG_WARN, source="protect")
+            return None, []
 
-        faces_dir = Path.home() / ".openclaw/workspace/faces"
-        known_dir = faces_dir / "known"
-        unknown_dir = faces_dir / "unknown"
-        encodings_file = faces_dir / "encodings.json"
-        unknown_dir.mkdir(parents=True, exist_ok=True)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("identify_faces", sam_faces_dir / "identify_faces.py")
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
 
-        image = face_recognition.load_image_file(image_path)
-        face_locations = face_recognition.face_locations(image, model="hog")
-        if not face_locations:
-            return None
+        result = mod.identify(image_path, threshold=0.55, save_unknowns=True, save_crops=True)
 
-        face_encodings = face_recognition.face_encodings(image, face_locations)
+        if result.get("face_count", 0) == 0:
+            return None, []
 
-        # Load known encodings
-        known_people = {}
-        if encodings_file.exists():
-            try:
-                cache = json.loads(encodings_file.read_text())
-                for name, encs in cache.get("people", {}).items():
-                    known_people[name] = [np.array(e) for e in encs]
-            except Exception:
-                pass
-
-        results = []
-        for i, (face_enc, face_loc) in enumerate(zip(face_encodings, face_locations)):
-            best_name, best_dist = None, 1.0
-            for name, known_encs in known_people.items():
-                distances = face_recognition.face_distance(known_encs, face_enc)
-                min_dist = np.min(distances)
-                if min_dist < best_dist:
-                    best_dist = min_dist
-                    best_name = name
-
-            if best_dist <= 0.55 and best_name:
-                confidence = round((1 - best_dist) * 100, 1)
-                results.append(f"{best_name} ({confidence}%)")
-                log(f"Face: {best_name} ({confidence}%) on {camera_name}", level=LOG_INFO, source="protect")
+        parts = []
+        unknown_crops = []
+        for face in result.get("faces", []):
+            if face.get("unknown"):
+                parts.append("Unknown face")
+                uid = face.get("unknown_id", "")
+                crop_dir = sam_faces_dir.parent / "faces" / "unknown"
+                src_stem = Path(image_path).stem
+                crop_path = crop_dir / f"unknown_{src_stem}_{face['bounding_box']['top']}_{face['bounding_box']['left']}.jpg"
+                if crop_path.exists():
+                    unknown_crops.append(str(crop_path))
+                log(f"Face: unknown on {camera_name} (id: {uid})", level=LOG_INFO, source="protect")
             else:
-                # Save unknown face crop
-                top, right, bottom, left = face_loc
-                pad = 40
-                h, w = image.shape[:2]
-                crop = image[max(0,top-pad):min(h,bottom+pad), max(0,left-pad):min(w,right+pad)]
-                ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-                crop_name = f"unknown_{camera_name.replace(' ','_')}_{ts}_{i}.jpg"
-                crop_path = unknown_dir / crop_name
-                try:
-                    Image.fromarray(crop).save(str(crop_path))
-                    results.append(f"Unknown face (saved: {crop_name})")
-                    log(f"Face: unknown on {camera_name}, saved {crop_name}", level=LOG_INFO, source="protect")
-                except Exception:
-                    results.append("Unknown face")
+                name = face["name"]
+                conf = int(face["confidence"] * 100)
+                parts.append(f"{name} ({conf}%)")
+                log(f"Face: {name} ({conf}%) on {camera_name}", level=LOG_INFO, source="protect")
 
-        return " | ".join(results) if results else None
+        desc = " | ".join(parts) if parts else None
+        return desc, unknown_crops
 
-    except ImportError:
-        return None
     except Exception as e:
         log(f"Face recognition error: {e}", level=LOG_WARN, source="protect")
-        return None
+        return None, []
 
 
 def _is_exterior(camera):
@@ -323,8 +297,7 @@ def _vision_identify(image_path):
         )
         resp = urllib.request.urlopen(req, timeout=30)
         data = json.loads(resp.read())
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
-        # Strip thinking tags if present
+        content = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
         if "<think>" in content:
             end = content.rfind("</think>")
             if end > 0:
@@ -573,8 +546,9 @@ def check_motion_events(client, state):
                         alert_text += f"\n  :eye: {vision_desc}"
 
                     # Face recognition on person detections
+                    unknown_crops = []
                     if filtered_types and "person" in filtered_types:
-                        face_result = _face_recognize(str(thumb_path), cam_name)
+                        face_result, unknown_crops = _face_recognize(str(thumb_path), cam_name)
                         if face_result:
                             alert_text += f"\n  :bust_in_silhouette: {face_result}"
 
@@ -590,6 +564,16 @@ def check_motion_events(client, state):
                     else:
                         log(f"Slack upload failed for {cam_name}, falling back to text",
                             level=LOG_WARN, source="protect")
+
+                    # Upload unknown face crops so they can be reviewed
+                    for crop_path in unknown_crops:
+                        slack_upload_image(
+                            crop_path,
+                            SLACK_NOTIFY,
+                            title=f"Unknown face — {cam_name}",
+                            comment=f":question: Unknown face detected on {cam_name}. Who is this?",
+                        )
+
                     try:
                         thumb_path.unlink()
                     except Exception:

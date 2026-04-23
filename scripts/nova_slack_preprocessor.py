@@ -22,7 +22,13 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-SLACK_TOKEN = nova_config.slack_bot_token()
+_cached_token = ""
+def _get_token():
+    global _cached_token
+    if not _cached_token:
+        _cached_token = nova_config.slack_bot_token()
+    return _cached_token
+
 JORDAN_USER_ID = "U049EPC2W"
 NOVA_BOT_ID = "U0ALZRF3HRQ"
 NOVA_CHAT_CHANNEL = "C0AMNQ5GX70"
@@ -42,7 +48,7 @@ def get_latest_messages(channel, since_ts="0"):
         url = (f"https://slack.com/api/conversations.history"
                f"?channel={channel}&oldest={since_ts}&limit=20")
         req = urllib.request.Request(url,
-            headers={"Authorization": f"Bearer {SLACK_TOKEN}"})
+            headers={"Authorization": f"Bearer {_get_token()}"})
         with urllib.request.urlopen(req, timeout=10) as r:
             data = json.loads(r.read())
             if data.get("ok"):
@@ -93,7 +99,7 @@ def post_memory_context_to_thread(channel, thread_ts, memory_text):
             data=payload,
             headers={
                 "Content-Type": "application/json",
-                "Authorization": f"Bearer {SLACK_TOKEN}",
+                "Authorization": f"Bearer {_get_token()}",
             }
         )
         urllib.request.urlopen(req, timeout=10)
