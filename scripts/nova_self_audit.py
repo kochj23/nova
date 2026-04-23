@@ -22,6 +22,7 @@ import re
 import socket
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -49,7 +50,6 @@ EXPECTED_SERVICES = {
     18789: {"name": "OpenClaw Gateway", "path": "/health"},
     18790: {"name": "Memory Server", "path": "/health"},
     11434: {"name": "Ollama", "path": "/"},
-    34750: {"name": "Nova-NextGen Gateway", "path": "/health"},
     37421: {"name": "OneOnOne", "path": "/api/status"},
     37432: {"name": "HomekitControl", "path": "/api/status"},
 }
@@ -60,6 +60,25 @@ EXPECTED_PROCESSES = [
     {"name": "Slack Preprocessor", "match": "nova_slack_preprocessor.py"},
     {"name": "Memory Server", "match": "memory_server.py"},
 ]
+
+
+AUDIT_STATE_FILE = Path.home() / ".openclaw/workspace/state/self_audit_state.json"
+
+
+def _load_last_audit_state():
+    try:
+        if AUDIT_STATE_FILE.exists():
+            with open(AUDIT_STATE_FILE) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_audit_state(state):
+    AUDIT_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(AUDIT_STATE_FILE, "w") as f:
+        json.dump(state, f)
 
 
 def _scripts_on_disk():
@@ -74,7 +93,7 @@ def _scripts_in_file(path):
     if not path.exists():
         return set()
     text = path.read_text()
-    pattern = re.compile(r'(?:nova_[a-z_]+\.(?:py|sh)|dream_[a-z_]+\.(?:py|sh))')
+    pattern = re.compile(r'(?:nova_[a-z0-9_]+\.(?:py|sh)|dream_[a-z0-9_]+\.(?:py|sh))')
     return set(pattern.findall(text))
 
 
@@ -254,12 +273,24 @@ def run_audit():
     report = "\n".join(lines)
     print(report)
 
-    # Post to Slack if there are issues
-    if all_issues:
+    # Only post to Slack if issues changed since last run (prevent spam)
+    issue_key = json.dumps(sorted(all_issues))
+    last_state = _load_last_audit_state()
+    changed = issue_key != last_state.get("last_issue_key", "")
+
+    if all_issues and changed:
         slack_post(report)
-        logging.info(f"Self-audit complete: {len(all_issues)} issue(s) posted to Slack")
+        logging.info(f"Self-audit complete: {len(all_issues)} issue(s) posted to Slack (new)")
+    elif all_issues:
+        logging.info(f"Self-audit complete: {len(all_issues)} issue(s), unchanged — skipping Slack")
     else:
-        logging.info("Self-audit complete: no issues found")
+        if last_state.get("last_issue_key", "") != "[]":
+            slack_post(report)
+            logging.info("Self-audit complete: all clear (issues resolved) — posted to Slack")
+        else:
+            logging.info("Self-audit complete: no issues found")
+
+    _save_audit_state({"last_issue_key": issue_key, "last_run": str(datetime.now())})
 
     return len(all_issues)
 
