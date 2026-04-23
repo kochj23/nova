@@ -111,6 +111,7 @@ class SynoSession:
 
     def __init__(self):
         self.sid = None
+        self._retried_login = False
 
     def login(self):
         """Authenticate and get session ID."""
@@ -170,6 +171,17 @@ class SynoSession:
             return data.get("data", {})
 
         error_code = data.get("error", {}).get("code", "?") if data else "no response"
+
+        # Error 119 = SID not valid (session expired/invalidated) — re-login once
+        if error_code == 119 and not getattr(self, "_retried_login", False):
+            log(f"Session invalidated (error 119) — re-authenticating...")
+            self._retried_login = True
+            self.sid = None
+            if self.login():
+                return self.query(api, version, method, extra_params)
+            log("Re-login failed after session invalidation")
+            return None
+
         # Don't log for expected "API not found" errors when probing optional APIs
         if error_code not in (101, 102, 103, 104, "?"):
             log(f"API error {api} method={method}: code={error_code}")
@@ -1241,8 +1253,12 @@ def full_check(session):
     storage = get_storage(session)
 
     if not sysinfo and not utilization and not storage:
-        log("Could not reach Synology DSM API")
-        slack_post("*Synology Monitor*\n  Unable to reach NAS at 192.168.1.11")
+        log("Could not reach Synology DSM API — all queries returned None")
+        slack_post(
+            "*Synology Monitor*\n"
+            "  DSM API returned no data (session may have been invalidated).\n"
+            "  NAS host 192.168.1.11 may still be reachable — check next cycle."
+        )
         return
 
     problems = find_problems(sysinfo, utilization, storage)
