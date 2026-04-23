@@ -31,9 +31,6 @@ logging.basicConfig(
     ],
 )
 
-SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN = nova_config.SLACK_CHAN
-SLACK_API = nova_config.SLACK_API
 NOW = datetime.now()
 TODAY = NOW.strftime("%Y-%m-%d")
 WEEK_AGO = (NOW - timedelta(days=7)).strftime("%Y-%m-%d")
@@ -383,21 +380,7 @@ def generate_weekly():
 
 
 def slack_post(text):
-    data = json.dumps({
-        "channel": SLACK_CHAN, "text": text, "mrkdwn": True
-    }).encode()
-    req_cmd = [
-        "curl", "-s", "-X", "POST",
-        f"{SLACK_API}/chat.postMessage",
-        "-H", f"Authorization: Bearer {SLACK_TOKEN}",
-        "-H", "Content-Type: application/json; charset=utf-8",
-        "-d", data.decode(),
-    ]
-    try:
-        subprocess.run(req_cmd, capture_output=True, timeout=15)
-        logging.info("Weekly journal sent to Slack")
-    except Exception as e:
-        logging.error(f"Slack post failed: {e}")
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
 
 
 if __name__ == "__main__":

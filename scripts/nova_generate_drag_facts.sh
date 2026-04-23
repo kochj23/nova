@@ -115,12 +115,7 @@ done
 final=$(wc -l < "$DATA/drag_racing_facts.jsonl" | tr -d ' ')
 echo "[$(date '+%H:%M:%S')] Generation complete. Total facts: $final" >> "$LOG"
 
-# Slack notification
-python3 -c "
-import sys; sys.path.insert(0, '$SCRIPTS')
-import nova_config, json, urllib.request
-token = nova_config.slack_bot_token()
-payload = json.dumps({'channel': nova_config.SLACK_NOTIFY, 'text': ':racing_car: *Drag Racing Knowledge Generation Complete*\nTotal facts: $final\nAll ingested into vector memory (source: drag_racing)'}).encode()
-req = urllib.request.Request('https://slack.com/api/chat.postMessage', data=payload, headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'})
-urllib.request.urlopen(req, timeout=10)
-" 2>/dev/null
+# Slack+Discord notification
+bash ~/.openclaw/scripts/nova_slack_post.sh ":racing_car: *Drag Racing Knowledge Generation Complete*
+Total facts: $final
+All ingested into vector memory (source: drag_racing)" "C0ATAF7NZG9"

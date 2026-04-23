@@ -19,8 +19,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-SLACK_TOKEN   = nova_config.slack_bot_token()
-SLACK_CHANNEL = "C0ATAF7NZG9"
 CRON_RUNS_DIR = Path.home() / ".openclaw/cron/runs"
 LOGS_DIR      = Path.home() / ".openclaw/logs"
 CUTOFF        = datetime.now() - timedelta(days=30)
@@ -32,20 +30,7 @@ def log(msg):
 
 
 def slack_post(text: str):
-    payload = json.dumps({"channel": SLACK_CHANNEL, "text": text}).encode()
-    req = urllib.request.Request(
-        "https://slack.com/api/chat.postMessage",
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {SLACK_TOKEN}",
-            "Content-Type": "application/json; charset=utf-8",
-        }
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            pass
-    except Exception as e:
-        log(f"Slack post failed: {e}")
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def trim_jsonl(path: Path) -> tuple[int, int]:

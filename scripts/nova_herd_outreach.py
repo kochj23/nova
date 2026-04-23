@@ -225,19 +225,7 @@ def send_email(to: str, subject: str, body: str, image_path: str = None) -> bool
 
 
 def slack_notify(text: str):
-    try:
-        data = json.dumps({
-            "channel": nova_config.SLACK_CHAN,
-            "text": text, "mrkdwn": True
-        }).encode()
-        req = urllib.request.Request(
-            f"{nova_config.SLACK_API}/chat.postMessage", data=data,
-            headers={"Authorization": f"Bearer {nova_config.slack_bot_token()}",
-                     "Content-Type": "application/json; charset=utf-8"})
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-    except Exception as e:
-        log(f"Slack error: {e}")
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
 
 
 def main():

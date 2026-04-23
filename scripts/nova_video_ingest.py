@@ -35,9 +35,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-SLACK_TOKEN = nova_config.slack_bot_token()
-JORDAN_DM = nova_config.JORDAN_DM
-SLACK_API = nova_config.SLACK_API
 VECTOR_URL = nova_config.VECTOR_URL
 
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
@@ -55,17 +52,7 @@ def log(msg):
 
 
 def slack_dm(text):
-    data = json.dumps({"channel": JORDAN_DM, "text": text, "mrkdwn": True}).encode()
-    req = urllib.request.Request(
-        f"{SLACK_API}/chat.postMessage", data=data,
-        headers={"Authorization": "Bearer " + SLACK_TOKEN,
-                 "Content-Type": "application/json; charset=utf-8"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=nova_config.JORDAN_DM)
 
 
 def vector_remember(text, metadata=None):

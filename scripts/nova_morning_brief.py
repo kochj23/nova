@@ -20,9 +20,6 @@ from datetime import datetime, date
 from pathlib import Path
 import nova_config
 
-SLACK_TOKEN  = nova_config.slack_bot_token()
-SLACK_CHAN   = "C0ATAF7NZG9"
-SLACK_API    = "https://slack.com/api"
 SCRIPTS      = Path.home() / ".openclaw" / "scripts"
 WORKSPACE    = Path.home() / ".openclaw" / "workspace"
 MEMORY_DIR   = WORKSPACE / "memory"
@@ -40,17 +37,7 @@ def log(msg):
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
 def slack_post(text):
-    data = json.dumps({"channel": SLACK_CHAN, "text": text, "mrkdwn": True}).encode()
-    req  = urllib.request.Request(
-        f"{SLACK_API}/chat.postMessage", data=data,
-        headers={"Authorization": "Bearer " + SLACK_TOKEN,
-                 "Content-Type": "application/json; charset=utf-8"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15):
-            pass
-    except Exception as e:
-        log(f"Slack error: {e}")
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 # ── HomePod TTS (DISABLED 2026-04-09 — randomly triggering during meetings) ──

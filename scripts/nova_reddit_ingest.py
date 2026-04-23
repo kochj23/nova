@@ -298,21 +298,15 @@ def main():
     log(f"Done. {total} new posts ingested across {len(SUBREDDITS)} subreddits",
         level=LOG_INFO, source="reddit_ingest")
 
-    # Post summary to Slack if any new content
+    # Post summary to Slack+Discord if any new content
     if total > 0:
         try:
-            token = nova_config.slack_bot_token()
             msg = (
                 f":globe_with_meridians: *Reddit Ingest* — {total} new posts from "
                 f"{len(SUBREDDITS)} subreddits\n"
                 f"Sources: {', '.join(f'r/{s}' for s in SUBREDDITS)}"
             )
-            payload = json.dumps({"channel": nova_config.SLACK_NOTIFY, "text": msg}).encode()
-            req = urllib.request.Request(
-                "https://slack.com/api/chat.postMessage", data=payload,
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-            )
-            urllib.request.urlopen(req, timeout=10)
+            nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
         except Exception:
             pass
 

@@ -25,24 +25,12 @@ import nova_config
 from nova_logger import log, LOG_INFO, LOG_ERROR
 from nova_protect_monitor import ProtectClient
 
-SLACK_CHAN = nova_config.SLACK_NOTIFY
 INTERIOR_PREFIX = "Interior"
 TODAY = datetime.now().strftime("%A, %B %d")
 
 
 def slack_post(text):
-    token = nova_config.slack_bot_token()
-    if not token:
-        return
-    try:
-        payload = json.dumps({"channel": SLACK_CHAN, "text": text}).encode()
-        req = urllib.request.Request(
-            "https://slack.com/api/chat.postMessage", data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def main():

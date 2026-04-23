@@ -62,9 +62,6 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 import nova_config
 
-SLACK_TOKEN  = None  # loaded lazily
-SLACK_CHAN   = nova_config.SLACK_NOTIFY
-SLACK_API    = nova_config.SLACK_API
 
 # Load herd config
 try:
@@ -400,28 +397,8 @@ def _load_sender_profile(addr: str) -> str:
 
 # ── Slack + Memory ───────────────────────────────────────────────────────────
 
-def _get_slack_token() -> str:
-    global SLACK_TOKEN
-    if SLACK_TOKEN:
-        return SLACK_TOKEN
-    SLACK_TOKEN = nova_config.slack_bot_token()
-    return SLACK_TOKEN or ""
-
-
 def slack_post(text: str):
-    token = _get_slack_token()
-    if not token:
-        return
-    try:
-        data = json.dumps({"channel": SLACK_CHAN, "text": text, "mrkdwn": True}).encode()
-        req = urllib.request.Request(
-            f"{SLACK_API}/chat.postMessage", data=data,
-            headers={"Authorization": f"Bearer {token}",
-                     "Content-Type": "application/json; charset=utf-8"})
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-    except Exception as e:
-        log(f"  Slack error: {e}")
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def vector_remember(text: str):

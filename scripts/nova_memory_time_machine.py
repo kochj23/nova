@@ -22,25 +22,13 @@ import nova_config
 from nova_logger import log, LOG_INFO, LOG_ERROR
 
 VECTOR_URL = "http://127.0.0.1:18790"
-SLACK_CHAN = nova_config.SLACK_CHAN  # #nova-chat — this is personal, not notifications
 TODAY = date.today()
 MONTH_DAY = TODAY.strftime("%B %d")  # "April 17"
 CURRENT_YEAR = TODAY.year
 
 
 def slack_post(text):
-    token = nova_config.slack_bot_token()
-    if not token:
-        return
-    try:
-        payload = json.dumps({"channel": SLACK_CHAN, "text": text}).encode()
-        req = urllib.request.Request(
-            "https://slack.com/api/chat.postMessage", data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
 
 
 def recall(query, n=10, source=None):

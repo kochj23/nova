@@ -26,8 +26,6 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
 VECTOR_URL = nova_config.VECTOR_URL
-SLACK_CHAN = nova_config.SLACK_CHAN
-SLACK_TOKEN = nova_config.slack_bot_token()
 NOW = datetime.now()
 TODAY = date.today().isoformat()
 
@@ -40,15 +38,7 @@ def log(msg):
 
 
 def slack_post(text):
-    data = json.dumps({"channel": SLACK_CHAN, "text": text, "mrkdwn": True}).encode()
-    req = urllib.request.Request(
-        "https://slack.com/api/chat.postMessage", data=data,
-        headers={"Authorization": f"Bearer {SLACK_TOKEN}",
-                 "Content-Type": "application/json; charset=utf-8"})
-    try:
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
 
 
 def vector_remember(text, metadata=None):

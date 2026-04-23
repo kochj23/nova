@@ -27,8 +27,6 @@ from pathlib import Path
 
 SOURCE_DIR = Path("/Volumes/nas/Google-Drive-kochjpar")
 MEMORY_URL = "http://127.0.0.1:18790/remember?async=1"
-SLACK_URL = "https://slack.com/api/chat.postMessage"
-SLACK_CHANNEL = "C0ATAF7NZG9"  # #nova-notifications
 STATUS_INTERVAL = 300  # 5 minutes
 
 LOG_FILE = Path("/tmp/nova-gdrive-ingest.log")
@@ -85,25 +83,11 @@ def load_slack_token():
 
 
 def post_slack(message):
-    if not slack_token:
-        return
     try:
-        payload = json.dumps({
-            "channel": SLACK_CHANNEL,
-            "text": message,
-            "mrkdwn": True,
-        }).encode()
-        req = urllib.request.Request(
-            SLACK_URL,
-            data=payload,
-            headers={
-                "Authorization": f"Bearer {slack_token}",
-                "Content-Type": "application/json; charset=utf-8",
-            },
-        )
-        urllib.request.urlopen(req, timeout=10)
+        import nova_config
+        nova_config.post_both(message, slack_channel=nova_config.SLACK_NOTIFY)
     except Exception as e:
-        log(f"Slack post failed: {e}")
+        log(f"Slack/Discord post failed: {e}")
 
 
 def post_status():

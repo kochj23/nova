@@ -21,7 +21,6 @@ import nova_config
 
 SLACK_TOKEN   = nova_config.slack_bot_token()
 SLACK_CHANNEL = "C0ATAF7NZG9"
-SLACK_API     = "https://slack.com/api/chat.postMessage"
 JOBS_FILE     = Path.home() / ".openclaw/cron/jobs.json"
 LOG_DIR       = Path.home() / ".openclaw/logs"
 NOVA_BOT_ID   = "U0ANKLR3SUQ"   # novaslackintegation bot user ID
@@ -51,22 +50,7 @@ def log(msg):
 
 
 def slack_post(text: str):
-    payload = json.dumps({"channel": SLACK_CHANNEL, "text": text}).encode()
-    req = urllib.request.Request(
-        SLACK_API,
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {SLACK_TOKEN}",
-            "Content-Type": "application/json; charset=utf-8",
-        }
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            result = json.loads(r.read())
-            if not result.get("ok"):
-                log(f"Slack post failed: {result.get('error')}")
-    except Exception as e:
-        log(f"Slack post error: {e}")
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def fetch_recent_slack_messages(hours: int = 20) -> list[dict]:

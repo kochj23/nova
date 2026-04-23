@@ -84,19 +84,7 @@ def save_state(state):
 
 
 def slack_post(text, channel=None):
-    token = nova_config.slack_bot_token()
-    if not token:
-        return
-    try:
-        payload = json.dumps({"channel": channel or SLACK_CHAT, "text": text}).encode()
-        import urllib.request
-        req = urllib.request.Request(
-            "https://slack.com/api/chat.postMessage", data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_CHAN)
 
 
 def handle_package_detection(camera_name, event_id, client=None):

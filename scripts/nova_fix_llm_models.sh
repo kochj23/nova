@@ -281,14 +281,7 @@ log ""
 log "=== LLM Model Discovery Fix Complete ==="
 log "All projects updated, committed, pushed, built, installed, archived."
 
-# Slack notification
-python3 -c "
-import sys; sys.path.insert(0, '$HOME/.openclaw/scripts')
-import nova_config, json, urllib.request
-token = nova_config.slack_bot_token()
-payload = json.dumps({'channel': nova_config.SLACK_NOTIFY, 'text': ':gear: *LLM Model Discovery* — Updated ${#PROJECTS[@]}+ apps to dynamically discover available Ollama and MLX models. Built, installed, archived, pushed.'}).encode()
-req = urllib.request.Request('https://slack.com/api/chat.postMessage', data=payload, headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {token}'})
-urllib.request.urlopen(req, timeout=10)
-" 2>/dev/null
+# Slack+Discord notification
+bash ~/.openclaw/scripts/nova_slack_post.sh ":gear: *LLM Model Discovery* — Updated ${#PROJECTS[@]}+ apps to dynamically discover available Ollama and MLX models. Built, installed, archived, pushed." "C0ATAF7NZG9"
 
-log "Slack notification sent. Done."
+log "Slack+Discord notification sent. Done."

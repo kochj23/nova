@@ -19,23 +19,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN = nova_config.SLACK_CHAN
 INTERVAL = 300  # 5 minutes
 VECTOR_URL = "http://127.0.0.1:18790"
 
 def slack_post(text):
-    data = json.dumps({"channel": SLACK_CHAN, "text": text, "mrkdwn": True}).encode()
-    req = urllib.request.Request(
-        "https://slack.com/api/chat.postMessage", data=data,
-        headers={"Authorization": "Bearer " + SLACK_TOKEN,
-                 "Content-Type": "application/json; charset=utf-8"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-    except Exception as e:
-        print(f"Slack error: {e}", flush=True)
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
 
 
 def get_stats():

@@ -19,9 +19,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-SLACK_TOKEN   = nova_config.slack_bot_token()
-SLACK_CHANNEL = "C0ATAF7NZG9"
-SLACK_API     = "https://slack.com/api/chat.postMessage"
 SCRIPTS       = Path(__file__).parent
 LOGS          = Path.home() / ".openclaw/logs"
 TODAY         = date.today().isoformat()
@@ -56,22 +53,7 @@ def log(msg):
 
 
 def slack_post(text: str):
-    payload = json.dumps({"channel": SLACK_CHANNEL, "text": text}).encode()
-    req = urllib.request.Request(
-        SLACK_API,
-        data=payload,
-        headers={
-            "Authorization": f"Bearer {SLACK_TOKEN}",
-            "Content-Type": "application/json; charset=utf-8",
-        }
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            result = json.loads(r.read())
-            if not result.get("ok"):
-                log(f"Slack error: {result.get('error')}")
-    except Exception as e:
-        log(f"Slack post failed: {e}")
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def log_has_todays_run(log_path: Path) -> bool:

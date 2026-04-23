@@ -575,35 +575,13 @@ def generate_report(days: int) -> str:
 # ── Slack posting ────────────────────────────────────────────────────────────
 
 def post_to_slack(text: str) -> bool:
-    """Post report to Slack #nova-notifications."""
-    token = nova_config.slack_bot_token()
-    if not token:
-        log("No Slack token available -- skipping post")
-        return False
-
-    data = json.dumps({
-        "channel": SLACK_CHANNEL,
-        "text": text,
-        "mrkdwn": True,
-    }).encode()
-    req = urllib.request.Request(
-        f"{SLACK_API}/chat.postMessage",
-        data=data,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json; charset=utf-8",
-        },
-    )
+    """Post report to Slack+Discord #nova-notifications."""
     try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            result = json.loads(resp.read())
-            if result.get("ok"):
-                log("Report posted to Slack #nova-notifications")
-                return True
-            log(f"Slack error: {result.get('error', 'unknown')}")
-            return False
+        nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+        log("Report posted to Slack+Discord #nova-notifications")
+        return True
     except Exception as exc:
-        log(f"Slack post failed: {exc}")
+        log(f"Slack/Discord post failed: {exc}")
         return False
 
 

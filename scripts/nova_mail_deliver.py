@@ -39,11 +39,8 @@ def vector_remember(text: str, metadata: dict = None):
         pass
 
 SCRIPTS      = Path.home() / ".openclaw" / "scripts"
-SLACK_TOKEN  = nova_config.slack_bot_token()
-SLACK_CHAN   = "C0ATAF7NZG9"
 JORDAN_EMAIL = "kochj23" + "@gmail.com"  # noqa
 SUMMARY_FILE = Path.home() / ".openclaw/workspace/state/nova_mail_fetch.txt"
-SLACK_API    = "https://slack.com/api"
 
 # Senders/subjects to treat as low-priority / newsletters
 NOISE_PATTERNS = [
@@ -68,16 +65,7 @@ def log(msg):
 def slack_post(text):
     chunks = [text[i:i+3000] for i in range(0, len(text), 3000)]
     for chunk in chunks:
-        data = json.dumps({"channel": SLACK_CHAN, "text": chunk, "mrkdwn": True}).encode()
-        req  = urllib.request.Request(
-            f"{SLACK_API}/chat.postMessage", data=data,
-            headers={"Authorization": "Bearer " + SLACK_TOKEN,
-                     "Content-Type": "application/json; charset=utf-8"}
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
-            if not result.get("ok"):
-                log(f"Slack error: {result.get('error')}")
+        nova_config.post_both(chunk, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def send_email(subject, body):

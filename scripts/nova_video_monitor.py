@@ -19,24 +19,12 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN = nova_config.SLACK_CHAN
 LOG_FILE = Path("/Volumes/Data/nova-video-batch.log")
 INTERVAL = 600  # 10 minutes
 
 
 def slack_post(text):
-    data = json.dumps({"channel": SLACK_CHAN, "text": text, "mrkdwn": True}).encode()
-    req = urllib.request.Request(
-        "https://slack.com/api/chat.postMessage", data=data,
-        headers={"Authorization": "Bearer " + SLACK_TOKEN,
-                 "Content-Type": "application/json; charset=utf-8"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
 
 
 def get_progress():

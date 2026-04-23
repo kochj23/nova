@@ -319,19 +319,8 @@ class NovaScheduler:
     # ── Slack ────────────────────────────────────────────────────────────
 
     async def _slack_post(self, text):
-        token = nova_config.slack_bot_token()
-        if not token:
-            return
-        channel = self.slack_cfg.get("channel", nova_config.SLACK_NOTIFY)
-        try:
-            payload = json.dumps({"channel": channel, "text": text}).encode()
-            req = urllib.request.Request(
-                "https://slack.com/api/chat.postMessage", data=payload,
-                headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-            )
-            await asyncio.get_event_loop().run_in_executor(None, urllib.request.urlopen, req)
-        except Exception:
-            pass
+        import asyncio
+        await asyncio.to_thread(nova_config.post_both, text, nova_config.SLACK_NOTIFY)
 
     async def _slack_alert(self, text):
         if self.slack_cfg.get("alerts", True):

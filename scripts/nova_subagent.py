@@ -311,24 +311,10 @@ class SubAgent(ABC):
         """Post to #nova-chat for Jordan's attention (flag-and-report pattern)."""
         await self._slack_post(message, SLACK_CHAT)
 
-    async def _slack_post(self, message: str, channel: str):
-        token = nova_config.slack_bot_token()
-        if not token:
-            log("No Slack token available", level=LOG_WARN, source=f"subagent.{self.name}")
-            return
-        payload = json.dumps({"channel": channel, "text": message}).encode()
-        req = urllib.request.Request(
-            "https://slack.com/api/chat.postMessage",
-            data=payload,
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {token}",
-            },
-        )
-        try:
-            urllib.request.urlopen(req, timeout=10)
-        except Exception as e:
-            log(f"Slack post failed: {e}", level=LOG_ERROR, source=f"subagent.{self.name}")
+    async def _slack_post(self, message: str, channel: str = None):
+        import asyncio
+        ch = channel or nova_config.SLACK_NOTIFY
+        await asyncio.to_thread(nova_config.post_both, message, ch)
 
     # ── Task Publishing ──────────────────────────────────────────────────────
 

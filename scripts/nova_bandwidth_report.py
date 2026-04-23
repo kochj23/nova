@@ -7,8 +7,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-SLACK_CHAN = "C0ATAF7NZG9"  # #nova-notifications (not #nova-chat)
-SLACK_TOKEN = nova_config.slack_bot_token()
 VECTOR_URL = nova_config.VECTOR_URL
 
 SSL_CTX = ssl.create_default_context()
@@ -21,13 +19,7 @@ def get_api_key():
     return r.stdout.strip()
 
 def slack_post(text):
-    data = json.dumps({"channel": SLACK_CHAN, "text": text, "mrkdwn": True}).encode()
-    req = urllib.request.Request("https://slack.com/api/chat.postMessage", data=data,
-        headers={"Authorization": f"Bearer {SLACK_TOKEN}", "Content-Type": "application/json; charset=utf-8"})
-    try:
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 def api_get(endpoint, key):
     """GET request to UDM Pro API."""

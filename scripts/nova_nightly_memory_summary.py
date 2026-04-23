@@ -17,9 +17,11 @@ import urllib.request
 from datetime import datetime, date
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+import nova_config
+
 WORKSPACE = Path.home() / ".openclaw/workspace"
 MEMORY_DIR = WORKSPACE / "memory"
-CHANNEL = "C0ATAF7NZG9"  # #nova-notifications
 VECTOR_URL = "http://127.0.0.1:18790"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 MODEL = "qwen3-coder:30b"
@@ -198,46 +200,11 @@ def _fallback_summary(raw_context: str) -> str:
 
 # ── Slack posting ────────────────────────────────────────────────────────────
 
-def get_slack_token() -> str:
-    """Get Slack bot token from openclaw.json."""
-    try:
-        config_path = Path.home() / ".openclaw/openclaw.json"
-        with open(config_path, 'r') as f:
-            config = json.load(f)
-        return config.get('channels', {}).get('slack', {}).get('botToken', '')
-    except Exception as e:
-        log(f"Config error: {e}")
-        return ""
-
-
 def post_to_slack(message: str) -> bool:
     """Post message to Slack #nova-notifications."""
-    bot_token = get_slack_token()
-    if not bot_token:
-        log("Slack bot token not found in config")
-        return False
-
     try:
-        payload = json.dumps({
-            "channel": CHANNEL,
-            "text": message
-        })
-        req = urllib.request.Request(
-            "https://slack.com/api/chat.postMessage",
-            data=payload.encode(),
-            headers={
-                "Authorization": f"Bearer {bot_token}",
-                "Content-Type": "application/json"
-            }
-        )
-        with urllib.request.urlopen(req, timeout=10) as r:
-            response = json.loads(r.read())
-        if response.get('ok'):
-            log(f"Posted to Slack: {response.get('ts')}")
-            return True
-        else:
-            log(f"Slack error: {response.get('error')}")
-            return False
+        nova_config.post_both(message, slack_channel=nova_config.SLACK_NOTIFY)
+        return True
     except Exception as e:
         log(f"Slack post error: {e}")
         return False

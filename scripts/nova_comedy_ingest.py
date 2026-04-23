@@ -32,8 +32,6 @@ import nova_config
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 FFPROBE = "/opt/homebrew/bin/ffprobe"
 VECTOR_URL = "http://127.0.0.1:18790/remember"
-SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN = nova_config.SLACK_NOTIFY  # #nova-notifications
 VIDEO_EXTENSIONS = {".mp4", ".mov", ".m4v", ".avi", ".mkv", ".webm"}
 STATUS_INTERVAL = 300  # 5 minutes
 
@@ -58,17 +56,7 @@ def log(msg):
 
 
 def slack_post(text):
-    if not SLACK_TOKEN:
-        return
-    try:
-        payload = json.dumps({"channel": SLACK_CHAN, "text": text}).encode()
-        req = urllib.request.Request(
-            "https://slack.com/api/chat.postMessage", data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {SLACK_TOKEN}"}
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def vector_remember(text, metadata):

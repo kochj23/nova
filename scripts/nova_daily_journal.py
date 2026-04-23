@@ -30,9 +30,6 @@ logging.basicConfig(
     ],
 )
 
-SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN = nova_config.SLACK_CHAN
-SLACK_API = nova_config.SLACK_API
 TODAY = datetime.now().strftime("%Y-%m-%d")
 DB = "nova_memories"
 STATE_DIR = Path.home() / ".openclaw/workspace/state"
@@ -318,21 +315,7 @@ def generate_journal():
 
 
 def slack_post(text):
-    data = json.dumps({
-        "channel": SLACK_CHAN, "text": text, "mrkdwn": True
-    }).encode()
-    req_cmd = [
-        "curl", "-s", "-X", "POST",
-        f"{SLACK_API}/chat.postMessage",
-        "-H", f"Authorization: Bearer {SLACK_TOKEN}",
-        "-H", "Content-Type: application/json; charset=utf-8",
-        "-d", data.decode(),
-    ]
-    try:
-        subprocess.run(req_cmd, capture_output=True, timeout=15)
-        logging.info("Daily journal sent to Slack")
-    except Exception as e:
-        logging.error(f"Slack post failed: {e}")
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
 
 
 if __name__ == "__main__":

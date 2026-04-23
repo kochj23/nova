@@ -34,9 +34,11 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+import nova_config
+
 PG_CONN = "host=127.0.0.1 dbname=nova_memories"
 OLLAMA_URL = "http://127.0.0.1:11434/api/embed"
-SLACK_CHANNEL = "C0ATAF7NZG9"
 BATCH_SIZE = 100
 STATUS_INTERVAL = 300
 
@@ -45,30 +47,8 @@ def log(msg):
     print(f"[reembed {datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def get_slack_token():
-    try:
-        r = subprocess.run(
-            ["security", "find-generic-password", "-a", "nova", "-s", "nova-slack-bot-token", "-w"],
-            capture_output=True, text=True, timeout=10
-        )
-        return r.stdout.strip()
-    except Exception:
-        return None
-
-
 def post_slack(text):
-    token = get_slack_token()
-    if not token:
-        return
-    try:
-        payload = json.dumps({"channel": SLACK_CHANNEL, "text": text, "mrkdwn": True}).encode()
-        req = urllib.request.Request(
-            "https://slack.com/api/chat.postMessage", data=payload,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"}
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def embed(text, model):

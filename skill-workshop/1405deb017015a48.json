@@ -2,7 +2,8 @@
   "version": 1,
   "proposals": [],
   "review": {
-    "turnsSinceReview": 9,
-    "toolCallsSinceReview": 0
+    "turnsSinceReview": 0,
+    "toolCallsSinceReview": 0,
+    "lastReviewAt": 1776985499232
   }
 }

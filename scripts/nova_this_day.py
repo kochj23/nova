@@ -44,9 +44,6 @@ def vector_remember(text: str, metadata: dict = None):
         log(f"vector_remember skipped: {e}")
 
 
-SLACK_TOKEN   = nova_config.slack_bot_token()
-SLACK_CHANNEL = "C0ATAF7NZG9"  # #nova-notifications
-SLACK_API     = "https://slack.com/api"
 MEMORY_DIR    = Path.home() / ".openclaw" / "workspace" / "memory"
 
 # How many items to pull from each category
@@ -192,28 +189,10 @@ def format_memory(month, day, events, births, deaths, date_str):
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
 def slack_post(text):
+    # Split long messages into 3000-char chunks for Slack limit
     chunks = [text[i:i + 3000] for i in range(0, len(text), 3000)]
     for chunk in chunks:
-        data = json.dumps({
-            "channel": SLACK_CHANNEL,
-            "text":    chunk,
-            "mrkdwn":  True,
-        }).encode()
-        req = urllib.request.Request(
-            f"{SLACK_API}/chat.postMessage",
-            data=data,
-            headers={
-                "Authorization": "Bearer " + SLACK_TOKEN,
-                "Content-Type": "application/json; charset=utf-8",
-            }
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=30) as resp:
-                result = json.loads(resp.read())
-                if not result.get("ok"):
-                    log(f"Slack error: {result.get('error')}")
-        except Exception as e:
-            log(f"Slack post error: {e}")
+        nova_config.post_both(chunk, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 # ── Memory ────────────────────────────────────────────────────────────────────

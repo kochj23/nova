@@ -10,8 +10,6 @@ JOURNAL="$HOME/.openclaw/workspace/journal/dreams/${TODAY}.md"
 PENDING="$HOME/.openclaw/workspace/journal/pending_delivery.json"
 DEAD_LETTER="$HOME/.openclaw/workspace/journal/failed_deliveries/${TODAY}.json"
 LOG="$HOME/.openclaw/logs/dream-pipeline.log"
-SLACK_TOKEN=$(python3 -c "import sys; sys.path.insert(0,'$HOME/.openclaw/scripts'); import nova_config; print(nova_config.slack_bot_token())" 2>/dev/null || echo "")
-SLACK_CHANNEL="C0ATAF7NZG9"
 
 failures=()
 
@@ -56,13 +54,6 @@ for f in "${failures[@]}"; do
     echo "  - $f"
 done
 
-# Post to Slack
-if [ -n "$SLACK_TOKEN" ]; then
-    curl -s -X POST "https://slack.com/api/chat.postMessage" \
-        -H "Authorization: Bearer $SLACK_TOKEN" \
-        -H "Content-Type: application/json; charset=utf-8" \
-        -d "{\"channel\":\"$SLACK_CHANNEL\",\"text\":\"$(echo -e "$MSG")\",\"mrkdwn\":true}" > /dev/null 2>&1
-    echo "[dream_health $(date +%H:%M:%S)] Failure alert posted to Slack"
-else
-    echo "[dream_health $(date +%H:%M:%S)] WARNING: No Slack token — could not post alert"
-fi
+# Post to Slack+Discord
+bash ~/.openclaw/scripts/nova_slack_post.sh "$(echo -e "$MSG")" "C0ATAF7NZG9"
+echo "[dream_health $(date +%H:%M:%S)] Failure alert posted to Slack+Discord"

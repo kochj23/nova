@@ -42,8 +42,6 @@ import nova_config
 
 HISTORY_DB = Path.home() / "Library/Safari/History.db"
 VECTOR_URL = "http://127.0.0.1:18790/remember?async=1"
-SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN = nova_config.SLACK_NOTIFY  # #nova-notifications
 CHECKPOINT_FILE = Path.home() / ".openclaw/workspace/state/safari_ingest_checkpoint.json"
 STATUS_INTERVAL = 300  # 5 minutes
 MAX_URLS_PER_CHUNK = 30  # Cap URLs in a single memory chunk
@@ -140,24 +138,7 @@ def mac_timestamp_to_datetime(mac_time):
 
 def slack_post(text):
     """Post a message to #nova-notifications."""
-    if not SLACK_TOKEN:
-        return
-    try:
-        payload = json.dumps({
-            "channel": SLACK_CHAN,
-            "text": text,
-            "mrkdwn": True,
-        }).encode()
-        req = urllib.request.Request(
-            "https://slack.com/api/chat.postMessage", data=payload,
-            headers={
-                "Content-Type": "application/json; charset=utf-8",
-                "Authorization": f"Bearer {SLACK_TOKEN}",
-            }
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except Exception as e:
-        log(f"Slack post failed: {e}")
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def vector_remember(text, metadata):

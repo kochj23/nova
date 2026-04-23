@@ -10,15 +10,8 @@
 SCRIPTS="$HOME/.openclaw/scripts"
 LOGS="$HOME/.openclaw/logs"
 TVSHOWS="/Volumes/external/videos/TVShows"
-SLACK_NOTIFY="C0ATAF7NZG9"
-
 _slack() {
-    local token=$(security find-generic-password -a nova -s nova-slack-bot-token -w 2>/dev/null)
-    [ -z "$token" ] && return
-    curl -s -X POST "https://slack.com/api/chat.postMessage" \
-        -H "Authorization: Bearer $token" \
-        -H "Content-Type: application/json" \
-        -d "{\"channel\": \"$SLACK_NOTIFY\", \"text\": \"$1\"}" > /dev/null 2>&1
+    bash ~/.openclaw/scripts/nova_slack_post.sh "$1" "C0ATAF7NZG9"
 }
 
 _is_running() {

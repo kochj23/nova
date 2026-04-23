@@ -108,9 +108,6 @@ def save_state(state):
 sys.path.insert(0, str(SCRIPTS))
 import nova_config
 
-SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN  = nova_config.SLACK_CHAN
-SLACK_API  = nova_config.SLACK_API
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 
 
@@ -127,18 +124,7 @@ def send_mail(to, subject, body, in_reply_to=None):
 
 def slack_post(text):
     """Post a game update to #nova-chat."""
-    if not SLACK_TOKEN:
-        return
-    try:
-        import urllib.request as _ur
-        data = json.dumps({"channel": SLACK_CHAN, "text": text, "mrkdwn": True}).encode()
-        req = _ur.Request(f"{SLACK_API}/chat.postMessage", data=data,
-            headers={"Authorization": f"Bearer {SLACK_TOKEN}",
-                     "Content-Type": "application/json; charset=utf-8"})
-        with _ur.urlopen(req, timeout=10):
-            pass
-    except Exception as e:
-        log(f"Slack error: {e}")
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
 
 
 def nova_auto_play(scene_text, inventory, turn, suggested):

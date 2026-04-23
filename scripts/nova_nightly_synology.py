@@ -19,24 +19,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_logger import log, LOG_INFO, LOG_ERROR
 
-SLACK_CHAN = nova_config.SLACK_NOTIFY
 TODAY = datetime.now().strftime("%A, %B %d")
 SYNOLOGY_SCRIPT = Path(__file__).parent / "nova_synology_monitor.py"
 
 
 def slack_post(text):
-    token = nova_config.slack_bot_token()
-    if not token:
-        return
-    try:
-        payload = json.dumps({"channel": SLACK_CHAN, "text": text}).encode()
-        req = __import__("urllib.request", fromlist=["Request"]).Request(
-            "https://slack.com/api/chat.postMessage", data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {token}"}
-        )
-        __import__("urllib.request", fromlist=["urlopen"]).urlopen(req, timeout=10)
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def run_synology(mode):

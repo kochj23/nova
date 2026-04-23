@@ -30,12 +30,12 @@ from datetime import datetime, date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import nova_config
 
 VECTOR_URL = "http://127.0.0.1:18790"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 CONSOLIDATION_MODEL = "nova:latest"
 PG_CONN = "host=127.0.0.1 dbname=nova_memories"
-SLACK_CHANNEL = "C0ATAF7NZG9"
 TODAY = date.today().isoformat()
 MAX_CLUSTERS_PER_RUN = 20
 CLUSTER_SIMILARITY_THRESHOLD = 0.85
@@ -45,30 +45,8 @@ def log(msg):
     print(f"[rem_sleep {datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def get_slack_token():
-    try:
-        r = subprocess.run(
-            ["security", "find-generic-password", "-a", "nova", "-s", "nova-slack-bot-token", "-w"],
-            capture_output=True, text=True, timeout=10
-        )
-        return r.stdout.strip()
-    except Exception:
-        return None
-
-
 def post_slack(text):
-    token = get_slack_token()
-    if not token:
-        return
-    try:
-        payload = json.dumps({"channel": SLACK_CHANNEL, "text": text, "mrkdwn": True}).encode()
-        req = urllib.request.Request(
-            "https://slack.com/api/chat.postMessage", data=payload,
-            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"}
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def pg_connect():

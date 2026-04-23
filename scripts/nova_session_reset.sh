@@ -21,8 +21,6 @@ SESSIONS_DIR="$HOME/.openclaw/agents/main/sessions"
 THRESHOLD_MB=20
 FORCE=false
 CHECK_ONLY=false
-SLACK_CHAN="C0ATAF7NZG9"
-
 # ── Parse args ────────────────────────────────────────────────────────────────
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -75,22 +73,8 @@ launchctl kickstart -k "gui/$(id -u)/ai.openclaw.gateway" 2>/dev/null || true
 echo "[session_reset] Gateway restarted."
 
 # ── Slack notification ────────────────────────────────────────────────────────
-SCRIPT_DIR="$(dirname "$0")"
-SLACK_TOKEN=$(python3 -c "
-import json
-from pathlib import Path
-c = json.loads((Path.home() / '.openclaw/openclaw.json').read_text())
-print(c['channels']['slack']['botToken'])
-" 2>/dev/null)
-
-if [[ -n "$SLACK_TOKEN" ]]; then
-    MSG="🔄 *Nova session reset* — context was ${SESSION_MB}MB (threshold ${THRESHOLD_MB}MB). Archived \`$(basename "$ARCHIVE_NAME")\`. Fresh session started."
-    curl -s -X POST "https://slack.com/api/chat.postMessage" \
-        -H "Authorization: Bearer $SLACK_TOKEN" \
-        -H "Content-Type: application/json" \
-        -d "{\"channel\":\"$SLACK_CHAN\",\"text\":\"$MSG\",\"mrkdwn\":true}" \
-        > /dev/null
-    echo "[session_reset] Slack notification sent."
-fi
+MSG="🔄 *Nova session reset* — context was ${SESSION_MB}MB (threshold ${THRESHOLD_MB}MB). Archived \`$(basename "$ARCHIVE_NAME")\`. Fresh session started."
+bash ~/.openclaw/scripts/nova_slack_post.sh "$MSG" "C0ATAF7NZG9"
+echo "[session_reset] Slack+Discord notification sent."
 
 echo "[session_reset] Done. Nova has a fresh session."

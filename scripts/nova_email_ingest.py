@@ -50,8 +50,6 @@ MAIL_DIR = Path.home() / "Library/Mail/V10"
 # Only ingest Home (~278K), Import (~38K), Inbox, and other personal folders
 EXCLUDE_PATHS = ["/Work/", "/Work -", "Work%20-"]
 VECTOR_URL = "http://127.0.0.1:18790/remember?async=1"
-SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN = nova_config.SLACK_NOTIFY   # #nova-notifications for status updates
 CHECKPOINT_FILE = Path.home() / ".openclaw/workspace/email_ingest_checkpoint.json"
 WORKERS = 4
 BATCH_SIZE = 50
@@ -90,17 +88,7 @@ def log(msg):
 # ── Slack reporting ──────────────────────────────────────────────────────────
 
 def slack_post(text):
-    data = json.dumps({"channel": SLACK_CHAN, "text": text, "mrkdwn": True}).encode()
-    req = urllib.request.Request(
-        "https://slack.com/api/chat.postMessage", data=data,
-        headers={"Authorization": "Bearer " + SLACK_TOKEN,
-                 "Content-Type": "application/json; charset=utf-8"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def post_status():

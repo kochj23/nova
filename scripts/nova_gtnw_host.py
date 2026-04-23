@@ -43,9 +43,6 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 import nova_config
 from herd_config import HERD
 
-SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN   = nova_config.SLACK_NOTIFY          # C0ATAF7NZG9 #nova-notifications
-SLACK_API   = nova_config.SLACK_API
 NOVA_EMAIL  = nova_config.NOVA_EMAIL
 HERD_MAIL   = str(SCRIPTS / "nova_herd_mail.sh")
 
@@ -181,27 +178,8 @@ def read_message(msg_id: str) -> dict | None:
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
 def slack_post(text: str):
-    """Post a message to #nova-chat."""
-    if not SLACK_TOKEN:
-        log("No Slack token — skipping Slack post")
-        return
-    try:
-        data = json.dumps({
-            "channel": SLACK_CHAN,
-            "text": text,
-            "mrkdwn": True
-        }).encode()
-        req = urllib.request.Request(
-            f"{SLACK_API}/chat.postMessage", data=data,
-            headers={
-                "Authorization": f"Bearer {SLACK_TOKEN}",
-                "Content-Type": "application/json; charset=utf-8"
-            }
-        )
-        with urllib.request.urlopen(req, timeout=10):
-            pass
-    except Exception as e:
-        log(f"Slack error: {e}")
+    """Post a message to #nova-notifications."""
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 # ── Ollama crisis simulator (fallback when GTNW not running) ──────────────────

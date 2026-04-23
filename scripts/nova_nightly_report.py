@@ -45,9 +45,6 @@ def vector_remember(text: str, source: str = "nightly", metadata: dict = None):
         pass
 
 
-SLACK_TOKEN  = nova_config.slack_bot_token()
-SLACK_CHAN   = "C0ATAF7NZG9"
-SLACK_API    = "https://slack.com/api"
 SCRIPTS      = Path.home() / ".openclaw" / "scripts"
 WORKSPACE    = Path.home() / ".openclaw" / "workspace"
 MEMORY_DIR   = WORKSPACE / "memory"
@@ -61,16 +58,7 @@ NOW          = datetime.now()
 def slack_post(text):
     chunks = [text[i:i+3000] for i in range(0, len(text), 3000)]
     for chunk in chunks:
-        data = json.dumps({"channel": SLACK_CHAN, "text": chunk, "mrkdwn": True}).encode()
-        req  = urllib.request.Request(
-            f"{SLACK_API}/chat.postMessage", data=data,
-            headers={"Authorization": "Bearer " + SLACK_TOKEN,
-                     "Content-Type": "application/json; charset=utf-8"}
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
-            if not result.get("ok"):
-                log(f"Slack error: {result.get('error')}")
+        nova_config.post_both(chunk, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def log(msg):

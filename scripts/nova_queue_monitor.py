@@ -24,24 +24,12 @@ except ImportError:
     sys.exit(1)
 
 REDIS_KEY = "nova:memory:ingest"
-SLACK_CHAN = nova_config.SLACK_NOTIFY
-SLACK_TOKEN = nova_config.slack_bot_token()
 INTERVAL = 900  # 15 minutes
 VECTOR_URL = "http://127.0.0.1:18790/stats"
 
 
 def slack_post(text):
-    if not SLACK_TOKEN:
-        return
-    try:
-        payload = json.dumps({"channel": SLACK_CHAN, "text": text}).encode()
-        req = urllib.request.Request(
-            "https://slack.com/api/chat.postMessage", data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {SLACK_TOKEN}"}
-        )
-        urllib.request.urlopen(req, timeout=10)
-    except Exception:
-        pass
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def get_memory_count():

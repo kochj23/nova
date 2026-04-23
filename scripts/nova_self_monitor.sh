@@ -13,8 +13,6 @@
 # Cron: every 15 minutes
 # Written by Jordan Koch.
 
-SLACK_TOKEN=$(security find-generic-password -a nova -s nova-slack-bot-token -w)
-SLACK_CHAN="C0ATAF7NZG9"
 VECTOR_PORT=18790
 ALERT_FILE="$HOME/.openclaw/workspace/state/nova_monitor_last_alert"
 ALERT_COOLDOWN=3600  # Only re-alert same issue after 1 hour
@@ -22,20 +20,7 @@ ALERT_COOLDOWN=3600  # Only re-alert same issue after 1 hour
 log() { echo "[nova_self_monitor $(date '+%H:%M:%S')] $*"; }
 
 slack_alert() {
-    local msg="$1"
-    /opt/homebrew/bin/python3 - "$msg" "$SLACK_TOKEN" "$SLACK_CHAN" << 'EOF'
-import sys, json, urllib.request
-msg, token, chan = sys.argv[1], sys.argv[2], sys.argv[3]
-data = json.dumps({"channel": chan, "text": msg, "mrkdwn": True}).encode()
-req = urllib.request.Request(
-    "https://slack.com/api/chat.postMessage", data=data,
-    headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"}
-)
-try:
-    with urllib.request.urlopen(req, timeout=10): pass
-except Exception as e:
-    print(f"Slack error: {e}", file=sys.stderr)
-EOF
+    bash ~/.openclaw/scripts/nova_slack_post.sh "$1" "C0ATAF7NZG9"
 }
 
 should_alert() {

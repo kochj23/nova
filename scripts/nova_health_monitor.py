@@ -32,9 +32,6 @@ from collections import defaultdict
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-SLACK_TOKEN = nova_config.slack_bot_token()
-JORDAN_DM = nova_config.JORDAN_DM
-SLACK_API = nova_config.SLACK_API
 VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
 TODAY = date.today().isoformat()
@@ -60,19 +57,7 @@ def log(msg):
 
 def slack_dm(text):
     """Post to Jordan's DM only — never #nova-chat for health data."""
-    data = json.dumps({
-        "channel": JORDAN_DM, "text": text, "mrkdwn": True
-    }).encode()
-    req = urllib.request.Request(
-        f"{SLACK_API}/chat.postMessage", data=data,
-        headers={"Authorization": "Bearer " + SLACK_TOKEN,
-                 "Content-Type": "application/json; charset=utf-8"}
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15):
-            pass
-    except Exception as e:
-        log(f"Slack error: {e}")
+    nova_config.post_both(text, slack_channel=nova_config.JORDAN_DM)
 
 
 def vector_remember(text, metadata=None):

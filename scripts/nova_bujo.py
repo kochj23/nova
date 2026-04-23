@@ -41,15 +41,9 @@ SCRIPTS_DIR    = Path.home() / ".openclaw" / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 try:
     import nova_config
-    SLACK_TOKEN   = nova_config.slack_bot_token()
-    SLACK_NOTIFY  = nova_config.SLACK_NOTIFY       # #nova-notifications
     VECTOR_URL    = nova_config.VECTOR_URL          # http://127.0.0.1:18790/remember
 except ImportError:
-    SLACK_TOKEN   = ""
-    SLACK_NOTIFY  = "C0ATAF7NZG9"
     VECTOR_URL    = "http://127.0.0.1:18790/remember"
-
-SLACK_API = "https://slack.com/api"
 TODAY     = date.today().isoformat()
 STALE_DAYS    = 5
 STUCK_MIGRATES = 3
@@ -155,26 +149,7 @@ def remember(text: str, tags: list | None = None):
 
 def slack_post(text: str, channel: str | None = None):
     """Post a message to Slack as Nova."""
-    token = SLACK_TOKEN
-    if not token:
-        log("No Slack token available — skipping post")
-        return
-    chan = channel or SLACK_NOTIFY
-    data = json.dumps({"channel": chan, "text": text, "mrkdwn": True}).encode()
-    req = urllib.request.Request(
-        f"{SLACK_API}/chat.postMessage", data=data,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json; charset=utf-8",
-        },
-    )
-    try:
-        with urllib.request.urlopen(req, timeout=15) as r:
-            resp = json.loads(r.read())
-            if not resp.get("ok"):
-                log(f"Slack error: {resp.get('error', 'unknown')}")
-    except Exception as e:
-        log(f"Slack post failed: {e}")
+    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_NOTIFY)
 
 
 # ── Data Access Helpers ──────────────────────────────────────────────────────
