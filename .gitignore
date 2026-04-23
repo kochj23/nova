@@ -135,3 +135,4 @@ agents/
 __pycache__/
 workspace
 openclaw.json.last-good
+openclaw.json.clobbered*
