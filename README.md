@@ -5,11 +5,11 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 > *"Like a star being born"* — Nova, on choosing her name
 
 ```
-  Scripts: 172         Scheduler tasks: 39  Vector memories: 1,345,000+
+  Scripts: 177         Scheduler tasks: 39  Vector memories: 1,345,000+
   Subagents: 7         Cameras: 25 Protect  Calendars: 15
   App APIs: 18 ports   AI backends: 7       Herd members: 9
-  Memory sources: 93   Privacy intents: 20+ (local-only)
-  Memory tiers: 3 (working / long_term / scratchpad)
+  Channels: 3 (Slack + Signal + Discord)    Privacy intents: 20+ (local-only)
+  Memory sources: 93   Memory tiers: 3 (working / long_term / scratchpad)
   Cross-links: memory_links graph with 2-hop traversal
   HealthKit: 1,826 daily files (Withings, Dexcom, RingCon)
   Self-healing: unified scheduler + watchdog + REM Sleep consolidation
@@ -132,12 +132,12 @@ Jordan never has to say "from your memories" — Nova checks automatically.
 +-----------------------------------------------------------------------------+
 |                                                                             |
 |   COMMUNICATION LAYER                                                       |
-|   +----------+  +----------+  +--------------+  +------------------+      |
-|   |  Slack    |  | iMessage |  | Email (IMAP) |  | Herd Mail (SMTP) |      |
-|   | socket   |  | Messages |  | nova@digital |  | haiku + memory   |      |
-|   | mode     |  | .app     |  | noise.net    |  | fragment per msg  |      |
-|   +----+-----+  +----+-----+  +------+-------+  +-------+----------+      |
-|        +----------+---+---------------+------------------+                  |
+|   +----------+  +----------+  +----------+  +--------------+  +--------+ |
+|   |  Slack    |  |  Signal  |  | Discord  |  | Email (IMAP) |  | Herd   | |
+|   | socket   |  | signal-  |  | bot      |  | nova@digital |  | Mail   | |
+|   | mode     |  | cli HTTP |  | gateway  |  | noise.net    |  | (SMTP) | |
+|   +----+-----+  +----+-----+  +----+-----+  +------+-------+  +---+----+ |
+|        +----------+---+-------------+---------------+--------------+       |
 |                   v                                                          |
 |   +-----------------------------------------------------------------+      |
 |   |              OpenClaw Gateway (ws://127.0.0.1:18789)             |      |
@@ -167,8 +167,8 @@ Jordan never has to say "from your memories" — Nova checks automatically.
 |   +------+----------------------------------------------------------+      |
 |   |                     MODEL ROUTING                                |      |
 |   |                                                                  |      |
-|   |  +- CLOUD (OpenRouter) — Slack only ------------------------+    |      |
-|   |  |  qwen/qwen3-235b-a22b-2507 (#nova-chat + Jordan DM)    |    |      |
+|   |  +- CLOUD (OpenRouter) — Slack + Signal + Discord ----------+    |      |
+|   |  |  qwen/qwen3-235b-a22b-2507 (#nova-chat + DMs)          |    |      |
 |   |  +---------------------------------------------------------+    |      |
 |   |                                                                  |      |
 |   |  +- LOCAL (never leaves machine) --------------------------+    |      |
@@ -475,10 +475,14 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 
 | Channel | Method | Details |
 |---------|--------|---------|
-| Slack | Socket mode (real-time) | Primary channel. #nova-chat + Jordan DM |
+| Slack | Socket mode (real-time) | Primary channel. #nova-chat + Jordan DM. Qwen3 235B via OpenRouter |
+| Signal | signal-cli daemon (HTTP) | +13233645436 (Nova's Google Voice). DMs + group chats. Qwen3 235B |
+| Discord | Bot gateway (WebSocket) | Koch Family server. #nova-chat + #nova-notifications. Known upstream bug in @buape/carbon@0.16.0 WebSocket READY |
 | Email | IMAP read + SMTP send | nova@digitalnoise.net. Auto-reply with haiku + memory fragment |
 | iMessage | AppleScript send, SQLite read, macOS Contacts resolution | Sends as Jordan (signed "-- Nova"). All messages (in + out) stored in memory with contact names resolved from 599 macOS Contacts entries. Search by name, not phone numbers. |
 | Herd outreach | LLM-decided daily | Warmth scoring, topic matching, dream image attachments (35% chance) |
+
+**Multi-channel posting:** All 65+ notification/report scripts use `nova_config.post_both()` which posts to both Slack and Discord simultaneously. Channel mapping: Slack `#nova-chat` ↔ Discord `#nova-chat`, Slack `#nova-notifications` ↔ Discord `#nova-notifications`.
 
 ### Memory
 
@@ -863,16 +867,16 @@ Nova uses a three-tier execution model. As of Apr 14 2026, **only Slack conversa
 |  |  Cost: $0/day (local inference on M4 Mac Studio)           | |
 |  +------------------------------------------------------------+ |
 |                                                                  |
-|  TIER 3: Slack conversation (OpenRouter — real-time)            |
+|  TIER 3: Conversation (OpenRouter — real-time)                  |
 |  +------------------------------------------------------------+ |
-|  |  Direct conversation with Jordan in #nova-chat + DMs.      | |
+|  |  Direct conversation via Slack, Signal, or Discord.        | |
 |  |  Uses Qwen3 235B via OpenRouter (262K context).            | |
 |  |  modelByChannel routes only these to cloud.                | |
 |  |                                                            | |
 |  |  Session auto-resets after 2hr idle or daily at 4am.       | |
 |  |  Bootstrap context capped at 50K chars (was 250K).         | |
 |  |                                                            | |
-|  |  Cost: ~$1-2/day (~$50/month)                              | |
+|  |  Cost: ~$1-3/day (~$50-90/month)                           | |
 |  +------------------------------------------------------------+ |
 |                                                                  |
 |  History:                                                        |
@@ -1107,6 +1111,7 @@ All secrets loaded at runtime via `nova_config.py` (Python) or `nova_load_secret
 | `nova-slack-app-token` | nova | Slack app-level token (xapp-...) |
 | `nova-openrouter-api-key` | nova | OpenRouter API key |
 | `nova-gateway-auth-token` | nova | OpenClaw gateway authentication |
+| `nova-discord-token` | nova | Discord bot token (Koch Family server) |
 | `nova-smtp-app-password` | nova | Gmail App Password for SMTP |
 
 ---
@@ -1265,9 +1270,10 @@ All secrets stored in macOS Keychain. No plaintext tokens in config files.
 | `nova-slack-app-token` | Slack app-level token (xapp-...) |
 | `nova-openrouter-api-key` | OpenRouter API key |
 | `nova-gateway-auth-token` | OpenClaw gateway auth |
+| `nova-discord-token` | Discord bot token (Koch Family server) |
 | `nova-smtp-app-password` | Gmail App Password for SMTP |
 
-`openclaw.json` and `agents/main/agent/models.json` use `${ENV_VAR}` references resolved from Keychain at startup via `nova_load_secrets.sh`. The `nova_config.py` central config module reads Keychain directly for Python scripts.
+`openclaw.json` and `agents/main/agent/models.json` use `${ENV_VAR}` references resolved from Keychain at startup via `nova_load_secrets.sh` / `nova_gateway_start.sh`. The `nova_config.py` central config module reads Keychain directly for Python scripts.
 
 ### Database Backups
 
@@ -1323,6 +1329,38 @@ All critical services run under macOS launchd with `KeepAlive` and `ThrottleInte
 ---
 
 ## Changelog
+
+### Apr 23, 2026 -- Multi-Channel Expansion (Signal + Discord) + OpenClaw 2026.4.22
+
+**OpenClaw upgraded** from 2026.4.15 to 2026.4.22. Key new features enabled: Skill Workshop plugin, Tokenjuice (exec output compaction), faster plugin startup (82-90%).
+
+**Signal channel (LIVE):**
+- Registered +13233645436 (Nova's Google Voice) via `signal-cli 0.14.3`
+- signal-cli daemon runs on `127.0.0.1:8080`, auto-started by OpenClaw gateway
+- DMs + group chats working, routed to Qwen3 235B via OpenRouter
+- Privacy model enforced: Jordan sees everything in DMs, group chats protect PII
+
+**Discord channel (configured, upstream bug):**
+- Bot `Nova#9600` on Koch Family server (guild `1496985100657623210`)
+- `#nova-chat` + `#nova-notifications` channels mapped with model routing
+- `requireMention: false` for natural conversation
+- Known bug: `@buape/carbon@0.16.0` WebSocket gateway rarely reaches READY state. Messages are received when connected but connection is unreliable.
+
+**Dual-posting infrastructure:**
+- `nova_config.py`: Added `DISCORD_CHAT`, `DISCORD_NOTIFY`, `CHANNEL_MAP`, `discord_bot_token()`, `post_discord()`, `post_both()`
+- **65 scripts migrated** to `nova_config.post_both()` — all notifications/reports post to both Slack and Discord simultaneously. Removed ~1,000 lines of duplicated Slack API boilerplate.
+- `nova_discord_mirror.py`: Daemon that polls Slack and mirrors bot posts to Discord (backup path for scripts not yet migrated)
+- `nova_slack_post.sh` now calls `post_both()`
+
+**Bootstrap fixes (identity amnesia resolution):**
+- `BOOTSTRAP.md` rewritten: "You are Nova. Resume normal operation." Stops first-time setup from running on existing sessions.
+- `systemPromptOverride` updated with anti-narration rules: never mention internal files, never narrate boot sequence, never include [Note:] blocks
+- `MEMORY.md` trimmed from 22K to 1.6K chars — was exceeding per-file bootstrap budget (~4K), causing truncation of critical instructions (memory API endpoints, tool commands). Full version preserved as `MEMORY.md.full-backup`.
+- Built-in `memorySearch` disabled — memory-core plugin was auto-selecting Bedrock embeddings with stale AWS credentials. Nova's real memory (1.3M+ vectors on PostgreSQL port 18790) unaffected.
+
+**Keychain entries added:** `nova-discord-token`
+
+**Stats:** 8 commits, 177 scripts, 10 OpenClaw plugins loaded (acpx, browser, device-pair, discord, phone-control, signal, skill-workshop, slack, talk-voice, tokenjuice)
 
 ### Apr 20-21, 2026 -- Major Recovery, Intelligence Upgrade, Conduit-Inspired Architecture
 
