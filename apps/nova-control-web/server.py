@@ -22,6 +22,8 @@ OLLAMA_PS = "http://127.0.0.1:11434/api/ps"
 REDIS_URL = "redis://127.0.0.1:6379"
 TASK_DB = Path.home() / ".openclaw" / "tasks" / "runs.sqlite"
 FLOW_DB = Path.home() / ".openclaw" / "flows" / "registry.sqlite"
+SESSIONS_JSON = Path.home() / ".openclaw" / "agents" / "main" / "sessions" / "sessions.json"
+GATEWAY_QUERY_DB = Path.home() / ".nova_gateway" / "context.db"
 PG_DB = "nova_memories"
 
 AGENTS = ["analyst", "sentinel", "coder", "lookout", "librarian"]
@@ -403,6 +405,104 @@ async def collect_task_throughput() -> list:
         return task_throughput_cache or []
 
 
+_model_usage_cache: dict = {}
+_model_usage_ts: float = 0
+
+
+async def collect_model_usage() -> dict:
+    global _model_usage_cache, _model_usage_ts
+    now = time.time()
+    if now - _model_usage_ts < 30:
+        return _model_usage_cache
+    try:
+        import json as _json
+        data = _json.loads(SESSIONS_JSON.read_text())
+
+        by_provider: dict = {}
+        by_model: dict = {}
+
+        for key, val in data.items():
+            if not isinstance(val, dict):
+                continue
+            prov = val.get("modelProvider", "unknown")
+            model = val.get("model", "unknown")
+            inp = val.get("inputTokens", 0) or 0
+            out = val.get("outputTokens", 0) or 0
+            cost = val.get("estimatedCostUsd", 0) or 0
+
+            if prov not in by_provider:
+                by_provider[prov] = {"sessions": 0, "input_tokens": 0, "output_tokens": 0, "cost": 0.0}
+            by_provider[prov]["sessions"] += 1
+            by_provider[prov]["input_tokens"] += inp
+            by_provider[prov]["output_tokens"] += out
+            by_provider[prov]["cost"] += cost
+
+            if model not in by_model:
+                by_model[model] = {"sessions": 0, "input_tokens": 0, "output_tokens": 0, "cost": 0.0, "provider": prov}
+            by_model[model]["sessions"] += 1
+            by_model[model]["input_tokens"] += inp
+            by_model[model]["output_tokens"] += out
+            by_model[model]["cost"] += cost
+
+        total_sessions = len(data)
+        total_cost = sum(v["cost"] for v in by_provider.values())
+        total_tokens = sum(v["input_tokens"] + v["output_tokens"] for v in by_provider.values())
+
+        result = {
+            "status": "ok",
+            "by_provider": by_provider,
+            "by_model": by_model,
+            "total_sessions": total_sessions,
+            "total_cost_usd": round(total_cost, 6),
+            "total_tokens": total_tokens,
+        }
+        _model_usage_cache = result
+        _model_usage_ts = now
+        return result
+    except Exception as e:
+        return _model_usage_cache or {"status": "error", "error": str(e), "by_provider": {}, "by_model": {}, "total_sessions": 0, "total_cost_usd": 0, "total_tokens": 0}
+
+
+async def collect_gateway_query_log() -> dict:
+    try:
+        if not GATEWAY_QUERY_DB.exists() or GATEWAY_QUERY_DB.stat().st_size == 0:
+            return {"status": "empty", "backends": {}, "total_queries": 0}
+
+        async with aiosqlite.connect(f"file:{GATEWAY_QUERY_DB}?mode=ro", uri=True) as db:
+            cursor = await db.execute(
+                """SELECT backend_used, model_used, COUNT(*) as cnt,
+                          AVG(latency_ms) as avg_lat,
+                          SUM(prompt_length) as total_prompt,
+                          SUM(response_length) as total_response,
+                          SUM(fallback_used) as fallbacks
+                   FROM query_log GROUP BY backend_used, model_used"""
+            )
+            rows = await cursor.fetchall()
+            backends = {}
+            total_queries = 0
+            for backend, model, cnt, avg_lat, total_prompt, total_resp, fallbacks in rows:
+                total_queries += cnt
+                if backend not in backends:
+                    backends[backend] = {"models": {}, "total_queries": 0, "total_prompt_chars": 0, "total_response_chars": 0}
+                backends[backend]["total_queries"] += cnt
+                backends[backend]["total_prompt_chars"] += total_prompt or 0
+                backends[backend]["total_response_chars"] += total_resp or 0
+                backends[backend]["models"][model] = {
+                    "queries": cnt,
+                    "avg_latency_ms": round(avg_lat or 0),
+                    "prompt_chars": total_prompt or 0,
+                    "response_chars": total_resp or 0,
+                    "fallbacks": fallbacks or 0,
+                }
+
+            cursor2 = await db.execute("SELECT COUNT(*) FROM query_log")
+            total = (await cursor2.fetchone())[0]
+
+        return {"status": "ok", "backends": backends, "total_queries": total}
+    except Exception as e:
+        return {"status": "error", "error": str(e), "backends": {}, "total_queries": 0}
+
+
 def collect_traffic_flow(scheduler_data, redis_data, task_history_data, services_data) -> dict:
     global _log_offset, _prev_scheduler_runs, _prev_ingest_depth, _prev_task_total
 
@@ -525,6 +625,8 @@ async def poll_loop():
             collect_postgresql(),
             collect_flow_runs(),
             collect_task_throughput(),
+            collect_model_usage(),
+            collect_gateway_query_log(),
             return_exceptions=True,
         )
 
@@ -553,6 +655,8 @@ async def poll_loop():
             "postgresql": safe(8),
             "flows": safe(9),
             "task_throughput": results[10] if not isinstance(results[10], BaseException) else [],
+            "model_usage": safe(11),
+            "gateway_queries": safe(12),
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }

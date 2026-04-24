@@ -87,6 +87,8 @@ function renderCards(state) {
   renderPostgresql(state.postgresql);
   renderRedis(state.redis);
   renderMemory(state);
+  renderModelUsage(state.model_usage);
+  renderGatewayQueries(state.gateway_queries);
   renderTaskHistory(state.task_history);
   renderThroughput(state.task_throughput);
   renderLatency(state.services);
@@ -273,6 +275,89 @@ function renderMemory(state) {
     statRow('Redis Backend', redisOk ? 'Connected' : 'Down', redisOk ? 'green' : 'red') +
     statRow('Ingest Queue', redis?.ingest_queue_depth || 0,
       (redis?.ingest_queue_depth || 0) > 20 ? 'yellow' : 'cyan');
+}
+
+// --- Model Usage ---
+function renderModelUsage(mu) {
+  const card = document.getElementById('card-model-usage');
+  if (!mu) return;
+  card.dataset.status = mu.status === 'ok' ? 'healthy' : (mu.status === 'error' ? 'down' : 'unknown');
+  const body = card.querySelector('.card-body');
+
+  let html =
+    statRow('Total Sessions', mu.total_sessions || 0, 'cyan') +
+    statRow('Total Tokens', (mu.total_tokens || 0).toLocaleString(), 'green') +
+    statRow('Total Cost', '$' + (mu.total_cost_usd || 0).toFixed(4), 'magenta');
+
+  // By provider
+  if (mu.by_provider && Object.keys(mu.by_provider).length > 0) {
+    html += '<div class="stat-label" style="margin-top:10px;margin-bottom:4px">By Provider</div>';
+    for (const [prov, s] of Object.entries(mu.by_provider).sort((a,b) => b[1].sessions - a[1].sessions)) {
+      if (prov === 'unknown') continue;
+      const tokens = (s.input_tokens + s.output_tokens).toLocaleString();
+      const color = prov === 'ollama' ? 'green' : prov === 'openrouter' ? 'magenta' : 'cyan';
+      html += `<div class="model-row">
+        <div>
+          <div class="model-name" style="color:var(--accent-${color})">${escapeHtml(prov)}</div>
+          <div class="model-detail">${s.sessions} sessions &middot; ${tokens} tokens</div>
+        </div>
+        <div style="text-align:right">
+          <div class="stat-value ${color}">${s.cost > 0 ? '$' + s.cost.toFixed(4) : '$0'}</div>
+          <div class="model-detail">${s.input_tokens.toLocaleString()} in / ${s.output_tokens.toLocaleString()} out</div>
+        </div>
+      </div>`;
+    }
+  }
+
+  // By model (top 5)
+  if (mu.by_model && Object.keys(mu.by_model).length > 0) {
+    html += '<div class="stat-label" style="margin-top:10px;margin-bottom:4px">By Model</div>';
+    const models = Object.entries(mu.by_model)
+      .filter(([m]) => m !== 'unknown')
+      .sort((a,b) => (b[1].input_tokens + b[1].output_tokens) - (a[1].input_tokens + a[1].output_tokens))
+      .slice(0, 6);
+    for (const [model, s] of models) {
+      const tokens = (s.input_tokens + s.output_tokens).toLocaleString();
+      const isLocal = s.provider === 'ollama';
+      html += `<div class="pg-table-row">
+        <span class="pg-table-name">${escapeHtml(model)}</span>
+        <span class="pg-table-rows">${s.sessions}s &middot; ${tokens} tok ${isLocal ? '<span style="color:var(--accent-green);font-size:9px">LOCAL</span>' : '<span style="color:var(--accent-magenta);font-size:9px">CLOUD</span>'}</span>
+      </div>`;
+    }
+  }
+
+  body.innerHTML = html;
+}
+
+// --- Gateway Queries ---
+function renderGatewayQueries(gq) {
+  const card = document.getElementById('card-gateway-queries');
+  if (!gq) return;
+  card.dataset.status = gq.status === 'ok' ? 'healthy' : gq.status === 'empty' ? 'degraded' : 'down';
+  const body = card.querySelector('.card-body');
+
+  let html = statRow('Total Queries', gq.total_queries || 0, 'cyan');
+
+  if (gq.backends && Object.keys(gq.backends).length > 0) {
+    for (const [backend, info] of Object.entries(gq.backends)) {
+      html += `<div style="margin-top:8px"><span class="stat-label" style="text-transform:uppercase">${escapeHtml(backend)}</span></div>`;
+      html += statRow('Queries', info.total_queries || 0);
+      html += statRow('Prompt Chars', (info.total_prompt_chars || 0).toLocaleString());
+      html += statRow('Response Chars', (info.total_response_chars || 0).toLocaleString());
+
+      for (const [model, minfo] of Object.entries(info.models || {})) {
+        html += `<div class="pg-table-row">
+          <span class="pg-table-name">${escapeHtml(model)}</span>
+          <span class="pg-table-rows">${minfo.queries}q &middot; avg ${minfo.avg_latency_ms}ms${minfo.fallbacks > 0 ? ' &middot; ' + minfo.fallbacks + ' fallback' : ''}</span>
+        </div>`;
+      }
+    }
+  } else {
+    html += '<p class="dim" style="margin-top:8px">No queries logged yet</p>';
+  }
+
+  if (gq.error) html += `<div class="error-text">${escapeHtml(gq.error)}</div>`;
+  body.innerHTML = html;
 }
 
 // --- Task History ---
