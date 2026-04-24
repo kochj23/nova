@@ -5,7 +5,7 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 > *"Like a star being born"* — Nova, on choosing her name
 
 ```
-  Scripts: 177         Scheduler tasks: 39  Vector memories: 1,345,000+
+  Scripts: 178         Scheduler tasks: 39  Vector memories: 1,347,000+
   Subagents: 7         Cameras: 25 Protect  Calendars: 15
   App APIs: 18 ports   AI backends: 7       Herd members: 9
   Channels: 3 (Slack + Signal + Discord)    Privacy intents: 20+ (local-only)
@@ -304,6 +304,16 @@ This is a unified monorepo. Previously split across 4 repos (nova, Nova-NextGen,
 |       |   |   +-- Readers/             7 service readers
 |       |   +-- Views/
 |       +-- NovaControl.xcodeproj
+|
+|   +-- nova-control-web/        Real-time web monitoring dashboard
+|       +-- server.py                FastAPI + 11 data collectors + WebSocket
+|       +-- requirements.txt         Python dependencies
+|       +-- static/
+|       |   +-- index.html           Dashboard page
+|       |   +-- css/dashboard.css    Dark cyberpunk theme
+|       |   +-- js/graph.js          Canvas node graph + traffic-driven particles
+|       |   +-- js/main.js           WebSocket client + card renderers
+|       +-- README.md
 |
 +-- workspace/               Runtime data (mostly gitignored)
 |   +-- memory/                  Daily logs (YYYY-MM-DD.md)
@@ -912,6 +922,22 @@ SwiftUI macOS app providing a single API endpoint (port 37400) that aggregates d
 - Prometheus-compatible metrics endpoint
 - Content graph and topology mapping
 
+### Nova Control Web (Real-Time Dashboard)
+
+Python/FastAPI web dashboard at port 37450 with live system visualization. Accessible from any device on the LAN.
+
+- **Animated node graph** — Canvas-based topology: channels → gateway → backends, with support services below. Particle flow driven by **actual traffic volume** (gateway log parsing, scheduler deltas, Redis queue changes, service latency).
+- **11 concurrent data collectors** — Scheduler API, gateway health, Redis, Ollama `/api/ps`, PostgreSQL row counts, SQLite task/flow history, service latency with sparkline trends, `psutil` system metrics, gateway log tail for per-channel activity.
+- **System resources** — CPU, RAM, swap, all disk volumes with color-coded progress bars, live network TX/RX rates.
+- **Ollama model stats** — Loaded models, VRAM usage, parameter counts, quantization, context lengths.
+- **PostgreSQL stats** — Database size (14 GB), 1.3M+ memory rows, per-table breakdown, index count.
+- **Service latency sparklines** — Real-time ms response for 7 services with trend history.
+- **Task throughput chart** — 24-hour stacked bar chart (succeeded/failed/timed_out).
+- **Sortable scheduler job table** — All 36+ jobs, collapsible, with duration bars and failure tracking.
+- **Agent cards** — Status, model, uptime for all 5 sub-agents.
+- **Dark cyberpunk theme** — Monospace typography, cyan/green/magenta accents, glowing node halos.
+- **WebSocket push** — State updates every 2.5 seconds, ~125ms poll cycle.
+
 ---
 
 ## Daily Rhythm
@@ -1073,6 +1099,7 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 | `nova_email_ingest.py` | Bulk .emlx ingest (1M+ emails). Work-only exclusion. 4-worker parallel, text_hash dedup |
 | `nova_gdrive_ingest.py` | Google Drive backup from NAS (PDFs, XLSX, DOCX, CSV). 1,797 memories. privacy:local-only |
 | `nova_youtube_ingest.py` | YouTube playlist: yt-dlp download, ffmpeg WAV, MLX Whisper transcription. 570 memories from 39 videos |
+| `nova_youtube_channel_ingest.py` | YouTube channel ingest: enumerate all videos, download audio, MLX Whisper, store in memory. 2-min delay between videos, 10-min Slack/Signal status updates. Resumable (`.ingested` markers). |
 | `nova_safari_ingest.py` | Safari History.db: grouped by domain/date, noise filtered (70+ ad domains). 906 groups |
 | `nova_comedy_ingest.py` | Comedy special transcription: filename to comedian/show parsing, MLX Whisper |
 | `nova_tvshow_ingest.py` | TV show transcription: recursive season folders, episode parsing, multi-source tagging |
@@ -1329,6 +1356,40 @@ All critical services run under macOS launchd with `KeepAlive` and `ThrottleInte
 ---
 
 ## Changelog
+
+### Apr 24, 2026 -- Nova Control Web Dashboard + YouTube Channel Ingest + SSRF Policy Fix
+
+**Nova Control Web Dashboard** (`apps/nova-control-web/`): Built a real-time monitoring dashboard for all Nova infrastructure. Python/FastAPI backend on port 37450, vanilla HTML/CSS/JS frontend with Canvas-based animated node graph.
+
+- **11 concurrent data collectors**: Scheduler API, gateway health, Redis (agent status + ingest queue), Ollama `/api/ps` (loaded models, VRAM), PostgreSQL (DB size, 1.3M+ row counts), SQLite task history + throughput, service HTTP latency with trend history, `psutil` system resources (CPU/RAM/disk/network), gateway log tail (per-channel activity parsing), flow runs.
+- **Traffic-driven particle system**: Animated particles flow between nodes with density, speed, and brightness driven by actual traffic — gateway log analysis for channel messages, scheduler task deltas, Redis ingest queue changes, service response latency. Zero activity = near-zero particles; active traffic is dramatically visible.
+- **System resource monitoring**: CPU %, RAM with progress bar, swap, all 4 disk volumes with color-coded free space warnings, live network TX/RX rates computed from deltas.
+- **Ollama model cards**: 2 models loaded — nova:latest (30.5B Q4_K_M, 29.7 GB VRAM) + nomic-embed-text (137M F16, 0.5 GB). Shows family, params, quant, context length.
+- **PostgreSQL stats**: 13.85 GB database, 1,347,523 rows across 3 tables (memories: 1,347,521), 12 indexes. Direct `SELECT count(*)` queries (pg_stat was stale).
+- **Service latency sparklines**: Real-time ms response for 7 services (Ollama 2ms, OpenWebUI 20ms, etc.) with trend history building over time.
+- **24-hour task throughput chart**: Canvas-rendered stacked bar chart (succeeded/failed/timed_out per hour).
+- **Sortable scheduler job table**: All 36 jobs with run counts, durations with visual bars, consecutive failures, time-to-next-run. Collapsible to save screen space.
+- **5 agent cards**: Status, model, tasks completed, uptime from Redis meta hashes.
+- **Dark cyberpunk theme**: Monospace typography, cyan/green/magenta palette, radial node glows, subtle grid background. Responsive down to mobile.
+- **WebSocket push**: Full state broadcast every 2.5 seconds, ~125ms poll cycle. Exponential backoff reconnection.
+- **LAN accessible**: Binds to `0.0.0.0:37450`, accessible from any device on the network.
+
+**Browser SSRF policy fix**: Nova couldn't access her own local network — browser tool blocked `127.0.0.1` and `192.168.x.x` as private addresses. Traced through OpenClaw's `ssrf-BPsBM7sE.js` → `cdp.helpers-BWvLGafd.js` → `config-DUIgvEzx.js` and found the `browser.ssrfPolicy.allowPrivateNetwork` flag. Added `"browser": {"ssrfPolicy": {"allowPrivateNetwork": true}}` to `openclaw.json`. Nova can now browse her own dashboard and all local services.
+
+**YouTube channel ingest** (`nova_youtube_channel_ingest.py`): New script for ingesting entire YouTube channels.
+
+- Enumerates all videos via `yt-dlp --flat-playlist` on `/videos` URL
+- Downloads audio → ffmpeg WAV → MLX Whisper large-v3-turbo transcription → vector memory
+- 2-minute delay between videos (configurable `--delay`)
+- 10-minute status updates to Slack + Discord `#nova-notifications` + Signal (configurable `--status-interval`)
+- Signal notifications via signal-cli JSON-RPC at `/api/v1/rpc`
+- Resumable: `.ingested` marker files per video, skip on re-run
+- All memories tagged `privacy:local-only`, `source: youtube-channel-ingest`
+- First run: Brian Scotto channel (21 videos, car culture content)
+
+**Slack connection fix**: Gateway Slack socket mode silently disconnected. Health monitor caught it once at 11:12 but it dropped again. Gateway restart via `launchctl kickstart -k gui/501/ai.openclaw.gateway` restored all 3 channels (Slack, Discord, Signal).
+
+**Stats**: 5 new files, ~2,500 lines of new code, 1 OpenClaw config change, 21 YouTube videos queued for ingest.
 
 ### Apr 23, 2026 -- Multi-Channel Expansion (Signal + Discord) + OpenClaw 2026.4.22
 

@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nova Control</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>NOVA CONTROL</h1>
+      <span class="header-subtitle">system overview</span>
+    </div>
+    <div class="header-right">
+      <span id="poll-latency" class="meta-text"></span>
+      <div id="connection-status" class="status-dot"></div>
+    </div>
+  </header>
+
+  <section id="graph-section">
+    <canvas id="node-graph"></canvas>
+  </section>
+
+  <section id="cards-section">
+    <!-- Row 1: Core infrastructure -->
+    <div class="card card-wide" id="card-system" data-status="unknown">
+      <div class="card-header"><span class="card-title">System Resources</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+    <div class="card" id="card-gateway" data-status="unknown">
+      <div class="card-header"><span class="card-title">Gateway</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+    <div class="card" id="card-scheduler" data-status="unknown">
+      <div class="card-header"><span class="card-title">Scheduler</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+
+    <!-- Row 2: Data stores & models -->
+    <div class="card" id="card-ollama" data-status="unknown">
+      <div class="card-header"><span class="card-title">Ollama Models</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+    <div class="card" id="card-postgresql" data-status="unknown">
+      <div class="card-header"><span class="card-title">PostgreSQL</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+    <div class="card" id="card-redis" data-status="unknown">
+      <div class="card-header"><span class="card-title">Redis</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+    <div class="card" id="card-memory" data-status="unknown">
+      <div class="card-header"><span class="card-title">Memory System</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+
+    <!-- Row 3: Tasks & throughput -->
+    <div class="card" id="card-task-history" data-status="unknown">
+      <div class="card-header"><span class="card-title">Task History</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+    <div class="card card-wide" id="card-throughput" data-status="unknown">
+      <div class="card-header"><span class="card-title">Task Throughput (24h)</span><span class="card-dot"></span></div>
+      <div class="card-body"><canvas id="throughput-chart" height="100"></canvas></div>
+    </div>
+
+    <!-- Row 4: Service latencies -->
+    <div class="card card-wide" id="card-latency" data-status="unknown">
+      <div class="card-header"><span class="card-title">Service Latency</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+
+    <!-- Row 5: Agents -->
+    <div class="card agent-card" id="card-agent-analyst" data-status="unknown">
+      <div class="card-header"><span class="card-title">Agent: Analyst</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+    <div class="card agent-card" id="card-agent-sentinel" data-status="unknown">
+      <div class="card-header"><span class="card-title">Agent: Sentinel</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+    <div class="card agent-card" id="card-agent-coder" data-status="unknown">
+      <div class="card-header"><span class="card-title">Agent: Coder</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+    <div class="card agent-card" id="card-agent-lookout" data-status="unknown">
+      <div class="card-header"><span class="card-title">Agent: Lookout</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+    <div class="card agent-card" id="card-agent-librarian" data-status="unknown">
+      <div class="card-header"><span class="card-title">Agent: Librarian</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+
+    <!-- Row 6: Scheduler task table (collapsible) -->
+    <div class="card card-full" id="card-task-table" data-status="unknown">
+      <div class="card-header collapsible-header" id="task-table-toggle">
+        <span class="card-title">Scheduler Jobs <span class="collapse-arrow">&#9660;</span></span>
+        <span class="card-dot"></span>
+      </div>
+      <div class="card-body collapsible-body collapsed" id="task-table-body"><p class="dim">Connecting...</p></div>
+    </div>
+  </section>
+
+  <footer>
+    <span class="dim">Nova Control v1.1 &mdash; digitalnoise.net</span>
+  </footer>
+
+  <script src="/static/js/graph.js"></script>
+  <script src="/static/js/main.js"></script>
+</body>
+</html>
