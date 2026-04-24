@@ -1,4 +1,5 @@
 import asyncio
+import json as _json
 import os
 import re
 import subprocess
@@ -13,7 +14,7 @@ import psutil
 import redis.asyncio as aioredis
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 SCHEDULER_BASE = "http://127.0.0.1:37460"
@@ -75,6 +76,326 @@ app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), na
 @app.get("/")
 async def root():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
+
+
+@app.get("/api/detail/{service}")
+async def service_detail(service: str):
+    try:
+        if service == "postgresql":
+            return JSONResponse(await _detail_postgresql())
+        elif service == "redis":
+            return JSONResponse(await _detail_redis())
+        elif service == "ollama":
+            return JSONResponse(await _detail_ollama())
+        elif service == "scheduler":
+            return JSONResponse(await _detail_scheduler())
+        elif service == "gateway":
+            return JSONResponse(await _detail_gateway())
+        elif service == "system":
+            return JSONResponse(await _detail_system())
+        elif service == "task_history":
+            return JSONResponse(await _detail_tasks())
+        elif service == "memory":
+            return JSONResponse(await _detail_memory())
+        elif service == "model_usage":
+            return JSONResponse(await _detail_model_usage())
+        elif service.startswith("agent-"):
+            agent_name = service.replace("agent-", "")
+            return JSONResponse(await _detail_agent(agent_name))
+        else:
+            return JSONResponse({"error": f"Unknown service: {service}"}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+async def _detail_postgresql():
+    queries = [
+        ("today", "SELECT count(*) FROM memories WHERE created_at >= CURRENT_DATE"),
+        ("yesterday", "SELECT count(*) FROM memories WHERE created_at >= CURRENT_DATE - 1 AND created_at < CURRENT_DATE"),
+        ("this_week", "SELECT count(*) FROM memories WHERE created_at >= CURRENT_DATE - 7"),
+        ("total", "SELECT count(*) FROM memories"),
+        ("db_size", "SELECT pg_database_size(current_database())"),
+        ("index_size", "SELECT pg_indexes_size('memories')"),
+        ("table_size", "SELECT pg_total_relation_size('memories')"),
+    ]
+    result = {}
+    for name, sql in queries:
+        proc = await asyncio.create_subprocess_exec(
+            "psql", PG_DB, "-t", "-A", "-c", sql,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        result[name] = int(stdout.decode().strip()) if stdout.decode().strip().isdigit() else stdout.decode().strip()
+
+    proc = await asyncio.create_subprocess_exec(
+        "psql", PG_DB, "-t", "-A", "-c",
+        "SELECT source, count(*) FROM memories GROUP BY source ORDER BY count DESC LIMIT 15",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+    result["top_sources"] = []
+    for line in stdout.decode().strip().split("\n"):
+        if "|" in line:
+            parts = line.split("|")
+            result["top_sources"].append({"source": parts[0], "count": int(parts[1])})
+
+    proc = await asyncio.create_subprocess_exec(
+        "psql", PG_DB, "-t", "-A", "-c",
+        "SELECT source, count(*) FROM memories WHERE created_at >= CURRENT_DATE GROUP BY source ORDER BY count DESC LIMIT 10",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+    result["today_sources"] = []
+    for line in stdout.decode().strip().split("\n"):
+        if "|" in line:
+            parts = line.split("|")
+            result["today_sources"].append({"source": parts[0], "count": int(parts[1])})
+
+    proc = await asyncio.create_subprocess_exec(
+        "psql", PG_DB, "-t", "-A", "-c",
+        "SELECT date_trunc('day', created_at)::date, count(*) FROM memories WHERE created_at >= CURRENT_DATE - 7 GROUP BY 1 ORDER BY 1",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+    result["daily_counts"] = []
+    for line in stdout.decode().strip().split("\n"):
+        if "|" in line:
+            parts = line.split("|")
+            result["daily_counts"].append({"date": parts[0], "count": int(parts[1])})
+
+    return result
+
+
+async def _detail_redis():
+    r = app.state.redis
+    info_mem = await r.info("memory")
+    info_cli = await r.info("clients")
+    info_stats = await r.info("stats")
+    info_server = await r.info("server")
+    keys = await r.keys("*")
+    decoded_keys = [k.decode() if isinstance(k, bytes) else k for k in keys]
+
+    key_details = []
+    for k in decoded_keys:
+        ktype = await r.type(k)
+        ktype = ktype.decode() if isinstance(ktype, bytes) else ktype
+        size = None
+        if ktype == "string":
+            size = await r.strlen(k)
+        elif ktype == "list":
+            size = await r.llen(k)
+        elif ktype == "hash":
+            size = await r.hlen(k)
+        elif ktype == "set":
+            size = await r.scard(k)
+        ttl = await r.ttl(k)
+        key_details.append({"key": k, "type": ktype, "size": size, "ttl": ttl})
+
+    return {
+        "memory_used": info_mem.get("used_memory_human", "?"),
+        "memory_peak": info_mem.get("used_memory_peak_human", "?"),
+        "max_memory": info_mem.get("maxmemory_human", "?"),
+        "connected_clients": info_cli.get("connected_clients", 0),
+        "blocked_clients": info_cli.get("blocked_clients", 0),
+        "total_commands": info_stats.get("total_commands_processed", 0),
+        "total_connections": info_stats.get("total_connections_received", 0),
+        "keyspace_hits": info_stats.get("keyspace_hits", 0),
+        "keyspace_misses": info_stats.get("keyspace_misses", 0),
+        "hit_rate": round(info_stats.get("keyspace_hits", 0) / max(1, info_stats.get("keyspace_hits", 0) + info_stats.get("keyspace_misses", 0)) * 100, 1),
+        "uptime_seconds": info_server.get("uptime_in_seconds", 0),
+        "redis_version": info_server.get("redis_version", "?"),
+        "keys": key_details,
+    }
+
+
+async def _detail_ollama():
+    session = app.state.http_session
+    async with session.get("http://127.0.0.1:11434/api/tags", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+        tags = await resp.json()
+    async with session.get("http://127.0.0.1:11434/api/ps", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+        ps = await resp.json()
+
+    all_models = []
+    for m in tags.get("models", []):
+        all_models.append({
+            "name": m.get("name"), "size_gb": round(m.get("size", 0) / 1e9, 1),
+            "params": m.get("details", {}).get("parameter_size", "?"),
+            "quant": m.get("details", {}).get("quantization_level", "?"),
+            "family": m.get("details", {}).get("family", "?"),
+            "modified": m.get("modified_at", "?")[:19],
+        })
+    running = []
+    total_vram = 0
+    for m in ps.get("models", []):
+        vram = m.get("size_vram", 0)
+        total_vram += vram
+        running.append({
+            "name": m.get("name"), "vram_gb": round(vram / 1e9, 1),
+            "context_length": m.get("context_length", 0),
+            "expires": m.get("expires_at", "?")[:19],
+            "family": m.get("details", {}).get("family", "?"),
+            "params": m.get("details", {}).get("parameter_size", "?"),
+        })
+
+    return {"all_models": all_models, "running": running, "total_vram_gb": round(total_vram / 1e9, 1), "model_count": len(all_models)}
+
+
+async def _detail_scheduler():
+    session = app.state.http_session
+    async with session.get(f"{SCHEDULER_BASE}/status", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+        info = await resp.json()
+    async with session.get(f"{SCHEDULER_BASE}/tasks", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+        tasks = await resp.json()
+
+    task_list = []
+    for name, t in sorted(tasks.items(), key=lambda x: x[1].get("run_count", 0), reverse=True):
+        task_list.append({"name": name, **t})
+
+    return {"info": info, "tasks": task_list}
+
+
+async def _detail_gateway():
+    lines = []
+    try:
+        log_path = Path.home() / ".openclaw" / "logs" / "gateway.log"
+        if log_path.exists():
+            with open(log_path, "r", errors="replace") as f:
+                all_lines = f.readlines()
+                lines = [l.rstrip() for l in all_lines[-50:]]
+    except Exception:
+        pass
+
+    return {
+        "recent_logs": lines,
+        "current_state": current_state.get("gateway", {}),
+    }
+
+
+async def _detail_system():
+    cpu_freq = psutil.cpu_freq()
+    cpu_count = psutil.cpu_count()
+    cpu_count_phys = psutil.cpu_count(logical=False)
+    boot_time = psutil.boot_time()
+    uptime = time.time() - boot_time
+    load = os.getloadavg()
+
+    top_procs = []
+    for p in sorted(psutil.process_iter(['pid', 'name', 'cpu_percent', 'memory_percent']),
+                    key=lambda x: x.info.get('cpu_percent', 0) or 0, reverse=True)[:15]:
+        info = p.info
+        top_procs.append({
+            "pid": info["pid"], "name": info["name"],
+            "cpu": round(info.get("cpu_percent", 0) or 0, 1),
+            "mem": round(info.get("memory_percent", 0) or 0, 1),
+        })
+
+    return {
+        "cpu_count": cpu_count, "cpu_count_physical": cpu_count_phys,
+        "cpu_freq_mhz": round(cpu_freq.current) if cpu_freq else None,
+        "load_avg": [round(l, 2) for l in load],
+        "uptime_seconds": int(uptime),
+        "boot_time": time.strftime("%Y-%m-%d %H:%M", time.localtime(boot_time)),
+        "top_processes": top_procs,
+        "current": current_state.get("system", {}),
+    }
+
+
+async def _detail_tasks():
+    async with aiosqlite.connect(f"file:{TASK_DB}?mode=ro", uri=True) as db:
+        cursor = await db.execute(
+            "SELECT agent_id, status, COUNT(*) FROM task_runs GROUP BY agent_id, status ORDER BY COUNT(*) DESC")
+        by_agent = {}
+        for agent, status, count in await cursor.fetchall():
+            a = agent or "(scheduler)"
+            if a not in by_agent:
+                by_agent[a] = {}
+            by_agent[a][status] = count
+
+        cursor = await db.execute(
+            """SELECT label, status,
+                      CASE WHEN ended_at > 0 AND started_at > 0 THEN ended_at - started_at ELSE NULL END as duration,
+                      created_at
+               FROM task_runs ORDER BY created_at DESC LIMIT 25""")
+        recent = []
+        for label, status, dur, created in await cursor.fetchall():
+            recent.append({"label": label or "?", "status": status, "duration_s": round(dur, 1) if dur else None, "created_at": created})
+
+    return {"by_agent": by_agent, "recent_runs": recent}
+
+
+async def _detail_memory():
+    r = app.state.redis
+    ingest_len = await r.llen("nova:memory:ingest")
+
+    proc = await asyncio.create_subprocess_exec(
+        "psql", PG_DB, "-t", "-A", "-c",
+        "SELECT count(*) FROM memories WHERE created_at >= CURRENT_DATE",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+    today_count = int(stdout.decode().strip()) if stdout.decode().strip().isdigit() else 0
+
+    proc = await asyncio.create_subprocess_exec(
+        "psql", PG_DB, "-t", "-A", "-c",
+        "SELECT source, count(*) FROM memories WHERE created_at >= CURRENT_DATE GROUP BY source ORDER BY count DESC LIMIT 8",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+    today_sources = []
+    for line in stdout.decode().strip().split("\n"):
+        if "|" in line:
+            parts = line.split("|")
+            today_sources.append({"source": parts[0], "count": int(parts[1])})
+
+    proc = await asyncio.create_subprocess_exec(
+        "psql", PG_DB, "-t", "-A", "-c",
+        "SELECT tier, count(*) FROM memories GROUP BY tier ORDER BY count DESC",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+    tiers = {}
+    for line in stdout.decode().strip().split("\n"):
+        if "|" in line:
+            parts = line.split("|")
+            tiers[parts[0] or "default"] = int(parts[1])
+
+    return {"ingest_queue": ingest_len, "today_stored": today_count, "today_sources": today_sources, "tiers": tiers}
+
+
+async def _detail_model_usage():
+    data = _json.loads(SESSIONS_JSON.read_text())
+    sessions = []
+    for key, val in data.items():
+        if not isinstance(val, dict) or val.get("modelProvider") == "unknown":
+            continue
+        sessions.append({
+            "key": key[:60],
+            "provider": val.get("modelProvider", "?"),
+            "model": val.get("model", "?"),
+            "input_tokens": val.get("inputTokens", 0) or 0,
+            "output_tokens": val.get("outputTokens", 0) or 0,
+            "cost": val.get("estimatedCostUsd", 0) or 0,
+            "label": val.get("label", ""),
+            "updated": val.get("updatedAt", "")[:19],
+        })
+    sessions.sort(key=lambda x: x.get("updated", ""), reverse=True)
+    return {"sessions": sessions[:30]}
+
+
+async def _detail_agent(name):
+    r = app.state.redis
+    status = await r.get(f"nova:agent:{name}:status")
+    if isinstance(status, bytes):
+        status = status.decode()
+    meta = await r.hgetall(f"nova:agent:{name}:meta")
+    decoded = {}
+    for k, v in meta.items():
+        decoded[k.decode() if isinstance(k, bytes) else k] = v.decode() if isinstance(v, bytes) else v
+
+    async with aiosqlite.connect(f"file:{TASK_DB}?mode=ro", uri=True) as db:
+        cursor = await db.execute(
+            """SELECT label, status,
+                      CASE WHEN ended_at > 0 AND started_at > 0 THEN ended_at - started_at ELSE NULL END,
+                      created_at
+               FROM task_runs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 15""", (name,))
+        recent = []
+        for label, st, dur, created in await cursor.fetchall():
+            recent.append({"label": label or "?", "status": st, "duration_s": round(dur, 1) if dur else None, "created_at": created})
+
+    return {"status": status, "meta": decoded, "recent_tasks": recent}
 
 
 @app.websocket("/ws")

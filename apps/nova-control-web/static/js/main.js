@@ -630,6 +630,275 @@ function renderAgent(name, agent) {
   body.innerHTML = html;
 }
 
+// --- Detail Modal ---
+const CARD_SERVICE_MAP = {
+  'card-gateway': 'gateway', 'card-scheduler': 'scheduler',
+  'card-system': 'system', 'card-ollama': 'ollama',
+  'card-postgresql': 'postgresql', 'card-redis': 'redis',
+  'card-memory': 'memory', 'card-task-history': 'task_history',
+  'card-model-usage': 'model_usage',
+  'card-agent-analyst': 'agent-analyst', 'card-agent-sentinel': 'agent-sentinel',
+  'card-agent-coder': 'agent-coder', 'card-agent-lookout': 'agent-lookout',
+  'card-agent-librarian': 'agent-librarian',
+};
+
+function openModal(title, html) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').innerHTML = html;
+  document.getElementById('modal-overlay').classList.add('active');
+}
+
+function closeModal() {
+  document.getElementById('modal-overlay').classList.remove('active');
+}
+
+document.getElementById('modal-close').addEventListener('click', closeModal);
+document.getElementById('modal-overlay').addEventListener('click', (e) => {
+  if (e.target === e.currentTarget) closeModal();
+});
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+
+function fetchDetail(service, title) {
+  openModal(title, '<p class="dim">Loading...</p>');
+  fetch(`/api/detail/${service}`)
+    .then(r => r.json())
+    .then(data => {
+      if (data.error) { openModal(title, `<div class="error-text">${escapeHtml(data.error)}</div>`); return; }
+      const renderer = DETAIL_RENDERERS[service];
+      if (renderer) openModal(title, renderer(data));
+      else openModal(title, `<pre style="color:var(--text-dim);font-size:10px;white-space:pre-wrap">${escapeHtml(JSON.stringify(data, null, 2))}</pre>`);
+    })
+    .catch(err => openModal(title, `<div class="error-text">${escapeHtml(err.message)}</div>`));
+}
+
+document.getElementById('cards-section').addEventListener('click', (e) => {
+  const card = e.target.closest('.card');
+  if (!card) return;
+  if (e.target.closest('.collapsible-header')) return;
+  if (e.target.closest('th')) return;
+  const svc = CARD_SERVICE_MAP[card.id];
+  if (!svc) return;
+  const title = card.querySelector('.card-title')?.textContent?.replace(/[▲▼]/g, '').trim() || svc;
+  fetchDetail(svc, title);
+});
+
+const DETAIL_RENDERERS = {
+  postgresql(d) {
+    let h = statRow('Total Memories', (d.total || 0).toLocaleString(), 'cyan') +
+      statRow('Stored Today', (d.today || 0).toLocaleString(), 'green') +
+      statRow('Stored Yesterday', (d.yesterday || 0).toLocaleString()) +
+      statRow('This Week', (d.this_week || 0).toLocaleString()) +
+      statRow('Database Size', formatBytesDetail(d.db_size), 'magenta') +
+      statRow('Index Size', formatBytesDetail(d.index_size)) +
+      statRow('Table Size', formatBytesDetail(d.table_size));
+
+    if (d.daily_counts?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">Daily Ingestion (7 days)</div>';
+      const max = Math.max(1, ...d.daily_counts.map(x => x.count));
+      for (const dc of d.daily_counts) {
+        const pct = (dc.count / max * 100).toFixed(0);
+        h += `<div class="stat-row"><span class="stat-label">${dc.date}</span><span class="stat-value">${dc.count.toLocaleString()}</span></div>` +
+          `<div class="progress-bar-track"><div class="progress-bar-fill cyan" style="width:${pct}%"></div></div>`;
+      }
+      h += '</div>';
+    }
+
+    if (d.today_sources?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">Today\'s Sources</div><table class="modal-table"><thead><tr><th>Source</th><th>Count</th></tr></thead><tbody>';
+      for (const s of d.today_sources) h += `<tr><td>${escapeHtml(s.source)}</td><td>${s.count.toLocaleString()}</td></tr>`;
+      h += '</tbody></table></div>';
+    }
+
+    if (d.top_sources?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">All-Time Top Sources</div><table class="modal-table"><thead><tr><th>Source</th><th>Count</th></tr></thead><tbody>';
+      for (const s of d.top_sources) h += `<tr><td>${escapeHtml(s.source)}</td><td>${s.count.toLocaleString()}</td></tr>`;
+      h += '</tbody></table></div>';
+    }
+    return h;
+  },
+
+  redis(d) {
+    const hitRate = d.hit_rate || 0;
+    let h = statRow('Version', d.redis_version, 'cyan') +
+      statRow('Memory Used', d.memory_used) +
+      statRow('Memory Peak', d.memory_peak) +
+      statRow('Max Memory', d.max_memory) +
+      statRow('Uptime', formatUptime(d.uptime_seconds)) +
+      statRow('Connected Clients', d.connected_clients) +
+      statRow('Total Commands', (d.total_commands || 0).toLocaleString(), 'green') +
+      statRow('Total Connections', (d.total_connections || 0).toLocaleString()) +
+      statRow('Cache Hit Rate', hitRate + '%', hitRate > 90 ? 'green' : hitRate > 70 ? 'yellow' : 'red') +
+      statRow('Hits / Misses', `${(d.keyspace_hits||0).toLocaleString()} / ${(d.keyspace_misses||0).toLocaleString()}`);
+
+    if (d.keys?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">Keys</div><table class="modal-table"><thead><tr><th>Key</th><th>Type</th><th>Size</th><th>TTL</th></tr></thead><tbody>';
+      for (const k of d.keys) {
+        const ttl = k.ttl === -1 ? 'persistent' : k.ttl === -2 ? 'expired' : k.ttl + 's';
+        h += `<tr><td style="max-width:280px;overflow:hidden;text-overflow:ellipsis">${escapeHtml(k.key)}</td><td>${k.type}</td><td>${k.size ?? '?'}</td><td>${ttl}</td></tr>`;
+      }
+      h += '</tbody></table></div>';
+    }
+    return h;
+  },
+
+  ollama(d) {
+    let h = statRow('Total Models', d.model_count, 'cyan') +
+      statRow('Active VRAM', d.total_vram_gb + ' GB', 'magenta');
+
+    if (d.running?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">Running Models</div>';
+      for (const m of d.running) {
+        h += `<div class="model-row"><div><div class="model-name">${escapeHtml(m.name)}</div>` +
+          `<div class="model-detail">${m.family} &middot; ${m.params} &middot; ctx: ${m.context_length.toLocaleString()}</div></div>` +
+          `<div style="text-align:right"><div class="stat-value cyan">${m.vram_gb} GB VRAM</div>` +
+          `<div class="model-detail">expires: ${m.expires}</div></div></div>`;
+      }
+      h += '</div>';
+    }
+
+    if (d.all_models?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">All Installed Models</div><table class="modal-table"><thead><tr><th>Model</th><th>Family</th><th>Params</th><th>Quant</th><th>Size</th><th>Modified</th></tr></thead><tbody>';
+      for (const m of d.all_models) h += `<tr><td>${escapeHtml(m.name)}</td><td>${m.family}</td><td>${m.params}</td><td>${m.quant}</td><td>${m.size_gb}GB</td><td>${m.modified}</td></tr>`;
+      h += '</tbody></table></div>';
+    }
+    return h;
+  },
+
+  scheduler(d) {
+    let h = statRow('Status', d.info?.status || '?', 'green') +
+      statRow('Uptime', formatUptime(d.info?.uptime_s)) +
+      statRow('Total Tasks', d.info?.tasks_total || 0) +
+      statRow('Total Runs', (d.info?.total_runs || 0).toLocaleString(), 'cyan') +
+      statRow('Total Failures', d.info?.total_failures || 0, (d.info?.total_failures || 0) > 0 ? 'yellow' : 'green');
+
+    if (d.tasks?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">All Jobs</div><table class="modal-table"><thead><tr><th>Job</th><th>Schedule</th><th>Runs</th><th>Last Dur</th><th>Fails</th><th>Status</th></tr></thead><tbody>';
+      for (const t of d.tasks) {
+        const cls = t.running ? 'style="color:var(--accent-cyan)"' : t.consecutive_failures > 0 ? 'style="color:var(--accent-yellow)"' : '';
+        h += `<tr ${cls}><td>${escapeHtml(t.name)}</td><td>${escapeHtml(t.schedule||'')}</td><td>${(t.run_count||0).toLocaleString()}</td><td>${(t.last_duration||0).toFixed(1)}s</td><td>${t.consecutive_failures||0}</td><td>${t.running ? 'RUNNING' : t.enabled ? 'enabled' : 'disabled'}</td></tr>`;
+      }
+      h += '</tbody></table></div>';
+    }
+    return h;
+  },
+
+  gateway(d) {
+    const gw = d.current_state || {};
+    let h = statRow('Status', gw.gateway_status || '?', gw.ok ? 'green' : 'red') +
+      statRow('WebSocket', gw.ws_reachable ? 'reachable' : 'unreachable', gw.ws_reachable ? 'green' : 'red');
+
+    if (d.recent_logs?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">Recent Gateway Logs</div>' +
+        `<pre style="font-size:10px;color:var(--text-dim);white-space:pre-wrap;max-height:400px;overflow-y:auto;line-height:1.6">${d.recent_logs.map(escapeHtml).join('\n')}</pre></div>`;
+    }
+    return h;
+  },
+
+  system(d) {
+    const cur = d.current || {};
+    let h = statRow('CPU Cores', `${d.cpu_count_physical} physical / ${d.cpu_count} logical`) +
+      statRow('CPU Frequency', (d.cpu_freq_mhz || '?') + ' MHz') +
+      statRow('Load Average', (d.load_avg || []).join(' / ')) +
+      statRow('System Uptime', formatUptime(d.uptime_seconds), 'cyan') +
+      statRow('Boot Time', d.boot_time || '?');
+
+    if (cur.memory) {
+      h += statRow('RAM', `${cur.memory.used_gb}/${cur.memory.total_gb} GB (${cur.memory.percent}%)`,
+        cur.memory.percent > 85 ? 'red' : cur.memory.percent > 70 ? 'yellow' : 'green');
+    }
+
+    if (d.top_processes?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">Top Processes by CPU</div><table class="modal-table"><thead><tr><th>PID</th><th>Name</th><th>CPU %</th><th>MEM %</th></tr></thead><tbody>';
+      for (const p of d.top_processes) h += `<tr><td>${p.pid}</td><td>${escapeHtml(p.name)}</td><td>${p.cpu}%</td><td>${p.mem}%</td></tr>`;
+      h += '</tbody></table></div>';
+    }
+    return h;
+  },
+
+  task_history(d) {
+    let h = '';
+    if (d.by_agent) {
+      h += '<div class="modal-section-title">By Agent</div><table class="modal-table"><thead><tr><th>Agent</th><th>Succeeded</th><th>Timed Out</th><th>Failed</th><th>Lost</th></tr></thead><tbody>';
+      for (const [agent, statuses] of Object.entries(d.by_agent)) {
+        h += `<tr><td>${escapeHtml(agent)}</td><td style="color:var(--accent-green)">${statuses.succeeded||0}</td><td style="color:var(--accent-yellow)">${statuses.timed_out||0}</td><td style="color:var(--accent-red)">${statuses.failed||0}</td><td>${statuses.lost||0}</td></tr>`;
+      }
+      h += '</tbody></table>';
+    }
+    if (d.recent_runs?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">Recent Task Runs</div><table class="modal-table"><thead><tr><th>Task</th><th>Status</th><th>Duration</th><th>Time</th></tr></thead><tbody>';
+      for (const r of d.recent_runs) {
+        const color = r.status === 'succeeded' ? 'var(--accent-green)' : r.status === 'timed_out' ? 'var(--accent-yellow)' : r.status === 'failed' ? 'var(--accent-red)' : '';
+        h += `<tr><td>${escapeHtml(r.label)}</td><td style="color:${color}">${r.status}</td><td>${r.duration_s != null ? r.duration_s + 's' : '?'}</td><td style="font-size:10px">${r.created_at||''}</td></tr>`;
+      }
+      h += '</tbody></table></div>';
+    }
+    return h;
+  },
+
+  memory(d) {
+    let h = statRow('Stored Today', (d.today_stored || 0).toLocaleString(), 'green') +
+      statRow('Ingest Queue', d.ingest_queue || 0, (d.ingest_queue || 0) > 20 ? 'yellow' : 'cyan');
+
+    if (d.tiers) {
+      h += '<div class="modal-section"><div class="modal-section-title">Memory Tiers</div>';
+      for (const [tier, count] of Object.entries(d.tiers)) {
+        h += statRow(tier, count.toLocaleString(), tier === 'long_term' ? 'cyan' : tier === 'working' ? 'green' : 'yellow');
+      }
+      h += '</div>';
+    }
+
+    if (d.today_sources?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">Today\'s Sources</div><table class="modal-table"><thead><tr><th>Source</th><th>Count</th></tr></thead><tbody>';
+      for (const s of d.today_sources) h += `<tr><td>${escapeHtml(s.source)}</td><td>${s.count.toLocaleString()}</td></tr>`;
+      h += '</tbody></table></div>';
+    }
+    return h;
+  },
+
+  model_usage(d) {
+    let h = '';
+    if (d.sessions?.length) {
+      h += '<table class="modal-table"><thead><tr><th>Session</th><th>Provider</th><th>Model</th><th>In Tok</th><th>Out Tok</th><th>Cost</th><th>Updated</th></tr></thead><tbody>';
+      for (const s of d.sessions) {
+        const isLocal = s.provider === 'ollama';
+        h += `<tr><td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;font-size:10px" title="${escapeHtml(s.key)}">${escapeHtml(s.label || s.key)}</td>` +
+          `<td style="color:${isLocal ? 'var(--accent-green)' : 'var(--accent-magenta)'}">${s.provider}</td>` +
+          `<td style="font-size:10px">${escapeHtml(s.model)}</td>` +
+          `<td>${s.input_tokens.toLocaleString()}</td><td>${s.output_tokens.toLocaleString()}</td>` +
+          `<td>${s.cost > 0 ? '$' + s.cost.toFixed(4) : '$0'}</td>` +
+          `<td style="font-size:10px">${s.updated}</td></tr>`;
+      }
+      h += '</tbody></table>';
+    }
+    return h || '<p class="dim">No session data</p>';
+  },
+};
+
+['agent-analyst', 'agent-sentinel', 'agent-coder', 'agent-lookout', 'agent-librarian'].forEach(a => {
+  DETAIL_RENDERERS[a] = function(d) {
+    let h = statRow('Status', d.status || '?', d.status === 'running' ? 'green' : 'red');
+    if (d.meta) {
+      for (const [k, v] of Object.entries(d.meta)) h += statRow(k, v);
+    }
+    if (d.recent_tasks?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">Recent Tasks</div><table class="modal-table"><thead><tr><th>Task</th><th>Status</th><th>Duration</th><th>Time</th></tr></thead><tbody>';
+      for (const r of d.recent_tasks) {
+        const color = r.status === 'succeeded' ? 'var(--accent-green)' : r.status === 'timed_out' ? 'var(--accent-yellow)' : 'var(--accent-red)';
+        h += `<tr><td>${escapeHtml(r.label)}</td><td style="color:${color}">${r.status}</td><td>${r.duration_s != null ? r.duration_s + 's' : '?'}</td><td style="font-size:10px">${r.created_at||''}</td></tr>`;
+      }
+      h += '</tbody></table></div>';
+    }
+    return h;
+  };
+});
+
+function formatBytesDetail(bytes) {
+  if (!bytes) return '?';
+  if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
+  if (bytes < 1024*1024*1024) return (bytes/(1024*1024)).toFixed(1) + ' MB';
+  return (bytes/(1024*1024*1024)).toFixed(2) + ' GB';
+}
+
 // Collapsible task table toggle
 document.getElementById('task-table-toggle')?.addEventListener('click', () => {
   const body = document.getElementById('task-table-body');
