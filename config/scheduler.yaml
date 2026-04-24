@@ -126,7 +126,7 @@ tasks:
   reddit_ingest:
     script: nova_reddit_ingest.py
     schedule: every 4h
-    timeout: 600
+    timeout: 1800
     overlap: skip
 
   # ── Daily: overnight ───────────────────────────────────────────────────
@@ -140,14 +140,14 @@ tasks:
   pg_backup:
     script: nova_pg_backup.sh
     schedule: cron 0 2 * * *
-    timeout: 1200
+    timeout: 3600
     overlap: queue
 
   agent_gardener:
     script: nova_agent_gardener.py
     args: ["--cron"]
     schedule: cron 0 3 * * *
-    timeout: 300
+    timeout: 1800
     overlap: skip
 
   log_rotate:
