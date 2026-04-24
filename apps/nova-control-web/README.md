@@ -24,6 +24,16 @@ Nova Control is a single-page web dashboard that monitors Nova's infrastructure 
 - **Scheduler Job Table** — Full sortable table of all 36+ scheduled jobs with run counts, durations, failure tracking, and time-to-next-run. Collapsible to save screen space.
 - **Agent Cards** — Status, model, uptime, and task completion counts for all 5 Nova sub-agents (Analyst, Sentinel, Coder, Lookout, Librarian).
 - **Gateway, Redis, Memory System Cards** — Health status, connection state, queue depths.
+- **Historical Trends** — SQLite time-series database records snapshots every 30s. Click any card to see trends over 1h/6h/24h/7d with interactive line charts for CPU, RAM, disk, latency, memory growth, and cost tracking.
+- **Alerting Panel** — Persistent banner surfaces anomalies: disk below 10GB, services down, task failure streaks, queue backups, high CPU/memory. Color-coded by severity (warning/critical).
+- **Conversation Activity** — Live view of active Nova sessions from OpenClaw: who's talking, which channel, token counts, session labels.
+- **UniFi Network Card** — Device count, client count, WAN uptime from the UDM Pro API. Full device list in detail view.
+- **OpenRouter Cost Tracking** — Daily cost aggregation with running monthly projection. Cost trend charts in detail modals.
+- **Memory Growth Visualization** — Total memory count over time with per-source growth trends.
+- **Dark/Light Theme Toggle** — CSS variable swap with localStorage persistence. Light theme for outdoor/mobile use.
+- **Mobile-Optimized Layout** — Responsive breakpoints at 768px and 480px. Cards go single-column, modals go full-screen, graph shrinks gracefully.
+- **Keyboard Shortcuts** — `R` reconnect, `1-9` jump to cards, `/` search tasks, `?` show help, `Esc` close modals.
+- **Click-to-Detail Modals** — Click any card or graph node for deep stats. PostgreSQL shows daily ingestion charts, Redis shows cache hit rates, Ollama shows all installed models, channels show gateway log analysis.
 - **Dark Cyberpunk Theme** — Monospace typography, cyan/green/magenta accent palette, glowing node halos, subtle grid background.
 - **LAN Accessible** — Binds to `0.0.0.0` so any device on the local network can view the dashboard.
 - **Responsive** — Works on desktop, tablet, and mobile layouts.
@@ -41,6 +51,9 @@ FastAPI Server (port 37450)
     ├── PostgreSQL (nova_memories) — DB size, row counts, table stats
     ├── SQLite (tasks/runs.sqlite) — task history, throughput bucketing
     ├── SQLite (flows/registry.sqlite) — flow run status
+    ├── SQLite (history.db) — time-series snapshots every 30s (local)
+    ├── UniFi API (192.168.1.1) — network devices, clients, WAN health
+    ├── OpenClaw sessions.json — conversation activity, model usage, costs
     ├── Service HTTP checks — latency timing for 7 services
     ├── Gateway log tail — per-channel message activity parsing
     └── psutil — CPU, RAM, disk, network counters
@@ -116,15 +129,19 @@ Adjust ports if your Nova infrastructure uses different bindings.
 
 ```
 nova-control/
-├── server.py              # FastAPI app, 11 data collectors, WebSocket broadcast
+├── server.py              # FastAPI app, 15 data collectors, WebSocket broadcast,
+│                          # history DB, alert evaluator, 20+ REST API endpoints
 ├── requirements.txt       # Python dependencies
+├── history.db             # SQLite time-series DB (auto-created, 30-day retention)
 ├── static/
-│   ├── index.html         # Dashboard page with card layout
+│   ├── index.html         # Dashboard page with card layout + alert banner
 │   ├── css/
-│   │   └── dashboard.css  # Dark theme, card styles, responsive grid
+│   │   └── dashboard.css  # Dark/light themes, responsive grid, modals, mobile
 │   └── js/
+│       ├── charts.js      # Reusable Canvas line/area chart library
 │       ├── graph.js       # Canvas node graph + traffic-driven particle system
-│       └── main.js        # WebSocket client, card renderers, sparklines, charts
+│       └── main.js        # WebSocket client, card renderers, modals, search,
+│                          # keyboard shortcuts, theme toggle, trend charts
 ├── LICENSE                # MIT License
 └── README.md
 ```

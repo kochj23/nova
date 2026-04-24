@@ -2,6 +2,7 @@ import asyncio
 import json as _json
 import os
 import re
+import sqlite3
 import subprocess
 import time
 from collections import deque
@@ -42,12 +43,30 @@ SERVICE_PORTS = {
 POLL_INTERVAL = 2.5
 LATENCY_HISTORY_SIZE = 120  # ~5 min at 2.5s intervals
 TASK_THROUGHPUT_HOURS = 24
+HISTORY_DB = Path("/Volumes/Data/nova-control/history.db")
 
 current_state: dict = {}
 connected_clients: set[WebSocket] = set()
 latency_history: dict[str, deque] = {}
 task_throughput_cache: list = []
 task_throughput_ts: float = 0
+
+# History tracking
+_last_history_write: float = 0
+
+# Alert tracking
+_service_down_counts: dict[str, int] = {}
+_cpu_high_count: int = 0
+
+# UniFi tracking
+UNIFI_API = "https://192.168.1.1/proxy/network/api"
+_unifi_api_key: str | None = None
+_unifi_cache: dict = {}
+_unifi_ts: float = 0
+
+# Conversation tracking
+_conversations_cache: dict = {}
+_conversations_ts: float = 0
 
 # Traffic flow tracking
 GATEWAY_LOG = Path.home() / ".openclaw" / "logs" / "gateway.log"
@@ -60,13 +79,82 @@ _prev_task_total: int = -1
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global _unifi_api_key
+
     app.state.http_session = aiohttp.ClientSession()
     app.state.redis = aioredis.from_url(REDIS_URL, decode_responses=False)
+
+    # --- History DB init ---
+    db = sqlite3.connect(str(HISTORY_DB))
+    db.execute("PRAGMA journal_mode=WAL")
+    db.executescript("""
+        CREATE TABLE IF NOT EXISTS snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL NOT NULL,
+            cpu_percent REAL,
+            memory_percent REAL,
+            memory_used_gb REAL,
+            poll_duration_ms INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS disk_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL NOT NULL,
+            mount TEXT NOT NULL,
+            free_gb REAL,
+            percent REAL
+        );
+        CREATE TABLE IF NOT EXISTS latency_history_db (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL NOT NULL,
+            service TEXT NOT NULL,
+            latency_ms INTEGER,
+            status TEXT
+        );
+        CREATE TABLE IF NOT EXISTS memory_count_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            ts REAL NOT NULL,
+            total_count INTEGER
+        );
+        CREATE TABLE IF NOT EXISTS cost_history (
+            date TEXT NOT NULL,
+            provider TEXT NOT NULL,
+            total_cost_usd REAL,
+            input_tokens INTEGER,
+            output_tokens INTEGER,
+            session_count INTEGER,
+            PRIMARY KEY(date, provider)
+        );
+        CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON snapshots(ts);
+        CREATE INDEX IF NOT EXISTS idx_disk_history_ts ON disk_history(ts);
+        CREATE INDEX IF NOT EXISTS idx_latency_history_db_ts ON latency_history_db(ts);
+        CREATE INDEX IF NOT EXISTS idx_memory_count_history_ts ON memory_count_history(ts);
+    """)
+    db.commit()
+    app.state.history_db = db
+
+    # Cleanup rows older than 30 days
+    cutoff = time.time() - (30 * 86400)
+    for tbl in ("snapshots", "disk_history", "latency_history_db", "memory_count_history"):
+        db.execute(f"DELETE FROM {tbl} WHERE ts < ?", (cutoff,))
+    db.execute("DELETE FROM cost_history WHERE date < date('now', '-30 days')")
+    db.commit()
+
+    # --- Load UniFi API key from Keychain ---
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "security", "find-generic-password", "-s", "nova-unifi-api-key", "-w",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        _unifi_api_key = stdout.decode().strip() or None
+    except Exception:
+        _unifi_api_key = None
+
     poll_task = asyncio.create_task(poll_loop())
     yield
     poll_task.cancel()
     await app.state.http_session.close()
     await app.state.redis.close()
+    app.state.history_db.close()
 
 
 app = FastAPI(title="Nova Control", lifespan=lifespan)
@@ -110,6 +198,10 @@ async def service_detail(service: str):
             return JSONResponse(await _detail_service(service))
         elif service == "memory_server":
             return JSONResponse(await _detail_memory_server())
+        elif service == "conversations":
+            return JSONResponse(await collect_conversations())
+        elif service == "unifi":
+            return JSONResponse(await collect_unifi(app.state.http_session))
         else:
             return JSONResponse({"error": f"Unknown service: {service}"}, status_code=404)
     except Exception as e:
@@ -1132,10 +1224,414 @@ def collect_traffic_flow(scheduler_data, redis_data, task_history_data, services
     return flow
 
 
+# --- History Writer ---
+
+async def write_history_snapshot(state: dict):
+    """Write a snapshot of current state to the history DB. Non-blocking."""
+    try:
+        db = app.state.history_db
+        now = time.time()
+
+        # System snapshot
+        sys = state.get("system", {})
+        mem = sys.get("memory", {})
+        db.execute(
+            "INSERT INTO snapshots (ts, cpu_percent, memory_percent, memory_used_gb, poll_duration_ms) VALUES (?, ?, ?, ?, ?)",
+            (now, sys.get("cpu_percent"), mem.get("percent"), mem.get("used_gb"), state.get("poll_duration_ms")))
+
+        # Disk history
+        disks = sys.get("disks", {})
+        for mount, info in disks.items():
+            db.execute(
+                "INSERT INTO disk_history (ts, mount, free_gb, percent) VALUES (?, ?, ?, ?)",
+                (now, mount, info.get("free_gb"), info.get("percent")))
+
+        # Service latencies
+        services = state.get("services", {})
+        for svc_name, svc_info in services.items():
+            db.execute(
+                "INSERT INTO latency_history_db (ts, service, latency_ms, status) VALUES (?, ?, ?, ?)",
+                (now, svc_name, svc_info.get("latency_ms"), svc_info.get("status")))
+
+        # Memory count
+        pg = state.get("postgresql", {})
+        if pg.get("total_rows"):
+            db.execute(
+                "INSERT INTO memory_count_history (ts, total_count) VALUES (?, ?)",
+                (now, pg["total_rows"]))
+
+        # Cost history (daily upsert per provider)
+        model_usage = state.get("model_usage", {})
+        today = time.strftime("%Y-%m-%d")
+        for prov, pdata in model_usage.get("by_provider", {}).items():
+            db.execute(
+                """INSERT INTO cost_history (date, provider, total_cost_usd, input_tokens, output_tokens, session_count)
+                   VALUES (?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(date, provider) DO UPDATE SET
+                       total_cost_usd = excluded.total_cost_usd,
+                       input_tokens = excluded.input_tokens,
+                       output_tokens = excluded.output_tokens,
+                       session_count = excluded.session_count""",
+                (today, prov, pdata.get("cost", 0), pdata.get("input_tokens", 0),
+                 pdata.get("output_tokens", 0), pdata.get("sessions", 0)))
+
+        db.commit()
+    except Exception:
+        pass  # Non-critical — never block the poll loop
+
+
+# --- Alert Evaluator ---
+
+def evaluate_alerts(state: dict) -> list[dict]:
+    """Evaluate alert conditions against current state. Returns list of alerts."""
+    global _service_down_counts, _cpu_high_count
+    alerts = []
+
+    # Disk free < 10 GB
+    sys_data = state.get("system", {})
+    for mount, info in sys_data.get("disks", {}).items():
+        free = info.get("free_gb", 999)
+        if free < 10:
+            alerts.append({"category": "disk", "severity": "critical",
+                           "message": f"{mount} has only {free:.1f} GB free"})
+
+    # Memory > 90%
+    mem_pct = sys_data.get("memory", {}).get("percent", 0)
+    if mem_pct > 90:
+        alerts.append({"category": "memory", "severity": "critical",
+                       "message": f"Memory usage at {mem_pct:.1f}%"})
+
+    # CPU > 95 for 3+ consecutive polls
+    cpu_pct = sys_data.get("cpu_percent", 0)
+    if cpu_pct > 95:
+        _cpu_high_count += 1
+    else:
+        _cpu_high_count = 0
+    if _cpu_high_count >= 3:
+        alerts.append({"category": "cpu", "severity": "warning",
+                       "message": f"CPU sustained above 95% for {_cpu_high_count} polls ({cpu_pct:.1f}% now)"})
+
+    # Service down for 5+ consecutive polls
+    all_services = {}
+    for name, svc in state.get("services", {}).items():
+        all_services[name] = svc.get("status", "unknown")
+    gw = state.get("gateway", {})
+    if gw.get("status") == "error" or not gw.get("ok"):
+        all_services["gateway"] = "down"
+    if state.get("scheduler", {}).get("status") == "error":
+        all_services["scheduler"] = "down"
+
+    seen_services = set()
+    for name, status in all_services.items():
+        seen_services.add(name)
+        if status == "down" or status == "error":
+            _service_down_counts[name] = _service_down_counts.get(name, 0) + 1
+        else:
+            _service_down_counts[name] = 0
+        if _service_down_counts.get(name, 0) >= 5:
+            alerts.append({"category": "service", "severity": "warning",
+                           "message": f"{name} has been down for {_service_down_counts[name]} consecutive polls"})
+    # Reset counts for services no longer tracked
+    for name in list(_service_down_counts):
+        if name not in seen_services:
+            del _service_down_counts[name]
+
+    # Scheduler task consecutive_failures > 3
+    sched = state.get("scheduler", {})
+    if isinstance(sched.get("tasks"), dict):
+        for task_name, task_info in sched["tasks"].items():
+            cf = task_info.get("consecutive_failures", 0)
+            if cf > 3:
+                alerts.append({"category": "scheduler", "severity": "warning",
+                               "message": f"Task '{task_name}' has {cf} consecutive failures"})
+
+    # Redis ingest queue depth
+    redis_data = state.get("redis", {})
+    depth = redis_data.get("ingest_queue_depth", 0)
+    if depth > 100:
+        alerts.append({"category": "redis", "severity": "critical",
+                       "message": f"Ingest queue depth at {depth} (> 100)"})
+    elif depth > 50:
+        alerts.append({"category": "redis", "severity": "warning",
+                       "message": f"Ingest queue depth at {depth} (> 50)"})
+
+    return alerts
+
+
+# --- Conversation Activity Collector ---
+
+async def collect_conversations() -> dict:
+    """Read sessions.json and return active conversations from last 30 minutes."""
+    global _conversations_cache, _conversations_ts
+    now = time.time()
+    if now - _conversations_ts < 15:
+        return _conversations_cache
+    try:
+        data = _json.loads(SESSIONS_JSON.read_text())
+        cutoff = now - 1800  # 30 minutes
+        active = []
+        by_channel: dict[str, int] = {}
+
+        for key, val in data.items():
+            if not isinstance(val, dict):
+                continue
+            updated = val.get("updatedAt", 0)
+            if isinstance(updated, (int, float)):
+                # Handle millisecond timestamps
+                if updated > 1e12:
+                    updated = updated / 1000.0
+            else:
+                continue
+            if updated < cutoff:
+                continue
+
+            # Parse channel from key like "agent:main:slack:channel:xxx"
+            parts = key.split(":")
+            channel = "unknown"
+            if len(parts) >= 3:
+                channel = parts[2]  # e.g. slack, discord, signal, main
+            if channel == "main":
+                channel = "direct"
+
+            by_channel[channel] = by_channel.get(channel, 0) + 1
+            active.append({
+                "key": key[:80],
+                "model": val.get("model", "?"),
+                "provider": val.get("modelProvider", "?"),
+                "input_tokens": val.get("inputTokens", 0) or 0,
+                "output_tokens": val.get("outputTokens", 0) or 0,
+                "label": val.get("label", ""),
+                "channel": channel,
+            })
+
+        result = {
+            "status": "ok",
+            "active_sessions": active,
+            "active_count": len(active),
+            "by_channel": by_channel,
+        }
+        _conversations_cache = result
+        _conversations_ts = now
+        return result
+    except Exception as e:
+        return _conversations_cache or {"status": "error", "error": str(e),
+                                         "active_sessions": [], "active_count": 0, "by_channel": {}}
+
+
+# --- UniFi Collector ---
+
+async def collect_unifi(session: aiohttp.ClientSession) -> dict:
+    """Collect UniFi network controller data. 30s cache."""
+    global _unifi_cache, _unifi_ts
+    now = time.time()
+    if now - _unifi_ts < 30:
+        return _unifi_cache
+    if _unifi_api_key is None:
+        return {"status": "no_key"}
+    try:
+        import ssl as _ssl
+        ssl_ctx = _ssl.create_default_context()
+        ssl_ctx.check_hostname = False
+        ssl_ctx.verify_mode = _ssl.CERT_NONE
+        headers = {"X-API-Key": _unifi_api_key}
+        timeout = aiohttp.ClientTimeout(total=5)
+
+        async with session.get(f"{UNIFI_API}/s/default/stat/device",
+                               headers=headers, ssl=ssl_ctx, timeout=timeout) as resp:
+            device_data = await resp.json()
+        async with session.get(f"{UNIFI_API}/s/default/stat/sta",
+                               headers=headers, ssl=ssl_ctx, timeout=timeout) as resp:
+            sta_data = await resp.json()
+        async with session.get(f"{UNIFI_API}/s/default/stat/health",
+                               headers=headers, ssl=ssl_ctx, timeout=timeout) as resp:
+            health_data = await resp.json()
+
+        devices_raw = device_data.get("data", []) if isinstance(device_data, dict) else device_data if isinstance(device_data, list) else []
+        clients_raw = sta_data.get("data", []) if isinstance(sta_data, dict) else sta_data if isinstance(sta_data, list) else []
+        health_list = health_data.get("data", []) if isinstance(health_data, dict) else health_data if isinstance(health_data, list) else []
+
+        wan_uptime = 0
+        for h in health_list:
+            if h.get("subsystem") == "wan":
+                wan_uptime = h.get("uptime", 0)
+
+        devices = []
+        for d in devices_raw:
+            devices.append({
+                "name": d.get("name", d.get("hostname", "?")),
+                "model": d.get("model", "?"),
+                "type": d.get("type", "?"),
+                "num_sta": d.get("num_sta", 0),
+            })
+
+        result = {
+            "status": "ok",
+            "device_count": len(devices_raw),
+            "client_count": len(clients_raw),
+            "wan_uptime_s": wan_uptime,
+            "devices": devices,
+        }
+        _unifi_cache = result
+        _unifi_ts = now
+        return result
+    except Exception as e:
+        return _unifi_cache or {"status": "error", "error": str(e),
+                                 "device_count": 0, "client_count": 0, "wan_uptime_s": 0, "devices": []}
+
+
+# --- History API Endpoint ---
+
+RANGE_MAP = {"1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800}
+
+
+@app.get("/api/history/{metric}")
+async def history_endpoint(metric: str, range: str = "24h"):
+    """Return historical data for a metric. Downsamples into 5-min buckets for large ranges."""
+    seconds = RANGE_MAP.get(range, 86400)
+    cutoff = time.time() - seconds
+    # Downsample into 5-min (300s) buckets for ranges > 1h
+    downsample = seconds > 3600
+
+    try:
+        db = app.state.history_db
+        if metric == "cpu":
+            rows = db.execute(
+                "SELECT ts, cpu_percent FROM snapshots WHERE ts > ? ORDER BY ts", (cutoff,)).fetchall()
+            if downsample and rows:
+                return JSONResponse(_downsample_single(rows, "cpu_percent"))
+            return JSONResponse([{"ts": r[0], "cpu_percent": r[1]} for r in rows])
+
+        elif metric == "memory":
+            rows = db.execute(
+                "SELECT ts, memory_percent, memory_used_gb FROM snapshots WHERE ts > ? ORDER BY ts", (cutoff,)).fetchall()
+            if downsample and rows:
+                return JSONResponse(_downsample_memory(rows))
+            return JSONResponse([{"ts": r[0], "memory_percent": r[1], "memory_used_gb": r[2]} for r in rows])
+
+        elif metric == "disk":
+            rows = db.execute(
+                "SELECT ts, mount, free_gb, percent FROM disk_history WHERE ts > ? ORDER BY ts", (cutoff,)).fetchall()
+            if downsample and rows:
+                return JSONResponse(_downsample_disk(rows))
+            return JSONResponse([{"ts": r[0], "mount": r[1], "free_gb": r[2], "percent": r[3]} for r in rows])
+
+        elif metric == "latency":
+            rows = db.execute(
+                "SELECT ts, service, latency_ms, status FROM latency_history_db WHERE ts > ? ORDER BY ts", (cutoff,)).fetchall()
+            if downsample and rows:
+                return JSONResponse(_downsample_latency(rows))
+            return JSONResponse([{"ts": r[0], "service": r[1], "latency_ms": r[2], "status": r[3]} for r in rows])
+
+        elif metric == "memories":
+            rows = db.execute(
+                "SELECT ts, total_count FROM memory_count_history WHERE ts > ? ORDER BY ts", (cutoff,)).fetchall()
+            if downsample and rows:
+                return JSONResponse(_downsample_single(rows, "total_count"))
+            return JSONResponse([{"ts": r[0], "total_count": r[1]} for r in rows])
+
+        elif metric == "costs":
+            rows = db.execute(
+                "SELECT date, provider, total_cost_usd, input_tokens, output_tokens, session_count FROM cost_history WHERE date >= date('now', ? || ' seconds') ORDER BY date",
+                (str(-seconds),)).fetchall()
+            return JSONResponse([{
+                "date": r[0], "provider": r[1], "total_cost_usd": r[2],
+                "input_tokens": r[3], "output_tokens": r[4], "session_count": r[5]
+            } for r in rows])
+
+        else:
+            return JSONResponse({"error": f"Unknown metric: {metric}"}, status_code=404)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+def _bucket_ts(ts: float) -> float:
+    """Round timestamp down to nearest 5-minute bucket."""
+    return ts - (ts % 300)
+
+
+def _downsample_single(rows: list, field: str) -> list:
+    """Downsample rows with a single numeric value into 5-min avg buckets."""
+    buckets: dict[float, list] = {}
+    for ts, val in rows:
+        b = _bucket_ts(ts)
+        if b not in buckets:
+            buckets[b] = []
+        if val is not None:
+            buckets[b].append(val)
+    result = []
+    for b in sorted(buckets):
+        vals = buckets[b]
+        result.append({"ts": b, field: round(sum(vals) / len(vals), 2) if vals else None})
+    return result
+
+
+def _downsample_memory(rows: list) -> list:
+    """Downsample memory rows (percent + used_gb) into 5-min avg buckets."""
+    buckets: dict[float, tuple[list, list]] = {}
+    for ts, pct, used in rows:
+        b = _bucket_ts(ts)
+        if b not in buckets:
+            buckets[b] = ([], [])
+        if pct is not None:
+            buckets[b][0].append(pct)
+        if used is not None:
+            buckets[b][1].append(used)
+    result = []
+    for b in sorted(buckets):
+        pcts, useds = buckets[b]
+        result.append({
+            "ts": b,
+            "memory_percent": round(sum(pcts) / len(pcts), 2) if pcts else None,
+            "memory_used_gb": round(sum(useds) / len(useds), 2) if useds else None,
+        })
+    return result
+
+
+def _downsample_disk(rows: list) -> list:
+    """Downsample disk rows by mount + 5-min buckets."""
+    buckets: dict[tuple[float, str], tuple[list, list]] = {}
+    for ts, mount, free, pct in rows:
+        key = (_bucket_ts(ts), mount)
+        if key not in buckets:
+            buckets[key] = ([], [])
+        if free is not None:
+            buckets[key][0].append(free)
+        if pct is not None:
+            buckets[key][1].append(pct)
+    result = []
+    for (b, mount) in sorted(buckets):
+        frees, pcts = buckets[(b, mount)]
+        result.append({
+            "ts": b, "mount": mount,
+            "free_gb": round(sum(frees) / len(frees), 2) if frees else None,
+            "percent": round(sum(pcts) / len(pcts), 2) if pcts else None,
+        })
+    return result
+
+
+def _downsample_latency(rows: list) -> list:
+    """Downsample latency rows by service + 5-min buckets."""
+    buckets: dict[tuple[float, str], list] = {}
+    for ts, svc, lat, status in rows:
+        key = (_bucket_ts(ts), svc)
+        if key not in buckets:
+            buckets[key] = []
+        if lat is not None:
+            buckets[key].append(lat)
+    result = []
+    for (b, svc) in sorted(buckets):
+        vals = buckets[(b, svc)]
+        result.append({
+            "ts": b, "service": svc,
+            "latency_ms": round(sum(vals) / len(vals)) if vals else None,
+        })
+    return result
+
+
 # --- Poll Loop ---
 
 async def poll_loop():
-    global current_state
+    global current_state, _last_history_write
     session = app.state.http_session
     redis_client = app.state.redis
 
@@ -1158,6 +1654,8 @@ async def poll_loop():
             collect_task_throughput(),
             collect_model_usage(),
             collect_gateway_query_log(),
+            collect_conversations(),
+            collect_unifi(session),
             return_exceptions=True,
         )
 
@@ -1188,10 +1686,22 @@ async def poll_loop():
             "task_throughput": results[10] if not isinstance(results[10], BaseException) else [],
             "model_usage": safe(11),
             "gateway_queries": safe(12),
+            "conversations": safe(13),
+            "unifi": safe(14),
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }
+
+        # Evaluate alerts every poll cycle
+        state["alerts"] = evaluate_alerts(state)
+
         current_state = state
+
+        # Write history snapshot every 30s (non-blocking)
+        now = time.time()
+        if now - _last_history_write >= 30:
+            _last_history_write = now
+            asyncio.create_task(write_history_snapshot(state))
 
         dead = set()
         for ws in list(connected_clients):

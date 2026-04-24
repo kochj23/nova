@@ -18,10 +18,11 @@ const NODE_DEFS = {
   tinychat:       { label: 'TinyChat',      group: 'backend',  gx: 0.90, gy: 0.60 },
   openwebui:      { label: 'OpenWebUI',     group: 'backend',  gx: 0.90, gy: 0.76 },
 
-  redis:          { label: 'Redis',         group: 'support',  gx: 0.28, gy: 0.90 },
-  postgresql:     { label: 'PostgreSQL',    group: 'support',  gx: 0.42, gy: 0.90 },
-  memory_server:  { label: 'Memory',        group: 'support',  gx: 0.58, gy: 0.90 },
-  scheduler:      { label: 'Scheduler',     group: 'support',  gx: 0.72, gy: 0.90 },
+  redis:          { label: 'Redis',         group: 'support',  gx: 0.20, gy: 0.90 },
+  postgresql:     { label: 'PostgreSQL',    group: 'support',  gx: 0.35, gy: 0.90 },
+  unifi:          { label: 'UniFi',         group: 'support',  gx: 0.50, gy: 0.90 },
+  memory_server:  { label: 'Memory',        group: 'support',  gx: 0.65, gy: 0.90 },
+  scheduler:      { label: 'Scheduler',     group: 'support',  gx: 0.80, gy: 0.90 },
 };
 
 const EDGE_DEFS = [
@@ -37,6 +38,7 @@ const EDGE_DEFS = [
   { from: 'gateway',   to: 'openwebui',    dir: 'out' },
   { from: 'redis',          to: 'gateway', dir: 'support' },
   { from: 'postgresql',     to: 'gateway', dir: 'support' },
+  { from: 'unifi',          to: 'gateway', dir: 'support' },
   { from: 'memory_server',  to: 'gateway', dir: 'support' },
   { from: 'scheduler',      to: 'gateway', dir: 'support' },
 ];
@@ -131,7 +133,8 @@ function bezierPoint(ax, ay, cx, cy, bx, by, t) {
 }
 
 function drawGrid() {
-  ctx.strokeStyle = 'rgba(0, 255, 200, 0.025)';
+  const isLight = document.documentElement.dataset.theme === 'light';
+  ctx.strokeStyle = isLight ? 'rgba(0, 100, 80, 0.06)' : 'rgba(0, 255, 200, 0.025)';
   ctx.lineWidth = 0.5;
   const spacing = 50;
   for (let x = spacing; x < W; x += spacing) {
@@ -304,6 +307,8 @@ function updateNodeStatuses() {
   if (s.services?.memory_server) nodes.memory_server.status = s.services.memory_server.status;
 
   nodes.postgresql.status = 'up';
+
+  if (s.unifi) nodes.unifi.status = s.unifi.status === 'ok' ? 'up' : s.unifi.status === 'no_key' ? 'unknown' : 'down';
 }
 
 function animate(ts) {

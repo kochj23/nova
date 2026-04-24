@@ -80,6 +80,7 @@ function escapeHtml(str) {
 }
 
 function renderCards(state) {
+  renderAlerts(state.alerts);
   renderSystem(state.system);
   renderGateway(state.gateway);
   renderScheduler(state.scheduler);
@@ -87,7 +88,9 @@ function renderCards(state) {
   renderPostgresql(state.postgresql);
   renderRedis(state.redis);
   renderMemory(state);
+  renderUnifi(state.unifi);
   renderModelUsage(state.model_usage);
+  renderConversations(state.conversations);
   renderGatewayQueries(state.gateway_queries);
   renderTaskHistory(state.task_history);
   renderThroughput(state.task_throughput);
@@ -275,6 +278,60 @@ function renderMemory(state) {
     statRow('Redis Backend', redisOk ? 'Connected' : 'Down', redisOk ? 'green' : 'red') +
     statRow('Ingest Queue', redis?.ingest_queue_depth || 0,
       (redis?.ingest_queue_depth || 0) > 20 ? 'yellow' : 'cyan');
+}
+
+// --- Alert Banner ---
+function renderAlerts(alerts) {
+  const banner = document.getElementById('alert-banner');
+  if (!banner) return;
+  if (!alerts || alerts.length === 0) {
+    banner.innerHTML = '';
+    return;
+  }
+  let html = '';
+  for (const a of alerts) {
+    const sev = (a.severity || 'warning').toLowerCase();
+    const cls = sev === 'critical' ? 'critical' : 'warning';
+    html += `<div class="alert-item ${cls}"><span class="alert-severity">${escapeHtml(sev)}</span><span>${escapeHtml(a.message || '')}</span></div>`;
+  }
+  banner.innerHTML = html;
+}
+
+// --- UniFi Network ---
+function renderUnifi(data) {
+  const card = document.getElementById('card-unifi');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  card.dataset.status = data.status === 'ok' ? 'healthy' : data.status === 'no_key' ? 'unknown' : 'down';
+  const body = card.querySelector('.card-body');
+  body.innerHTML =
+    statRow('Devices', data.device_count || 0, 'cyan') +
+    statRow('Clients', data.client_count || 0, 'green') +
+    statRow('WAN Uptime', data.wan_uptime ? formatUptime(data.wan_uptime) : '---', 'cyan') +
+    (data.error ? `<div class="error-text">${escapeHtml(data.error)}</div>` : '');
+}
+
+// --- Conversation Activity ---
+function renderConversations(data) {
+  const card = document.getElementById('card-conversations');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  card.dataset.status = data.active_sessions > 0 ? 'healthy' : 'degraded';
+  const body = card.querySelector('.card-body');
+  let html = statRow('Active Sessions', data.active_sessions || 0, 'cyan');
+  if (data.by_channel) {
+    for (const [ch, count] of Object.entries(data.by_channel)) {
+      html += statRow(ch, count);
+    }
+  }
+  if (data.sessions?.length) {
+    html += '<div style="margin-top:8px">';
+    for (const s of data.sessions) {
+      html += `<div class="pg-table-row"><span class="pg-table-name">${escapeHtml(s.label || s.id || '?')}</span><span class="pg-table-rows">${escapeHtml(s.channel || '')}</span></div>`;
+    }
+    html += '</div>';
+  }
+  body.innerHTML = html;
 }
 
 // --- Model Usage ---
@@ -622,6 +679,7 @@ window.openNodeDetail = function(nodeId, nodeLabel) {
     swarmui: 'swarmui', comfyui: 'comfyui',
     redis: 'redis', postgresql: 'postgresql',
     memory_server: 'memory_server', scheduler: 'scheduler',
+    unifi: 'unifi',
   };
   const svc = NODE_SERVICE_MAP[nodeId];
   if (svc) fetchDetail(svc, nodeLabel);
@@ -634,6 +692,7 @@ const CARD_SERVICE_MAP = {
   'card-postgresql': 'postgresql', 'card-redis': 'redis',
   'card-memory': 'memory', 'card-task-history': 'task_history',
   'card-model-usage': 'model_usage',
+  'card-unifi': 'unifi', 'card-conversations': 'conversations',
   'card-agent-analyst': 'agent-analyst', 'card-agent-sentinel': 'agent-sentinel',
   'card-agent-coder': 'agent-coder', 'card-agent-lookout': 'agent-lookout',
   'card-agent-librarian': 'agent-librarian',
@@ -653,7 +712,7 @@ document.getElementById('modal-close').addEventListener('click', closeModal);
 document.getElementById('modal-overlay').addEventListener('click', (e) => {
   if (e.target === e.currentTarget) closeModal();
 });
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeModal(); });
+/* keydown handler moved to keyboard shortcuts section below */
 
 function fetchDetail(service, title) {
   openModal(title, '<p class="dim">Loading...</p>');
@@ -662,8 +721,12 @@ function fetchDetail(service, title) {
     .then(data => {
       if (data.error) { openModal(title, `<div class="error-text">${escapeHtml(data.error)}</div>`); return; }
       const renderer = DETAIL_RENDERERS[service];
-      if (renderer) openModal(title, renderer(data));
-      else openModal(title, `<pre style="color:var(--text-dim);font-size:10px;white-space:pre-wrap">${escapeHtml(JSON.stringify(data, null, 2))}</pre>`);
+      if (renderer) {
+        openModal(title, renderer(data));
+        requestAnimationFrame(() => loadModalCharts(document.getElementById('modal-body')));
+      } else {
+        openModal(title, `<pre style="color:var(--text-dim);font-size:10px;white-space:pre-wrap">${escapeHtml(JSON.stringify(data, null, 2))}</pre>`);
+      }
     })
     .catch(err => openModal(title, `<div class="error-text">${escapeHtml(err.message)}</div>`));
 }
@@ -711,6 +774,10 @@ const DETAIL_RENDERERS = {
       for (const s of d.top_sources) h += `<tr><td>${escapeHtml(s.source)}</td><td>${s.count.toLocaleString()}</td></tr>`;
       h += '</tbody></table></div>';
     }
+
+    h += '<div class="modal-section"><div class="modal-section-title">Trends</div>';
+    h += '<div class="time-range-btns" data-metric="memories"><button class="time-range-btn active" data-range="6h">6h</button><button class="time-range-btn" data-range="24h">24h</button><button class="time-range-btn" data-range="7d">7d</button></div>';
+    h += '<canvas class="modal-trend-chart" data-metric="memories" height="140"></canvas></div>';
     return h;
   },
 
@@ -849,6 +916,10 @@ const DETAIL_RENDERERS = {
       for (const s of d.today_sources) h += `<tr><td>${escapeHtml(s.source)}</td><td>${s.count.toLocaleString()}</td></tr>`;
       h += '</tbody></table></div>';
     }
+
+    h += '<div class="modal-section"><div class="modal-section-title">Trends</div>';
+    h += '<div class="time-range-btns" data-metric="memories"><button class="time-range-btn active" data-range="6h">6h</button><button class="time-range-btn" data-range="24h">24h</button><button class="time-range-btn" data-range="7d">7d</button></div>';
+    h += '<canvas class="modal-trend-chart" data-metric="memories" height="140"></canvas></div>';
     return h;
   },
 
@@ -914,6 +985,10 @@ DETAIL_RENDERERS.openrouter = function(d) {
     }
     h += '</tbody></table></div>';
   }
+
+  h += '<div class="modal-section"><div class="modal-section-title">Cost Trends</div>';
+  h += '<div class="time-range-btns" data-metric="costs"><button class="time-range-btn active" data-range="6h">6h</button><button class="time-range-btn" data-range="24h">24h</button><button class="time-range-btn" data-range="7d">7d</button><button class="time-range-btn" data-range="30d">30d</button></div>';
+  h += '<canvas class="modal-trend-chart" data-metric="costs" height="140"></canvas></div>';
   return h;
 };
 
@@ -993,6 +1068,43 @@ DETAIL_RENDERERS.memory_server = function(d) {
   return h;
 };
 
+DETAIL_RENDERERS.unifi = function(d) {
+  let h = statRow('Status', d.status || '?', d.status === 'ok' ? 'green' : 'red') +
+    statRow('Devices', d.device_count || 0, 'cyan') +
+    statRow('Clients', d.client_count || 0, 'green') +
+    statRow('WAN Uptime', d.wan_uptime ? formatUptime(d.wan_uptime) : '---', 'cyan');
+
+  if (d.devices?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Devices</div><table class="modal-table"><thead><tr><th>Name</th><th>Model</th><th>Status</th><th>IP</th><th>Clients</th></tr></thead><tbody>';
+    for (const dev of d.devices) {
+      const color = dev.status === 'online' ? 'var(--accent-green)' : 'var(--accent-red)';
+      h += `<tr><td>${escapeHtml(dev.name || '?')}</td><td style="font-size:10px">${escapeHtml(dev.model || '')}</td><td style="color:${color}">${dev.status || '?'}</td><td style="font-size:10px">${escapeHtml(dev.ip || '')}</td><td>${dev.num_clients || 0}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
+  }
+  if (d.error) h += `<div class="error-text">${escapeHtml(d.error)}</div>`;
+  return h;
+};
+
+DETAIL_RENDERERS.conversations = function(d) {
+  let h = statRow('Active Sessions', d.active_sessions || 0, 'cyan');
+  if (d.by_channel) {
+    h += '<div class="modal-section"><div class="modal-section-title">By Channel</div>';
+    for (const [ch, count] of Object.entries(d.by_channel)) {
+      h += statRow(ch, count);
+    }
+    h += '</div>';
+  }
+  if (d.sessions?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Active Sessions</div><table class="modal-table"><thead><tr><th>Session</th><th>Channel</th><th>Started</th><th>Messages</th></tr></thead><tbody>';
+    for (const s of d.sessions) {
+      h += `<tr><td>${escapeHtml(s.label || s.id || '?')}</td><td>${escapeHtml(s.channel || '')}</td><td style="font-size:10px">${escapeHtml(s.started || '')}</td><td>${s.message_count || 0}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
+  }
+  return h || '<p class="dim">No conversation data</p>';
+};
+
 ['agent-analyst', 'agent-sentinel', 'agent-coder', 'agent-lookout', 'agent-librarian'].forEach(a => {
   DETAIL_RENDERERS[a] = function(d) {
     let h = statRow('Status', d.status || '?', d.status === 'running' ? 'green' : 'red');
@@ -1018,6 +1130,89 @@ function formatBytesDetail(bytes) {
   return (bytes/(1024*1024*1024)).toFixed(2) + ' GB';
 }
 
+// --- Modal Chart Loading ---
+function loadModalCharts(container) {
+  if (!container) return;
+  const canvases = container.querySelectorAll('.modal-trend-chart');
+  for (const canvas of canvases) {
+    const metric = canvas.dataset.metric;
+    if (!metric) continue;
+    fetchChartData(canvas, metric, '6h');
+  }
+  // Wire up time-range buttons
+  const btnGroups = container.querySelectorAll('.time-range-btns');
+  for (const group of btnGroups) {
+    const metric = group.dataset.metric;
+    const buttons = group.querySelectorAll('.time-range-btn');
+    const canvas = container.querySelector(`.modal-trend-chart[data-metric="${metric}"]`);
+    buttons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        buttons.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        if (canvas) fetchChartData(canvas, metric, btn.dataset.range);
+      });
+    });
+  }
+}
+
+function fetchChartData(canvas, metric, range) {
+  fetch(`/api/history/${metric}?range=${range}`)
+    .then(r => r.json())
+    .then(data => {
+      if (!data || !data.points || data.points.length === 0) return;
+      const series = [{
+        label: metric,
+        color: metric === 'costs' ? 'rgba(255,0,128,0.7)' : 'rgba(0,255,200,0.7)',
+        data: data.points.map(p => ({ ts: p.ts || p.timestamp, value: p.value })),
+      }];
+      const unit = metric === 'costs' ? '$' : metric === 'memories' ? '' : '';
+      drawLineChart(canvas, series, { unit, minY: 0 });
+    })
+    .catch(() => {});
+}
+
+// --- Shortcut Help Modal ---
+function showShortcutHelp() {
+  let h = '<table class="modal-table"><thead><tr><th>Key</th><th>Action</th></tr></thead><tbody>';
+  h += '<tr><td>R</td><td>Reconnect WebSocket</td></tr>';
+  h += '<tr><td>1-9</td><td>Jump to card by position</td></tr>';
+  h += '<tr><td>/</td><td>Search tasks</td></tr>';
+  h += '<tr><td>?</td><td>Show this help</td></tr>';
+  h += '<tr><td>Esc</td><td>Close modal</td></tr>';
+  h += '</tbody></table>';
+  openModal('Keyboard Shortcuts', h);
+}
+
+// --- Search Modal ---
+function showSearchModal() {
+  let h = '<input class="search-input" type="text" placeholder="Search scheduler tasks..." autofocus>';
+  h += '<ul class="search-results"></ul>';
+  openModal('Search', h);
+  const input = document.querySelector('.search-input');
+  const results = document.querySelector('.search-results');
+  if (input) {
+    input.focus();
+    input.addEventListener('input', () => {
+      const q = input.value.toLowerCase().trim();
+      if (!q) { results.innerHTML = ''; return; }
+      const tasks = window.novaState?.scheduler?.tasks;
+      if (!tasks) { results.innerHTML = '<li class="search-result-item dim">No task data</li>'; return; }
+      const matches = Object.keys(tasks).filter(name => name.toLowerCase().includes(q));
+      if (matches.length === 0) { results.innerHTML = '<li class="search-result-item dim">No matches</li>'; return; }
+      results.innerHTML = matches.map(name =>
+        `<li class="search-result-item" data-task="${escapeHtml(name)}">${escapeHtml(name)} <span class="dim" style="font-size:10px">${escapeHtml(tasks[name].schedule || '')}</span></li>`
+      ).join('');
+      results.querySelectorAll('.search-result-item[data-task]').forEach(el => {
+        el.addEventListener('click', () => {
+          closeModal();
+          const section = document.getElementById('card-task-table');
+          if (section) section.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        });
+      });
+    });
+  }
+}
+
 // Collapsible task table toggle
 document.getElementById('task-table-toggle')?.addEventListener('click', () => {
   const body = document.getElementById('task-table-body');
@@ -1031,6 +1226,32 @@ document.getElementById('task-table-toggle')?.addEventListener('click', () => {
     body.classList.add('collapsed');
     if (arrow) arrow.style.transform = 'rotate(-90deg)';
   }
+});
+
+// --- Theme Toggle ---
+const savedTheme = localStorage.getItem('nova-theme') || 'dark';
+document.documentElement.dataset.theme = savedTheme;
+document.getElementById('theme-toggle')?.addEventListener('click', () => {
+  const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  document.documentElement.dataset.theme = next;
+  localStorage.setItem('nova-theme', next);
+  document.getElementById('theme-toggle').textContent = next === 'dark' ? '☽' : '☀';
+});
+
+// --- Keyboard Shortcuts ---
+document.addEventListener('keydown', (e) => {
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+  const modal = document.getElementById('modal-overlay');
+  if (e.key === 'Escape' && modal.classList.contains('active')) { closeModal(); return; }
+  if (e.key === '?' && !modal.classList.contains('active')) { showShortcutHelp(); return; }
+  if (e.key === 'r' || e.key === 'R') { if (ws) { ws.close(); connect(); } return; }
+  if (e.key >= '1' && e.key <= '9') {
+    const cards = document.querySelectorAll('#cards-section > .card');
+    const idx = parseInt(e.key) - 1;
+    if (cards[idx]) cards[idx].scrollIntoView({ behavior: 'smooth', block: 'center' });
+    return;
+  }
+  if (e.key === '/' && !modal.classList.contains('active')) { e.preventDefault(); showSearchModal(); return; }
 });
 
 connect();

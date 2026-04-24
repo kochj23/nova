@@ -13,10 +13,13 @@
       <span class="header-subtitle">system overview</span>
     </div>
     <div class="header-right">
+      <button id="theme-toggle" class="theme-toggle" title="Toggle theme">&#9789;</button>
       <span id="poll-latency" class="meta-text"></span>
       <div id="connection-status" class="status-dot"></div>
     </div>
   </header>
+
+  <section id="alert-banner" class="alert-banner"></section>
 
   <section id="graph-section">
     <canvas id="node-graph"></canvas>
@@ -55,10 +58,18 @@
       <div class="card-header"><span class="card-title">Memory System</span><span class="card-dot"></span></div>
       <div class="card-body"><p class="dim">Connecting...</p></div>
     </div>
+    <div class="card" id="card-unifi" data-status="unknown">
+      <div class="card-header"><span class="card-title">UniFi Network</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
 
     <!-- Row 3: Model usage & routing -->
     <div class="card card-wide" id="card-model-usage" data-status="unknown">
       <div class="card-header"><span class="card-title">Model Usage</span><span class="card-dot"></span></div>
+      <div class="card-body"><p class="dim">Connecting...</p></div>
+    </div>
+    <div class="card" id="card-conversations" data-status="unknown">
+      <div class="card-header"><span class="card-title">Conversations</span><span class="card-dot"></span></div>
       <div class="card-body"><p class="dim">Connecting...</p></div>
     </div>
     <div class="card" id="card-gateway-queries" data-status="unknown">
@@ -128,6 +139,7 @@
     <span class="dim">Nova Control v1.1 &mdash; digitalnoise.net</span>
   </footer>
 
+  <script src="/static/js/charts.js"></script>
   <script src="/static/js/graph.js"></script>
   <script src="/static/js/main.js"></script>
 </body>
