@@ -197,35 +197,38 @@ h1 {
 .collapsible-body.expanded { max-height: 2000px; opacity: 1; }
 .collapsed + .collapse-arrow, .card-header .collapsed ~ .collapse-arrow { transform: rotate(-90deg); }
 
-/* Scheduler task table */
-.task-table {
-  width: 100%; font-size: 11px;
-  border-collapse: collapse; margin-top: 8px;
+/* Scheduler job grid */
+.job-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 10px; margin-top: 8px;
 }
-.task-table th {
-  text-align: left; padding: 6px 8px;
-  color: var(--text-dim); font-weight: 500;
-  border-bottom: 1px solid var(--border-glow);
-  cursor: pointer; user-select: none;
-  font-size: 10px; text-transform: uppercase;
-  letter-spacing: 0.05em;
+.job-card {
+  background: rgba(10, 12, 24, 0.6);
+  border: 1px solid var(--border-glow);
+  border-top: 2px solid var(--border-glow);
+  border-radius: 6px; padding: 10px 12px;
+  font-size: 12px;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
 }
-.task-table th:hover { color: var(--text-secondary); }
-.task-table th.sorted { color: var(--accent-cyan); }
-.task-table td {
-  padding: 4px 8px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.02);
+.job-card:hover {
+  box-shadow: 0 0 12px rgba(0, 255, 200, 0.06);
+  border-color: var(--border-glow-bright);
 }
-.task-table tr:hover td { background: rgba(0, 255, 200, 0.03); }
-.task-table tr.running td { color: var(--accent-cyan); }
-.task-table tr.failing td { color: var(--accent-yellow); }
-
-.duration-bar {
-  display: inline-block; height: 4px; border-radius: 2px;
-  background: var(--accent-cyan); min-width: 2px;
-  vertical-align: middle; margin-left: 4px;
-  transition: width 0.3s ease;
+.job-card-header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px;
 }
+.job-name {
+  font-size: 11px; font-weight: 600; color: var(--text-primary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  max-width: 60%;
+}
+.job-card .stat-row { padding: 2px 0; }
+.job-card .stat-label { font-size: 10px; }
+.job-card .stat-value { font-size: 11px; }
+.job-card .progress-bar-track { margin-top: 2px; margin-bottom: 2px; }
+.job-card .model-tag { flex-shrink: 0; }
 
 /* Throughput chart */
 #throughput-chart { width: 100%; height: 100px; display: block; }

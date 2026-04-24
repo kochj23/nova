@@ -541,7 +541,7 @@ function drawSparkline(canvas) {
   ctx.stroke();
 }
 
-// --- Scheduler Task Table ---
+// --- Scheduler Task Table (card-grid layout) ---
 function renderTaskTable(sched) {
   const card = document.getElementById('card-task-table');
   if (!sched || !sched.tasks) { card.dataset.status = 'unknown'; return; }
@@ -554,62 +554,43 @@ function renderTaskTable(sched) {
     next_in: t.next_run ? Math.max(0, t.next_run - Date.now() / 1000) : null,
   }));
 
-  const col = taskTableSort.col;
-  const dir = taskTableSort.dir === 'asc' ? 1 : -1;
   tasks.sort((a, b) => {
-    let av = a[col], bv = b[col];
-    if (typeof av === 'string') return av.localeCompare(bv) * dir;
-    return ((av || 0) - (bv || 0)) * dir;
+    if (a.running && !b.running) return -1;
+    if (!a.running && b.running) return 1;
+    if (a.consecutive_failures > 0 && b.consecutive_failures <= 0) return -1;
+    if (a.consecutive_failures <= 0 && b.consecutive_failures > 0) return 1;
+    return (b.run_count || 0) - (a.run_count || 0);
   });
 
   const maxDur = Math.max(1, ...tasks.map(t => t.last_duration || 0));
 
-  const cols = [
-    { key: 'name', label: 'Job' },
-    { key: 'schedule', label: 'Schedule' },
-    { key: 'run_count', label: 'Runs' },
-    { key: 'last_duration', label: 'Duration' },
-    { key: 'consecutive_failures', label: 'Fails' },
-    { key: 'next_in', label: 'Next In' },
-  ];
-
-  let html = '<table class="task-table"><thead><tr>';
-  for (const c of cols) {
-    const sorted = col === c.key ? ' sorted' : '';
-    const arrow = col === c.key ? (dir > 0 ? ' &#9650;' : ' &#9660;') : '';
-    html += `<th class="${sorted}" data-col="${c.key}">${c.label}${arrow}</th>`;
-  }
-  html += '</tr></thead><tbody>';
-
+  let html = '<div class="job-grid">';
   for (const t of tasks) {
-    const cls = t.running ? ' class="running"' : t.consecutive_failures > 0 ? ' class="failing"' : '';
-    const durPct = Math.max(2, ((t.last_duration || 0) / maxDur) * 80);
-    const durColor = (t.last_duration || 0) > 60 ? 'var(--accent-yellow)' :
-                     (t.last_duration || 0) > 300 ? 'var(--accent-red)' : 'var(--accent-cyan)';
+    const status = t.running ? 'running' : t.consecutive_failures > 0 ? 'failing' :
+                   !t.enabled ? 'disabled' : 'ok';
+    const borderColor = status === 'running' ? 'var(--accent-cyan)' :
+                        status === 'failing' ? 'var(--accent-yellow)' :
+                        status === 'disabled' ? 'var(--text-dim)' : 'var(--border-glow)';
+    const durPct = Math.min(100, ((t.last_duration || 0) / maxDur) * 100);
+    const durColor = (t.last_duration || 0) > 300 ? 'red' :
+                     (t.last_duration || 0) > 60 ? 'yellow' : 'cyan';
     const nextIn = t.next_in != null ? formatUptime(Math.round(t.next_in)) : '---';
 
-    html += `<tr${cls}>
-      <td>${t.running ? '&#9654; ' : ''}${escapeHtml(t.name)}</td>
-      <td>${escapeHtml(t.schedule || '')}</td>
-      <td>${(t.run_count || 0).toLocaleString()}</td>
-      <td>${(t.last_duration || 0).toFixed(1)}s <span class="duration-bar" style="width:${durPct}px;background:${durColor}"></span></td>
-      <td style="color:${t.consecutive_failures > 0 ? 'var(--accent-yellow)' : 'inherit'}">${t.consecutive_failures || 0}</td>
-      <td>${nextIn}</td>
-    </tr>`;
+    html += `<div class="job-card" style="border-top-color:${borderColor}">
+      <div class="job-card-header">
+        <span class="job-name">${t.running ? '<span style="color:var(--accent-cyan)">&#9654; </span>' : ''}${escapeHtml(t.name)}</span>
+        <span class="model-tag">${escapeHtml(t.schedule || '?')}</span>
+      </div>
+      ${statRow('Runs', (t.run_count || 0).toLocaleString(), 'cyan')}
+      ${statRow('Duration', (t.last_duration || 0).toFixed(1) + 's', durColor)}
+      <div class="progress-bar-track"><div class="progress-bar-fill ${durColor}" style="width:${durPct}%"></div></div>
+      ${t.consecutive_failures > 0 ? statRow('Failures', t.consecutive_failures + 'x consecutive', 'yellow') : ''}
+      ${statRow('Next', nextIn)}
+      ${t.last_exit_code !== 0 && t.last_exit_code != null ? statRow('Exit Code', t.last_exit_code, 'red') : ''}
+    </div>`;
   }
-  html += '</tbody></table>';
+  html += '</div>';
   body.innerHTML = html;
-
-  for (const th of body.querySelectorAll('th[data-col]')) {
-    th.addEventListener('click', () => {
-      const c = th.dataset.col;
-      if (taskTableSort.col === c) {
-        taskTableSort.dir = taskTableSort.dir === 'asc' ? 'desc' : 'asc';
-      } else {
-        taskTableSort = { col: c, dir: 'asc' };
-      }
-    });
-  }
 }
 
 // --- Agent Cards ---
