@@ -96,6 +96,7 @@ function resizeCanvas() {
   canvas.style.height = H + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   layoutNodes();
+  updateHitboxes();
 }
 
 function statusColor(status) {
@@ -324,33 +325,42 @@ function animate(ts) {
   requestAnimationFrame(animate);
 }
 
-function getNodeAt(mx, my) {
-  for (const node of Object.values(nodes)) {
-    const dx = mx - node.x;
-    const dy = my - node.y;
-    const hitR = node.radius + 8;
-    if (dx * dx + dy * dy <= hitR * hitR) return node;
+const hitboxContainer = document.getElementById('node-hitboxes');
+
+function updateHitboxes() {
+  const existing = hitboxContainer.children;
+  const nodeList = Object.values(nodes);
+
+  if (existing.length !== nodeList.length) {
+    hitboxContainer.innerHTML = '';
+    for (const node of nodeList) {
+      const div = document.createElement('div');
+      div.className = 'node-hitbox';
+      div.dataset.nodeId = node.id;
+      div.dataset.nodeLabel = node.label;
+      div.title = node.label;
+      div.addEventListener('click', () => {
+        if (typeof window.openNodeDetail === 'function') {
+          window.openNodeDetail(node.id, node.label);
+        }
+      });
+      hitboxContainer.appendChild(div);
+    }
   }
-  return null;
+
+  let i = 0;
+  for (const node of nodeList) {
+    const div = existing[i];
+    if (div) {
+      const size = (node.radius + 14) * 2;
+      div.style.left = (node.x - size / 2) + 'px';
+      div.style.top = (node.y - size / 2) + 'px';
+      div.style.width = size + 'px';
+      div.style.height = size + 'px';
+    }
+    i++;
+  }
 }
-
-canvas.style.cursor = 'default';
-canvas.addEventListener('mousemove', (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-  canvas.style.cursor = getNodeAt(mx, my) ? 'pointer' : 'default';
-});
-
-canvas.addEventListener('click', (e) => {
-  const rect = canvas.getBoundingClientRect();
-  const mx = e.clientX - rect.left;
-  const my = e.clientY - rect.top;
-  const node = getNodeAt(mx, my);
-  if (node && typeof window.openNodeDetail === 'function') {
-    window.openNodeDetail(node.id, node.label);
-  }
-});
 
 initNodes();
 resizeCanvas();
