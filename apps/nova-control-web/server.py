@@ -102,6 +102,14 @@ async def service_detail(service: str):
         elif service.startswith("agent-"):
             agent_name = service.replace("agent-", "")
             return JSONResponse(await _detail_agent(agent_name))
+        elif service in ("slack", "discord", "signal", "imessage", "email"):
+            return JSONResponse(await _detail_channel(service))
+        elif service == "openrouter":
+            return JSONResponse(await _detail_openrouter())
+        elif service in ("tinychat", "mlx_chat", "openwebui", "comfyui", "swarmui"):
+            return JSONResponse(await _detail_service(service))
+        elif service == "memory_server":
+            return JSONResponse(await _detail_memory_server())
         else:
             return JSONResponse({"error": f"Unknown service: {service}"}, status_code=404)
     except Exception as e:
@@ -369,7 +377,7 @@ async def _detail_model_usage():
             "output_tokens": val.get("outputTokens", 0) or 0,
             "cost": val.get("estimatedCostUsd", 0) or 0,
             "label": val.get("label", ""),
-            "updated": val.get("updatedAt", "")[:19],
+            "updated": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(val["updatedAt"] / 1000 if val.get("updatedAt", 0) > 1e12 else val.get("updatedAt", 0))) if isinstance(val.get("updatedAt"), (int, float)) else str(val.get("updatedAt", ""))[:19],
         })
     sessions.sort(key=lambda x: x.get("updated", ""), reverse=True)
     return {"sessions": sessions[:30]}
@@ -396,6 +404,208 @@ async def _detail_agent(name):
             recent.append({"label": label or "?", "status": st, "duration_s": round(dur, 1) if dur else None, "created_at": created})
 
     return {"status": status, "meta": decoded, "recent_tasks": recent}
+
+
+async def _detail_channel(channel):
+    log_path = Path.home() / ".openclaw" / "logs" / "gateway.log"
+    events = []
+    total_lines = 0
+    tag = f"[{channel}]"
+    if channel == "imessage":
+        tag = "[ws]"
+    elif channel == "email":
+        tag = "[gmail"
+
+    try:
+        with open(log_path, "r", errors="replace") as f:
+            for line in f:
+                if tag in line:
+                    total_lines += 1
+                    events.append(line.rstrip())
+    except Exception:
+        pass
+
+    recent = events[-40:]
+
+    stats = {"connected": 0, "disconnected": 0, "restarts": 0, "messages_delivered": 0, "errors": 0, "other": 0}
+    for line in events:
+        ll = line.lower()
+        if "connected" in ll and "disconnect" not in ll:
+            stats["connected"] += 1
+        elif "disconnect" in ll or "closed" in ll:
+            stats["disconnected"] += 1
+        elif "starting provider" in ll or "restart" in ll:
+            stats["restarts"] += 1
+        elif "delivered" in ll or "res ✓" in ll:
+            stats["messages_delivered"] += 1
+        elif "error" in ll or "fail" in ll:
+            stats["errors"] += 1
+        else:
+            stats["other"] += 1
+
+    svc_data = current_state.get("services", {})
+    traffic = current_state.get("traffic_flow", {})
+
+    return {
+        "channel": channel,
+        "total_log_events": total_lines,
+        "stats": stats,
+        "traffic_flow": traffic.get(channel, 0),
+        "recent_logs": recent,
+    }
+
+
+async def _detail_openrouter():
+    data = _json.loads(SESSIONS_JSON.read_text())
+    sessions = []
+    total_in = 0
+    total_out = 0
+    total_cost = 0.0
+    for key, val in data.items():
+        if not isinstance(val, dict):
+            continue
+        if val.get("modelProvider") != "openrouter":
+            continue
+        inp = val.get("inputTokens", 0) or 0
+        out = val.get("outputTokens", 0) or 0
+        cost = val.get("estimatedCostUsd", 0) or 0
+        total_in += inp
+        total_out += out
+        total_cost += cost
+        updated = val.get("updatedAt", "")
+        if isinstance(updated, (int, float)):
+            updated = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(updated / 1000 if updated > 1e12 else updated))
+        else:
+            updated = str(updated)[:19]
+        sessions.append({
+            "key": key[:60], "model": val.get("model", "?"),
+            "input_tokens": inp, "output_tokens": out,
+            "cost": cost, "label": val.get("label", ""),
+            "updated": updated,
+        })
+    sessions.sort(key=lambda x: x.get("updated", ""), reverse=True)
+
+    return {
+        "provider": "openrouter",
+        "total_sessions": len(sessions),
+        "total_input_tokens": total_in,
+        "total_output_tokens": total_out,
+        "total_cost_usd": round(total_cost, 6),
+        "sessions": sessions[:20],
+    }
+
+
+async def _detail_service(name):
+    svc_info = current_state.get("services", {}).get(name, {})
+    latency_trend = svc_info.get("latency_trend", [])
+
+    proc_info = {}
+    port = SERVICE_PORTS.get(name, {}).get("port")
+    if port:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "lsof", f"-iTCP:{port}", "-sTCP:LISTEN", "-t",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+            pid = stdout.decode().strip().split("\n")[0]
+            if pid:
+                p = psutil.Process(int(pid))
+                mem = p.memory_info()
+                proc_info = {
+                    "pid": int(pid),
+                    "name": p.name(),
+                    "cmdline": " ".join(p.cmdline()[:5]),
+                    "cpu_percent": p.cpu_percent(),
+                    "rss_mb": round(mem.rss / (1024 * 1024), 1),
+                    "vms_mb": round(mem.vms / (1024 * 1024), 1),
+                    "create_time": time.strftime("%Y-%m-%d %H:%M", time.localtime(p.create_time())),
+                    "uptime_s": int(time.time() - p.create_time()),
+                    "num_threads": p.num_threads(),
+                }
+        except Exception:
+            pass
+
+    extra = {}
+    session = app.state.http_session
+    if name == "comfyui":
+        try:
+            async with session.get("http://127.0.0.1:8188/system_stats", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                sys_stats = await resp.json()
+                si = sys_stats.get("system", {})
+                extra = {
+                    "comfyui_version": si.get("comfyui_version"),
+                    "python_version": si.get("python_version", "")[:20],
+                    "pytorch_version": si.get("pytorch_version"),
+                    "ram_total_gb": round(si.get("ram_total", 0) / 1e9, 1),
+                    "ram_free_gb": round(si.get("ram_free", 0) / 1e9, 1),
+                }
+        except Exception:
+            pass
+
+    gw_config = {
+        "ollama": {"model": "deepseek-r1:8b", "role": "Reasoning, analysis, generalist default"},
+        "tinychat": {"model": "deepseek-r1:8b", "role": "Lightweight chat, quick responses, email"},
+        "mlx_chat": {"model": "Qwen2.5-7B-Instruct-4bit", "role": "Fast general inference (Apple ANE)"},
+        "openwebui": {"model": "qwen3-vl:4b", "role": "Vision, UI, multimodal, RAG"},
+        "swarmui": {"model": "Juggernaut XL", "role": "Image generation (Stable Diffusion)"},
+        "comfyui": {"model": "Custom workflows", "role": "Advanced image pipelines"},
+    }
+
+    avg_latency = round(sum(latency_trend) / len(latency_trend)) if latency_trend else None
+    max_latency = max(latency_trend) if latency_trend else None
+    min_latency = min(latency_trend) if latency_trend else None
+
+    return {
+        "service": name,
+        "status": svc_info.get("status", "unknown"),
+        "port": svc_info.get("port"),
+        "current_latency_ms": svc_info.get("latency_ms"),
+        "avg_latency_ms": avg_latency,
+        "min_latency_ms": min_latency,
+        "max_latency_ms": max_latency,
+        "latency_points": len(latency_trend),
+        "gateway_config": gw_config.get(name, {}),
+        "process": proc_info,
+        **extra,
+    }
+
+
+async def _detail_memory_server():
+    session = app.state.http_session
+    health = {}
+    stats = {}
+    try:
+        async with session.get("http://127.0.0.1:18790/health", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+            health = await resp.json()
+    except Exception:
+        pass
+    try:
+        async with session.get("http://127.0.0.1:18790/stats", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+            stats = await resp.json()
+    except Exception:
+        pass
+
+    proc_info = {}
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "lsof", "-iTCP:18790", "-sTCP:LISTEN", "-t",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+        pid = stdout.decode().strip().split("\n")[0]
+        if pid:
+            p = psutil.Process(int(pid))
+            mem = p.memory_info()
+            proc_info = {
+                "pid": int(pid), "rss_mb": round(mem.rss / (1024 * 1024), 1),
+                "uptime_s": int(time.time() - p.create_time()),
+                "num_threads": p.num_threads(),
+            }
+    except Exception:
+        pass
+
+    return {
+        "health": health, "stats": stats, "process": proc_info,
+    }
 
 
 @app.websocket("/ws")

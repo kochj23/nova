@@ -324,6 +324,34 @@ function animate(ts) {
   requestAnimationFrame(animate);
 }
 
+function getNodeAt(mx, my) {
+  for (const node of Object.values(nodes)) {
+    const dx = mx - node.x;
+    const dy = my - node.y;
+    const hitR = node.radius + 8;
+    if (dx * dx + dy * dy <= hitR * hitR) return node;
+  }
+  return null;
+}
+
+canvas.style.cursor = 'default';
+canvas.addEventListener('mousemove', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  canvas.style.cursor = getNodeAt(mx, my) ? 'pointer' : 'default';
+});
+
+canvas.addEventListener('click', (e) => {
+  const rect = canvas.getBoundingClientRect();
+  const mx = e.clientX - rect.left;
+  const my = e.clientY - rect.top;
+  const node = getNodeAt(mx, my);
+  if (node && typeof window.openNodeDetail === 'function') {
+    window.openNodeDetail(node.id, node.label);
+  }
+});
+
 initNodes();
 resizeCanvas();
 window.addEventListener('resize', resizeCanvas);

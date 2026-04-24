@@ -611,6 +611,22 @@ function renderAgent(name, agent) {
   body.innerHTML = html;
 }
 
+// --- Graph Node Click Handler ---
+window.openNodeDetail = function(nodeId, nodeLabel) {
+  const NODE_SERVICE_MAP = {
+    slack: 'slack', discord: 'discord', signal: 'signal',
+    imessage: 'imessage', email: 'email',
+    gateway: 'gateway',
+    ollama: 'ollama', openrouter: 'openrouter',
+    mlx_chat: 'mlx_chat', tinychat: 'tinychat', openwebui: 'openwebui',
+    swarmui: 'swarmui', comfyui: 'comfyui',
+    redis: 'redis', postgresql: 'postgresql',
+    memory_server: 'memory_server', scheduler: 'scheduler',
+  };
+  const svc = NODE_SERVICE_MAP[nodeId];
+  if (svc) fetchDetail(svc, nodeLabel);
+};
+
 // --- Detail Modal ---
 const CARD_SERVICE_MAP = {
   'card-gateway': 'gateway', 'card-scheduler': 'scheduler',
@@ -853,6 +869,128 @@ const DETAIL_RENDERERS = {
     }
     return h || '<p class="dim">No session data</p>';
   },
+};
+
+// --- Channel detail renderers ---
+['slack', 'discord', 'signal', 'imessage', 'email'].forEach(ch => {
+  DETAIL_RENDERERS[ch] = function(d) {
+    const s = d.stats || {};
+    let h = statRow('Channel', d.channel, 'cyan') +
+      statRow('Total Log Events', (d.total_log_events || 0).toLocaleString()) +
+      statRow('Traffic Flow', (d.traffic_flow || 0).toFixed(3), d.traffic_flow > 0.1 ? 'green' : '');
+
+    h += '<div class="modal-section"><div class="modal-section-title">Event Summary</div>';
+    h += statRow('Connected', s.connected || 0, 'green') +
+      statRow('Disconnected', s.disconnected || 0, (s.disconnected || 0) > 0 ? 'yellow' : '') +
+      statRow('Restarts', s.restarts || 0, (s.restarts || 0) > 5 ? 'yellow' : '') +
+      statRow('Messages Delivered', s.messages_delivered || 0, 'cyan') +
+      statRow('Errors', s.errors || 0, (s.errors || 0) > 0 ? 'red' : 'green') +
+      statRow('Other Events', s.other || 0);
+    h += '</div>';
+
+    if (d.recent_logs?.length) {
+      h += '<div class="modal-section"><div class="modal-section-title">Recent Log Lines</div>' +
+        `<pre style="font-size:10px;color:var(--text-dim);white-space:pre-wrap;max-height:300px;overflow-y:auto;line-height:1.6">${d.recent_logs.map(escapeHtml).join('\n')}</pre></div>`;
+    }
+    return h;
+  };
+});
+
+DETAIL_RENDERERS.openrouter = function(d) {
+  let h = statRow('Provider', 'OpenRouter', 'magenta') +
+    statRow('Sessions', d.total_sessions || 0, 'cyan') +
+    statRow('Input Tokens', (d.total_input_tokens || 0).toLocaleString()) +
+    statRow('Output Tokens', (d.total_output_tokens || 0).toLocaleString()) +
+    statRow('Total Cost', '$' + (d.total_cost_usd || 0).toFixed(4), 'magenta');
+
+  if (d.sessions?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Recent Sessions</div><table class="modal-table"><thead><tr><th>Session</th><th>Model</th><th>In</th><th>Out</th><th>Cost</th><th>Updated</th></tr></thead><tbody>';
+    for (const s of d.sessions) {
+      h += `<tr><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;font-size:10px">${escapeHtml(s.label || s.key)}</td>` +
+        `<td style="font-size:10px">${escapeHtml(s.model)}</td>` +
+        `<td>${s.input_tokens.toLocaleString()}</td><td>${s.output_tokens.toLocaleString()}</td>` +
+        `<td>${s.cost > 0 ? '$' + s.cost.toFixed(4) : '$0'}</td>` +
+        `<td style="font-size:10px">${s.updated}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
+  }
+  return h;
+};
+
+// --- Service detail renderers (tinychat, mlx_chat, openwebui, comfyui, swarmui) ---
+['tinychat', 'mlx_chat', 'openwebui', 'comfyui', 'swarmui'].forEach(svc => {
+  DETAIL_RENDERERS[svc] = function(d) {
+    const gw = d.gateway_config || {};
+    let h = statRow('Service', d.service, 'cyan') +
+      statRow('Status', d.status || '?', d.status === 'up' ? 'green' : 'red') +
+      statRow('Port', d.port || '?');
+
+    if (gw.model) h += statRow('Gateway Model', gw.model, 'magenta');
+    if (gw.role) h += statRow('Role', gw.role);
+
+    h += '<div class="modal-section"><div class="modal-section-title">Latency</div>';
+    h += statRow('Current', d.current_latency_ms != null ? d.current_latency_ms + 'ms' : '?', 'green') +
+      statRow('Average', d.avg_latency_ms != null ? d.avg_latency_ms + 'ms' : '?') +
+      statRow('Min / Max', (d.min_latency_ms ?? '?') + ' / ' + (d.max_latency_ms ?? '?') + 'ms') +
+      statRow('Data Points', d.latency_points || 0);
+    h += '</div>';
+
+    if (d.process && d.process.pid) {
+      const p = d.process;
+      h += '<div class="modal-section"><div class="modal-section-title">Process</div>';
+      h += statRow('PID', p.pid) +
+        statRow('Memory (RSS)', p.rss_mb + ' MB', p.rss_mb > 500 ? 'yellow' : '') +
+        statRow('Virtual Memory', p.vms_mb + ' MB') +
+        statRow('Threads', p.num_threads) +
+        statRow('Uptime', formatUptime(p.uptime_s), 'cyan') +
+        statRow('Started', p.create_time);
+      if (p.cmdline) h += `<div class="model-tag" style="margin-top:4px;max-width:100%;word-break:break-all">${escapeHtml(p.cmdline)}</div>`;
+      h += '</div>';
+    }
+
+    if (d.comfyui_version) {
+      h += '<div class="modal-section"><div class="modal-section-title">ComfyUI Info</div>';
+      h += statRow('Version', d.comfyui_version, 'cyan') +
+        statRow('PyTorch', d.pytorch_version || '?') +
+        statRow('Python', d.python_version || '?') +
+        statRow('RAM Total', (d.ram_total_gb || 0) + ' GB') +
+        statRow('RAM Free', (d.ram_free_gb || 0) + ' GB');
+      h += '</div>';
+    }
+    return h;
+  };
+});
+
+DETAIL_RENDERERS.memory_server = function(d) {
+  const h1 = d.health || {};
+  const s = d.stats || {};
+  let h = statRow('Status', h1.status || '?', h1.status === 'ok' ? 'green' : 'red') +
+    statRow('Total Memories', (h1.count || s.count || 0).toLocaleString(), 'cyan') +
+    statRow('Embedding Model', h1.model || s.model || '?') +
+    statRow('Backend', h1.backend || s.backend || '?') +
+    statRow('Dimensions', s.dims || '?') +
+    statRow('Database Size', s.db_size || '?', 'magenta') +
+    statRow('Queue Length', h1.queue_length ?? s.queue_length ?? '?',
+      (h1.queue_length || 0) > 20 ? 'yellow' : 'green');
+
+  if (d.process && d.process.pid) {
+    h += '<div class="modal-section"><div class="modal-section-title">Process</div>';
+    h += statRow('PID', d.process.pid) +
+      statRow('Memory (RSS)', d.process.rss_mb + ' MB') +
+      statRow('Threads', d.process.num_threads) +
+      statRow('Uptime', formatUptime(d.process.uptime_s), 'cyan');
+    h += '</div>';
+  }
+
+  if (s.by_source) {
+    const sources = Object.entries(s.by_source).sort((a, b) => b[1] - a[1]).slice(0, 20);
+    h += '<div class="modal-section"><div class="modal-section-title">Top Sources</div><table class="modal-table"><thead><tr><th>Source</th><th>Count</th></tr></thead><tbody>';
+    for (const [src, cnt] of sources) {
+      h += `<tr><td>${escapeHtml(src)}</td><td>${cnt.toLocaleString()}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
+  }
+  return h;
 };
 
 ['agent-analyst', 'agent-sentinel', 'agent-coder', 'agent-lookout', 'agent-librarian'].forEach(a => {
