@@ -1389,7 +1389,21 @@ All critical services run under macOS launchd with `KeepAlive` and `ThrottleInte
 
 **Slack connection fix**: Gateway Slack socket mode silently disconnected. Health monitor caught it once at 11:12 but it dropped again. Gateway restart via `launchctl kickstart -k gui/501/ai.openclaw.gateway` restored all 3 channels (Slack, Discord, Signal).
 
-**Stats**: 5 new files, ~2,500 lines of new code, 1 OpenClaw config change, 21 YouTube videos queued for ingest.
+**v1.1 — 9-Feature Expansion (same day):**
+
+- **Historical trends**: SQLite time-series DB recording snapshots every 30s with `/api/history/{metric}` endpoint. Supports CPU, memory, disk, latency, memory count, and cost trends with range selection (1h/6h/24h/7d). 30-day retention with auto-cleanup.
+- **Alerting panel**: Persistent banner evaluating every poll cycle — disk <10GB, memory >90%, CPU >95% sustained, service down 5+ polls, task failure streak >3, ingest queue backup.
+- **Conversation activity**: Live sessions from OpenClaw sessions.json showing active count, per-channel breakdown (Slack/Discord/Signal), session labels.
+- **UniFi network card**: 16 devices, 106 clients, WAN uptime from UDM Pro API (API key from Keychain, SSL disabled for self-signed cert).
+- **Cost tracking**: Daily OpenRouter cost aggregation with trend charts in detail modals.
+- **Memory growth**: Total memory count over time with line charts in PostgreSQL/Memory detail modals.
+- **Dark/light theme toggle**: CSS variable swap with localStorage persistence.
+- **Mobile optimization**: Responsive at 768px and 480px — single-column cards, full-screen modals, compact graph.
+- **Keyboard shortcuts**: R=reconnect, 1-9=jump to card, /=search tasks, ?=help, Esc=close.
+
+Total dashboard: 1,719 lines backend (15 collectors, 20+ API endpoints), 1,100+ lines frontend (4 JS files), 450+ lines CSS.
+
+**Stats**: 8 new files, ~4,500 lines of new code, 1 OpenClaw config change, 21 YouTube videos ingested (Brian Scotto channel).
 
 ### Apr 23, 2026 -- Multi-Channel Expansion (Signal + Discord) + OpenClaw 2026.4.22
 
