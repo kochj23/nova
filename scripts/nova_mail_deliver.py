@@ -50,12 +50,19 @@ NOISE_PATTERNS = [
     "skillshare", "capital grille", "teepublic", "amazon", "citibank"
 ]
 
-# Senders that are always important
+# Senders that are always important (herd names loaded from config)
+sys.path.insert(0, str(__import__('pathlib').Path.home() / ".openclaw"))
+try:
+    from herd_config import HERD as _herd
+    _herd_patterns = [m["name"].lower() for m in _herd]
+except ImportError:
+    _herd_patterns = []
+
 IMPORTANT_PATTERNS = [
     "american express", "amex", "apple developer", "adt security",
-    "network solutions", "partners federal", "kevin", "sam@", "amy", "jason.cox",
-    "digitalnoise.net"
-]
+    "network solutions", "partners federal",
+    "digitalnoise.net",
+] + _herd_patterns
 
 
 def log(msg):

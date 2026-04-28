@@ -37,7 +37,7 @@ PII_PATTERNS = [
     r'\b\d{3}-\d{2}-\d{4}\b',
     r'password|passwd|secret|token|api.?key|credential',
     r'jordan|kochj|digitalnoise|disney\.com',
-    r'/Users/kochj|/Volumes/Data',
+    r'/Users/' + __import__('os').environ.get('USER', '') + r'|/Volumes/Data',
 ]
 
 def is_safe(text):

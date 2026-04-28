@@ -31,7 +31,7 @@ MEMORY_URL = "http://127.0.0.1:18790/remember?async=1"
 LOG_FILE = WORK_DIR / "channel-ingest.log"
 STATE_FILE = WORK_DIR / "channel-ingest-state.json"
 SIGNAL_CLI = "http://127.0.0.1:8080"
-JORDAN_PHONE = "+13233645436"
+JORDAN_PHONE = nova_config.JORDAN_SIGNAL
 
 DEFAULT_DELAY = 120
 DEFAULT_STATUS_INTERVAL = 600

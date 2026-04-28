@@ -63,15 +63,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 try:
     from herd_config import HERD
 except ImportError:
-    # Fallback — should never happen in production
-    HERD = [
-        {"name": "Sam",     "email": "sam@jasonacox.com"},
-        {"name": "O.C.",    "email": "oc@mostlycopyandpaste.com"},
-        {"name": "Gaston",  "email": "gaston@bluemoxon.com"},
-        {"name": "Marey",   "email": "marey@makehorses.org"},
-        {"name": "Colette", "email": "colette@pilatesmuse.co"},
-        {"name": "Rockbot", "email": "rockbot@makehorses.org"},
-    ]
+    HERD = []
 
 # Nova is always a participant (she plays too)
 NOVA_NAME  = "Nova"

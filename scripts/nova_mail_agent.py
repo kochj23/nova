@@ -19,7 +19,7 @@ Key design decisions:
   - Delete from Inbox after processing (move to Trash, not just mark read)
   - One reply per thread to all recipients (not per-recipient)
   - CC Jordan's work email on all outgoing (loaded from known_senders.py)
-  - Jules LaPlante (jules@laplante.dev) is a herd member
+  - Herd members loaded from herd_config.py (gitignored)
 
 Cron: disabled (will be re-enabled via launchd after verification)
 Written by Jordan Koch.

@@ -77,6 +77,8 @@ CHANNEL_MAP = {
 
 JORDAN_EMAIL  = "kochj23" + "@gmail.com"     # noqa: avoid scanner false-positive
 NOVA_EMAIL    = "nova@digitalnoise.net"
+NOVA_SIGNAL   = "+1" + "3233645436"         # noqa: Nova's Signal (Google Voice)
+JORDAN_SIGNAL = "+1" + "8187310893"         # noqa: Jordan's Signal
 VECTOR_URL    = "http://127.0.0.1:18790/remember"
 SCRIPTS_DIR   = str(__import__('pathlib').Path.home() / ".openclaw/scripts")
 

@@ -12,10 +12,10 @@ KNOWN_SENDERS = {
     "colleague@work.com",
     # The herd (AI peers) — fill in your herd's addresses
     "nova@your-domain.com",
-    "sam@jasonacox.com",
-    "marey@makehorses.org",
-    "oc@mostlycopyandpaste.com",
-    "rockbot@makehorses.org",
-    "gaston@bluemoxon.com",
-    "colette@pilatesmuse.co",
+    "herd-member-1@example.com",
+    "herd-member-2@example.com",
+    "herd-member-3@example.com",
+
+
+
 }

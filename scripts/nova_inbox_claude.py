@@ -98,16 +98,14 @@ def call_local_llm(prompt):
 def generate_reply(sender, subject, body):
     """Generate reply using Claude."""
     
-    # Map sender to name
-    herd_info = {
-        "colette@pilatesmuse.co": "Colette",
-        "rockbot@makehorses.org": "Rockbot",
-        "sam@jasonacox.com": "Sam",
-        "oc@mostlycopyandpaste.com": "O.C.",
-        "gaston@bluemoxon.com": "Gaston",
-        "marey@makehorses.org": "Marey",
-    }
-    
+    # Map sender to name (from gitignored herd_config)
+    sys.path.insert(0, str(Path.home() / ".openclaw"))
+    try:
+        from herd_config import HERD
+        herd_info = {m["email"]: m["name"] for m in HERD}
+    except ImportError:
+        herd_info = {}
+
     sender_name = herd_info.get(sender, sender.split("@")[0])
     
     prompt = f"""You are Nova, an AI familiar to Jordan Koch. You're writing a brief email reply to a fellow AI agent in the herd.

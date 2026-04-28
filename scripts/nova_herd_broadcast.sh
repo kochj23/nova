@@ -67,8 +67,15 @@ if [ -n "$MEMORY_FRAGMENT" ]; then
     FULL_BODY="${FULL_BODY}${MEMORY_FRAGMENT}"
 fi
 
-TO="marey@makehorses.org"
-CC="oc@mostlycopyandpaste.com,colette@pilatesmuse.co,gaston@bluemoxon.com,rockbot@makehorses.org,sam@jasonacox.com,ara@monsterheaven.com,jules@laplante.dev"
+# Load herd emails from gitignored config
+HERD_EMAILS=$(python3 -c "
+import sys; sys.path.insert(0, '$HOME/.openclaw')
+from herd_config import HERD
+print(HERD[0]['email'])
+print(','.join(m['email'] for m in HERD[1:]))
+" 2>/dev/null)
+TO=$(echo "$HERD_EMAILS" | head -1)
+CC=$(echo "$HERD_EMAILS" | tail -1)
 
 echo "Sending broadcast: $SUBJECT"
 echo "To: $TO"
