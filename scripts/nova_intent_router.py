@@ -2,35 +2,28 @@
 """
 nova_intent_router.py — Privacy-first intent-based AI router for Nova. (v4)
 
-DESIGN PRINCIPLE: Nothing sensitive leaves the machine. OpenRouter is ONLY for
-real-time conversation with Jordan (Slack, chat). Everything else runs locally
-on the M3 Ultra (512GB RAM, 80 GPU cores).
+DESIGN PRINCIPLE: NOTHING leaves the machine. 100% local as of 2026-04-28.
+OpenRouter removed from all routing. Every intent runs on local hardware.
+M3 Ultra (512GB RAM, 80 GPU cores) handles everything.
 
-Two tiers:
-
-  CLOUD (OpenRouter) — Nova's live voice ONLY
-    Real-time Slack replies, live chat, herd outreach.
-    NO email content, NO memory data, NO personal data.
-
-  LOCAL — Everything else, matched to the right model:
-    gpt-oss:120b  — Heavy lifting: analysis, consolidation, creative, reports
-                    65GB MXFP4, 131K context, thinking+tools. The powerhouse.
-    gpt-oss:20b   — Fast general: summaries, digests, quick text tasks
-                    13GB MXFP4. Good balance of speed and quality.
-    qwen3-coder:30b — Code: review, generation, debugging, Swift
-                    18GB Q4_K_M. Code-specialized.
-    deepseek-r1:8b  — Reasoning: architecture, security, logic, deep analysis
-                    5GB Q4_K_M. Chain-of-thought specialist.
-    qwen3-vl:4b    — Vision: camera analysis, image description
-                    3GB Q4_K_M. Multimodal.
-    nomic-embed-text — Embeddings only (memory server uses this directly)
+Model roster (right model for the right job):
+  qwen3-next:80b    — Nova's voice: conversation, Slack, Discord, Signal
+                      82GB, 131K context. The personality model.
+  MLX Qwen2.5-32B   — Fast general: email, memory, summaries, reports
+                      18GB 4-bit via Apple Neural Engine. Speed king.
+  qwen3-coder:30b   — Code: review, generation, debugging, Swift
+                      18GB Q4_K_M. Code-specialized.
+  deepseek-r1:8b    — Reasoning: architecture, security, logic, deep analysis
+                      5GB Q4_K_M. Chain-of-thought specialist.
+  qwen3-vl:4b       — Vision: camera analysis, image description
+                      3GB Q4_K_M. Multimodal.
+  nomic-embed-text   — Embeddings only (memory server uses this directly)
 
 Privacy enforcement:
-  - PRIVATE_INTENTS: hard-fail if local is down. Never cloud. Never.
-  - SENSITIVE_INTENTS: local-only, no cloud fallback, but softer error messaging.
-  - All other local intents: local-only, no cloud fallback. Period.
-    The old "fallback to cloud" behavior was a privacy leak. It's gone.
-  - Only CLOUD_INTENTS go to OpenRouter. Nothing else. Ever.
+  - PRIVATE_INTENTS: hard-fail if Ollama/MLX is down. Never external. Never.
+  - SENSITIVE_INTENTS: local-only, no fallback, softer error messaging.
+  - ALL intents: local-only. No cloud fallback. Period.
+  - OpenRouter config retained but unused (tokens available for future use).
 
 Usage:
   python3 nova_intent_router.py --intent "code_review" --input "def foo(): ..."
@@ -42,6 +35,7 @@ Author: Jordan Koch
 """
 
 import argparse
+import hashlib
 import json
 import sys
 import urllib.request
@@ -49,6 +43,51 @@ import urllib.error
 from enum import Enum
 from pathlib import Path
 from typing import Optional
+
+try:
+    import redis
+    _redis_client = redis.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+    _redis_client.ping()
+    REDIS_AVAILABLE = True
+except Exception:
+    _redis_client = None
+    REDIS_AVAILABLE = False
+
+REDIS_RESPONSE_TTL = 300      # 5-min cache for identical prompt+intent combos
+REDIS_RESPONSE_PREFIX = "nova:router:resp:"
+
+
+def _cache_key(intent: str, prompt: str) -> str:
+    """Generate Redis cache key from intent + prompt hash."""
+    h = hashlib.sha256(f"{intent}:{prompt}".encode()).hexdigest()[:16]
+    return f"{REDIS_RESPONSE_PREFIX}{intent}:{h}"
+
+
+def _cache_get(intent: str, prompt: str) -> Optional[dict]:
+    """Try to fetch a cached response from Redis."""
+    if not REDIS_AVAILABLE:
+        return None
+    try:
+        key = _cache_key(intent, prompt)
+        data = _redis_client.get(key)
+        if data:
+            result = json.loads(data)
+            result["cached"] = True
+            return result
+    except Exception:
+        pass
+    return None
+
+
+def _cache_set(intent: str, prompt: str, result: dict) -> None:
+    """Store a successful response in Redis cache."""
+    if not REDIS_AVAILABLE or not result.get("success"):
+        return
+    try:
+        key = _cache_key(intent, prompt)
+        _redis_client.setex(key, REDIS_RESPONSE_TTL, json.dumps(result, default=str))
+    except Exception:
+        pass
 
 
 # ── Model registry ───────────────────────────────────────────────────────────
@@ -64,23 +103,24 @@ class LocalModel:
         self.speed = speed     # "fast", "medium", "slow"
 
 MODELS = {
-    # Benchmarked 2026-04-08 on M3 Ultra 512GB
-    # 5 local backends, each specialized:
+    # Benchmarked 2026-04-28 on M3 Ultra 512GB
+    # 6 local backends, each specialized:
     #   MLX (port 5050)      — Apple Neural Engine, 25-30 tok/s, no load delay
-    #   Ollama (port 11434)  — qwen3-coder 64-88 tok/s, deepseek-r1 reasoning, qwen3-vl vision
+    #   Ollama (port 11434)  — qwen3-next 80B conversation, qwen3-coder 64-88 tok/s, deepseek-r1 reasoning, qwen3-vl vision
     #   TinyChat (port 8000) — lightweight OpenAI-compat chat, fast for quick tasks
     #   OpenWebUI (port 3000)— RAG pipeline, document grounding, web search
-    "mlx_general": LocalModel("mlx:qwen2.5-32b",    "32B params, 4-bit MLX — fast general via Apple Neural Engine",  ctx=32768,  speed="fast"),
-    "coder":       LocalModel("qwen3-coder:30b",     "30B params, Q4_K_M — code review, generation, debugging",     ctx=32768,  speed="fast"),
-    "reasoner":    LocalModel("deepseek-r1:8b",      "8B params, Q4_K_M — chain-of-thought, logic, architecture",   ctx=32768,  speed="medium"),
-    "vision":      LocalModel("qwen3-vl:4b",         "4B params, Q4_K_M — image/video understanding",               ctx=8192,   speed="fast"),
-    "quick":       LocalModel("qwen3-coder:30b",      "30B via Ollama — fast for classification, tagging, quick tasks", ctx=32768,  speed="fast"),
-    "rag":         LocalModel("openwebui:rag",        "OpenWebUI RAG — document grounding, search, retrieval",       ctx=32768,  speed="medium"),
+    "conversation": LocalModel("qwen3-next:80b",     "80B params — high-quality conversation, Nova's voice",         ctx=131072, speed="medium"),
+    "mlx_general":  LocalModel("mlx:qwen2.5-32b",   "32B params, 4-bit MLX — fast general via Apple Neural Engine", ctx=32768,  speed="fast"),
+    "coder":        LocalModel("qwen3-coder:30b",    "30B params, Q4_K_M — code review, generation, debugging",     ctx=32768,  speed="fast"),
+    "reasoner":     LocalModel("deepseek-r1:8b",     "8B params, Q4_K_M — chain-of-thought, logic, architecture",   ctx=32768,  speed="medium"),
+    "vision":       LocalModel("qwen3-vl:4b",        "4B params, Q4_K_M — image/video understanding",               ctx=8192,   speed="fast"),
+    "quick":        LocalModel("qwen3-coder:30b",    "30B via Ollama — fast for classification, tagging, quick tasks", ctx=32768, speed="fast"),
+    "rag":          LocalModel("openwebui:rag",      "OpenWebUI RAG — document grounding, search, retrieval",        ctx=32768,  speed="medium"),
 }
 
 # ── Backend config ───────────────────────────────────────────────────────────
 
-MLX_URL                   = "http://127.0.0.1:5050"
+MLX_URL                   = "http://192.168.1.6:5050"
 TINYCHAT_URL              = "http://192.168.1.6:8000"
 OPENWEBUI_URL             = "http://192.168.1.6:3000"
 OLLAMA_URL                = "http://127.0.0.1:11434"
@@ -177,13 +217,14 @@ class Backend(Enum):
 
 INTENT_MAP: dict[str, tuple[Backend, str, str]] = {
     # ═══════════════════════════════════════════════════════════════════════════
-    # CLOUD — Real-time conversation ONLY. No data processing. No email content.
+    # CONVERSATION — Nova's voice. 100% local via qwen3-next:80b (2026-04-28)
+    # Previously routed to OpenRouter. Now fully local — zero cloud dependency.
     # ═══════════════════════════════════════════════════════════════════════════
-    "conversation":             (Backend.CLOUD, "",           "cloud"),
-    "realtime_chat":            (Backend.CLOUD, "",           "cloud"),
-    "slack_reply":              (Backend.CLOUD, "",           "cloud"),
-    "slack_post":               (Backend.CLOUD, "",           "cloud"),
-    "herd_outreach":            (Backend.CLOUD, "",           "cloud"),
+    "conversation":             (Backend.LOCAL, "conversation", "normal"),
+    "realtime_chat":            (Backend.LOCAL, "conversation", "normal"),
+    "slack_reply":              (Backend.LOCAL, "conversation", "normal"),
+    "slack_post":               (Backend.LOCAL, "conversation", "normal"),
+    "herd_outreach":            (Backend.LOCAL, "conversation", "normal"),
 
     # ═══════════════════════════════════════════════════════════════════════════
     # PRIVATE — Personal data. NEVER leaves the machine. Hard-fail if local down.
@@ -331,7 +372,7 @@ def query_local(
     if model_info.name.startswith("openwebui:"):
         return _query_openwebui_rag(prompt, model_info, intent, system, options)
     # Everything else → Ollama (port 11434)
-    return _query_ollama(prompt, model_info, intent, system, options)
+    return _query_ollama(prompt, model_info, intent, system, options, model_key=model_key)
 
 
 def _query_mlx(prompt, model_info, intent="", system=None, options=None) -> dict:
@@ -479,7 +520,7 @@ def _query_openwebui_rag(prompt, model_info, intent="", system=None, options=Non
         return {"success": False, "error": str(e), "source": "local"}
 
 
-def _query_ollama(prompt, model_info, intent="", system=None, options=None) -> dict:
+def _query_ollama(prompt, model_info, intent="", system=None, options=None, model_key="") -> dict:
     """Call Ollama directly via /api/chat."""
     temperature = INTENT_TEMPERATURE.get(intent, DEFAULT_TEMPERATURE)
     if options and "temperature" in options:
@@ -638,35 +679,41 @@ def route(
     Route a task to the right backend based on intent.
 
     PRIVACY RULES (enforced here, not advisory):
-      1. Unknown intents → LOCAL (gpt-oss:20b). Never cloud.
+      1. Unknown intents → LOCAL (mlx_general). Never external.
       2. PRIVATE intents → LOCAL, hard-fail if unavailable.
       3. SENSITIVE intents → LOCAL, soft-fail if unavailable.
-      4. All LOCAL intents → LOCAL only. No cloud fallback. Ever.
-      5. Only CLOUD_INTENTS go to OpenRouter.
+      4. ALL intents → LOCAL only. No cloud fallback. Period.
     """
     if intent not in INTENT_MAP:
-        # Unknown intent → default to LOCAL general model. NEVER cloud.
-        print(f"[intent_router] Unknown intent '{intent}' → local (gpt-oss:20b). "
+        print(f"[intent_router] Unknown intent '{intent}' → local (mlx_general). "
               f"Add it to INTENT_MAP to route properly.", file=sys.stderr)
         backend, model_key, privacy = Backend.LOCAL, "mlx_general", "normal"
     else:
         backend, model_key, privacy = INTENT_MAP[intent]
 
-    # ── Cloud path: only for real-time conversation ──────────────────────────
+    # ── Redis response cache (skip for conversation — must be fresh) ────────
+    cacheable = intent not in VOICE_INTENTS and privacy != "private"
+    if cacheable:
+        cached = _cache_get(intent, prompt)
+        if cached:
+            cached["intent"] = intent
+            cached["privacy"] = privacy
+            return cached
+
+    # ── Cloud path (currently unused — all intents route local) ──────────────
     if backend == Backend.CLOUD:
         result = query_cloud(prompt, intent=intent, system=system, model=model)
         result["intent"] = intent
         result["privacy"] = privacy
         return result
 
-    # ── Local path: call Ollama directly ─────────────────────────────────────
-    # Inject Nova's identity for creative/report intents that need her voice
+    # ── Local path: call Ollama/MLX directly ───────────────────────────────────
+    # Inject Nova's identity for conversation and creative intents
     effective_system = system
-    if not effective_system and intent in (
+    if not effective_system and intent in VOICE_INTENTS | {
         "dream_journal", "creative_writing", "haiku_generate",
         "morning_brief_gen", "nightly_report_gen", "email_reply",
-        "herd_outreach",
-    ):
+    }:
         effective_system = NOVA_SYSTEM_PROMPT
 
     # Image generation doesn't need an LLM
@@ -712,6 +759,11 @@ def route(
 
     result["intent"] = intent
     result["privacy"] = privacy
+
+    # Cache successful non-conversation responses in Redis
+    if cacheable and result.get("success"):
+        _cache_set(intent, prompt, result)
+
     return result
 
 
@@ -739,7 +791,7 @@ def main():
         print(f"  {'-'*14} {'-'*22} {'-'*8} {'-'*8}  {'-'*50}")
         for key, m in MODELS.items():
             print(f"  {key:<14} {m.name:<22} {m.speed:<8} {m.ctx:>8,}  {m.desc}")
-        print(f"\n  Cloud: {OPENROUTER_MODEL} (free) → {OPENROUTER_MODEL_FALLBACK} (paid)")
+        print(f"\n  OpenRouter (unused, tokens banked): {OPENROUTER_MODEL} → {OPENROUTER_MODEL_FALLBACK}")
         print()
         return
 

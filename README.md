@@ -7,7 +7,7 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 ```
   Scripts: 187         Scheduler tasks: 38  Vector memories: 1,450,000+
   Subagents: 7         Cameras: 25 Protect  Calendars: 15
-  App APIs: 18 ports   AI backends: 7       Herd members: 9
+  App APIs: 18 ports   AI backends: 8       Herd members: 9
   Channels: 5 Slack + Signal + Discord      Privacy intents: 20+ (local-only)
   Memory sources: 93   Memory tiers: 3 (working / long_term / scratchpad)
   Cross-links: memory_links graph with 2-hop traversal
@@ -84,7 +84,7 @@ Nova checks her own 1.45 million memories **before** anything else. Always. Her 
 |                                                   v             |
 |  +- 5. WEB SEARCH -------------------------------------------+ |
 |  |  Only if memory AND local LLM have nothing                 | |
-|  |  DuckDuckGo or Playwright browser automation               | |
+|  |  SearXNG (local, aggregates Google/Bing/DuckDuckGo)        | |
 |  +------------------------------------------------+-----------+ |
 |                                                   v             |
 |  +- 6. CLOUD ------------------------------------------------+ |
@@ -651,9 +651,14 @@ Video file → ffprobe (metadata) → duration, resolution, codec
 - **Batch processing**: Point at a folder, process all videos
 - **Configurable**: `--interval 30` for 1 frame per 30s, `--frames-only`, `--transcript-only`
 
-### Browser Automation
+### Web Search & Browser Automation
 
-Full Playwright/Chromium headless control:
+**SearXNG** (local, port 8888) — privacy-first metasearch engine aggregating Google, Bing, DuckDuckGo, Startpage, and Wikipedia. No API keys, no rate limits, zero cloud dependency. Returns structured JSON results for Nova's web queries. Runs as launchd service (`net.digitalnoise.searxng`).
+
+**Redis response caching** — 5-minute TTL on non-conversation intent responses. Reduces redundant LLM calls for repeated queries (e.g., cron jobs asking the same thing).
+
+**Playwright/Chromium headless control:**
+- Uses Playwright's bundled Chromium (not system Chrome) to avoid extension conflicts
 - JS-rendered page fetching (SPAs, dynamic content)
 - Full page and element-targeted screenshots
 - Form filling and button clicking
@@ -1104,7 +1109,7 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 | `dream_generate.py` + `dream_deliver.py` | Dream narrative + image + delivery pipeline |
 | `nova_video_ingest.py` | Video analysis: keyframe vision (qwen3-vl) + MLX Whisper transcription |
 | `generate_image.sh` | SwarmUI image generation on demand |
-| `nova_web_search.py` | DuckDuckGo with 24h cache + memory integration |
+| `nova_web_search.py` | SearXNG (local) with 24h cache + memory integration. Falls back to DuckDuckGo |
 | `nova_this_day.py` | This Day in History from Wikipedia |
 
 ### Bulk Ingest Pipelines
@@ -1381,6 +1386,38 @@ All critical services run under macOS launchd with `KeepAlive` and `ThrottleInte
 ---
 
 ## Changelog
+
+### Apr 28, 2026 -- SearXNG Web Search + Redis Caching + Ollama Tuning + Browser Fix
+
+**SearXNG local search engine:**
+- Installed SearXNG (`/Volumes/Data/searxng/`) — local metasearch aggregating Google, Bing, DuckDuckGo, Startpage, Wikipedia
+- Runs on port 8888, launchd service `net.digitalnoise.searxng`, JSON API enabled
+- Updated `nova_web_search.py` to query SearXNG first (falls back to DuckDuckGo Instant Answer API)
+- Zero API keys, zero cost, zero rate limits. Fully local.
+
+**Redis response caching (intent router):**
+- Added Redis caching layer to `nova_intent_router.py` — 5-minute TTL for non-conversation intents
+- Prevents redundant LLM calls for repeated queries (cron jobs, monitoring)
+- Redis bumped to 4GB max memory (was 2GB). allkeys-lru eviction.
+
+**Ollama performance tuning:**
+- `ollama_serve_start.sh` updated: `OLLAMA_MAX_LOADED_MODELS=6`, `NUM_PARALLEL=4`, `KEEP_ALIVE=24h`, `FLASH_ATTENTION=1`, `KV_CACHE_TYPE=q8_0`
+- Added `qwen3-next:80b` to model registry (partially downloaded, ready for future local-only mode)
+
+**MLX speculative decoding:**
+- Downloaded `Qwen2.5-0.5B-Instruct-4bit` as draft model
+- MLX server script updated with `--draft-model` and `--num-draft-tokens 6` for 2-3x speedup
+
+**Browser stability fix:**
+- `openclaw.json` browser config now uses Playwright's bundled Chromium (`Google Chrome for Testing`) instead of system Chrome
+- Eliminates EXC_BREAKPOINT crashes from Norton AntiTrack extension interference
+- Added `headless: true`, `noSandbox: true` for reliable automated browsing
+
+**Dashboard (Nova Control Web):**
+- Added SearXNG to service graph and health monitoring
+- Fixed task throughput chart (timestamps were ms vs seconds mismatch)
+- Fixed PostgreSQL health check (added `/opt/homebrew/bin` to PATH in startup script)
+- Updated service descriptions and gateway config display
 
 ### Apr 27, 2026 -- Reboot Reliability + Notification Routing + Browser Fixes
 

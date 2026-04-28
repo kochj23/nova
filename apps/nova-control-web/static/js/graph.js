@@ -18,11 +18,13 @@ const NODE_DEFS = {
   tinychat:       { label: 'TinyChat',      group: 'backend',  gx: 0.90, gy: 0.60 },
   openwebui:      { label: 'OpenWebUI',     group: 'backend',  gx: 0.90, gy: 0.76 },
 
-  redis:          { label: 'Redis',         group: 'support',  gx: 0.20, gy: 0.90 },
-  postgresql:     { label: 'PostgreSQL',    group: 'support',  gx: 0.35, gy: 0.90 },
+  searxng:        { label: 'SearXNG',       group: 'backend',  gx: 0.72, gy: 0.44 },
+
+  redis:          { label: 'Redis',         group: 'support',  gx: 0.17, gy: 0.90 },
+  postgresql:     { label: 'PostgreSQL',    group: 'support',  gx: 0.33, gy: 0.90 },
   unifi:          { label: 'UniFi',         group: 'support',  gx: 0.50, gy: 0.90 },
-  memory_server:  { label: 'Memory',        group: 'support',  gx: 0.65, gy: 0.90 },
-  scheduler:      { label: 'Scheduler',     group: 'support',  gx: 0.80, gy: 0.90 },
+  memory_server:  { label: 'Memory',        group: 'support',  gx: 0.66, gy: 0.90 },
+  scheduler:      { label: 'Scheduler',     group: 'support',  gx: 0.83, gy: 0.90 },
 };
 
 const EDGE_DEFS = [
@@ -33,6 +35,7 @@ const EDGE_DEFS = [
   { from: 'email',     to: 'gateway', dir: 'in' },
   { from: 'gateway',   to: 'ollama',       dir: 'out' },
   { from: 'gateway',   to: 'openrouter',   dir: 'out' },
+  { from: 'gateway',   to: 'searxng',      dir: 'out' },
   { from: 'gateway',   to: 'mlx_chat',     dir: 'out' },
   { from: 'gateway',   to: 'tinychat',     dir: 'out' },
   { from: 'gateway',   to: 'openwebui',    dir: 'out' },

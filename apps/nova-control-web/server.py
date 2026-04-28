@@ -33,8 +33,9 @@ AGENTS = ["analyst", "sentinel", "coder", "lookout", "librarian"]
 SERVICE_PORTS = {
     "ollama": {"port": 11434, "url": "http://127.0.0.1:11434"},
     "tinychat": {"port": 8000, "url": "http://192.168.1.6:8000"},
-    "mlx_chat": {"port": 5000, "url": "http://127.0.0.1:5000"},
+    "mlx_chat": {"port": 5050, "url": "http://192.168.1.6:5050"},
     "openwebui": {"port": 3000, "url": "http://192.168.1.6:3000"},
+    "searxng": {"port": 8888, "url": "http://127.0.0.1:8888"},
     "swarmui": {"port": 7801, "url": "http://127.0.0.1:7801"},
     "comfyui": {"port": 8188, "url": "http://127.0.0.1:8188"},
     "memory_server": {"port": 18790, "url": "http://127.0.0.1:18790"},
@@ -635,10 +636,12 @@ async def _detail_service(name):
             pass
 
     gw_config = {
-        "ollama": {"model": "deepseek-r1:8b", "role": "Reasoning, analysis, generalist default"},
-        "tinychat": {"model": "deepseek-r1:8b", "role": "Lightweight chat, quick responses, email"},
-        "mlx_chat": {"model": "Qwen2.5-7B-Instruct-4bit", "role": "Fast general inference (Apple ANE)"},
-        "openwebui": {"model": "qwen3-vl:4b", "role": "Vision, UI, multimodal, RAG"},
+        "ollama": {"model": "qwen3-coder:30b + deepseek-r1:8b + qwen3-vl:4b", "role": "Code, reasoning, vision (local private intents)"},
+        "openrouter": {"model": "Qwen3 235B MoE", "role": "Conversation, Slack, Discord, Signal"},
+        "searxng": {"model": "Multi-engine aggregator", "role": "Web search (Google, Bing, DuckDuckGo)"},
+        "tinychat": {"model": "qwen3-coder:30b", "role": "Lightweight chat, quick responses"},
+        "mlx_chat": {"model": "Qwen2.5-32B-4bit + speculative draft", "role": "Fast general (Apple Neural Engine)"},
+        "openwebui": {"model": "qwen3-coder:30b + RAG", "role": "Document grounding, retrieval, web search"},
         "swarmui": {"model": "Juggernaut XL", "role": "Image generation (Stable Diffusion)"},
         "comfyui": {"model": "Custom workflows", "role": "Advanced image pipelines"},
     }
@@ -1000,16 +1003,16 @@ async def collect_task_throughput() -> list:
     if now - task_throughput_ts < 60:
         return task_throughput_cache
     try:
-        cutoff = now - (TASK_THROUGHPUT_HOURS * 3600)
+        cutoff_ms = int((now - (TASK_THROUGHPUT_HOURS * 3600)) * 1000)
         async with aiosqlite.connect(f"file:{TASK_DB}?mode=ro", uri=True) as db:
             cursor = await db.execute(
-                """SELECT CAST((created_at - ?) / 3600 AS INTEGER) as hour_bucket,
+                """SELECT CAST((created_at - ?) / 3600000 AS INTEGER) as hour_bucket,
                           status, COUNT(*)
                    FROM task_runs
                    WHERE created_at > ?
                    GROUP BY hour_bucket, status
                    ORDER BY hour_bucket""",
-                (cutoff, cutoff)
+                (cutoff_ms, cutoff_ms)
             )
             rows = await cursor.fetchall()
         buckets = {}

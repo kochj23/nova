@@ -162,49 +162,69 @@ class DuckDuckGoSearch:
                region: str = DEFAULT_REGION,
                safe_search: str = DEFAULT_SAFE_SEARCH) -> Optional[List[Dict]]:
         """
-        Search DuckDuckGo API.
-        
+        Search via local SearXNG instance (aggregates Google, Bing, DuckDuckGo, etc.).
+        Falls back to DuckDuckGo Instant Answer API if SearXNG is unavailable.
+
         Args:
             query: Search query
             count: Number of results
             region: Region code (e.g., "us-en", "uk-en")
             safe_search: Level (strict, moderate, off)
-        
+
         Returns:
             List of results with title, url, snippet, or None if error
         """
-        # Safe search param mapping
-        safe_search_map = {"strict": "1", "moderate": "0", "off": "-1"}
-        safe_val = safe_search_map.get(safe_search.lower(), "0")
-        
-        # Build API call
-        params = [
-            f"q={query}",
-            f"format=json",
-            f"no_redirect=1",
-            f"no_html=1",
-            f"t=nova",
-            f"kl={region}",
-            f"safe={safe_val}",
-        ]
-        
-        url = "https://api.duckduckgo.com/?" + "&".join(params)
-        
+        safe_search_map = {"strict": "2", "moderate": "1", "off": "0"}
+        safe_val = safe_search_map.get(safe_search.lower(), "1")
+
+        import urllib.parse
+        params = urllib.parse.urlencode({
+            "q": query,
+            "format": "json",
+            "safesearch": safe_val,
+            "language": region,
+        })
+        url = f"http://127.0.0.1:8888/search?{params}"
+
         try:
             result = subprocess.run(
-                ["curl", "-s", "-m", str(TIMEOUT), "-A", "Nova-Local-AI",
-                 "--", url],
+                ["curl", "-s", "-m", str(TIMEOUT), "--", url],
                 capture_output=True,
                 text=True,
                 timeout=TIMEOUT + 2
             )
-            
+
             if result.returncode == 0 and result.stdout:
                 data = json.loads(result.stdout)
-                
                 results = []
-                
-                # Parse abstract result
+
+                for item in data.get("results", [])[:count]:
+                    results.append({
+                        "title": item.get("title", ""),
+                        "url": item.get("url", ""),
+                        "snippet": item.get("content", ""),
+                        "source": item.get("engine", "searxng"),
+                    })
+
+                if results:
+                    return results
+        except Exception as e:
+            print(f"SearXNG search error: {e}", file=sys.stderr)
+
+        # Fallback: DuckDuckGo Instant Answer API (limited but better than nothing)
+        try:
+            ddg_params = urllib.parse.urlencode({
+                "q": query, "format": "json", "no_redirect": "1",
+                "no_html": "1", "t": "nova",
+            })
+            ddg_url = f"https://api.duckduckgo.com/?{ddg_params}"
+            result = subprocess.run(
+                ["curl", "-s", "-m", str(TIMEOUT), "-A", "Nova-Local-AI", "--", ddg_url],
+                capture_output=True, text=True, timeout=TIMEOUT + 2
+            )
+            if result.returncode == 0 and result.stdout:
+                data = json.loads(result.stdout)
+                results = []
                 if data.get("AbstractText"):
                     results.append({
                         "title": data.get("AbstractTitle", "Definition"),
@@ -212,21 +232,18 @@ class DuckDuckGoSearch:
                         "snippet": data.get("AbstractText", ""),
                         "source": "duckduckgo",
                     })
-                
-                # Parse related topics
                 for item in data.get("RelatedTopics", [])[:count]:
                     if "Text" in item:
                         results.append({
-                            "title": item.get("FirstURL", "").split("/")[-1] or item.get("FirstURL", ""),
+                            "title": item.get("FirstURL", "").split("/")[-1],
                             "url": item.get("FirstURL", ""),
                             "snippet": item.get("Text", ""),
                             "source": "duckduckgo",
                         })
-                
                 return results[:count] if results else None
         except Exception as e:
-            print(f"DuckDuckGo search error: {e}", file=sys.stderr)
-        
+            print(f"DuckDuckGo fallback error: {e}", file=sys.stderr)
+
         return None
 
 

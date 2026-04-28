@@ -674,7 +674,7 @@ window.openNodeDetail = function(nodeId, nodeLabel) {
     slack: 'slack', discord: 'discord', signal: 'signal',
     imessage: 'imessage', email: 'email',
     gateway: 'gateway',
-    ollama: 'ollama', openrouter: 'openrouter',
+    ollama: 'ollama', openrouter: 'openrouter', searxng: 'searxng',
     mlx_chat: 'mlx_chat', tinychat: 'tinychat', openwebui: 'openwebui',
     swarmui: 'swarmui', comfyui: 'comfyui',
     redis: 'redis', postgresql: 'postgresql',
