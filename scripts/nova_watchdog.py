@@ -139,8 +139,8 @@ def main():
         ("Gateway", "127.0.0.1", 18789, "ai.openclaw.gateway"),
         ("Memory Server", "127.0.0.1", 18790, "net.digitalnoise.nova-memory-server"),
         ("Ollama", "127.0.0.1", 11434, None),  # Managed by Ollama.app
-        ("OpenWebUI", "127.0.0.1", 3000, "net.digitalnoise.openwebui"),
-        ("TinyChat", "127.0.0.1", 8000, "net.digitalnoise.tinychat"),
+        ("OpenWebUI", "192.168.1.6", 3000, "net.digitalnoise.openwebui"),
+        ("TinyChat", "192.168.1.6", 8000, "net.digitalnoise.tinychat"),
     ]
 
     for name, host, port, label in services:
