@@ -290,7 +290,7 @@ def main():
         if count:
             log(f"  r/{name}: {count} new posts", level=LOG_INFO, source="reddit_ingest")
         total += count
-        time.sleep(30)  # Rate limit between subreddits
+        time.sleep(10)  # Rate limit between subreddits
 
     save_state(state)
     generate_dream_context(state)

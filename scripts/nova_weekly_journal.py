@@ -380,7 +380,7 @@ def generate_weekly():
 
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 if __name__ == "__main__":

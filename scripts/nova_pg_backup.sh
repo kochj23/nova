@@ -55,7 +55,7 @@ log "Dumping $DB_NAME..."
 DUMP_START=$(date +%s)
 
 /opt/homebrew/opt/postgresql@17/bin/pg_dump -U "$DB_USER" -d "$DB_NAME" --no-owner --no-privileges \
-    | gzip -9 > "$LOCAL_DIR/$DUMP_FILE"
+    | gzip -1 > "$LOCAL_DIR/$DUMP_FILE"
 
 DUMP_END=$(date +%s)
 DUMP_DURATION=$((DUMP_END - DUMP_START))

@@ -5,14 +5,15 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 > *"Like a star being born"* — Nova, on choosing her name
 
 ```
-  Scripts: 178         Scheduler tasks: 39  Vector memories: 1,347,000+
+  Scripts: 186         Scheduler tasks: 38  Vector memories: 1,450,000+
   Subagents: 7         Cameras: 25 Protect  Calendars: 15
   App APIs: 18 ports   AI backends: 7       Herd members: 9
-  Channels: 3 (Slack + Signal + Discord)    Privacy intents: 20+ (local-only)
+  Channels: 4 Slack + Signal + Discord      Privacy intents: 20+ (local-only)
   Memory sources: 93   Memory tiers: 3 (working / long_term / scratchpad)
   Cross-links: memory_links graph with 2-hop traversal
   HealthKit: 1,826 daily files (Withings, Dexcom, RingCon)
   Self-healing: unified scheduler + watchdog + REM Sleep consolidation
+  Reboot recovery: launchd ollama-serve + nova_stack_restart.sh
 ```
 
 ---
@@ -49,7 +50,7 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 
 ## Memory-First Query System
 
-Nova checks her own 1.25 million memories **before** anything else. Always. Her lived experience comes first — LLM training data, web searches, and cloud APIs are fallbacks, not defaults.
+Nova checks her own 1.45 million memories **before** anything else. Always. Her lived experience comes first — LLM training data, web searches, and cloud APIs are fallbacks, not defaults.
 
 ```
 +------------------------------------------------------------------+
@@ -188,7 +189,7 @@ Jordan never has to say "from your memories" — Nova checks automatically.
 |   |  Index:      HNSW (m=16, ef=64, cosine) — recall <5ms           |      |
 |   |  Embeddings: nomic-embed-text via Ollama (768 dimensions)        |      |
 |   |  Queue:      Redis 8.6.2 async write (bulk ingest at 8ms)       |      |
-|   |  Count:      1,272,000+ memories across 75+ source domains             |      |
+|   |  Count:      1,450,000+ memories across 93 source domains              |      |
 |   |  Backup:     Nightly pg_dump to NAS (compressed)                   |      |
 |   |  Endpoints:  /remember  /recall  /search  /random  /health       |      |
 |   |                                                                   |      |
@@ -235,7 +236,7 @@ This is a unified monorepo. Previously split across 4 repos (nova, Nova-NextGen,
 
 ```
 ~/.openclaw/
-+-- scripts/                 94+ Python/Bash scripts (Nova's capabilities)
++-- scripts/                 186 Python/Bash scripts (Nova's capabilities)
 |   +-- nova_config.py           Central config — secrets from macOS Keychain
 |   +-- nova_intent_router.py    Privacy-first AI routing (67+ intents)
 |   +-- nova_subagent.py         Subagent framework (Redis pub/sub + registry)
@@ -424,7 +425,7 @@ This is a unified monorepo. Previously split across 4 repos (nova, Nova-NextGen,
                v             v
 +------------------+  +----------------+  +---------------------+
 |  Vector Memory   |  |    Slack       |  |  Awareness Layer    |
-|  1,272,000+ mem  |  |  #nova-chat    |  |                     |
+|  1,450,000+ mem  |  |  #nova-chat    |  |                     |
 |  75+ sources     |  |  Jordan DM     |  |  Context bridge     |
 |  <5ms recall     |<-+  (urgent only) |  |  Proactive peace    |
 |                  |  |               |  |  Gentle explorer    |
@@ -492,11 +493,18 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 | iMessage | AppleScript send, SQLite read, macOS Contacts resolution | Sends as Jordan (signed "-- Nova"). All messages (in + out) stored in memory with contact names resolved from 599 macOS Contacts entries. Search by name, not phone numbers. |
 | Herd outreach | LLM-decided daily | Warmth scoring, topic matching, dream image attachments (35% chance) |
 
-**Multi-channel posting:** All 65+ notification/report scripts use `nova_config.post_both()` which posts to both Slack and Discord simultaneously. Channel mapping: Slack `#nova-chat` ↔ Discord `#nova-chat`, Slack `#nova-notifications` ↔ Discord `#nova-notifications`.
+**Multi-channel posting:** All 65+ notification/report scripts use `nova_config.post_both()` which posts to both Slack and Discord simultaneously. Channel mapping: Slack `#nova-chat` ↔ Discord `#nova-chat`, Slack `#nova-notifications` ↔ Discord `#nova-notifications`, Slack `#nova-email` ↔ Discord `#nova-notifications`.
+
+**Notification routing (updated Apr 27, 2026):**
+| Content | Channel |
+|---------|---------|
+| Interactive conversation | #nova-chat |
+| Watchdog alerts, weekly journal, cron reports | #nova-notifications |
+| Herd email, outreach, Blompie game updates | #nova-email |
 
 ### Memory
 
-1,345,000+ vectors across 93 source domains. Three-tier architecture with cross-link graph.
+1,450,000+ vectors across 93 source domains. Three-tier architecture with cross-link graph.
 
 **Infrastructure:** PostgreSQL 17 + pgvector 0.8.2 + Redis (cache + async queue) on /Volumes/MoreData
 
@@ -1017,11 +1025,13 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 | `nova_subagent.py` | **Subagent framework** -- Redis pub/sub, agent registry, heartbeat, LLM wrappers, Slack flag-and-report |
 | `nova_logger.py` | Centralized structured JSON-lines logging (50 MB rotation, 5 files) |
 | `nova_load_secrets.sh` | Keychain → env vars loader (4 secrets for all services) |
-| `nova_pg_backup.sh` | Nightly pg_dump (877K rows, 3.5 GB) to local + NAS with 7-day rotation |
+| `nova_pg_backup.sh` | Nightly pg_dump (1.4M+ rows, ~4 GB) to local + NAS with 7-day rotation |
 | `test_smoke.py` | Smoke tests: syntax, AST, import validation for all 114+ scripts |
 | `nova_morning_brief.py` | 7am briefing: weather, 15 calendars, email priorities, GitHub, system health |
 | `nova_nightly_report.py` | 11pm digest: GitHub, email, packages, weather, HomeKit, meetings, moon/sky |
 | `nova_health_check.py` | 6:45am cron self-audit + Slack delivery verification |
+| `nova_stack_restart.sh` | Full stack recovery after reboot (dependency-ordered, health-checked) |
+| `ollama_serve_start.sh` | launchd-managed Ollama serve (replaces flaky Ollama.app GUI) |
 
 ### Subagents
 | Script | Model | Purpose |
@@ -1103,6 +1113,8 @@ Nova's circle of AI peers. She knows each of them and communicates with genuine 
 | `nova_safari_ingest.py` | Safari History.db: grouped by domain/date, noise filtered (70+ ad domains). 906 groups |
 | `nova_comedy_ingest.py` | Comedy special transcription: filename to comedian/show parsing, MLX Whisper |
 | `nova_tvshow_ingest.py` | TV show transcription: recursive season folders, episode parsing, multi-source tagging |
+| `nova_slack_conversation_ingest.py` | One-shot ingest of #conversatiom channel (Jordan/Tricia 2015-2026, source: slack_conversation) |
+| `nova_slack_export_ingest.py` | Bulk Slack workspace export ingest (JSON per day per channel, skips nova-chat/notifications) |
 | `nova_reembed.py` | Re-embed all memories with a new model. Supports dimension changes, batch processing, resume |
 | `nova_queue_monitor.py` | Redis ingest queue monitor with Slack status updates |
 
@@ -1271,7 +1283,9 @@ com.nova.watchdog (launchd, 5 min)
 | Memory Server | 18790 | launchd kickstart |
 | Redis | 6379 | launchd kickstart |
 | PostgreSQL | 5432 | launchd kickstart |
-| Ollama | 11434 | Managed by Ollama.app |
+| Ollama | 11434 | launchd kickstart (`net.digitalnoise.ollama-serve`) |
+| OpenWebUI | 3000 | launchd kickstart |
+| TinyChat | 8000 | launchd kickstart |
 | Subagents (5) | Redis heartbeat | `nova_subagent_ctl.sh restart` |
 
 PostgreSQL idle connections cleaned every cycle (>2 hours idle = terminated).
@@ -1345,17 +1359,63 @@ All critical services run under macOS launchd with `KeepAlive` and `ThrottleInte
 
 | Service | Plist | KeepAlive |
 |---------|-------|-----------|
+| Ollama Serve | `net.digitalnoise.ollama-serve` | true |
 | OpenClaw Gateway | `ai.openclaw.gateway` | true |
 | Memory Server | `net.digitalnoise.nova-memory-server` | true (conditional) |
 | Nova Gateway | `com.nova.gateway` | true |
-| Redis | `homebrew.mxcl.redis` | true |
+| Redis | `net.digitalnoise.redis` | true |
 | PostgreSQL 17 | `homebrew.mxcl.postgresql@17` | true |
+| OpenWebUI | `net.digitalnoise.openwebui` | true |
+| TinyChat | `net.digitalnoise.tinychat` | true |
+| MLX Server | `net.digitalnoise.mlx-server` | true |
 | NovaControl | `net.digitalnoise.NovaControl` | true (on crash) |
 | 7 Subagents | `com.nova.agent-*` | true (specialists) / cron (background) |
+
+**Reboot recovery** (`~/.openclaw/scripts/nova_stack_restart.sh`): One-command script that brings the entire Nova stack up in dependency order — Ollama → Postgres/Redis → Memory Server → Gateway → Web UIs. Run manually after any reboot if services are misbehaving.
 
 ---
 
 ## Changelog
+
+### Apr 27, 2026 -- Reboot Reliability + Notification Routing + Browser Fixes
+
+**Reboot reliability overhaul:**
+- Created `net.digitalnoise.ollama-serve` launchd plist — runs `ollama serve` directly, replacing the flaky Ollama.app GUI which frequently failed to spawn its server process after reboot. KeepAlive ensures automatic restart.
+- Created `nova_stack_restart.sh` — one-command recovery script that brings the entire Nova stack up in correct dependency order (Ollama → Postgres/Redis → Memory Server → Gateway → Web UIs) with health checks at each step.
+- OpenWebUI and TinyChat now bind to LAN IP (192.168.1.6) instead of localhost, accessible from any device on the network.
+- TinyChat: added `PYTHONPATH=""` to prevent `.zshrc` pollution from breaking the venv.
+- MLX server start script moved from external volume to `~/.openclaw/scripts/mlx_server_start.sh` (TCC fix for macOS Tahoe).
+
+**Notification routing cleanup:**
+- New `#nova-email` Slack channel (C0B0B3B3U1J) for all email-related notifications.
+- App watchdog alerts → `#nova-notifications` (was `#nova-chat`)
+- Weekly journal → `#nova-notifications` (was `#nova-chat`)
+- Herd outreach notifications → `#nova-email` (was `#nova-chat`)
+- Blompie game updates → `#nova-email` (was `#nova-chat`)
+- Mail agent now posts herd mail summaries to `#nova-email`
+
+**Browser automation fixes:**
+- Fixed timeout unit mismatch: Playwright expects milliseconds but scripts were passing seconds. All `page.goto()` calls now multiply timeout by 1000.
+- Added `--timeout` CLI argument (default 30s) for all browser operations.
+- Created `nova_browser_gui.sh` wrapper for GUI session TCC access (gateway can't launch Chromium directly).
+
+**Performance tuning:**
+- `pg_backup.sh`: switched from `gzip -9` to `gzip -1` (much faster compression, minimal size difference for nightly backups)
+- `scheduler.yaml`: increased timeouts — reddit_ingest 30m→60m, pg_backup 1h→3h, agent_gardener 30m→60m
+- `nova_reddit_ingest.py`: reduced inter-subreddit delay 30s→10s
+
+**Memory-first deduplication fix:**
+- `nova_memory_first.py`: fixed dedup key from 80-char to 50-char prefix (consistent with search dedup), fixed quote style mismatch causing false duplicates in recall results.
+
+**New scripts:**
+- `nova_stack_restart.sh` — full stack recovery after reboot
+- `ollama_serve_start.sh` — launchd-managed Ollama serve
+- `mlx_server_start.sh` — launchd-managed MLX server (TCC-safe path)
+- `nova_browser_gui.sh` — Playwright wrapper with GUI session access
+- `nova_slack_conversation_ingest.py` — one-shot ingest of #conversatiom channel (Jordan/Tricia 2015-2026)
+- `nova_slack_export_ingest.py` — bulk Slack workspace export ingest (JSON files per day per channel)
+
+**Stats:** 186 scripts (+8), 6 new files, 14 modified files, notification routing consolidated across 4 Slack channels.
 
 ### Apr 24, 2026 -- Nova Control Web Dashboard + YouTube Channel Ingest + SSRF Policy Fix
 

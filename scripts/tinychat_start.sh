@@ -5,7 +5,9 @@
 source "$HOME/.openclaw/scripts/wait-for-port.sh"
 wait_for_port 11434 "Ollama" 120 || exit 1
 
+export PYTHONPATH=""
 export PORT=8000
+export HOST=192.168.1.6
 export OPENAI_API_BASE=http://127.0.0.1:11434/v1
 export OPENAI_API_KEY=ollama
 export LLM_MODEL=deepseek-r1:8b

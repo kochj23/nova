@@ -225,7 +225,7 @@ def send_email(to: str, subject: str, body: str, image_path: str = None) -> bool
 
 
 def slack_notify(text: str):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_EMAIL)
 
 
 def main():

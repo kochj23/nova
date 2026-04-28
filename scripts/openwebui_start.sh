@@ -22,5 +22,5 @@ sys.path.insert(0, '/Volumes/Data/openwebui/venv/lib/python3.12/site-packages')
 import site; site.main()
 from open_webui.main import app
 import uvicorn
-uvicorn.run(app, host='127.0.0.1', port=3000, log_level='info')
+uvicorn.run(app, host='192.168.1.6', port=3000, log_level='info')
 "

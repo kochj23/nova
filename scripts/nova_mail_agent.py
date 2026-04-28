@@ -566,8 +566,15 @@ def main():
                     f"Nova replied to all herd: {reply_body[:200]}"
                 )
 
-                # Only notify Slack on failures (routine sends are silent)
-                if not sent:
+                if sent:
+                    nova_config.post_both(
+                        f"📬 *Herd mail from {msg['from_raw'].split('<')[0].strip()}*\n"
+                        f"*Subject:* {subject}\n"
+                        f"*They said:* {body[:200]}...\n"
+                        f"*I replied:* {reply_body[:150]}...",
+                        slack_channel=nova_config.SLACK_EMAIL,
+                    )
+                else:
                     slack_post(
                         f"*❌ Herd email reply FAILED*\n"
                         f"*From:* {msg['from_raw']}\n"

@@ -60,6 +60,7 @@ def slack_bot_token() -> str:
 SLACK_API     = "https://slack.com/api"
 SLACK_CHAN     = "C0AMNQ5GX70"   # #nova-chat (interactive conversations with Jordan)
 SLACK_NOTIFY  = "C0ATAF7NZG9"   # #nova-notifications (cron output, status, automated posts)
+SLACK_EMAIL   = "C0B0B3B3U1J"   # #nova-email (automated email notifications)
 JORDAN_DM     = "D0AMPB3F4T0"   # Jordan's DM channel with Nova
 
 DISCORD_API   = "https://discord.com/api/v10"
@@ -69,6 +70,7 @@ DISCORD_NOTIFY = "1496990332250886246"  # #nova-notifications on Koch Family Dis
 CHANNEL_MAP = {
     SLACK_CHAN: DISCORD_CHAT,
     SLACK_NOTIFY: DISCORD_NOTIFY,
+    SLACK_EMAIL: DISCORD_NOTIFY,
 }
 
 JORDAN_EMAIL  = "kochj23" + "@gmail.com"     # noqa: avoid scanner false-positive

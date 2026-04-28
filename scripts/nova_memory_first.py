@@ -388,7 +388,7 @@ def memory_lookup(query):
         for item in search_items:
             # Don't add duplicates
             item_text = item.get("text", "")[:50]
-            if not any(item_text in r.get("text", "")[:50] for r in results):
+            if not any(item_text in r.get('text', '')[:50] for r in results):
                 results.append(item)
 
     # Step 3: Broad recall without source filter if still nothing
@@ -400,9 +400,9 @@ def memory_lookup(query):
     seen = set()
     unique = []
     for r in results:
-        key = r.get("text", "")[:80]
-        if key not in seen:
-            seen.add(key)
+        item_text = r.get("text", "")[:50]
+        if item_text not in seen:
+            seen.add(item_text)
             unique.append(r)
     results = unique[:RECALL_COUNT]
 

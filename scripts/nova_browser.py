@@ -179,7 +179,7 @@ async def fetch_rendered(url, wait_for=None, timeout=DEFAULT_TIMEOUT):
     """Fetch a URL with full JS rendering. Returns page text content."""
     pw, ctx, page = await create_browser()
     try:
-        await page.goto(url, timeout=timeout, wait_until="networkidle")
+        await page.goto(url, timeout=timeout * 1000, wait_until="networkidle")
         if wait_for:
             await page.wait_for_selector(wait_for, timeout=10000)
 
@@ -209,7 +209,7 @@ async def take_screenshot(url, selector=None, full_page=True,
     ensure_dirs()
     pw, ctx, page = await create_browser()
     try:
-        await page.goto(url, timeout=timeout, wait_until="networkidle")
+        await page.goto(url, timeout=timeout * 1000, wait_until="networkidle")
 
         if output:
             path = Path(output)
@@ -248,7 +248,7 @@ async def extract_content(url, selector, attribute=None, timeout=DEFAULT_TIMEOUT
     """Extract content from specific elements on a page."""
     pw, ctx, page = await create_browser()
     try:
-        await page.goto(url, timeout=timeout, wait_until="networkidle")
+        await page.goto(url, timeout=timeout * 1000, wait_until="networkidle")
         elements = await page.query_selector_all(selector)
 
         results = []
@@ -280,7 +280,7 @@ async def interact(url, fill_map=None, click_selector=None, wait_after=2000,
     ensure_dirs()
     pw, ctx, page = await create_browser()
     try:
-        await page.goto(url, timeout=timeout, wait_until="networkidle")
+        await page.goto(url, timeout=timeout * 1000, wait_until="networkidle")
 
         if fill_map:
             for selector, value in fill_map.items():
@@ -318,7 +318,7 @@ async def generate_pdf(url, output=None, timeout=DEFAULT_TIMEOUT):
     ensure_dirs()
     pw, ctx, page = await create_browser()
     try:
-        await page.goto(url, timeout=timeout, wait_until="networkidle")
+        await page.goto(url, timeout=timeout * 1000, wait_until="networkidle")
 
         if output:
             path = Path(output)
@@ -504,12 +504,14 @@ if __name__ == "__main__":
     parser.add_argument("--full-page", action="store_true", default=True, help="Full page screenshot")
     parser.add_argument("--json", action="store_true", help="Output as JSON")
     parser.add_argument("--post-slack", action="store_true", help="Post result to Slack")
+    parser.add_argument("--timeout", type=int, default=30, help="Page load timeout in seconds (default: 30)")
     args = parser.parse_args()
 
     result = None
+    timeout = args.timeout
 
     if args.fetch:
-        result = run_async(fetch_rendered(args.fetch, wait_for=args.selector))
+        result = run_async(fetch_rendered(args.fetch, wait_for=args.selector, timeout=timeout))
         if not args.json:
             if "error" in result:
                 print(f"Error: {result['error']}")
@@ -520,7 +522,7 @@ if __name__ == "__main__":
 
     elif args.screenshot:
         result = run_async(take_screenshot(args.screenshot, selector=args.selector,
-                                           output=args.output, full_page=args.full_page))
+                                           output=args.output, timeout=timeout, full_page=args.full_page))
         if not args.json:
             if "error" in result:
                 print(f"Error: {result['error']}")
@@ -533,7 +535,7 @@ if __name__ == "__main__":
         if not args.selector:
             print("Error: --extract requires --selector")
             sys.exit(1)
-        result = run_async(extract_content(args.extract, args.selector))
+        result = run_async(extract_content(args.extract, args.selector, timeout=timeout))
         if not args.json:
             if "error" in result:
                 print(f"Error: {result['error']}")
@@ -545,7 +547,7 @@ if __name__ == "__main__":
     elif args.interact:
         fill_map = json.loads(args.fill) if args.fill else None
         result = run_async(interact(args.interact, fill_map=fill_map,
-                                    click_selector=args.click))
+                                    click_selector=args.click, timeout=timeout))
         if not args.json:
             if "error" in result:
                 print(f"Error: {result['error']}")
@@ -556,7 +558,7 @@ if __name__ == "__main__":
                     print(f"Screenshot: {result['screenshot']}")
 
     elif args.pdf:
-        result = run_async(generate_pdf(args.pdf, output=args.output))
+        result = run_async(generate_pdf(args.pdf, output=args.output, timeout=timeout))
         if not args.json:
             if "error" in result:
                 print(f"Error: {result['error']}")
@@ -579,7 +581,7 @@ if __name__ == "__main__":
                 print(f"No change. Values: {result['values'][:3]}")
 
     elif args.perf:
-        result = run_async(page_performance(args.perf))
+        result = run_async(page_performance(args.perf, timeout=timeout))
         if not args.json:
             if "error" in result:
                 print(f"Error: {result['error']}")

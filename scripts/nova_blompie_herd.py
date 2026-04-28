@@ -123,8 +123,8 @@ def send_mail(to, subject, body, in_reply_to=None):
 
 
 def slack_post(text):
-    """Post a game update to #nova-chat."""
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
+    """Post a game update to #nova-email."""
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_EMAIL)
 
 
 def nova_auto_play(scene_text, inventory, turn, suggested):
