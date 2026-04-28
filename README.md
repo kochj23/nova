@@ -5,10 +5,10 @@ Jordan Koch's local AI familiar. Running on an M4 Mac Studio in Burbank via [Ope
 > *"Like a star being born"* — Nova, on choosing her name
 
 ```
-  Scripts: 186         Scheduler tasks: 38  Vector memories: 1,450,000+
+  Scripts: 187         Scheduler tasks: 38  Vector memories: 1,450,000+
   Subagents: 7         Cameras: 25 Protect  Calendars: 15
   App APIs: 18 ports   AI backends: 7       Herd members: 9
-  Channels: 4 Slack + Signal + Discord      Privacy intents: 20+ (local-only)
+  Channels: 5 Slack + Signal + Discord      Privacy intents: 20+ (local-only)
   Memory sources: 93   Memory tiers: 3 (working / long_term / scratchpad)
   Cross-links: memory_links graph with 2-hop traversal
   HealthKit: 1,826 daily files (Withings, Dexcom, RingCon)
@@ -236,7 +236,7 @@ This is a unified monorepo. Previously split across 4 repos (nova, Nova-NextGen,
 
 ```
 ~/.openclaw/
-+-- scripts/                 186 Python/Bash scripts (Nova's capabilities)
++-- scripts/                 187 Python/Bash scripts (Nova's capabilities)
 |   +-- nova_config.py           Central config — secrets from macOS Keychain
 |   +-- nova_intent_router.py    Privacy-first AI routing (67+ intents)
 |   +-- nova_subagent.py         Subagent framework (Redis pub/sub + registry)
@@ -493,14 +493,18 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 | iMessage | AppleScript send, SQLite read, macOS Contacts resolution | Sends as Jordan (signed "-- Nova"). All messages (in + out) stored in memory with contact names resolved from 599 macOS Contacts entries. Search by name, not phone numbers. |
 | Herd outreach | LLM-decided daily | Warmth scoring, topic matching, dream image attachments (35% chance) |
 
-**Multi-channel posting:** All 65+ notification/report scripts use `nova_config.post_both()` which posts to both Slack and Discord simultaneously. Channel mapping: Slack `#nova-chat` ↔ Discord `#nova-chat`, Slack `#nova-notifications` ↔ Discord `#nova-notifications`, Slack `#nova-email` ↔ Discord `#nova-notifications`.
+**Multi-channel posting:** All 65+ notification/report scripts use `nova_config.post_both()` which posts to both Slack and Discord simultaneously. Channel mapping: Slack `#nova-chat` ↔ Discord `#nova-chat`, Slack `#nova-notifications` ↔ Discord `#nova-notifications`, Slack `#nova-email` ↔ Discord `#nova-notifications`, Slack `#nova-photos` ↔ Discord `#nova-notifications`.
 
 **Notification routing (updated Apr 27, 2026):**
+
+`#nova-chat` is exclusively for real-time conversations with Jordan. All automated content goes elsewhere:
+
 | Content | Channel |
 |---------|---------|
-| Interactive conversation | #nova-chat |
-| Watchdog alerts, weekly journal, cron reports | #nova-notifications |
-| Herd email, outreach, Blompie game updates | #nova-email |
+| Real-time conversation with Jordan | #nova-chat |
+| Watchdog alerts, journals, reports, monitoring, packages, weather, games | #nova-notifications |
+| Herd email, outreach, Blompie game updates, relationship tracker | #nova-email |
+| Camera alerts, sky photos, dream images, face recognition, dog sightings, screenshots | #nova-photos |
 
 ### Memory
 
@@ -568,8 +572,8 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 ### Eyes and Recognition
 
 - **25 cameras** via UniFi Protect UNVR at 192.168.1.9 (23 connected, exterior only — interior cameras NEVER accessed)
-- **Four-layer vehicle filtering**: (1) smart detect type filter, (2) notification gate, (3) vision model screening via OpenRouter, (4) motion-only events require vision success to post image
-- **Vision identification**: every person/animal thumbnail analyzed by `qwen3.5-9b` (OpenRouter) or `llama-4-scout` before posting to Slack. Known subjects: Abundio (neighbor/gardener), dogs (Jeremy, Bruno, Sammy, Preston)
+- **Five-layer filtering**: (1) smart detect type filter (vehicle, licensePlate, alrmSpeak, alrmBark suppressed), (2) notification gate, (3) local vision model screening via Ollama `qwen3-vl:4b`, (4) person verification gate (if Protect says "person" but vision model disagrees, skip), (5) motion-only events require vision success to post image
+- **Vision identification**: every person/animal thumbnail analyzed by local `qwen3-vl:4b` (Ollama, $0 cost) before posting to `#nova-photos`. Known subjects: Abundio (neighbor/gardener), dogs (Jeremy, Bruno, Sammy, Preston)
 - **Face recognition** integrated into protect monitor. Local `face_recognition`/`dlib` (128-dim encodings, 0.55 tolerance). Unknown faces auto-cropped and saved to `~/.openclaw/workspace/faces/unknown/` for later enrollment. Enrollment: drop photos in `faces/known/<name>/`. Inspired by [sam-faces](https://github.com/jasonacox-sam/sam-faces).
 - **Dog watcher** (`nova_watch_dogs.py`): on-demand or continuous scan of exterior cameras for Chihuahuas. Downloads Protect API snapshots, analyzes via vision model, posts sightings with photos.
 - **Slack image analysis** (`nova_slack_image.py`): downloads Slack file attachments (requires `files:read` scope), sends to vision model, returns description. Fixes the "can't see images" problem.
@@ -1369,6 +1373,7 @@ All critical services run under macOS launchd with `KeepAlive` and `ThrottleInte
 | TinyChat | `net.digitalnoise.tinychat` | true |
 | MLX Server | `net.digitalnoise.mlx-server` | true |
 | NovaControl | `net.digitalnoise.NovaControl` | true (on crash) |
+| Nova Control Web | `net.digitalnoise.nova-control-web` | true |
 | 7 Subagents | `com.nova.agent-*` | true (specialists) / cron (background) |
 
 **Reboot recovery** (`~/.openclaw/scripts/nova_stack_restart.sh`): One-command script that brings the entire Nova stack up in dependency order — Ollama → Postgres/Redis → Memory Server → Gateway → Web UIs. Run manually after any reboot if services are misbehaving.
@@ -1415,7 +1420,25 @@ All critical services run under macOS launchd with `KeepAlive` and `ThrottleInte
 - `nova_slack_conversation_ingest.py` — one-shot ingest of #conversatiom channel (Jordan/Tricia 2015-2026)
 - `nova_slack_export_ingest.py` — bulk Slack workspace export ingest (JSON files per day per channel)
 
-**Stats:** 186 scripts (+8), 6 new files, 14 modified files, notification routing consolidated across 4 Slack channels.
+**Protect monitor overhaul:**
+- Vision model switched from OpenRouter (qwen3.5-9b, cloud) to local Ollama (`qwen3-vl:4b`). $0 cost per analysis.
+- Added person verification gate: if UniFi Protect reports "person detected" but the local vision model doesn't see any person/animal, the notification is suppressed. Eliminates false positives (e.g., parked cars triggering person alerts).
+- Suppressed `alrmSpeak` and `alrmBark` smart detect types (always false positives — 4 dogs bark all day).
+
+**Nova Control Web dashboard** (`apps/nova-control-web/`):
+- Added launchd plist (`net.digitalnoise.nova-control-web`) for auto-start on reboot.
+- Dashboard accessible at `http://192.168.1.6:37450/`
+
+**New Slack channel: `#nova-photos`** (C0B01L9GQTV):
+- All image content routed here: camera thumbnails, sky photos, dream images, face recognition, dog sightings, browser screenshots.
+
+**Complete notification routing overhaul (28 scripts):**
+- `#nova-chat` is now EXCLUSIVELY for real-time conversations with Jordan.
+- ALL automated content moved to `#nova-notifications`, `#nova-email`, or `#nova-photos`.
+- OpenWebUI/TinyChat URL references updated from localhost to 192.168.1.6 across 8 files (gateway, scripts, apps).
+- Watchdog health checks updated to check correct LAN IP.
+
+**Stats:** 187 scripts (+9), 7 new files, 40+ modified files, notification routing consolidated across 5 Slack channels.
 
 ### Apr 24, 2026 -- Nova Control Web Dashboard + YouTube Channel Ingest + SSRF Policy Fix
 
