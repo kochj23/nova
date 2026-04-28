@@ -427,8 +427,8 @@ def check_motion_events(client, state):
         if event_ts > max_ts:
             max_ts = event_ts
 
-        # Filter out noisy detection types (vehicle, licensePlate, alrmSpeak)
-        smart_types = [t for t in smart_types if t not in ("vehicle", "licensePlate", "alrmSpeak")]
+        # Filter out noisy detection types (vehicle, licensePlate, alrmSpeak, alrmBark)
+        smart_types = [t for t in smart_types if t not in ("vehicle", "licensePlate", "alrmSpeak", "alrmBark")]
         if smart_types:
             new_events.append({
                 "camera": cam_name,
