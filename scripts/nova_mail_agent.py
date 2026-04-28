@@ -163,11 +163,16 @@ def imap_fetch_message(conn: imaplib.IMAP4_SSL, uid: bytes) -> dict:
     references = msg.get("References", "")
     in_reply_to = msg.get("In-Reply-To", "")
 
+    to_raw = msg.get("To", "")
+    cc_raw = msg.get("Cc", "")
+
     return {
         "uid": uid,
         "from_raw": from_raw,
         "from_name": from_name,
         "from_addr": from_addr,
+        "to_raw": to_raw,
+        "cc_raw": cc_raw,
         "subject": subject,
         "body": body[:3000],
         "message_id": message_id,
@@ -434,6 +439,11 @@ def is_from_herd(from_addr: str) -> bool:
     return addr in HERD_EMAILS
 
 
+def is_addressed_to_nova(to_raw: str) -> bool:
+    """Check if Nova is in the To: field (not just CC'd or BCC'd)."""
+    return NOVA_EMAIL in to_raw.lower()
+
+
 def is_known_sender(from_addr: str) -> bool:
     addr = from_addr.lower()
     return any(k in addr for k in KNOWN_SENDERS)
@@ -506,9 +516,16 @@ def main():
                 processed += 1
                 continue
 
-            # Herd emails: generate reply, send to ALL herd + CC Jordan
-            # But only ONE reply per thread (deduplicate by normalized subject)
+            # Herd emails: only reply if Nova is directly in the To: field
+            # Skip if Nova is just CC'd or part of a group thread she wasn't addressed in
             if is_from_herd(from_addr):
+                if not is_addressed_to_nova(msg.get("to_raw", "")):
+                    log(f"  Herd email but Nova not in To: — storing only, no reply")
+                    vector_remember(f"Email from {msg['from_raw']} re: {subject}. Body: {body[:300]}")
+                    imap_move_to_trash(conn, uid)
+                    processed += 1
+                    continue
+
                 thread_key = re.sub(r'^(re:\s*)+', '', subject, flags=re.IGNORECASE).strip().lower()[:80]
                 if thread_key in replied_threads:
                     log(f"  Already replied to this thread — trashing duplicate")
@@ -585,50 +602,23 @@ def main():
                 processed += 1
                 continue
 
-            # Known sender (non-herd): auto-acknowledge, store
+            # Known sender (non-herd): store in memory, no reply
             if is_known_sender(from_addr):
-                log(f"  Known sender (non-herd) — auto-acknowledge")
-                ack_body = (
-                    "Hi,\n\n"
-                    "Thank you for your message. I'm Nova, Jordan Koch's AI assistant. "
-                    "I'll make sure Jordan sees your email.\n\n"
-                    "— Nova"
-                )
-                clean_mid = msg["message_id"].strip().replace("\n", " ").replace("\r", "")
-                sent, msg_bytes = smtp_send(
-                    app_pass,
-                    to_addrs=[from_addr],
-                    cc_addrs=[JORDAN_CC],
-                    subject=f"Re: {subject}" if not subject.lower().startswith("re:") else subject,
-                    body=ack_body,
-                    in_reply_to=clean_mid,
-                )
-                if sent:
-                    imap_save_to_sent(conn, msg_bytes)
+                log(f"  Known sender (non-herd) — storing, no reply")
                 vector_remember(f"Email from {from_addr} re: {subject}. Body: {body[:300]}")
                 imap_move_to_trash(conn, uid)
                 processed += 1
                 continue
 
-            # Unknown sender: acknowledge + notify
-            log(f"  Unknown sender — auto-acknowledge")
-            ack_body = (
-                "Hi,\n\n"
-                "Thank you for your message. I'm Nova, Jordan Koch's AI assistant. "
-                "I'll make sure Jordan sees your email.\n\n"
-                "— Nova"
+            # Unknown sender: store + notify Jordan, no reply
+            log(f"  Unknown sender — storing, no reply")
+            vector_remember(f"Email from unknown {from_addr} re: {subject}. Body: {body[:300]}")
+            slack_post(
+                f"*📧 Unknown sender email*\n"
+                f"*From:* {from_addr}\n"
+                f"*Subject:* {subject}\n"
+                f"*Preview:* {body[:150].replace(chr(10), ' ')}..."
             )
-            clean_mid = msg["message_id"].strip().replace("\n", " ").replace("\r", "")
-            sent, msg_bytes = smtp_send(
-                app_pass,
-                to_addrs=[from_addr],
-                cc_addrs=[JORDAN_CC],
-                subject=f"Re: {subject}" if not subject.lower().startswith("re:") else subject,
-                body=ack_body,
-                in_reply_to=clean_mid,
-            )
-            if sent:
-                imap_save_to_sent(conn, msg_bytes)
             imap_move_to_trash(conn, uid)
             processed += 1
 
