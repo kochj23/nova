@@ -54,8 +54,8 @@ class NovaMonitor: ObservableObject {
             ),
             MonitoredService(
                 id: "openwebui", name: "Open WebUI", icon: "globe", port: 3000,
-                startAction: .openURL(url: "http://127.0.0.1:3000"),
-                openAction: .openURL(url: "http://127.0.0.1:3000")
+                startAction: .openURL(url: "http://192.168.1.6:3000"),
+                openAction: .openURL(url: "http://192.168.1.6:3000")
             ),
             MonitoredService(
                 id: "tinychat", name: "TinyChat", icon: "bubble.left.fill", port: 5000,

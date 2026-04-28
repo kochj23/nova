@@ -29,7 +29,7 @@ backends:
   # TinyChat — lightweight OpenAI-compatible proxy (port 8000)
   # Uses deepseek-r1:8b via Ollama — fast reasoning for quick tasks and email
   tinychat:
-    url: "http://localhost:8000"
+    url: "http://192.168.1.6:8000"
     enabled: true
     default_model: "deepseek-r1:8b"
 
@@ -51,7 +51,7 @@ backends:
   # Specialized model: qwen3-vl:4b — vision, UI interactions, multimodal
   # NOTE: Set WEBUI_AUTH=False to disable auth, or add api_key below
   openwebui:
-    url: "http://localhost:3000"
+    url: "http://192.168.1.6:3000"
     enabled: true
     default_model: "qwen3-vl:4b"
     api_key: ""   # Set your OpenWebUI API key here if auth is enabled

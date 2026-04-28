@@ -22,7 +22,7 @@ from typing import Optional, Dict, List
 from urllib.parse import urljoin
 
 # Configuration
-OPENWEBUI_ENDPOINT = os.getenv("OPENWEBUI_ENDPOINT", "http://127.0.0.1:3000")
+OPENWEBUI_ENDPOINT = os.getenv("OPENWEBUI_ENDPOINT", "http://192.168.1.6:3000")
 OPENWEBUI_TIMEOUT = int(os.getenv("OPENWEBUI_TIMEOUT", "30"))
 DEFAULT_MODEL = os.getenv("OPENWEBUI_DEFAULT_MODEL", "mistral")
 

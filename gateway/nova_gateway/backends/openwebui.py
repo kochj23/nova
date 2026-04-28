@@ -30,7 +30,7 @@ class OpenWebUIBackend(BaseBackend):
 
     def __init__(
         self,
-        url: str = "http://localhost:3000",
+        url: str = "http://192.168.1.6:3000",
         default_model: str = "qwen3-vl:4b",
         api_key: str = "",
     ):

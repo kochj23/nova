@@ -32,9 +32,9 @@ AGENTS = ["analyst", "sentinel", "coder", "lookout", "librarian"]
 
 SERVICE_PORTS = {
     "ollama": {"port": 11434, "url": "http://127.0.0.1:11434"},
-    "tinychat": {"port": 8000, "url": "http://127.0.0.1:8000"},
+    "tinychat": {"port": 8000, "url": "http://192.168.1.6:8000"},
     "mlx_chat": {"port": 5000, "url": "http://127.0.0.1:5000"},
-    "openwebui": {"port": 3000, "url": "http://127.0.0.1:3000"},
+    "openwebui": {"port": 3000, "url": "http://192.168.1.6:3000"},
     "swarmui": {"port": 7801, "url": "http://127.0.0.1:7801"},
     "comfyui": {"port": 8188, "url": "http://127.0.0.1:8188"},
     "memory_server": {"port": 18790, "url": "http://127.0.0.1:18790"},

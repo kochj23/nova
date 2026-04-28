@@ -81,8 +81,8 @@ MODELS = {
 # ── Backend config ───────────────────────────────────────────────────────────
 
 MLX_URL                   = "http://127.0.0.1:5050"
-TINYCHAT_URL              = "http://127.0.0.1:8000"
-OPENWEBUI_URL             = "http://127.0.0.1:3000"
+TINYCHAT_URL              = "http://192.168.1.6:8000"
+OPENWEBUI_URL             = "http://192.168.1.6:3000"
 OLLAMA_URL                = "http://127.0.0.1:11434"
 OPENROUTER_URL            = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL          = "qwen/qwen3-next-80b-a3b-instruct:free"

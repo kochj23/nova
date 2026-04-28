@@ -81,7 +81,7 @@ async def lifespan(app: FastAPI):
     # Initialise all seven backends
     _backends = {
         "tinychat": TinyChatBackend(
-            url=bc.get("tinychat", {}).get("url", "http://localhost:8000"),
+            url=bc.get("tinychat", {}).get("url", "http://192.168.1.6:8000"),
             default_model=bc.get("tinychat", {}).get("default_model", "gpt-oss:20b"),
         ),
         "mlxcode": MLXCodeBackend(
@@ -92,7 +92,7 @@ async def lifespan(app: FastAPI):
             default_model=bc.get("mlxchat", {}).get("default_model", "mlx-community/Qwen2.5-7B-Instruct-4bit"),
         ),
         "openwebui": OpenWebUIBackend(
-            url=bc.get("openwebui", {}).get("url", "http://localhost:3000"),
+            url=bc.get("openwebui", {}).get("url", "http://192.168.1.6:3000"),
             default_model=bc.get("openwebui", {}).get("default_model", "qwen3-vl:4b"),
             api_key=bc.get("openwebui", {}).get("api_key", ""),
         ),

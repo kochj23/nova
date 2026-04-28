@@ -36,7 +36,7 @@ _MODEL_PREFERENCE = ["gpt-oss:20b", "qwen3:30b", "qwen3:8b", "qwen3-vl:4b", "mis
 class TinyChatBackend(BaseBackend):
     name = "tinychat"
 
-    def __init__(self, url: str = "http://localhost:8000", default_model: str = "gpt-oss:20b"):
+    def __init__(self, url: str = "http://192.168.1.6:8000", default_model: str = "gpt-oss:20b"):
         super().__init__(url, timeout=60.0)
         self.default_model = default_model
         self._available_models: list[str] = []
