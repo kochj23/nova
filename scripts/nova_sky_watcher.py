@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
 SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN = nova_config.SLACK_NOTIFY
+SLACK_CHAN = nova_config.SLACK_PHOTOS
 VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
 TODAY = date.today().isoformat()
@@ -84,7 +84,7 @@ def log(msg):
 
 
 def slack_post(text, channel=None):
-    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_NOTIFY)
+    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_PHOTOS)
 
 
 def slack_upload(filepath, comment="", channel=None):

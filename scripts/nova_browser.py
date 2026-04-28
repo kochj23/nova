@@ -71,7 +71,7 @@ PROFILES_DIR = BROWSER_DIR / "profiles"
 MONITOR_STATE = BROWSER_DIR / "monitor_state.json"
 
 SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN = nova_config.SLACK_NOTIFY
+SLACK_CHAN = nova_config.SLACK_PHOTOS
 VECTOR_URL = nova_config.VECTOR_URL
 
 # Default browser config

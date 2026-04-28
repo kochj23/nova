@@ -37,7 +37,7 @@ WORKSPACE    = Path.home() / ".openclaw/workspace"
 MOVIE_DIR    = WORKSPACE / "dream_videos"
 MOVIE_DIR.mkdir(parents=True, exist_ok=True)
 SLACK_TOKEN   = nova_config.slack_bot_token()
-SLACK_CHANNEL = "C0ATAF7NZG9"
+SLACK_CHANNEL = "C0B01L9GQTV"   # #nova-photos
 
 # Style prefix applied to every scene for visual consistency
 DREAM_STYLE = (

@@ -24,7 +24,7 @@ PENDING_FILE  = WORKSPACE / "journal" / "pending_delivery.json"
 DEAD_LETTER   = WORKSPACE / "journal" / "failed_deliveries"
 MAX_RETRIES   = 3
 SLACK_TOKEN   = nova_config.slack_bot_token()
-SLACK_CHANNEL = "C0ATAF7NZG9"   # #nova-notifications
+SLACK_CHANNEL = "C0B01L9GQTV"   # #nova-photos
 SLACK_API     = "https://slack.com/api"
 SCRIPTS       = Path.home() / ".openclaw" / "scripts"
 
