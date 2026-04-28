@@ -27,6 +27,10 @@ FLOW_DB = Path.home() / ".openclaw" / "flows" / "registry.sqlite"
 SESSIONS_JSON = Path.home() / ".openclaw" / "agents" / "main" / "sessions" / "sessions.json"
 GATEWAY_QUERY_DB = Path.home() / ".nova_gateway" / "context.db"
 PG_DB = "nova_memories"
+BACKUP_LOG = Path.home() / ".openclaw" / "logs" / "nova_pg_backup.log"
+PROTECT_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "protect_monitor_state.json"
+HOMEKIT_API = "http://127.0.0.1:37432"
+MLX_MODELS_URL = "http://192.168.1.6:5050/v1/models"
 
 AGENTS = ["analyst", "sentinel", "coder", "lookout", "librarian"]
 
@@ -76,6 +80,22 @@ _log_offset: int = 0
 _prev_scheduler_runs: int = -1
 _prev_ingest_depth: int = -1
 _prev_task_total: int = -1
+
+# New card collector caches
+_searxng_cache: dict = {}
+_searxng_ts: float = 0
+_backup_cache: dict = {}
+_backup_ts: float = 0
+_response_time_cache: dict = {}
+_response_time_ts: float = 0
+_herd_cache: dict = {}
+_herd_ts: float = 0
+_mlx_cache: dict = {}
+_mlx_ts: float = 0
+_camera_cache: dict = {}
+_camera_ts: float = 0
+_homekit_cache: dict = {}
+_homekit_ts: float = 0
 
 
 @asynccontextmanager
@@ -195,14 +215,44 @@ async def service_detail(service: str):
             return JSONResponse(await _detail_channel(service))
         elif service == "openrouter":
             return JSONResponse(await _detail_openrouter())
-        elif service in ("tinychat", "mlx_chat", "openwebui", "comfyui", "swarmui"):
+        elif service in ("tinychat", "mlx_chat", "openwebui", "comfyui", "swarmui", "searxng"):
             return JSONResponse(await _detail_service(service))
+        elif service == "gateway_queries":
+            return JSONResponse(await collect_gateway_query_log())
+        elif service == "latency":
+            return JSONResponse({"services": {k: list(v) for k, v in latency_history.items()}})
+        elif service == "throughput":
+            return JSONResponse({"hours": await collect_task_throughput()})
         elif service == "memory_server":
             return JSONResponse(await _detail_memory_server())
         elif service == "conversations":
             return JSONResponse(await collect_conversations())
         elif service == "unifi":
             return JSONResponse(await collect_unifi(app.state.http_session))
+        elif service == "cost_tracker":
+            return JSONResponse(await _detail_cost_tracker())
+        elif service == "memory_growth":
+            return JSONResponse(await _detail_memory_growth())
+        elif service == "disk_usage":
+            return JSONResponse(await _detail_disk_usage())
+        elif service == "searxng_stats":
+            return JSONResponse(await collect_searxng_stats(app.state.http_session))
+        elif service == "backup_status":
+            return JSONResponse(await collect_backup_status())
+        elif service == "response_time":
+            return JSONResponse(await collect_response_time())
+        elif service == "herd_activity":
+            return JSONResponse(await collect_herd_activity())
+        elif service == "mlx_status":
+            return JSONResponse(await collect_mlx_status(app.state.http_session))
+        elif service == "cron_health":
+            return JSONResponse(await _detail_cron_health())
+        elif service == "token_counter":
+            return JSONResponse(await _detail_token_counter())
+        elif service == "cameras":
+            return JSONResponse(await collect_camera_activity())
+        elif service == "homekit":
+            return JSONResponse(await collect_homekit(app.state.http_session))
         else:
             return JSONResponse({"error": f"Unknown service: {service}"}, status_code=404)
     except Exception as e:
@@ -866,7 +916,7 @@ async def collect_system_resources() -> dict:
         disks = {}
         seen_devices = set()
         for part in psutil.disk_partitions():
-            if part.mountpoint in ("/", "/System/Volumes/Data", "/Volumes/Data", "/Volumes/MoreData"):
+            if part.mountpoint in ("/", "/System/Volumes/Data", "/Volumes/Data", "/Volumes/MoreData", "/Volumes/nas"):
                 if part.device in seen_devices:
                     continue
                 seen_devices.add(part.device)
@@ -1464,6 +1514,9 @@ async def collect_unifi(session: aiohttp.ClientSession) -> dict:
                 "name": d.get("name", d.get("hostname", "?")),
                 "model": d.get("model", "?"),
                 "type": d.get("type", "?"),
+                "status": "online" if d.get("state", 0) == 1 else "offline",
+                "ip": d.get("ip", ""),
+                "num_clients": d.get("num_sta", 0),
                 "num_sta": d.get("num_sta", 0),
             })
 
@@ -1631,6 +1684,410 @@ def _downsample_latency(rows: list) -> list:
     return result
 
 
+# --- New Card Collectors ---
+
+async def collect_searxng_stats(session: aiohttp.ClientSession) -> dict:
+    global _searxng_cache, _searxng_ts
+    now = time.time()
+    if now - _searxng_ts < 60:
+        return _searxng_cache
+    try:
+        async with session.get("http://127.0.0.1:8888/config",
+                               timeout=aiohttp.ClientTimeout(total=3)) as resp:
+            data = await resp.json()
+        engines = data.get("engines", [])
+        enabled = [e for e in engines if e.get("enabled", True)] if isinstance(engines, list) else engines
+        svc_status = current_state.get("services", {}).get("searxng", {}).get("status", "unknown")
+        result = {
+            "status": svc_status,
+            "engine_count": len(enabled) if isinstance(enabled, list) else 0,
+            "total_engines": len(engines) if isinstance(engines, list) else 0,
+            "engines": [{"name": e.get("name", "?"), "shortcut": e.get("shortcut", "")}
+                        for e in (enabled[:20] if isinstance(enabled, list) else [])],
+        }
+        _searxng_cache = result
+        _searxng_ts = now
+        return result
+    except Exception as e:
+        return _searxng_cache or {"status": "down", "engine_count": 0, "total_engines": 0, "error": str(e), "engines": []}
+
+
+async def collect_backup_status() -> dict:
+    global _backup_cache, _backup_ts
+    now = time.time()
+    if now - _backup_ts < 30:
+        return _backup_cache
+    try:
+        if not BACKUP_LOG.exists():
+            return {"status": "no_log", "last_backup": None, "success": False, "size": None, "lines": []}
+
+        with open(BACKUP_LOG, "r", errors="replace") as f:
+            all_lines = f.readlines()
+            lines = [l.rstrip() for l in all_lines[-30:]]
+
+        last_success_ts = None
+        last_error_ts = None
+        last_size = None
+        success = False
+
+        for line in reversed(lines):
+            ll = line.lower()
+            if "backup complete" in ll or "backup successful" in ll or "success" in ll:
+                # Try to extract timestamp from line start (common format: 2026-04-28 12:00:00)
+                ts_match = re.match(r"(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2})", line)
+                if ts_match and not last_success_ts:
+                    last_success_ts = ts_match.group(1)
+                    success = True
+                # Try to extract size
+                size_match = re.search(r"(\d+(?:\.\d+)?)\s*(MB|GB|KB|bytes)", line, re.IGNORECASE)
+                if size_match and not last_size:
+                    last_size = size_match.group(0)
+            elif "error" in ll or "fail" in ll:
+                ts_match = re.match(r"(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2})", line)
+                if ts_match and not last_error_ts:
+                    last_error_ts = ts_match.group(1)
+
+        # Determine if backup is stale (>24h)
+        stale = False
+        if last_success_ts:
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(last_success_ts.replace(" ", "T"))
+                age_hours = (datetime.now() - dt).total_seconds() / 3600
+                stale = age_hours > 24
+            except Exception:
+                pass
+
+        result = {
+            "status": "ok" if success and not stale else "warning" if success and stale else "error",
+            "last_backup": last_success_ts,
+            "last_error": last_error_ts,
+            "success": success,
+            "stale": stale,
+            "size": last_size,
+            "lines": lines,
+        }
+        _backup_cache = result
+        _backup_ts = now
+        return result
+    except Exception as e:
+        return _backup_cache or {"status": "error", "error": str(e), "last_backup": None, "success": False, "size": None, "lines": []}
+
+
+async def collect_response_time() -> dict:
+    global _response_time_cache, _response_time_ts
+    now = time.time()
+    if now - _response_time_ts < 30:
+        return _response_time_cache
+    try:
+        if not GATEWAY_LOG.exists():
+            return {"status": "no_log", "replies_today": 0, "avg_per_hour": 0.0, "recent_replies": []}
+
+        with open(GATEWAY_LOG, "r", errors="replace") as f:
+            content = f.read()
+
+        # Look for "[slack] delivered reply" or "res " patterns
+        reply_pattern = re.compile(r"(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2}).*(?:\[slack\]\s*delivered reply|res\s+)", re.IGNORECASE)
+        today_str = time.strftime("%Y-%m-%d")
+        today_count = 0
+        all_hours: dict[int, int] = {}
+        recent: list[str] = []
+
+        for line in content.split("\n"):
+            m = reply_pattern.search(line)
+            if m:
+                ts_str = m.group(1)
+                if ts_str.startswith(today_str):
+                    today_count += 1
+                try:
+                    hour = int(ts_str[11:13])
+                    all_hours[hour] = all_hours.get(hour, 0) + 1
+                except Exception:
+                    pass
+                recent.append(line.rstrip())
+
+        hours_with_data = len(all_hours)
+        avg_per_hour = round(sum(all_hours.values()) / max(1, hours_with_data), 1)
+
+        result = {
+            "status": "ok",
+            "replies_today": today_count,
+            "avg_per_hour": avg_per_hour,
+            "hourly_breakdown": all_hours,
+            "recent_replies": recent[-20:],
+        }
+        _response_time_cache = result
+        _response_time_ts = now
+        return result
+    except Exception as e:
+        return _response_time_cache or {"status": "error", "error": str(e), "replies_today": 0, "avg_per_hour": 0.0}
+
+
+async def collect_herd_activity() -> dict:
+    global _herd_cache, _herd_ts
+    now = time.time()
+    if now - _herd_ts < 30:
+        return _herd_cache
+    try:
+        if not GATEWAY_LOG.exists():
+            return {"status": "no_log", "channels": {}, "total_events": 0}
+
+        with open(GATEWAY_LOG, "r", errors="replace") as f:
+            content = f.read()
+
+        channel_pattern = re.compile(r"\[(slack|discord|signal)\]")
+        counts: dict[str, int] = {"slack": 0, "discord": 0, "signal": 0}
+        today_str = time.strftime("%Y-%m-%d")
+        today_counts: dict[str, int] = {"slack": 0, "discord": 0, "signal": 0}
+
+        for line in content.split("\n"):
+            m = channel_pattern.search(line)
+            if m:
+                ch = m.group(1)
+                counts[ch] = counts.get(ch, 0) + 1
+                if today_str in line[:20]:
+                    today_counts[ch] = today_counts.get(ch, 0) + 1
+
+        total = sum(counts.values())
+        result = {
+            "status": "ok",
+            "channels": counts,
+            "today": today_counts,
+            "total_events": total,
+        }
+        _herd_cache = result
+        _herd_ts = now
+        return result
+    except Exception as e:
+        return _herd_cache or {"status": "error", "error": str(e), "channels": {}, "total_events": 0}
+
+
+async def collect_mlx_status(session: aiohttp.ClientSession) -> dict:
+    global _mlx_cache, _mlx_ts
+    now = time.time()
+    if now - _mlx_ts < 15:
+        return _mlx_cache
+    try:
+        async with session.get(MLX_MODELS_URL,
+                               timeout=aiohttp.ClientTimeout(total=3)) as resp:
+            data = await resp.json()
+        models = data.get("data", [])
+        model_name = models[0].get("id", "unknown") if models else "none"
+        svc_status = current_state.get("services", {}).get("mlx_chat", {}).get("status", "unknown")
+        result = {
+            "status": svc_status,
+            "model": model_name,
+            "model_count": len(models),
+            "models": [{"id": m.get("id", "?"), "owned_by": m.get("owned_by", "?")} for m in models],
+        }
+        _mlx_cache = result
+        _mlx_ts = now
+        return result
+    except Exception as e:
+        return _mlx_cache or {"status": "down", "model": "unreachable", "model_count": 0, "error": str(e), "models": []}
+
+
+async def collect_camera_activity() -> dict:
+    global _camera_cache, _camera_ts
+    now = time.time()
+    if now - _camera_ts < 30:
+        return _camera_cache
+    try:
+        if not PROTECT_STATE.exists():
+            return {"status": "no_file", "cameras": [], "total": 0, "connected": 0, "disconnected": 0}
+
+        data = _json.loads(PROTECT_STATE.read_text())
+        cameras = data.get("cameras", []) if isinstance(data, dict) else []
+        connected = sum(1 for c in cameras if c.get("connected", False) or c.get("state", "") == "CONNECTED")
+        disconnected = len(cameras) - connected
+
+        result = {
+            "status": "ok",
+            "cameras": [{"name": c.get("name", "?"), "connected": c.get("connected", False) or c.get("state", "") == "CONNECTED",
+                          "type": c.get("type", "?"), "ip": c.get("host", c.get("ip", "?"))}
+                         for c in cameras],
+            "total": len(cameras),
+            "connected": connected,
+            "disconnected": disconnected,
+        }
+        _camera_cache = result
+        _camera_ts = now
+        return result
+    except Exception as e:
+        return _camera_cache or {"status": "error", "error": str(e), "cameras": [], "total": 0, "connected": 0, "disconnected": 0}
+
+
+async def collect_homekit(session: aiohttp.ClientSession) -> dict:
+    global _homekit_cache, _homekit_ts
+    now = time.time()
+    if now - _homekit_ts < 30:
+        return _homekit_cache
+    try:
+        scenes = []
+        status_data = {}
+        try:
+            async with session.get(f"{HOMEKIT_API}/api/scenes",
+                                   timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                scenes_resp = await resp.json()
+                scenes = scenes_resp if isinstance(scenes_resp, list) else scenes_resp.get("scenes", [])
+        except Exception:
+            pass
+        try:
+            async with session.get(f"{HOMEKIT_API}/api/status",
+                                   timeout=aiohttp.ClientTimeout(total=3)) as resp:
+                status_data = await resp.json()
+        except Exception:
+            pass
+
+        accessories = status_data.get("accessories", status_data.get("accessory_count", 0))
+        if isinstance(accessories, list):
+            accessory_count = len(accessories)
+        elif isinstance(accessories, int):
+            accessory_count = accessories
+        else:
+            accessory_count = 0
+
+        result = {
+            "status": "ok" if scenes or status_data else "unavailable",
+            "scene_count": len(scenes),
+            "accessory_count": accessory_count,
+            "scenes": [{"name": s.get("name", s.get("displayName", "?")), "id": s.get("id", "")} for s in scenes[:20]] if isinstance(scenes, list) else [],
+            "raw_status": {k: v for k, v in status_data.items() if k not in ("accessories",)},
+        }
+        _homekit_cache = result
+        _homekit_ts = now
+        return result
+    except Exception as e:
+        return _homekit_cache or {"status": "unavailable", "scene_count": 0, "accessory_count": 0, "error": str(e), "scenes": []}
+
+
+# --- Detail helpers for new cards ---
+
+async def _detail_cost_tracker():
+    """Detail for OpenRouter cost tracker card."""
+    data = _json.loads(SESSIONS_JSON.read_text())
+    today_str = time.strftime("%Y-%m-%d")
+    today_cost = 0.0
+    today_sessions = 0
+    today_tokens = 0
+    total_cost = 0.0
+
+    sessions = []
+    for key, val in data.items():
+        if not isinstance(val, dict):
+            continue
+        if val.get("modelProvider") != "openrouter":
+            continue
+        cost = val.get("estimatedCostUsd", 0) or 0
+        inp = val.get("inputTokens", 0) or 0
+        out = val.get("outputTokens", 0) or 0
+        total_cost += cost
+
+        updated = val.get("updatedAt", 0)
+        if isinstance(updated, (int, float)):
+            if updated > 1e12:
+                updated_ts = updated / 1000.0
+            else:
+                updated_ts = updated
+            updated_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(updated_ts))
+            if updated_str.startswith(today_str):
+                today_cost += cost
+                today_sessions += 1
+                today_tokens += inp + out
+        else:
+            updated_str = str(updated)[:19]
+
+        sessions.append({
+            "key": key[:60], "model": val.get("model", "?"),
+            "cost": cost, "input_tokens": inp, "output_tokens": out,
+            "updated": updated_str,
+        })
+
+    sessions.sort(key=lambda x: x.get("updated", ""), reverse=True)
+    return {
+        "today_cost": round(today_cost, 6),
+        "total_cost": round(total_cost, 6),
+        "today_sessions": today_sessions,
+        "today_tokens": today_tokens,
+        "sessions": sessions[:25],
+    }
+
+
+async def _detail_memory_growth():
+    """Detail for memory growth card."""
+    pg = current_state.get("postgresql", {})
+    total = pg.get("total_rows", 0)
+
+    # Get by-source breakdown
+    proc = await asyncio.create_subprocess_exec(
+        "psql", PG_DB, "-t", "-A", "-c",
+        "SELECT source, count(*) FROM memories GROUP BY source ORDER BY count DESC LIMIT 20",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+    sources = []
+    for line in stdout.decode().strip().split("\n"):
+        if "|" in line:
+            parts = line.split("|")
+            sources.append({"source": parts[0], "count": int(parts[1])})
+
+    # Daily counts for trend
+    proc2 = await asyncio.create_subprocess_exec(
+        "psql", PG_DB, "-t", "-A", "-c",
+        "SELECT date_trunc('day', created_at)::date, count(*) FROM memories WHERE created_at >= CURRENT_DATE - 14 GROUP BY 1 ORDER BY 1",
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+    stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=5)
+    daily = []
+    for line in stdout2.decode().strip().split("\n"):
+        if "|" in line:
+            parts = line.split("|")
+            daily.append({"date": parts[0], "count": int(parts[1])})
+
+    return {
+        "total": total,
+        "by_source": sources,
+        "daily_trend": daily,
+    }
+
+
+async def _detail_disk_usage():
+    """Detail for disk usage card."""
+    sys_data = current_state.get("system", {})
+    disks = sys_data.get("disks", {})
+    return {"disks": disks}
+
+
+async def _detail_cron_health():
+    """Detail for cron health card."""
+    sched = current_state.get("scheduler", {})
+    tasks = sched.get("tasks", {})
+    task_list = []
+    for name, t in sorted(tasks.items(), key=lambda x: x[0]):
+        status = "ok"
+        if not t.get("enabled", True):
+            status = "disabled"
+        elif t.get("running"):
+            status = "running"
+        elif t.get("consecutive_failures", 0) > 0:
+            status = "failing"
+        elif t.get("run_count", 0) == 0:
+            status = "never"
+        task_list.append({"name": name, "status": status, "run_count": t.get("run_count", 0),
+                          "consecutive_failures": t.get("consecutive_failures", 0),
+                          "schedule": t.get("schedule", "?"),
+                          "last_duration": t.get("last_duration", 0)})
+    return {"tasks": task_list}
+
+
+async def _detail_token_counter():
+    """Detail for live token counter card."""
+    mu = current_state.get("model_usage", {})
+    return {
+        "total_tokens": mu.get("total_tokens", 0),
+        "total_cost": mu.get("total_cost_usd", 0),
+        "by_provider": mu.get("by_provider", {}),
+    }
+
+
 # --- Poll Loop ---
 
 async def poll_loop():
@@ -1644,21 +2101,28 @@ async def poll_loop():
     while True:
         start = time.monotonic()
         results = await asyncio.gather(
-            collect_scheduler(session),
-            collect_agents(redis_client),
-            collect_gateway(session),
-            collect_task_history(),
-            collect_redis_info(redis_client),
-            collect_services(session),
-            collect_system_resources(),
-            collect_ollama_models(session),
-            collect_postgresql(),
-            collect_flow_runs(),
-            collect_task_throughput(),
-            collect_model_usage(),
-            collect_gateway_query_log(),
-            collect_conversations(),
-            collect_unifi(session),
+            collect_scheduler(session),       # 0
+            collect_agents(redis_client),     # 1
+            collect_gateway(session),         # 2
+            collect_task_history(),           # 3
+            collect_redis_info(redis_client), # 4
+            collect_services(session),        # 5
+            collect_system_resources(),       # 6
+            collect_ollama_models(session),   # 7
+            collect_postgresql(),             # 8
+            collect_flow_runs(),              # 9
+            collect_task_throughput(),        # 10
+            collect_model_usage(),           # 11
+            collect_gateway_query_log(),     # 12
+            collect_conversations(),         # 13
+            collect_unifi(session),          # 14
+            collect_searxng_stats(session),  # 15
+            collect_backup_status(),         # 16
+            collect_response_time(),         # 17
+            collect_herd_activity(),         # 18
+            collect_mlx_status(session),     # 19
+            collect_camera_activity(),       # 20
+            collect_homekit(session),        # 21
             return_exceptions=True,
         )
 
@@ -1691,6 +2155,13 @@ async def poll_loop():
             "gateway_queries": safe(12),
             "conversations": safe(13),
             "unifi": safe(14),
+            "searxng_stats": safe(15),
+            "backup_status": safe(16),
+            "response_time": safe(17),
+            "herd_activity": safe(18),
+            "mlx_status": safe(19),
+            "cameras": safe(20),
+            "homekit": safe(21),
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }

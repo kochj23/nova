@@ -95,6 +95,18 @@ function renderCards(state) {
   renderTaskHistory(state.task_history);
   renderThroughput(state.task_throughput);
   renderLatency(state.services);
+  renderCostTracker(state.model_usage);
+  renderMemoryGrowth(state.postgresql);
+  renderDiskUsage(state.system);
+  renderSearxngStats(state.searxng_stats);
+  renderBackupStatus(state.backup_status);
+  renderResponseTime(state.response_time);
+  renderHerdActivity(state.herd_activity);
+  renderMlxStatus(state.mlx_status, state.services);
+  renderCronHealth(state.scheduler);
+  renderTokenCounter(state.model_usage);
+  renderCameras(state.cameras);
+  renderHomeKit(state.homekit);
   renderTaskTable(state.scheduler);
   for (const name of ['analyst', 'sentinel', 'coder', 'lookout', 'librarian']) {
     renderAgent(name, state.agents?.[name]);
@@ -692,10 +704,19 @@ const CARD_SERVICE_MAP = {
   'card-postgresql': 'postgresql', 'card-redis': 'redis',
   'card-memory': 'memory', 'card-task-history': 'task_history',
   'card-model-usage': 'model_usage',
+  'card-gateway-queries': 'gateway_queries',
+  'card-latency': 'latency',
+  'card-throughput': 'throughput',
   'card-unifi': 'unifi', 'card-conversations': 'conversations',
   'card-agent-analyst': 'agent-analyst', 'card-agent-sentinel': 'agent-sentinel',
   'card-agent-coder': 'agent-coder', 'card-agent-lookout': 'agent-lookout',
   'card-agent-librarian': 'agent-librarian',
+  'card-cost-tracker': 'cost_tracker', 'card-memory-growth': 'memory_growth',
+  'card-disk-usage': 'disk_usage', 'card-searxng-stats': 'searxng_stats',
+  'card-backup-status': 'backup_status', 'card-response-time': 'response_time',
+  'card-herd-activity': 'herd_activity', 'card-mlx-status': 'mlx_status',
+  'card-cron-health': 'cron_health', 'card-token-counter': 'token_counter',
+  'card-cameras': 'cameras', 'card-homekit': 'homekit',
 };
 
 function openModal(title, html) {
@@ -1068,21 +1089,77 @@ DETAIL_RENDERERS.memory_server = function(d) {
   return h;
 };
 
-DETAIL_RENDERERS.unifi = function(d) {
-  let h = statRow('Status', d.status || '?', d.status === 'ok' ? 'green' : 'red') +
-    statRow('Devices', d.device_count || 0, 'cyan') +
-    statRow('Clients', d.client_count || 0, 'green') +
-    statRow('WAN Uptime', d.wan_uptime ? formatUptime(d.wan_uptime) : '---', 'cyan');
-
-  if (d.devices?.length) {
-    h += '<div class="modal-section"><div class="modal-section-title">Devices</div><table class="modal-table"><thead><tr><th>Name</th><th>Model</th><th>Status</th><th>IP</th><th>Clients</th></tr></thead><tbody>';
-    for (const dev of d.devices) {
-      const color = dev.status === 'online' ? 'var(--accent-green)' : 'var(--accent-red)';
-      h += `<tr><td>${escapeHtml(dev.name || '?')}</td><td style="font-size:10px">${escapeHtml(dev.model || '')}</td><td style="color:${color}">${dev.status || '?'}</td><td style="font-size:10px">${escapeHtml(dev.ip || '')}</td><td>${dev.num_clients || 0}</td></tr>`;
+DETAIL_RENDERERS.gateway_queries = function(d) {
+  if (d.status === 'empty') return '<p class="dim">No query data yet</p>';
+  let h = statRow('Total Queries', (d.total_queries || 0).toLocaleString(), 'cyan');
+  if (d.backends && Object.keys(d.backends).length > 0) {
+    h += '<div class="modal-section"><div class="modal-section-title">By Backend</div><table class="modal-table"><thead><tr><th>Backend</th><th>Model</th><th>Queries</th><th>Avg Latency</th><th>Fallbacks</th></tr></thead><tbody>';
+    for (const [backend, info] of Object.entries(d.backends)) {
+      for (const [model, stats] of Object.entries(info.models || {})) {
+        h += `<tr><td>${escapeHtml(backend)}</td><td style="font-size:10px">${escapeHtml(model)}</td><td>${stats.queries}</td><td>${stats.avg_latency_ms}ms</td><td>${stats.fallbacks || 0}</td></tr>`;
+      }
     }
     h += '</tbody></table></div>';
   }
-  if (d.error) h += `<div class="error-text">${escapeHtml(d.error)}</div>`;
+  return h;
+};
+
+DETAIL_RENDERERS.latency = function(d) {
+  if (!d.services || Object.keys(d.services).length === 0) return '<p class="dim">No latency data</p>';
+  let h = '<div class="modal-section"><div class="modal-section-title">Service Latency (recent samples)</div><table class="modal-table"><thead><tr><th>Service</th><th>Last</th><th>Min</th><th>Max</th><th>Avg</th><th>Samples</th></tr></thead><tbody>';
+  for (const [svc, points] of Object.entries(d.services)) {
+    const nums = points.filter(p => p !== null && p > 0);
+    if (nums.length === 0) { h += `<tr><td>${escapeHtml(svc)}</td><td colspan="5" class="dim">no data</td></tr>`; continue; }
+    const last = nums[nums.length - 1];
+    const min = Math.min(...nums);
+    const max = Math.max(...nums);
+    const avg = Math.round(nums.reduce((a,b) => a+b, 0) / nums.length);
+    h += `<tr><td>${escapeHtml(svc)}</td><td>${last}ms</td><td>${min}ms</td><td>${max}ms</td><td>${avg}ms</td><td>${nums.length}</td></tr>`;
+  }
+  h += '</tbody></table></div>';
+  return h;
+};
+
+DETAIL_RENDERERS.throughput = function(d) {
+  const hours = d.hours || [];
+  if (hours.length === 0) return '<p class="dim">No throughput data</p>';
+  const total = hours.reduce((a, h) => a + (h.succeeded||0) + (h.failed||0) + (h.timed_out||0), 0);
+  const succeeded = hours.reduce((a, h) => a + (h.succeeded||0), 0);
+  const failed = hours.reduce((a, h) => a + (h.failed||0), 0);
+  const timed_out = hours.reduce((a, h) => a + (h.timed_out||0), 0);
+  let h = statRow('Total Tasks (24h)', total.toLocaleString(), 'cyan') +
+    statRow('Succeeded', succeeded.toLocaleString(), 'green') +
+    statRow('Failed', failed.toLocaleString(), failed > 0 ? 'red' : '') +
+    statRow('Timed Out', timed_out.toLocaleString(), timed_out > 0 ? 'yellow' : '') +
+    statRow('Success Rate', total > 0 ? Math.round(succeeded/total*100) + '%' : '---', 'green');
+  h += '<div class="modal-section"><div class="modal-section-title">Hourly Breakdown</div><table class="modal-table"><thead><tr><th>Hour</th><th>OK</th><th>Fail</th><th>Timeout</th></tr></thead><tbody>';
+  for (const bucket of hours) {
+    const t = (bucket.succeeded||0) + (bucket.failed||0) + (bucket.timed_out||0);
+    if (t === 0) continue;
+    h += `<tr><td>H-${bucket.hour}</td><td style="color:var(--accent-green)">${bucket.succeeded||0}</td><td style="color:var(--accent-red)">${bucket.failed||0}</td><td style="color:var(--accent-yellow)">${bucket.timed_out||0}</td></tr>`;
+  }
+  h += '</tbody></table></div>';
+  return h;
+};
+
+DETAIL_RENDERERS.unifi = function(d) {
+  if (d.status === 'no_key') return '<p class="dim">UniFi API key not configured in Keychain</p>';
+  if (d.error) return `<div class="error-text">${escapeHtml(d.error)}</div>`;
+  const uptime = d.wan_uptime_s || d.wan_uptime || 0;
+  const uptimeStr = uptime > 0 ? (typeof formatUptime === 'function' ? formatUptime(uptime) : Math.round(uptime/3600) + 'h') : '---';
+  let h = statRow('Status', d.status || '?', d.status === 'ok' ? 'green' : 'red') +
+    statRow('Devices', d.device_count || 0, 'cyan') +
+    statRow('Clients', d.client_count || 0, 'green') +
+    statRow('WAN Uptime', uptimeStr, 'cyan');
+
+  if (d.devices?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Devices</div><table class="modal-table"><thead><tr><th>Name</th><th>Model</th><th>Type</th><th>Status</th><th>IP</th><th>Clients</th></tr></thead><tbody>';
+    for (const dev of d.devices) {
+      const color = dev.status === 'online' ? 'var(--accent-green)' : 'var(--accent-red)';
+      h += `<tr><td>${escapeHtml(dev.name || '?')}</td><td style="font-size:10px">${escapeHtml(dev.model || '')}</td><td>${escapeHtml(dev.type || '')}</td><td style="color:${color}">${dev.status || '?'}</td><td style="font-size:10px">${escapeHtml(dev.ip || '')}</td><td>${dev.num_clients || 0}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
+  }
   return h;
 };
 
