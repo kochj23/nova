@@ -256,48 +256,40 @@ def _is_exterior(camera):
 
 
 def _vision_identify(image_path):
-    """Run thumbnail through OpenRouter vision model to identify people/animals."""
+    """Run thumbnail through local Ollama vision model (qwen3-vl:4b) to identify people/animals."""
     try:
         import base64
-        api_key = subprocess.run(
-            ["security", "find-generic-password", "-a", "nova", "-s", "nova-openrouter-api-key", "-w"],
-            capture_output=True, text=True, timeout=10
-        ).stdout.strip()
-        if not api_key:
-            return None
 
         with open(image_path, "rb") as f:
             b64 = base64.b64encode(f.read()).decode()
 
         payload = json.dumps({
-            "model": "qwen/qwen3.5-9b",
+            "model": "qwen3-vl:4b",
             "messages": [{
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": (
-                        "Security camera image. Identify any people or dogs visible. "
-                        "For people: describe appearance, clothing, what they're doing. "
-                        "For dogs: describe breed/size/color. "
-                        "Known people: Abundio (neighbor, gardener). "
-                        "Known dogs: Jeremy (small, dark), Bruno (medium, troublemaker), "
-                        "Sammy (energetic), Preston (larger, limps from stroke). "
-                        "Be concise — 2-3 sentences max. If nobody/nothing notable, say 'No identifiable subjects.'"
-                    )},
-                    {"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-                ],
+                "content": (
+                    "Security camera image. Identify any people or dogs visible. "
+                    "For people: describe appearance, clothing, what they're doing. "
+                    "For dogs: describe breed/size/color. "
+                    "Known people: Abundio (neighbor, gardener). "
+                    "Known dogs: Jeremy (small, dark), Bruno (medium, troublemaker), "
+                    "Sammy (energetic), Preston (larger, limps from stroke). "
+                    "Be concise — 2-3 sentences max. If nobody/nothing notable, say 'No identifiable subjects.'"
+                ),
             }],
-            "max_tokens": 200,
-            "temperature": 0.2,
+            "images": [b64],
+            "stream": False,
+            "options": {"temperature": 0.2, "num_predict": 200},
         }).encode()
 
         req = urllib.request.Request(
-            "https://openrouter.ai/api/v1/chat/completions",
+            "http://127.0.0.1:11434/api/chat",
             data=payload,
-            headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"},
+            headers={"Content-Type": "application/json"},
         )
-        resp = urllib.request.urlopen(req, timeout=30)
+        resp = urllib.request.urlopen(req, timeout=60)
         data = json.loads(resp.read())
-        content = data.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
+        content = data.get("message", {}).get("content", "") or ""
         if "<think>" in content:
             end = content.rfind("</think>")
             if end > 0:
@@ -527,6 +519,10 @@ def check_motion_events(client, state):
                         has_person_or_animal = any(w in desc_lower for w in person_words)
                         if has_vehicle and not has_person_or_animal:
                             log(f"Vision: vehicle-only on {cam_name}, skipping",
+                                level=LOG_INFO, source="protect")
+                            skip_image = True
+                        elif "person" in filtered_types and not has_person_or_animal:
+                            log(f"Vision: Protect said 'person' but model sees none on {cam_name}, skipping",
                                 level=LOG_INFO, source="protect")
                             skip_image = True
                     elif is_motion_only:
