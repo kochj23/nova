@@ -572,7 +572,7 @@ The gateway (`gateway/`) routes AI tasks to the optimal local backend. Formerly 
 ### Eyes and Recognition
 
 - **25 cameras** via UniFi Protect UNVR at 192.168.1.9 (23 connected, exterior only — interior cameras NEVER accessed)
-- **Five-layer filtering**: (1) smart detect type filter (vehicle, licensePlate, alrmSpeak, alrmBark suppressed), (2) notification gate, (3) local vision model screening via Ollama `qwen3-vl:4b`, (4) person verification gate (if Protect says "person" but vision model disagrees, skip), (5) motion-only events require vision success to post image
+- **Five-layer filtering**: (1) smart detect type filter (vehicle, licensePlate, face, alrmSpeak, alrmBark suppressed), (2) notification gate, (3) local vision model screening via Ollama `qwen3-vl:4b`, (4) person verification gate (if Protect says "person" but vision model disagrees, skip), (5) motion-only events require vision success to post image
 - **Vision identification**: every person/animal thumbnail analyzed by local `qwen3-vl:4b` (Ollama, $0 cost) before posting to `#nova-photos`. Known subjects: Abundio (neighbor/gardener), dogs (Jeremy, Bruno, Sammy, Preston)
 - **Face recognition** integrated into protect monitor. Local `face_recognition`/`dlib` (128-dim encodings, 0.55 tolerance). Unknown faces auto-cropped and saved to `~/.openclaw/workspace/faces/unknown/` for later enrollment. Enrollment: drop photos in `faces/known/<name>/`. Inspired by [sam-faces](https://github.com/jasonacox-sam/sam-faces).
 - **Dog watcher** (`nova_watch_dogs.py`): on-demand or continuous scan of exterior cameras for Chihuahuas. Downloads Protect API snapshots, analyzes via vision model, posts sightings with photos.

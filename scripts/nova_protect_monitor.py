@@ -427,8 +427,8 @@ def check_motion_events(client, state):
         if event_ts > max_ts:
             max_ts = event_ts
 
-        # Filter out noisy detection types (vehicle, licensePlate, alrmSpeak, alrmBark)
-        smart_types = [t for t in smart_types if t not in ("vehicle", "licensePlate", "alrmSpeak", "alrmBark")]
+        # Filter out noisy detection types
+        smart_types = [t for t in smart_types if t not in ("vehicle", "licensePlate", "alrmSpeak", "alrmBark", "face")]
         if smart_types:
             new_events.append({
                 "camera": cam_name,
@@ -521,8 +521,8 @@ def check_motion_events(client, state):
                             log(f"Vision: vehicle-only on {cam_name}, skipping",
                                 level=LOG_INFO, source="protect")
                             skip_image = True
-                        elif "person" in filtered_types and not has_person_or_animal:
-                            log(f"Vision: Protect said 'person' but model sees none on {cam_name}, skipping",
+                        elif (filtered_types & {"person", "face"}) and not has_person_or_animal:
+                            log(f"Vision: Protect said person/face but model sees none on {cam_name}, skipping",
                                 level=LOG_INFO, source="protect")
                             skip_image = True
                     elif is_motion_only:
