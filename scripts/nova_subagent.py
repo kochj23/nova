@@ -58,7 +58,7 @@ REGISTRY_PATH = Path.home() / ".openclaw" / "subagents" / "runs.json"
 OLLAMA_URL = "http://127.0.0.1:11434"
 MLX_URL = "http://127.0.0.1:5050"
 SLACK_NOTIFY = nova_config.SLACK_NOTIFY   # C0ATAF7NZG9 #nova-notifications
-SLACK_CHAT = nova_config.SLACK_CHAN        # C0AMNQ5GX70 #nova-chat
+SLACK_CHAT = nova_config.SLACK_NOTIFY     # #nova-notifications (subagent flags)
 HEARTBEAT_INTERVAL = 30  # seconds
 
 

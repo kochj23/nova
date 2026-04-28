@@ -20,14 +20,14 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_logger import log, LOG_INFO, LOG_ERROR, read_logs
 
-SLACK_CHAN = nova_config.SLACK_CHAN  # #nova-chat — Jordan should see this
+SLACK_CHAN = nova_config.SLACK_NOTIFY  # #nova-chat — Jordan should see this
 VECTOR_URL = nova_config.VECTOR_URL
 TODAY = datetime.now()
 WEEK_AGO = TODAY - timedelta(days=7)
 
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def get_scheduler_tasks():

@@ -38,7 +38,7 @@ def log(msg):
 
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def vector_remember(text, metadata=None):

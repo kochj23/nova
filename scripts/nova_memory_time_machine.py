@@ -28,7 +28,7 @@ CURRENT_YEAR = TODAY.year
 
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def recall(query, n=10, source=None):

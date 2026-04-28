@@ -27,7 +27,7 @@ import nova_config
 from nova_logger import log, LOG_INFO, LOG_WARN
 from nova_protect_monitor import ProtectClient, _get_event_thumbnail, slack_upload_image
 
-SLACK_CHAT = nova_config.SLACK_CHAN  # Package alerts go to #nova-chat (Jordan wants to know)
+SLACK_CHAT = nova_config.SLACK_NOTIFY  # Package alerts go to #nova-chat (Jordan wants to know)
 SLACK_NOTIFY = nova_config.SLACK_NOTIFY
 TRACKING_FILE = Path.home() / ".openclaw/workspace/state/package_tracker.json"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/package_clairvoyance.json"
@@ -84,7 +84,7 @@ def save_state(state):
 
 
 def slack_post(text, channel=None):
-    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_CHAN)
+    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_NOTIFY)
 
 
 def handle_package_detection(camera_name, event_id, client=None):

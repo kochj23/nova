@@ -23,7 +23,7 @@ INTERVAL = 300  # 5 minutes
 VECTOR_URL = "http://127.0.0.1:18790"
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 def get_stats():

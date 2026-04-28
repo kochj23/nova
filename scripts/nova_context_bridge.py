@@ -56,7 +56,7 @@ def log(msg):
 
 
 def slack_post(text, channel=None):
-    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_CHAN)
+    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_NOTIFY)
 
 
 def load_state():

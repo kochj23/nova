@@ -5,7 +5,7 @@
 # Written by Jordan Koch
 
 MESSAGE="${1:?Usage: nova_slack_post.sh \"message\" [channel_id]}"
-CHANNEL="${2:-C0AMNQ5GX70}"
+CHANNEL="${2:-C0ATAF7NZG9}"
 
 python3 - "$MESSAGE" "$CHANNEL" << 'PYEOF'
 import sys

@@ -20,7 +20,7 @@ import nova_config
 
 SLACK_TOKEN   = nova_config.slack_bot_token()
 SLACK_API     = "https://slack.com/api"
-DEFAULT_CHAN  = "C0AMNQ5GX70"
+DEFAULT_CHAN  = "C0ATAF7NZG9"
 
 
 def slack_post(endpoint, payload):

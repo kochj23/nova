@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
 SLACK_TOKEN = nova_config.slack_bot_token()
-SLACK_CHAN = nova_config.SLACK_CHAN
+SLACK_CHAN = nova_config.SLACK_NOTIFY
 SLACK_NOTIFY = nova_config.SLACK_NOTIFY
 SLACK_API = nova_config.SLACK_API
 VECTOR_URL = nova_config.VECTOR_URL
