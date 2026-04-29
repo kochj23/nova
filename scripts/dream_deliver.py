@@ -294,6 +294,29 @@ def main():
         log("No narrative in pending delivery — aborting")
         sys.exit(1)
 
+    # Ensure dream image exists — generate on-the-spot if missing
+    if not image_path or not Path(image_path).exists():
+        log("Image missing — attempting generation before delivery...")
+        try:
+            result = subprocess.run(
+                ["/bin/bash", str(Path.home() / ".openclaw/scripts/dream_add_image.sh")],
+                capture_output=True, text=True, timeout=300,
+            )
+            if result.returncode == 0:
+                # Reload pending delivery to get updated image path
+                delivery = json.loads(PENDING_FILE.read_text(encoding="utf-8"))
+                image_path = delivery.get("image")
+                if image_path and Path(image_path).exists():
+                    log(f"Image generated successfully: {image_path}")
+                else:
+                    log("Image generation ran but no image produced — delivering without image")
+            else:
+                log(f"Image generation failed: {result.stderr[:200]}")
+        except subprocess.TimeoutExpired:
+            log("Image generation timed out (300s) — delivering without image")
+        except Exception as e:
+            log(f"Image generation error: {e} — delivering without image")
+
     # Strip any un-replaced image placeholder lines Nova may have left in the narrative
     # (e.g. "![Dream]([image path — omit this entire line if image is null])")
     import re

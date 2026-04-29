@@ -145,6 +145,12 @@ tasks:
     overlap: skip
     group: llm
 
+  dream_add_image:
+    script: dream_add_image.sh
+    schedule: cron 50 2 * * *
+    timeout: 300
+    overlap: skip
+
   agent_gardener:
     script: nova_agent_gardener.py
     args: ["--cron"]

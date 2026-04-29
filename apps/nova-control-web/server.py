@@ -187,6 +187,11 @@ async def root():
     return FileResponse(Path(__file__).parent / "static" / "index.html")
 
 
+@app.get("/hud")
+async def hud_page():
+    return FileResponse(Path(__file__).parent / "static" / "hud.html")
+
+
 @app.get("/api/detail/{service}")
 async def service_detail(service: str):
     try:
@@ -1174,7 +1179,27 @@ async def collect_gateway_query_log() -> dict:
             cursor2 = await db.execute("SELECT COUNT(*) FROM query_log")
             total = (await cursor2.fetchone())[0]
 
-        return {"status": "ok", "backends": backends, "total_queries": total}
+            # Compute reqs/sec from last hour
+            reqs_per_sec = 0
+            try:
+                cursor3 = await db.execute(
+                    "SELECT COUNT(*) FROM query_log WHERE timestamp > datetime('now', '-1 hour')"
+                )
+                last_hour = (await cursor3.fetchone())[0]
+                reqs_per_sec = round(last_hour / 3600, 2)
+
+                cursor4 = await db.execute(
+                    "SELECT COUNT(*) FROM query_log WHERE timestamp > datetime('now', '-5 minutes')"
+                )
+                last_5m = (await cursor4.fetchone())[0]
+                reqs_per_min = round(last_5m / 5, 1)
+            except Exception:
+                last_hour = 0
+                reqs_per_min = 0
+
+        return {"status": "ok", "backends": backends, "total_queries": total,
+                "reqs_per_sec": reqs_per_sec, "reqs_per_min": reqs_per_min,
+                "last_hour": last_hour}
     except Exception as e:
         return {"status": "error", "error": str(e), "backends": {}, "total_queries": 0}
 
@@ -1698,18 +1723,40 @@ async def collect_searxng_stats(session: aiohttp.ClientSession) -> dict:
         engines = data.get("engines", [])
         enabled = [e for e in engines if e.get("enabled", True)] if isinstance(engines, list) else engines
         svc_status = current_state.get("services", {}).get("searxng", {}).get("status", "unknown")
+
+        # Get search stats if available
+        stats_data = {}
+        try:
+            async with session.get("http://127.0.0.1:8888/stats",
+                                   timeout=aiohttp.ClientTimeout(total=3)) as stats_resp:
+                if stats_resp.status == 200:
+                    stats_data = await stats_resp.json()
+        except Exception:
+            pass
+
+        # Categorize engines by type
+        categories = {}
+        for e in (enabled if isinstance(enabled, list) else []):
+            cat = e.get("categories", ["other"])
+            cat_name = cat[0] if isinstance(cat, list) and cat else "other"
+            categories[cat_name] = categories.get(cat_name, 0) + 1
+
         result = {
             "status": svc_status,
             "engine_count": len(enabled) if isinstance(enabled, list) else 0,
             "total_engines": len(engines) if isinstance(engines, list) else 0,
-            "engines": [{"name": e.get("name", "?"), "shortcut": e.get("shortcut", "")}
-                        for e in (enabled[:20] if isinstance(enabled, list) else [])],
+            "categories": categories,
+            "queries_total": stats_data.get("queries", stats_data.get("total_queries", 0)),
+            "avg_response_ms": stats_data.get("avg_response_time", 0),
+            "engines": [{"name": e.get("name", "?"), "shortcut": e.get("shortcut", ""),
+                         "categories": e.get("categories", []), "enabled": e.get("enabled", True)}
+                        for e in (enabled[:30] if isinstance(enabled, list) else [])],
         }
         _searxng_cache = result
         _searxng_ts = now
         return result
     except Exception as e:
-        return _searxng_cache or {"status": "down", "engine_count": 0, "total_engines": 0, "error": str(e), "engines": []}
+        return _searxng_cache or {"status": "down", "engine_count": 0, "total_engines": 0, "error": str(e), "engines": [], "categories": {}}
 
 
 async def collect_backup_status() -> dict:

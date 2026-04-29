@@ -113,8 +113,8 @@ h1 {
 
 #graph-section {
   position: relative;
-  height: 48vh;
-  min-height: 360px;
+  height: 60vh;
+  min-height: 450px;
   border-bottom: 1px solid var(--border-glow);
   overflow: hidden;
   background: radial-gradient(ellipse at 50% 42%, rgba(0, 255, 200, 0.02) 0%, transparent 60%);
@@ -444,3 +444,35 @@ footer {
   font-size: 12px;
 }
 .search-result-item:hover { color: var(--accent-cyan); }
+
+/* Cron dot grid */
+.cron-dot-grid {
+  display: flex; flex-wrap: wrap; gap: 4px; padding: 4px 0;
+}
+.cron-dot {
+  width: 10px; height: 10px; border-radius: 50%;
+  display: inline-block; cursor: default;
+  transition: transform 0.2s ease;
+}
+.cron-dot:hover { transform: scale(1.5); }
+.cron-dot-ok { background: var(--accent-green); box-shadow: 0 0 4px rgba(0,255,102,0.3); }
+.cron-dot-yellow { background: var(--accent-yellow); box-shadow: 0 0 4px rgba(255,204,0,0.3); }
+.cron-dot-red { background: var(--accent-red); box-shadow: 0 0 4px rgba(255,51,68,0.3); }
+.cron-dot-gray { background: var(--text-dim); opacity: 0.5; }
+
+/* Camera list */
+.camera-list { margin-top: 8px; }
+.camera-item {
+  display: flex; align-items: center; gap: 6px;
+  padding: 2px 0; font-size: 11px; color: var(--text-secondary);
+}
+.cam-dot {
+  width: 6px; height: 6px; border-radius: 50%;
+  display: inline-block; flex-shrink: 0;
+}
+.cam-dot-on { background: var(--accent-green); box-shadow: 0 0 4px rgba(0,255,102,0.4); }
+.cam-dot-off { background: var(--accent-red); box-shadow: 0 0 4px rgba(255,51,68,0.4); }
+
+/* Disk usage detail */
+.disk-usage-item { margin-bottom: 6px; }
+.disk-detail { font-size: 10px; color: var(--text-dim); margin-top: 2px; }

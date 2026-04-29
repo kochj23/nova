@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NOVA CONTROL — HUD</title>
+  <link rel="stylesheet" href="/static/css/hud.css">
+</head>
+<body>
+  <div id="hud-container">
+
+    <!-- Top Bar: Title, status LEDs, clock -->
+    <div id="hud-topbar">
+      <div id="hud-title">NOVA CONTROL</div>
+      <div id="hud-status-leds"></div>
+      <div id="hud-clock">--:--:--</div>
+    </div>
+
+    <!-- Main visualization area -->
+    <div id="hud-main">
+      <canvas id="hud-heatmap"></canvas>
+      <canvas id="hud-canvas"></canvas>
+      <div id="hud-scanline"></div>
+    </div>
+
+    <!-- Bottom Bar: Ticker + stats -->
+    <div id="hud-bottombar">
+      <div id="hud-ticker-wrap">
+        <div id="hud-ticker"></div>
+      </div>
+      <div id="hud-stats">
+        <div class="hud-stat">
+          <span class="hud-stat-label">Memories</span>
+          <span class="hud-stat-value" id="stat-memories">--</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-stat-label">Scheduler</span>
+          <span class="hud-stat-value" id="stat-scheduler">--</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-stat-label">Uptime</span>
+          <span class="hud-stat-value" id="stat-uptime">--</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-stat-label">CPU</span>
+          <span class="hud-stat-value" id="stat-cpu">--</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-stat-label">RAM</span>
+          <span class="hud-stat-value" id="stat-ram">--</span>
+        </div>
+        <div class="hud-stat">
+          <span class="hud-stat-label">Models</span>
+          <span class="hud-stat-value" id="stat-models">--</span>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+  <script src="/static/js/hud.js"></script>
+</body>
+</html>

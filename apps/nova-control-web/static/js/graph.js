@@ -4,27 +4,27 @@ let W = 0, H = 0;
 const dpr = window.devicePixelRatio || 1;
 
 const NODE_DEFS = {
-  slack:          { label: 'Slack',         group: 'channel',  gx: 0.10, gy: 0.15 },
-  discord:        { label: 'Discord',       group: 'channel',  gx: 0.10, gy: 0.30 },
-  signal:         { label: 'Signal',        group: 'channel',  gx: 0.10, gy: 0.45 },
-  imessage:       { label: 'iMessage',      group: 'channel',  gx: 0.10, gy: 0.60 },
-  email:          { label: 'Email',         group: 'channel',  gx: 0.10, gy: 0.75 },
+    slack:          { label: 'Slack',         group: 'channel',  gx: 0.10, gy: 0.15, icon: '#' },
+    discord:        { label: 'Discord',       group: 'channel',  gx: 0.10, gy: 0.30, icon: '🎮' },
+    signal:         { label: 'Signal',        group: 'channel',  gx: 0.10, gy: 0.45, icon: '🔒' },
+    imessage:       { label: 'iMessage',      group: 'channel',  gx: 0.10, gy: 0.60, icon: '💬' },
+    email:          { label: 'Email',         group: 'channel',  gx: 0.10, gy: 0.75, icon: '✉' },
 
-  gateway:        { label: 'GATEWAY',       group: 'gateway',  gx: 0.50, gy: 0.42 },
+    gateway:        { label: 'GATEWAY',       group: 'gateway',  gx: 0.50, gy: 0.42, icon: '⬢' },
 
-  ollama:         { label: 'Ollama',        group: 'backend',  gx: 0.90, gy: 0.12 },
-  openrouter:     { label: 'OpenRouter',    group: 'backend',  gx: 0.90, gy: 0.28 },
-  mlx_chat:       { label: 'MLX Chat',      group: 'backend',  gx: 0.90, gy: 0.44 },
-  tinychat:       { label: 'TinyChat',      group: 'backend',  gx: 0.90, gy: 0.60 },
-  openwebui:      { label: 'OpenWebUI',     group: 'backend',  gx: 0.90, gy: 0.76 },
+    ollama:         { label: 'Ollama',        group: 'backend',  gx: 0.90, gy: 0.10, sublabel: 'coder · vision · dreams', icon: '🐇' },
+    openrouter:     { label: 'OpenRouter',    group: 'backend',  gx: 0.90, gy: 0.26, sublabel: 'chat · conversation', icon: '⑂' },
+    mlx_chat:       { label: 'MLX Chat',      group: 'backend',  gx: 0.90, gy: 0.42, sublabel: 'general · fast', icon: '⬡' },
+    tinychat:       { label: 'TinyChat',      group: 'backend',  gx: 0.90, gy: 0.58, sublabel: 'web UI · RAG', icon: '💬' },
+    openwebui:      { label: 'OpenWebUI',     group: 'backend',  gx: 0.90, gy: 0.74, sublabel: 'models · playground', icon: '🌐' },
 
-  searxng:        { label: 'SearXNG',       group: 'backend',  gx: 0.72, gy: 0.44 },
+    searxng:        { label: 'SearXNG',       group: 'support',  gx: 0.50, gy: 0.72, sublabel: 'web search', icon: '🔍' },
 
-  redis:          { label: 'Redis',         group: 'support',  gx: 0.17, gy: 0.90 },
-  postgresql:     { label: 'PostgreSQL',    group: 'support',  gx: 0.33, gy: 0.90 },
-  unifi:          { label: 'UniFi',         group: 'support',  gx: 0.50, gy: 0.90 },
-  memory_server:  { label: 'Memory',        group: 'support',  gx: 0.66, gy: 0.90 },
-  scheduler:      { label: 'Scheduler',     group: 'support',  gx: 0.83, gy: 0.90 },
+    redis:          { label: 'Redis',         group: 'support',  gx: 0.17, gy: 0.90, icon: '◆' },
+    postgresql:     { label: 'PostgreSQL',    group: 'support',  gx: 0.33, gy: 0.90, icon: '🗃' },
+    unifi:          { label: 'UniFi',         group: 'support',  gx: 0.50, gy: 0.90, icon: '📡' },
+    memory_server:  { label: 'Memory',        group: 'support',  gx: 0.66, gy: 0.90, icon: '🧠' },
+    scheduler:      { label: 'Scheduler',     group: 'support',  gx: 0.83, gy: 0.90, icon: '⏰' },
 };
 
 const EDGE_DEFS = [
@@ -35,7 +35,7 @@ const EDGE_DEFS = [
   { from: 'email',     to: 'gateway', dir: 'in' },
   { from: 'gateway',   to: 'ollama',       dir: 'out' },
   { from: 'gateway',   to: 'openrouter',   dir: 'out' },
-  { from: 'gateway',   to: 'searxng',      dir: 'out' },
+  { from: 'searxng',        to: 'gateway', dir: 'support' },
   { from: 'gateway',   to: 'mlx_chat',     dir: 'out' },
   { from: 'gateway',   to: 'tinychat',     dir: 'out' },
   { from: 'gateway',   to: 'openwebui',    dir: 'out' },
@@ -60,7 +60,7 @@ function initNodes() {
       gy: def.gy,
       x: 0,
       y: 0,
-      radius: id === 'gateway' ? 32 : 18,
+      radius: 18, // will be recalculated in layoutNodes
       status: 'unknown',
       pulsePhase: Math.random() * Math.PI * 2,
     };
@@ -71,9 +71,12 @@ function initNodes() {
 }
 
 function layoutNodes() {
+  const unit = Math.min(W, H);
   for (const node of Object.values(nodes)) {
     node.x = node.gx * W;
     node.y = node.gy * H;
+    // Responsive sizing: gateway = 6% of unit, others = 3.5% of unit
+    node.radius = node.group === 'gateway' ? Math.max(32, unit * 0.06) : Math.max(18, unit * 0.035);
   }
   for (const edge of edges) {
     const a = nodes[edge.from];
@@ -180,38 +183,95 @@ function drawEdge(edge) {
   ctx.stroke();
 }
 
+function getNodeActivity(nodeId) {
+  const flow = window.novaState?.traffic_flow;
+  if (!flow) return 0;
+  return flow[nodeId] || flow[nodeId.replace('_', '')] || 0;
+}
+
+function activityFillColor(activity, isDown, status) {
+  if (isDown) return [255, 51, 68];
+  if (status === 'unknown') return [0, 200, 130]; // still visible cyan-green for unknown
+  if (activity < 0.01) return [0, 255, 102];       // green
+  if (activity < 0.3) {
+    const t = activity / 0.3;
+    return [Math.round(255 * t), 255, Math.round(102 * (1 - t))];
+  }
+  if (activity < 0.7) {
+    const t = (activity - 0.3) / 0.4;
+    return [255, Math.round(255 - t * 100), 0];
+  }
+  const t = (activity - 0.7) / 0.3;
+  return [255, Math.round(155 - t * 80), 0];
+}
+
 function drawNode(node, ts) {
-  const col = statusColor(node.status);
+  const isDown = node.status === 'down' || node.status === 'error' || node.status === 'stopped';
+  const activity = getNodeActivity(node.id);
+  const fillCol = isDown ? [255, 51, 68] : [0, 255, 102]; // Force green/red for visibility
   const pulse = Math.sin(ts / 1000 + node.pulsePhase) * 0.3 + 0.7;
   const r = node.radius;
+  const fillOpacity = 0.3;
 
-  const grad = ctx.createRadialGradient(node.x, node.y, r * 0.3, node.x, node.y, r * 2.8);
-  grad.addColorStop(0, rgba(col, 0.25 * pulse));
-  grad.addColorStop(1, rgba(col, 0));
+  // Outer glow halo
+  const grad = ctx.createRadialGradient(node.x, node.y, r * 0.5, node.x, node.y, r * 2.2);
+  grad.addColorStop(0, rgba(fillCol, 0.5 * pulse));
+  grad.addColorStop(0.6, rgba(fillCol, 0.15 * pulse));
+  grad.addColorStop(1, rgba(fillCol, 0));
   ctx.fillStyle = grad;
   ctx.beginPath();
-  ctx.arc(node.x, node.y, r * 2.8, 0, Math.PI * 2);
+  ctx.arc(node.x, node.y, r * 2.2, 0, Math.PI * 2);
   ctx.fill();
 
+  // Solid filled interior
   ctx.beginPath();
   ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
-  ctx.fillStyle = rgba(col, 0.1);
+  ctx.fillStyle = rgba(fillCol, 0.3);
   ctx.fill();
-  ctx.strokeStyle = rgba(col, 0.7 * pulse);
-  ctx.lineWidth = node.group === 'gateway' ? 2.5 : 1.5;
+
+  // Bright border ring
+  ctx.beginPath();
+  ctx.arc(node.x, node.y, r, 0, Math.PI * 2);
+  ctx.strokeStyle = rgba(fillCol, 0.9);
+  ctx.lineWidth = node.group === 'gateway' ? 3.5 : 2.5;
   ctx.stroke();
 
-  if (node.group === 'gateway') {
+  // Inner detail ring
+  ctx.beginPath();
+  ctx.arc(node.x, node.y, r * 0.65, 0, Math.PI * 2);
+  ctx.strokeStyle = rgba(fillCol, 0.3);
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // Icon inside the node circle
+  const def = NODE_DEFS[node.id];
+  if (def && def.icon) {
+    ctx.fillStyle = node.group === 'gateway' ? rgba([0, 255, 200], 0.85 * pulse) : rgba(fillCol, 0.85 * pulse);
+    ctx.font = Math.max(14, r * 0.65) + 'px sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(def.icon, node.x, node.y);
+    ctx.textBaseline = 'alphabetic';
+  } else if (node.group === 'gateway') {
     ctx.beginPath();
     ctx.arc(node.x, node.y, r * 0.4, 0, Math.PI * 2);
     ctx.fillStyle = rgba(col, 0.35 * pulse);
     ctx.fill();
   }
 
+  // Label below node
   ctx.fillStyle = node.group === 'gateway' ? rgba([0, 255, 200], 0.9) : 'rgba(192, 192, 208, 0.85)';
-  ctx.font = node.group === 'gateway' ? 'bold 12px monospace' : '10px monospace';
+  const labelSize = node.group === 'gateway' ? Math.max(12, r * 0.4) : Math.max(9, r * 0.5);
+  ctx.font = (node.group === 'gateway' ? 'bold ' : '') + labelSize + 'px monospace';
   ctx.textAlign = 'center';
-  ctx.fillText(node.label, node.x, node.y + r + 16);
+  ctx.fillText(node.label, node.x, node.y + r + Math.max(14, r * 0.6));
+
+  // Sublabel (intent/role) below label for backend nodes
+  if (def && def.sublabel) {
+    ctx.fillStyle = 'rgba(128, 180, 160, 0.55)';
+    ctx.font = Math.max(7, r * 0.35) + 'px monospace';
+    ctx.fillText(def.sublabel, node.x, node.y + r + Math.max(14, r * 0.6) + Math.max(10, r * 0.45));
+  }
 }
 
 class Particle {

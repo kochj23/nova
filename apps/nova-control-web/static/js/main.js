@@ -680,6 +680,247 @@ function renderAgent(name, agent) {
   body.innerHTML = html;
 }
 
+// --- Token counter delta tracking ---
+let _prevTokens = null;
+let _prevTokenTs = null;
+
+// --- Card 1: OpenRouter Cost Tracker ---
+function renderCostTracker(mu) {
+  const card = document.getElementById('card-cost-tracker');
+  if (!card || !mu) return;
+  const or_data = mu.by_provider?.openrouter;
+  card.dataset.status = or_data ? 'healthy' : 'unknown';
+  const body = card.querySelector('.card-body');
+  const cost = or_data?.cost || 0;
+  const sessions = or_data?.sessions || 0;
+  const tokens = (or_data?.input_tokens || 0) + (or_data?.output_tokens || 0);
+  body.innerHTML =
+    statRow('Cost', '$' + cost.toFixed(4), cost > 1 ? 'red' : cost > 0.1 ? 'yellow' : 'green') +
+    statRow('Sessions', sessions, 'cyan') +
+    statRow('Tokens', tokens.toLocaleString()) +
+    statRow('Total Cost', '$' + (mu.total_cost_usd || 0).toFixed(4), 'magenta');
+}
+
+// --- Card 2: Memory Growth ---
+function renderMemoryGrowth(pg) {
+  const card = document.getElementById('card-memory-growth');
+  if (!card || !pg) return;
+  card.dataset.status = pg.status === 'ok' ? 'healthy' : 'down';
+  const body = card.querySelector('.card-body');
+  const total = pg.total_rows || 0;
+  body.innerHTML =
+    statRow('Total Memories', total.toLocaleString(), 'cyan') +
+    statRow('Database', pg.db_size_gb + ' GB', 'magenta') +
+    statRow('Tables', pg.tables?.length || 0);
+}
+
+// --- Card 3: Disk Usage ---
+function renderDiskUsage(sys) {
+  const card = document.getElementById('card-disk-usage');
+  if (!card || !sys) return;
+  const disks = sys.disks || {};
+  const hasRed = Object.values(disks).some(d => d.percent > 90);
+  const hasYellow = Object.values(disks).some(d => d.percent > 80);
+  card.dataset.status = hasRed ? 'down' : hasYellow ? 'degraded' : 'healthy';
+  const body = card.querySelector('.card-body');
+  let html = '';
+  for (const [mount, d] of Object.entries(disks)) {
+    const label = mount === '/' || mount === '/System/Volumes/Data' ? 'SSD' :
+                  mount.replace('/Volumes/', '');
+    const color = d.percent > 90 ? 'red' : d.percent > 80 ? 'yellow' : 'green';
+    html += `<div class="disk-usage-item">` +
+      statRow(label, `${d.free_gb} GB free (${d.percent}%)`, color) +
+      progressBar(d.percent, [80, 90]) +
+      `<div class="disk-detail">${d.used_gb}/${d.total_gb} GB used</div></div>`;
+  }
+  if (!html) html = '<p class="dim">No disk data</p>';
+  body.innerHTML = html;
+}
+
+// --- Card 4: SearXNG Stats ---
+function renderSearxngStats(data) {
+  const card = document.getElementById('card-searxng-stats');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  card.dataset.status = data.status === 'up' ? 'healthy' : data.status === 'down' ? 'down' : 'unknown';
+  const body = card.querySelector('.card-body');
+  body.innerHTML =
+    statRow('Status', data.status || 'unknown', data.status === 'up' ? 'green' : 'red') +
+    statRow('Engines', data.engine_count || 0, 'cyan') +
+    (data.error ? `<div class="error-text">${escapeHtml(data.error)}</div>` : '');
+}
+
+// --- Card 5: Backup Status ---
+function renderBackupStatus(data) {
+  const card = document.getElementById('card-backup-status');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  const ok = data.status === 'ok';
+  const stale = data.stale;
+  card.dataset.status = ok ? 'healthy' : data.status === 'warning' ? 'degraded' : 'down';
+  const body = card.querySelector('.card-body');
+  let timeStr = data.last_backup || 'Never';
+  if (data.last_backup) {
+    try {
+      const dt = new Date(data.last_backup.replace(' ', 'T'));
+      const ago = Math.floor((Date.now() - dt.getTime()) / 1000);
+      timeStr = formatUptime(ago) + ' ago';
+    } catch(e) { timeStr = data.last_backup; }
+  }
+  body.innerHTML =
+    statRow('Last Backup', timeStr, ok ? 'green' : stale ? 'yellow' : 'red') +
+    statRow('Result', data.success ? 'PASS' : 'FAIL', data.success ? 'green' : 'red') +
+    (data.size ? statRow('Size', data.size) : '') +
+    (data.status === 'no_log' ? '<div class="dim" style="margin-top:4px">No backup log found</div>' : '');
+}
+
+// --- Card 6: Nova Response Time ---
+function renderResponseTime(data) {
+  const card = document.getElementById('card-response-time');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  card.dataset.status = data.status === 'ok' ? 'healthy' : 'degraded';
+  const body = card.querySelector('.card-body');
+  body.innerHTML =
+    statRow('Replies Today', data.replies_today || 0, 'cyan') +
+    statRow('Avg/Hour', data.avg_per_hour || 0, 'green') +
+    (data.status === 'no_log' ? '<div class="dim" style="margin-top:4px">No gateway log</div>' : '');
+}
+
+// --- Card 7: Herd Activity ---
+function renderHerdActivity(data) {
+  const card = document.getElementById('card-herd-activity');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  card.dataset.status = data.status === 'ok' ? 'healthy' : 'degraded';
+  const body = card.querySelector('.card-body');
+  const channels = data.today || data.channels || {};
+  const colors = { slack: 'magenta', discord: 'blue', signal: 'green' };
+  let html = '';
+  for (const [ch, count] of Object.entries(channels)) {
+    html += statRow(ch, count, colors[ch] || 'cyan');
+  }
+  html += statRow('Total', data.total_events || 0, 'cyan');
+  body.innerHTML = html;
+}
+
+// --- Card 8: MLX Server Status ---
+function renderMlxStatus(data, services) {
+  const card = document.getElementById('card-mlx-status');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  const svcStatus = services?.mlx_chat?.status || data.status || 'unknown';
+  card.dataset.status = svcStatus === 'up' ? 'healthy' : 'down';
+  const body = card.querySelector('.card-body');
+  body.innerHTML =
+    statRow('Status', svcStatus, svcStatus === 'up' ? 'green' : 'red') +
+    statRow('Model', data.model || '?', 'cyan') +
+    (data.error ? `<div class="error-text">${escapeHtml(data.error)}</div>` : '');
+}
+
+// --- Card 9: Cron Job Health ---
+function renderCronHealth(sched) {
+  const card = document.getElementById('card-cron-health');
+  if (!card) return;
+  if (!sched || !sched.tasks) { card.dataset.status = 'unknown'; return; }
+  card.dataset.status = sched.status === 'ok' ? 'healthy' : 'down';
+  const body = card.querySelector('.card-body');
+  const tasks = sched.tasks;
+  let okCount = 0, failCount = 0, neverCount = 0;
+  let dots = '';
+  for (const [name, t] of Object.entries(tasks).sort((a, b) => a[0].localeCompare(b[0]))) {
+    let cls = 'cron-dot-ok';
+    if (!t.enabled) {
+      cls = 'cron-dot-gray';
+    } else if (t.consecutive_failures > 0 && t.run_count > 0) {
+      cls = t.consecutive_failures > 2 ? 'cron-dot-red' : 'cron-dot-yellow';
+      failCount++;
+    } else if (t.run_count === 0) {
+      cls = 'cron-dot-gray';
+      neverCount++;
+    } else {
+      okCount++;
+    }
+    dots += `<span class="cron-dot ${cls}" title="${escapeHtml(name)}: ${t.run_count || 0} runs, ${t.consecutive_failures || 0} failures"></span>`;
+  }
+  const total = Object.keys(tasks).length;
+  body.innerHTML =
+    `<div class="cron-dot-grid">${dots}</div>` +
+    `<div style="margin-top:8px;font-size:11px;color:var(--text-dim)">${okCount} OK / ${failCount} failing / ${neverCount} never</div>`;
+}
+
+// --- Card 10: Live Token Counter ---
+function renderTokenCounter(mu) {
+  const card = document.getElementById('card-token-counter');
+  if (!card || !mu) return;
+  card.dataset.status = mu.status === 'ok' ? 'healthy' : 'unknown';
+  const body = card.querySelector('.card-body');
+  const totalIn = Object.values(mu.by_provider || {}).reduce((a, p) => a + (p.input_tokens || 0), 0);
+  const totalOut = Object.values(mu.by_provider || {}).reduce((a, p) => a + (p.output_tokens || 0), 0);
+  const total = totalIn + totalOut;
+  let rateStr = '---';
+  const now = Date.now() / 1000;
+  if (_prevTokens !== null && _prevTokenTs !== null) {
+    const dt = now - _prevTokenTs;
+    if (dt > 0) {
+      const delta = total - _prevTokens;
+      const rate = Math.max(0, delta / dt);
+      rateStr = rate.toFixed(0) + ' tok/s';
+    }
+  }
+  _prevTokens = total;
+  _prevTokenTs = now;
+  body.innerHTML =
+    statRow('IN', totalIn.toLocaleString(), 'green') +
+    statRow('OUT', totalOut.toLocaleString(), 'magenta') +
+    statRow('Total', total.toLocaleString(), 'cyan') +
+    statRow('Rate', rateStr);
+}
+
+// --- Card 11: Camera Activity ---
+function renderCameras(data) {
+  const card = document.getElementById('card-cameras');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  if (data.status === 'no_file') {
+    card.dataset.status = 'unknown';
+    card.querySelector('.card-body').innerHTML = '<p class="dim">No camera state file</p>';
+    return;
+  }
+  card.dataset.status = data.disconnected > 0 ? 'degraded' : data.total > 0 ? 'healthy' : 'unknown';
+  const body = card.querySelector('.card-body');
+  let html = statRow('Cameras', data.total || 0, 'cyan') +
+    statRow('Connected', data.connected || 0, 'green') +
+    statRow('Disconnected', data.disconnected || 0, data.disconnected > 0 ? 'red' : 'green');
+  if (data.cameras?.length) {
+    html += '<div class="camera-list">';
+    for (const c of data.cameras) {
+      const dotCls = c.connected ? 'cam-dot-on' : 'cam-dot-off';
+      html += `<div class="camera-item"><span class="cam-dot ${dotCls}"></span><span>${escapeHtml(c.name || '?')}</span></div>`;
+    }
+    html += '</div>';
+  }
+  body.innerHTML = html;
+}
+
+// --- Card 12: HomeKit Scenes ---
+function renderHomeKit(data) {
+  const card = document.getElementById('card-homekit');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  if (data.status === 'unavailable') {
+    card.dataset.status = 'unknown';
+    card.querySelector('.card-body').innerHTML = '<p class="dim">Not configured</p>';
+    return;
+  }
+  card.dataset.status = data.status === 'ok' ? 'healthy' : 'degraded';
+  const body = card.querySelector('.card-body');
+  body.innerHTML =
+    statRow('Scenes', data.scene_count || 0, 'cyan') +
+    statRow('Accessories', data.accessory_count || 0, 'green') +
+    (data.error ? `<div class="error-text">${escapeHtml(data.error)}</div>` : '');
+}
+
 // --- Graph Node Click Handler ---
 window.openNodeDetail = function(nodeId, nodeLabel) {
   const NODE_SERVICE_MAP = {
@@ -1091,7 +1332,10 @@ DETAIL_RENDERERS.memory_server = function(d) {
 
 DETAIL_RENDERERS.gateway_queries = function(d) {
   if (d.status === 'empty') return '<p class="dim">No query data yet</p>';
-  let h = statRow('Total Queries', (d.total_queries || 0).toLocaleString(), 'cyan');
+  let h = statRow('Total Queries', (d.total_queries || 0).toLocaleString(), 'cyan') +
+    statRow('Reqs/sec', d.reqs_per_sec || 0, d.reqs_per_sec > 0.1 ? 'green' : 'dim') +
+    statRow('Reqs/min (5m avg)', d.reqs_per_min || 0, 'magenta') +
+    statRow('Last Hour', (d.last_hour || 0).toLocaleString(), 'green');
   if (d.backends && Object.keys(d.backends).length > 0) {
     h += '<div class="modal-section"><div class="modal-section-title">By Backend</div><table class="modal-table"><thead><tr><th>Backend</th><th>Model</th><th>Queries</th><th>Avg Latency</th><th>Fallbacks</th></tr></thead><tbody>';
     for (const [backend, info] of Object.entries(d.backends)) {
@@ -1199,6 +1443,254 @@ DETAIL_RENDERERS.conversations = function(d) {
     return h;
   };
 });
+
+// --- Detail Renderers for 12 New Cards ---
+
+DETAIL_RENDERERS.cost_tracker = function(d) {
+  let h = statRow('Today Cost', '$' + (d.today_cost || 0).toFixed(6), 'magenta') +
+    statRow('Total Cost', '$' + (d.total_cost || 0).toFixed(6), 'red') +
+    statRow('Today Sessions', d.today_sessions || 0, 'cyan') +
+    statRow('Today Tokens', (d.today_tokens || 0).toLocaleString(), 'green');
+
+  if (d.sessions?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Recent Sessions</div><table class="modal-table"><thead><tr><th>Session</th><th>Model</th><th>Cost</th><th>In</th><th>Out</th><th>Updated</th></tr></thead><tbody>';
+    for (const s of d.sessions) {
+      h += `<tr><td style="max-width:120px;overflow:hidden;text-overflow:ellipsis;font-size:10px">${escapeHtml(s.key)}</td>` +
+        `<td style="font-size:10px">${escapeHtml(s.model)}</td>` +
+        `<td>${s.cost > 0 ? '$' + s.cost.toFixed(4) : '$0'}</td>` +
+        `<td>${(s.input_tokens||0).toLocaleString()}</td><td>${(s.output_tokens||0).toLocaleString()}</td>` +
+        `<td style="font-size:10px">${s.updated}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
+  }
+
+  h += '<div class="modal-section"><div class="modal-section-title">Cost Trends</div>';
+  h += '<div class="time-range-btns" data-metric="costs"><button class="time-range-btn active" data-range="6h">6h</button><button class="time-range-btn" data-range="24h">24h</button><button class="time-range-btn" data-range="7d">7d</button></div>';
+  h += '<canvas class="modal-trend-chart" data-metric="costs" height="140"></canvas></div>';
+  return h;
+};
+
+DETAIL_RENDERERS.memory_growth = function(d) {
+  let h = statRow('Total Memories', (d.total || 0).toLocaleString(), 'cyan');
+
+  if (d.daily_trend?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Daily Growth (14 days)</div>';
+    const max = Math.max(1, ...d.daily_trend.map(x => x.count));
+    for (const dc of d.daily_trend) {
+      const pct = (dc.count / max * 100).toFixed(0);
+      h += statRow(dc.date, dc.count.toLocaleString()) +
+        `<div class="progress-bar-track"><div class="progress-bar-fill cyan" style="width:${pct}%"></div></div>`;
+    }
+    h += '</div>';
+  }
+
+  if (d.by_source?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">By Source</div><table class="modal-table"><thead><tr><th>Source</th><th>Count</th></tr></thead><tbody>';
+    for (const s of d.by_source) h += `<tr><td>${escapeHtml(s.source)}</td><td>${s.count.toLocaleString()}</td></tr>`;
+    h += '</tbody></table></div>';
+  }
+
+  h += '<div class="modal-section"><div class="modal-section-title">Trends</div>';
+  h += '<div class="time-range-btns" data-metric="memories"><button class="time-range-btn active" data-range="6h">6h</button><button class="time-range-btn" data-range="24h">24h</button><button class="time-range-btn" data-range="7d">7d</button></div>';
+  h += '<canvas class="modal-trend-chart" data-metric="memories" height="140"></canvas></div>';
+  return h;
+};
+
+DETAIL_RENDERERS.disk_usage = function(d) {
+  const disks = d.disks || {};
+  if (Object.keys(disks).length === 0) return '<p class="dim">No disk data</p>';
+  let h = '';
+  for (const [mount, info] of Object.entries(disks)) {
+    const label = mount === '/' || mount === '/System/Volumes/Data' ? 'SSD (' + mount + ')' : mount;
+    const color = info.percent > 90 ? 'red' : info.percent > 80 ? 'yellow' : 'green';
+    h += statRow(label, `${info.used_gb}/${info.total_gb} GB (${info.percent}%)`, color) +
+      progressBar(info.percent, [80, 90]) +
+      statRow('Free', info.free_gb + ' GB', color);
+    h += '<div style="margin-bottom:12px"></div>';
+  }
+  h += '<div class="modal-section"><div class="modal-section-title">Disk Trends</div>';
+  h += '<div class="time-range-btns" data-metric="disk"><button class="time-range-btn active" data-range="6h">6h</button><button class="time-range-btn" data-range="24h">24h</button><button class="time-range-btn" data-range="7d">7d</button></div>';
+  h += '<canvas class="modal-trend-chart" data-metric="disk" height="140"></canvas></div>';
+  return h;
+};
+
+DETAIL_RENDERERS.searxng_stats = function(d) {
+  let h = statRow('Status', d.status || '?', d.status === 'up' ? 'green' : 'red') +
+    statRow('Active Engines', d.engine_count || 0, 'cyan') +
+    statRow('Total Engines', d.total_engines || 0) +
+    statRow('Queries (total)', d.queries_total || 'n/a', 'magenta') +
+    statRow('Avg Response', d.avg_response_ms ? d.avg_response_ms + 'ms' : 'n/a', 'green');
+
+  // Engine categories breakdown
+  if (d.categories && Object.keys(d.categories).length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Engine Categories</div><table class="modal-table"><thead><tr><th>Category</th><th>Count</th></tr></thead><tbody>';
+    for (const [cat, count] of Object.entries(d.categories).sort((a,b) => b[1] - a[1])) {
+      h += `<tr><td>${escapeHtml(cat)}</td><td>${count}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
+  }
+
+  // Engine list
+  if (d.engines?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Engines (' + d.engines.length + ')</div><table class="modal-table"><thead><tr><th>Engine</th><th>Shortcut</th><th>Category</th></tr></thead><tbody>';
+    for (const e of d.engines) {
+      const cat = Array.isArray(e.categories) ? e.categories[0] || '' : '';
+      h += `<tr><td>${escapeHtml(e.name)}</td><td>${escapeHtml(e.shortcut)}</td><td style="color:var(--text-dim)">${escapeHtml(cat)}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
+  }
+  if (d.error) h += `<div class="error-text">${escapeHtml(d.error)}</div>`;
+  return h;
+};
+
+DETAIL_RENDERERS.backup_status = function(d) {
+  let h = statRow('Status', d.status || '?', d.status === 'ok' ? 'green' : d.status === 'warning' ? 'yellow' : 'red') +
+    statRow('Last Backup', d.last_backup || 'Never', d.success ? 'green' : 'red') +
+    statRow('Result', d.success ? 'PASS' : 'FAIL', d.success ? 'green' : 'red') +
+    (d.size ? statRow('Size', d.size) : '') +
+    (d.stale ? '<div style="color:var(--accent-yellow);font-size:11px;margin-top:4px">Backup is stale (>24h old)</div>' : '') +
+    (d.last_error ? statRow('Last Error', d.last_error, 'red') : '');
+
+  if (d.lines?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Recent Log Lines</div>' +
+      `<pre style="font-size:10px;color:var(--text-dim);white-space:pre-wrap;max-height:300px;overflow-y:auto;line-height:1.6">${d.lines.map(escapeHtml).join('\n')}</pre></div>`;
+  }
+  return h;
+};
+
+DETAIL_RENDERERS.response_time = function(d) {
+  let h = statRow('Replies Today', d.replies_today || 0, 'cyan') +
+    statRow('Avg Replies/Hour', d.avg_per_hour || 0, 'green');
+
+  if (d.hourly_breakdown && Object.keys(d.hourly_breakdown).length > 0) {
+    h += '<div class="modal-section"><div class="modal-section-title">Hourly Breakdown</div><table class="modal-table"><thead><tr><th>Hour</th><th>Replies</th></tr></thead><tbody>';
+    for (const [hour, count] of Object.entries(d.hourly_breakdown).sort((a,b) => parseInt(a[0]) - parseInt(b[0]))) {
+      h += `<tr><td>${hour}:00</td><td>${count}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
+  }
+
+  if (d.recent_replies?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Recent Replies</div>' +
+      `<pre style="font-size:10px;color:var(--text-dim);white-space:pre-wrap;max-height:300px;overflow-y:auto;line-height:1.6">${d.recent_replies.map(escapeHtml).join('\n')}</pre></div>`;
+  }
+  return h;
+};
+
+DETAIL_RENDERERS.herd_activity = function(d) {
+  const colors = { slack: 'magenta', discord: 'blue', signal: 'green' };
+  let h = statRow('Total Events', (d.total_events || 0).toLocaleString(), 'cyan');
+
+  h += '<div class="modal-section"><div class="modal-section-title">All Time</div>';
+  for (const [ch, count] of Object.entries(d.channels || {})) {
+    h += statRow(ch, count.toLocaleString(), colors[ch] || '');
+  }
+  h += '</div>';
+
+  if (d.today) {
+    h += '<div class="modal-section"><div class="modal-section-title">Today</div>';
+    for (const [ch, count] of Object.entries(d.today)) {
+      h += statRow(ch, count.toLocaleString(), colors[ch] || '');
+    }
+    h += '</div>';
+  }
+  return h;
+};
+
+DETAIL_RENDERERS.mlx_status = function(d) {
+  let h = statRow('Status', d.status || '?', d.status === 'up' ? 'green' : 'red') +
+    statRow('Loaded Model', d.model || '?', 'cyan') +
+    statRow('Model Count', d.model_count || 0);
+
+  if (d.models?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Available Models</div><table class="modal-table"><thead><tr><th>Model ID</th><th>Owner</th></tr></thead><tbody>';
+    for (const m of d.models) h += `<tr><td>${escapeHtml(m.id)}</td><td>${escapeHtml(m.owned_by)}</td></tr>`;
+    h += '</tbody></table></div>';
+  }
+  if (d.error) h += `<div class="error-text">${escapeHtml(d.error)}</div>`;
+  return h;
+};
+
+DETAIL_RENDERERS.cron_health = function(d) {
+  const tasks = d.tasks || [];
+  if (tasks.length === 0) return '<p class="dim">No task data</p>';
+  let okCount = 0, failCount = 0, neverCount = 0;
+  for (const t of tasks) {
+    if (t.status === 'ok') okCount++;
+    else if (t.status === 'failing') failCount++;
+    else if (t.status === 'never') neverCount++;
+  }
+  let h = statRow('OK', okCount, 'green') +
+    statRow('Failing', failCount, failCount > 0 ? 'red' : 'green') +
+    statRow('Never Run', neverCount, neverCount > 0 ? 'yellow' : '') +
+    statRow('Total', tasks.length, 'cyan');
+
+  h += '<div class="modal-section"><div class="modal-section-title">All Jobs</div><table class="modal-table"><thead><tr><th>Job</th><th>Schedule</th><th>Runs</th><th>Fails</th><th>Status</th></tr></thead><tbody>';
+  for (const t of tasks) {
+    const color = t.status === 'ok' ? 'var(--accent-green)' : t.status === 'failing' ? 'var(--accent-red)' : t.status === 'running' ? 'var(--accent-cyan)' : 'var(--text-dim)';
+    h += `<tr><td>${escapeHtml(t.name)}</td><td>${escapeHtml(t.schedule)}</td><td>${t.run_count||0}</td><td>${t.consecutive_failures||0}</td><td style="color:${color}">${t.status}</td></tr>`;
+  }
+  h += '</tbody></table></div>';
+  return h;
+};
+
+DETAIL_RENDERERS.token_counter = function(d) {
+  let h = statRow('Total Tokens', (d.total_tokens || 0).toLocaleString(), 'cyan') +
+    statRow('Total Cost', '$' + (d.total_cost || 0).toFixed(4), 'magenta');
+
+  if (d.by_provider && Object.keys(d.by_provider).length > 0) {
+    h += '<div class="modal-section"><div class="modal-section-title">By Provider</div><table class="modal-table"><thead><tr><th>Provider</th><th>Input</th><th>Output</th><th>Total</th><th>Cost</th></tr></thead><tbody>';
+    for (const [prov, p] of Object.entries(d.by_provider).sort((a,b) => (b[1].input_tokens+b[1].output_tokens) - (a[1].input_tokens+a[1].output_tokens))) {
+      const tot = (p.input_tokens || 0) + (p.output_tokens || 0);
+      h += `<tr><td>${escapeHtml(prov)}</td><td>${(p.input_tokens||0).toLocaleString()}</td><td>${(p.output_tokens||0).toLocaleString()}</td><td>${tot.toLocaleString()}</td><td>${p.cost > 0 ? '$' + p.cost.toFixed(4) : '$0'}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
+  }
+  return h;
+};
+
+DETAIL_RENDERERS.cameras = function(d) {
+  if (d.status === 'no_file') return '<p class="dim">No camera state file found</p>';
+  let h = statRow('Total Cameras', d.total || 0, 'cyan') +
+    statRow('Connected', d.connected || 0, 'green') +
+    statRow('Disconnected', d.disconnected || 0, d.disconnected > 0 ? 'red' : 'green');
+
+  if (d.cameras?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Camera Details</div><table class="modal-table"><thead><tr><th>Name</th><th>Type</th><th>IP</th><th>Status</th></tr></thead><tbody>';
+    for (const c of d.cameras) {
+      const color = c.connected ? 'var(--accent-green)' : 'var(--accent-red)';
+      h += `<tr><td>${escapeHtml(c.name)}</td><td>${escapeHtml(c.type || '?')}</td><td style="font-size:10px">${escapeHtml(c.ip || '?')}</td><td style="color:${color}">${c.connected ? 'Online' : 'Offline'}</td></tr>`;
+    }
+    h += '</tbody></table></div>';
+  }
+  if (d.error) h += `<div class="error-text">${escapeHtml(d.error)}</div>`;
+  return h;
+};
+
+DETAIL_RENDERERS.homekit = function(d) {
+  if (d.status === 'unavailable') return '<p class="dim">Not configured or unavailable</p>';
+  let h = statRow('Scenes', d.scene_count || 0, 'cyan') +
+    statRow('Accessories', d.accessory_count || 0, 'green');
+
+  if (d.scenes?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Scenes</div><table class="modal-table"><thead><tr><th>Scene</th><th>ID</th></tr></thead><tbody>';
+    for (const s of d.scenes) h += `<tr><td>${escapeHtml(s.name)}</td><td style="font-size:10px">${escapeHtml(s.id)}</td></tr>`;
+    h += '</tbody></table></div>';
+  }
+
+  if (d.raw_status && Object.keys(d.raw_status).length > 0) {
+    h += '<div class="modal-section"><div class="modal-section-title">Status</div>';
+    for (const [k, v] of Object.entries(d.raw_status)) {
+      h += statRow(k, typeof v === 'object' ? JSON.stringify(v) : String(v));
+    }
+    h += '</div>';
+  }
+  if (d.error) h += `<div class="error-text">${escapeHtml(d.error)}</div>`;
+  return h;
+};
+
+DETAIL_RENDERERS.searxng = DETAIL_RENDERERS.searxng_stats;
+DETAIL_RENDERERS.gateway = DETAIL_RENDERERS.gateway_queries;
 
 function formatBytesDetail(bytes) {
   if (!bytes) return '?';
