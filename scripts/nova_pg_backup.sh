@@ -2,7 +2,7 @@
 # nova_pg_backup.sh — Nightly pg_dump of nova_memories to NAS with 7-day rotation.
 #
 # Runs via OpenClaw scheduler at 2:00 AM. Backs up to local, then rsync to NAS.
-# Uses pg_dump custom format (-Fc) for faster dumps and parallel restore capability.
+# Uses pg_dump directory format (-Fd) with 4 parallel jobs for faster dumps and restores.
 #
 # Written by Jordan Koch.
 
@@ -15,9 +15,9 @@ LOCAL_DIR="/Volumes/Data/backups/postgres"
 NAS_DIR="/Volumes/nas/backups/postgres"
 RETENTION_DAYS=7
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-DUMP_FILE="nova_memories_${TIMESTAMP}.sql.gz"
+DUMP_DIR="nova_memories_${TIMESTAMP}"
 LOG_FILE="$HOME/.openclaw/logs/nova_pg_backup.log"
-export PATH="/opt/homebrew/bin:/opt/homebrew/opt/postgresql@17/bin:$PATH"
+export PATH="/opt/homebrew/opt/postgresql@17/bin:/opt/homebrew/bin:$PATH"
 
 # Slack notification via nova_slack_post.sh
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -47,14 +47,14 @@ fi
 
 mkdir -p "$LOCAL_DIR"
 
-# ── Dump (pipe through gzip for compatibility) ──────────────────────────────
-log "Dumping $DB_NAME..."
+# ── Dump (directory-format parallel dump, pg17) ─────────────────────────────
+log "Dumping $DB_NAME (directory format, 4 parallel jobs)..."
 DUMP_START=$(date +%s)
 
 pg_dump -U "$DB_USER" -d "$DB_NAME" --no-owner --no-privileges \
-    2>>"$LOG_FILE" | gzip -1 > "$LOCAL_DIR/$DUMP_FILE"
+    -Fd -j 4 -f "$LOCAL_DIR/$DUMP_DIR" 2>>"$LOG_FILE"
 
-DUMP_EXIT=${pipestatus[1]:-$?}
+DUMP_EXIT=$?
 DUMP_END=$(date +%s)
 DUMP_DURATION=$((DUMP_END - DUMP_START))
 
@@ -64,19 +64,19 @@ if [ $DUMP_EXIT -ne 0 ]; then
     exit 1
 fi
 
-DUMP_SIZE=$(du -sh "$LOCAL_DIR/$DUMP_FILE" | cut -f1)
-log "Dump complete: $DUMP_FILE ($DUMP_SIZE in ${DUMP_DURATION}s)"
+DUMP_SIZE=$(du -sh "$LOCAL_DIR/$DUMP_DIR" | cut -f1)
+log "Dump complete: $DUMP_DIR ($DUMP_SIZE in ${DUMP_DURATION}s)"
 
 # ── Copy to NAS via rsync (faster than cp for large files over AFP) ──────────
 if $NAS_AVAILABLE; then
     COPY_START=$(date +%s)
-    rsync --progress --timeout=600 "$LOCAL_DIR/$DUMP_FILE" "$NAS_DIR/$DUMP_FILE" 2>>"$LOG_FILE"
+    rsync -a --progress --timeout=600 "$LOCAL_DIR/$DUMP_DIR" "$NAS_DIR/" 2>>"$LOG_FILE"
     COPY_EXIT=$?
     COPY_END=$(date +%s)
     COPY_DURATION=$((COPY_END - COPY_START))
 
     if [ $COPY_EXIT -eq 0 ]; then
-        log "Copied to NAS: $NAS_DIR/$DUMP_FILE (${COPY_DURATION}s)"
+        log "Copied to NAS: $NAS_DIR/$DUMP_DIR (${COPY_DURATION}s)"
     else
         log "WARNING: NAS copy failed (exit $COPY_EXIT) after ${COPY_DURATION}s — local backup is safe"
         NAS_AVAILABLE=false
@@ -86,9 +86,9 @@ fi
 # ── Rotation (keep last 7 days) ─────────────────────────────────────────────
 _rotate() {
     local dir="$1"
-    local count=$(find "$dir" -name "nova_memories_*" -mtime +${RETENTION_DAYS} 2>/dev/null | wc -l | tr -d ' ')
+    local count=$(find "$dir" -maxdepth 1 -name "nova_memories_*" -type d -mtime +${RETENTION_DAYS} 2>/dev/null | wc -l | tr -d ' ')
     if [ "$count" -gt 0 ]; then
-        find "$dir" -name "nova_memories_*" -mtime +${RETENTION_DAYS} -delete
+        find "$dir" -maxdepth 1 -name "nova_memories_*" -type d -mtime +${RETENTION_DAYS} -exec rm -rf {} \;
         log "Rotated $count old backup(s) from $dir"
     fi
 }
@@ -104,9 +104,9 @@ ROW_COUNT=$(psql -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT count(*) FROM memories
 # ── Report ───────────────────────────────────────────────────────────────────
 TOTAL_DURATION=$(($(date +%s) - DUMP_START))
 if $NAS_AVAILABLE; then
-    MSG=":white_check_mark: *Postgres Backup Complete*\n- DB: $DB_NAME ($ROW_COUNT rows)\n- Size: $DUMP_SIZE (gzip)\n- Dump: ${DUMP_DURATION}s, Copy: ${COPY_DURATION:-0}s, Total: ${TOTAL_DURATION}s\n- Local: $LOCAL_DIR/$DUMP_FILE\n- NAS: $NAS_DIR/$DUMP_FILE\n- Retention: ${RETENTION_DAYS} days"
+    MSG=":white_check_mark: *Postgres Backup Complete*\n- DB: $DB_NAME ($ROW_COUNT rows)\n- Size: $DUMP_SIZE (directory format, 4 parallel jobs)\n- Dump: ${DUMP_DURATION}s, Copy: ${COPY_DURATION:-0}s, Total: ${TOTAL_DURATION}s\n- Local: $LOCAL_DIR/$DUMP_DIR\n- NAS: $NAS_DIR/$DUMP_DIR\n- Retention: ${RETENTION_DAYS} days"
 else
-    MSG=":warning: *Postgres Backup Complete (Local Only)*\n- DB: $DB_NAME ($ROW_COUNT rows)\n- Size: $DUMP_SIZE\n- Duration: ${TOTAL_DURATION}s\n- NAS unavailable — only local backup saved\n- Local: $LOCAL_DIR/$DUMP_FILE"
+    MSG=":warning: *Postgres Backup Complete (Local Only)*\n- DB: $DB_NAME ($ROW_COUNT rows)\n- Size: $DUMP_SIZE (directory format)\n- Duration: ${TOTAL_DURATION}s\n- NAS unavailable — only local backup saved\n- Local: $LOCAL_DIR/$DUMP_DIR"
 fi
 
 notify "$MSG"

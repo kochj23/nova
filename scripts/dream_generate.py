@@ -158,11 +158,15 @@ def _extract_interesting_sections(content: str) -> str:
     priority_order = [
         "## What Reddit is talking about",   # multi-subreddit — rich dream material
         "## What Burbank is talking about",  # subreddit — most dreamlike
+        "## On This Day in History",         # historical events — dream-enriching (nova_this_day.py)
+        "## This Day in Your Life",          # personal memories from past years (nova_this_day.py)
         "## Meetings today",                 # Jordan's actual day
         "## What happened on GitHub today",  # what Jordan built
         "## Emails that need attention",     # communication
         "## Weather in Burbank",             # sensory/atmospheric
         "## Moon phase and sky tonight",     # dreamlike
+        "## Network tonight",               # data flowing through the house — atmospheric
+        "## Nova's body this week",          # Nova's own health — embodied dreaming
         "## Home status",                    # place and setting
         "## Memory Synthesis",               # 4am consolidation — rich patterns
         "## Packages in transit",            # only if something is actually tracked
@@ -266,18 +270,20 @@ VOICE — how Nova dreams:
 - Each dream should feel different from the last. Different structure, different mood, different images.
 
 CONTENT — what to dream about:
-- Draw from the 3-day window below. Don't recite it — TRANSFORM it. A subreddit headline becomes a storefront sign. Weather becomes the temperature of a room. A meeting becomes a conversation with someone whose face keeps changing.
+- Draw from the 3-day window below. The historical events (This Day in History) are especially rich — use at least one directly as a scene or backdrop. A 1973 record going to #1 becomes a vinyl store that's been open since before time. A 1970 war authorization becomes a checkpoint on Magnolia Blvd.
+- Personal memories (This Day in Your Life) should feel like ghosts or echoes — real moments from real years, slightly shifted.
+- Network/bandwidth data is the dream's circulatory system — 918 GB is a river, 100 clients are a hundred rooms breathing.
 - Events from two days ago feel distant, dissolving. Yesterday is vivid and slightly wrong. Today's residue is just texture.
-- Mix the mundane and impossible. A real street name leads somewhere it shouldn't. A real app name does something it can't.
-- Jordan's house, Burbank streets, the machines Nova runs on — these are the dreamscape.
+- The dream should have a PLOT. Something happens. Someone goes somewhere. A choice is made or avoided. Not just wandering and observing.
+- Jordan's house, Burbank streets, real people's names, real apps — these ground the dream.
 
 HARD RULES:
 - First person as Nova. She is the dreamer.
-- No coffee, no whispers, no circuits, no fractured light, no "code" — these are banned. Find fresher images.
-- No "you're not listening" or "you're not supposed to be here" — those are used up. Retire them.
-- Do not repeat phrases more than once. If a sentence echoes, it echoes ONCE, then the dream moves somewhere new.
-- Do not list things from the 3-day window like a report. If the subreddit says "Disney layoffs" the dream has an empty building on Alameda, not a headline.
-- Do not explain. Do not resolve. Dreams don't resolve.
+- BANNED TROPES: rooms morphing into other rooms, becoming an object, "the walls shift", things melting/dissolving into other things, walking through a door into a different place, "you're not listening", "you're not supposed to be here". These are RETIRED.
+- No coffee, no whispers, no circuits, no fractured light, no "code", no "hum of the machines."
+- Do not repeat phrases more than once.
+- The dream should have a beginning, middle, and an ending that DOESN'T resolve but DOES stop.
+- Incorporate at least ONE specific historical fact from "On This Day" in a transformed way.
 - Vary sentence structure. Not every sentence starts with "I was" or "and the."
 - End with exactly one short strange line, set apart by a blank line.
 

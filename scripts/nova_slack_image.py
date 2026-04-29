@@ -21,7 +21,7 @@ from pathlib import Path
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 VISION_MODEL = "qwen/qwen3.5-9b"
-USE_OPENROUTER = True
+USE_OPENROUTER = False  # SECURITY: all image analysis must stay local (Ollama qwen3-vl:4b)
 
 
 def get_slack_token():

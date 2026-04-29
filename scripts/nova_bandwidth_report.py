@@ -187,6 +187,52 @@ def main():
         wan_total_gb = (wan_down + wan_up) / 1024/1024/1024
         lines.append(f"  Today: {wan_down_gb:,.1f}G down / {wan_up_gb:,.1f}G up ({wan_total_gb:,.1f}G total)")
 
+    # ── Delta vs yesterday ──────────────────────────────────────────────
+    state_dir = Path.home() / ".openclaw/workspace/state"
+    state_dir.mkdir(parents=True, exist_ok=True)
+    yesterday_file = state_dir / "bandwidth_yesterday.json"
+
+    try:
+        if yesterday_file.exists():
+            yday = json.loads(yesterday_file.read_text())
+            yday_total = yday.get("wan_total_gb", 0)
+            if yday_total > 0 and wan_total_gb > 0:
+                pct_change = ((wan_total_gb - yday_total) / yday_total) * 100
+                arrow = "↑" if pct_change >= 0 else "↓"
+                lines.append(f"  {arrow}{abs(pct_change):.0f}% vs yesterday ({yday_total:,.1f}G)")
+
+            # Find top grower: device with biggest increase vs yesterday
+            yday_devices = {d["name"]: d["total_gb"] for d in yday.get("devices", [])}
+            if ranked and yday_devices:
+                biggest_growth_name = ""
+                biggest_growth_delta = 0
+                for c in ranked[:20]:
+                    today_gb = c["total"] / 1024/1024/1024
+                    prev_gb = yday_devices.get(c["name"], 0)
+                    delta = today_gb - prev_gb
+                    if delta > biggest_growth_delta:
+                        biggest_growth_delta = delta
+                        biggest_growth_name = c["name"]
+                if biggest_growth_name and biggest_growth_delta > 0.1:
+                    lines.append(f"  Top grower: {biggest_growth_name} (+{biggest_growth_delta:,.1f}G)")
+    except Exception:
+        pass  # no yesterday data or parse error — skip silently
+
+    # Save today's state for tomorrow's comparison
+    try:
+        today_state = {
+            "date": now.strftime("%Y-%m-%d"),
+            "wan_down_gb": wan_down / 1024/1024/1024 if wan_down else 0,
+            "wan_up_gb": wan_up / 1024/1024/1024 if wan_up else 0,
+            "wan_total_gb": (wan_down + wan_up) / 1024/1024/1024 if (wan_down or wan_up) else 0,
+            "lan_total_gb": sum(c["total"] for c in ranked) / 1024/1024/1024 if ranked else 0,
+            "client_count": len(clients),
+            "devices": [{"name": c["name"], "total_gb": c["total"] / 1024/1024/1024} for c in ranked[:20]],
+        }
+        yesterday_file.write_text(json.dumps(today_state, indent=2))
+    except Exception:
+        pass
+
     lines.append("")
     lines.append(f"*Top 10 LAN clients:*")
     lines.append(f"```{'Device':<30} {'Total':>10} {'Down':>10} {'Up':>10}")
@@ -217,6 +263,28 @@ def main():
     try:
         req = urllib.request.Request(f"{VECTOR_URL}?async=1", data=payload, headers={"Content-Type": "application/json"}, method="POST")
         urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+
+    # Append to daily memory file for dream generation
+    from pathlib import Path
+    mem_dir = Path.home() / ".openclaw/workspace/memory"
+    mem_dir.mkdir(parents=True, exist_ok=True)
+    mem_file = mem_dir / f"{now.strftime('%Y-%m-%d')}.md"
+    top_names = [c["name"].replace("---", " ").replace("-", " ") for c in ranked[:5]]
+    mem_block = (
+        f"\n\n## Network tonight\n"
+        f"- {total_all:.0f} GB flowing through {len(clients)} devices on the LAN\n"
+        f"- Top talkers: {', '.join(top_names)}\n"
+        f"- {wan_str.strip() if wan_str else 'WAN quiet'}\n"
+    )
+    try:
+        if mem_file.exists():
+            existing = mem_file.read_text(encoding="utf-8")
+            if "Network tonight" not in existing:
+                mem_file.write_text(existing.rstrip() + mem_block, encoding="utf-8")
+        else:
+            mem_file.write_text(f"# Nova Memory -- {now.strftime('%Y-%m-%d')}\n" + mem_block, encoding="utf-8")
     except Exception:
         pass
 

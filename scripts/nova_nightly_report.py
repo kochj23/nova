@@ -228,14 +228,17 @@ def email_action_items():
                     ["american express", "amex", "bank", "credit", "payment", "invoice", "bill",
                      "statement", "fraud", "transaction", "charge"])
                 is_security = any(w in sender_lower + subj_lower for w in
-                    ["security", "alert", "warning", "unauthorized", "verify", "password",
-                     "2fa", "login", "breach", "adt", "low battery"])
+                    ["security alert", "unauthorized", "verify your",
+                     "2fa", "suspicious login", "breach", "fraud alert"])
+                # ADT resolved/restored notifications are informational, not actionable
+                is_adt_resolved = ("adt" in sender_lower and
+                    any(w in subj_lower for w in ["restored", "resolved", "cleared"]))
                 is_question = "?" in current_msg["subject"]
                 is_nova_msg = "nova" in sender_lower and "digitalnoise" in sender_lower
 
                 if not is_noise and not is_nova_msg:
                     priority = None
-                    if is_security or is_financial:
+                    if (is_security or is_financial) and not is_adt_resolved:
                         priority = "🔴 HIGH"
                     elif is_known and is_question:
                         priority = "🟡 REPLY"
@@ -933,14 +936,33 @@ def main():
         ("Meeting Notes",      meeting_notes),
     ]
 
+    # Phrases indicating a section has no real content — skip posting these
+    EMPTY_PHRASES = [
+        "no activity in the last 24 hours",
+        "no package notifications",
+        "no action items identified",
+        "no posts found",
+        "no monitored apps running",
+        "could not fetch mail data",
+        "app is not running",
+        "no meetings today",
+    ]
+
+    def _is_empty_section(text):
+        """Return True if the section only contains an empty-state message."""
+        lower = text.lower()
+        return any(phrase in lower for phrase in EMPTY_PHRASES)
+
     results = {}
     for name, fn in modules:
         log(f"Running: {name}")
         try:
             result = fn()
             results[name] = result or ""
-            if result:
+            if result and not _is_empty_section(result):
                 slack_post(result)
+            elif result:
+                log(f"Skipping empty section: {name}")
         except Exception as e:
             results[name] = f"Error: {e}"
             slack_post(f"*{name}*\n_Failed: {e}_")

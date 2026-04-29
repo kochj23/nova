@@ -24,15 +24,21 @@ SLACK_CHANNEL = "C0ATAF7NZG9"
 JOBS_FILE     = Path.home() / ".openclaw/cron/jobs.json"
 LOG_DIR       = Path.home() / ".openclaw/logs"
 NOVA_BOT_ID   = "U0ANKLR3SUQ"   # novaslackintegation bot user ID
+SCHEDULER_API = "http://127.0.0.1:37460/tasks"
 
 # Thresholds
 MAX_CONSECUTIVE_ERRORS  = 2       # alert after this many consecutive failures
 FAST_RUN_THRESHOLD_MS   = 100     # runs shorter than this are suspect (empty promises)
 STALE_HOURS             = 26      # job hasn't run in this long despite being scheduled daily
+WEEKLY_TASKS            = {"weekly_journal", "self_audit", "weekly_reliability"}
 FAST_RUN_EXEMPT         = {       # jobs that legitimately run fast
     "Nova Disk Check (noon only)",
     "Nova Gateway Watchdog",
     "Nova Home Watchdog",
+    "session_watchdog",
+    "gateway_watchdog",
+    "home_watchdog",
+    "subagent_health",
 }
 
 # Key deliveries that should appear in Slack within the last 20 hours
@@ -77,8 +83,49 @@ def fetch_recent_slack_messages(hours: int = 20) -> list[dict]:
 
 
 def audit_slack_deliveries() -> list[dict]:
-    """Check that expected bot messages appeared in Slack in the last 20 hours."""
+    """Check that expected deliveries happened in the last 20 hours.
+
+    Primary: check scheduler task state for last_run timestamps.
+    Fallback: search Slack message history.
+    """
     issues = []
+    now = datetime.now().timestamp()
+
+    # Map deliveries to scheduler task IDs
+    DELIVERY_TASK_MAP = {
+        "Morning Brief": "morning_brief",
+        "Mail Summary": "mail_deliver_am",
+        "Nightly Report": "nightly_report",
+    }
+
+    # Try scheduler API first
+    try:
+        resp = urllib.request.urlopen(SCHEDULER_API, timeout=5)
+        tasks = json.loads(resp.read())
+
+        for label, task_id in DELIVERY_TASK_MAP.items():
+            task = tasks.get(task_id, {})
+            last_run = task.get("last_run", 0)
+            hours_ago = (now - last_run) / 3600 if last_run else 999
+            exit_code = task.get("last_exit_code", -1)
+
+            if hours_ago > 20:
+                issues.append({
+                    "severity": "warning",
+                    "name": f"Slack delivery: {label}",
+                    "reason": f"Task '{task_id}' last ran {hours_ago:.0f}h ago (expected within 20h)",
+                })
+            elif exit_code != 0:
+                issues.append({
+                    "severity": "warning",
+                    "name": f"Slack delivery: {label}",
+                    "reason": f"Task '{task_id}' ran but failed (exit {exit_code})",
+                })
+        return issues
+    except Exception:
+        pass
+
+    # Fallback: Slack message search
     messages = fetch_recent_slack_messages(hours=20)
     all_text = " ".join(m.get("text", "") for m in messages).lower()
 
@@ -87,7 +134,7 @@ def audit_slack_deliveries() -> list[dict]:
             issues.append({
                 "severity": "warning",
                 "name": f"Slack delivery: {label}",
-                "reason": f"No '{fragment}' message found in #nova-chat in last 20h",
+                "reason": f"No '{fragment}' message found in #nova-notifications in last 20h",
             })
 
     return issues
@@ -163,10 +210,67 @@ def _load_run_history(job_id: str) -> dict:
 
 
 def audit_jobs() -> list[dict]:
-    """Return list of issues found across all cron jobs."""
-    issues = []
-    now_ms = datetime.now().timestamp() * 1000
+    """Return list of issues found across all scheduled tasks.
 
+    Primary source: unified scheduler API (port 37460).
+    Fallback: legacy cron/jobs.json for old-system tasks.
+    """
+    issues = []
+    now = datetime.now().timestamp()
+
+    # Try the unified scheduler API first
+    scheduler_tasks = {}
+    try:
+        resp = urllib.request.urlopen(SCHEDULER_API, timeout=5)
+        scheduler_tasks = json.loads(resp.read())
+    except Exception as e:
+        log(f"Scheduler API unavailable: {e} — falling back to jobs.json")
+
+    if scheduler_tasks:
+        for task_id, task in scheduler_tasks.items():
+            if not task.get("enabled", True):
+                continue
+
+            errors = task.get("consecutive_failures", 0)
+            last_run = task.get("last_run", 0)
+            last_dur = task.get("last_duration", 0)
+            last_exit = task.get("last_exit_code", 0)
+            hours_since = (now - last_run) / 3600 if last_run else 999
+
+            # Consecutive failures
+            if errors >= MAX_CONSECUTIVE_ERRORS:
+                issues.append({
+                    "severity": "error",
+                    "name": task_id,
+                    "reason": f"{errors} consecutive failures (exit code {last_exit})",
+                })
+                continue
+
+            # Suspiciously fast (empty promise) — only for cron tasks
+            dur_ms = int(last_dur * 1000)
+            is_cron = "cron" in task.get("schedule", "")
+            if (is_cron
+                    and last_exit == 0
+                    and dur_ms < FAST_RUN_THRESHOLD_MS
+                    and dur_ms > 0
+                    and task_id not in FAST_RUN_EXEMPT):
+                issues.append({
+                    "severity": "warning",
+                    "name": task_id,
+                    "reason": f"Completed in {dur_ms}ms — likely did not execute (empty promise)",
+                })
+
+            # Stale — daily cron that hasn't run in 26+ hours (skip weekly tasks)
+            if (is_cron and hours_since > STALE_HOURS and last_run > 0
+                    and task_id not in WEEKLY_TASKS):
+                issues.append({
+                    "severity": "warning",
+                    "name": task_id,
+                    "reason": f"Last ran {hours_since:.0f}h ago — may be stuck or skipped",
+                })
+        return issues
+
+    # Fallback: legacy cron/jobs.json
     try:
         data = json.loads(JOBS_FILE.read_text())
     except Exception as e:
@@ -179,7 +283,6 @@ def audit_jobs() -> list[dict]:
         name   = job.get("name", "unknown")
         job_id = job.get("id", "")
 
-        # Read state from JSONL run history (primary) with jobs.json state as fallback
         run_info = _load_run_history(job_id) if job_id else {}
         state  = job.get("state", {})
         errors = run_info.get("consecutiveErrors", state.get("consecutiveErrors", 0))
@@ -187,18 +290,16 @@ def audit_jobs() -> list[dict]:
         dur    = run_info.get("lastDurationMs", state.get("lastDurationMs", 0))
         last   = run_info.get("lastRunAtMs", state.get("lastRunAtMs", 0))
         err    = run_info.get("lastError", state.get("lastError", ""))
-        hours_since = (now_ms - last) / 3_600_000 if last else 999
+        hours_since = ((now * 1000) - last) / 3_600_000 if last else 999
 
-        # Consecutive failures
         if errors >= MAX_CONSECUTIVE_ERRORS:
             issues.append({
                 "severity": "error",
                 "name": name,
                 "reason": f"{errors} consecutive errors — {err[:80] if err else status}",
             })
-            continue  # don't double-report
+            continue
 
-        # Last run errored
         if status == "error":
             issues.append({
                 "severity": "warning",
@@ -207,7 +308,6 @@ def audit_jobs() -> list[dict]:
             })
             continue
 
-        # Suspiciously fast (empty promise)
         if (status == "ok"
                 and dur < FAST_RUN_THRESHOLD_MS
                 and name not in FAST_RUN_EXEMPT
@@ -216,19 +316,6 @@ def audit_jobs() -> list[dict]:
                 "severity": "warning",
                 "name": name,
                 "reason": f"Completed in {dur}ms — likely did not execute (empty promise)",
-            })
-
-        # Stale — scheduled daily but hasn't run recently
-        sched = job.get("schedule", {})
-        is_daily = (
-            sched.get("kind") == "cron"
-            and "* * *" in sched.get("expr", "")
-        )
-        if is_daily and hours_since > STALE_HOURS and last > 0:
-            issues.append({
-                "severity": "warning",
-                "name": name,
-                "reason": f"Last ran {hours_since:.0f}h ago — may be stuck or skipped",
             })
 
     return issues

@@ -83,12 +83,24 @@ def log(msg):
     print(f"[nova_sky {NOW.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def _is_quiet_hours():
+    """Return True if current local time is between 23:00 and 07:00."""
+    current_hour = datetime.now().hour
+    return current_hour >= 23 or current_hour < 7
+
+
 def slack_post(text, channel=None):
+    if _is_quiet_hours():
+        log("Quiet hours — suppressing Slack post")
+        return
     nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_PHOTOS)
 
 
 def slack_upload(filepath, comment="", channel=None):
-    """Upload image to Slack."""
+    """Upload image to Slack. Suppressed during quiet hours (23:00-07:00)."""
+    if _is_quiet_hours():
+        log("Quiet hours — suppressing Slack upload")
+        return
     try:
         cmd = [
             "curl", "-s", "-F", f"file=@{filepath}",

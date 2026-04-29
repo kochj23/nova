@@ -21,10 +21,37 @@ from nova_logger import log, LOG_INFO, LOG_ERROR
 
 TODAY = datetime.now().strftime("%A, %B %d")
 SYNOLOGY_SCRIPT = Path(__file__).parent / "nova_synology_monitor.py"
+ACK_PATH = Path.home() / ".openclaw" / "config" / "acknowledged_issues.json"
+
+
+def load_acknowledged():
+    """Load acknowledged issues config."""
+    try:
+        if ACK_PATH.exists():
+            return json.loads(ACK_PATH.read_text())
+    except Exception:
+        pass
+    return {}
 
 
 def slack_post(text):
     nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+
+
+def wake_nas(host="192.168.1.11", retries=2):
+    """Ping the NAS to wake it from sleep before querying."""
+    import socket
+    for _ in range(retries):
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.settimeout(5)
+            s.connect((host, 5000))  # DSM web port
+            s.close()
+            return True
+        except Exception:
+            import time
+            time.sleep(5)
+    return False
 
 
 def run_synology(mode):
@@ -54,6 +81,10 @@ def format_bytes(b):
 def main():
     log("Nightly Synology digest starting", level=LOG_INFO, source="nightly_synology")
 
+    # Wake the NAS first — it may be sleeping at 11:30 PM
+    if not wake_nas():
+        log("NAS did not respond to wake attempt", level=LOG_ERROR, source="nightly_synology")
+
     lines = [f"*:nas: Nightly NAS Report — {TODAY}*", ""]
 
     # System status
@@ -71,7 +102,13 @@ def main():
         lines.append(f"{emoji} *System:* {model} / DSM {dsm} / Uptime: {uptime_d}d")
         lines.append(f"  CPU: {cpu_pct}% / RAM: {ram_pct}% / Temp: {temp}°C")
     else:
-        lines.append(":red_circle: *System:* Could not reach NAS at 192.168.1.11")
+        ack = load_acknowledged()
+        nas_sleep_hours = ack.get("nas_unreachable_hours", [])
+        current_hour = datetime.now().hour
+        if current_hour in nas_sleep_hours:
+            lines.append(":large_yellow_circle: *System:* NAS sleeping (expected) — 192.168.1.11")
+        else:
+            lines.append(":red_circle: *System:* Could not reach NAS at 192.168.1.11")
 
     # Storage / RAID
     storage = run_synology("storage")

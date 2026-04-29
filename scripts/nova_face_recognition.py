@@ -63,9 +63,40 @@ TOLERANCE = 0.55
 PERSON_COOLDOWN = 1800  # 30 min
 UNKNOWN_COOLDOWN = 600  # 10 min
 
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+VISION_MODEL = "qwen3-vl:4b"
+
 
 def log(msg):
     print(f"[nova_face {NOW.strftime('%H:%M:%S')}] {msg}", flush=True)
+
+
+def describe_scene(image_path):
+    """Use local vision model to describe what's happening in a camera frame.
+    Returns a short description or None on failure."""
+    import base64
+    try:
+        with open(image_path, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode()
+
+        payload = json.dumps({
+            "model": VISION_MODEL,
+            "prompt": "Describe this security camera image in one sentence. Focus on: how many people, what they're doing, what they're carrying, vehicle presence, and anything unusual. Be specific and concise.",
+            "images": [img_b64],
+            "stream": False,
+            "options": {"temperature": 0.2, "num_predict": 150}
+        }).encode()
+
+        req = urllib.request.Request(
+            OLLAMA_URL, data=payload,
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read())
+        return result.get("response", "").strip()[:200]
+    except Exception as e:
+        log(f"Vision describe failed: {e}")
+        return None
 
 
 def _load_sam_faces():
@@ -225,6 +256,7 @@ def scan_cameras():
                             "type": "unknown",
                             "camera": camera_name,
                             "crop_path": str(crop_path) if crop_path.exists() else None,
+                            "frame_path": str(frame_path),
                         })
                         state.setdefault("unknown_alerts", {})[camera_name] = now_ts
 
@@ -255,13 +287,24 @@ def post_detections(detections):
 
     if unknown:
         for d in unknown:
-            msg = f":question: *Unknown person* at {d['camera']} — {NOW.strftime('%I:%M %p')}. Who is this?"
+            # Use vision model to describe what the person is doing
+            scene_desc = ""
+            if d.get("frame_path") and Path(d["frame_path"]).exists():
+                scene_desc = describe_scene(d["frame_path"]) or ""
+
+            desc_line = f"\n  _Scene: {scene_desc}_" if scene_desc else ""
+            msg = f":question: *Unknown person* at {d['camera']} — {NOW.strftime('%I:%M %p')}. Who is this?{desc_line}"
+
             if d.get("crop_path") and Path(d["crop_path"]).exists():
                 slack_upload_image(d["crop_path"], msg)
             else:
                 slack_post(msg)
+
+            memory_text = f"Unknown person detected at {d['camera']} on {TODAY} at {NOW.strftime('%H:%M')}"
+            if scene_desc:
+                memory_text += f". Scene: {scene_desc}"
             vector_remember(
-                f"Unknown person detected at {d['camera']} on {TODAY} at {NOW.strftime('%H:%M')}",
+                memory_text,
                 {"date": TODAY, "type": "face_unknown", "camera": d["camera"]}
             )
 

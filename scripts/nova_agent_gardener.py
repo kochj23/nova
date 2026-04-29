@@ -34,17 +34,17 @@ SOURCES_TO_SCAN = [
     "email", "music_history", "meeting", "demonology",
     "subagent.analyst", "socal_rave",
 ]
-SAMPLES_PER_SOURCE = 15
+SAMPLES_PER_SOURCE = 30
 MAX_FINDINGS_PER_RUN = 20
 
 
 class MemoryGardener(SubAgent):
     name = "gardener"
-    model = "deepseek-r1:8b"
+    model = "qwen3-coder:30b"
     backend = "ollama"
     channels = ["garden", "memory_maintenance"]
     description = "Nightly memory curation: dedup, contradiction, staleness detection. Flag and report only."
-    temperature = 0.1
+    temperature = 0.2
 
     async def handle(self, task: dict) -> dict:
         """Handle explicit garden requests."""
@@ -86,74 +86,155 @@ class MemoryGardener(SubAgent):
 
             time.sleep(2)  # Don't hammer the LLM
 
-        # Build report for Jordan
-        if all_findings:
-            all_findings = all_findings[:MAX_FINDINGS_PER_RUN]
+        # Auto-merge duplicates silently
+        duplicates = [f for f in all_findings if f.get("type") == "duplicate"]
+        merged_count = 0
+        for dup in duplicates:
+            ids = dup.get("memory_ids", [])
+            if len(ids) >= 2:
+                merged_count += await self._auto_merge(ids)
+
+        # Report only non-duplicate findings to Jordan
+        reportable = [f for f in all_findings if f.get("type") != "duplicate"]
+        all_findings_count = len(all_findings)
+
+        if reportable or merged_count > 0:
+            reportable = reportable[:MAX_FINDINGS_PER_RUN]
             msg = (
                 f":seedling: *Memory Gardener — Nightly Report*\n"
                 f"*Scanned:* {sources_scanned} sources ({total:,} total memories)\n"
-                f"*Findings:* {len(all_findings)}\n\n"
             )
 
-            by_type = {}
-            for f in all_findings:
-                ftype = f.get("type", "unknown")
-                by_type[ftype] = by_type.get(ftype, 0) + 1
+            if merged_count > 0:
+                msg += f"*Auto-merged:* {merged_count} duplicate(s) :white_check_mark:\n"
 
-            for ftype, count in sorted(by_type.items(), key=lambda x: -x[1]):
-                emoji = {"duplicate": ":busts_in_silhouette:", "contradiction": ":twisted_rightwards_arrows:",
-                         "stale": ":hourglass:", "relationship": ":link:"}.get(ftype, ":mag:")
-                msg += f"  {emoji} {ftype}: {count}\n"
+            if reportable:
+                msg += f"*Findings:* {len(reportable)}\n\n"
 
-            msg += "\n*Top findings:*\n"
-            for i, f in enumerate(all_findings[:8], 1):
-                desc = f.get("description", "")[:120]
-                rec = f.get("recommendation", "")
-                msg += f"  {i}. *{f.get('type', '?')}* — {desc}"
-                if rec:
-                    msg += f" _(rec: {rec})_"
-                msg += "\n"
+                by_type = {}
+                for f in reportable:
+                    ftype = f.get("type", "unknown")
+                    by_type[ftype] = by_type.get(ftype, 0) + 1
 
-            if len(all_findings) > 8:
-                msg += f"\n  _...and {len(all_findings) - 8} more findings._\n"
+                for ftype, count in sorted(by_type.items(), key=lambda x: -x[1]):
+                    emoji = {"contradiction": ":twisted_rightwards_arrows:",
+                             "stale": ":hourglass:", "relationship": ":link:"}.get(ftype, ":mag:")
+                    msg += f"  {emoji} {ftype}: {count}\n"
 
-            msg += "\n_Reply with numbers to act on, or :white_check_mark: to acknowledge._"
-            await self.report_to_jordan(msg)
+                msg += "\n*Needs review:*\n"
+                for i, f in enumerate(reportable[:8], 1):
+                    desc = f.get("description", "")[:120]
+                    rec = f.get("recommendation", "")
+                    msg += f"  {i}. *{f.get('type', '?')}* — {desc}"
+                    if rec:
+                        msg += f" _(rec: {rec})_"
+                    msg += "\n"
+
+                if len(reportable) > 8:
+                    msg += f"\n  _...and {len(reportable) - 8} more._\n"
+            else:
+                msg += "\nNo issues requiring review."
         else:
-            await self.notify(
+            msg = (
                 ":seedling: *Memory Gardener* — Nightly scan complete. "
                 f"Scanned {sources_scanned} sources. No issues found. :white_check_mark:"
             )
+
+        await self.report_to_jordan(msg)
 
         log(f"Garden scan complete: {len(all_findings)} findings across {sources_scanned} sources",
             level=LOG_INFO, source="subagent.gardener")
 
         return {"findings": all_findings, "sources_scanned": sources_scanned}
 
-    async def _scan_source(self, source: str) -> dict:
-        """Scan a specific source for quality issues using random sampling."""
-        # Get random samples
+    async def _auto_merge(self, memory_ids: list[str]) -> int:
+        """Auto-merge duplicate memories: keep the longest, delete the rest.
+        Returns count of memories deleted."""
+        if len(memory_ids) < 2:
+            return 0
+
+        # Fetch full text of each memory to determine which to keep
         memories = []
-        for _ in range(3):
+        for mid in memory_ids:
             try:
-                resp = urllib.request.urlopen(f"{MEMORY_URL}/random?n={SAMPLES_PER_SOURCE}&source={source}", timeout=10)
-                batch = json.loads(resp.read())
-                if isinstance(batch, list):
-                    memories.extend(batch)
-                elif isinstance(batch, dict) and "memories" in batch:
-                    memories.extend(batch["memories"])
+                resp = urllib.request.urlopen(f"{MEMORY_URL}/get?id={mid}", timeout=5)
+                data = json.loads(resp.read())
+                if data:
+                    memories.append(data)
             except Exception:
-                # /random may not support source filter — use recall with broad query
+                pass
+
+        if len(memories) < 2:
+            return 0
+
+        # Keep the longest (most complete) memory
+        memories.sort(key=lambda m: len(m.get("text", "")), reverse=True)
+        to_delete = memories[1:]  # everything except the longest
+
+        deleted = 0
+        for mem in to_delete:
+            mid = mem.get("id", "")
+            if not mid:
+                continue
+            try:
+                req = urllib.request.Request(
+                    f"{MEMORY_URL}/forget?id={mid}",
+                    method="DELETE"
+                )
+                urllib.request.urlopen(req, timeout=5)
+                deleted += 1
+                log(f"Auto-merged: deleted {mid[:8]}... (kept longer version)",
+                    level=LOG_INFO, source="subagent.gardener")
+            except Exception as e:
+                log(f"Failed to delete {mid[:8]}...: {e}",
+                    level=LOG_WARN, source="subagent.gardener")
+
+        return deleted
+
+    async def _scan_source(self, source: str) -> dict:
+        """Scan a specific source for quality issues, preferring newest memories.
+
+        Tries /recent first (most likely to have fresh duplicates from same-day
+        ingestion), falls back to /random, then /recall.
+        """
+        memories = []
+
+        # Try newest memories first — fresh ingestion is most likely to have dupes
+        try:
+            resp = urllib.request.urlopen(
+                f"{MEMORY_URL}/recent?n={SAMPLES_PER_SOURCE}&source={source}", timeout=10)
+            batch = json.loads(resp.read())
+            if isinstance(batch, list):
+                memories.extend(batch)
+            elif isinstance(batch, dict) and "memories" in batch:
+                memories.extend(batch["memories"])
+        except Exception:
+            pass  # /recent may not exist — fall through to random
+
+        # Backfill with random samples if /recent didn't return enough
+        if len(memories) < SAMPLES_PER_SOURCE:
+            remaining = SAMPLES_PER_SOURCE - len(memories)
+            for _ in range(3):
                 try:
                     resp = urllib.request.urlopen(
-                        f"{MEMORY_URL}/recall?q=information+knowledge+fact&n={SAMPLES_PER_SOURCE}&source={source}",
-                        timeout=10
-                    )
-                    data = json.loads(resp.read())
-                    memories.extend(data.get("memories", []))
+                        f"{MEMORY_URL}/random?n={remaining}&source={source}", timeout=10)
+                    batch = json.loads(resp.read())
+                    if isinstance(batch, list):
+                        memories.extend(batch)
+                    elif isinstance(batch, dict) and "memories" in batch:
+                        memories.extend(batch["memories"])
                 except Exception:
-                    pass
-                break
+                    # /random may not support source filter — use recall with broad query
+                    try:
+                        resp = urllib.request.urlopen(
+                            f"{MEMORY_URL}/recall?q=information+knowledge+fact&n={remaining}&source={source}",
+                            timeout=10
+                        )
+                        data = json.loads(resp.read())
+                        memories.extend(data.get("memories", []))
+                    except Exception:
+                        pass
+                    break
 
         if len(memories) < 3:
             return {"findings": []}
@@ -174,6 +255,9 @@ class MemoryGardener(SubAgent):
             for m in memories
         )
 
+        from datetime import date
+        current_year = date.today().year
+
         prompt = (
             f"Analyze these {len(memories)} memories from source '{source}' for quality issues.\n"
             f"Find: duplicates (same info restated), contradictions (conflicting facts), "
@@ -181,12 +265,17 @@ class MemoryGardener(SubAgent):
         )
 
         system = (
-            "You are a memory curator. Analyze the given memories and return JSON:\n"
+            f"You are a memory curator. The current year is {current_year}. "
+            f"All years from 2000 to {current_year} are VALID past dates — they are NOT 'in the future'.\n"
+            "A memory is only 'stale' if its CONTENT is clearly outdated (e.g. 'meeting tomorrow' from 3 years ago), "
+            "not because it references a past year.\n"
+            "Analyze the given memories and return JSON:\n"
             '{"findings": [{"type": "duplicate|contradiction|stale", '
             '"severity": "high|medium|low", "memory_ids": ["id1","id2"], '
             '"description": "what the issue is", "recommendation": "merge|delete_one|update"}], '
             '"stats": {"memories_analyzed": N}}\n'
-            "Only report genuine issues. Empty findings array if nothing wrong."
+            "Only report genuine issues. Empty findings array if nothing wrong. "
+            "For duplicates, always include both memory IDs so they can be auto-merged."
         )
 
         try:

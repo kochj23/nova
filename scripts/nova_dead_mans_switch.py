@@ -20,27 +20,27 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
 SCRIPTS       = Path(__file__).parent
-LOGS          = Path.home() / ".openclaw/logs"
 TODAY         = date.today().isoformat()
 NOW_HOUR      = datetime.now().hour
 
-# Deliveries to verify — (log_file, script_path, check_after_hour, label)
-# Only checked if current hour >= check_after_hour
+SCHEDULER_API = "http://127.0.0.1:37460/tasks"
+
+# Deliveries to verify — (scheduler_task_id, script_path, check_after_hour, label)
 DELIVERIES = [
     (
-        LOGS / "morning-brief.log",
+        "morning_brief",
         SCRIPTS / "nova_morning_brief.py",
         9,
         "Morning Brief (7am)",
     ),
     (
-        LOGS / "mail-deliver-8am.log",
+        "mail_deliver_am",
         SCRIPTS / "nova_mail_deliver.py",
         9,
         "Morning Mail Summary (8am)",
     ),
     (
-        LOGS / "mail-deliver-6pm.log",
+        "mail_deliver_pm",
         SCRIPTS / "nova_mail_deliver.py",
         19,
         "Evening Mail Summary (6pm)",
@@ -56,15 +56,26 @@ def slack_post(text: str):
     nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
 
 
-def log_has_todays_run(log_path: Path) -> bool:
-    """Return True if the log file contains an entry from today."""
+def get_scheduler_tasks() -> dict:
+    """Query scheduler API for task states."""
     try:
-        content = log_path.read_text(errors="ignore")
-        return TODAY in content
-    except FileNotFoundError:
+        with urllib.request.urlopen(SCHEDULER_API, timeout=5) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        log(f"Scheduler API unreachable: {e}")
+        return {}
+
+
+def task_ran_today(tasks: dict, task_id: str) -> bool:
+    """Check if a task ran successfully today via scheduler state."""
+    task = tasks.get(task_id, {})
+    last_run = task.get("last_run", 0)
+    if last_run == 0:
         return False
-    except Exception:
-        return False
+    last_run_date = datetime.fromtimestamp(last_run).strftime("%Y-%m-%d")
+    ran_today = last_run_date == TODAY
+    succeeded = task.get("last_exit_code", -1) == 0
+    return ran_today and succeeded
 
 
 def run_script(script_path: Path) -> bool:
@@ -93,13 +104,18 @@ def run_script(script_path: Path) -> bool:
 def main():
     log(f"Dead man's switch — checking deliveries for {TODAY} (hour={NOW_HOUR})")
 
+    tasks = get_scheduler_tasks()
+    if not tasks:
+        log("Could not reach scheduler API — skipping")
+        return
+
     missed = []
-    for log_path, script, min_hour, label in DELIVERIES:
+    for task_id, script, min_hour, label in DELIVERIES:
         if NOW_HOUR < min_hour:
             log(f"  {label} — too early to check (now={NOW_HOUR}h, min={min_hour}h)")
             continue
 
-        if log_has_todays_run(log_path):
+        if task_ran_today(tasks, task_id):
             log(f"  {label} — delivered ✓")
         else:
             log(f"  {label} — MISSING, running now")

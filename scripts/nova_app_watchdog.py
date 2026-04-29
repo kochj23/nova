@@ -52,6 +52,9 @@ INFRA_SERVICES = [
     (11434, "Ollama",           "open -a Ollama"),
 ]
 
+# Require consecutive down checks before alerting (prevents flapping on brief blips)
+INFRA_CONFIRM_CHECKS = 2  # Must be down for 2 consecutive checks (10 min) before alerting
+
 # Cooldown: don't re-alert for same app within this many seconds
 ALERT_COOLDOWN = 600  # 10 minutes
 # Don't auto-restart more than this many times per hour
@@ -135,6 +138,44 @@ def check_infra_port(port, timeout=3):
         return False, "down"
 
 
+def capture_diagnostics(port, app_name):
+    """Capture diagnostic info before restart for post-mortem analysis."""
+    diag_dir = Path.home() / ".openclaw/logs/diagnostics"
+    diag_dir.mkdir(parents=True, exist_ok=True)
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    diag_file = diag_dir / f"{app_name}_{timestamp}.txt"
+
+    lines = [f"Pre-restart diagnostic for {app_name} (port {port})", f"Time: {timestamp}", ""]
+
+    # Check what's on the port
+    try:
+        result = subprocess.run(["lsof", "-i", f":{port}"], capture_output=True, text=True, timeout=5)
+        lines.append("=== lsof ===")
+        lines.append(result.stdout or "(empty)")
+    except Exception:
+        pass
+
+    # Check process status
+    try:
+        result = subprocess.run(["ps", "aux"], capture_output=True, text=True, timeout=5)
+        app_procs = [l for l in result.stdout.splitlines() if app_name.lower() in l.lower()]
+        lines.append("=== processes ===")
+        lines.extend(app_procs or ["(no matching processes)"])
+    except Exception:
+        pass
+
+    # Check memory pressure
+    try:
+        result = subprocess.run(["memory_pressure"], capture_output=True, text=True, timeout=5)
+        lines.append("=== memory_pressure ===")
+        lines.append(result.stdout[:200] if result.stdout else "(empty)")
+    except Exception:
+        pass
+
+    diag_file.write_text("\n".join(lines))
+    return str(diag_file)
+
+
 def restart_app(app_name, bundle_name):
     """Attempt to restart a macOS app via `open -a`."""
     try:
@@ -211,6 +252,8 @@ def main():
                 # Auto-restart if critical and we haven't exhausted restart budget
                 restarted = False
                 if critical and count_recent_restarts(state) < MAX_RESTARTS_PER_HOUR:
+                    diag_path = capture_diagnostics(port, app_name)
+                    log(f"Diagnostics captured: {diag_path}")
                     restarted = restart_app(app_name, bundle_name)
                     state.setdefault("restarts", []).append({
                         "ts": now_ts, "app": app_name, "success": restarted
@@ -243,15 +286,16 @@ def main():
         prev = apps_state.get(key, {})
         was_alive = prev.get("alive", None)
         last_alert = prev.get("last_alert", 0)
+        down_checks = prev.get("down_checks", 0)
 
         if alive:
             if was_alive is False:
                 recoveries.append(f"*{name}* (:{port}) is back up")
-            apps_state[key] = {"alive": True, "last_seen": now_ts, "last_alert": 0}
+            apps_state[key] = {"alive": True, "last_seen": now_ts, "last_alert": 0, "down_checks": 0}
         else:
-            if was_alive is not False and (now_ts - last_alert) > ALERT_COOLDOWN:
+            down_checks += 1
+            if down_checks >= INFRA_CONFIRM_CHECKS and (now_ts - last_alert) > ALERT_COOLDOWN:
                 alerts.append(f"*{name}* (:{port}) is DOWN")
-                # Auto-restart infra
                 if count_recent_restarts(state) < MAX_RESTARTS_PER_HOUR:
                     restarted = restart_infra(name, restart_cmd)
                     state.setdefault("restarts", []).append({
@@ -261,9 +305,9 @@ def main():
                         alerts[-1] += " — *auto-restart attempted*"
 
                 apps_state[key] = {"alive": False, "last_seen": prev.get("last_seen", 0),
-                                   "last_alert": now_ts}
+                                   "last_alert": now_ts, "down_checks": down_checks}
             else:
-                apps_state[key] = {**prev, "alive": False}
+                apps_state[key] = {**prev, "alive": False, "down_checks": down_checks}
 
     # ── Post results ─────────────────────────────────────────────────────────
     state["apps"] = apps_state

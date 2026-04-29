@@ -279,6 +279,11 @@ def main():
             slack_lines.append(f"  • {i}")
         slack_lines.append("")
 
+    # Clean overnight indicator — if no issues and no priority emails
+    if not issues and not emails:
+        slack_lines.append("✅ Clean overnight — all systems green")
+        slack_lines.append("")
+
     slack_lines.append(f"_Vector memory: {mem_count} memories stored_")
     slack_lines.append("_— Nova_")
 

@@ -178,11 +178,14 @@ def main():
     slack_post(msg)
 
     # Store in memory
+    reliability_summary = (
+        f"Weekly reliability report {week_str}: {success_rate:.1f}% success rate, "
+        f"{total_runs} runs, {total_failures} failures, {len(healthy)} healthy tasks, "
+        f"{mem_count:,} memories."
+    )
     try:
         payload = json.dumps({
-            "text": f"Weekly reliability report {week_str}: {success_rate:.1f}% success rate, "
-                    f"{total_runs} runs, {total_failures} failures, {len(healthy)} healthy tasks, "
-                    f"{mem_count:,} memories.",
+            "text": reliability_summary,
             "source": "system",
             "metadata": {"type": "weekly_reliability", "date": TODAY.isoformat(),
                          "success_rate": success_rate, "total_runs": total_runs}
@@ -190,6 +193,28 @@ def main():
         req = urllib.request.Request(VECTOR_URL, data=payload,
                                      headers={"Content-Type": "application/json"})
         urllib.request.urlopen(req, timeout=10)
+    except Exception:
+        pass
+
+    # Append to daily memory file for dream generation
+    from pathlib import Path
+    mem_dir = Path.home() / ".openclaw/workspace/memory"
+    mem_dir.mkdir(parents=True, exist_ok=True)
+    mem_file = mem_dir / f"{TODAY.isoformat()}.md"
+    failing_names = [t.id for t in failing[:3]] if failing else []
+    mem_block = (
+        f"\n\n## Nova's body this week\n"
+        f"- Ran {total_runs:,} tasks with {success_rate:.1f}% success\n"
+        f"- {mem_count:,} memories stored across {source_count} sources\n"
+        + (f"- Struggling: {', '.join(failing_names)}\n" if failing_names else "- All systems healthy\n")
+    )
+    try:
+        if mem_file.exists():
+            existing = mem_file.read_text(encoding="utf-8")
+            if "Nova's body this week" not in existing:
+                mem_file.write_text(existing.rstrip() + mem_block, encoding="utf-8")
+        else:
+            mem_file.write_text(f"# Nova Memory -- {TODAY.isoformat()}\n" + mem_block, encoding="utf-8")
     except Exception:
         pass
 

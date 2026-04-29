@@ -27,7 +27,7 @@ import subprocess
 import sys
 import time
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -128,19 +128,66 @@ def cleanup_postgres_idle():
         pass
 
 
+def check_gateway_eperm():
+    """Check gateway log for workspace-state.json EPERM errors in the last 3 minutes.
+
+    If found, restart the gateway. This replaces the standalone
+    nova_gateway_watchdog.sh script.
+    """
+    log_file = Path(f"/tmp/openclaw/openclaw-{datetime.now().strftime('%Y-%m-%d')}.log")
+    if not log_file.exists():
+        return False
+
+    cutoff = time.time() - 180  # 3 minutes ago
+    found = False
+
+    try:
+        with open(log_file) as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    d = json.loads(line)
+                    msg = str(d.get("0", "")) + str(d.get("1", ""))
+                    ts = d.get("_meta", {}).get("date", "")
+                    if "workspace-state.json" in msg and "EPERM" in msg and ts:
+                        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+                        if dt.timestamp() >= cutoff:
+                            found = True
+                            break
+                except Exception:
+                    pass
+    except Exception:
+        return False
+
+    if found:
+        log("EPERM detected on workspace-state.json — restarting gateway",
+            level=LOG_WARN, source="watchdog")
+        uid = os.getuid()
+        try:
+            subprocess.run(
+                ["launchctl", "kickstart", "-k", f"gui/{uid}/ai.openclaw.gateway"],
+                capture_output=True, timeout=15
+            )
+            log("Gateway restarted due to EPERM", level=LOG_INFO, source="watchdog")
+            return True
+        except Exception as e:
+            log(f"Failed to restart gateway after EPERM: {e}",
+                level=LOG_ERROR, source="watchdog")
+    return False
+
+
 def main():
     issues = []
     fixes = []
 
-    # Check critical services
+    # Check critical services (infra only — app ports handled by nova_app_watchdog.py)
     # Canonical launchd labels — verified 2026-04-22
     services = [
         ("Scheduler", "127.0.0.1", 37460, "com.nova.scheduler"),
-        ("Gateway", "127.0.0.1", 18789, "ai.openclaw.gateway"),
         ("Memory Server", "127.0.0.1", 18790, "net.digitalnoise.nova-memory-server"),
         ("Ollama", "127.0.0.1", 11434, None),  # Managed by Ollama.app
-        ("OpenWebUI", "192.168.1.6", 3000, "net.digitalnoise.openwebui"),
-        ("TinyChat", "192.168.1.6", 8000, "net.digitalnoise.tinychat"),
     ]
 
     for name, host, port, label in services:
@@ -204,6 +251,11 @@ def main():
 
     # Cleanup idle PG connections
     cleanup_postgres_idle()
+
+    # Check gateway log for EPERM errors (absorbed from nova_gateway_watchdog.sh)
+    if check_gateway_eperm():
+        issues.append("Gateway EPERM on workspace-state.json")
+        fixes.append("Restarted gateway")
 
     # Report
     if issues:

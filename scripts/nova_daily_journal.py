@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 
 """
-Nova Daily Journal — nightly summary posted to Slack at 9 PM PT.
+Nova Daily Journal — unified nightly summary posted to Slack at 9 PM PT.
 
-Pulls directly from Postgres (nova_memories) by source and date
-instead of semantic search. Sections: calendar, infra, security,
-app health, local news, dreams, and historical tidbits.
+Combines the data-driven daily journal (calendar, infra, security, app health,
+local news, dreams, historical tidbits, scheduler health) with the LLM-powered
+nightly memory summary (vector recall + Ollama synthesis in Nova's voice).
+
+One Slack message. One script. Runs once at 9pm.
 
 Written by Jordan Koch.
 """
@@ -15,7 +17,9 @@ import logging
 import os
 import subprocess
 import sys
-from datetime import datetime
+import urllib.parse
+import urllib.request
+from datetime import datetime, date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -30,9 +34,17 @@ logging.basicConfig(
     ],
 )
 
-TODAY = datetime.now().strftime("%Y-%m-%d")
+TODAY = date.today().isoformat()
 DB = "nova_memories"
 STATE_DIR = Path.home() / ".openclaw/workspace/state"
+WORKSPACE = Path.home() / ".openclaw/workspace"
+MEMORY_DIR = WORKSPACE / "memory"
+VECTOR_URL = "http://127.0.0.1:18790"
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+MODEL = "qwen3-coder:30b"
+
+
+# ── Postgres helpers ────────────────────────────────────────────────────────
 
 
 def _query(sql):
@@ -64,6 +76,9 @@ def _load_state(name):
     return {}
 
 
+# ── Data-driven sections ───────────────────────────────────────────────────
+
+
 def section_calendar():
     rows = _query(
         f"SELECT text FROM memories "
@@ -72,10 +87,7 @@ def section_calendar():
     )
     if not rows:
         return None
-    # Calendar entries are usually "Calendar for DATE: N events — ..."
-    # Deduplicate and pick the most complete one
     best = max(rows, key=len)
-    # Strip the prefix if present
     if "—" in best:
         events_part = best.split("—", 1)[1].strip()
         events = [e.strip() for e in events_part.split(",")]
@@ -93,15 +105,12 @@ def section_morning_brief():
     if not rows:
         return None
     brief = rows[0]
-    # Extract weather from brief: "Morning brief DATE: Sunny +55°F ..."
     if ":" in brief:
         content = brief.split(":", 1)[1].strip()
         parts = []
-        # Weather
         if "°F" in content:
             weather = content.split(".")[0]
             parts.append(f"• Weather: {weather.strip()}")
-        # Meetings
         if "Meetings:" in content:
             meetings = content.split("Meetings:", 1)[1].strip()
             parts.append(f"• Meetings: {meetings.split('.')[0].strip()}")
@@ -124,7 +133,7 @@ def section_infrastructure():
         status = "all clear" if problems == 0 else f"{problems} problem(s)"
         lines.append(f"• NAS ({model}): CPU {cpu}%, RAM {ram}%, {vols} — {status}")
 
-    # Network — latest from DB
+    # Network
     net_rows = _query(
         f"SELECT text FROM memories "
         f"WHERE source = 'infrastructure' AND text LIKE 'Network health%' "
@@ -132,8 +141,6 @@ def section_infrastructure():
     )
     if net_rows:
         row = net_rows[0]
-        # "Network health check 2026-04-22 16:23: WAN ok ..."
-        # Split on the time pattern to get just the status part
         if "WAN" in row:
             content = row[row.index("WAN"):]
             lines.append(f"• Network: {content}")
@@ -153,7 +160,6 @@ def section_infrastructure():
         if downs:
             apps_affected = set()
             for d in downs:
-                # "OneOnOne went down on DATE at TIME..."
                 app_name = d.split(" went down")[0].strip()
                 apps_affected.add(app_name)
             lines.append(
@@ -176,14 +182,12 @@ def section_security():
     if not count or count == "0":
         return None
 
-    # Get unique cameras with events
     cam_rows = _query(
         f"SELECT text FROM memories "
         f"WHERE source = 'security' AND created_at >= '{TODAY}'"
     )
     cameras = {}
     for row in cam_rows:
-        # "Protect event on Exterior - Front Right: ..."
         if "Protect event on " in row:
             cam = row.split("Protect event on ", 1)[1].split(":")[0].strip()
             cameras[cam] = cameras.get(cam, 0) + 1
@@ -208,10 +212,8 @@ def section_local_news():
 
     highlights = []
     for row in rows:
-        # "Reddit r/glendale: Title\nFlair: ...\nScore: N, Comments: N ..."
         first_line = row.split("\n")[0].strip()
         if "Reddit r/" in first_line:
-            # Extract sub and title
             after_reddit = first_line.split("Reddit ", 1)[1]
             highlights.append(f"• {after_reddit}")
         if len(highlights) >= 5:
@@ -235,7 +237,6 @@ def section_dream():
     text = rows[0]
     if ":" in text:
         text = text.split(":", 1)[1].strip()
-    # Truncate to first ~200 chars
     if len(text) > 200:
         text = text[:200].rsplit(" ", 1)[0] + "..."
     return f"*Dream Journal:*\n_{text}_"
@@ -251,9 +252,8 @@ def section_this_day():
         return None
     lines = []
     for row in rows:
-        # "On this day (April 22), 1944: ..."
         if "On this day" in row:
-            after = row.split(")," , 1)
+            after = row.split("),", 1)
             if len(after) == 2:
                 year_event = after[1].strip()
                 if len(year_event) > 120:
@@ -293,9 +293,9 @@ def section_scheduler_health():
         return f"*Scheduler:*\n• {total_runs} total runs today, all tasks healthy"
 
 
-def generate_journal():
+def generate_journal_sections():
+    """Build the data-driven portion of the journal. Returns assembled text."""
     sections = [
-        f"*Nova Daily Journal — {TODAY}*",
         section_morning_brief(),
         section_calendar(),
         section_infrastructure(),
@@ -308,24 +308,254 @@ def generate_journal():
 
     parts = [s for s in sections if s]
 
-    if len(parts) <= 1:
+    if not parts:
         parts.append("_Quiet day — no significant events recorded._")
 
     return "\n\n".join(parts)
 
 
-def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+# ── Vector memory gathering (from nightly_memory_summary) ──────────────────
+
+
+def get_memory_stats():
+    """Get vector memory health stats."""
+    try:
+        req = urllib.request.Request(f"{VECTOR_URL}/health", headers={})
+        with urllib.request.urlopen(req, timeout=5) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        logging.warning(f"Memory stats error: {e}")
+    return {}
+
+
+def vector_recall(query, n=8, source=None):
+    """Semantic search against vector memory."""
+    try:
+        params = f"q={urllib.parse.quote(query)}&n={n}"
+        if source:
+            params += f"&source={source}"
+        req = urllib.request.Request(f"{VECTOR_URL}/recall?{params}")
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read())
+        return [m.get("text", "")[:300] for m in data.get("memories", [])
+                if m.get("score", 0) >= 0.4]
+    except Exception as e:
+        logging.warning(f"Recall error for '{query[:40]}': {e}")
+        return []
+
+
+def get_today_memory_file():
+    """Read today's daily memory file."""
+    today_file = MEMORY_DIR / f"{TODAY}.md"
+    if today_file.exists():
+        try:
+            return today_file.read_text(encoding="utf-8")[:4000]
+        except Exception as e:
+            logging.warning(f"Error reading today's memory: {e}")
+    return ""
+
+
+def gather_today_learnings():
+    """
+    Gather everything Nova learned, noticed, and processed today from
+    the daily memory file and vector memory. Returns a raw text block
+    for the LLM to synthesize.
+    """
+    parts = []
+
+    # Daily memory file
+    daily = get_today_memory_file()
+    if daily.strip():
+        parts.append("[Today's daily memory log]\n" + daily)
+
+    # Vector memory — pull today's ingested content across all sources
+    queries = [
+        ("GitHub activity commits issues stars", "github"),
+        ("email communication action items", "email"),
+        ("meeting summary notes action items", "meeting"),
+        ("Burbank subreddit news discussion", "nightly"),
+        ("home status HomeKit accessories", "homekit"),
+        ("Slack messages conversation", None),
+        ("memory ingested knowledge learned", None),
+    ]
+    recalled = []
+    seen = set()
+    for q, src in queries:
+        for chunk in vector_recall(q, n=5, source=src):
+            if TODAY in chunk or not recalled:
+                key = chunk[:80]
+                if key not in seen:
+                    seen.add(key)
+                    recalled.append(chunk)
+
+    if recalled:
+        parts.append("[Recalled from vector memory — today]\n" + "\n---\n".join(recalled[:15]))
+
+    return "\n\n".join(parts)
+
+
+# ── LLM synthesis ──────────────────────────────────────────────────────────
+
+
+def synthesize_summary(raw_context):
+    """
+    Use local Ollama to synthesize a concise, Nova-voiced summary of
+    what was learned and noticed today. Returns the summary text.
+    """
+    if not raw_context.strip():
+        return "_Quiet day. Nothing notable crossed my desk._"
+
+    prompt = f"""/no_think
+
+You are Nova, an AI familiar. It's 9pm. Summarize what you learned, noticed, and processed today in 150-250 words.
+
+Rules:
+- Write as Nova, first person. Direct and observant. Not a report — a reflection.
+- Lead with the most interesting or notable things, not operational stats.
+- If Burbank news happened (subreddit, weather, events), mention what stood out.
+- If Jordan worked on projects, note what and how it went.
+- If emails or meetings happened, capture the gist.
+- Compress cron/system activity into one sentence at most.
+- End with one line about what's on your mind tonight or what you're watching for tomorrow.
+- No headers, no bullet points, no markdown formatting. Just flowing text.
+- No filler phrases like "Today was" or "Here's what happened."
+
+Today's data:
+{raw_context[:3500]}
+
+Write the summary now:"""
+
+    try:
+        payload = {
+            "model": MODEL,
+            "prompt": prompt,
+            "stream": False,
+            "think": False,
+            "options": {
+                "temperature": 0.4,
+                "num_predict": 400,
+                "num_ctx": 8192,
+            }
+        }
+        req = urllib.request.Request(
+            OLLAMA_URL,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"}
+        )
+        with urllib.request.urlopen(req, timeout=300) as r:
+            result = json.loads(r.read())
+        response = result.get("response", "").strip()
+
+        # Strip thinking blocks if they leak through
+        try:
+            from nova_strip_thinking import strip_thinking
+            response = strip_thinking(response)
+        except ImportError:
+            pass
+
+        if len(response.split()) < 20:
+            logging.warning(f"Very short LLM response ({len(response.split())} words)")
+            return response or "_Quiet day. Nothing notable crossed my desk._"
+
+        return response
+
+    except Exception as e:
+        logging.error(f"LLM synthesis failed: {e}")
+        return _fallback_summary(raw_context)
+
+
+def _fallback_summary(raw_context):
+    """If LLM is down, produce a bare-bones summary from raw data."""
+    lines = []
+    for line in raw_context.splitlines():
+        line = line.strip()
+        if line.startswith("•") or line.startswith("\U0001f534") or line.startswith("\U0001f7e1"):
+            lines.append(line)
+        if "weather" in line.lower() and ("°F" in line or "°C" in line):
+            lines.append(line)
+    if lines:
+        return "LLM unavailable — raw highlights:\n" + "\n".join(lines[:10])
+    return "_Quiet day. LLM was unavailable for synthesis._"
+
+
+# ── Memory storage ─────────────────────────────────────────────────────────
+
+
+def store_summary_in_memory(summary):
+    """Store tonight's summary in vector memory for the dream to use."""
+    try:
+        subprocess.run(
+            [str(Path.home() / ".openclaw/scripts/nova_remember.sh"),
+             f"Nova nightly summary {TODAY}: {summary[:500]}", "nightly"],
+            timeout=30, capture_output=True
+        )
+        logging.info("Summary stored in vector memory")
+    except Exception as e:
+        logging.warning(f"Memory store failed (non-fatal): {e}")
+
+
+# ── Unified posting ────────────────────────────────────────────────────────
+
+
+def build_unified_message(journal_text, memory_count, llm_summary):
+    """Assemble the single unified Slack message."""
+    header = f"*Nova Daily Journal — {TODAY}*"
+    separator = "\n────────────────────────────────────────\n"
+    memory_header = f"*Nova Nightly Summary — {memory_count} memories indexed*"
+    footer = "_— Nova · 9pm_"
+
+    parts = [
+        header,
+        journal_text,
+        separator,
+        memory_header,
+        llm_summary,
+        "",
+        footer,
+    ]
+    return "\n\n".join(parts)
+
+
+# ── Main ───────────────────────────────────────────────────────────────────
+
+
+def main():
+    logging.info("Starting unified daily journal + nightly summary")
+
+    # Phase 1: Data-driven journal sections
+    logging.info("Gathering data-driven sections...")
+    journal_text = generate_journal_sections()
+
+    # Phase 2: Vector memory context
+    logging.info("Gathering vector memory context...")
+    raw_context = gather_today_learnings()
+    logging.info(f"Gathered {len(raw_context)} chars of memory context")
+
+    stats = get_memory_stats()
+    memory_count = stats.get("count", "unknown")
+
+    # Phase 3: LLM reflection
+    logging.info("Synthesizing summary via local LLM (qwen3-coder:30b)...")
+    llm_summary = synthesize_summary(raw_context)
+    logging.info(f"LLM summary: {len(llm_summary.split())} words")
+
+    # Phase 4: Post unified message
+    message = build_unified_message(journal_text, memory_count, llm_summary)
+    print(message)
+    print()
+
+    try:
+        nova_config.post_both(message, slack_channel=nova_config.SLACK_NOTIFY)
+        logging.info("Unified journal posted to Slack")
+    except Exception as e:
+        logging.error(f"Slack post failed: {e}")
+
+    # Phase 5: Store LLM summary in vector memory for dream pickup
+    store_summary_in_memory(llm_summary)
+
+    logging.info("Unified daily journal process completed")
+    return 0
 
 
 if __name__ == "__main__":
-    logging.info("Starting daily journal generation")
-    try:
-        journal = generate_journal()
-        print(journal)
-        print()
-        slack_post(journal)
-    except Exception as e:
-        logging.error(f"Journal generation failed: {e}")
-        slack_post(f"Nova Daily Journal failed: {e}")
-    logging.info("Daily journal process completed")
+    sys.exit(main())

@@ -68,6 +68,7 @@ class Task:
     args: list = field(default_factory=list)
     env: dict = field(default_factory=dict)
     enabled: bool = True
+    group: str = ""
     state: TaskState = field(default_factory=TaskState)
 
     # Parsed schedule
@@ -160,6 +161,7 @@ def load_config():
             args=tcfg.get("args", []),
             env=tcfg.get("env", {}),
             enabled=tcfg.get("enabled", True),
+            group=tcfg.get("group", ""),
         )
         # Parse schedule
         if t.schedule.startswith("every"):
@@ -337,6 +339,18 @@ class NovaScheduler:
         if failing:
             fail_str = "\n  :x: Failing: " + ", ".join(t.id for t in failing)
 
+        # Quiet hours: suppress heartbeat between 10pm-8am unless there are NEW failures
+        tz = ZoneInfo(self.sched_cfg.get("tz", "America/Los_Angeles"))
+        local_hour = datetime.now(tz).hour
+        in_quiet_hours = local_hour >= 22 or local_hour < 8
+
+        if in_quiet_hours:
+            # Only post during quiet hours if there are new failures since last heartbeat
+            new_failures = [t for t in failing
+                           if t.state.last_run > self._last_heartbeat]
+            if not new_failures:
+                return
+
         await self._slack_post(
             f":heartbeat: *Scheduler Heartbeat*\n"
             f"  Tasks: {healthy}/{total} healthy, {running} running\n"
@@ -371,6 +385,7 @@ class NovaScheduler:
                         "script": t.script,
                         "schedule": t.schedule,
                         "enabled": t.enabled,
+                        "group": t.group,
                         "running": t.state.running,
                         "last_run": t.state.last_run,
                         "next_run": t.state.next_run,
@@ -460,6 +475,16 @@ class NovaScheduler:
 
                 if self._running_count >= max_conc:
                     break
+
+                # Group serialization: skip if another task in the same group is running
+                if task.group:
+                    group_busy = any(
+                        t.state.running
+                        for t in self.tasks.values()
+                        if t.group == task.group and t.id != task.id
+                    )
+                    if group_busy:
+                        continue  # will retry on next tick
 
                 asyncio.create_task(self.execute_task(task))
 

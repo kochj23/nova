@@ -1,0 +1,5 @@
+{
+  "cameras_offline": ["Exterior - Front Left", "Exterior - Trash Cans"],
+  "nas_unreachable_hours": [23, 0, 1, 2, 3, 4, 5, 6, 7],
+  "apps_expected_down": []
+}

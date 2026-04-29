@@ -280,6 +280,12 @@ def generate_dream_context(state):
     log(f"Dream context written: {dream_file}", level=LOG_INFO, source="reddit_ingest")
 
 
+def _is_quiet_hours():
+    """Return True if current local time is between 23:00 and 07:00."""
+    current_hour = datetime.now().hour
+    return current_hour >= 23 or current_hour < 7
+
+
 def main():
     log(f"Reddit ingest starting — {len(SUBREDDITS)} subreddits", level=LOG_INFO, source="reddit_ingest")
     state = load_state()
@@ -298,8 +304,8 @@ def main():
     log(f"Done. {total} new posts ingested across {len(SUBREDDITS)} subreddits",
         level=LOG_INFO, source="reddit_ingest")
 
-    # Post summary to Slack+Discord if any new content
-    if total > 0:
+    # Post summary to Slack+Discord if any new content (suppress during quiet hours 23:00-07:00)
+    if total > 0 and not _is_quiet_hours():
         try:
             msg = (
                 f":globe_with_meridians: *Reddit Ingest* — {total} new posts from "

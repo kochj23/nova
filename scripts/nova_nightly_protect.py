@@ -27,6 +27,17 @@ from nova_protect_monitor import ProtectClient
 
 INTERIOR_PREFIX = "Interior"
 TODAY = datetime.now().strftime("%A, %B %d")
+ACK_PATH = Path.home() / ".openclaw" / "config" / "acknowledged_issues.json"
+
+
+def load_acknowledged():
+    """Load acknowledged issues config."""
+    try:
+        if ACK_PATH.exists():
+            return json.loads(ACK_PATH.read_text())
+    except Exception:
+        pass
+    return {}
 
 
 def slack_post(text):
@@ -72,10 +83,17 @@ def main():
     lines.append("")
 
     # Camera Health
+    ack = load_acknowledged()
+    ack_cameras = ack.get("cameras_offline", [])
+
     lines.append(f"*Cameras:* {len(connected)}/{len(exterior)} online")
     if disconnected:
         for c in disconnected:
-            lines.append(f"  :red_circle: {c.get('name','?')} — OFFLINE ({c.get('type','')})")
+            cam_name = c.get("name", "?")
+            if cam_name in ack_cameras:
+                lines.append(f"  :white_circle: {cam_name} — OFFLINE (known — acknowledged)")
+            else:
+                lines.append(f"  :red_circle: {cam_name} — OFFLINE ({c.get('type','')})")
     lines.append("")
 
     # Get today's events (exterior only)
