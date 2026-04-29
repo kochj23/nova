@@ -38,6 +38,7 @@ graph TD
     FaceRec["Face Recognition<br/>15 cameras · dlib"]
     Dashboard["Web Dashboard<br/>FastAPI + WebSocket"]
     Scripts["170+ Scripts<br/>Python / Shell"]
+    SearXNG["SearXNG<br/>Local Web Search"]
     Redis["Redis<br/>Cache + Queue"]
     Subagents["5 Subagents<br/>analyst · coder · lookout<br/>librarian · sentinel"]
 
@@ -50,6 +51,7 @@ graph TD
     MemServer --> Redis
     GW --> Subagents
     Subagents --> Ollama
+    Scripts --> SearXNG
     Dashboard --> GW
     Dashboard --> MemServer
     Dashboard --> Scheduler
@@ -83,7 +85,7 @@ Nova holds **1,370,000+ vector memories** across 100+ source domains, searchable
 | Graph | memory_links table with 2-hop traversal via `/recall/deep` |
 | Consolidation | Nightly REM Sleep: triage, synthesis, linking, pruning, report |
 
-**Memory-first resolution order:** Every query checks Nova's own memories before falling back to local LLM, then web search, then cloud. Personal data never leaves the machine.
+**Memory-first resolution order:** Every query checks Nova's own memories before falling back to local LLM, then local web search via SearXNG, then cloud. Personal data never leaves the machine.
 
 **API endpoints:** `/remember`, `/recall`, `/recall/deep`, `/search`, `/links`, `/random`, `/health`, `/stats`
 
@@ -248,8 +250,8 @@ Nova is designed to recover from failures without human intervention.
 
 **Optional:**
 
+- [SearXNG](https://github.com/searxng/searxng) for private local web search (no tracking, no cloud logging)
 - SwarmUI / ComfyUI for image generation
-- SearXNG for local web search
 - UniFi Protect for camera integration
 - Synology NAS for backup targets
 
