@@ -16,6 +16,7 @@ import re
 import subprocess
 import urllib.request
 import urllib.parse
+import urllib.error
 from datetime import datetime, date
 from pathlib import Path
 import nova_config
@@ -46,6 +47,7 @@ def slack_post(text):
 # ── Weather ───────────────────────────────────────────────────────────────────
 
 def get_weather():
+    # Primary source
     try:
         req = urllib.request.Request(
             "https://wttr.in/burbank,ca?format=%C+%t+feels+%f+humidity+%h",
@@ -53,6 +55,8 @@ def get_weather():
         )
         with urllib.request.urlopen(req, timeout=8) as r:
             raw = r.read().decode().strip()
+        if r.status >= 500:
+            raise urllib.error.HTTPError(r.url, r.status, "Server error", {}, None)
         # Parse to human-friendly
         temp_match = re.search(r"([+-]?\d+)°C", raw)
         if temp_match:
@@ -60,8 +64,27 @@ def get_weather():
             f = round(c * 9/5 + 32)
             raw = raw.replace(temp_match.group(0), f"{f}°F")
         return raw
-    except Exception as e:
-        return f"weather unavailable ({e})"
+    except Exception as primary_err:
+        log(f"Primary weather failed: {primary_err} — trying fallback...")
+
+    # Fallback source: wttr.in with simpler format
+    try:
+        req = urllib.request.Request(
+            "https://wttr.in/Burbank?format=%C+%t+feels+%f+humidity+%h+wind+%w",
+            headers={"User-Agent": "curl/7.0"}
+        )
+        with urllib.request.urlopen(req, timeout=8) as r:
+            raw = r.read().decode().strip()
+        temp_match = re.search(r"([+-]?\d+)°C", raw)
+        if temp_match:
+            c = int(temp_match.group(1))
+            f = round(c * 9/5 + 32)
+            raw = raw.replace(temp_match.group(0), f"{f}°F")
+        return raw
+    except Exception as fallback_err:
+        log(f"Fallback weather also failed: {fallback_err}")
+
+    return "Weather: unavailable"
 
 
 # ── Email priorities ──────────────────────────────────────────────────────────

@@ -16,6 +16,12 @@ SCRIPTS="$HOME/.openclaw/scripts"
 
 log() { echo "[dream_add_image.sh $(date +%H:%M:%S)] $*"; }
 
+# Pre-flight: check if SwarmUI is responding before attempting generation
+if ! curl -sf http://127.0.0.1:7801/ > /dev/null 2>&1; then
+    log "SwarmUI not available — skipping image generation."
+    exit 0  # Exit cleanly so scheduler doesn't count as failure
+fi
+
 if [ ! -f "$PENDING" ]; then
     log "No pending_delivery.json found — nothing to do."
     exit 0

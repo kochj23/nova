@@ -232,6 +232,54 @@ def format_history_slack(events, births, deaths, date_str):
     return "\n".join(lines)
 
 
+def _clean_memory_text(text, source):
+    """Clean up raw memory text for display.
+
+    Email archive entries often contain full headers (Date:, From:, To:, Subject:).
+    Extract just the useful info and cap at 150 chars.
+    """
+    text = text.strip().replace("\n", " ").strip()
+
+    # Detect raw email headers and extract subject + sender
+    if source in ("email_archive", "email") or text.startswith(("Date:", "From:", "Email subject archive")):
+        subject = ""
+        sender = ""
+        for part in text.replace("; ", "\n").replace("  ", "\n").split("\n"):
+            part = part.strip()
+            if part.startswith("Subject:"):
+                subject = part[len("Subject:"):].strip()
+            elif part.startswith("SUBJ:"):
+                subject = part[len("SUBJ:"):].strip()
+            elif part.startswith("From:"):
+                sender = part[len("From:"):].strip()
+            elif part.startswith("FROM:"):
+                sender = part[len("FROM:"):].strip()
+        # Also try regex extraction from single-line format
+        if not subject:
+            import re
+            subj_match = re.search(r"(?:Subject|SUBJ):\s*(.+?)(?:\s*(?:From|FROM|To|TO|Date):|$)", text)
+            if subj_match:
+                subject = subj_match.group(1).strip()
+        if not sender:
+            import re
+            from_match = re.search(r"(?:From|FROM):\s*(.+?)(?:\s*(?:Subject|SUBJ|To|TO|Date):|$)", text)
+            if from_match:
+                sender = from_match.group(1).strip()
+
+        if subject or sender:
+            if subject and sender:
+                text = f"Email: {subject} (from {sender})"
+            elif subject:
+                text = f"Email: {subject}"
+            elif sender:
+                text = f"Email from {sender}"
+
+    # Cap at 150 characters
+    if len(text) > 150:
+        text = text[:147] + "..."
+    return text
+
+
 def format_personal_slack(memories_by_year, month_day_str, current_year):
     """Format personal memory section for Slack."""
     lines = []
@@ -254,9 +302,7 @@ def format_personal_slack(memories_by_year, month_day_str, current_year):
 
         for mem in memories_by_year[year]:
             source = mem["source"]
-            text = mem["text"].strip().replace("\n", " ").strip()
-            if len(text) > 250:
-                text = text[:247] + "..."
+            text = _clean_memory_text(mem["text"], source)
 
             source_emoji = {
                 "email_archive": ":email:",

@@ -264,11 +264,20 @@ class MemoryGardener(SubAgent):
             f"stale info (likely outdated).\n\n{mem_text}"
         )
 
+        today_str = date.today().strftime("%B %d, %Y")
         system = (
-            f"You are a memory curator. The current year is {current_year}. "
-            f"All years from 2000 to {current_year} are VALID past dates — they are NOT 'in the future'.\n"
-            "A memory is only 'stale' if its CONTENT is clearly outdated (e.g. 'meeting tomorrow' from 3 years ago), "
-            "not because it references a past year.\n"
+            f"You are a memory curator. The current date is {today_str}. "
+            f"ALL dates from 2000 to {current_year} are VALID PAST dates. "
+            f"Dates in {current_year + 1}, {current_year + 2}, {current_year + 3} are FUTURE dates.\n\n"
+            "STALENESS RULES — READ CAREFULLY:\n"
+            "A memory is ONLY 'stale' if its CONTENT describes a time-sensitive action that is "
+            "clearly no longer relevant (e.g., 'meeting tomorrow' from 3 years ago, an expired coupon, "
+            "a completed event with no historical value). "
+            "Historical records, past emails, and old conversations are NOT stale — they are archive memories.\n"
+            "Do NOT flag memories as stale just because they reference old dates. "
+            "Only flag if the information is ACTIVELY MISLEADING if recalled today.\n"
+            "A 2025 Uber receipt is a VALID historical record, not stale.\n"
+            "A 2020 email is a VALID archive memory, not stale.\n\n"
             "Analyze the given memories and return JSON:\n"
             '{"findings": [{"type": "duplicate|contradiction|stale", '
             '"severity": "high|medium|low", "memory_ids": ["id1","id2"], '

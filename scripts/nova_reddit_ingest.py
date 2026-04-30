@@ -281,9 +281,9 @@ def generate_dream_context(state):
 
 
 def _is_quiet_hours():
-    """Return True if current local time is between 23:00 and 07:00."""
+    """Return True if current local time is between 22:00 and 07:00."""
     current_hour = datetime.now().hour
-    return current_hour >= 23 or current_hour < 7
+    return current_hour >= 22 or current_hour < 7
 
 
 def main():

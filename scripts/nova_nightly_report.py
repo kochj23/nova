@@ -233,13 +233,20 @@ def email_action_items():
                 # ADT resolved/restored notifications are informational, not actionable
                 is_adt_resolved = ("adt" in sender_lower and
                     any(w in subj_lower for w in ["restored", "resolved", "cleared"]))
+                # Routine financial notifications (not actionable)
+                is_routine_financial = any(w in sender_lower + subj_lower for w in
+                    ["credit score changed", "scheduled a mortgage payment", "scheduled a payment",
+                     "transunion", "credit karma", "your fico", "score update",
+                     "payment confirmed", "payment received", "autopay"])
                 is_question = "?" in current_msg["subject"]
                 is_nova_msg = "nova" in sender_lower and "digitalnoise" in sender_lower
 
                 if not is_noise and not is_nova_msg:
                     priority = None
-                    if (is_security or is_financial) and not is_adt_resolved:
+                    if (is_security or is_financial) and not is_adt_resolved and not is_routine_financial:
                         priority = "🔴 HIGH"
+                    elif is_routine_financial:
+                        priority = "🔵 FYI"
                     elif is_known and is_question:
                         priority = "🟡 REPLY"
                     elif is_known:
@@ -278,35 +285,21 @@ def nova_memory_log():
         mem_file  = MEMORY_DIR / f"{today_str}.md"
         MEMORY_DIR.mkdir(parents=True, exist_ok=True)
 
-        # Count cron runs today from JSONL files
-        cron_runs_dir = Path.home() / ".openclaw" / "cron" / "runs"
+        # Pull task data from the unified scheduler API
         run_counts = {}
-        import glob
-        for jf in glob.glob(str(cron_runs_dir / "*.jsonl")):
-            job_id = Path(jf).stem
-            try:
-                # Map job IDs to names
-                jobs_file = Path.home() / ".openclaw" / "cron" / "jobs.json"
-                jobs_data = json.loads(jobs_file.read_text())
-                jobs = jobs_data.get("jobs", jobs_data) if isinstance(jobs_data, dict) else jobs_data
-                job_name_map = {j["id"]: j["name"] for j in jobs}
-            except Exception:
-                job_name_map = {}
-
-            count = 0
-            with open(jf) as f:
-                for line in f:
-                    try:
-                        e = json.loads(line.strip())
-                        ts_ms = e.get("ts", 0)
-                        ts    = datetime.fromtimestamp(ts_ms / 1000)
-                        if ts.date() == date.today() and e.get("action") == "finished":
-                            count += 1
-                    except Exception:
-                        pass
-            if count > 0:
-                name = job_name_map.get(job_id, job_id[:8])
-                run_counts[name] = count
+        try:
+            req = urllib.request.Request("http://127.0.0.1:37460/tasks", method="GET")
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                tasks_data = json.loads(resp.read())
+            for task_id, tinfo in tasks_data.items():
+                rc = tinfo.get("run_count", 0)
+                if rc > 0:
+                    # Use the script name (without extension) as the display name
+                    script = tinfo.get("script", task_id)
+                    name = script.rsplit(".", 1)[0] if "." in script else script
+                    run_counts[name] = rc
+        except Exception as e:
+            log(f"Could not reach scheduler API: {e} — task counts unavailable")
 
         # Count Slack deliveries today from gateway log
         slack_count = 0

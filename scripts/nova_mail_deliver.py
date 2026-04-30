@@ -76,16 +76,10 @@ def slack_post(text):
 
 
 def send_email(subject, body):
-    try:
-        sys.path.insert(0, str(SCRIPTS))
-        from nova_send_mail import send_mail
-        ok = send_mail(JORDAN_EMAIL, subject, body)
-        if ok:
-            log("Email sent.")
-        else:
-            log("Email failed (check nova_send_mail.py logs above).")
-    except Exception as e:
-        log(f"Email failed: {e}")
+    """DISABLED — sending mail summaries to Jordan's own addresses caused duplicates
+    in the next mail scan (Nova Morning Mail Summary appearing as new mail).
+    Mail summaries are now Slack-only. Kept as no-op for call-site compatibility."""
+    log("Email delivery disabled (Slack-only). Skipping.")
 
 
 def is_noise(sender, subject):

@@ -10,7 +10,7 @@ const NODE_DEFS = {
     imessage:       { label: 'iMessage',      group: 'channel',  gx: 0.10, gy: 0.60, icon: '💬' },
     email:          { label: 'Email',         group: 'channel',  gx: 0.10, gy: 0.75, icon: '✉' },
 
-    gateway:        { label: 'GATEWAY',       group: 'gateway',  gx: 0.50, gy: 0.42, icon: '⬢' },
+    gateway:        { label: 'GATEWAY',       group: 'gateway',  gx: 0.50, gy: 0.42, icon: '🐙' },
 
     ollama:         { label: 'Ollama',        group: 'backend',  gx: 0.90, gy: 0.10, sublabel: 'coder · vision · dreams', icon: '🐇' },
     openrouter:     { label: 'OpenRouter',    group: 'backend',  gx: 0.90, gy: 0.26, sublabel: 'chat · conversation', icon: '⑂' },

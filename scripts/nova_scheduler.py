@@ -188,6 +188,8 @@ class NovaScheduler:
         self._start_time = 0
         self._total_runs = 0
         self._total_failures = 0
+        self._prev_heartbeat_state = None  # (healthy, total, failing_ids) from last heartbeat
+        self._last_forced_heartbeat = 0    # timestamp of last proof-of-life heartbeat
 
     def load(self):
         self.sched_cfg, self.slack_cfg, self.tasks = load_config()
@@ -335,9 +337,13 @@ class NovaScheduler:
         uptime_h = (time.time() - self._start_time) / 3600
 
         failing = [t for t in self.tasks.values() if t.state.consecutive_failures >= 3 and t.enabled]
+        failing_ids = frozenset(t.id for t in failing)
         fail_str = ""
         if failing:
             fail_str = "\n  :x: Failing: " + ", ".join(t.id for t in failing)
+
+        # Build current state snapshot for comparison
+        current_state = (healthy, total, failing_ids)
 
         # Quiet hours: suppress heartbeat between 10pm-8am unless there are NEW failures
         tz = ZoneInfo(self.sched_cfg.get("tz", "America/Los_Angeles"))
@@ -350,6 +356,23 @@ class NovaScheduler:
                            if t.state.last_run > self._last_heartbeat]
             if not new_failures:
                 return
+
+        # During daytime: suppress heartbeat if nothing changed since last time.
+        # Still post at least every 4 hours as proof-of-life.
+        now = time.time()
+        proof_of_life_interval = 4 * 3600  # 4 hours
+        state_changed = (self._prev_heartbeat_state is None or
+                         current_state != self._prev_heartbeat_state)
+        new_failures_since = any(t.state.last_run > self._last_heartbeat for t in failing)
+        force_proof_of_life = (now - self._last_forced_heartbeat) >= proof_of_life_interval
+
+        if not in_quiet_hours and not state_changed and not new_failures_since and not force_proof_of_life:
+            # Nothing changed, no new failures, and not time for proof-of-life yet
+            return
+
+        self._prev_heartbeat_state = current_state
+        if force_proof_of_life or state_changed or new_failures_since:
+            self._last_forced_heartbeat = now
 
         await self._slack_post(
             f":heartbeat: *Scheduler Heartbeat*\n"
@@ -421,6 +444,7 @@ class NovaScheduler:
         self._last_tick = time.time()
         self._last_heartbeat = time.time()
         self._last_state_save = time.time()
+        self._last_forced_heartbeat = time.time()
 
         # Signal handlers
         loop = asyncio.get_event_loop()

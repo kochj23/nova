@@ -90,6 +90,23 @@ SOURCE_RULES = [
         "sources": ["music_lyrics", "music", "music_history"],
         "label": "lyrics",
     },
+    # AppViewX Migration Project / PKI / certificates / work project
+    {
+        "patterns": [
+            r"\b(appviewx|avx|cert\+|migration project)\b",
+            r"\b(m?pki|entrust|managed pki|certificate migration)\b",
+            r"\b(clearpass|wpa[23]|802\.1x|radius|scep|waep)\b",
+            r"\b(pci cert|pci compliance|roc|dkam|dcam)\b",
+            r"\b(enrollment server|cert.?lifecycle|cert.?automat)\b",
+            r"\b(sectigo|code.?sign|keystone|webvan)\b",
+            r"\b(disney.?connect|wlan|ssid|dual.?ca)\b",
+            r"\b(david burland|sean sullivan|mark randall|ian funk|laura iwasaki)\b",
+            r"\b(joe von schmidt|taher|harut|ganesh mallaya|justice london)\b",
+            r"\b(the project|the migration|avx project)\b",
+        ],
+        "sources": ["work_knowledge"],
+        "label": "AppViewX Migration Project",
+    },
     # SRE / work knowledge (not work emails — just SRE concepts)
     {
         "patterns": [

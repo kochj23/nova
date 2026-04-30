@@ -355,12 +355,15 @@
     ctx.lineWidth = 1.5;
     ctx.stroke();
 
-    // --- "GATEWAY" label ---
-    ctx.font = 'bold ' + Math.max(16, UNIT * 0.026) + 'px "Orbitron", "Share Tech Mono", monospace';
+    // --- OpenClaw icon + "GATEWAY" label ---
+    ctx.font = Math.max(24, UNIT * 0.04) + 'px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillStyle = rgba(baseCol, 0.7 * trafficPulse);
-    ctx.fillText('GATEWAY', CX, CY - UNIT * 0.008);
+    ctx.fillStyle = rgba(baseCol, 0.8 * trafficPulse);
+    ctx.fillText('🐙', CX, CY - UNIT * 0.025);
+    ctx.font = 'bold ' + Math.max(12, UNIT * 0.018) + 'px "Orbitron", "Share Tech Mono", monospace';
+    ctx.fillStyle = rgba(baseCol, 0.6 * trafficPulse);
+    ctx.fillText('GATEWAY', CX, CY + UNIT * 0.02);
 
     // --- Data readouts along rings ---
     ctx.font = Math.max(9, UNIT * 0.011) + 'px "Share Tech Mono", monospace';
