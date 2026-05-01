@@ -107,6 +107,18 @@ function renderCards(state) {
   renderTokenCounter(state.model_usage);
   renderCameras(state.cameras);
   renderHomeKit(state.homekit);
+  renderDeadman(state.scheduler);
+  renderAppWatchdog(state.app_watchdog);
+  renderChannels(state);
+  renderNas(state.synology);
+  renderKnowledge(state);
+  renderBriefings(state.scheduler);
+  renderHomebridgeCard(state.homebridge);
+  renderWeather(state.weather);
+  renderDream(state.dream);
+  renderNmap(state.scheduler);
+  renderHealthKit2(state.healthkit);
+  renderTraffic(state.traffic_flow);
   renderTaskTable(state.scheduler);
   for (const name of ['analyst', 'sentinel', 'coder', 'lookout', 'librarian']) {
     renderAgent(name, state.agents?.[name]);
@@ -921,6 +933,374 @@ function renderHomeKit(data) {
     (data.error ? `<div class="error-text">${escapeHtml(data.error)}</div>` : '');
 }
 
+// --- 12 New Dashboard Cards ---
+
+// 1. Dead Man's Switch
+function renderDeadman(sched) {
+  const card = document.getElementById('card-deadman');
+  if (!card || !sched || !sched.tasks) return;
+  const dms = sched.tasks.dead_mans_switch || sched.tasks.dead_man_switch;
+  if (!dms) { card.dataset.status = 'unknown'; card.querySelector('.card-body').innerHTML = '<p class="dim">No dead man\'s switch task</p>'; return; }
+
+  const lastRun = dms.last_run || 0;
+  const ageS = lastRun > 0 ? (Date.now() / 1000 - lastRun) : Infinity;
+  const ageH = ageS / 3600;
+  const failures = dms.consecutive_failures || 0;
+
+  let status = 'healthy';
+  if (ageH > 48 || failures > 0) status = 'down';
+  else if (ageH > 36) status = 'degraded';
+
+  card.dataset.status = status;
+  const agoStr = lastRun > 0 ? formatUptime(Math.round(ageS)) + ' ago' : 'Never';
+  const body = card.querySelector('.card-body');
+  body.innerHTML =
+    statRow('Last Fired', agoStr, status === 'healthy' ? 'green' : status === 'degraded' ? 'yellow' : 'red') +
+    statRow('Status', failures > 0 ? 'FAIL' : 'PASS', failures > 0 ? 'red' : 'green') +
+    statRow('Streak', (dms.run_count || 0) + ' runs', 'cyan') +
+    (failures > 0 ? statRow('Failures', failures + 'x', 'red') : '');
+}
+
+// 2. App Ports / Watchdog
+function renderAppWatchdog(data) {
+  const card = document.getElementById('card-app-watchdog');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  card.dataset.status = data.status === 'ok' ? 'healthy' : data.status === 'degraded' ? 'degraded' : 'down';
+  const body = card.querySelector('.card-body');
+  let html = statRow('Apps', (data.up_count || 0) + '/' + (data.total || 0) + ' up',
+    data.up_count === data.total ? 'green' : 'yellow');
+
+  if (data.apps?.length) {
+    html += '<div style="margin-top:6px">';
+    for (const app of data.apps) {
+      const dotCls = app.alive ? 'green' : 'red';
+      const upStr = app.alive && app.uptime_s > 0 ? formatUptime(Math.round(app.uptime_s)) : '';
+      html += `<div class="stat-row">
+        <span class="stat-label"><span style="color:var(--accent-${dotCls});font-size:8px">&#9679;</span> ${escapeHtml(app.name)} <span class="dim" style="font-size:9px">:${escapeHtml(app.port)}</span></span>
+        <span class="stat-value ${dotCls}">${app.alive ? 'UP' : 'DOWN'}${upStr ? ' <span class="dim" style="font-size:9px">' + upStr + '</span>' : ''}</span>
+      </div>`;
+    }
+    html += '</div>';
+  }
+
+  if (data.recent_restarts?.length) {
+    html += '<div style="margin-top:6px;font-size:10px;color:var(--text-dim)">Recent restarts:';
+    for (const r of data.recent_restarts) {
+      html += ` ${escapeHtml(r.app || '?')}`;
+    }
+    html += '</div>';
+  }
+  body.innerHTML = html;
+}
+
+// 3. Messaging Channels
+function renderChannels(state) {
+  const card = document.getElementById('card-channels');
+  if (!card) return;
+  const gw = state.gateway;
+  const herd = state.herd_activity;
+  const flows = state.flows;
+
+  if (!gw && !herd) { card.dataset.status = 'unknown'; return; }
+
+  const channels = [
+    { name: 'Slack', key: 'slack', color: 'magenta' },
+    { name: 'Discord', key: 'discord', color: 'cyan' },
+    { name: 'Signal', key: 'signal', color: 'green' },
+    { name: 'iMessage', key: 'imessage', color: 'yellow' },
+    { name: 'Email', key: 'email', color: 'blue' },
+  ];
+
+  const todayCounts = herd?.today || {};
+  const services = state.services || {};
+  let upCount = 0;
+
+  let html = '<div style="display:flex;flex-wrap:wrap;gap:8px">';
+  for (const ch of channels) {
+    const svc = services[ch.key];
+    const isUp = svc?.status === 'up';
+    if (isUp) upCount++;
+    const msgCount = todayCounts[ch.key] || 0;
+    const dotColor = isUp ? 'green' : 'red';
+
+    html += `<div style="flex:1;min-width:80px;padding:4px 0">
+      <div class="stat-row">
+        <span class="stat-label"><span style="color:var(--accent-${dotColor});font-size:8px">&#9679;</span> ${ch.name}</span>
+        <span class="stat-value ${ch.color}">${msgCount}</span>
+      </div>
+    </div>`;
+  }
+  html += '</div>';
+
+  card.dataset.status = upCount >= 3 ? 'healthy' : upCount >= 1 ? 'degraded' : 'down';
+  card.querySelector('.card-body').innerHTML = html;
+}
+
+// 4. Synology NAS
+function renderNas(data) {
+  const card = document.getElementById('card-nas');
+  if (!card) return;
+  if (!data || data.status === 'unavailable') {
+    card.dataset.status = 'unknown';
+    card.querySelector('.card-body').innerHTML = '<p class="dim">No NAS data</p>';
+    return;
+  }
+  card.dataset.status = data.status === 'ok' ? (data.problem_count > 0 ? 'degraded' : 'healthy') : 'down';
+  const body = card.querySelector('.card-body');
+  const ramColor = (data.ram_pct || 0) > 90 ? 'red' : (data.ram_pct || 0) > 75 ? 'yellow' : 'green';
+
+  let lastCheck = data.last_check || '---';
+  if (lastCheck && lastCheck.includes('T')) {
+    try {
+      const dt = new Date(lastCheck);
+      const ago = Math.floor((Date.now() - dt.getTime()) / 1000);
+      lastCheck = formatUptime(ago) + ' ago';
+    } catch(e) {}
+  }
+
+  body.innerHTML =
+    statRow('Status', data.status === 'ok' ? 'Awake' : 'Down', data.status === 'ok' ? 'green' : 'red') +
+    statRow('Model', data.model || '?', 'cyan') +
+    statRow('Firmware', data.firmware || '?') +
+    statRow('RAM', (data.ram_pct || 0) + '%', ramColor) +
+    progressBar(data.ram_pct || 0, [75, 90]) +
+    statRow('Volumes', data.volumes || '?') +
+    statRow('Last Check', lastCheck) +
+    (data.problem_count > 0 ? statRow('Problems', data.problem_count, 'red') : '');
+}
+
+// 5. Knowledge Pipeline
+function renderKnowledge(state) {
+  const card = document.getElementById('card-knowledge');
+  if (!card) return;
+  const sched = state.scheduler;
+  const pg = state.postgresql;
+  if (!sched) { card.dataset.status = 'unknown'; return; }
+
+  const tasks = sched.tasks || {};
+  const knowledgeTasks = ['reddit_ingest', 'sam_blog_ingest', 'context_bridge_am', 'context_bridge_pm', 'this_day'];
+  let failCount = 0;
+  let lastRunTs = 0;
+
+  let html = '';
+  if (pg) {
+    html += statRow('Today Ingested', (pg.today_count || 0).toLocaleString(), 'cyan');
+    if (pg.today_sources?.length) {
+      const top3 = pg.today_sources.slice(0, 3);
+      html += statRow('Top Sources', top3.map(s => s.source + '(' + s.count + ')').join(', '), 'green');
+    }
+  }
+
+  html += '<div style="margin-top:6px">';
+  for (const name of knowledgeTasks) {
+    const t = tasks[name];
+    if (!t) continue;
+    const ok = (t.consecutive_failures || 0) === 0 && (t.run_count || 0) > 0;
+    if (!ok && t.run_count > 0) failCount++;
+    const lr = t.last_run || 0;
+    if (lr > lastRunTs) lastRunTs = lr;
+    const agoStr = lr > 0 ? formatUptime(Math.round(Date.now() / 1000 - lr)) + ' ago' : 'never';
+    const dotColor = ok ? 'green' : (t.run_count || 0) === 0 ? 'dim' : 'red';
+    html += `<div class="stat-row">
+      <span class="stat-label"><span style="color:var(--accent-${dotColor});font-size:8px">&#9679;</span> ${escapeHtml(name)}</span>
+      <span class="stat-value" style="font-size:10px">${agoStr}</span>
+    </div>`;
+  }
+  html += '</div>';
+
+  card.dataset.status = failCount > 0 ? 'degraded' : 'healthy';
+  card.querySelector('.card-body').innerHTML = html;
+}
+
+// 6. Briefings & Reports
+function renderBriefings(sched) {
+  const card = document.getElementById('card-briefings');
+  if (!card || !sched) return;
+  const tasks = sched.tasks || {};
+  const briefingNames = ['morning_brief', 'nightly_report', 'daily_journal', 'weekly_journal', 'dream_pipeline'];
+  let failCount = 0;
+
+  let html = '';
+  for (const name of briefingNames) {
+    const t = tasks[name];
+    if (!t) continue;
+    const ok = (t.consecutive_failures || 0) === 0 && (t.run_count || 0) > 0;
+    if (!ok && t.run_count > 0) failCount++;
+    const lr = t.last_run || 0;
+    const agoStr = lr > 0 ? formatUptime(Math.round(Date.now() / 1000 - lr)) + ' ago' : 'never';
+    const dotColor = ok ? 'green' : (t.run_count || 0) === 0 ? 'dim' : 'red';
+    const displayName = name.replace(/_/g, ' ');
+    html += `<div class="stat-row">
+      <span class="stat-label"><span style="color:var(--accent-${dotColor});font-size:8px">&#9679;</span> ${escapeHtml(displayName)}</span>
+      <span class="stat-value" style="font-size:10px">${agoStr}</span>
+    </div>`;
+  }
+
+  card.dataset.status = failCount > 0 ? 'degraded' : 'healthy';
+  card.querySelector('.card-body').innerHTML = html || '<p class="dim">No briefing tasks found</p>';
+}
+
+// 7. Homebridge
+function renderHomebridgeCard(data) {
+  const card = document.getElementById('card-homebridge');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  card.dataset.status = data.status === 'ok' ? 'healthy' : data.status === 'degraded' ? 'degraded' : 'down';
+  const body = card.querySelector('.card-body');
+  body.innerHTML =
+    statRow('Status', data.status === 'ok' ? 'Online' : data.status === 'degraded' ? 'Partial' : 'Offline',
+      data.status === 'ok' ? 'green' : data.status === 'degraded' ? 'yellow' : 'red') +
+    statRow('LaunchAgent', data.launchd ? 'Running' : 'Stopped', data.launchd ? 'green' : 'red') +
+    statRow('Port 8581', data.port_reachable ? 'Reachable' : 'Unreachable', data.port_reachable ? 'green' : 'red') +
+    (data.pid ? statRow('PID', data.pid, 'cyan') : '') +
+    (data.error ? `<div class="error-text">${escapeHtml(data.error)}</div>` : '');
+}
+
+// 8. Weather / Sky
+function renderWeather(data) {
+  const card = document.getElementById('card-weather');
+  if (!card) return;
+  if (!data || data.status === 'unavailable') {
+    card.dataset.status = 'unknown';
+    card.querySelector('.card-body').innerHTML = '<p class="dim">No weather data</p>';
+    return;
+  }
+  card.dataset.status = data.status === 'ok' ? 'healthy' : 'degraded';
+  const body = card.querySelector('.card-body');
+  let html = '';
+
+  if (data.temp_f) html += statRow('Temperature', data.temp_f + '°F', 'cyan');
+  if (data.conditions) html += statRow('Conditions', data.conditions, 'green');
+  if (data.moon_phase) html += statRow('Moon', data.moon_phase);
+  if (data.frames_today) html += statRow('Sky Frames', data.frames_today, 'cyan');
+  if (data.sessions_today?.length) {
+    html += statRow('Sessions', data.sessions_today.join(', '));
+  }
+  if (data.last_capture) {
+    let captureStr = data.last_capture;
+    try {
+      const dt = new Date(captureStr);
+      const ago = Math.floor((Date.now() - dt.getTime()) / 1000);
+      captureStr = formatUptime(ago) + ' ago';
+    } catch(e) {}
+    html += statRow('Last Capture', captureStr);
+  }
+  if (!html) html = '<p class="dim">Weather data partial</p>';
+  body.innerHTML = html;
+}
+
+// 9. Dream Pipeline
+function renderDream(data) {
+  const card = document.getElementById('card-dream');
+  if (!card) return;
+  if (!data || data.status === 'unavailable') {
+    card.dataset.status = 'unknown';
+    card.querySelector('.card-body').innerHTML = '<p class="dim">No dream data</p>';
+    return;
+  }
+  card.dataset.status = data.status === 'ok' ? 'healthy' : data.status === 'degraded' ? 'degraded' : 'down';
+  const body = card.querySelector('.card-body');
+
+  let lastRunStr = '---';
+  if (data.last_run > 0) {
+    const ago = Math.floor(Date.now() / 1000 - data.last_run);
+    lastRunStr = formatUptime(ago) + ' ago';
+  }
+
+  let html =
+    statRow('Last Run', lastRunStr, (data.consecutive_failures || 0) > 0 ? 'red' : 'green') +
+    statRow('Runs', data.run_count || 0, 'cyan') +
+    statRow('Images', data.image_count || 0, data.has_images ? 'green' : 'dim') +
+    statRow('Dream Entries', data.dream_entries || 0, 'cyan');
+
+  if (data.last_dream_words) html += statRow('Last Words', data.last_dream_words);
+  if (data.last_dream_file) html += statRow('Last File', data.last_dream_file);
+  if (data.last_image_ts) {
+    const imgAgo = Math.floor(Date.now() / 1000 - data.last_image_ts);
+    html += statRow('Last Image', formatUptime(imgAgo) + ' ago');
+  }
+  if (data.consecutive_failures > 0) html += statRow('Failures', data.consecutive_failures + 'x', 'red');
+
+  body.innerHTML = html;
+}
+
+// 10. NMAP Scan
+function renderNmap(sched) {
+  const card = document.getElementById('card-nmap');
+  if (!card || !sched) return;
+  const tasks = sched.tasks || {};
+  const nmap = tasks.weekly_nmap;
+  if (!nmap) {
+    card.dataset.status = 'unknown';
+    card.querySelector('.card-body').innerHTML = '<p class="dim">No NMAP task</p>';
+    return;
+  }
+
+  const ok = (nmap.consecutive_failures || 0) === 0 && (nmap.run_count || 0) > 0;
+  card.dataset.status = ok ? 'healthy' : nmap.run_count > 0 ? 'degraded' : 'unknown';
+
+  const lr = nmap.last_run || 0;
+  const agoStr = lr > 0 ? formatUptime(Math.round(Date.now() / 1000 - lr)) + ' ago' : 'Never';
+
+  const body = card.querySelector('.card-body');
+  body.innerHTML =
+    statRow('Last Scan', agoStr, ok ? 'green' : 'yellow') +
+    statRow('Total Runs', nmap.run_count || 0, 'cyan') +
+    statRow('Schedule', nmap.schedule || '?') +
+    statRow('Duration', (nmap.last_duration || 0).toFixed(1) + 's') +
+    (nmap.consecutive_failures > 0 ? statRow('Failures', nmap.consecutive_failures + 'x', 'red') : '');
+}
+
+// 11. HealthKit
+function renderHealthKit2(data) {
+  const card = document.getElementById('card-healthkit');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  card.dataset.status = data.status === 'ok' ? 'healthy' : 'down';
+  const body = card.querySelector('.card-body');
+  body.innerHTML =
+    statRow('Status', data.running ? 'Running' : 'Stopped', data.running ? 'green' : 'red') +
+    statRow('LaunchAgent', data.running ? 'Active' : 'Inactive', data.running ? 'green' : 'red') +
+    (data.last_sync ? statRow('Last Sync', data.last_sync) : statRow('Last Sync', 'Unknown', 'dim')) +
+    (data.error ? `<div class="error-text">${escapeHtml(data.error)}</div>` : '');
+}
+
+// 12. Traffic Overview
+function renderTraffic(traffic) {
+  const card = document.getElementById('card-traffic');
+  if (!card) return;
+  if (!traffic || typeof traffic !== 'object') { card.dataset.status = 'unknown'; return; }
+
+  // traffic_flow is a dict of node -> flow rate
+  const nodes = Object.entries(traffic)
+    .filter(([k, v]) => typeof v === 'number' && v > 0)
+    .sort((a, b) => b[1] - a[1]);
+
+  if (nodes.length === 0) {
+    card.dataset.status = 'unknown';
+    card.querySelector('.card-body').innerHTML = '<p class="dim">No traffic data</p>';
+    return;
+  }
+
+  const totalFlow = nodes.reduce((a, [_, v]) => a + v, 0);
+  card.dataset.status = totalFlow > 0 ? 'healthy' : 'degraded';
+
+  let html = statRow('Total Flow', totalFlow.toFixed(3), 'cyan');
+  const top5 = nodes.slice(0, 5);
+  html += '<div style="margin-top:6px">';
+  for (const [node, rate] of top5) {
+    const pct = (rate / totalFlow * 100).toFixed(0);
+    html += `<div class="stat-row">
+      <span class="stat-label">${escapeHtml(node)}</span>
+      <span class="stat-value green">${rate.toFixed(3)} <span class="dim" style="font-size:9px">${pct}%</span></span>
+    </div>`;
+  }
+  html += '</div>';
+
+  card.querySelector('.card-body').innerHTML = html;
+}
+
 // --- Graph Node Click Handler ---
 window.openNodeDetail = function(nodeId, nodeLabel) {
   const NODE_SERVICE_MAP = {
@@ -958,6 +1338,12 @@ const CARD_SERVICE_MAP = {
   'card-herd-activity': 'herd_activity', 'card-mlx-status': 'mlx_status',
   'card-cron-health': 'cron_health', 'card-token-counter': 'token_counter',
   'card-cameras': 'cameras', 'card-homekit': 'homekit',
+  'card-deadman': 'deadman', 'card-app-watchdog': 'app_watchdog',
+  'card-channels': 'channels', 'card-nas': 'synology',
+  'card-knowledge': 'knowledge', 'card-briefings': 'briefings',
+  'card-homebridge': 'homebridge', 'card-weather': 'weather',
+  'card-dream': 'dream', 'card-nmap': 'nmap',
+  'card-healthkit': 'healthkit_status', 'card-traffic': 'traffic',
 };
 
 function openModal(title, html) {

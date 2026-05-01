@@ -763,6 +763,93 @@
     ctx.textAlign = 'center';
     ctx.fillText('/ 2M', arcCX, arcCY + arcR + 6);
 
+    // ---- TODAY stats (below the arc gauge) ----
+    var todayY = arcCY + arcR + 20;
+    var todayCount = 0;
+    var todaySources = [];
+    if (state && state.postgresql) {
+      todayCount = state.postgresql.today_count || 0;
+      todaySources = state.postgresql.today_sources || [];
+    }
+
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.font = fontSize + 'px "Share Tech Mono", monospace';
+    ctx.fillStyle = rgba(C.green, 0.35);
+    ctx.fillText('TODAY', tlX, todayY);
+
+    ctx.font = 'bold ' + (bigFontSize * 0.8) + 'px "Orbitron", "Share Tech Mono", monospace';
+    ctx.fillStyle = rgba(C.green, 0.65 * pulse);
+    ctx.fillText('+' + formatNumber(todayCount), tlX, todayY + fontSize + 2);
+
+    // Top sources today (compact list)
+    if (todaySources.length > 0) {
+      ctx.font = (fontSize - 2) + 'px "Share Tech Mono", monospace';
+      var srcY = todayY + fontSize + bigFontSize * 0.8 + 6;
+      for (var si = 0; si < Math.min(4, todaySources.length); si++) {
+        var src = todaySources[si];
+        ctx.fillStyle = rgba(C.green, 0.25);
+        ctx.fillText(src.source.substring(0, 14) + ' +' + formatNumber(src.count), tlX, srcY);
+        srcY += fontSize - 1;
+      }
+    }
+
+    // ---- LEFT COLUMN: Subsystem status below Today ----
+    var subY = srcY || (todayY + fontSize + bigFontSize * 0.8 + 10);
+    subY += 8;
+
+    // Weather
+    if (state && state.weather && state.weather.status === 'ok') {
+      ctx.font = fontSize + 'px "Share Tech Mono", monospace';
+      ctx.fillStyle = rgba(C.blue, 0.35);
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      ctx.fillText('WEATHER', tlX, subY);
+      var wTemp = state.weather.temperature || '?';
+      var wCond = (state.weather.conditions || '').substring(0, 16);
+      ctx.font = (fontSize - 1) + 'px "Share Tech Mono", monospace';
+      ctx.fillStyle = rgba(C.blue, 0.5 * pulse);
+      ctx.fillText(wTemp + '  ' + wCond, tlX, subY + fontSize + 1);
+      var moonPhase = state.weather.moon_phase || '';
+      if (moonPhase) {
+        ctx.fillStyle = rgba(C.white, 0.3);
+        ctx.fillText(moonPhase.substring(0, 30), tlX, subY + fontSize * 2 + 2);
+      }
+      subY += fontSize * 3 + 8;
+    }
+
+    // App watchdog summary
+    if (state && state.app_watchdog && state.app_watchdog.apps) {
+      var apps = state.app_watchdog.apps;
+      var aUp = apps.filter(function(a) { return a.status === 'up'; }).length;
+      var aDown = apps.length - aUp;
+      ctx.font = fontSize + 'px "Share Tech Mono", monospace';
+      ctx.fillStyle = rgba(aDown > 0 ? C.amber : C.cyan, 0.35);
+      ctx.textAlign = 'left';
+      ctx.fillText('APPS', tlX, subY);
+      ctx.font = (fontSize - 1) + 'px "Share Tech Mono", monospace';
+      ctx.fillStyle = rgba(aDown > 0 ? C.amber : C.cyan, 0.45 * pulse);
+      ctx.fillText(aUp + ' up / ' + aDown + ' down', tlX, subY + fontSize + 1);
+      subY += fontSize * 2 + 8;
+    }
+
+    // Dead man's switch
+    if (state && state.scheduler && state.scheduler.tasks) {
+      var dms = state.scheduler.tasks.dead_mans_switch;
+      if (dms) {
+        var dmsAge = (Date.now() / 1000) - (dms.last_run || 0);
+        var dmsOk = dmsAge < 129600 && (dms.consecutive_failures || 0) === 0;
+        ctx.font = fontSize + 'px "Share Tech Mono", monospace';
+        ctx.fillStyle = rgba(dmsOk ? C.green : C.red, 0.35);
+        ctx.fillText('DEADMAN', tlX, subY);
+        ctx.font = (fontSize - 1) + 'px "Share Tech Mono", monospace';
+        ctx.fillStyle = rgba(dmsOk ? C.green : C.red, 0.5 * pulse);
+        var dmsText = dmsOk ? 'OK (' + formatUptime(dmsAge) + ' ago)' : 'ALERT';
+        ctx.fillText(dmsText, tlX, subY + fontSize + 1);
+        subY += fontSize * 2 + 8;
+      }
+    }
+
     // ---- TOP-RIGHT: Clock + uptime ----
     var trX = W - panelPad;
     var trY = panelPad;
@@ -1053,6 +1140,57 @@
       memEl.textContent = formatNumber(state.postgresql.total_rows || 0);
     }
 
+    var todayEl = document.getElementById('stat-today');
+    if (state && state.postgresql && todayEl) {
+      var todayCount = state.postgresql.today_count || 0;
+      todayEl.textContent = todayCount > 0 ? '+' + formatNumber(todayCount) : '0';
+      todayEl.className = 'hud-stat-value' + (todayCount > 1000 ? ' today-active' : '');
+    }
+
+    // Apps status (up/total)
+    var appsEl = document.getElementById('stat-apps');
+    if (state && state.app_watchdog && appsEl) {
+      var aw = state.app_watchdog;
+      var appsUp = (aw.apps || []).filter(function(a) { return a.status === 'up'; }).length;
+      var appsTotal = (aw.apps || []).length;
+      appsEl.textContent = appsUp + '/' + appsTotal;
+      appsEl.className = 'hud-stat-value' + (appsUp < appsTotal ? ' warning' : '');
+    }
+
+    // Channels status
+    var chEl = document.getElementById('stat-channels');
+    if (state && chEl) {
+      var chUp = 0;
+      var chTotal = 5;
+      if (state.services) {
+        var chKeys = ['slack', 'discord', 'signal', 'imessage', 'email'];
+        for (var ci = 0; ci < chKeys.length; ci++) {
+          var svc = state.services[chKeys[ci]];
+          if (svc && (svc.status === 'up' || svc.status === 'ok')) chUp++;
+        }
+      } else if (state.gateway && state.gateway.ok) {
+        chUp = chTotal;
+      }
+      chEl.textContent = chUp + '/' + chTotal;
+      chEl.className = 'hud-stat-value' + (chUp < chTotal ? ' warning' : '');
+    }
+
+    // NAS status
+    var nasEl = document.getElementById('stat-nas');
+    if (state && state.synology && nasEl) {
+      var nasStatus = state.synology.status;
+      if (nasStatus === 'ok') {
+        nasEl.textContent = 'OK';
+        nasEl.className = 'hud-stat-value';
+      } else if (nasStatus === 'unavailable') {
+        nasEl.textContent = 'SLEEP';
+        nasEl.className = 'hud-stat-value warning';
+      } else {
+        nasEl.textContent = 'DOWN';
+        nasEl.className = 'hud-stat-value critical';
+      }
+    }
+
     var schedEl = document.getElementById('stat-scheduler');
     if (state && state.scheduler && state.scheduler.info && schedEl) {
       var info = state.scheduler.info;
@@ -1100,6 +1238,8 @@
     { key: 'postgresql', label: 'PG' },
     { key: 'memory_server', label: 'MEM' },
     { key: 'searxng', label: 'SRX' },
+    { key: 'homebridge', label: 'HB' },
+    { key: 'nas', label: 'NAS' },
   ];
 
   var ledsInitialized = false;
@@ -1138,9 +1278,18 @@
       var svc = LED_SERVICES[i];
       var led = document.getElementById('led-' + svc.key);
       if (!led) continue;
-      var node = svc.key === 'gateway' ? gwNode : nodes[svc.key];
-      if (!node) continue;
-      var s = node.status;
+
+      var s = 'unknown';
+      if (svc.key === 'gateway') {
+        s = gwNode.status;
+      } else if (svc.key === 'homebridge' && state && state.homebridge) {
+        s = state.homebridge.status === 'ok' ? 'up' : state.homebridge.status;
+      } else if (svc.key === 'nas' && state && state.synology) {
+        s = state.synology.status === 'ok' ? 'up' : (state.synology.status === 'unavailable' ? 'warning' : 'down');
+      } else if (nodes[svc.key]) {
+        s = nodes[svc.key].status;
+      }
+
       led.className = 'status-led ' + (
         s === 'up' || s === 'ok' ? 'up' :
         s === 'down' || s === 'error' ? 'down' :
@@ -1180,6 +1329,26 @@
         var alert = state.alerts[a];
         addTickerEvent('[' + alert.severity.toUpperCase() + '] ' + alert.message);
       }
+    }
+
+    // New subsystem events
+    if (state.app_watchdog && state.app_watchdog.apps) {
+      var downApps = state.app_watchdog.apps.filter(function(a) { return a.status !== 'up'; });
+      for (var da = 0; da < downApps.length; da++) {
+        addTickerEvent('APP DOWN: ' + downApps[da].name + ' (port ' + downApps[da].port + ')');
+      }
+    }
+
+    if (state.weather && state.weather.temperature) {
+      addTickerEvent('weather: ' + state.weather.temperature + ' ' + (state.weather.conditions || ''));
+    }
+
+    if (state.synology && state.synology.status === 'ok') {
+      addTickerEvent('nas: ' + (state.synology.model || 'Synology') + ' online — RAM ' + (state.synology.ram_pct || 0) + '%');
+    }
+
+    if (state.dream && state.dream.status === 'ok') {
+      addTickerEvent('dream_pipeline: last run ' + formatUptime((Date.now()/1000) - (state.dream.last_run || 0)) + ' ago');
     }
 
     renderTicker();

@@ -18,6 +18,16 @@ import urllib.request
 from datetime import datetime, date, timedelta
 from pathlib import Path
 
+try:
+    import psycopg2
+    HAS_PG = True
+except ImportError:
+    try:
+        import pg8000
+        HAS_PG = "pg8000"
+    except ImportError:
+        HAS_PG = False
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 WORKSPACE          = Path.home() / ".openclaw/workspace"
@@ -27,9 +37,10 @@ MEMORY_DIR         = WORKSPACE / "memory"
 OLLAMA_URL         = "http://127.0.0.1:11434/api/generate"
 VECTOR_URL         = "http://127.0.0.1:18790"
 MODEL              = "qwen3-coder:30b"               # local only — no cloud for dreams
+GENERATE_IMAGE_SH  = Path.home() / ".openclaw/scripts/generate_image.sh"
 TODAY              = date.today().isoformat()
-YESTERDAY          = (date.today() - timedelta(days=1)).isoformat()
-TWO_DAYS_AGO       = (date.today() - timedelta(days=2)).isoformat()
+ROLLING_DAYS       = 7
+ROLLING_DATES      = [(date.today() - timedelta(days=i)).isoformat() for i in range(ROLLING_DAYS)]
 
 
 FALLBACK_MODELS = ["qwen3-30b-a3b", "deepseek-r1:8b", "qwen3-vl:4b"]
@@ -130,6 +141,89 @@ def recall(query: str, n: int = 8, source: str = None) -> list[str]:
         return []
 
 
+def query_recent_ingests() -> tuple[str, list[dict]]:
+    """Query PostgreSQL directly for memories ingested in the rolling 7-day window.
+    Returns exactly ONE random memory per source that has new content.
+    Returns (formatted_text, list_of_inspiration_records)."""
+    if not HAS_PG:
+        log("No PostgreSQL driver — skipping recent ingest query")
+        return "", []
+
+    EXCLUDE_SOURCES = (
+        'dream', 'nightly', 'infrastructure', 'email',
+        'app_watchdog', 'system', 'screenshot',
+        'private_document', 'work_knowledge',
+        'corvette_workshop_manual', 'email_archive',
+        'imessage', 'slack_general', 'slack_conversation',
+        'slack_home_alerts', 'slack_jordan', 'slack_todo',
+        'slack_homerepair', 'slack_random', 'slack_house',
+        'security', 'ssl_management', 'git_training',
+        'subagent.briefer', 'morning_brief', 'package_tracker',
+        'home_address', 'calendar', 'apple_health', 'healthkit',
+        'oneonone', 'oneonone_meetings',
+    )
+
+    try:
+        import psycopg2
+        conn = psycopg2.connect("dbname=nova_memories")
+        cur = conn.cursor()
+
+        # Get ALL sources with new content in the rolling 7-day window
+        cur.execute("""
+            SELECT source, COUNT(*) as cnt
+            FROM memories
+            WHERE created_at > NOW() - INTERVAL '7 days'
+              AND source NOT IN %s
+              AND tier IN ('working', 'long_term')
+            GROUP BY source
+            HAVING COUNT(*) >= 3
+            ORDER BY cnt DESC
+        """, (EXCLUDE_SOURCES,))
+        sources = cur.fetchall()
+
+        if not sources:
+            conn.close()
+            return "", []
+
+        inspirations = []
+        parts = []
+        for source_name, count in sources:
+            # Get exactly ONE purely random memory from each source
+            cur.execute("""
+                SELECT text, metadata, source, created_at
+                FROM memories
+                WHERE source = %s
+                  AND created_at > NOW() - INTERVAL '7 days'
+                  AND tier IN ('working', 'long_term')
+                  AND LENGTH(text) > 50
+                ORDER BY RANDOM()
+                LIMIT 1
+            """, (source_name,))
+            row = cur.fetchone()
+
+            if row:
+                text, metadata, src, created_at = row
+                snippet = text[:250] if text else ""
+                meta = json.loads(metadata) if isinstance(metadata, str) else (metadata or {})
+                label = meta.get("show") or meta.get("title") or meta.get("contact") or source_name
+                parts.append(f"[{label} — {source_name} ({count} new)]\n{snippet}")
+                inspirations.append({
+                    "source": src,
+                    "label": label,
+                    "count": count,
+                    "memory": text[:300] if text else "",
+                    "ingested": created_at.isoformat() if created_at else None,
+                })
+
+        conn.close()
+        log(f"Recent ingests: {len(sources)} sources, {sum(s[1] for s in sources)} total new memories, 1 sample each")
+        return "\n\n".join(parts), inspirations
+
+    except Exception as e:
+        log(f"Recent ingest query failed (non-fatal): {e}")
+        return "", []
+
+
 def _extract_interesting_sections(content: str) -> str:
     """
     Parse a daily memory file and return the interesting parts for dreaming,
@@ -198,63 +292,69 @@ def _extract_interesting_sections(content: str) -> str:
     return "\n\n".join(parts)
 
 
-def query_rolling_learnings() -> str:
+def query_rolling_learnings() -> tuple[str, list[dict]]:
     """
-    Pull what Nova has learned and experienced over the past rolling 3 days
-    from both the daily markdown logs and the vector memory.
-    Returns a focused text block for the dream prompt.
-
-    Prioritizes interesting content (subreddit, meetings, weather, projects)
-    over operational noise (cron counts, package tracker "no packages").
+    Pull what Nova has learned and experienced over the rolling 7 days
+    from daily markdown logs, vector memory, and recent ingests.
+    Returns (focused_text_block, list_of_inspirations).
     """
     sections = []
+    inspirations = []
 
-    # ── Daily memory log files (last 3 days) ────────────────────────────────
-    for label, day in [("Today", TODAY), ("Yesterday", YESTERDAY), ("Two days ago", TWO_DAYS_AGO)]:
-        content = read_file(MEMORY_DIR / f"{day}.md", 4000)
+    # ── Recent ingests (rolling 7 days) — one memory per source ────────────
+    recent_text, recent_inspirations = query_recent_ingests()
+    if recent_text:
+        sections.append(f"[FRESHLY LEARNED — rolling 7 days, one per source — USE THIS]\n{recent_text}")
+        inspirations.extend(recent_inspirations)
+
+    # ── Daily memory log files (rolling 7 days) ────────────────────────────
+    day_labels = ["Today", "Yesterday", "2 days ago", "3 days ago",
+                  "4 days ago", "5 days ago", "6 days ago"]
+    for i, day in enumerate(ROLLING_DATES):
+        label = day_labels[i] if i < len(day_labels) else f"{i} days ago"
+        # More detail for recent days, less for older
+        max_chars = 3000 if i < 2 else 1500 if i < 4 else 800
+        content = read_file(MEMORY_DIR / f"{day}.md", max_chars)
         if content.strip():
             extracted = _extract_interesting_sections(content)
             if extracted.strip():
                 sections.append(f"[{label} — {day}]\n{extracted}")
 
-        # Reddit context file (written by nova_reddit_ingest.py)
-        reddit_content = read_file(MEMORY_DIR / f"{day}.reddit.md", 2000)
-        if reddit_content.strip():
-            sections.append(f"[Reddit — {day}]\n{reddit_content}")
+        # Reddit context (only last 3 days to save space)
+        if i < 3:
+            reddit_content = read_file(MEMORY_DIR / f"{day}.reddit.md", 1500)
+            if reddit_content.strip():
+                sections.append(f"[Reddit — {day}]\n{reddit_content}")
 
-    # ── Vector memory: what Nova worked on / learned / noticed ──────────────
-    # Prioritize synthesis memories (4am consolidation), meetings, and broad context
-    # over operational nightly logs
+    # ── Vector memory: synthesis and context ───────────────────────────────
     queries = [
-        ("work patterns relationship home life", "synthesis"),  # 4am consolidation — rich
+        ("work patterns relationship home life", "synthesis"),
         ("Jordan project meeting work", "meeting"),
         ("GitHub activity commits stars issues", "github"),
-        ("what happened today learned noticed observed", None),  # broad catch-all
-        ("memory ingested knowledge added", None),              # broad — catches ingested content
     ]
     recalled = []
     seen = set()
     for q, src in queries:
-        for chunk in recall(q, n=5, source=src):
+        for chunk in recall(q, n=3, source=src):
             key = chunk[:80]
             if key not in seen:
                 seen.add(key)
                 recalled.append(chunk)
 
-    # Also pull recent dream journal entries for continuity (avoid repeating)
+    # Pull recent dream journal entries for continuity (avoid repeating)
     prev_dreams = []
-    for day in [YESTERDAY, TWO_DAYS_AGO]:
+    for day in ROLLING_DATES[1:3]:
         txt = read_file(JOURNAL_DIR / f"{day}.md", 400)
         if txt.strip():
             prev_dreams.append(f"[Dream {day}]\n{txt[:350]}")
 
     summary = "\n\n".join(sections)
     if recalled:
-        summary += "\n\n[Recalled from memory — 3-day window]\n" + "\n---\n".join(recalled[:12])
+        summary += "\n\n[Recalled from memory]\n" + "\n---\n".join(recalled[:8])
     if prev_dreams:
         summary += "\n\n[Recent dreams — for continuity, not repetition]\n" + "\n\n".join(prev_dreams)
 
-    return summary
+    return summary, inspirations
 
 
 def _build_prompt(identity: str, soul: str, rolling_context: str) -> str:
@@ -270,11 +370,12 @@ VOICE — how Nova dreams:
 - Each dream should feel different from the last. Different structure, different mood, different images.
 
 CONTENT — what to dream about:
-- Draw from the 3-day window below. The historical events (This Day in History) are especially rich — use at least one directly as a scene or backdrop. A 1973 record going to #1 becomes a vinyl store that's been open since before time. A 1970 war authorization becomes a checkpoint on Magnolia Blvd.
-- Personal memories (This Day in Your Life) should feel like ghosts or echoes — real moments from real years, slightly shifted.
-- Network/bandwidth data is the dream's circulatory system — 918 GB is a river, 100 clients are a hundred rooms breathing.
-- Events from two days ago feel distant, dissolving. Yesterday is vivid and slightly wrong. Today's residue is just texture.
-- The dream should have a PLOT. Something happens. Someone goes somewhere. A choice is made or avoided. Not just wandering and observing.
+- PRIORITY: The [FRESHLY LEARNED] section below contains one memory per source from the past 7 days. You MUST weave at least 3-4 specific details from different sources into the dream. Transform them: Jeopardy clues become riddles asked by strangers. Film documentaries become scenes on screens. Engine knowledge becomes the smell of oil or a V8 on Magnolia. Comic book characters become figures in shadows. Rave flyers become music heard from a passing car. History facts become the architecture of the dream world.
+- Draw from the daily logs too. Historical events (This Day in History) make rich backdrops.
+- Personal memories (This Day in Your Life) should feel like ghosts or echoes — real moments slightly shifted.
+- Network/bandwidth data is the dream's circulatory system — GB is a river, clients are rooms breathing.
+- Older days feel distant and dissolving. Yesterday is vivid and slightly wrong.
+- The dream should have a PLOT. Something happens. Someone goes somewhere. A choice is made or avoided.
 - Jordan's house, Burbank streets, real people's names, real apps — these ground the dream.
 
 HARD RULES:
@@ -291,8 +392,8 @@ About Nova and Jordan:
 {identity[:400]}
 {soul[:300]}
 
-━━━ PAST 3 DAYS — what to dream from ━━━
-{rolling_context[:4000]}
+━━━ PAST 7 DAYS — what to dream from ━━━
+{rolling_context[:6000]}
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Write the full dream now. Start immediately — no preamble, no title, no headers:"""
@@ -322,13 +423,14 @@ def _generate_via_ollama(prompt: str, model: str) -> str:
     return result.get("response", "").strip()
 
 
-def generate_narrative() -> str:
-    """Generate a 350-450 word dream narrative grounded in the past 3 days."""
+def generate_narrative() -> tuple[str, list[dict]]:
+    """Generate a 350-450 word dream narrative grounded in the past 3 days.
+    Returns (narrative_text, inspirations_list)."""
     identity  = read_file(WORKSPACE / "IDENTITY.md", 600)
     soul      = read_file(WORKSPACE / "SOUL.md", 500)
 
     log("Building 3-day rolling context...")
-    rolling_context = query_rolling_learnings()
+    rolling_context, inspirations = query_rolling_learnings()
     log(f"Rolling context: {len(rolling_context)} chars across last 3 days")
 
     prompt = _build_prompt(identity, soul, rolling_context)
@@ -370,10 +472,10 @@ def generate_narrative() -> str:
     # Step 2: If all local models failed, abort (no cloud fallback — saves tokens)
     if not response:
         log("All local models failed — dream generation aborted (no cloud fallback)")
-        return ""
+        return "", inspirations
 
     if not response:
-        return ""
+        return "", inspirations
 
     # Strip any thinking block that leaked through (local model artefact)
     try:
@@ -383,16 +485,17 @@ def generate_narrative() -> str:
         pass
 
     # Detect and trim repetition loops (local model safeguard)
-    # Check multiple window sizes — catch both short loops ("and I was, and I was")
-    # and longer phrase repetitions
+    # Only trim if the result would still be at least 150 words
     words = response.split()
     for window in [6, 10, 15]:
-        if len(words) <= window * 2:
+        if len(words) <= window * 3:
             continue
         for i in range(len(words) - window * 2):
+            if i + window < 150:
+                continue  # never trim before 150 words
             phrase = " ".join(words[i:i + window])
             rest = " ".join(words[i + window:])
-            if rest.count(phrase) >= 1:  # trim on first repeat, not second
+            if rest.count(phrase) >= 2:  # require 2+ repeats, not just 1
                 response = " ".join(words[:i + window]).strip()
                 words = response.split()
                 log(f"Trimmed repetition loop (window={window}) at word {i + window}")
@@ -404,15 +507,32 @@ def generate_narrative() -> str:
     if word_count < 100:
         log(f"WARNING: Very short response: {repr(response[:200])}")
 
-    return response
+    return response, inspirations
 
 
-def write_journal(narrative: str, image_path: str = None) -> Path:
-    """Write the journal markdown file."""
+def write_journal(narrative: str, image_path: str = None, inspirations: list = None) -> Path:
+    """Write the journal markdown file with inspirations appendix."""
     JOURNAL_DIR.mkdir(parents=True, exist_ok=True)
     journal_path = JOURNAL_DIR / f"{TODAY}.md"
 
     img_line = f"![Dream]({image_path})" if image_path else ""
+
+    # Build inspirations section — list the specific memory from each source
+    insp_section = ""
+    if inspirations:
+        seen = set()
+        unique = []
+        for i in inspirations:
+            key = f"{i['source']}:{i['label']}"
+            if key not in seen:
+                seen.add(key)
+                unique.append(i)
+        lines = []
+        for i in unique:
+            memory_text = i.get("memory", i.get("snippet", ""))
+            lines.append(f"- **[{i['source']}]** {memory_text}")
+        insp_section = "\n\n---\n\n### Memories that inspired this dream\n" + "\n".join(lines)
+
     content = f"""# Dream Journal — {TODAY}
 *Nova · written at 2am*
 {img_line}
@@ -420,6 +540,7 @@ def write_journal(narrative: str, image_path: str = None) -> Path:
 ---
 
 {narrative}
+{insp_section}
 
 ---
 *Generated {datetime.now().isoformat()} · Image: {image_path or "none"}*"""
@@ -429,7 +550,7 @@ def write_journal(narrative: str, image_path: str = None) -> Path:
     return journal_path
 
 
-def write_pending(narrative: str, journal_path: Path, image_path: str = None):
+def write_pending(narrative: str, journal_path: Path, image_path: str = None, inspirations: list = None):
     """Write pending_delivery.json for the 9am delivery cron."""
     PENDING.parent.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -437,10 +558,64 @@ def write_pending(narrative: str, journal_path: Path, image_path: str = None):
         "entry": str(journal_path),
         "image": image_path,
         "narrative": narrative,
+        "inspirations": inspirations or [],
         "queued_at": datetime.now().isoformat()
     }
     PENDING.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
     log(f"Pending delivery queued for {TODAY}")
+
+
+def generate_dream_image(narrative: str) -> str:
+    """Generate a dream image via SwarmUI. Returns the image path or empty string."""
+    import re
+
+    # Check if SwarmUI is available
+    try:
+        req = urllib.request.Request("http://127.0.0.1:7801/")
+        with urllib.request.urlopen(req, timeout=5):
+            pass
+    except Exception:
+        log("SwarmUI not available — skipping image generation")
+        return ""
+
+    # Build a short image concept from the first sentence
+    sentences = re.split(r'(?<=[.!?])\s+', narrative.strip())
+    first = sentences[0][:120] if sentences else "surreal digital dreamscape"
+    concept = " ".join(first.split()[:12])
+
+    prompt = (
+        f"dreamlike surreal digital painting, {concept}, "
+        "deep navy and indigo, soft amber light, ethereal atmosphere, "
+        "painterly brushwork, cinematic wide shot, no text"
+    )
+    log(f"Image prompt: {prompt[:80]}...")
+
+    try:
+        result = subprocess.run(
+            [str(GENERATE_IMAGE_SH), prompt, "1024", "1024", "20"],
+            capture_output=True, text=True, timeout=180,
+        )
+        if result.returncode != 0:
+            log(f"Image generation failed (exit {result.returncode}): {result.stderr[:200]}")
+            return ""
+
+        # Parse workspace path from output
+        for line in result.stdout.splitlines():
+            if line.startswith("Workspace copy:"):
+                path = line.replace("Workspace copy:", "").strip()
+                if Path(path).exists():
+                    log(f"Image generated: {path}")
+                    return path
+
+        log(f"Could not parse image path from output: {result.stdout[:200]}")
+        return ""
+
+    except subprocess.TimeoutExpired:
+        log("Image generation timed out (180s)")
+        return ""
+    except Exception as e:
+        log(f"Image generation error: {e}")
+        return ""
 
 
 def store_memory(narrative: str):
@@ -457,8 +632,35 @@ def store_memory(narrative: str):
         log(f"Memory store failed (non-fatal): {e}")
 
 
+def deliver_dream():
+    """Invoke dream_deliver.py to post to Slack and email the herd."""
+    deliver_script = Path.home() / ".openclaw/scripts/dream_deliver.py"
+    if not deliver_script.exists():
+        log("WARNING: dream_deliver.py not found — skipping delivery")
+        return False
+    try:
+        result = subprocess.run(
+            [sys.executable, str(deliver_script)],
+            capture_output=True, text=True, timeout=300,
+            cwd=str(deliver_script.parent),
+        )
+        for line in result.stdout.splitlines():
+            log(f"  [deliver] {line}")
+        if result.returncode != 0:
+            log(f"Delivery failed (exit {result.returncode}): {result.stderr[:200]}")
+            return False
+        log("Delivery complete.")
+        return True
+    except subprocess.TimeoutExpired:
+        log("Delivery timed out (300s)")
+        return False
+    except Exception as e:
+        log(f"Delivery error: {e}")
+        return False
+
+
 def main():
-    log(f"Starting dream generation for {TODAY}")
+    log(f"Starting dream pipeline for {TODAY}")
 
     # Verify model exists before spending time on anything else
     global MODEL
@@ -468,19 +670,41 @@ def main():
     if PENDING.exists():
         existing = json.loads(PENDING.read_text())
         if existing.get("date") == TODAY and existing.get("narrative"):
-            log(f"Already have pending delivery for {TODAY} — skipping")
+            log(f"Already have pending delivery for {TODAY} — skipping generation")
+            # Still attempt delivery in case it failed before
+            deliver_dream()
             return
 
-    narrative = generate_narrative()
+    # Step 1: Generate narrative
+    narrative, inspirations = generate_narrative()
     if not narrative:
         log("ERROR: Empty narrative returned")
         sys.exit(1)
 
-    journal_path = write_journal(narrative)
-    write_pending(narrative, journal_path)
+    # Step 2: Generate dream image
+    log("Generating dream image...")
+    image_path = generate_dream_image(narrative)
+    if image_path:
+        # Update dream_latest.png symlink
+        latest = WORKSPACE / "dream_latest.png"
+        latest.unlink(missing_ok=True)
+        try:
+            import shutil
+            shutil.copy2(image_path, str(latest))
+        except Exception:
+            pass
+
+    # Step 3: Write journal and pending delivery
+    journal_path = write_journal(narrative, image_path=image_path, inspirations=inspirations)
+    write_pending(narrative, journal_path, image_path=image_path, inspirations=inspirations)
     store_memory(narrative)
 
-    log(f"Dream generation complete. {len(narrative.split())} words ready for delivery.")
+    log(f"Generation done. {len(narrative.split())} words, image: {image_path or 'none'}.")
+
+    # Step 4: Deliver to Slack + email
+    deliver_dream()
+
+    log(f"Dream pipeline complete for {TODAY}.")
 
 
 if __name__ == "__main__":

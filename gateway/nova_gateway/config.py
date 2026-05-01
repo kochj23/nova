@@ -5,7 +5,6 @@ Reads config.yaml, resolves paths, and exposes typed settings.
 Author: Jordan Koch
 """
 
-import os
 import yaml
 from pathlib import Path
 from typing import Optional
@@ -20,10 +19,10 @@ def load(path: str = None) -> dict:
         path = Path(__file__).parent.parent / "config.yaml"
     with open(path, "r") as f:
         _config = yaml.safe_load(f)
-    # Resolve ~ in db_path
-    db = _config.get("gateway", {}).get("db_path", "~/.nova_gateway/context.db")
-    _config["gateway"]["db_path"] = str(Path(db).expanduser())
-    os.makedirs(Path(_config["gateway"]["db_path"]).parent, exist_ok=True)
+    # Ensure pg_dsn has a default
+    gw = _config.setdefault("gateway", {})
+    if "pg_dsn" not in gw:
+        gw["pg_dsn"] = "postgresql://localhost/nova_ops"
     return _config
 
 
@@ -41,8 +40,8 @@ def gateway_host() -> str:
     return get()["gateway"].get("host", "127.0.0.1")
 
 
-def db_path() -> str:
-    return get()["gateway"]["db_path"]
+def pg_dsn() -> str:
+    return get()["gateway"]["pg_dsn"]
 
 
 def backend_cfg(name: str) -> dict:

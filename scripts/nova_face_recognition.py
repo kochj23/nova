@@ -2,18 +2,18 @@
 """
 nova_face_recognition.py — Local face recognition on exterior cameras.
 
-Uses sam-faces skill (CNN + SQLite) for identification. Fully local — no cloud.
+Uses sam-faces skill (CNN + PostgreSQL nova_ops) for identification. Fully local — no cloud.
 
 Workflow:
   1. Scans exterior camera frames for faces
-  2. Compares against sam-faces SQLite database
+  2. Compares against face_people / face_encodings in PostgreSQL (nova_ops)
   3. Known faces → log to vector memory ("Jordan arrived home at 3pm")
   4. Unknown faces → save crop, alert Slack with image, ask "Who is this?"
   5. Enrollment: use sam-faces enroll_face.py or drop photo in known/<name>/
 
 Face database:
-  /Volumes/Data/Nova/skills/sam-faces/faces/people.db  — SQLite (sam-faces)
-  ~/.openclaw/workspace/faces/unknown/                 — unidentified face crops
+  PostgreSQL nova_ops — tables: face_people, face_encodings, face_unknown_candidates
+  ~/.openclaw/workspace/faces/unknown/ — unidentified face crops
 
 Cron: every 15 min (or integrated into camera monitor)
 Written by Jordan Koch.

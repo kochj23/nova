@@ -588,6 +588,28 @@ def main():
         sys.exit(0)
 
     query = " ".join(sys.argv[1:])
+
+    # Route "what was added/ingested recently" questions to the dedicated tool
+    _q_lower = query.lower()
+    _recency_signals = ["added", "ingested", "new memories", "recently added",
+                        "what was added", "what memories were", "past 24", "past 48",
+                        "past 72", "yesterday", "last 24", "last 48", "last 72",
+                        "how many memories", "what's new in"]
+    if any(sig in _q_lower for sig in _recency_signals) and any(
+            w in _q_lower for w in ["memor", "vector", "postgres", "db", "database",
+                                     "added", "ingested", "new"]):
+        import subprocess as _sp
+        hours = 72 if "72" in _q_lower or "3 day" in _q_lower else (
+            48 if "48" in _q_lower or "2 day" in _q_lower else 24)
+        _result = _sp.run(
+            [sys.executable, str(Path(__file__).parent / "nova_recent_memories.py"),
+             "--hours", str(hours)],
+            capture_output=True, text=True, timeout=30)
+        if _result.returncode == 0:
+            print(f"MEMORY INGESTION REPORT (last {hours} hours):")
+            print(_result.stdout)
+            sys.exit(0)
+
     results, sources_searched, labels = memory_lookup(query)
 
     if results:

@@ -150,7 +150,8 @@ if [ -n "$MEMORY_FRAGMENT" ]; then
     FINAL_BODY="${FINAL_BODY}${MEMORY_FRAGMENT}"
 fi
 
-# Call herd_mail.py with the assembled body (always use --body now, not --body-file)
+# Call herd_mail.py with the assembled body
+# CC is passed by the caller via --cc in REMAINING_ARGS when needed
 python3 "$HERD_MAIL" send \
     --body "$FINAL_BODY" \
     "${REMAINING_ARGS[@]}"

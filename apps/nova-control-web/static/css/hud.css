@@ -273,6 +273,11 @@ html, body {
   text-shadow: 0 0 10px rgba(255, 51, 68, 0.3);
 }
 
+.hud-stat-value.today-active {
+  color: var(--hud-green);
+  text-shadow: 0 0 10px rgba(0, 255, 102, 0.3);
+}
+
 /* ---- Responsive ---- */
 
 @media (max-width: 800px) {

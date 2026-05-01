@@ -24,7 +24,7 @@ PENDING_FILE  = WORKSPACE / "journal" / "pending_delivery.json"
 DEAD_LETTER   = WORKSPACE / "journal" / "failed_deliveries"
 MAX_RETRIES   = 3
 SLACK_TOKEN   = nova_config.slack_bot_token()
-SLACK_CHANNEL = "C0ATAF7NZG9"   # #nova-notifications
+SLACK_CHANNEL = "C0AMNQ5GX70"   # #nova-chat
 SLACK_API     = "https://slack.com/api"
 SCRIPTS       = Path.home() / ".openclaw" / "scripts"
 
@@ -39,12 +39,7 @@ try:
 except ImportError:
     HERD_RECIPIENTS = []
 
-# CC Jordan at work (loaded from Keychain to avoid hardcoding in source)
-import subprocess as _sp
-_work_email = _sp.run(["security", "find-generic-password", "-a", "nova", "-s", "nova-jordan-work-email", "-w"],
-                      capture_output=True, text=True).stdout.strip()
-if _work_email and _work_email not in HERD_RECIPIENTS:
-    HERD_RECIPIENTS.append(_work_email)
+# Jordan's work email is CC'd on all herd emails (loaded from Keychain at send time)
 
 
 # ── Slack Helpers ─────────────────────────────────────────────────────────────
@@ -213,7 +208,7 @@ def generate_haiku(narrative: str) -> str:
 # ── Herd Distribution ─────────────────────────────────────────────────────────
 
 def email_herd(narrative, image_path, entry_date):
-    """Email the dream journal to each herd member via herd-mail."""
+    """Email the dream journal to the entire herd (one email, CC Jordan)."""
     subject = "Nova Dream Journal -- " + entry_date
     body = "\n".join([
         "Dream Journal -- " + entry_date,
@@ -227,26 +222,46 @@ def email_herd(narrative, image_path, entry_date):
     log("Generating haiku for herd emails...")
     haiku = generate_haiku(narrative)
 
-    herd_mail = str(Path.home() / ".openclaw/scripts/nova_herd_mail.sh")
-    ok_count = 0
-    for recipient in HERD_RECIPIENTS:
-        try:
-            args = [
-                herd_mail, "send",
-                "--to", recipient,
-                "--subject", subject,
-                "--body", body,
-                "--haiku", haiku,
-            ]
-            result = subprocess.run(args, capture_output=True, text=True, timeout=60)
-            if result.returncode == 0:
-                ok_count += 1
-            else:
-                log(f"Herd email failed for {recipient}: {result.stderr.strip()[:100]}")
-        except Exception as e:
-            log(f"Herd email error for {recipient}: {e}")
+    # Get Jordan's work email for CC (from Keychain)
+    cc_email = subprocess.run(
+        ["security", "find-generic-password", "-a", "nova", "-s", "nova-jordan-work-email", "-w"],
+        capture_output=True, text=True
+    ).stdout.strip()
 
-    log("Herd emails sent: " + str(ok_count) + "/" + str(len(HERD_RECIPIENTS)))
+    # Send one email to all herd members, CC Jordan
+    to_list = [e for e in HERD_RECIPIENTS if e != cc_email]
+
+    if not to_list:
+        log("No herd recipients — skipping email")
+        return
+
+    herd_mail = str(Path.home() / ".openclaw/scripts/nova_herd_mail.sh")
+    to_str = to_list[0]  # Primary recipient (first herd member)
+    cc_others = ",".join(to_list[1:])
+    if cc_email:
+        cc_others = cc_email + ("," + cc_others if cc_others else "")
+
+    try:
+        args = [
+            herd_mail, "send",
+            "--to", to_str,
+            "--subject", subject,
+            "--body", body,
+            "--haiku", haiku,
+            "--rich",
+        ]
+        if cc_others:
+            args.extend(["--cc", cc_others])
+        if image_path and Path(image_path).exists():
+            args.extend(["--attachment", str(image_path)])
+
+        result = subprocess.run(args, capture_output=True, text=True, timeout=120)
+        if result.returncode == 0:
+            log(f"Herd email sent to {len(to_list)} recipients (CC: {cc_email or 'none'}, image: {'yes' if image_path else 'no'})")
+        else:
+            log(f"Herd email failed: {result.stderr.strip()[:200]}")
+    except Exception as e:
+        log(f"Herd email error: {e}")
 
 
 # ── Utilities ─────────────────────────────────────────────────────────────────
@@ -293,9 +308,10 @@ def main():
         log("Failed to read pending delivery: " + str(e))
         sys.exit(1)
 
-    narrative  = delivery.get("narrative", "")
-    image_path = delivery.get("image")
-    entry_date = delivery.get("date", datetime.now().strftime("%Y-%m-%d"))
+    narrative    = delivery.get("narrative", "")
+    image_path   = delivery.get("image")
+    entry_date   = delivery.get("date", datetime.now().strftime("%Y-%m-%d"))
+    inspirations = delivery.get("inspirations", [])
 
     if not narrative:
         log("No narrative in pending delivery — aborting")
@@ -331,6 +347,19 @@ def main():
         line for line in narrative.splitlines()
         if not re.match(r"!\[Dream\]\(\[", line)
     ).strip()
+
+    # Append specific memories that inspired the dream
+    if inspirations:
+        seen = set()
+        insp_lines = []
+        for i in inspirations:
+            key = f"{i.get('source','')}:{i.get('label','')}"
+            if key not in seen:
+                seen.add(key)
+                memory_text = i.get("memory", i.get("snippet", ""))[:200]
+                insp_lines.append(f"  • *[{i.get('source', '?')}]* {memory_text}")
+        if insp_lines:
+            narrative += "\n\n_Memories that inspired this dream:_\n" + "\n".join(insp_lines)
 
     log("Delivering dream for " + entry_date)
     slack_ok = post_dream(narrative, image_path, entry_date)

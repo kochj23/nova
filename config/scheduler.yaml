@@ -45,13 +45,13 @@ tasks:
 
   sky_watcher:
     script: nova_sky_watcher.py
-    schedule: every 5m
+    schedule: every 10m
     timeout: 90
     overlap: skip
 
   imessage_watch:
     script: nova_imessage.py
-    schedule: every 5m
+    schedule: every 10m
     timeout: 30
     overlap: skip
 
@@ -78,7 +78,7 @@ tasks:
 
   proactive_peace:
     script: nova_proactive_peace.py
-    schedule: every 10m
+    schedule: every 15m
     timeout: 60
     overlap: skip
 
@@ -144,18 +144,12 @@ tasks:
     timeout: 10800
     overlap: queue
 
-  dream_generate:
+  dream_pipeline:
     script: dream_generate.py
-    schedule: cron 30 2 * * *
-    timeout: 600
+    schedule: cron 0 5 * * *
+    timeout: 900
     overlap: skip
     group: llm
-
-  dream_add_image:
-    script: dream_add_image.sh
-    schedule: cron 50 2 * * *
-    timeout: 300
-    overlap: skip
 
   agent_gardener:
     script: nova_agent_gardener.py
@@ -186,12 +180,6 @@ tasks:
     overlap: skip
 
   # ── Daily: post-wake (verification, enrichment) ────────────────────────
-
-  dream_deliver:
-    script: dream_deliver.py
-    schedule: cron 0 8 * * *
-    timeout: 300
-    overlap: skip
 
   dead_mans_switch:
     script: nova_dead_mans_switch.py

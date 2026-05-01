@@ -1,8 +1,9 @@
 import asyncio
+import datetime as _dt
 import json as _json
 import os
 import re
-import sqlite3
+import psycopg2
 import subprocess
 import time
 from collections import deque
@@ -10,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiohttp
-import aiosqlite
+import asyncpg
 import psutil
 import redis.asyncio as aioredis
 import uvicorn
@@ -22,10 +23,8 @@ SCHEDULER_BASE = "http://127.0.0.1:37460"
 GATEWAY_HEALTH = "http://127.0.0.1:18789/health"
 OLLAMA_PS = "http://127.0.0.1:11434/api/ps"
 REDIS_URL = "redis://127.0.0.1:6379"
-TASK_DB = Path.home() / ".openclaw" / "tasks" / "runs.sqlite"
-FLOW_DB = Path.home() / ".openclaw" / "flows" / "registry.sqlite"
+OPS_PG_DSN = "postgresql://localhost/nova_ops"
 SESSIONS_JSON = Path.home() / ".openclaw" / "agents" / "main" / "sessions" / "sessions.json"
-GATEWAY_QUERY_DB = Path.home() / ".nova_gateway" / "context.db"
 PG_DB = "nova_memories"
 BACKUP_LOG = Path.home() / ".openclaw" / "logs" / "nova_pg_backup.log"
 PROTECT_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "protect_monitor_state.json"
@@ -48,7 +47,7 @@ SERVICE_PORTS = {
 POLL_INTERVAL = 2.5
 LATENCY_HISTORY_SIZE = 120  # ~5 min at 2.5s intervals
 TASK_THROUGHPUT_HOURS = 24
-HISTORY_DB = Path("/Volumes/Data/nova-control/history.db")
+HISTORY_PG = "dbname=nova_ops"
 
 current_state: dict = {}
 connected_clients: set[WebSocket] = set()
@@ -97,6 +96,31 @@ _camera_ts: float = 0
 _homekit_cache: dict = {}
 _homekit_ts: float = 0
 
+# 12 new card collector caches
+_app_watchdog_cache: dict = {}
+_app_watchdog_ts: float = 0
+_weather_cache: dict = {}
+_weather_ts: float = 0
+_dream_cache: dict = {}
+_dream_ts: float = 0
+
+APP_WATCHDOG_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_app_watchdog_state.json"
+SYNOLOGY_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_synology_state.json"
+SKY_WATCHER_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_sky_watcher_state.json"
+WEATHER_HOMEKIT_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_weather_homekit_state.json"
+HEALTHKIT_LOG = Path.home() / ".openclaw" / "logs" / "healthkit.log"
+MEMORY_DIR = Path.home() / ".openclaw" / "workspace" / "memory"
+JOURNAL_DIR = Path.home() / ".openclaw" / "workspace" / "journal"
+DREAM_DIR = Path.home() / ".openclaw" / "workspace" / "journal" / "dreams"
+
+APP_PORT_NAMES = {
+    "37421": "OneOnOne",
+    "37422": "MLXCode",
+    "37423": "NMAPScanner",
+    "37424": "RsyncGUI",
+    "37432": "HomekitControl",
+}
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -105,60 +129,20 @@ async def lifespan(app: FastAPI):
     app.state.http_session = aiohttp.ClientSession()
     app.state.redis = aioredis.from_url(REDIS_URL, decode_responses=False)
 
-    # --- History DB init ---
-    db = sqlite3.connect(str(HISTORY_DB))
-    db.execute("PRAGMA journal_mode=WAL")
-    db.executescript("""
-        CREATE TABLE IF NOT EXISTS snapshots (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts REAL NOT NULL,
-            cpu_percent REAL,
-            memory_percent REAL,
-            memory_used_gb REAL,
-            poll_duration_ms INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS disk_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts REAL NOT NULL,
-            mount TEXT NOT NULL,
-            free_gb REAL,
-            percent REAL
-        );
-        CREATE TABLE IF NOT EXISTS latency_history_db (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts REAL NOT NULL,
-            service TEXT NOT NULL,
-            latency_ms INTEGER,
-            status TEXT
-        );
-        CREATE TABLE IF NOT EXISTS memory_count_history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts REAL NOT NULL,
-            total_count INTEGER
-        );
-        CREATE TABLE IF NOT EXISTS cost_history (
-            date TEXT NOT NULL,
-            provider TEXT NOT NULL,
-            total_cost_usd REAL,
-            input_tokens INTEGER,
-            output_tokens INTEGER,
-            session_count INTEGER,
-            PRIMARY KEY(date, provider)
-        );
-        CREATE INDEX IF NOT EXISTS idx_snapshots_ts ON snapshots(ts);
-        CREATE INDEX IF NOT EXISTS idx_disk_history_ts ON disk_history(ts);
-        CREATE INDEX IF NOT EXISTS idx_latency_history_db_ts ON latency_history_db(ts);
-        CREATE INDEX IF NOT EXISTS idx_memory_count_history_ts ON memory_count_history(ts);
-    """)
-    db.commit()
+    # --- History DB init (PostgreSQL nova_ops) ---
+    db = psycopg2.connect(HISTORY_PG)
+    db.autocommit = False
     app.state.history_db = db
 
     # Cleanup rows older than 30 days
+    cur = db.cursor()
     cutoff = time.time() - (30 * 86400)
-    for tbl in ("snapshots", "disk_history", "latency_history_db", "memory_count_history"):
-        db.execute(f"DELETE FROM {tbl} WHERE ts < ?", (cutoff,))
-    db.execute("DELETE FROM cost_history WHERE date < date('now', '-30 days')")
+    for tbl in ("dashboard_snapshots", "dashboard_disk_history", "dashboard_latency_history", "dashboard_memory_count_history"):
+        cur.execute(f"DELETE FROM {tbl} WHERE ts < %s", (cutoff,))
+    cost_cutoff_30d = (_dt.datetime.now() - _dt.timedelta(days=30)).strftime("%Y-%m-%d")
+    cur.execute("DELETE FROM dashboard_cost_history WHERE date < %s", (cost_cutoff_30d,))
     db.commit()
+    cur.close()
 
     # --- Load UniFi API key from Keychain ---
     try:
@@ -258,6 +242,35 @@ async def service_detail(service: str):
             return JSONResponse(await collect_camera_activity())
         elif service == "homekit":
             return JSONResponse(await collect_homekit(app.state.http_session))
+        elif service == "app_watchdog":
+            return JSONResponse(await collect_app_watchdog())
+        elif service == "weather":
+            return JSONResponse(await collect_weather())
+        elif service == "dream":
+            return JSONResponse(await collect_dream_status())
+        elif service == "synology":
+            return JSONResponse(await collect_synology_state())
+        elif service == "healthkit_status":
+            return JSONResponse(await collect_healthkit_status())
+        elif service == "homebridge":
+            return JSONResponse(await collect_homebridge_status())
+        elif service == "deadman":
+            sched = current_state.get("scheduler", {})
+            dms = sched.get("tasks", {}).get("dead_mans_switch", {})
+            return JSONResponse(dms)
+        elif service == "channels":
+            return JSONResponse(current_state.get("gateway", {}))
+        elif service == "knowledge":
+            return JSONResponse({"scheduler": current_state.get("scheduler", {}),
+                                "postgresql": current_state.get("postgresql", {})})
+        elif service == "briefings":
+            return JSONResponse(current_state.get("scheduler", {}))
+        elif service == "nmap":
+            sched = current_state.get("scheduler", {})
+            nmap_task = sched.get("tasks", {}).get("weekly_nmap", {})
+            return JSONResponse(nmap_task)
+        elif service == "traffic":
+            return JSONResponse(current_state.get("traffic_flow", {}))
         else:
             return JSONResponse({"error": f"Unknown service: {service}"}, status_code=404)
     except Exception as e:
@@ -453,25 +466,28 @@ async def _detail_system():
 
 
 async def _detail_tasks():
-    async with aiosqlite.connect(f"file:{TASK_DB}?mode=ro", uri=True) as db:
-        cursor = await db.execute(
-            "SELECT agent_id, status, COUNT(*) FROM task_runs GROUP BY agent_id, status ORDER BY COUNT(*) DESC")
+    conn = await asyncpg.connect(OPS_PG_DSN)
+    try:
+        rows = await conn.fetch(
+            "SELECT agent_id, status, COUNT(*) as cnt FROM task_runs GROUP BY agent_id, status ORDER BY cnt DESC")
         by_agent = {}
-        for agent, status, count in await cursor.fetchall():
-            a = agent or "(scheduler)"
+        for r in rows:
+            a = r["agent_id"] or "(scheduler)"
             if a not in by_agent:
                 by_agent[a] = {}
-            by_agent[a][status] = count
+            by_agent[a][r["status"]] = r["cnt"]
 
-        cursor = await db.execute(
+        rows = await conn.fetch(
             """SELECT label, status,
                       CASE WHEN ended_at > 0 AND started_at > 0 THEN ended_at - started_at ELSE NULL END as duration,
                       created_at
                FROM task_runs ORDER BY created_at DESC LIMIT 25""")
         recent = []
-        for label, status, dur, created in await cursor.fetchall():
-            recent.append({"label": label or "?", "status": status, "duration_s": round(dur, 1) if dur else None, "created_at": created})
-
+        for r in rows:
+            dur = r["duration"]
+            recent.append({"label": r["label"] or "?", "status": r["status"], "duration_s": round(dur, 1) if dur else None, "created_at": r["created_at"]})
+    finally:
+        await conn.close()
     return {"by_agent": by_agent, "recent_runs": recent}
 
 
@@ -541,16 +557,19 @@ async def _detail_agent(name):
     for k, v in meta.items():
         decoded[k.decode() if isinstance(k, bytes) else k] = v.decode() if isinstance(v, bytes) else v
 
-    async with aiosqlite.connect(f"file:{TASK_DB}?mode=ro", uri=True) as db:
-        cursor = await db.execute(
+    conn = await asyncpg.connect(OPS_PG_DSN)
+    try:
+        rows = await conn.fetch(
             """SELECT label, status,
-                      CASE WHEN ended_at > 0 AND started_at > 0 THEN ended_at - started_at ELSE NULL END,
+                      CASE WHEN ended_at > 0 AND started_at > 0 THEN ended_at - started_at ELSE NULL END as duration,
                       created_at
-               FROM task_runs WHERE agent_id = ? ORDER BY created_at DESC LIMIT 15""", (name,))
+               FROM task_runs WHERE agent_id = $1 ORDER BY created_at DESC LIMIT 15""", name)
         recent = []
-        for label, st, dur, created in await cursor.fetchall():
-            recent.append({"label": label or "?", "status": st, "duration_s": round(dur, 1) if dur else None, "created_at": created})
-
+        for r in rows:
+            dur = r["duration"]
+            recent.append({"label": r["label"] or "?", "status": r["status"], "duration_s": round(dur, 1) if dur else None, "created_at": r["created_at"]})
+    finally:
+        await conn.close()
     return {"status": status, "meta": decoded, "recent_tasks": recent}
 
 
@@ -847,23 +866,18 @@ async def collect_gateway(session: aiohttp.ClientSession) -> dict:
 
 async def collect_task_history() -> dict:
     try:
-        async with aiosqlite.connect(f"file:{TASK_DB}?mode=ro", uri=True) as db:
-            cursor = await db.execute("SELECT status, COUNT(*) FROM task_runs GROUP BY status")
-            rows = await cursor.fetchall()
-            all_time = {}
-            for status, count in rows:
-                all_time[status] = count
+        conn = await asyncpg.connect(OPS_PG_DSN)
+        try:
+            rows = await conn.fetch("SELECT status, COUNT(*) as cnt FROM task_runs GROUP BY status")
+            all_time = {r["status"]: r["cnt"] for r in rows}
 
             day_ago = time.time() - 86400
-            cursor = await db.execute(
-                "SELECT status, COUNT(*) FROM task_runs WHERE created_at > ? GROUP BY status",
-                (day_ago,)
-            )
-            rows = await cursor.fetchall()
-            last_24h = {}
-            for status, count in rows:
-                last_24h[status] = count
-
+            rows = await conn.fetch(
+                "SELECT status, COUNT(*) as cnt FROM task_runs WHERE created_at > $1 GROUP BY status",
+                int(day_ago))
+            last_24h = {r["status"]: r["cnt"] for r in rows}
+        finally:
+            await conn.close()
         return {"status": "ok", "all_time": all_time, "last_24h": last_24h}
     except Exception as e:
         return {"status": "error", "error": str(e)}
@@ -1028,12 +1042,37 @@ async def collect_postgresql() -> dict:
         stdout3, _ = await asyncio.wait_for(proc3.communicate(), timeout=3)
         index_count = int(stdout3.decode().strip()) if stdout3.decode().strip() else 0
 
+        # Today's memory stats (for HUD display)
+        proc4 = await asyncio.create_subprocess_exec(
+            "psql", PG_DB, "-t", "-A", "-c",
+            "SELECT count(*) FROM memories WHERE created_at >= CURRENT_DATE",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout4, _ = await asyncio.wait_for(proc4.communicate(), timeout=3)
+        today_count = int(stdout4.decode().strip()) if stdout4.decode().strip().isdigit() else 0
+
+        proc5 = await asyncio.create_subprocess_exec(
+            "psql", PG_DB, "-t", "-A", "-c",
+            "SELECT source, count(*) FROM memories WHERE created_at >= CURRENT_DATE GROUP BY source ORDER BY count DESC LIMIT 5",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout5, _ = await asyncio.wait_for(proc5.communicate(), timeout=3)
+        today_sources = []
+        for line in stdout5.decode().strip().split("\n"):
+            if "|" in line:
+                parts = line.split("|")
+                today_sources.append({"source": parts[0].strip(), "count": int(parts[1].strip())})
+
         return {
             "status": "ok",
             "db_size_gb": round(db_size_bytes / (1024**3), 2),
             "total_rows": total_rows,
             "tables": tables,
             "index_count": index_count,
+            "today_count": today_count,
+            "today_sources": today_sources,
         }
     except Exception as e:
         return {"status": "error", "error": str(e), "db_size_gb": 0, "total_rows": 0, "tables": [], "index_count": 0}
@@ -1041,12 +1080,12 @@ async def collect_postgresql() -> dict:
 
 async def collect_flow_runs() -> dict:
     try:
-        async with aiosqlite.connect(f"file:{FLOW_DB}?mode=ro", uri=True) as db:
-            cursor = await db.execute("SELECT status, COUNT(*) FROM flow_runs GROUP BY status")
-            rows = await cursor.fetchall()
-            flows = {}
-            for status, count in rows:
-                flows[status] = count
+        conn = await asyncpg.connect(OPS_PG_DSN)
+        try:
+            rows = await conn.fetch("SELECT status, COUNT(*) as cnt FROM flow_runs GROUP BY status")
+            flows = {r["status"]: r["cnt"] for r in rows}
+        finally:
+            await conn.close()
         return {"status": "ok", "flows": flows}
     except Exception as e:
         return {"status": "error", "error": str(e), "flows": {}}
@@ -1059,24 +1098,25 @@ async def collect_task_throughput() -> list:
         return task_throughput_cache
     try:
         cutoff_ms = int((now - (TASK_THROUGHPUT_HOURS * 3600)) * 1000)
-        async with aiosqlite.connect(f"file:{TASK_DB}?mode=ro", uri=True) as db:
-            cursor = await db.execute(
-                """SELECT CAST((created_at - ?) / 3600000 AS INTEGER) as hour_bucket,
-                          status, COUNT(*)
+        conn = await asyncpg.connect(OPS_PG_DSN)
+        try:
+            rows = await conn.fetch(
+                """SELECT CAST((created_at - $1) / 3600000 AS INTEGER) as hour_bucket,
+                          status, COUNT(*) as cnt
                    FROM task_runs
-                   WHERE created_at > ?
+                   WHERE created_at > $2
                    GROUP BY hour_bucket, status
                    ORDER BY hour_bucket""",
-                (cutoff_ms, cutoff_ms)
-            )
-            rows = await cursor.fetchall()
+                cutoff_ms, cutoff_ms)
+        finally:
+            await conn.close()
         buckets = {}
-        for hour_bucket, status, count in rows:
-            h = int(hour_bucket)
+        for r in rows:
+            h = int(r["hour_bucket"])
             if h not in buckets:
                 buckets[h] = {"hour": h, "succeeded": 0, "failed": 0, "timed_out": 0, "lost": 0}
-            if status in buckets[h]:
-                buckets[h][status] = count
+            if r["status"] in buckets[h]:
+                buckets[h][r["status"]] = r["cnt"]
         result = [buckets.get(i, {"hour": i, "succeeded": 0, "failed": 0, "timed_out": 0, "lost": 0})
                   for i in range(TASK_THROUGHPUT_HOURS)]
         task_throughput_cache = result
@@ -1146,32 +1186,39 @@ async def collect_model_usage() -> dict:
 
 async def collect_gateway_query_log() -> dict:
     try:
-        if not GATEWAY_QUERY_DB.exists() or GATEWAY_QUERY_DB.stat().st_size == 0:
-            return {"status": "empty", "backends": {}, "total_queries": 0}
+        conn = await asyncpg.connect(OPS_PG_DSN)
+        try:
+            # Check if gateway_query_log table exists
+            exists = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='gateway_query_log')")
+            if not exists:
+                await conn.close()
+                return {"status": "empty", "backends": {}, "total_queries": 0}
 
-        async with aiosqlite.connect(f"file:{GATEWAY_QUERY_DB}?mode=ro", uri=True) as db:
-            cursor = await db.execute(
+            rows = await conn.fetch(
                 """SELECT backend_used, model_used, COUNT(*) as cnt,
                           AVG(latency_ms) as avg_lat,
                           SUM(prompt_length) as total_prompt,
                           SUM(response_length) as total_response,
-                          SUM(fallback_used) as fallbacks
-                   FROM query_log GROUP BY backend_used, model_used"""
-            )
-            rows = await cursor.fetchall()
-            backends = {}
-            total_queries = 0
-            for backend, model, cnt, avg_lat, total_prompt, total_resp, fallbacks in rows:
-                total_queries += cnt
-                if backend not in backends:
-                    backends[backend] = {"models": {}, "total_queries": 0, "total_prompt_chars": 0, "total_response_chars": 0}
-                backends[backend]["total_queries"] += cnt
-                backends[backend]["total_prompt_chars"] += total_prompt or 0
-                backends[backend]["total_response_chars"] += total_resp or 0
-                backends[backend]["models"][model] = {
-                    "queries": cnt,
-                    "avg_latency_ms": round(avg_lat or 0),
-                    "prompt_chars": total_prompt or 0,
+                          SUM(fallback_used::int) as fallbacks
+                   FROM gateway_query_log GROUP BY backend_used, model_used""")
+        finally:
+            await conn.close()
+        backends = {}
+        total_queries = 0
+        for r in rows:
+            total_queries += r["cnt"]
+            backend = r["backend_used"]
+            model = r["model_used"]
+            if backend not in backends:
+                backends[backend] = {"models": {}, "total_queries": 0, "total_prompt_chars": 0, "total_response_chars": 0}
+            backends[backend]["total_queries"] += r["cnt"]
+            backends[backend]["total_prompt_chars"] += r["total_prompt"] or 0
+            backends[backend]["total_response_chars"] += r["total_response"] or 0
+            backends[backend]["models"][model] = {
+                "queries": r["cnt"],
+                "avg_latency_ms": round(r["avg_lat"] or 0),
+                "prompt_chars": r["total_prompt"] or 0,
                     "response_chars": total_resp or 0,
                     "fallbacks": fallbacks or 0,
                 }
@@ -1308,43 +1355,44 @@ async def write_history_snapshot(state: dict):
     """Write a snapshot of current state to the history DB. Non-blocking."""
     try:
         db = app.state.history_db
+        cur = db.cursor()
         now = time.time()
 
         # System snapshot
         sys = state.get("system", {})
         mem = sys.get("memory", {})
-        db.execute(
-            "INSERT INTO snapshots (ts, cpu_percent, memory_percent, memory_used_gb, poll_duration_ms) VALUES (?, ?, ?, ?, ?)",
+        cur.execute(
+            "INSERT INTO dashboard_snapshots (ts, cpu_percent, memory_percent, memory_used_gb, poll_duration_ms) VALUES (%s, %s, %s, %s, %s)",
             (now, sys.get("cpu_percent"), mem.get("percent"), mem.get("used_gb"), state.get("poll_duration_ms")))
 
         # Disk history
         disks = sys.get("disks", {})
         for mount, info in disks.items():
-            db.execute(
-                "INSERT INTO disk_history (ts, mount, free_gb, percent) VALUES (?, ?, ?, ?)",
+            cur.execute(
+                "INSERT INTO dashboard_disk_history (ts, mount, free_gb, percent) VALUES (%s, %s, %s, %s)",
                 (now, mount, info.get("free_gb"), info.get("percent")))
 
         # Service latencies
         services = state.get("services", {})
         for svc_name, svc_info in services.items():
-            db.execute(
-                "INSERT INTO latency_history_db (ts, service, latency_ms, status) VALUES (?, ?, ?, ?)",
+            cur.execute(
+                "INSERT INTO dashboard_latency_history (ts, service, latency_ms, status) VALUES (%s, %s, %s, %s)",
                 (now, svc_name, svc_info.get("latency_ms"), svc_info.get("status")))
 
         # Memory count
         pg = state.get("postgresql", {})
         if pg.get("total_rows"):
-            db.execute(
-                "INSERT INTO memory_count_history (ts, total_count) VALUES (?, ?)",
+            cur.execute(
+                "INSERT INTO dashboard_memory_count_history (ts, total_count) VALUES (%s, %s)",
                 (now, pg["total_rows"]))
 
         # Cost history (daily upsert per provider)
         model_usage = state.get("model_usage", {})
         today = time.strftime("%Y-%m-%d")
         for prov, pdata in model_usage.get("by_provider", {}).items():
-            db.execute(
-                """INSERT INTO cost_history (date, provider, total_cost_usd, input_tokens, output_tokens, session_count)
-                   VALUES (?, ?, ?, ?, ?, ?)
+            cur.execute(
+                """INSERT INTO dashboard_cost_history (date, provider, total_cost_usd, input_tokens, output_tokens, session_count)
+                   VALUES (%s, %s, %s, %s, %s, %s)
                    ON CONFLICT(date, provider) DO UPDATE SET
                        total_cost_usd = excluded.total_cost_usd,
                        input_tokens = excluded.input_tokens,
@@ -1354,8 +1402,12 @@ async def write_history_snapshot(state: dict):
                  pdata.get("output_tokens", 0), pdata.get("sessions", 0)))
 
         db.commit()
+        cur.close()
     except Exception:
-        pass  # Non-critical — never block the poll loop
+        try:
+            db.rollback()
+        except Exception:
+            pass  # Non-critical — never block the poll loop
 
 
 # --- Alert Evaluator ---
@@ -1575,51 +1627,66 @@ async def history_endpoint(metric: str, range: str = "24h"):
 
     try:
         db = app.state.history_db
+        cur = db.cursor()
         if metric == "cpu":
-            rows = db.execute(
-                "SELECT ts, cpu_percent FROM snapshots WHERE ts > ? ORDER BY ts", (cutoff,)).fetchall()
+            cur.execute(
+                "SELECT ts, cpu_percent FROM dashboard_snapshots WHERE ts > %s ORDER BY ts", (cutoff,))
+            rows = cur.fetchall()
+            cur.close()
             if downsample and rows:
                 return JSONResponse(_downsample_single(rows, "cpu_percent"))
             return JSONResponse([{"ts": r[0], "cpu_percent": r[1]} for r in rows])
 
         elif metric == "memory":
-            rows = db.execute(
-                "SELECT ts, memory_percent, memory_used_gb FROM snapshots WHERE ts > ? ORDER BY ts", (cutoff,)).fetchall()
+            cur.execute(
+                "SELECT ts, memory_percent, memory_used_gb FROM dashboard_snapshots WHERE ts > %s ORDER BY ts", (cutoff,))
+            rows = cur.fetchall()
+            cur.close()
             if downsample and rows:
                 return JSONResponse(_downsample_memory(rows))
             return JSONResponse([{"ts": r[0], "memory_percent": r[1], "memory_used_gb": r[2]} for r in rows])
 
         elif metric == "disk":
-            rows = db.execute(
-                "SELECT ts, mount, free_gb, percent FROM disk_history WHERE ts > ? ORDER BY ts", (cutoff,)).fetchall()
+            cur.execute(
+                "SELECT ts, mount, free_gb, percent FROM dashboard_disk_history WHERE ts > %s ORDER BY ts", (cutoff,))
+            rows = cur.fetchall()
+            cur.close()
             if downsample and rows:
                 return JSONResponse(_downsample_disk(rows))
             return JSONResponse([{"ts": r[0], "mount": r[1], "free_gb": r[2], "percent": r[3]} for r in rows])
 
         elif metric == "latency":
-            rows = db.execute(
-                "SELECT ts, service, latency_ms, status FROM latency_history_db WHERE ts > ? ORDER BY ts", (cutoff,)).fetchall()
+            cur.execute(
+                "SELECT ts, service, latency_ms, status FROM dashboard_latency_history WHERE ts > %s ORDER BY ts", (cutoff,))
+            rows = cur.fetchall()
+            cur.close()
             if downsample and rows:
                 return JSONResponse(_downsample_latency(rows))
             return JSONResponse([{"ts": r[0], "service": r[1], "latency_ms": r[2], "status": r[3]} for r in rows])
 
         elif metric == "memories":
-            rows = db.execute(
-                "SELECT ts, total_count FROM memory_count_history WHERE ts > ? ORDER BY ts", (cutoff,)).fetchall()
+            cur.execute(
+                "SELECT ts, total_count FROM dashboard_memory_count_history WHERE ts > %s ORDER BY ts", (cutoff,))
+            rows = cur.fetchall()
+            cur.close()
             if downsample and rows:
                 return JSONResponse(_downsample_single(rows, "total_count"))
             return JSONResponse([{"ts": r[0], "total_count": r[1]} for r in rows])
 
         elif metric == "costs":
-            rows = db.execute(
-                "SELECT date, provider, total_cost_usd, input_tokens, output_tokens, session_count FROM cost_history WHERE date >= date('now', ? || ' seconds') ORDER BY date",
-                (str(-seconds),)).fetchall()
+            cost_cutoff = (_dt.datetime.now() - _dt.timedelta(seconds=seconds)).strftime("%Y-%m-%d")
+            cur.execute(
+                "SELECT date, provider, total_cost_usd, input_tokens, output_tokens, session_count FROM dashboard_cost_history WHERE date >= %s ORDER BY date",
+                (cost_cutoff,))
+            rows = cur.fetchall()
+            cur.close()
             return JSONResponse([{
                 "date": r[0], "provider": r[1], "total_cost_usd": r[2],
                 "input_tokens": r[3], "output_tokens": r[4], "session_count": r[5]
             } for r in rows])
 
         else:
+            cur.close()
             return JSONResponse({"error": f"Unknown metric: {metric}"}, status_code=404)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -2008,6 +2075,253 @@ async def collect_homekit(session: aiohttp.ClientSession) -> dict:
         return _homekit_cache or {"status": "unavailable", "scene_count": 0, "accessory_count": 0, "error": str(e), "scenes": []}
 
 
+# --- New card collectors (12 cards) ---
+
+async def collect_app_watchdog() -> dict:
+    """Read the app watchdog state file for port health."""
+    global _app_watchdog_cache, _app_watchdog_ts
+    now = time.time()
+    if now - _app_watchdog_ts < 15:
+        return _app_watchdog_cache
+    try:
+        if not APP_WATCHDOG_STATE.exists():
+            return {"status": "unavailable", "apps": []}
+        data = _json.loads(APP_WATCHDOG_STATE.read_text())
+        apps_raw = data.get("apps", {})
+        apps = []
+        for port_key, info in apps_raw.items():
+            # Skip infra ports — they're already tracked elsewhere
+            if port_key.startswith("infra_"):
+                continue
+            name = APP_PORT_NAMES.get(port_key, f"Port {port_key}")
+            alive = info.get("alive", False)
+            last_seen = info.get("last_seen", 0)
+            uptime_s = now - last_seen if alive and last_seen > 0 else 0
+            apps.append({
+                "name": name,
+                "port": port_key,
+                "alive": alive,
+                "info": info.get("info", ""),
+                "last_seen": last_seen,
+                "uptime_s": uptime_s,
+            })
+        apps.sort(key=lambda a: int(a["port"]) if a["port"].isdigit() else 99999)
+        up_count = sum(1 for a in apps if a["alive"])
+        total = len(apps)
+        restarts = data.get("restarts", [])
+        result = {
+            "status": "ok" if up_count == total else "degraded" if up_count > 0 else "down",
+            "apps": apps,
+            "up_count": up_count,
+            "total": total,
+            "recent_restarts": restarts[-5:] if restarts else [],
+        }
+        _app_watchdog_cache = result
+        _app_watchdog_ts = now
+        return result
+    except Exception as e:
+        return _app_watchdog_cache or {"status": "error", "error": str(e), "apps": []}
+
+
+async def collect_weather() -> dict:
+    """Read sky watcher state and today's memory file for weather info."""
+    global _weather_cache, _weather_ts
+    now = time.time()
+    if now - _weather_ts < 120:  # cache 2 minutes
+        return _weather_cache
+    try:
+        result = {"status": "unavailable"}
+
+        # Read sky watcher state
+        if SKY_WATCHER_STATE.exists():
+            sky = _json.loads(SKY_WATCHER_STATE.read_text())
+            result["last_capture"] = sky.get("last_capture", "")
+            result["frames_today"] = sky.get("frames_today", 0)
+            result["sessions_today"] = sky.get("sessions_today", [])
+            result["status"] = "ok"
+
+        # Read today's memory file for weather data
+        today_str = time.strftime("%Y-%m-%d")
+        today_file = MEMORY_DIR / f"{today_str}.md"
+        if today_file.exists():
+            content = today_file.read_text(errors="replace")
+            # Try to extract weather section
+            weather_match = re.search(
+                r"(?:Weather|weather|WEATHER).*?(?:\n\n|\Z)",
+                content, re.DOTALL)
+            if weather_match:
+                weather_text = weather_match.group(0).strip()[:500]
+                result["weather_text"] = weather_text
+                result["status"] = "ok"
+                # Extract temperature if present
+                temp_match = re.search(r"(\d{2,3})\s*[°F]", weather_text)
+                if temp_match:
+                    result["temp_f"] = int(temp_match.group(1))
+                # Extract conditions
+                for cond in ("sunny", "cloudy", "partly cloudy", "overcast", "rain",
+                             "clear", "fog", "haze", "windy", "storm"):
+                    if cond in weather_text.lower():
+                        result["conditions"] = cond.title()
+                        break
+
+            # Try to extract moon phase
+            moon_match = re.search(r"(?:moon|Moon|MOON)[:\s]*([^\n]+)", content)
+            if moon_match:
+                result["moon_phase"] = moon_match.group(1).strip()[:80]
+
+        _weather_cache = result
+        _weather_ts = now
+        return result
+    except Exception as e:
+        return _weather_cache or {"status": "error", "error": str(e)}
+
+
+async def collect_dream_status() -> dict:
+    """Check dream pipeline state from scheduler tasks and workspace."""
+    global _dream_cache, _dream_ts
+    now = time.time()
+    if now - _dream_ts < 60:
+        return _dream_cache
+    try:
+        result = {"status": "unavailable"}
+        sched = current_state.get("scheduler", {})
+        tasks = sched.get("tasks", {})
+
+        dream_task = tasks.get("dream_pipeline", {})
+        if dream_task:
+            result["last_run"] = dream_task.get("last_run", 0)
+            result["run_count"] = dream_task.get("run_count", 0)
+            result["consecutive_failures"] = dream_task.get("consecutive_failures", 0)
+            result["last_duration"] = dream_task.get("last_duration", 0)
+            result["status"] = "ok" if dream_task.get("consecutive_failures", 0) == 0 else "degraded"
+
+        # Check for dream images in workspace
+        dream_video_dir = Path.home() / ".openclaw" / "workspace" / "dream_videos"
+        if dream_video_dir.exists():
+            images = list(dream_video_dir.glob("*.png"))
+            result["image_count"] = len(images)
+            result["has_images"] = len(images) > 0
+            if images:
+                newest = max(images, key=lambda p: p.stat().st_mtime)
+                result["last_image_ts"] = newest.stat().st_mtime
+        else:
+            result["image_count"] = 0
+            result["has_images"] = False
+
+        # Check if dream journal exists in memory/dreams
+        if DREAM_DIR.exists():
+            dream_files = sorted(DREAM_DIR.iterdir())
+            result["dream_entries"] = len(dream_files)
+            if dream_files:
+                last = dream_files[-1]
+                result["last_dream_file"] = last.name
+                try:
+                    content = last.read_text(errors="replace")
+                    result["last_dream_words"] = len(content.split())
+                except Exception:
+                    pass
+        else:
+            result["dream_entries"] = 0
+
+        _dream_cache = result
+        _dream_ts = now
+        return result
+    except Exception as e:
+        return _dream_cache or {"status": "error", "error": str(e)}
+
+
+async def collect_synology_state() -> dict:
+    """Read Synology NAS state file."""
+    try:
+        if not SYNOLOGY_STATE.exists():
+            return {"status": "unavailable"}
+        data = _json.loads(SYNOLOGY_STATE.read_text())
+        return {
+            "status": "ok",
+            "last_check": data.get("last_check", ""),
+            "model": data.get("model", "?"),
+            "firmware": data.get("firmware", "?"),
+            "cpu_pct": data.get("cpu_pct", 0),
+            "ram_pct": data.get("ram_pct", 0),
+            "problem_count": data.get("problem_count", 0),
+            "problems": data.get("problems", []),
+            "volumes": data.get("volumes", ""),
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+async def collect_healthkit_status() -> dict:
+    """Check HealthKit launchd agent status."""
+    try:
+        # Check launchd status
+        proc = await asyncio.create_subprocess_exec(
+            "launchctl", "list", "com.nova.healthkit",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=3)
+        running = proc.returncode == 0
+
+        # Check log file for last sync time
+        last_sync = None
+        if HEALTHKIT_LOG.exists():
+            try:
+                lines = HEALTHKIT_LOG.read_text(errors="replace").strip().split("\n")
+                for line in reversed(lines[-50:]):
+                    ts_match = re.match(r"(\d{4}-\d{2}-\d{2}[\sT]\d{2}:\d{2}:\d{2})", line)
+                    if ts_match:
+                        last_sync = ts_match.group(1)
+                        break
+            except Exception:
+                pass
+
+        return {
+            "status": "ok" if running else "down",
+            "running": running,
+            "last_sync": last_sync,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+async def collect_homebridge_status() -> dict:
+    """Check Homebridge status by pinging port 8581 and checking launchd."""
+    try:
+        # Check launchd
+        proc = await asyncio.create_subprocess_exec(
+            "launchctl", "list", "net.digitalnoise.homebridge",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=3)
+        launchd_ok = proc.returncode == 0
+
+        # Parse PID from launchctl output
+        pid = None
+        if launchd_ok and stdout:
+            parts = stdout.decode().strip().split("\t")
+            if len(parts) >= 1 and parts[0].isdigit():
+                pid = int(parts[0])
+
+        # Quick HTTP check on port 8581
+        port_ok = False
+        try:
+            reader, writer = await asyncio.wait_for(
+                asyncio.open_connection("127.0.0.1", 8581), timeout=2)
+            writer.close()
+            await writer.wait_closed()
+            port_ok = True
+        except Exception:
+            pass
+
+        status = "ok" if launchd_ok and port_ok else "degraded" if launchd_ok else "down"
+        return {
+            "status": status,
+            "launchd": launchd_ok,
+            "port_reachable": port_ok,
+            "pid": pid,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 # --- Detail helpers for new cards ---
 
 async def _detail_cost_tracker():
@@ -2170,6 +2484,12 @@ async def poll_loop():
             collect_mlx_status(session),     # 19
             collect_camera_activity(),       # 20
             collect_homekit(session),        # 21
+            collect_app_watchdog(),          # 22
+            collect_weather(),               # 23
+            collect_dream_status(),          # 24
+            collect_synology_state(),        # 25
+            collect_healthkit_status(),      # 26
+            collect_homebridge_status(),     # 27
             return_exceptions=True,
         )
 
@@ -2209,6 +2529,12 @@ async def poll_loop():
             "mlx_status": safe(19),
             "cameras": safe(20),
             "homekit": safe(21),
+            "app_watchdog": safe(22),
+            "weather": safe(23),
+            "dream": safe(24),
+            "synology": safe(25),
+            "healthkit": safe(26),
+            "homebridge": safe(27),
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }
