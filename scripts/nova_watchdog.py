@@ -89,6 +89,27 @@ def check_scheduler():
     return False, {}
 
 
+def check_scheduler_staleness(issues, fixes):
+    """Check if scheduler heartbeat file is stale (>10 min old) and force-restart if so."""
+    heartbeat_file = Path.home() / ".openclaw/config/scheduler_heartbeat"
+    if not heartbeat_file.exists():
+        return  # Scheduler hasn't started yet
+    try:
+        ts = float(heartbeat_file.read_text().strip())
+        age = time.time() - ts
+        if age > 600:  # 10 minutes stale
+            log(f"Scheduler heartbeat stale ({age:.0f}s old) — force restarting",
+                level=LOG_WARN, source="watchdog")
+            subprocess.run(
+                ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/com.nova.scheduler"],
+                capture_output=True, timeout=15
+            )
+            issues.append("Scheduler heartbeat stale — restarted")
+            fixes.append("Force-restarted scheduler")
+    except Exception:
+        pass
+
+
 def check_subagent_heartbeats():
     """Check Redis heartbeats for subagents."""
     try:
@@ -181,6 +202,9 @@ def check_gateway_eperm():
 def main():
     issues = []
     fixes = []
+
+    # Check scheduler heartbeat staleness first (before service checks)
+    check_scheduler_staleness(issues, fixes)
 
     # Check critical services (infra only — app ports handled by nova_app_watchdog.py)
     # Canonical launchd labels — verified 2026-04-22

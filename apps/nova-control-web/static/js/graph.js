@@ -246,8 +246,9 @@ function drawNode(node, ts) {
   // Icon inside the node circle
   const def = NODE_DEFS[node.id];
   if (def && def.icon) {
-    ctx.fillStyle = node.group === 'gateway' ? rgba([0, 255, 200], 0.85 * pulse) : rgba(fillCol, 0.85 * pulse);
-    ctx.font = Math.max(14, r * 0.65) + 'px sans-serif';
+    ctx.fillStyle = node.group === 'gateway' ? rgba([0, 255, 200], 0.9 * pulse) : rgba(fillCol, 0.85 * pulse);
+    const iconSize = node.group === 'gateway' ? Math.max(28, r * 0.9) : Math.max(14, r * 0.65);
+    ctx.font = iconSize + 'px sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(def.icon, node.x, node.y);

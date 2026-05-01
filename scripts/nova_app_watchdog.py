@@ -97,27 +97,28 @@ def save_state(state):
 
 
 def check_port(port, timeout=3):
-    """Check if an app is responding on a port. Returns (alive, status_info)."""
+    """Check if an app is responding on a port. Returns (alive, status_info, elapsed_s)."""
+    start = time.time()
     try:
         url = f"http://127.0.0.1:{port}/api/status"
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=timeout) as r:
             data = json.loads(r.read())
             version = data.get("version", data.get("app", "ok"))
-            return True, str(version)
+            return True, str(version), time.time() - start
     except urllib.error.URLError:
-        return False, "connection refused"
+        return False, "connection refused", time.time() - start
     except Exception as e:
         # Port is open but /api/status may not exist — still alive
         try:
             url = f"http://127.0.0.1:{port}/"
             urllib.request.urlopen(url, timeout=timeout)
-            return True, "responding (no status endpoint)"
+            return True, "responding (no status endpoint)", time.time() - start
         except urllib.error.HTTPError:
             # Got an HTTP response (even 404) — port is alive
-            return True, "responding"
+            return True, "responding", time.time() - start
         except Exception:
-            return False, str(e)
+            return False, str(e), time.time() - start
 
 
 def check_infra_port(port, timeout=3):
@@ -228,8 +229,29 @@ def main():
 
     # ── Check macOS apps ─────────────────────────────────────────────────────
     for port, app_name, bundle_name, critical in MONITORED_APPS:
-        alive, info = check_port(port)
+        alive, info, elapsed = check_port(port)
         key = str(port)
+
+        # OneOnOne preemptive restart: if alive but responding very slowly (>2s),
+        # the HTTP server is likely hanging — restart before it goes fully dead.
+        if port == 37421 and alive and elapsed > 2.0:
+            log(f"OneOnOne responding slowly ({elapsed:.1f}s) — preemptive restart")
+            diag_path = capture_diagnostics(port, app_name)
+            log(f"Diagnostics captured: {diag_path}")
+            if count_recent_restarts(state) < MAX_RESTARTS_PER_HOUR:
+                restart_app(app_name, bundle_name)
+                state.setdefault("restarts", []).append({
+                    "ts": now_ts, "app": app_name, "success": True, "reason": "slow_response"
+                })
+                alerts.append(f"*{app_name}* (:{port}) responding slowly ({elapsed:.1f}s) — *preemptive restart*")
+                vector_remember(
+                    f"{app_name} preemptively restarted on {TODAY} at {NOW.strftime('%H:%M')} "
+                    f"due to slow response ({elapsed:.1f}s)",
+                    {"date": TODAY, "type": "preemptive_restart", "app": app_name}
+                )
+                # Skip normal alive/down handling — we already dealt with it
+                apps_state[key] = {"alive": True, "info": "preemptive restart", "last_seen": now_ts, "last_alert": 0}
+                continue
         prev = apps_state.get(key, {})
         was_alive = prev.get("alive", None)
         last_alert = prev.get("last_alert", 0)
@@ -262,7 +284,7 @@ def main():
                         alerts[-1] += " — *auto-restart attempted*"
                         # Wait a moment and re-check
                         time.sleep(5)
-                        alive_now, _ = check_port(port, timeout=5)
+                        alive_now, _, _ = check_port(port, timeout=5)
                         if alive_now:
                             alerts[-1] += " (confirmed back up)"
                         else:
@@ -337,10 +359,10 @@ def status_report():
     print(f"App Watchdog Status — {NOW.strftime('%Y-%m-%d %H:%M')}\n")
     print("macOS Apps:")
     for port, name, _, critical in MONITORED_APPS:
-        alive, info = check_port(port)
+        alive, info, elapsed = check_port(port)
         icon = "UP" if alive else "DOWN"
         crit = " [critical]" if critical else ""
-        print(f"  {icon}  {name} (:{port}){crit} — {info}")
+        print(f"  {icon}  {name} (:{port}){crit} — {info} ({elapsed:.1f}s)")
 
     print("\nInfrastructure:")
     for port, name, _ in INFRA_SERVICES:

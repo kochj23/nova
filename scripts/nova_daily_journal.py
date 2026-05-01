@@ -397,6 +397,15 @@ def gather_today_learnings():
 # ── LLM synthesis ──────────────────────────────────────────────────────────
 
 
+def _ollama_available():
+    """Quick check if Ollama is responsive (5s timeout)."""
+    try:
+        urllib.request.urlopen("http://127.0.0.1:11434/", timeout=5)
+        return True
+    except Exception:
+        return False
+
+
 def synthesize_summary(raw_context):
     """
     Use local Ollama to synthesize a concise, Nova-voiced summary of
@@ -404,6 +413,10 @@ def synthesize_summary(raw_context):
     """
     if not raw_context.strip():
         return "_Quiet day. Nothing notable crossed my desk._"
+
+    if not _ollama_available():
+        logging.warning("Ollama unavailable — posting data-only journal (no LLM synthesis)")
+        return _fallback_summary(raw_context)
 
     prompt = f"""/no_think
 

@@ -124,6 +124,12 @@ tasks:
     timeout: 30
     overlap: skip
 
+  ollama_preload:
+    script: nova_ollama_preload.sh
+    schedule: every 4h
+    timeout: 120
+    overlap: skip
+
   reddit_ingest:
     script: nova_reddit_ingest.py
     schedule: every 4h
@@ -179,17 +185,11 @@ tasks:
     timeout: 300
     overlap: skip
 
-  mail_deliver_am:
-    script: nova_mail_deliver.py
-    schedule: cron 0 8 * * *
-    timeout: 120
-    overlap: skip
-
   # ── Daily: post-wake (verification, enrichment) ────────────────────────
 
   dream_deliver:
     script: dream_deliver.py
-    schedule: cron 0 9 * * *
+    schedule: cron 0 8 * * *
     timeout: 300
     overlap: skip
 
@@ -206,6 +206,12 @@ tasks:
     overlap: skip
 
   # ── Daily: daytime (enrichment, reflection) ────────────────────────────
+
+  mail_deliver_midday:
+    script: nova_mail_deliver.py
+    schedule: cron 0 12 * * *
+    timeout: 120
+    overlap: skip
 
   context_bridge_am:
     script: nova_context_bridge.py

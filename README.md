@@ -13,8 +13,8 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 | Metric | Value |
 |--------|-------|
 | Scripts | 170+ Python and Shell |
-| Scheduler tasks | 36 enabled (15 interval, 21 cron) |
-| Vector memories | 1,370,000+ |
+| Scheduler tasks | 40 enabled (15 interval, 21 cron) |
+| Vector memories | 1,410,000+ |
 | Memory sources | 100+ domains |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Security cameras | 15 UniFi Protect with face recognition |
@@ -74,7 +74,7 @@ All automated notifications post to both Slack and Discord simultaneously via `p
 
 ### Memory
 
-Nova holds **1,370,000+ vector memories** across 100+ source domains, searchable in under 5 ms.
+Nova holds **1,410,000+ vector memories** across 100+ source domains, searchable in under 5 ms.
 
 | Component | Implementation |
 |-----------|---------------|
@@ -105,7 +105,7 @@ Nova holds **1,370,000+ vector memories** across 100+ source domains, searchable
 
 ### Scheduling
 
-Nova runs a **unified scheduler** with 36 enabled tasks across interval and cron modes. Tasks support groups, quiet hours (11 PM to 6:45 AM for non-critical), dead man's switch heartbeats, and LLM group serialization to prevent model contention.
+Nova runs a **unified scheduler** with 40 enabled tasks across interval and cron modes. Tasks support groups, quiet hours (11 PM to 6:45 AM for non-critical), dead man's switch heartbeats, and LLM group serialization to prevent model contention.
 
 ### Dreams
 

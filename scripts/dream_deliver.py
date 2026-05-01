@@ -39,6 +39,13 @@ try:
 except ImportError:
     HERD_RECIPIENTS = []
 
+# CC Jordan at work (loaded from Keychain to avoid hardcoding in source)
+import subprocess as _sp
+_work_email = _sp.run(["security", "find-generic-password", "-a", "nova", "-s", "nova-jordan-work-email", "-w"],
+                      capture_output=True, text=True).stdout.strip()
+if _work_email and _work_email not in HERD_RECIPIENTS:
+    HERD_RECIPIENTS.append(_work_email)
+
 
 # ── Slack Helpers ─────────────────────────────────────────────────────────────
 

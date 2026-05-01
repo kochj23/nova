@@ -34,10 +34,12 @@ import re
 import sys
 import urllib.request
 import urllib.parse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-RECALL_URL = "http://127.0.0.1:18790/recall"
-SEARCH_URL = "http://127.0.0.1:18790/search"
+RECALL_URL       = "http://127.0.0.1:18790/recall"
+RECALL_BATCH_URL = "http://127.0.0.1:18790/recall_batch"
+SEARCH_URL       = "http://127.0.0.1:18790/search"
 RECALL_COUNT = 8
 SEARCH_COUNT = 5
 
@@ -46,6 +48,69 @@ SEARCH_COUNT = 5
 # Multiple sources are tried in order. First match wins.
 
 SOURCE_RULES = [
+    # iMessage / text messages
+    {
+        "patterns": [
+            r"\b(imessage|text|texted|sms|message from|message to)\b",
+            r"\b(i ?message|texts?|iphone message)\b",
+        ],
+        "sources": ["imessage"],
+        "label": "iMessage",
+    },
+    # Slack conversations
+    {
+        "patterns": [
+            r"\b(slack|channel|thread|posted in|said in slack)\b",
+        ],
+        "sources": ["slack_general", "slack_conversation", "slack_jordan", "slack_home_alerts", "slack_todo"],
+        "label": "slack",
+    },
+    # Security / cameras / protect
+    {
+        "patterns": [
+            r"\b(camera|security|protect|motion|detect|surveillance|nvr)\b",
+            r"\b(front door|alley|patio|exterior|driveway|ring)\b",
+        ],
+        "sources": ["security", "app_watchdog"],
+        "label": "security/cameras",
+    },
+    # Local knowledge (gangs, radio, comedy, geopolitics, general facts)
+    {
+        "patterns": [
+            r"\b(gang|crip|blood|piru|sure.?o|nort|armenian power|18th street|ms.?13)\b",
+            r"\b(kroq|kmdy|comedy radio|groove radio|mars.?fm)\b",
+            r"\b(ukraine|russia|putin|zelensky|invasion|crimea|donbas)\b",
+            r"\b(who would win|superhero|comic|marvel|dc )\b",
+        ],
+        "sources": ["local_knowledge", "gang_data"],
+        "label": "local knowledge/facts",
+    },
+    # Calendar / meetings / schedule
+    {
+        "patterns": [
+            r"\b(meeting|calendar|schedule|appointment|standup|1.?on.?1)\b",
+            r"\b(today|tomorrow|this week|next week|agenda)\b",
+        ],
+        "sources": ["calendar", "oneonone", "oneonone_meetings"],
+        "label": "calendar/meetings",
+    },
+    # Punk / hardcore music
+    {
+        "patterns": [
+            r"\b(punk|hardcore|straight edge|black flag|minor threat|bad brains|dead kennedys)\b",
+            r"\b(mosh|pit|zine|diy|squat|crust|grind)\b",
+        ],
+        "sources": ["hardcore_punk", "music", "socal_rave"],
+        "label": "punk/hardcore",
+    },
+    # Reddit / local news
+    {
+        "patterns": [
+            r"\b(reddit|subreddit|r/|posted on reddit|upvote)\b",
+        ],
+        "sources": ["reddit", "burbank", "local"],
+        "label": "reddit/local news",
+    },
     # Personal email / conversations / mailing lists
     {
         "patterns": [
@@ -54,7 +119,7 @@ SOURCE_RULES = [
             r"\b(remember when|do you remember|what did .+ say|what did .+ write)\b",
             r"\b(conversation|correspondence|letter|message from)\b",
         ],
-        "sources": ["email_archive", "email"],
+        "sources": ["email_archive", "email", "imessage"],
         "label": "personal email",
     },
     # Music / raves / DJs / events
@@ -140,6 +205,29 @@ SOURCE_RULES = [
         "sources": ["corvette_workshop_manual"],
         "label": "corvette",
     },
+    # Comics / superheroes / who would win battles
+    {
+        "patterns": [
+            r"\b(hulk|superman|batman|spider.?man|thanos|thor|iron man|captain america)\b",
+            r"\b(marvel|dc comics|avengers|x.?men|justice league)\b",
+            r"\b(omni.?man|invincible|thragg|homelander|viltrumite)\b",
+            r"\b(who would win|versus|legendary fight|battle beast|juggernaut|sentry)\b",
+            r"\b(ghost rider|colossus|black adam|doctor strange)\b",
+        ],
+        "sources": ["comic_books", "youtube_transcript", "video"],
+        "label": "comics/superheroes",
+    },
+    # Horror movies / slashers
+    {
+        "patterns": [
+            r"\b(horror|slasher|jason|freddy|michael myers|pennywise|ghostface)\b",
+            r"\b(halloween|friday the 13th|nightmare on elm|scream|saw|evil dead)\b",
+            r"\b(zombie|vampire|werewolf|demon|exorcist|haunting|paranormal)\b",
+            r"\b(art the clown|terrifier|jeepers creepers|vecna|pinhead|hellraiser)\b",
+        ],
+        "sources": ["horror", "youtube_transcript", "video"],
+        "label": "horror",
+    },
     # Home / Burbank / local
     {
         "patterns": [
@@ -147,7 +235,7 @@ SOURCE_RULES = [
             r"\b(homekit|home automation|lights|thermostat|scene)\b",
             r"\b(neighbor|neighborhood|house|apartment|rent|mortgage)\b",
         ],
-        "sources": ["local", "california", "home_repair"],
+        "sources": ["local", "california", "home_repair", "youtube_transcript"],
         "label": "local/home",
     },
     # Gardening
@@ -311,8 +399,14 @@ SOURCE_RULES = [
 ]
 
 # Default sources when no pattern matches — search broadly
-# video is always included because transcripts contain diverse topics
-DEFAULT_SOURCES = ["video", "email_archive", "music", "document"]
+# These are searched when no specific rule matches the query
+DEFAULT_SOURCES = [
+    "video", "youtube_transcript", "comic_books",
+    "email_archive", "music", "document",
+    "imessage", "local_knowledge", "private_document",
+    "slack_general", "slack_conversation", "security",
+    "burbank", "reddit", "calendar",
+]
 
 
 def classify_query(query):
@@ -373,6 +467,34 @@ def search(query, source=None, n=SEARCH_COUNT):
         return []
 
 
+def batch_recall(queries):
+    """Send multiple recall queries in one HTTP request to /recall_batch.
+
+    Args:
+        queries: list of dicts, each with keys q, n (optional), source (optional).
+    Returns:
+        list of result dicts, each with keys query and memories.
+    """
+    payload = json.dumps({"queries": queries}).encode()
+    req = urllib.request.Request(
+        RECALL_BATCH_URL,
+        data=payload,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read())
+            return data.get("results", [])
+    except Exception:
+        # Fallback: run individual recalls
+        results = []
+        for q in queries:
+            items = recall(q.get("q", ""), source=q.get("source"), n=q.get("n", RECALL_COUNT))
+            results.append({"query": q.get("q", ""), "memories": items})
+        return results
+
+
 def format_result(item, index):
     """Format a single memory result for Nova."""
     text = item.get("text", "")[:400]
@@ -383,35 +505,59 @@ def format_result(item, index):
 
 
 def memory_lookup(query):
-    """Run the full memory-first lookup pipeline."""
+    """Run the full memory-first lookup pipeline.
+
+    Uses /recall_batch to send all source-filtered queries in one request,
+    and runs text search in parallel via ThreadPoolExecutor.
+    """
     sources, labels, prefer_search = classify_query(query)
 
     results = []
     sources_searched = []
 
-    # Step 1: RECALL with source filters
-    for source in sources[:4]:  # Max 4 sources to avoid timeout
-        items = recall(query, source=source)
-        if items:
-            results.extend(items[:3])  # Top 3 per source
-            sources_searched.append(source)
+    # Step 1: BATCH RECALL — all source-filtered queries in one HTTP request
+    batch_queries = [{"q": query, "n": 3, "source": s} for s in sources[:4]]
+    batch_results = batch_recall(batch_queries)
+    for br in batch_results:
+        memories = br.get("memories", [])
+        if memories:
+            results.extend(memories[:3])
+            # Track which source returned results
+            if memories and memories[0].get("source"):
+                src = memories[0]["source"]
+                if src not in sources_searched:
+                    sources_searched.append(src)
         if len(results) >= 8:
             break
 
-    # Step 2: SEARCH for names/keywords (especially for people queries)
-    if prefer_search or len(results) < 3:
-        # Extract potential names or keywords for text search
-        search_items = search(query)
-        for item in search_items:
-            # Don't add duplicates
-            item_text = item.get("text", "")[:50]
-            if not any(item_text in r.get('text', '')[:50] for r in results):
-                results.append(item)
+    # Step 2: SEARCH + ALWAYS run broad recall (no source filter) to catch all 1.4M+ memories
+    need_search = prefer_search or len(results) < 3
 
-    # Step 3: Broad recall without source filter if still nothing
-    if not results:
-        results = recall(query, n=RECALL_COUNT)
-        sources_searched.append("(broad)")
+    with ThreadPoolExecutor(max_workers=3) as executor:
+        futures = {}
+        if need_search:
+            futures["search"] = executor.submit(search, query)
+        # Always run a broad (source-free) recall to ensure no memories are invisible
+        futures["broad"] = executor.submit(recall, query, None, RECALL_COUNT)
+
+        for key, future in futures.items():
+            try:
+                items = future.result(timeout=10)
+            except Exception:
+                items = []
+            if key == "search":
+                for item in items:
+                    item_text = item.get("text", "")[:50]
+                    if not any(item_text in r.get("text", "")[:50] for r in results):
+                        results.append(item)
+            elif key == "broad":
+                # Merge broad results, deduplicating against existing
+                for item in items:
+                    item_text = item.get("text", "")[:50]
+                    if not any(item_text in r.get("text", "")[:50] for r in results):
+                        results.append(item)
+                if items:
+                    sources_searched.append("(all sources)")
 
     # Deduplicate by text prefix
     seen = set()

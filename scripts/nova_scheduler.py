@@ -56,6 +56,7 @@ class TaskState:
     running: bool = False
     pid: int = 0
     run_count: int = 0
+    _retry_pending: bool = False
 
 
 @dataclass
@@ -209,6 +210,7 @@ class NovaScheduler:
                         s.last_exit_code = sdata.get("last_exit_code", 0)
                         s.consecutive_failures = sdata.get("consecutive_failures", 0)
                         s.run_count = sdata.get("run_count", 0)
+                        s._retry_pending = sdata.get("_retry_pending", False)
             except Exception:
                 pass
 
@@ -222,6 +224,7 @@ class NovaScheduler:
                 "consecutive_failures": task.state.consecutive_failures,
                 "run_count": task.state.run_count,
                 "next_run": task.state.next_run,
+                "_retry_pending": task.state._retry_pending,
             }
         STATE_PATH.write_text(json.dumps(data, indent=2))
         HEARTBEAT_FILE.write_text(str(time.time()))
@@ -287,19 +290,33 @@ class NovaScheduler:
             task.state.last_duration = time.time() - start
 
             if proc.returncode != 0:
-                task.state.consecutive_failures += 1
                 task.state.last_error = (stderr.decode(errors="replace"))[-500:]
-                log(f"FAIL {task.id} exit={proc.returncode} ({task.state.last_duration:.1f}s)",
-                    level=LOG_ERROR, source="scheduler")
-                self._total_failures += 1
-                if task.state.consecutive_failures >= 3:
-                    await self._slack_alert(f":x: *{task.id}* — {task.state.consecutive_failures} consecutive failures. "
-                                           f"Last error: {task.state.last_error[:200]}")
+                if not task.state._retry_pending and task.state.consecutive_failures == 0:
+                    # First failure — schedule a retry in 60s instead of counting it
+                    task.state._retry_pending = True
+                    task.state.next_run = time.time() + 60
+                    log(f"RETRY {task.id} in 60s (first failure, exit={proc.returncode})",
+                        level=LOG_WARN, source="scheduler")
+                    # Don't increment consecutive_failures yet — give it one more shot
+                else:
+                    # Retry also failed, or already had prior failures — count it
+                    task.state.consecutive_failures += 1
+                    task.state._retry_pending = False
+                    log(f"FAIL {task.id} exit={proc.returncode} ({task.state.last_duration:.1f}s)",
+                        level=LOG_ERROR, source="scheduler")
+                    self._total_failures += 1
+                    if task.state.consecutive_failures >= 3:
+                        await self._slack_alert(f":x: *{task.id}* — {task.state.consecutive_failures} consecutive failures. "
+                                               f"Last error: {task.state.last_error[:200]}")
             else:
-                if task.state.consecutive_failures > 0:
+                if task.state._retry_pending:
+                    log(f"RETRY OK {task.id} — recovered on retry",
+                        level=LOG_INFO, source="scheduler")
+                elif task.state.consecutive_failures > 0:
                     log(f"RECOVERED {task.id} after {task.state.consecutive_failures} failures",
                         level=LOG_INFO, source="scheduler")
                 task.state.consecutive_failures = 0
+                task.state._retry_pending = False
                 task.state.last_error = ""
 
         except Exception as e:
@@ -318,7 +335,9 @@ class NovaScheduler:
             task.state.run_count += 1
             self._running_count -= 1
             self._total_runs += 1
-            self._advance_next_run(task)
+            # Don't overwrite next_run if a retry was just scheduled
+            if not task.state._retry_pending:
+                self._advance_next_run(task)
 
     # ── Slack ────────────────────────────────────────────────────────────
 

@@ -67,6 +67,18 @@ fi
 DUMP_SIZE=$(du -sh "$LOCAL_DIR/$DUMP_DIR" | cut -f1)
 log "Dump complete: $DUMP_DIR ($DUMP_SIZE in ${DUMP_DURATION}s)"
 
+# ── Verify backup integrity ────────────────────────────────────────────────
+log "Verifying backup integrity..."
+VERIFY_OUTPUT=$(pg_restore --list "$LOCAL_DIR/$DUMP_DIR" 2>&1)
+VERIFY_EXIT=$?
+if [ $VERIFY_EXIT -ne 0 ]; then
+    log "WARNING: Backup verification failed (exit $VERIFY_EXIT)"
+    notify ":warning: *Postgres Backup Verification Failed* — dump may be corrupt. Exit: $VERIFY_EXIT"
+else
+    TOC_COUNT=$(echo "$VERIFY_OUTPUT" | wc -l | tr -d ' ')
+    log "Verification passed: $TOC_COUNT TOC entries"
+fi
+
 # ── Copy to NAS via rsync (faster than cp for large files over AFP) ──────────
 if $NAS_AVAILABLE; then
     COPY_START=$(date +%s)

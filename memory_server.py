@@ -17,6 +17,7 @@ Architecture:
 Endpoints:
   POST /remember[?async=1]  { "text": "...", "source": "...", "metadata": {...} }
   GET  /recall?q=...&n=5[&source=...&min_score=0.0]
+  POST /recall_batch         { "queries": [{"q": "...", "n": 5, "source": "..."}, ...] }
   GET  /search?q=...&n=10[&source=...]   <- full-text ILIKE, best for proper names
   GET  /random[?n=1&source=...]
   GET  /health
@@ -29,6 +30,7 @@ Author: Jordan Koch / kochj23
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import time
@@ -40,7 +42,8 @@ from typing import Optional
 import asyncpg
 import httpx
 import redis.asyncio as aioredis
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 logger = logging.getLogger("memory_server")
@@ -50,7 +53,7 @@ PG_DSN      = "postgresql://localhost/nova_memories"
 REDIS_URL   = "redis://localhost:6379"
 REDIS_QUEUE = "nova:memory:ingest"          # list key for write queue
 REDIS_CACHE = "nova:memory:cache"           # hash key for recall cache
-CACHE_TTL   = 900                           # 15-minute recall cache TTL
+CACHE_TTL   = 300                           # 5-minute recall cache TTL
 OLLAMA_BASE = "http://127.0.0.1:11434"
 EMBED_MODEL = "nomic-embed-text"
 DIMS        = 768
@@ -124,7 +127,11 @@ async def lifespan(app: FastAPI):
         # Increase HNSW ef_search for better recall accuracy at 200K+ rows
         await conn.execute("SET hnsw.ef_search = 400")
 
-    _pg_pool = await asyncpg.create_pool(PG_DSN, min_size=2, max_size=10, init=_pg_init)
+    _pg_pool = await asyncpg.create_pool(
+        PG_DSN, min_size=5, max_size=20, init=_pg_init,
+        max_inactive_connection_lifetime=3600.0,  # recycle idle connections after 1h
+        command_timeout=30.0,                      # per-query timeout
+    )
     _redis   = aioredis.from_url(REDIS_URL, decode_responses=True)
 
     # Ensure pgvector extension and table exist
@@ -240,19 +247,21 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
     return {"id": memory_id, "dims": len(vector), "status": "stored"}
 
 
-@app.get("/recall")
-async def recall(
-    q: str = Query(...),
-    n: int = Query(DEFAULT_N, ge=1, le=MAX_N),
-    source: Optional[str] = Query(None),
-    min_score: float = Query(0.0),
-):
-    """Semantic search using HNSW cosine similarity with Redis caching."""
-    if not q.strip():
-        raise HTTPException(status_code=400, detail="q cannot be empty")
+async def _do_recall(q: str, n: int = DEFAULT_N, source: Optional[str] = None, min_score: float = 0.0) -> dict:
+    """Core recall logic shared by /recall and /recall_batch.
 
-    # Check Redis cache first
-    cache_key = f"{REDIS_CACHE}:{q[:100]}:{source or 'all'}:{n}"
+    Returns dict with keys: memories, query, count.
+    Uses hash-based Redis cache key for reliable deduplication.
+    Sets higher HNSW ef_search for work_knowledge queries.
+    """
+    if not q.strip():
+        return {"memories": [], "query": q, "count": 0}
+
+    n = max(1, min(n, MAX_N))
+
+    # Hash-based cache key — deterministic, compact, handles long queries
+    cache_raw = f"{q}:{n}:{source or 'all'}"
+    cache_key = f"recall:{hashlib.md5(cache_raw.encode()).hexdigest()}"
     try:
         cached = await _redis.get(cache_key)
         if cached:
@@ -266,7 +275,21 @@ async def recall(
     k = n * 20 if source else n * 3
 
     async with _pg_pool.acquire() as conn:
-        if source:
+        if source == "work_knowledge":
+            # Boost ef_search for work_knowledge queries — better precision for PKI project.
+            # SET LOCAL requires a transaction block; use explicit transaction.
+            async with conn.transaction():
+                await conn.execute("SET LOCAL hnsw.ef_search = 600")
+                rows = await conn.fetch(
+                    """SELECT id, text, metadata, source, created_at,
+                              1 - (embedding <=> $1::vector) AS score
+                       FROM memories
+                       WHERE source = $2 AND tier IN ('working', 'long_term')
+                       ORDER BY embedding <=> $1::vector
+                       LIMIT $3""",
+                    vec_str, source, k
+                )
+        elif source:
             rows = await conn.fetch(
                 """SELECT id, text, metadata, source, created_at,
                           1 - (embedding <=> $1::vector) AS score
@@ -293,13 +316,65 @@ async def recall(
     top = results[:n]
     response = {"memories": [m.model_dump() for m in top], "query": q, "count": len(top)}
 
-    # Cache result in Redis (15-minute TTL)
+    # Cache result in Redis (5-minute TTL)
     try:
         await _redis.setex(cache_key, CACHE_TTL, json.dumps(response, default=str))
     except Exception:
         pass
 
     return response
+
+
+@app.get("/recall")
+async def recall(
+    q: str = Query(...),
+    n: int = Query(DEFAULT_N, ge=1, le=MAX_N),
+    source: Optional[str] = Query(None),
+    min_score: float = Query(0.0),
+):
+    """Semantic search using HNSW cosine similarity with Redis caching."""
+    if not q.strip():
+        raise HTTPException(status_code=400, detail="q cannot be empty")
+    return await _do_recall(q, n, source, min_score)
+
+
+@app.post("/recall_batch")
+async def recall_batch(request: Request):
+    """Batch recall: run multiple semantic queries in one request.
+
+    Body: {"queries": [{"q": "...", "n": 5, "source": "..."}, ...]}
+    Max 5 queries per batch. Each query uses the same _do_recall logic
+    (including Redis caching and HNSW ef_search tuning).
+    """
+    body = await request.json()
+    queries = body.get("queries", [])
+
+    if not queries:
+        return JSONResponse({"results": [], "count": 0})
+
+    # Cap at 5 queries per batch to bound latency
+    queries = queries[:5]
+
+    # Run all queries concurrently via asyncio.gather
+    tasks = []
+    for query in queries:
+        q = query.get("q", "")
+        n = query.get("n", DEFAULT_N)
+        source = query.get("source")
+        min_score = query.get("min_score", 0.0)
+        tasks.append(_do_recall(q, n, source, min_score))
+
+    results_raw = await asyncio.gather(*tasks, return_exceptions=True)
+
+    results = []
+    for i, res in enumerate(results_raw):
+        q = queries[i].get("q", "")
+        if isinstance(res, Exception):
+            results.append({"query": q, "memories": [], "error": str(res)})
+        else:
+            results.append({"query": q, "memories": res.get("memories", [])})
+
+    return JSONResponse({"results": results, "count": len(results)})
 
 
 @app.get("/search")
