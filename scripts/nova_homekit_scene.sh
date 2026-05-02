@@ -1,6 +1,6 @@
 #!/bin/bash
 #
-# nova_homekit_scene.sh — Execute a HomeKit scene via HomekitControl API.
+# nova_homekit_scene.sh — Execute a HomeKit scene via NovaControl API.
 # Falls back to Shortcuts CLI if the API is unavailable.
 #
 # Usage: nova_homekit_scene.sh "Good Morning"
@@ -11,7 +11,7 @@
 set -euo pipefail
 
 SCENE_NAME="${1:-}"
-API_URL="http://127.0.0.1:37432"
+API_URL="http://127.0.0.1:37400"
 
 if [ -z "$SCENE_NAME" ]; then
     echo "Usage: nova_homekit_scene.sh <scene_name>"
@@ -21,7 +21,7 @@ fi
 
 # List scenes
 if [ "$SCENE_NAME" = "--list" ]; then
-    result=$(curl -s --connect-timeout 3 "$API_URL/api/scenes" 2>/dev/null) || true
+    result=$(curl -s --connect-timeout 3 "$API_URL/api/homekit/scenes" 2>/dev/null) || true
     if [ -n "$result" ]; then
         echo "$result"
     else
@@ -35,7 +35,7 @@ fi
 result=$(curl -s --connect-timeout 3 -X POST \
     -H "Content-Type: application/json" \
     -d "{\"name\": \"$SCENE_NAME\"}" \
-    "$API_URL/api/scenes/execute" 2>/dev/null) || true
+    "$API_URL/api/homekit/scenes/execute" 2>/dev/null) || true
 
 if echo "$result" | grep -q '"status" *: *"executed"'; then
     echo "$result"

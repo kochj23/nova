@@ -47,7 +47,7 @@ EXPECTED_SERVICES = {
     18790: {"name": "Memory Server", "path": "/health"},
     11434: {"name": "Ollama", "path": "/"},
     37421: {"name": "OneOnOne", "path": "/api/status"},
-    37432: {"name": "HomekitControl", "path": "/api/status"},
+    37400: {"name": "NovaControl", "path": "/api/status"},
 }
 
 EXPECTED_PROCESSES = [

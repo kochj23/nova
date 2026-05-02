@@ -32,7 +32,7 @@ NOW = datetime.now()
 HOUR = NOW.hour
 TODAY = date.today().isoformat()
 STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_weather_homekit_state.json"
-HOMEKIT_URL = "http://127.0.0.1:37432"
+HOMEKIT_URL = "http://127.0.0.1:37400"
 
 # ── Weather thresholds ───────────────────────────────────────────────────────
 

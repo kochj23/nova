@@ -231,7 +231,7 @@ def get_system_health():
         issues.append("vector memory server is down")
         mem_count = 0
 
-    for port, name in [(37432, "HomekitControl"), (37421, "OneOnOne")]:
+    for port, name in [(37400, "NovaControl")]:
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=2)
         except Exception:

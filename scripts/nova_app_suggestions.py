@@ -43,7 +43,7 @@ APPS = [
     (37422, "MLXCode",        "MLX Code",       "/api/conversations",                         7),
     (37423, "NMAPScanner",    "NMAPScanner",    "/api/scan/results",                          14),
     (37424, "RsyncGUI",       "RsyncGUI",       None,                                         7),
-    (37432, "HomekitControl", "HomekitControl",  "/api/status",                                1),
+    (37400, "NovaControl",      "NovaControl",      "/api/status",                                1),
     (37443, "TopGUI",         "TopGUI",          None,                                        14),
     (37445, "ytdlp-gui",      "ytdlp-gui",      None,                                        14),
     (37446, "DotSync",        "Dot Sync",        None,                                         7),

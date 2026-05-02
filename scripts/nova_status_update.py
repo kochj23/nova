@@ -56,7 +56,7 @@ def main():
         app_status(37422, "MLXCode"),
         app_status(37423, "NMAPScanner"),
         app_status(37424, "RsyncGUI"),
-        app_status(37432, "HomekitControl"),
+        app_status(37400, "NovaControl"),
     ]
 
     # Ollama

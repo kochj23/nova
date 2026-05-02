@@ -87,7 +87,7 @@ def save_state(state):
 def get_accessories():
     """Query HomeKit — tries HomekitControl API first, falls back to Shortcuts CLI.
 
-    Primary: HomekitControl HTTP API on port 37432
+    Primary: NovaControl HTTP API on port 37400
     Fallback: 'Nova HomeKit Status' Shortcut via Shortcuts CLI
 
     The Shortcut should:
@@ -105,7 +105,7 @@ def get_accessories():
     # Try HomekitControl API first (faster, no Shortcuts overhead)
     try:
         result = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "3", "http://127.0.0.1:37432/api/accessories"],
+            ["curl", "-s", "--connect-timeout", "3", "http://127.0.0.1:37400/api/homekit/accessories"],
             capture_output=True, text=True, timeout=15
         )
         if result.returncode == 0 and result.stdout.strip():

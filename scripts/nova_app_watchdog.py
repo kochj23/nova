@@ -35,11 +35,10 @@ STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_app_watchdog_state.js
 # Apps to monitor: (port, app_name, bundle_name_for_open, critical)
 # critical=True means auto-restart, critical=False means alert-only
 MONITORED_APPS = [
-    (37421, "OneOnOne",         "OneOnOne",         True),
+    (37400, "NovaControl",      "NovaControl",      True),
     (37422, "MLXCode",          "MLX Code",         False),
     (37423, "NMAPScanner",      "NMAPScanner",      False),
     (37424, "RsyncGUI",         "RsyncGUI",         False),
-    (37432, "HomekitControl",   "HomekitControl",   True),
     (37443, "TopGUI",           "TopGUI",            False),
     (37445, "ytdlp-gui",        "ytdlp-gui",        False),
     (37446, "DotSync",          "Dot Sync",          False),
