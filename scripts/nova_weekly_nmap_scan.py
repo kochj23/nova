@@ -11,18 +11,31 @@ import json
 from datetime import datetime
 
 def run_nmap_scan():
-    """Trigger NMAPScanner network scan via Nova-Control API"""
+    """Trigger network scan via NovaControl unified API (port 37400)"""
     try:
+        # Trigger scan of local subnet
         response = requests.post(
-            "http://127.0.0.1:37423/api/nmap/scan",
-            json={"full": True, "threat_check": True},
+            "http://127.0.0.1:37400/api/nmap/scan",
+            json={"ip": "192.168.1.0/24"},
             timeout=300
         )
-        
-        if response.status_code == 200:
-            return response.json()
-        else:
-            return {"error": f"API returned {response.status_code}"}
+
+        if response.status_code != 200:
+            return {"error": f"Scan trigger returned {response.status_code}"}
+
+        # Get devices
+        devices_resp = requests.get("http://127.0.0.1:37400/api/nmap/devices", timeout=30)
+        devices = devices_resp.json() if devices_resp.status_code == 200 else []
+
+        # Get threats
+        threats_resp = requests.get("http://127.0.0.1:37400/api/nmap/threats", timeout=30)
+        threats = threats_resp.json() if threats_resp.status_code == 200 else []
+
+        return {
+            "device_count": len(devices) if isinstance(devices, list) else 0,
+            "threats": threats if isinstance(threats, list) else [],
+            "timestamp": datetime.now().isoformat()
+        }
     except Exception as e:
         return {"error": str(e)}
 

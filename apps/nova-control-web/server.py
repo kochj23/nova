@@ -28,7 +28,7 @@ SESSIONS_JSON = Path.home() / ".openclaw" / "agents" / "main" / "sessions" / "se
 PG_DB = "nova_memories"
 BACKUP_LOG = Path.home() / ".openclaw" / "logs" / "nova_pg_backup.log"
 PROTECT_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "protect_monitor_state.json"
-HOMEKIT_API = "http://127.0.0.1:37432"
+HOMEKIT_API = "http://127.0.0.1:37400"
 MLX_MODELS_URL = "http://192.168.1.6:5050/v1/models"
 
 AGENTS = ["analyst", "sentinel", "coder", "lookout", "librarian"]
@@ -118,7 +118,7 @@ APP_PORT_NAMES = {
     "37422": "MLXCode",
     "37423": "NMAPScanner",
     "37424": "RsyncGUI",
-    "37432": "HomekitControl",
+    "37432": "HomekitControl (retired → NovaControl:37400)",
 }
 
 
@@ -2038,35 +2038,30 @@ async def collect_homekit(session: aiohttp.ClientSession) -> dict:
         return _homekit_cache
     try:
         scenes = []
-        status_data = {}
+        accessories = []
         try:
-            async with session.get(f"{HOMEKIT_API}/api/scenes",
-                                   timeout=aiohttp.ClientTimeout(total=3)) as resp:
+            async with session.get(f"{HOMEKIT_API}/api/homekit/scenes",
+                                   timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 scenes_resp = await resp.json()
-                scenes = scenes_resp if isinstance(scenes_resp, list) else scenes_resp.get("scenes", [])
+                scenes = scenes_resp.get("scenes", []) if isinstance(scenes_resp, dict) else scenes_resp
         except Exception:
             pass
         try:
-            async with session.get(f"{HOMEKIT_API}/api/status",
-                                   timeout=aiohttp.ClientTimeout(total=3)) as resp:
-                status_data = await resp.json()
+            async with session.get(f"{HOMEKIT_API}/api/homekit/accessories",
+                                   timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                acc_resp = await resp.json()
+                accessories = acc_resp.get("accessories", []) if isinstance(acc_resp, dict) else acc_resp
         except Exception:
             pass
 
-        accessories = status_data.get("accessories", status_data.get("accessory_count", 0))
-        if isinstance(accessories, list):
-            accessory_count = len(accessories)
-        elif isinstance(accessories, int):
-            accessory_count = accessories
-        else:
-            accessory_count = 0
+        accessory_count = len(accessories) if isinstance(accessories, list) else 0
 
         result = {
-            "status": "ok" if scenes or status_data else "unavailable",
-            "scene_count": len(scenes),
+            "status": "ok" if scenes or accessories else "unavailable",
+            "scene_count": len(scenes) if isinstance(scenes, list) else 0,
             "accessory_count": accessory_count,
-            "scenes": [{"name": s.get("name", s.get("displayName", "?")), "id": s.get("id", "")} for s in scenes[:20]] if isinstance(scenes, list) else [],
-            "raw_status": {k: v for k, v in status_data.items() if k not in ("accessories",)},
+            "scenes": [{"name": s.get("name", "?"), "id": s.get("id", "")} for s in scenes[:20]] if isinstance(scenes, list) else [],
+            "source": "NovaControl:37400",
         }
         _homekit_cache = result
         _homekit_ts = now
