@@ -91,6 +91,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "functional: marks end-to-end workflow tests")
     config.addinivalue_line("markers", "frame: marks tests that verify HTML/CSS/JS frame rendering")
     config.addinivalue_line("markers", "dashboard: marks dashboard server unit tests")
+    config.addinivalue_line("markers", "security: marks security audit tests (static analysis, input validation, privacy)")
 
 
 @pytest.fixture
