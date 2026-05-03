@@ -569,6 +569,41 @@ def write_pending(narrative: str, journal_path: Path, image_path: str = None, in
     log(f"Pending delivery queued for {TODAY}")
 
 
+def _summarize_dream_for_image(narrative: str) -> str:
+    """Ask Ollama to summarize the dream into a visual scene description for image generation."""
+    summary_prompt = (
+        "/no_think\n\n"
+        "Summarize this dream into ONE vivid visual scene description for an AI image generator. "
+        "Focus on the most striking, paintable moment. Describe: setting, lighting, mood, key objects, "
+        "colors, composition. 30 words max. No characters' names. No text in the image. "
+        "Output ONLY the scene description, nothing else.\n\n"
+        f"Dream:\n{narrative[:2000]}"
+    )
+    try:
+        payload = {
+            "model": MODEL,
+            "prompt": summary_prompt,
+            "stream": False,
+            "think": False,
+            "options": {"temperature": 0.7, "num_predict": 60, "num_ctx": 4096},
+        }
+        req = urllib.request.Request(
+            OLLAMA_URL,
+            data=json.dumps(payload).encode(),
+            headers={"Content-Type": "application/json"},
+        )
+        with urllib.request.urlopen(req, timeout=60) as r:
+            result = json.loads(r.read())
+        summary = result.get("response", "").strip().split("\n")[0][:150]
+        if len(summary) > 20:
+            return summary
+    except Exception as e:
+        log(f"Dream image summary failed: {e}")
+    # Fallback: use the last line of the dream (the strange ending)
+    lines = [l.strip() for l in narrative.strip().splitlines() if l.strip()]
+    return lines[-1][:100] if lines else "surreal dreamscape at night"
+
+
 def generate_dream_image(narrative: str) -> str:
     """Generate a dream image via SwarmUI. Returns the image path or empty string."""
     import re
@@ -582,15 +617,14 @@ def generate_dream_image(narrative: str) -> str:
         log("SwarmUI not available — skipping image generation")
         return ""
 
-    # Build a short image concept from the first sentence
-    sentences = re.split(r'(?<=[.!?])\s+', narrative.strip())
-    first = sentences[0][:120] if sentences else "surreal digital dreamscape"
-    concept = " ".join(first.split()[:12])
+    # Summarize the entire dream into a visual scene description
+    concept = _summarize_dream_for_image(narrative)
+    log(f"Image concept from dream summary: {concept}")
 
     prompt = (
         f"dreamlike surreal digital painting, {concept}, "
-        "deep navy and indigo, soft amber light, ethereal atmosphere, "
-        "painterly brushwork, cinematic wide shot, no text"
+        "ethereal atmosphere, painterly brushwork, cinematic composition, "
+        "rich color palette, no text, no words, no letters"
     )
     log(f"Image prompt: {prompt[:80]}...")
 
