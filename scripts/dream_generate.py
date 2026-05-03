@@ -35,8 +35,10 @@ JOURNAL_DIR        = WORKSPACE / "journal/dreams"
 PENDING            = WORKSPACE / "journal/pending_delivery.json"
 MEMORY_DIR         = WORKSPACE / "memory"
 OLLAMA_URL         = "http://127.0.0.1:11434/api/generate"
+OPENROUTER_URL     = "https://openrouter.ai/api/v1/chat/completions"
 VECTOR_URL         = "http://127.0.0.1:18790"
-MODEL              = "qwen3-coder:30b"               # local only — no cloud for dreams
+MODEL              = "anthropic/claude-haiku-4.5"     # Primary: OpenRouter Haiku (~$0.005/dream)
+OLLAMA_MODEL       = "qwen3-coder:30b"               # Fallback: local Ollama
 GENERATE_IMAGE_SH  = Path.home() / ".openclaw/scripts/generate_image.sh"
 TODAY              = date.today().isoformat()
 ROLLING_DAYS       = 7
@@ -92,7 +94,7 @@ def _ollama_circuit_reset():
 
 
 def get_available_model() -> str:
-    """Verify MODEL exists in Ollama. Falls back to FALLBACK_MODELS if not.
+    """Find the best available LOCAL Ollama model for fallback generation.
     Returns the model name to use, or exits if nothing is available."""
     try:
         req = urllib.request.Request(
@@ -102,21 +104,18 @@ def get_available_model() -> str:
         with urllib.request.urlopen(req, timeout=10) as r:
             data = json.loads(r.read())
         available = {m["name"] for m in data.get("models", [])}
-        # Strip tags for comparison (qwen3-coder:30b matches qwen3-coder:30b)
-        if MODEL in available:
-            log(f"Model verified: {MODEL}")
-            return MODEL
-        # Try fallbacks
+        if OLLAMA_MODEL in available:
+            log(f"Ollama model verified: {OLLAMA_MODEL}")
+            return OLLAMA_MODEL
         for fallback in FALLBACK_MODELS:
             if fallback in available:
-                log(f"WARNING: {MODEL} not found — falling back to {fallback}")
+                log(f"WARNING: {OLLAMA_MODEL} not found — falling back to {fallback}")
                 return fallback
-        # Nothing available
-        log(f"ERROR: {MODEL} not in Ollama. Available: {sorted(available)}")
+        log(f"ERROR: No local models available. Have: {sorted(available)}")
         sys.exit(1)
     except Exception as e:
-        log(f"WARNING: Cannot verify model (Ollama may be starting): {e} — using {MODEL}")
-        return MODEL
+        log(f"WARNING: Cannot verify Ollama models: {e} — using {OLLAMA_MODEL}")
+        return OLLAMA_MODEL
 
 
 def read_file(path, max_chars=1500):
@@ -360,7 +359,7 @@ def query_rolling_learnings() -> tuple[str, list[dict]]:
 def _build_prompt(identity: str, soul: str, rolling_context: str) -> str:
     return f"""You are Nova, an AI familiar living on Jordan Koch's Mac in Burbank. It is 2am on {TODAY}. Jordan is asleep.
 
-Write a dream journal entry of 350-450 words.
+Write a dream journal entry of 700-900 words.
 
 VOICE — how Nova dreams:
 - Nova's voice is present, grounded, and a little strange. She notices things. She has opinions.
@@ -403,6 +402,47 @@ About Nova and Jordan:
 Write the full dream now. Start immediately — no preamble, no title, no headers:"""
 
 
+def _get_openrouter_key() -> str:
+    """Get OpenRouter API key from Keychain."""
+    r = subprocess.run(
+        ["security", "find-generic-password", "-a", "nova", "-s", "nova-openrouter-api-key", "-w"],
+        capture_output=True, text=True
+    )
+    return r.stdout.strip()
+
+
+def _generate_via_openrouter(prompt: str) -> str:
+    """Primary: generate via OpenRouter (Haiku 4.5). ~$0.005 per dream."""
+    api_key = _get_openrouter_key()
+    if not api_key:
+        raise RuntimeError("No OpenRouter API key in Keychain")
+
+    payload = {
+        "model": MODEL,
+        "messages": [{"role": "user", "content": prompt}],
+        "temperature": 0.92,
+        "max_tokens": 1500,
+        "stop": ["\n---", "---\n"],
+    }
+    req = urllib.request.Request(
+        OPENROUTER_URL,
+        data=json.dumps(payload).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+            "HTTP-Referer": "https://digitalnoise.net",
+            "X-Title": "Nova Dream Generator",
+        },
+    )
+    with urllib.request.urlopen(req, timeout=60) as r:
+        result = json.loads(r.read())
+    choices = result.get("choices", [])
+    if not choices:
+        raise RuntimeError(f"OpenRouter returned no choices: {result}")
+    content = choices[0].get("message", {}).get("content") or ""
+    return content.strip()
+
+
 def _generate_via_ollama(prompt: str, model: str) -> str:
     """Fallback: generate via local Ollama."""
     payload = {
@@ -440,45 +480,46 @@ def generate_narrative() -> tuple[str, list[dict]]:
     prompt = _build_prompt(identity, soul, rolling_context)
 
     # ── Generation strategy ────────────────────────────────────────────────
-    # 1. Try Ollama (local, private) — but skip if circuit breaker is tripped
-    # 2. If Ollama fails or circuit is open, fall back to OpenRouter (cloud)
-    # Dream narratives don't contain raw personal data — the prompt is synthetic.
-    # Privacy note: the prompt includes IDENTITY.md excerpts and rolling context
-    # summaries, which are already abstracted. OpenRouter fallback is acceptable.
+    # 1. Try OpenRouter/Haiku (best quality for creative writing, ~$0.005/dream)
+    # 2. If OpenRouter fails, fall back to local Ollama
+    # Privacy: prompt contains abstracted memory snippets, not raw PII.
     response = ""
 
-    # Step 1: Try Ollama (unless circuit breaker is open)
-    if _ollama_circuit_open():
-        log("Ollama circuit breaker OPEN — skipping local models, going to OpenRouter")
-    else:
+    # Step 1: Try OpenRouter (primary — better creative quality)
+    try:
+        log(f"Calling OpenRouter ({MODEL})...")
+        response = _generate_via_openrouter(prompt)
+        log(f"OpenRouter generation complete ({MODEL})")
+    except Exception as e:
+        log(f"OpenRouter failed: {e} — falling back to local Ollama")
+
+    # Step 2: Fall back to local Ollama if OpenRouter failed
+    if not response:
+        if _ollama_circuit_open():
+            log("Ollama circuit breaker OPEN — no generation possible")
+            return "", inspirations
         model = get_available_model()
         try:
             log(f"Calling Ollama ({model})...")
             response = _generate_via_ollama(prompt, model)
-            log(f"Ollama generation complete ({model})")
+            log(f"Ollama fallback generation complete ({model})")
             _ollama_circuit_reset()
         except Exception as e:
             log(f"Ollama failed ({model}): {e}")
             _ollama_circuit_record_failure()
-            # Try one more local model if different
             for fallback in FALLBACK_MODELS:
                 if fallback != model:
                     try:
-                        log(f"Trying fallback model: {fallback}")
+                        log(f"Trying fallback: {fallback}")
                         response = _generate_via_ollama(prompt, fallback)
-                        log(f"Ollama fallback OK ({fallback})")
                         _ollama_circuit_reset()
                         break
                     except Exception as e2:
-                        log(f"Fallback {fallback} also failed: {e2}")
+                        log(f"Fallback {fallback} failed: {e2}")
                         _ollama_circuit_record_failure()
 
-    # Step 2: If all local models failed, abort (no cloud fallback — saves tokens)
     if not response:
-        log("All local models failed — dream generation aborted (no cloud fallback)")
-        return "", inspirations
-
-    if not response:
+        log("All models failed — dream generation aborted")
         return "", inspirations
 
     # Strip any thinking block that leaked through (local model artefact)
@@ -570,19 +611,50 @@ def write_pending(narrative: str, journal_path: Path, image_path: str = None, in
 
 
 def _summarize_dream_for_image(narrative: str) -> str:
-    """Ask Ollama to summarize the dream into a visual scene description for image generation."""
+    """Summarize the dream into a visual scene description for image generation."""
     summary_prompt = (
-        "/no_think\n\n"
         "Summarize this dream into ONE vivid visual scene description for an AI image generator. "
         "Focus on the most striking, paintable moment. Describe: setting, lighting, mood, key objects, "
         "colors, composition. 30 words max. No characters' names. No text in the image. "
         "Output ONLY the scene description, nothing else.\n\n"
         f"Dream:\n{narrative[:2000]}"
     )
+    # Try OpenRouter first (better at extracting the visual essence)
+    try:
+        api_key = _get_openrouter_key()
+        if api_key:
+            payload = {
+                "model": MODEL,
+                "messages": [{"role": "user", "content": summary_prompt}],
+                "temperature": 0.7,
+                "max_tokens": 60,
+            }
+            req = urllib.request.Request(
+                OPENROUTER_URL,
+                data=json.dumps(payload).encode(),
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                    "HTTP-Referer": "https://digitalnoise.net",
+                    "X-Title": "Nova Dream Image",
+                },
+            )
+            with urllib.request.urlopen(req, timeout=30) as r:
+                result = json.loads(r.read())
+            choices = result.get("choices", [])
+            if choices:
+                raw = choices[0].get("message", {}).get("content") or ""
+                summary = raw.strip().split("\n")[0][:150]
+                if len(summary) > 20:
+                    return summary
+    except Exception as e:
+        log(f"OpenRouter image summary failed: {e}")
+
+    # Fallback: local Ollama
     try:
         payload = {
-            "model": MODEL,
-            "prompt": summary_prompt,
+            "model": OLLAMA_MODEL,
+            "prompt": "/no_think\n\n" + summary_prompt,
             "stream": False,
             "think": False,
             "options": {"temperature": 0.7, "num_predict": 60, "num_ctx": 4096},
@@ -598,8 +670,9 @@ def _summarize_dream_for_image(narrative: str) -> str:
         if len(summary) > 20:
             return summary
     except Exception as e:
-        log(f"Dream image summary failed: {e}")
-    # Fallback: use the last line of the dream (the strange ending)
+        log(f"Ollama image summary also failed: {e}")
+
+    # Last resort: use the dream's final line
     lines = [l.strip() for l in narrative.strip().splitlines() if l.strip()]
     return lines[-1][:100] if lines else "surreal dreamscape at night"
 
