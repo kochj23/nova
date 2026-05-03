@@ -213,7 +213,12 @@ def get_stale_goals(threshold_days=None):
     for g in goals:
         threshold = threshold_days or g["check_in_days"]
         if g["last_activity"]:
-            raw = g["last_activity"].split("+")[0].split("-0")[0].split(".")[0]
+            raw = g["last_activity"]
+            # Strip timezone offset and microseconds for naive comparison
+            if "+" in raw:
+                raw = raw[:raw.index("+")]
+            if "." in raw:
+                raw = raw[:raw.index(".")]
             try:
                 last = datetime.fromisoformat(raw)
             except ValueError:

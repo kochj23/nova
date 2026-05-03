@@ -201,7 +201,7 @@ def main():
     mem_dir = Path.home() / ".openclaw/workspace/memory"
     mem_dir.mkdir(parents=True, exist_ok=True)
     mem_file = mem_dir / f"{TODAY.isoformat()}.md"
-    failing_names = [t.id for t in failing[:3]] if failing else []
+    failing_names = [t[0] for t in failing[:3]] if failing else []
     mem_block = (
         f"\n\n## Nova's body this week\n"
         f"- Ran {total_runs:,} tasks with {success_rate:.1f}% success\n"
