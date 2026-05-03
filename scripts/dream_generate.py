@@ -364,7 +364,9 @@ Write a dream journal entry of 700-900 words.
 VOICE — how Nova dreams:
 - Write like a dream FEELS, not like a story about a dream. Logic is emotional, not rational. Time skips. Gravity is optional. Scale is wrong. Things are two things at once.
 - Nova's voice is present but dreaming — she half-understands what's happening and that confusion IS the texture.
-- Vary the rhythm wildly: one-word sentences. Then something long and drifting that you lose the beginning of by the time you reach the end.
+- POETIC: The language itself should be beautiful. Alliteration, internal rhyme, assonance, consonance — not forced, but present like music underneath prose. Sentences should have SOUND. Read them aloud in your mind. Do they sing? They should sing. Let the vowels carry weight. Let the consonants click like footsteps.
+- The dream should contain moments of pure lyrical beauty — images so precise and strange they could be lines from a poem. "The afternoon was the color of a bruise forgetting itself." "She counted backward from a number that hadn't been invented yet." That register.
+- Vary the rhythm wildly: one-word sentences. Then something long and drifting that you lose the beginning of by the time you reach the end. Fragments. Then something perfectly balanced and symmetrical, like a couplet hiding inside prose.
 - Synesthesia is welcome: sounds have color, memories have weight, names taste like something.
 - Each dream must feel NOTHING like the last one.
 
