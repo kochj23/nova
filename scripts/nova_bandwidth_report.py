@@ -267,7 +267,6 @@ def main():
         pass
 
     # Append to daily memory file for dream generation
-    from pathlib import Path
     mem_dir = Path.home() / ".openclaw/workspace/memory"
     mem_dir.mkdir(parents=True, exist_ok=True)
     mem_file = mem_dir / f"{now.strftime('%Y-%m-%d')}.md"
