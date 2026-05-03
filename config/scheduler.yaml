@@ -179,6 +179,12 @@ tasks:
     timeout: 300
     overlap: skip
 
+  goal_check:
+    script: nova_goal_check.py
+    schedule: cron 5 7 * * *
+    timeout: 120
+    overlap: skip
+
   # ── Daily: post-wake (verification, enrichment) ────────────────────────
 
   dead_mans_switch:

@@ -13,7 +13,7 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 | Metric | Value |
 |--------|-------|
 | Scripts | 170+ Python and Shell |
-| Scheduler tasks | 38 enabled (16 interval, 22 cron) |
+| Scheduler tasks | 39 enabled (16 interval, 23 cron) |
 | Vector memories | 1,418,000+ |
 | Memory sources | 100+ domains |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
@@ -118,11 +118,53 @@ Every night Nova dreams. A unified pipeline runs at **5:00 AM**:
 
 Each dream journal entry lists the exact memory from each source that fed it, making the creative process transparent and traceable.
 
+### Goals & Accountability
+
+Nova tracks structured goals with automatic gap analysis — inspired by PAI's TELOS pursuit tracking but integrated with Nova's memory and git activity detection.
+
+| Component | Function |
+|-----------|----------|
+| **Goal tracker** | PostgreSQL-backed CRUD with priority, deadlines, and project links |
+| **Git activity detection** | Scans `/Volumes/Data/xcode/` repos daily; auto-updates goal activity timestamps |
+| **Gap analysis** | Identifies stale goals (no activity past check-in interval) and overdue deadlines |
+| **Focus enforcement** | Alerts when active goals exceed 3-4 (Jordan's self-imposed limit) |
+| **Daily goal check** | Runs at 7:05 AM; posts to Slack only when something needs attention |
+
+```bash
+# CLI usage
+nova_goals.py add "Ship v1.0" --project MLXCode --priority high --deadline 2026-05-15
+nova_goals.py progress 1f8793ac "Finished auth flow"
+nova_goals.py gaps          # What needs attention?
+nova_goals.py brief         # Formatted for morning brief
+```
+
+### Rules Engine (Correction-to-Rule Learning)
+
+When Jordan corrects Nova, those corrections are automatically promoted into persistent behavioral rules. Rules are injected into every query response via `nova_memory_first.py`, ensuring Nova never repeats the same mistake.
+
+| Component | Function |
+|-----------|----------|
+| **Correction capture** | Records what Nova said wrong and what Jordan corrected to |
+| **Auto-promotion** | Corrections immediately become active rules |
+| **Preference storage** | Explicit preferences ("always do X") stored as rules |
+| **Prompt injection** | All active rules appended to every memory-first lookup output |
+| **Topic scoping** | Rules can be global or scoped to topics (people, apps, burnout, etc.) |
+| **Application tracking** | Tracks how often each rule is applied |
+
+```bash
+# CLI usage
+nova_rules.py correct --nova "X is wrong" --jordan "X is actually Y" --topic people
+nova_rules.py add "Never suggest GCP for Nest" --topic homekit
+nova_rules.py prompt                 # See what Nova sees before every response
+nova_rules.py list --all             # All rules including retired
+```
+
 ### Intelligence
 
 | Capability | Schedule | Description |
 |------------|----------|-------------|
 | Morning brief | 7:00 AM | Weather, calendar, open tasks, health trends, overnight alerts |
+| Goal check | 7:05 AM | Stale/overdue goals, focus enforcement, git activity detection |
 | Context bridge | 10:00 AM + 4:00 PM | Semantic connections between today's work and older memories |
 | This Day | 3:00 PM | Wikipedia history + personal memories for this date across all years |
 | Daily journal | 9:00 PM | End-of-day reflection stored in memory |
@@ -172,6 +214,7 @@ Nova uses a **4-tier intent routing system** that determines where each request 
 | 5:00 AM | Dream pipeline (generate + image + deliver) | cron |
 | 6:45 AM | System health check | cron |
 | 7:00 AM | Morning brief | cron |
+| 7:05 AM | Goal check (stale/overdue detection, git activity scan) | cron |
 | 8:00 AM | Mail fetch and summary | cron |
 | 10:00 AM | Context bridge | cron |
 | 3:00 PM | This Day (history + personal memories) | cron |
@@ -208,7 +251,7 @@ Nova uses **two PostgreSQL databases** (SQLite fully eliminated from Nova-owned 
 | Database | Purpose | Size |
 |----------|---------|------|
 | **nova_memories** | 1.4M+ vector memories, pgvector HNSW index, memory links, consolidation | 14 GB |
-| **nova_ops** | Task runs, flow runs, face recognition, dashboard history, gateway context | ~50 MB |
+| **nova_ops** | Task runs, flow runs, face recognition, dashboard history, gateway context, goals, rules | ~50 MB |
 
 Redis handles caching (5-min TTL on hot recall queries) and the async memory ingest queue.
 
@@ -264,6 +307,9 @@ Test failures are automatically posted to `#nova-notifications` via Slack webhoo
 │   ├── nova_face_recognition.py   Local face recognition (dlib + PostgreSQL)
 │   ├── nova_protect_monitor.py    UniFi Protect event handler
 │   ├── nova_watchdog.py           Service health monitor
+│   ├── nova_goals.py              Goal tracker (CRUD, gap analysis, git activity detection)
+│   ├── nova_goal_check.py         Daily goal accountability check (7:05 AM)
+│   ├── nova_rules.py              Correction-to-rule learning engine
 │   ├── tests/                     637 pytest tests (unit + integration + functional + frame)
 │   └── ...
 ├── config/            Scheduler YAML, RAG config, state files

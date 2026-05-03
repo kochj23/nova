@@ -173,20 +173,25 @@ def detect_burnout_signals():
             except Exception:
                 pass
 
-    # Weekend work
+    # Weekend work — only flag if LOCAL repos have commits in the last 2 hours
     if NOW.weekday() >= 5 and HOUR in FOCUS_HOURS:
+        two_hours_ago = (NOW - timedelta(hours=2)).isoformat()
         try:
-            r = subprocess.run(
-                ["gh", "api", "/users/kochj23/events?per_page=5"],
-                capture_output=True, text=True, timeout=8
-            )
-            if r.returncode == 0:
-                events = json.loads(r.stdout)
-                weekend_commits = [e for e in events
-                                   if TODAY in e.get("created_at", "")
-                                   and e["type"] == "PushEvent"]
-                if weekend_commits:
-                    signals.append("weekend_commits")
+            xcode_dir = Path("/Volumes/Data/xcode")
+            recent_commits = False
+            for repo in xcode_dir.iterdir():
+                if not (repo / ".git").exists():
+                    continue
+                r = subprocess.run(
+                    ["git", "-C", str(repo), "log", "--oneline",
+                     f"--since={two_hours_ago}", "-1"],
+                    capture_output=True, text=True, timeout=5
+                )
+                if r.stdout.strip():
+                    recent_commits = True
+                    break
+            if recent_commits:
+                signals.append("weekend_commits")
         except Exception:
             pass
 
@@ -313,7 +318,7 @@ def main():
 
     prev_jordan_state = prev_state.get("jordan_state", "unknown")
 
-    # Save current state
+    # Save current state (preserve persistent keys from previous state)
     state = {
         "jordan_state": jordan_state,
         "focus_mode": focus_mode,
@@ -322,6 +327,7 @@ def main():
         "burnout_signals": burnout,
         "updated_at": NOW.isoformat(),
         "date": TODAY,
+        "last_burnout_nudge": prev_state.get("last_burnout_nudge", ""),
     }
     STATE_FILE.write_text(json.dumps(state, indent=2))
 

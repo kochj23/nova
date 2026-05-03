@@ -572,6 +572,21 @@ def memory_lookup(query):
     return results, sources_searched, labels
 
 
+def _print_active_rules(labels=None):
+    """Append active behavioral rules to output so Nova sees them before responding."""
+    try:
+        from nova_rules import get_active_rules
+        rules = get_active_rules()  # All active rules, always
+        if not rules:
+            return
+        print("\n## ACTIVE RULES (behavioral corrections — MUST follow)")
+        for r in rules:
+            topic_tag = f"[{r['topic']}] " if r['topic'] != 'global' else ""
+            print(f"- {topic_tag}{r['rule']}")
+    except Exception:
+        pass
+
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: nova_memory_first.py \"your question here\"")
@@ -606,14 +621,14 @@ def main():
              "--hours", str(hours)],
             capture_output=True, text=True, timeout=30)
         if _result.returncode == 0:
-            print(f"MEMORY INGESTION REPORT (last {hours} hours):")
+            print("MEMORY INGESTION REPORT (last " + str(hours) + " hours):")
             print(_result.stdout)
             sys.exit(0)
 
     results, sources_searched, labels = memory_lookup(query)
 
     if results:
-        print(f"MEMORY FOUND — {len(results)} result(s) from {', '.join(labels)} "
+        print("MEMORY FOUND — " + str(len(results)) + " result(s) from " + ', '.join(labels) + " "
               f"(searched: {', '.join(sources_searched)})")
         print("---")
         for i, r in enumerate(results):
@@ -623,6 +638,9 @@ def main():
         print(f"NO MEMORIES FOUND for: {query}")
         print(f"Searched: {', '.join(sources_searched)} ({', '.join(labels)})")
         print("Nova should try: LOCAL LLM reasoning → WEB search → never cloud for private data")
+
+    # Append active behavioral rules (corrections + preferences Nova must follow)
+    _print_active_rules(labels)
 
 
 if __name__ == "__main__":
