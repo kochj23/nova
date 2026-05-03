@@ -424,7 +424,7 @@ def _generate_via_openrouter(prompt: str) -> str:
     payload = {
         "model": MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "temperature": 1.0,
+        "temperature": 0.9,
         "max_tokens": 1500,
         "stop": ["\n---", "---\n"],
     }
