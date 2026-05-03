@@ -116,6 +116,8 @@ function renderCards(state) {
   renderHomebridgeCard(state.homebridge);
   renderWeather(state.weather);
   renderDream(state.dream);
+  renderPlex(state.plex);
+  renderHdhr(state.hdhr);
   renderNmap(state.scheduler);
   renderHealthKit2(state.healthkit);
   renderTraffic(state.traffic_flow);
@@ -1222,6 +1224,40 @@ function renderDream(data) {
   }
   if (data.consecutive_failures > 0) html += statRow('Failures', data.consecutive_failures + 'x', 'red');
 
+  body.innerHTML = html;
+}
+
+// --- Plex Media ---
+function renderPlex(data) {
+  const card = document.getElementById('card-plex');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  card.dataset.status = data.status === 'ok' ? (data.active_streams > 0 ? 'healthy' : 'healthy') : data.status === 'no_token' ? 'unknown' : 'down';
+  const body = card.querySelector('.card-body');
+  let html = statRow('Streams', data.active_streams || 0, data.active_streams > 0 ? 'green' : 'cyan');
+  html += statRow('Library Items', data.total_items || 0, 'cyan');
+  html += statRow('On Deck', data.ondeck_count || 0, 'amber');
+  if (data.now_playing && data.now_playing.length > 0) {
+    html += '<div style="margin-top:8px">';
+    for (const p of data.now_playing) {
+      html += `<div class="pg-table-row"><span class="pg-table-name">${escapeHtml(p.title)}</span><span class="pg-table-rows">${escapeHtml(p.player || '')}</span></div>`;
+    }
+    html += '</div>';
+  }
+  body.innerHTML = html;
+}
+
+// --- HDHomeRun ---
+function renderHdhr(data) {
+  const card = document.getElementById('card-hdhr');
+  if (!card) return;
+  if (!data) { card.dataset.status = 'unknown'; return; }
+  card.dataset.status = data.status === 'ok' ? 'healthy' : 'down';
+  const body = card.querySelector('.card-body');
+  let html = statRow('Tuners Active', `${data.active_tuners || 0} / ${data.total_tuners || 4}`, data.active_tuners > 0 ? 'green' : 'cyan');
+  html += statRow('Channels', data.channel_count || 0, 'cyan');
+  html += statRow('Model', data.model || '?');
+  html += statRow('Firmware', data.firmware || '?');
   body.innerHTML = html;
 }
 

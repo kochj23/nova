@@ -17,7 +17,7 @@ import pytest
 
 # ── Constants ────────────────────────────────────────────────────────────────
 
-SCRIPTS_DIR = Path("/Users/kochj/.openclaw/scripts")
+SCRIPTS_DIR = Path.home() / ".openclaw" / "scripts"
 HOME = Path.home()
 
 # All shell scripts under test, with their expected interpreter

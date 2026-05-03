@@ -54,10 +54,13 @@
     mlx_chat:   { label: 'MLX',        angle: 70,  orbit: 'outer', icon: 'M', group: 'backend', intents: 'memory · email · health · reasoner · rag · quick' },
     // Support — inner orbit
     redis:         { label: 'REDIS',     angle: 120, orbit: 'inner', icon: 'R', group: 'support', intents: 'cache · queue' },
-    postgresql:    { label: 'POSTGRES',  angle: 140, orbit: 'inner', icon: 'P', group: 'support', intents: '1.38M vectors · pgvector' },
+    postgresql:    { label: 'POSTGRES',  angle: 140, orbit: 'inner', icon: 'P', group: 'support', intents: '1.5M vectors · pgvector' },
     memory_server: { label: 'MEMORY',    angle: 160, orbit: 'inner', icon: 'M', group: 'support', intents: 'recall · remember · search' },
-    scheduler:     { label: 'SCHEDULER', angle: 310, orbit: 'inner', icon: 'C', group: 'support', intents: '39 tasks · cron · interval' },
+    scheduler:     { label: 'SCHEDULER', angle: 310, orbit: 'inner', icon: 'C', group: 'support', intents: '59 tasks · cron · interval' },
     searxng:       { label: 'SEARXNG',   angle: 340, orbit: 'inner', icon: 'X', group: 'support', intents: 'web search · private' },
+    // Media — outer orbit (bottom)
+    plex:          { label: 'PLEX',      angle: 140, orbit: 'outer', icon: 'P', group: 'media', intents: 'watch history · mood · rewatch · shame' },
+    hdhr:          { label: 'HDHR',      angle: 160, orbit: 'outer', icon: 'T', group: 'media', intents: '224 ch · news · dream surf · gameshow' },
   };
 
   // ---- State ----
@@ -1046,6 +1049,17 @@
     if (state.redis && nodes.redis) nodes.redis.status = state.redis.status === 'ok' ? 'up' : 'down';
     if (state.scheduler && nodes.scheduler) nodes.scheduler.status = state.scheduler.status === 'ok' ? 'up' : 'down';
     if (state.postgresql && nodes.postgresql) nodes.postgresql.status = state.postgresql.status === 'ok' ? 'up' : 'down';
+
+    // Plex + HDHomeRun from dedicated fields
+    if (state.plex && nodes.plex) {
+      nodes.plex.status = state.plex.status === 'ok' ? 'up' : (state.plex.status === 'no_token' ? 'warning' : 'down');
+      nodes.plex.gaugeValue = Math.min(1, (state.plex.active_streams || 0) / 4);
+      if (state.plex.active_streams > 0) nodes.plex.intents = state.plex.now_playing.map(function(p) { return p.title; }).join(' · ');
+    }
+    if (state.hdhr && nodes.hdhr) {
+      nodes.hdhr.status = state.hdhr.status === 'ok' ? 'up' : 'down';
+      nodes.hdhr.gaugeValue = (state.hdhr.active_tuners || 0) / (state.hdhr.total_tuners || 4);
+    }
 
     // Activity levels from traffic_flow
     var maxFlow = 0;

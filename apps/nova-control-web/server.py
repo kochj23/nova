@@ -33,6 +33,11 @@ MLX_MODELS_URL = "http://192.168.1.6:5050/v1/models"
 
 AGENTS = ["analyst", "sentinel", "coder", "lookout", "librarian"]
 
+PLEX_BASE = "http://192.168.1.10:32400"
+PLEX_EXCLUDED_LIBS = {"23"}
+HDHR_BASE = "http://192.168.1.89"
+PLEX_PLAYING_STATE = Path.home() / ".openclaw" / "workspace" / "plex_playing.json"
+
 SERVICE_PORTS = {
     "ollama": {"port": 11434, "url": "http://127.0.0.1:11434"},
     "tinychat": {"port": 8000, "url": "http://192.168.1.6:8000"},
@@ -42,6 +47,8 @@ SERVICE_PORTS = {
     "swarmui": {"port": 7801, "url": "http://127.0.0.1:7801"},
     "comfyui": {"port": 8188, "url": "http://127.0.0.1:8188"},
     "memory_server": {"port": 18790, "url": "http://127.0.0.1:18790"},
+    "plex": {"port": 32400, "url": PLEX_BASE, "host": "192.168.1.10"},
+    "hdhr": {"port": 80, "url": HDHR_BASE, "host": "192.168.1.89"},
 }
 
 POLL_INTERVAL = 2.5
@@ -254,6 +261,10 @@ async def service_detail(service: str):
             return JSONResponse(await collect_healthkit_status())
         elif service == "homebridge":
             return JSONResponse(await collect_homebridge_status())
+        elif service == "plex":
+            return JSONResponse(await collect_plex(app.state.http_session))
+        elif service == "hdhr":
+            return JSONResponse(await collect_hdhr(app.state.http_session))
         elif service == "deadman":
             sched = current_state.get("scheduler", {})
             dms = sched.get("tasks", {}).get("dead_mans_switch", {})
@@ -1599,6 +1610,130 @@ async def collect_unifi(session: aiohttp.ClientSession) -> dict:
                                  "device_count": 0, "client_count": 0, "wan_uptime_s": 0, "devices": []}
 
 
+# --- Plex + HDHomeRun Collectors ---
+
+_plex_token: str | None = None
+_plex_cache: dict = {}
+_plex_ts: float = 0
+_hdhr_cache: dict = {}
+_hdhr_ts: float = 0
+
+
+def _get_plex_token() -> str:
+    global _plex_token
+    if _plex_token:
+        return _plex_token
+    try:
+        r = subprocess.run(
+            ["security", "find-generic-password", "-a", "nova", "-s", "nova-plex-token", "-w"],
+            capture_output=True, text=True, timeout=5
+        )
+        _plex_token = r.stdout.strip()
+    except Exception:
+        _plex_token = ""
+    return _plex_token or ""
+
+
+async def collect_plex(session: aiohttp.ClientSession) -> dict:
+    """Collect Plex server status: sessions, library counts, on-deck."""
+    global _plex_cache, _plex_ts
+    now = time.time()
+    if now - _plex_ts < 15:
+        return _plex_cache
+    token = _get_plex_token()
+    if not token:
+        return {"status": "no_token"}
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+        headers = {"X-Plex-Token": token, "Accept": "application/json"}
+
+        # Active sessions
+        async with session.get(f"{PLEX_BASE}/status/sessions", headers=headers, timeout=timeout) as resp:
+            sessions_data = await resp.json()
+        sessions = sessions_data.get("MediaContainer", {})
+        active_streams = sessions.get("size", 0)
+        now_playing = []
+        for v in sessions.get("Metadata", []):
+            now_playing.append({
+                "title": v.get("title", "?"),
+                "type": v.get("type", "?"),
+                "player": v.get("Player", {}).get("title", "?"),
+                "state": v.get("Player", {}).get("state", "?"),
+            })
+
+        # Library sizes
+        async with session.get(f"{PLEX_BASE}/library/sections", headers=headers, timeout=timeout) as resp:
+            lib_data = await resp.json()
+        libraries = []
+        total_items = 0
+        for d in lib_data.get("MediaContainer", {}).get("Directory", []):
+            if d.get("key") in PLEX_EXCLUDED_LIBS:
+                continue
+            count = int(d.get("count", 0)) if d.get("count") else 0
+            libraries.append({"title": d.get("title", "?"), "type": d.get("type", "?"), "count": count})
+            total_items += count
+
+        # On-deck count
+        async with session.get(f"{PLEX_BASE}/library/onDeck", headers=headers, timeout=timeout) as resp:
+            ondeck_data = await resp.json()
+        ondeck_count = ondeck_data.get("MediaContainer", {}).get("size", 0)
+
+        result = {
+            "status": "ok",
+            "active_streams": active_streams,
+            "now_playing": now_playing,
+            "libraries": libraries,
+            "total_items": total_items,
+            "ondeck_count": ondeck_count,
+        }
+        _plex_cache = result
+        _plex_ts = now
+        return result
+    except Exception as e:
+        return _plex_cache or {"status": "error", "error": str(e), "active_streams": 0, "now_playing": [], "total_items": 0}
+
+
+async def collect_hdhr(session: aiohttp.ClientSession) -> dict:
+    """Collect HDHomeRun tuner status: active tuners, channel count."""
+    global _hdhr_cache, _hdhr_ts
+    now = time.time()
+    if now - _hdhr_ts < 15:
+        return _hdhr_cache
+    try:
+        timeout = aiohttp.ClientTimeout(total=5)
+
+        # Device identity
+        async with session.get(f"{HDHR_BASE}/discover.json", timeout=timeout) as resp:
+            discover = await resp.json()
+
+        # Tuner status
+        async with session.get(f"{HDHR_BASE}/status.json", timeout=timeout) as resp:
+            status = await resp.json()
+
+        # Lineup count
+        async with session.get(f"{HDHR_BASE}/lineup.json", timeout=timeout) as resp:
+            lineup = await resp.json()
+
+        tuners = status.get("Resource", []) if isinstance(status, dict) else status if isinstance(status, list) else []
+        active_tuners = sum(1 for t in tuners if t.get("VctNumber") or t.get("TargetIP"))
+        total_tuners = discover.get("TunerCount", 4)
+
+        result = {
+            "status": "ok",
+            "model": discover.get("ModelNumber", "?"),
+            "firmware": discover.get("FirmwareVersion", "?"),
+            "total_tuners": total_tuners,
+            "active_tuners": active_tuners,
+            "channel_count": len(lineup) if isinstance(lineup, list) else 0,
+            "tuners": tuners,
+        }
+        _hdhr_cache = result
+        _hdhr_ts = now
+        return result
+    except Exception as e:
+        return _hdhr_cache or {"status": "error", "error": str(e), "total_tuners": 4, "active_tuners": 0, "channel_count": 0}
+
+
 # --- History API Endpoint ---
 
 RANGE_MAP = {"1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800}
@@ -2472,6 +2607,8 @@ async def poll_loop():
             collect_synology_state(),        # 25
             collect_healthkit_status(),      # 26
             collect_homebridge_status(),     # 27
+            collect_plex(session),           # 28
+            collect_hdhr(session),           # 29
             return_exceptions=True,
         )
 
@@ -2517,6 +2654,8 @@ async def poll_loop():
             "synology": safe(25),
             "healthkit": safe(26),
             "homebridge": safe(27),
+            "plex": safe(28),
+            "hdhr": safe(29),
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }
