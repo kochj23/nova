@@ -12,10 +12,10 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 
 | Metric | Value |
 |--------|-------|
-| Scripts | 170+ Python and Shell |
-| Scheduler tasks | 39 enabled (16 interval, 23 cron) |
-| Vector memories | 1,433,000+ |
-| Memory sources | 130+ domains |
+| Scripts | 180+ Python and Shell |
+| Scheduler tasks | 59 enabled (20 interval, 39 cron) |
+| Vector memories | 1,500,000+ |
+| Memory sources | 140+ domains |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Security cameras | 15 UniFi Protect with face recognition |
 | AI backends | Ollama (qwen3-next:80b, qwen3-coder:30b, qwen3-vl:4b, deepseek-r1:8b) |
@@ -34,14 +34,17 @@ graph TD
     Jordan["Jordan<br/>(Slack / Discord / Signal)"]
     GW["OpenClaw Gateway<br/>ws://localhost:18789"]
     Ollama["Ollama<br/>qwen3-next:80b<br/>qwen3-coder:30b<br/>qwen3-vl:4b<br/>deepseek-r1:8b"]
-    Scheduler["Unified Scheduler<br/>36 tasks"]
-    MemServer["Memory Server<br/>pgvector · 1.37M vectors"]
+    Scheduler["Unified Scheduler<br/>59 tasks"]
+    MemServer["Memory Server<br/>pgvector · 1.5M vectors"]
     FaceRec["Face Recognition<br/>15 cameras · dlib"]
     Dashboard["Web Dashboard<br/>FastAPI + WebSocket"]
-    Scripts["170+ Scripts<br/>Python / Shell"]
+    Scripts["180+ Scripts<br/>Python / Shell"]
     SearXNG["SearXNG<br/>Local Web Search"]
     Redis["Redis<br/>Cache + Queue"]
     Subagents["5 Subagents<br/>analyst · coder · lookout<br/>librarian · sentinel"]
+    Plex["Plex Media Server<br/>Synology NAS · 13 features"]
+    HDHomeRun["HDHomeRun QUATRO<br/>224 OTA channels · 4 tuners"]
+    MLXWhisper["MLX Whisper<br/>large-v3-turbo · transcription"]
 
     Jordan --> GW
     GW --> Ollama
@@ -53,6 +56,11 @@ graph TD
     GW --> Subagents
     Subagents --> Ollama
     Scripts --> SearXNG
+    Scripts --> Plex
+    Scripts --> HDHomeRun
+    HDHomeRun --> MLXWhisper
+    MLXWhisper --> MemServer
+    Plex --> MemServer
     Dashboard --> GW
     Dashboard --> MemServer
     Dashboard --> Scheduler
@@ -106,17 +114,67 @@ Nova holds **1,433,000+ vector memories** across 130+ source domains, searchable
 
 ### Scheduling
 
-Nova runs a **unified scheduler** with 40 enabled tasks across interval and cron modes. Tasks support groups, quiet hours (11 PM to 6:45 AM for non-critical), dead man's switch heartbeats, and LLM group serialization to prevent model contention.
+Nova runs a **unified scheduler** with 59 enabled tasks across interval and cron modes. Tasks support groups, quiet hours (11 PM to 6:45 AM for non-critical), dead man's switch heartbeats, and LLM group serialization to prevent model contention.
 
 ### Dreams
 
 Every night Nova dreams. A unified pipeline runs at **5:00 AM**:
 
-1. **Generate narrative** — 350-500 word dream journal grounded in the rolling 7-day memory window. One purely random memory is selected from each vector source with new content (typically 15-20 sources), giving every dream unique material from Jeopardy trivia, car culture, film docs, horror, SoCal raves, Burbank local news, and more.
-2. **Generate image** — SwarmUI (Juggernaut X SDXL) renders a dream painting from the first sentence.
-3. **Deliver** — Posts to Slack #nova-chat with image, emails the herd (9 AI peers) as a single HTML message with image attached and Jordan CC'd. Includes a haiku and the specific memories that inspired the dream.
+1. **Derive theme** — Query memories ingested in the last 7 days and use LLM to extract a single evocative theme phrase (e.g., "the persistence of broadcasting into dissolution").
+2. **Roll a mood** — Randomly assign one of 8 moods: surreal, nostalgic, anxious, euphoric, noir, liminal, feral, sacred. The mood saturates the entire dream.
+3. **Pull 15 memories** — 10 loosely matching the theme from ALL time + 5 completely random wildcards (the non-sequiturs that create surreal juxtaposition).
+4. **Generate narrative** — 700-900 word dream as ONE continuous story (not a montage). The theme provides emotional logic; the mood provides temperature; the wildcards provide glitches. Memories are dissolved into the architecture of the dream — never named literally.
+5. **Generate image** — SwarmUI (Juggernaut X SDXL) renders a dream painting from the most striking visual moment.
+6. **Deliver** — Posts to Slack #nova-chat with image + theme/mood header, emails the herd (10 AI peers) as HTML with image and haiku.
 
-Each dream journal entry lists the exact memory from each source that fed it, making the creative process transparent and traceable.
+Each dream journal entry cites the exact memories that inspired it, making the creative process transparent. Live TV dream fuel (random channel surfing at 4am) provides ephemeral real-world content as additional wildcard material.
+
+### Plex Integration
+
+Nova connects to a local Plex Media Server (Synology NAS) for viewing awareness, habit tracking, and media intelligence. 13 subcommands in `nova_plex.py`:
+
+| Feature | Schedule | Description |
+|---------|----------|-------------|
+| **Playing awareness** | Every 5 min | Knows when Jordan is watching something; suppresses non-critical notifications |
+| **Guest detective** | Every 5 min | Tracks which devices/IPs stream; flags unknown viewers |
+| **Watch history** | Daily 7:10 AM | Ingests yesterday's viewing into vector memory |
+| **Mood ring** | Daily 7:15 AM | Tracks genre × time-of-day patterns to model emotional rhythms |
+| **Film school** | Daily 7:20 AM | Cross-references watches with Nova's existing memory; posts "did you know" facts |
+| **Viewing velocity** | Daily 1 AM | Detects binge-watching; gentle nudge if watching past midnight |
+| **On Deck reminders** | Daily 7:30 PM | Surfaces partially-watched content (only when not watching) |
+| **Recommendations** | Fridays 7 PM | Suggests unwatched library content based on recent genre preferences |
+| **Rewatch index** | Sundays | Tracks repeat views; builds "Jordan's Canon" — the all-time favorites list |
+| **Weekly stats** | Sundays | Hours watched, genre breakdown, time-of-day analysis |
+| **Shame board** | Sundays | Roasts abandoned on-deck items (30+ days untouched) |
+| **Seasonal drift** | Monthly | Detects seasonal viewing patterns over time |
+| **Library sync** | Mondays | Compares Plex library vs. files on disk; reports unmatched content |
+
+### Live TV (HDHomeRun)
+
+Nova has access to **224 OTA channels** in Los Angeles via an HDHomeRun CONNECT QUATRO (4 tuners). She can tune in, record, transcribe, and react to live broadcast television. 7 subcommands in `nova_livetv.py`:
+
+| Feature | Schedule | Description |
+|---------|----------|-------------|
+| **What's On** | Every 15 min | Alerts when shows Jordan cares about are starting (Jeopardy, local news, MeTV) |
+| **Breaking news** | Every 15 min | Monitors CBS/NBC/ABC for breaking news keywords; DMs Jordan on detection |
+| **Morning news** | Daily 7:05 AM | Records 5 min from each major network, transcribes, ingests — Nova knows what happened in LA |
+| **Dream surf** | Daily 4:00 AM | Randomly tunes 3 channels for 60s each; transcribes ephemeral content as dream fuel |
+| **Game show companion** | Weekdays 7 PM | Watches Jeopardy/Wheel of Fortune, transcribes, posts recap and "score" |
+| **Ambiance logging** | 4× daily | 15-second snapshots from random channels; cultural time capsule of LA broadcast |
+| **Nova's TV Time** | Daily 10:30 PM | Nova autonomously picks a channel, watches 10 min, writes a review, develops viewing preferences |
+
+### Bulk Media Ingest
+
+Nova can transcribe and ingest entire video libraries using parallel MLX Whisper workers on the M3 Ultra. The pipeline: video → ffmpeg (extract 16kHz WAV) → mlx_whisper (large-v3-turbo) → chunk → vector memory.
+
+| Source | Files | Status |
+|--------|-------|--------|
+| TVShows (all) | 6,013 | Ingesting (3 parallel workers) |
+| Ripped Movies | 422 | Ingesting |
+| YouTube (CrashCourse) | 213+ | Complete |
+| Fishing with John | 7 | Complete |
+| Mobsters (2007) | 4 | Complete |
+| Drunk History (facts) | 28 episodes | Complete |
 
 ### Goals & Accountability
 
@@ -208,27 +266,39 @@ Nova uses a **4-tier intent routing system** that determines where each request 
 
 | Time | Task | Type |
 |------|------|------|
+| 1:00 AM | Plex binge/velocity check | cron |
 | 2:00 AM | Database backup to NAS | cron |
 | 3:00 AM | Memory gardener (dedup, auto-merge) | cron |
 | 3:30 AM | Log rotation | cron |
-| 5:00 AM | Dream pipeline (generate + image + deliver) | cron |
+| 4:00 AM | Live TV dream surf (3 random channels) | cron |
+| 5:00 AM | Dream pipeline (theme + mood + generate + image + deliver) | cron |
 | 6:45 AM | System health check | cron |
 | 7:00 AM | Morning brief | cron |
+| 7:05 AM | Live TV morning news (CBS/NBC/ABC transcription) | cron |
 | 7:05 AM | Goal check (stale/overdue detection, git activity scan) | cron |
+| 7:10 AM | Plex watch history ingest | cron |
+| 7:15 AM | Plex mood ring update | cron |
+| 7:20 AM | Plex film school cross-reference | cron |
 | 8:00 AM | Mail fetch and summary | cron |
+| 8,12,16,20 | Live TV ambiance snapshots (5 random channels) | cron |
 | 10:00 AM | Context bridge | cron |
 | 3:00 PM | This Day (history + personal memories) | cron |
 | 4:00 PM | Context bridge | cron |
 | 6:00 PM | Mail fetch | cron |
+| 7:00 PM | Plex on-deck reminders / Live TV Jeopardy companion (weekdays) | cron |
 | 9:00 PM | Daily journal | cron |
+| 10:30 PM | Nova's TV Time (autonomous viewing + review) | cron |
 | 11:00 PM | Nightly report | cron |
 | 11:20 PM | NAS health check | cron |
 | 11:40 PM | Protect camera audit | cron |
 | 11:50 PM | Bandwidth report | cron |
-| Every 5 min | App watchdog, Protect monitor | interval |
+| Every 5 min | App watchdog, Protect monitor, Plex playing/guest | interval |
 | Every 10 min | iMessage watch, Sky watcher | interval |
-| Every 15 min | Proactive peace (focus detection) | interval |
+| Every 15 min | Proactive peace, Live TV breaking news, What's On alerts | interval |
 | Every 30 min | Home watchdog, UniFi, Synology, Face recognition | interval |
+| Sundays | Plex weekly stats, shame board, rewatch index | weekly |
+| Fridays | Plex recommendations | weekly |
+| Monthly | Plex seasonal drift analysis, Library sync | monthly |
 
 ---
 

@@ -140,7 +140,15 @@ def post_dream(narrative, image_path, entry_date):
     """Post dream to #nova-chat. Image upload with header, then narrative.
     Returns True if at least the narrative was posted successfully."""
 
-    header   = "*Dream Journal \u2014 " + entry_date + "*\n_Written at 2am \u00b7 delivered with the morning_"
+    # Build header with theme/mood if available
+    meta_line = ""
+    if hasattr(post_dream, '_dream_meta') and post_dream._dream_meta:
+        dm = post_dream._dream_meta
+        theme = dm.get("theme", "")
+        mood = dm.get("mood", "")
+        if theme or mood:
+            meta_line = "\n_Theme: \"" + theme + "\" \u00b7 Mood: " + mood + "_"
+    header   = "*Dream Journal \u2014 " + entry_date + "*\n_Written at 5am \u00b7 delivered with the morning_" + meta_line
     sign_off = "\n\n_\u2014 Nova \u00b7 " + entry_date + "_"
     slack_ok = False
 
@@ -312,6 +320,7 @@ def main():
     image_path   = delivery.get("image")
     entry_date   = delivery.get("date", datetime.now().strftime("%Y-%m-%d"))
     inspirations = delivery.get("inspirations", [])
+    dream_meta   = delivery.get("dream_meta", {})
 
     if not narrative:
         log("No narrative in pending delivery — aborting")
@@ -362,6 +371,7 @@ def main():
             narrative += "\n\n_Memories that inspired this dream:_\n" + "\n".join(insp_lines)
 
     log("Delivering dream for " + entry_date)
+    post_dream._dream_meta = dream_meta
     slack_ok = post_dream(narrative, image_path, entry_date)
 
     log("Emailing herd...")

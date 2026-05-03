@@ -266,6 +266,72 @@ tasks:
     timeout: 120
     overlap: skip
 
+  # ── Plex Integration ───────────────────────────────────────────────────
+
+  plex_playing:
+    script: nova_plex.py
+    args: ["playing"]
+    schedule: every 5m
+    timeout: 30
+    overlap: skip
+
+  plex_history:
+    script: nova_plex.py
+    args: ["history"]
+    schedule: cron 10 7 * * *
+    timeout: 120
+    overlap: skip
+
+  plex_mood:
+    script: nova_plex.py
+    args: ["mood"]
+    schedule: cron 15 7 * * *
+    timeout: 60
+    overlap: skip
+
+  plex_filmschool:
+    script: nova_plex.py
+    args: ["filmschool"]
+    schedule: cron 20 7 * * *
+    timeout: 120
+    overlap: skip
+    group: llm
+
+  plex_velocity:
+    script: nova_plex.py
+    args: ["velocity"]
+    schedule: cron 0 1 * * *
+    timeout: 60
+    overlap: skip
+
+  plex_ondeck:
+    script: nova_plex.py
+    args: ["ondeck"]
+    schedule: cron 30 19 * * *
+    timeout: 60
+    overlap: skip
+
+  plex_recommend:
+    script: nova_plex.py
+    args: ["recommend"]
+    schedule: cron 0 19 * * 5
+    timeout: 120
+    overlap: skip
+
+  plex_guest:
+    script: nova_plex.py
+    args: ["guest"]
+    schedule: every 5m
+    timeout: 30
+    overlap: skip
+
+  plex_rewatch:
+    script: nova_plex.py
+    args: ["rewatch"]
+    schedule: cron 0 10 * * 0
+    timeout: 60
+    overlap: skip
+
   # ── Weekly ─────────────────────────────────────────────────────────────
 
   weekly_journal:
@@ -285,6 +351,87 @@ tasks:
     schedule: cron 0 22 * * 0
     timeout: 120
     overlap: skip
+
+  plex_stats:
+    script: nova_plex.py
+    args: ["stats"]
+    schedule: cron 0 18 * * 0
+    timeout: 120
+    overlap: skip
+
+  plex_shame:
+    script: nova_plex.py
+    args: ["shame"]
+    schedule: cron 30 18 * * 0
+    timeout: 60
+    overlap: skip
+
+  plex_seasonal:
+    script: nova_plex.py
+    args: ["seasonal"]
+    schedule: cron 0 10 1 * *
+    timeout: 60
+    overlap: skip
+
+  plex_sync:
+    script: nova_plex.py
+    args: ["sync"]
+    schedule: cron 0 4 * * 1
+    timeout: 300
+    overlap: skip
+
+  # ── Live TV (HDHomeRun) ────────────────────────────────────────────────
+
+  livetv_whats_on:
+    script: nova_livetv.py
+    args: ["whats-on"]
+    schedule: every 15m
+    timeout: 30
+    overlap: skip
+
+  livetv_breaking:
+    script: nova_livetv.py
+    args: ["breaking"]
+    schedule: every 15m
+    timeout: 180
+    overlap: skip
+
+  livetv_news:
+    script: nova_livetv.py
+    args: ["news"]
+    schedule: cron 5 7 * * *
+    timeout: 1200
+    overlap: skip
+
+  livetv_dream_surf:
+    script: nova_livetv.py
+    args: ["dream-surf"]
+    schedule: cron 0 4 * * *
+    timeout: 600
+    overlap: skip
+
+  livetv_gameshow:
+    script: nova_livetv.py
+    args: ["gameshow"]
+    schedule: cron 0 19 * * 1-5
+    timeout: 2400
+    overlap: skip
+    group: llm
+
+  livetv_ambiance:
+    script: nova_livetv.py
+    args: ["ambiance"]
+    schedule: cron 0 8,12,16,20 * * *
+    timeout: 300
+    overlap: skip
+
+  livetv_novas_time:
+    script: nova_livetv.py
+    args: ["novas-time"]
+    schedule: cron 30 22 * * *
+    timeout: 1200
+    overlap: skip
+    group: llm
 
   # ── Disabled ───────────────────────────────────────────────────────────
 
