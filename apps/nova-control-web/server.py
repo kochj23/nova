@@ -1188,7 +1188,6 @@ async def collect_gateway_query_log() -> dict:
     try:
         conn = await asyncpg.connect(OPS_PG_DSN)
         try:
-            # Check if gateway_query_log table exists
             exists = await conn.fetchval(
                 "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='gateway_query_log')")
             if not exists:
@@ -1202,8 +1201,14 @@ async def collect_gateway_query_log() -> dict:
                           SUM(response_length) as total_response,
                           SUM(fallback_used::int) as fallbacks
                    FROM gateway_query_log GROUP BY backend_used, model_used""")
+
+            last_hour = await conn.fetchval(
+                "SELECT COUNT(*) FROM gateway_query_log WHERE timestamp > NOW() - INTERVAL '1 hour'") or 0
+            last_5m = await conn.fetchval(
+                "SELECT COUNT(*) FROM gateway_query_log WHERE timestamp > NOW() - INTERVAL '5 minutes'") or 0
         finally:
             await conn.close()
+
         backends = {}
         total_queries = 0
         for r in rows:
@@ -1219,32 +1224,14 @@ async def collect_gateway_query_log() -> dict:
                 "queries": r["cnt"],
                 "avg_latency_ms": round(r["avg_lat"] or 0),
                 "prompt_chars": r["total_prompt"] or 0,
-                    "response_chars": total_resp or 0,
-                    "fallbacks": fallbacks or 0,
-                }
+                "response_chars": r["total_response"] or 0,
+                "fallbacks": r["fallbacks"] or 0,
+            }
 
-            cursor2 = await db.execute("SELECT COUNT(*) FROM query_log")
-            total = (await cursor2.fetchone())[0]
+        reqs_per_sec = round(last_hour / 3600, 2) if last_hour else 0
+        reqs_per_min = round(last_5m / 5, 1) if last_5m else 0
 
-            # Compute reqs/sec from last hour
-            reqs_per_sec = 0
-            try:
-                cursor3 = await db.execute(
-                    "SELECT COUNT(*) FROM query_log WHERE timestamp > datetime('now', '-1 hour')"
-                )
-                last_hour = (await cursor3.fetchone())[0]
-                reqs_per_sec = round(last_hour / 3600, 2)
-
-                cursor4 = await db.execute(
-                    "SELECT COUNT(*) FROM query_log WHERE timestamp > datetime('now', '-5 minutes')"
-                )
-                last_5m = (await cursor4.fetchone())[0]
-                reqs_per_min = round(last_5m / 5, 1)
-            except Exception:
-                last_hour = 0
-                reqs_per_min = 0
-
-        return {"status": "ok", "backends": backends, "total_queries": total,
+        return {"status": "ok", "backends": backends, "total_queries": total_queries,
                 "reqs_per_sec": reqs_per_sec, "reqs_per_min": reqs_per_min,
                 "last_hour": last_hour}
     except Exception as e:

@@ -14,8 +14,8 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 |--------|-------|
 | Scripts | 170+ Python and Shell |
 | Scheduler tasks | 39 enabled (16 interval, 23 cron) |
-| Vector memories | 1,418,000+ |
-| Memory sources | 100+ domains |
+| Vector memories | 1,433,000+ |
+| Memory sources | 130+ domains |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Security cameras | 15 UniFi Protect with face recognition |
 | AI backends | Ollama (qwen3-next:80b, qwen3-coder:30b, qwen3-vl:4b, deepseek-r1:8b) |
@@ -23,7 +23,7 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 | Privacy model | 4-tier intent routing, local-first |
 | Database | PostgreSQL 17 + pgvector (nova_memories + nova_ops) + Redis |
 | Web dashboard | FastAPI + WebSocket (real-time, 44 cards + HUD) |
-| Test suite | 637 tests (unit + integration + functional + frame) |
+| Test suite | 4,193 tests (unit + security + integration + functional + frame) |
 
 ---
 
@@ -75,7 +75,7 @@ All automated notifications post to both Slack and Discord simultaneously via `p
 
 ### Memory
 
-Nova holds **1,410,000+ vector memories** across 100+ source domains, searchable in under 5 ms.
+Nova holds **1,433,000+ vector memories** across 130+ source domains, searchable in under 5 ms.
 
 | Component | Implementation |
 |-----------|---------------|
@@ -250,7 +250,7 @@ Nova uses **two PostgreSQL databases** (SQLite fully eliminated from Nova-owned 
 
 | Database | Purpose | Size |
 |----------|---------|------|
-| **nova_memories** | 1.4M+ vector memories, pgvector HNSW index, memory links, consolidation | 14 GB |
+| **nova_memories** | 1.43M+ vector memories, pgvector HNSW index, memory links, consolidation | 14 GB |
 | **nova_ops** | Task runs, flow runs, face recognition, dashboard history, gateway context, goals, rules | ~50 MB |
 
 Redis handles caching (5-min TTL on hot recall queries) and the async memory ingest queue.
@@ -270,15 +270,24 @@ A secondary **HUD view** (`/hud`) provides a sci-fi radar visualization designed
 
 ### Testing
 
-Nova has a comprehensive **pytest test suite** (637 tests) organized by subsystem:
+Nova has a comprehensive **pytest test suite** (4,193 tests) organized by subsystem:
 
 ```
 scripts/tests/
 ├── conftest.py                 Shared fixtures + Slack notification on failures
+├── test_security.py            Full codebase security audit (2,131 tests)
+├── test_shell_scripts.py       All shell scripts: syntax, behavior, security (364 tests)
+├── test_goals_rules.py         Goals tracker, rules engine, goal check (191 tests)
+├── test_health_router.py       Intent router privacy, health, config, logger (172 tests)
+├── test_monitoring.py          Watchdogs, health checks, protect, unifi (176 tests)
+├── test_communication.py       Discord, iMessage, Slack, email agents (154 tests)
+├── test_home_security.py       Face rec, weather-HomeKit, cameras, NAS (153 tests)
+├── test_ingest_utils.py        Reddit, YouTube, email, memory consolidation (150 tests)
+├── test_intelligence.py        Morning brief, journal, context bridge, reports (132 tests)
+├── test_peace_agents.py        Proactive peace, 5 subagents (108 tests)
 ├── test_dream_pipeline.py      Dream generation, image, delivery (23 tests)
 ├── test_dream_extended.py      Narrative, circuit breaker, repetition trimming (44 tests)
 ├── test_memory_system.py       Recall, recent memories, consolidation (86 tests)
-├── test_monitoring.py          Watchdogs, health checks, protect, unifi (176 tests)
 ├── test_scheduler.py           Cron parsing, task execution, log rotation (73 tests)
 ├── test_mail.py                Herd mail, validation, retry logic (97 tests)
 ├── test_ingestion.py           Reddit, iMessage, Safari, YouTube, Slack (91 tests)
@@ -288,7 +297,7 @@ scripts/tests/
 └── test_herd_config.py         Member validation (23 tests)
 ```
 
-Test failures are automatically posted to `#nova-notifications` via Slack webhook.
+Test markers: `unit` (default), `@pytest.mark.security`, `@pytest.mark.integration`, `@pytest.mark.functional`, `@pytest.mark.frame`. Test failures are automatically posted to `#nova-notifications` via Slack webhook.
 
 ---
 
