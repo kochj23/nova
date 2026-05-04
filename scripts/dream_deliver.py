@@ -377,6 +377,25 @@ def main():
     log("Emailing herd...")
     email_herd(narrative, image_path, entry_date)
 
+    # Publish to journal website
+    log("Publishing to journal site...")
+    try:
+        journal_md = str(Path.home() / ".openclaw/workspace/journal/dreams" / (entry_date + ".md"))
+        publish_cmd = [
+            sys.executable,
+            str(Path.home() / ".openclaw/scripts/nova_publish_journal.py"),
+            "dream", journal_md,
+        ]
+        if image_path and Path(image_path).exists():
+            publish_cmd.append(str(image_path))
+        pub_result = subprocess.run(publish_cmd, capture_output=True, text=True, timeout=60)
+        if pub_result.returncode == 0:
+            log("Published to nova.digitalnoise.net")
+        else:
+            log("Journal publish failed (non-fatal): " + pub_result.stderr[:200])
+    except Exception as e:
+        log("Journal publish error (non-fatal): " + str(e))
+
     # Track retry count
     retry_count = delivery.get("_retry_count", 0)
 

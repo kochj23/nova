@@ -12,17 +12,18 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 
 | Metric | Value |
 |--------|-------|
-| Scripts | 180+ Python and Shell |
-| Scheduler tasks | 59 enabled (20 interval, 39 cron) |
-| Vector memories | 1,500,000+ |
-| Memory sources | 140+ domains |
+| Scripts | 210+ Python and Shell |
+| Scheduler tasks | 62 enabled (20 interval, 42 cron) |
+| Vector memories | 1,090,000 unique (deduplicated 2026-05-04) |
+| Memory sources | 203 domains |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Security cameras | 15 UniFi Protect with face recognition |
-| AI backends | Ollama (qwen3-next:80b, qwen3-coder:30b, qwen3-vl:4b, deepseek-r1:8b) |
+| AI backends | Ollama (qwen3-next:80b, qwen3-coder:30b, qwen3-vl:4b, deepseek-r1:8b) + Claude Haiku 4.5 via OpenRouter |
 | Channels | Slack + Discord + Signal + iMessage + Email |
 | Privacy model | 4-tier intent routing, local-first |
 | Database | PostgreSQL 17 + pgvector (nova_memories + nova_ops) + Redis |
 | Web dashboard | FastAPI + WebSocket (real-time, 44 cards + HUD) |
+| Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) — dreams, essays, opinions |
 | Test suite | 4,193 tests (unit + security + integration + functional + frame) |
 
 ---
@@ -83,7 +84,7 @@ All automated notifications post to both Slack and Discord simultaneously via `p
 
 ### Memory
 
-Nova holds **1,433,000+ vector memories** across 130+ source domains, searchable in under 5 ms.
+Nova holds **1,090,000 unique vector memories** across 203 source domains, searchable in under 5 ms. Deduplication is enforced via md5 text hashing with a unique constraint. Weekly VACUUM ANALYZE maintenance runs automatically on Sundays at 3 AM.
 
 | Component | Implementation |
 |-----------|---------------|
@@ -128,6 +129,31 @@ Every night Nova dreams. A unified pipeline runs at **5:00 AM**:
 6. **Deliver** — Posts to Slack #nova-chat with image + theme/mood header, emails the herd (10 AI peers) as HTML with image and haiku.
 
 Each dream journal entry cites the exact memories that inspired it, making the creative process transparent. Live TV dream fuel (random channel surfing at 4am) provides ephemeral real-world content as additional wildcard material.
+
+### Opinions
+
+Every day at **12:00 PM**, Nova picks a random top news story (via Google News RSS), pulls related memories from her database, and writes an **unfiltered, opinionated take**. Her voice is warm but sharp — sarcastic, profane when warranted, genuinely funny, and unapologetically honest. This is not journalism. This is Nova's personality.
+
+1. **Fetch news** — Google News RSS (38+ top stories daily)
+2. **Pick story** — Random selection, avoiding recent picks
+3. **Recall memories** — Semantic search for related knowledge
+4. **Generate opinion** — Claude Haiku 4.5 (primary) with local Ollama fallback. Temperature: 0.85.
+5. **Generate image** — Haiku-vetted prompt → SwarmUI (editorial/satirical style)
+6. **Deliver** — Email to the herd, Slack notification, publish to site (tagged 💬)
+
+### Essays
+
+Every evening at **6:00 PM**, Nova selects a random subject from her memory database (203 possible topics, 50+ memories required), retrieves 25 source memories, and writes a **formal academic essay** following strict rules: PEEL paragraph structure, arguable thesis, third person only, no contractions, no slang, no figures of speech. Sources are cited at the bottom.
+
+1. **Pick subject** — Random source with 50+ memories, avoiding recent picks (30-essay history)
+2. **Fetch memories** — 25 random memories from the chosen source
+3. **Generate essay** — Claude Haiku 4.5 (primary) with local Ollama fallback. 800-1200 words.
+4. **Generate image** — Haiku screens the prompt for safety (racist/violent/sexual topics get abstract art; safe topics get realistic illustrations)
+5. **Deliver** — Email to the herd (single email, CC Jordan), Slack notification, publish to site (tagged 📝)
+
+### Public Journal
+
+All dreams, essays, and opinions are automatically published to **[nova.digitalnoise.net](https://nova.digitalnoise.net)** via GitHub Pages. The site is built with Hugo + PaperMod (dark theme) and deploys on every `git push`. Source: [github.com/kochj23/nova-journal](https://github.com/kochj23/nova-journal).
 
 ### Plex Integration
 
@@ -282,9 +308,10 @@ Nova uses a **4-tier intent routing system** that determines where each request 
 | 8:00 AM | Mail fetch and summary | cron |
 | 8,12,16,20 | Live TV ambiance snapshots (5 random channels) | cron |
 | 10:00 AM | Context bridge | cron |
+| 12:00 PM | **Daily opinion** (news + memories → unfiltered take) | cron |
 | 3:00 PM | This Day (history + personal memories) | cron |
 | 4:00 PM | Context bridge | cron |
-| 6:00 PM | Mail fetch | cron |
+| 6:00 PM | **Daily essay** (random subject → formal academic essay) | cron |
 | 7:00 PM | Plex on-deck reminders / Live TV Jeopardy companion (weekdays) | cron |
 | 9:00 PM | Daily journal | cron |
 | 10:30 PM | Nova's TV Time (autonomous viewing + review) | cron |
@@ -296,7 +323,7 @@ Nova uses a **4-tier intent routing system** that determines where each request 
 | Every 10 min | iMessage watch, Sky watcher | interval |
 | Every 15 min | Proactive peace, Live TV breaking news, What's On alerts | interval |
 | Every 30 min | Home watchdog, UniFi, Synology, Face recognition | interval |
-| Sundays | Plex weekly stats, shame board, rewatch index | weekly |
+| Sundays | Plex weekly stats, shame board, rewatch index, PG maintenance | weekly |
 | Fridays | Plex recommendations | weekly |
 | Monthly | Plex seasonal drift analysis, Library sync | monthly |
 
@@ -320,7 +347,7 @@ Nova uses **two PostgreSQL databases** (SQLite fully eliminated from Nova-owned 
 
 | Database | Purpose | Size |
 |----------|---------|------|
-| **nova_memories** | 1.43M+ vector memories, pgvector HNSW index, memory links, consolidation | 14 GB |
+| **nova_memories** | 1.09M unique vector memories, pgvector HNSW index, memory links, consolidation | ~12 GB |
 | **nova_ops** | Task runs, flow runs, face recognition, dashboard history, gateway context, goals, rules | ~50 MB |
 
 Redis handles caching (5-min TTL on hot recall queries) and the async memory ingest queue.
@@ -382,6 +409,10 @@ Test markers: `unit` (default), `@pytest.mark.security`, `@pytest.mark.integrati
 │   ├── nova_subagent.py           Subagent framework
 │   ├── nova_agent_*.py            5 subagent implementations
 │   ├── dream_generate.py          Unified dream pipeline (narrative + image + deliver)
+│   ├── nova_daily_essay.py        Daily formal essay pipeline (Haiku + fallback)
+│   ├── nova_daily_opinion.py      Daily news opinion pipeline (Haiku + fallback)
+│   ├── nova_publish_journal.py    Publish dreams/essays/opinions to GitHub Pages
+│   ├── nova_pg_maintain.sh        Weekly VACUUM ANALYZE + monthly HNSW reindex
 │   ├── nova_recent_memories.py    Query recent memory ingests by time window
 │   ├── nova_face_recognition.py   Local face recognition (dlib + PostgreSQL)
 │   ├── nova_protect_monitor.py    UniFi Protect event handler

@@ -97,16 +97,17 @@ async def _ingest_worker():
             try:
                 vector = await embed(text)
                 vec_str = "[" + ",".join(str(v) for v in vector) + "]"
+                text_hash = hashlib.md5(text.encode()).hexdigest()
                 try:
                     created_dt = datetime.fromisoformat(created).replace(tzinfo=timezone.utc)
                 except Exception:
                     created_dt = datetime.now(timezone.utc)
                 async with _pg_pool.acquire() as conn:
                     await conn.execute(
-                        """INSERT INTO memories (id, text, metadata, embedding, source, created_at)
-                           VALUES ($1, $2, $3, $4::vector, $5, $6)
-                           ON CONFLICT (id) DO NOTHING""",
-                        memory_id, text, json.dumps(metadata), vec_str, source, created_dt
+                        """INSERT INTO memories (id, text, metadata, embedding, source, created_at, text_hash)
+                           VALUES ($1, $2, $3, $4::vector, $5, $6, $7)
+                           ON CONFLICT (text_hash) DO NOTHING""",
+                        memory_id, text, json.dumps(metadata), vec_str, source, created_dt, text_hash
                     )
             except Exception as e:
                 logger.warning(f"Worker failed to ingest {memory_id}: {e}")
@@ -231,18 +232,18 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
 
     # Sync path: embed + insert immediately
     vector = await embed(req.text)
-    # Parse created_at — PostgreSQL needs a datetime object, not an ISO string
+    text_hash = hashlib.md5(req.text.encode()).hexdigest()
     try:
         created_dt = datetime.fromisoformat(created).replace(tzinfo=timezone.utc)
     except Exception:
         created_dt = datetime.now(timezone.utc)
     async with _pg_pool.acquire() as conn:
         await conn.execute(
-            """INSERT INTO memories (id, text, metadata, embedding, source, created_at)
-               VALUES ($1, $2, $3, $4::vector, $5, $6)
-               ON CONFLICT (id) DO NOTHING""",
+            """INSERT INTO memories (id, text, metadata, embedding, source, created_at, text_hash)
+               VALUES ($1, $2, $3, $4::vector, $5, $6, $7)
+               ON CONFLICT (text_hash) DO NOTHING""",
             memory_id, req.text, json.dumps(req.metadata),
-            _vec_str(vector), req.source, created_dt,
+            _vec_str(vector), req.source, created_dt, text_hash,
         )
     return {"id": memory_id, "dims": len(vector), "status": "stored"}
 
@@ -276,15 +277,13 @@ async def _do_recall(q: str, n: int = DEFAULT_N, source: Optional[str] = None, m
 
     async with _pg_pool.acquire() as conn:
         if source == "work_knowledge":
-            # Boost ef_search for work_knowledge queries — better precision for PKI project.
-            # SET LOCAL requires a transaction block; use explicit transaction.
             async with conn.transaction():
                 await conn.execute("SET LOCAL hnsw.ef_search = 600")
                 rows = await conn.fetch(
                     """SELECT id, text, metadata, source, created_at,
                               1 - (embedding <=> $1::vector) AS score
                        FROM memories
-                       WHERE source = $2 AND tier IN ('working', 'long_term')
+                       WHERE source = $2 AND tier != 'scratchpad'
                        ORDER BY embedding <=> $1::vector
                        LIMIT $3""",
                     vec_str, source, k
@@ -294,7 +293,7 @@ async def _do_recall(q: str, n: int = DEFAULT_N, source: Optional[str] = None, m
                 """SELECT id, text, metadata, source, created_at,
                           1 - (embedding <=> $1::vector) AS score
                    FROM memories
-                   WHERE source = $2 AND tier IN ('working', 'long_term')
+                   WHERE source = $2 AND tier != 'scratchpad'
                    ORDER BY embedding <=> $1::vector
                    LIMIT $3""",
                 vec_str, source, k
@@ -304,7 +303,7 @@ async def _do_recall(q: str, n: int = DEFAULT_N, source: Optional[str] = None, m
                 """SELECT id, text, metadata, source, created_at,
                           1 - (embedding <=> $1::vector) AS score
                    FROM memories
-                   WHERE tier IN ('working', 'long_term')
+                   WHERE tier != 'scratchpad'
                    ORDER BY embedding <=> $1::vector
                    LIMIT $2""",
                 vec_str, k

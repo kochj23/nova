@@ -201,9 +201,16 @@ tasks:
 
   # ── Daily: daytime (enrichment, reflection) ────────────────────────────
 
+  daily_opinion:
+    script: nova_daily_opinion.py
+    schedule: cron 0 12 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
   mail_deliver_midday:
     script: nova_mail_deliver.py
-    schedule: cron 0 12 * * *
+    schedule: cron 5 12 * * *
     timeout: 120
     overlap: skip
 
@@ -226,6 +233,13 @@ tasks:
     overlap: skip
 
   # ── Daily: evening (wrap-up) ───────────────────────────────────────────
+
+  daily_essay:
+    script: nova_daily_essay.py
+    schedule: cron 0 18 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
 
   mail_deliver_pm:
     script: nova_mail_deliver.py
@@ -333,6 +347,12 @@ tasks:
     overlap: skip
 
   # ── Weekly ─────────────────────────────────────────────────────────────
+
+  pg_maintain:
+    script: nova_pg_maintain.sh
+    schedule: cron 0 3 * * 0
+    timeout: 7200
+    overlap: queue
 
   weekly_journal:
     script: nova_weekly_journal.py
