@@ -27,6 +27,19 @@ IMAGES_DREAMS = HUGO_ROOT / "static/images/dreams"
 IMAGES_ESSAYS = HUGO_ROOT / "static/images/essays"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_publish.log"
 
+EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
+SAFE_EMAILS = {"nova@digitalnoise.net"}
+
+
+def scrub_emails(text: str) -> str:
+    """Remove all email addresses except Nova's own."""
+    def replace_email(match):
+        email = match.group(0)
+        if email in SAFE_EMAILS:
+            return email
+        return "[email redacted]"
+    return EMAIL_PATTERN.sub(replace_email, text)
+
 
 def log(msg: str):
     ts = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -99,7 +112,8 @@ def publish_dream(md_path: str, image_path: str | None = None):
     text = re.sub(r'^\*Nova · written at .+\*\n', '', text)
     text = re.sub(r'^\*Theme: .+\*\n', '', text)
     text = re.sub(r'\*Generated .+\*\n?', '', text)
-    text = "\n".join(line for line in text.splitlines() if "/Users/kochj" not in line)
+    home = str(Path.home())
+    text = "\n".join(line for line in text.splitlines() if home not in line)
     text = text.lstrip('-\n ')
 
     # Build Hugo post
@@ -117,7 +131,7 @@ description: "A {mood} dream about {theme}"
 
     CONTENT_DREAMS.mkdir(parents=True, exist_ok=True)
     output = CONTENT_DREAMS / f"{date}.md"
-    output.write_text(front_matter + text)
+    output.write_text(front_matter + scrub_emails(text))
     log(f"Dream published: {output.name}")
 
     git_push(f"dream: {date} — {theme}")
@@ -154,7 +168,7 @@ description: "A formal essay on {source_label}"
 
     CONTENT_ESSAYS.mkdir(parents=True, exist_ok=True)
     output = CONTENT_ESSAYS / f"{date}-{slug}.md"
-    output.write_text(front_matter + essay_text)
+    output.write_text(front_matter + scrub_emails(essay_text))
     log(f"Essay published: {output.name}")
 
     git_push(f"essay: {date} — {source_label}")

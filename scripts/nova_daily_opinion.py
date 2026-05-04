@@ -388,6 +388,7 @@ description: "Nova's take on: {story['title'][:80]}"
     front_matter += "---\n\n"
 
     body = opinion + format_sources(story, memories) + "\n\n-- Nova\n"
+    body = re.sub(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}', '[email redacted]', body)
     output = content_dir / f"{date}-{slug}.md"
     output.write_text(front_matter + body)
     log(f"Written to site: {output.name}")

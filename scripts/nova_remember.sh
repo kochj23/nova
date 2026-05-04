@@ -28,13 +28,14 @@ echo "Action item stored: $summary"
   
 else
   # Default storage in vector memory via the /remember endpoint
-  http_response=$(curl -s -w "\n%{http_code}" -X POST http://127.0.0.1:18790/remember \
+  json_data=$(echo "{\"text\": \"$summary\", \"source\": \"$type_tag\", \"metadata\": {}}")
+  http_response=$(curl -s -w "%{http_code}" -X POST http://127.0.0.1:18790/remember \
     -H "Content-Type: application/json" \
-    --data "{\"text\": \"$summary\", \"source\": \"$type_tag\", \"metadata\": {}}")
+    --data "$json_data")
 
-  # Extract the HTTP status code (last line)
-  status_code=$(echo "$http_response" | tail -1)
-  body=$(echo "$http_response" | sed '$d')
+  # Extract the HTTP status code (last 3 digits)
+  status_code=$(echo "$http_response" | grep -o '[0-9]\{3\}$')
+  body=$(echo "$http_response" | sed 's/\n[0-9]\{3\}$//')
 
   if [ "$status_code" -eq 200 ]; then
     echo "Stored in vector memory (source=$type_tag): ${summary:0:80}..."

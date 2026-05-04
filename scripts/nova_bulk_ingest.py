@@ -195,6 +195,8 @@ def transcribe(wav_path: Path) -> str:
         if text:
             return text
 
+    # Use --output-name to force exact filename (avoids period-truncation bug)
+    safe_name = wav_path.stem
     result = subprocess.run(
         [
             "mlx_whisper",
@@ -202,15 +204,28 @@ def transcribe(wav_path: Path) -> str:
             "--language", "en",
             "--output-format", "txt",
             "--output-dir", str(TRANSCRIPT_DIR),
+            "--output-name", safe_name,
             str(wav_path),
         ],
-        capture_output=True, text=True, timeout=3600,  # 1 hour max per file
+        capture_output=True, text=True, timeout=3600,
     )
     if result.returncode != 0:
         raise RuntimeError(f"mlx_whisper failed: {result.stderr[:300]}")
 
     if txt_path.exists():
         return txt_path.read_text().strip()
+
+    # Fallback: mlx_whisper may have truncated at a period — find closest match
+    import glob
+    prefix = wav_path.stem.split(".")[0]
+    candidates = sorted(TRANSCRIPT_DIR.glob(f"{prefix}*.txt"), key=lambda p: len(p.name), reverse=True)
+    for candidate in candidates:
+        text = candidate.read_text().strip()
+        if text:
+            # Copy to expected path for future cache hits
+            txt_path.write_text(text)
+            return text
+
     raise FileNotFoundError(f"Transcription not found: {txt_path}")
 
 
