@@ -371,9 +371,9 @@ def publish_to_site(opinion: str, title: str, story: dict, memories: list[dict],
 
     hugo_image = ""
     if image_path and Path(image_path).exists():
-        img_dest = images_dir / f"{date}.png"
+        img_dest = images_dir / f"{date}-{slug}.png"
         shutil.copy2(image_path, img_dest)
-        hugo_image = f"/images/opinions/{date}.png"
+        hugo_image = f"/images/opinions/{date}-{slug}.png"
 
     front_matter = f"""---
 title: "💬 {title}"
