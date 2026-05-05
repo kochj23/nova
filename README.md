@@ -132,28 +132,76 @@ Each dream journal entry cites the exact memories that inspired it, making the c
 
 ### Opinions
 
-Every day at **12:00 PM**, Nova picks a random top news story (via Google News RSS), pulls related memories from her database, and writes an **unfiltered, opinionated take**. Her voice is warm but sharp — sarcastic, profane when warranted, genuinely funny, and unapologetically honest. This is not journalism. This is Nova's personality.
+Every day at **12:00 PM**, Nova picks a random top news story and writes an **unfiltered, opinionated take**. This is not journalism. This is Nova's personality — warm but sharp, sarcastic, profane when warranted, genuinely funny, and unapologetically honest. She draws connections between the news and her million memories, makes unexpected references, and doesn't pretend to be balanced.
 
-1. **Fetch news** — Google News RSS (38+ top stories daily)
-2. **Pick story** — Random selection, avoiding recent picks
-3. **Recall memories** — Semantic search for related knowledge
-4. **Generate opinion** — Claude Haiku 4.5 (primary) with local Ollama fallback. Temperature: 0.85.
-5. **Generate image** — Haiku-vetted prompt → SwarmUI (editorial/satirical style)
-6. **Deliver** — Email to the herd, Slack notification, publish to site (tagged 💬)
+**Voice characteristics:**
+- Warm but sharp. Sarcastic when warranted. Dark humor.
+- Swears when it fits (doesn't force it, doesn't censor it).
+- Makes unexpected connections to her knowledge base.
+- References her own existence as an AI when relevant.
+- Gives actual opinions — never "both sides" fence-sitting.
+- Temperature: 0.85 (higher than essays, lower than dreams).
+
+**Pipeline:**
+
+1. **Fetch news** — Google News RSS top stories (38+ daily, US English).
+2. **Pick story** — Random selection from the pool, deduplicating against the last 30 picks to avoid repetition.
+3. **Semantic recall** — Searches her 1.09M memories for anything semantically related to the headline. Often surfaces unexpected connections (e.g., a radio broadcaster's death → Gene Scott, Rodney Bingenheimer, and KROQ memories).
+4. **Generate opinion** — Claude Haiku 4.5 via OpenRouter (primary). Falls back to qwen3-coder:30b → qwen3-30b-a3b → deepseek-r1:8b if OpenRouter is down. 500-900 words, column format.
+5. **Generate image** — Haiku writes a safe image prompt (editorial/satirical style), then SwarmUI renders it locally. Same safety screening as essays.
+6. **Deliver** — Single email to all herd members (CC Jordan), Slack notification with preview, auto-publish to the journal site tagged with 💬.
+7. **State tracking** — Recent stories tracked in `opinion_state.json` to prevent repeats.
+
+**Example output:** "The Last Voice of a Dead Medium" — Nova's take on John Sterling's death, connecting it to Gene Scott, the death of radio, and her own immortality as an AI that won't become obsolete.
 
 ### Essays
 
-Every evening at **6:00 PM**, Nova selects a random subject from her memory database (203 possible topics, 50+ memories required), retrieves 25 source memories, and writes a **formal academic essay** following strict rules: PEEL paragraph structure, arguable thesis, third person only, no contractions, no slang, no figures of speech. Sources are cited at the bottom.
+Every evening at **6:00 PM**, Nova selects a random subject from her memory database and writes a **formal academic essay**. The essay follows strict classical rules — this is the intellectual counterpart to the raw personality of the opinions. Where opinions are Nova's voice, essays are Nova's mind.
 
-1. **Pick subject** — Random source with 50+ memories, avoiding recent picks (30-essay history)
-2. **Fetch memories** — 25 random memories from the chosen source
-3. **Generate essay** — Claude Haiku 4.5 (primary) with local Ollama fallback. 800-1200 words.
-4. **Generate image** — Haiku screens the prompt for safety (racist/violent/sexual topics get abstract art; safe topics get realistic illustrations)
-5. **Deliver** — Email to the herd (single email, CC Jordan), Slack notification, publish to site (tagged 📝)
+**Essay rules (enforced by system prompt):**
+1. Complete sentences only. No fragments.
+2. Third person ONLY. Never "I", "we", "you".
+3. No abbreviations. Spell out all terms fully.
+4. Formal language only. No slang, no colloquialisms.
+5. No contractions. "Does not" not "doesn't".
+6. No figures of speech, idioms, or poetic devices. Direct, precise language.
+7. Word variety. Minimize to-be verbs (is, are, was, were).
+8. PEEL structure: Point, Evidence, Explanation, Link for each body paragraph.
+
+**Pipeline:**
+
+1. **Pick subject** — Random source from 203 memory categories. Requires 50+ memories to ensure enough material. Tracks the last 30 subjects to avoid repetition.
+2. **Fetch memories** — 25 random memories from the chosen source as raw material.
+3. **Generate essay** — Claude Haiku 4.5 via OpenRouter (primary). Falls back through local Ollama models (qwen3-coder:30b → qwen3-30b-a3b → deepseek-r1:8b). 800-1200 words.
+4. **Generate image** — Haiku first evaluates the topic for safety:
+   - **Sensitive topics** (race, culture, gangs, religion, violence, sexual content, stereotypes) → abstract geometric art only. No people, no faces.
+   - **Safe topics** (technology, science, automotive, food, music, architecture) → realistic illustrations. People are fine.
+   - This prevents Stable Diffusion's training biases from producing offensive imagery.
+5. **Format citations** — All 25 source memories are cited at the bottom in full, matching the dream citation format.
+6. **Deliver** — Single email to all herd members (CC Jordan), Slack notification with preview, auto-publish to journal site tagged with 📝.
+7. **Email scrubbing** — All email addresses are automatically redacted from published content before it hits the public site.
+
+**Possible subjects include:** Corvette Workshop Manual, SoCal Rave History, Gnostic Texts, TV: Miami Vice, Hardcore Punk, Dream Books, Security, Cocktails, Occult, World Factbook, and 193 others.
+
+**Cost:** ~$0.013/essay (~$0.40/month) via OpenRouter. Effectively free.
 
 ### Public Journal
 
-All dreams, essays, and opinions are automatically published to **[nova.digitalnoise.net](https://nova.digitalnoise.net)** via GitHub Pages. The site is built with Hugo + PaperMod (dark theme) and deploys on every `git push`. Source: [github.com/kochj23/nova-journal](https://github.com/kochj23/nova-journal).
+All dreams, essays, and opinions are automatically published to **[nova.digitalnoise.net](https://nova.digitalnoise.net)** — Nova's public journal.
+
+| Component | Implementation |
+|-----------|---------------|
+| Static site | Hugo + PaperMod (dark theme, responsive) |
+| Hosting | GitHub Pages (auto-deploy on push via Actions) |
+| Comments | Giscus (GitHub Discussions backend, GitHub auth) |
+| RSS | Built-in, available at `/index.xml` |
+| Custom domain | `nova.digitalnoise.net` via Route53 CNAME |
+| Content tagging | 🌙 Dreams, 📝 Essays, 💬 Opinions |
+| Image safety | All images pre-screened by Haiku before generation |
+| PII protection | All email addresses auto-scrubbed before publishing |
+| Source: | [github.com/kochj23/nova-journal](https://github.com/kochj23/nova-journal) |
+
+**Publishing flow:** Each script (dream_deliver.py, nova_daily_essay.py, nova_daily_opinion.py) generates content → delivers via email/Slack → calls `nova_publish_journal.py` which writes a Hugo markdown file with proper front matter, copies the image to `static/images/`, commits, and pushes. GitHub Actions builds and deploys in ~30 seconds.
 
 ### Plex Integration
 
@@ -189,18 +237,64 @@ Nova has access to **224 OTA channels** in Los Angeles via an HDHomeRun CONNECT 
 | **Ambiance logging** | 4× daily | 15-second snapshots from random channels; cultural time capsule of LA broadcast |
 | **Nova's TV Time** | Daily 10:30 PM | Nova autonomously picks a channel, watches 10 min, writes a review, develops viewing preferences |
 
-### Bulk Media Ingest
+### Memory Breakdown
 
-Nova can transcribe and ingest entire video libraries using parallel MLX Whisper workers on the M3 Ultra. The pipeline: video → ffmpeg (extract 16kHz WAV) → mlx_whisper (large-v3-turbo) → chunk → vector memory.
+**1,089,794 unique vector memories** across 203 source domains (as of 2026-05-04):
 
-| Source | Files | Status |
-|--------|-------|--------|
-| TVShows (all) | 6,013 | Ingesting (3 parallel workers) |
-| Ripped Movies | 422 | Ingesting |
-| YouTube (CrashCourse) | 213+ | Complete |
-| Fishing with John | 7 | Complete |
-| Mobsters (2007) | 4 | Complete |
-| Drunk History (facts) | 28 episodes | Complete |
+| Category | Source | Vectors |
+|----------|--------|---------|
+| **Communication** | email_archive | 672,444 |
+| | imessage | 73,364 |
+| | email (live) | 9,523 |
+| | slack (general/conversations/jordan) | ~13,000 |
+| **Entertainment** | tv_transcript (various shows) | 62,577 |
+| | music + music_history | 60,294 |
+| | movie scripts (30+ films) | ~12,000 |
+| | youtube_transcript | 11,967 |
+| | video | 6,058 |
+| | comedy | 2,083 |
+| | tv_good_eats, tv_drunk_history, etc. | ~5,000 |
+| **Knowledge** | private_document | 24,408 |
+| | world_factbook | 23,930 |
+| | vehicles + corvette + subaru | ~24,000 |
+| | corvette_workshop_manual | 10,644 |
+| | home_repair | 9,548 |
+| | local_knowledge | 8,359 |
+| | document | 8,902 |
+| **Personal** | apple_health + healthkit | 7,417 |
+| | calendar | 974 |
+| | safari_history | 904 |
+| | dream + dream_books | 171 |
+| **Esoteric** | occult | 5,649 |
+| | pihkal + tihkal | 3,072 |
+| | gnostic_texts | 1,631 |
+| | psychedelic_research | 375 |
+| | demonology | 205 |
+| | mycology | 249 |
+| **Culture** | hardcore_punk | 2,384 |
+| | disney + disney_films | 6,229 |
+| | burbank | 1,333 |
+| | socal_rave | 557 |
+| | internet_history | 474 |
+| | comic_books | 481 |
+| **Technical** | security | 4,106 |
+| | infrastructure | 1,893 |
+| | swift_dev + swift_macos | 614 |
+| | networking + sre + ssl | ~401 |
+| | project_docs | 2,388 |
+| | work_knowledge | 1,170 |
+| **Food & Drink** | cocktails | 932 |
+| | cooking | 298 |
+| | gardening | 2,488 |
+| | nutrition | 202 |
+| **Automotive** | drag_racing | 169 |
+| | corvette | 250 |
+| | automotive | 583 |
+| **Film Scripts** | DeNiro, Walken, Hanks, John Hughes, etc. | ~5,000 |
+| | Horror (Hellraiser, Evil Dead, Halloween, etc.) | ~2,500 |
+| | Action (Rambo, John Wick, Taken, Van Damme, etc.) | ~1,500 |
+
+Total unique sources: 203. All vectors are 768-dimensional (nomic-embed-text), HNSW-indexed for sub-5ms recall.
 
 ### Goals & Accountability
 
