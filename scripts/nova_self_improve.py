@@ -405,7 +405,7 @@ def main():
         "opinions_reviewed": len(opinions),
         "critique_chars": len(critique),
     }
-    state["runs"] = (state.get("runs", []) + [run_record])[-52]  # Keep 1 year of history
+    state["runs"] = (state.get("runs", []) + [run_record])[-52:]  # Keep 1 year of history
     state["last_run"] = run_record
     save_state(state)
 
