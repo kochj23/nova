@@ -154,6 +154,16 @@ def get_openrouter_key() -> str:
     raise RuntimeError("nova-openrouter-api-key not found in Keychain")
 
 
+def _load_writing_lessons() -> str:
+    """Load writing lessons from self-improvement loop if available."""
+    lessons_file = Path.home() / ".openclaw/workspace/state/writing_lessons.md"
+    if lessons_file.exists():
+        content = lessons_file.read_text(encoding="utf-8").strip()
+        if content:
+            return content
+    return ""
+
+
 def _build_essay_prompt(source: str, memories: list[dict]) -> tuple[str, str]:
     """Build the system and user prompts for essay generation."""
     source_label = source.replace("_", " ").title()
@@ -180,6 +190,11 @@ ESSAY STRUCTURE:
 The essay should demonstrate genuine insight derived from the source material. Draw connections, identify patterns, and present an argument — not merely summarize.
 
 Length: 800-1200 words. Output ONLY the essay text (title + body). No preamble, no meta-commentary."""
+
+    # Inject writing lessons from self-improvement loop
+    writing_lessons = _load_writing_lessons()
+    if writing_lessons:
+        system_prompt += "\n\nWRITING LESSONS (from self-review):\n" + writing_lessons
 
     user_prompt = f"""Write a formal essay on the subject "{source_label}" using ONLY the following source material:
 

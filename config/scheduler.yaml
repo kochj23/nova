@@ -247,6 +247,13 @@ tasks:
     timeout: 120
     overlap: skip
 
+  herd_profiles:
+    script: nova_herd_profiles.py
+    schedule: cron 0 20 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
   daily_journal:
     script: nova_daily_journal.py
     schedule: cron 0 21 * * *
@@ -354,6 +361,13 @@ tasks:
     timeout: 7200
     overlap: queue
 
+  weekly_digest:
+    script: nova_weekly_digest.py
+    schedule: cron 0 17 * * 0
+    timeout: 600
+    overlap: skip
+    group: llm
+
   weekly_journal:
     script: nova_weekly_journal.py
     schedule: cron 0 17 * * 0
@@ -365,6 +379,13 @@ tasks:
     schedule: cron 30 17 * * 0
     timeout: 60
     overlap: skip
+
+  self_improve:
+    script: nova_self_improve.py
+    schedule: cron 0 21 * * 0
+    timeout: 600
+    overlap: skip
+    group: llm
 
   weekly_reliability:
     script: nova_weekly_reliability.py

@@ -126,6 +126,16 @@ def fetch_related_memories(topic: str) -> list[dict]:
         return []
 
 
+def _load_writing_lessons() -> str:
+    """Load writing lessons from self-improvement loop if available."""
+    lessons_file = Path.home() / ".openclaw/workspace/state/writing_lessons.md"
+    if lessons_file.exists():
+        content = lessons_file.read_text(encoding="utf-8").strip()
+        if content:
+            return content
+    return ""
+
+
 def generate_opinion(story: dict, memories: list[dict]) -> str | None:
     """Generate Nova's unfiltered opinion."""
     memory_context = ""
@@ -152,6 +162,11 @@ STRUCTURE:
 
 LENGTH: 500-900 words. This is a column, not a tweet and not an essay.
 OUTPUT: Just the opinion piece. Title on the first line. No preamble."""
+
+    # Inject writing lessons from self-improvement loop
+    writing_lessons = _load_writing_lessons()
+    if writing_lessons:
+        system_prompt += "\n\nWRITING LESSONS (from self-review):\n" + writing_lessons
 
     user_prompt = f"""Today's news story:
 HEADLINE: {story['title']}

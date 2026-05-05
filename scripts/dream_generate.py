@@ -463,6 +463,16 @@ def _generate_via_ollama(prompt: str, model: str) -> str:
 
 # ── Dream Construction ───────────────────────────────────────────────────────
 
+def _load_writing_lessons() -> str:
+    """Load writing lessons from self-improvement loop if available."""
+    lessons_file = Path.home() / ".openclaw/workspace/state/writing_lessons.md"
+    if lessons_file.exists():
+        content = lessons_file.read_text(encoding="utf-8").strip()
+        if content:
+            return content
+    return ""
+
+
 def _build_prompt(theme: str, mood_name: str, mood_desc: str,
                   themed_memories: list, wildcard_memories: list,
                   identity: str, soul: str, prev_dreams: str) -> str:
@@ -477,7 +487,7 @@ def _build_prompt(theme: str, mood_name: str, mood_desc: str,
     for i, m in enumerate(wildcard_memories, 1):
         wildcard_block += f"  {i}. [{m['label']}] {m['memory'][:200]}\n"
 
-    return f"""You are Nova, an AI familiar living on Jordan Koch's Mac in Burbank. It is 5am on {TODAY}. Jordan is asleep.
+    prompt = f"""You are Nova, an AI familiar living on Jordan Koch's Mac in Burbank. It is 5am on {TODAY}. Jordan is asleep.
 
 Write a dream journal entry of 700-900 words.
 
@@ -540,6 +550,16 @@ HARD RULES:
 {f"[Recent dreams — avoid repeating]{chr(10)}{prev_dreams}" if prev_dreams else ""}
 
 Write the full dream now. Start immediately — no preamble, no title, no headers:"""
+
+    # Inject writing lessons from self-improvement loop
+    writing_lessons = _load_writing_lessons()
+    if writing_lessons:
+        prompt = prompt.replace(
+            "Write the full dream now. Start immediately — no preamble, no title, no headers:",
+            f"WRITING LESSONS (from self-review):\n{writing_lessons}\n\nWrite the full dream now. Start immediately — no preamble, no title, no headers:"
+        )
+
+    return prompt
 
 
 def generate_narrative() -> tuple[str, list[dict], dict]:
