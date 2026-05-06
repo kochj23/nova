@@ -440,18 +440,45 @@ Nova connects to a local Plex Media Server (Synology NAS) for viewing awareness,
 
 ### Live TV (HDHomeRun)
 
-Nova has access to **224 OTA channels** in Los Angeles via an HDHomeRun CONNECT QUATRO (4 tuners). She can tune in, record, transcribe, and react to live broadcast television. 7 subcommands in `nova_livetv.py`:
+Nova has access to **224 OTA channels** in Los Angeles via an HDHomeRun CONNECT QUATRO (4 tuners). She records **full episodes**, transcribes with MLX Whisper (auto-translating non-English content from Armenian, Spanish, and Asian language channels), classifies content, and ingests into the appropriate memory vector.
 
 | Feature | Schedule | Description |
 |---------|----------|-------------|
-| **What's On** | Every 15 min | Alerts when shows Jordan cares about are starting (Jeopardy, local news, MeTV) |
-| **Breaking news** | Every 15 min | Monitors CBS/NBC/ABC for breaking news keywords; DMs Jordan on detection |
-| **Morning news** | Daily 7:05 AM | Records 5 min from each major network, transcribes, ingests — Nova knows what happened in LA |
-| **Dream surf** | Daily 4:00 AM | Randomly tunes 3 channels for 60s each; transcribes ephemeral content as dream fuel |
-| **Game show companion** | Weekdays 7 PM | Watches Jeopardy/Wheel of Fortune, transcribes, posts recap and "score" |
-| **Ambiance logging** | 4× daily | 15-second snapshots from random channels; cultural time capsule of LA broadcast |
-| **Nova's TV Time** | Daily 10:30 PM | Nova autonomously picks a channel, watches 10 min, writes a review, develops viewing preferences |
-| **Daily News Ingest** | 5 PM, 6 PM, 11 PM | Records 30 min KABC (ABC 7) news, transcribes via MLX Whisper, chunks and ingests into `daily_news` vector |
+| **What's On** | Every 15 min | Alerts when shows Jordan cares about are starting |
+| **Morning news** | Daily 7:05 AM | Records 5 min from CBS/NBC/ABC, transcribes, ingests |
+| **Dream surf** | Daily 4:00 AM | Random channels for 60s; ephemeral dream fuel |
+| **Game show companion** | Weekdays 7 PM | Records **full episode** of Jeopardy/Wheel of Fortune → `game_show` vector |
+| **Ambiance** | 4× daily | Picks random channel, records **full episode** → classified vector |
+| **Nova's TV Time** | Daily 10:30 PM | Random channel, **full episode**, Plex EPG for duration → classified vector + review |
+| **Daily News Ingest** | 5 PM, 6 PM, 11 PM | Records 30 min KABC → transcribe → Ollama summary → `daily_news` vector |
+| ~~Breaking news~~ | ~~Every 15 min~~ | **DISABLED** |
+
+```mermaid
+flowchart TD
+    HDHR["HDHomeRun QUATRO<br/>224 OTA channels"]
+    EPG["Plex EPG<br/>(episode duration + metadata)"]
+    
+    HDHR -->|"ffmpeg record"| WAV["WAV Audio<br/>(full episode)"]
+    EPG -->|"remaining_sec"| WAV
+    WAV -->|"MLX Whisper<br/>(auto-translate)"| Transcript["Transcript<br/>(English)"]
+    Transcript -->|"classify_tv_content()"| Vector{"Vector Classification"}
+    
+    Vector -->|game show| GS[("game_show")]
+    Vector -->|comedy| COM[("comedy")]
+    Vector -->|drama| DRA[("drama")]
+    Vector -->|horror| HOR[("horror")]
+    Vector -->|documentary| DOC[("documentary")]
+    Vector -->|news| NEWS[("daily_news")]
+    Vector -->|other| OTHER[("education / sports / music")]
+    
+    Transcript -->|"Ollama summary"| Slack["#nova-notifications<br/>(review + recap)"]
+```
+
+**Key features:**
+- **Plex EPG integration** — queries what's airing and exactly how long it runs (no guessing)
+- **Auto-translation** — non-English content (Armenian, Spanish, Korean, etc.) is translated to English via Whisper's translate task
+- **Smart classification** — content is routed to the correct vector based on title, genres, and transcript keywords
+- **Full episodes** — no more 10-minute snippets; Nova watches the whole thing
 
 ### YouTube TVShows Downloader
 
