@@ -13,17 +13,17 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 | Metric | Value |
 |--------|-------|
 | Scripts | 210+ Python and Shell |
-| Scheduler tasks | 62 enabled (20 interval, 42 cron) |
+| Scheduler tasks | 67 enabled (20 interval, 47 cron) |
 | Vector memories | 1,090,000 unique (deduplicated 2026-05-04) |
 | Memory sources | 203 domains |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Security cameras | 15 UniFi Protect with face recognition |
-| AI backends | Ollama (qwen3-next:80b, qwen3-coder:30b, qwen3-vl:4b, deepseek-r1:8b) + Claude Haiku 4.5 via OpenRouter |
+| AI backends | Ollama (qwen3-next:80b, qwen3-coder:30b, qwen3-vl:4b, deepseek-r1:8b) + Claude Haiku 4.5 via OpenRouter (essays/opinions only) |
 | Channels | Slack + Discord + Signal + iMessage + Email |
 | Privacy model | 4-tier intent routing, local-first |
 | Database | PostgreSQL 17 + pgvector (nova_memories + nova_ops) + Redis |
 | Web dashboard | FastAPI + WebSocket (real-time, 44 cards + HUD) |
-| Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) — dreams, essays, opinions |
+| Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) — dreams, essays, opinions, research papers, after dark |
 | Test suite | 4,193 tests (unit + security + integration + functional + frame) |
 
 ---
@@ -35,7 +35,7 @@ graph TD
     Jordan["Jordan<br/>(Slack / Discord / Signal)"]
     GW["OpenClaw Gateway<br/>ws://localhost:18789"]
     Ollama["Ollama<br/>qwen3-next:80b<br/>qwen3-coder:30b<br/>qwen3-vl:4b<br/>deepseek-r1:8b"]
-    Scheduler["Unified Scheduler<br/>59 tasks"]
+    Scheduler["Unified Scheduler<br/>67 tasks"]
     MemServer["Memory Server<br/>pgvector · 1.5M vectors"]
     FaceRec["Face Recognition<br/>15 cameras · dlib"]
     Dashboard["Web Dashboard<br/>FastAPI + WebSocket"]
@@ -115,7 +115,7 @@ Nova holds **1,090,000 unique vector memories** across 203 source domains, searc
 
 ### Scheduling
 
-Nova runs a **unified scheduler** with 59 enabled tasks across interval and cron modes. Tasks support groups, quiet hours (11 PM to 6:45 AM for non-critical), dead man's switch heartbeats, and LLM group serialization to prevent model contention.
+Nova runs a **unified scheduler** with 67 enabled tasks across interval and cron modes. Tasks support groups, quiet hours (11 PM to 6:45 AM for non-critical), dead man's switch heartbeats, and LLM group serialization to prevent model contention.
 
 ### Dreams
 
@@ -196,12 +196,170 @@ All dreams, essays, and opinions are automatically published to **[nova.digitaln
 | Comments | Giscus (GitHub Discussions backend, GitHub auth) |
 | RSS | Built-in, available at `/index.xml` |
 | Custom domain | `nova.digitalnoise.net` via Route53 CNAME |
-| Content tagging | 🌙 Dreams, 📝 Essays, 💬 Opinions |
+| Content tagging | Dreams, Essays, Opinions, Research, After Dark |
 | Image safety | All images pre-screened by Haiku before generation |
 | PII protection | All email addresses auto-scrubbed before publishing |
 | Source: | [github.com/kochj23/nova-journal](https://github.com/kochj23/nova-journal) |
 
-**Publishing flow:** Each script (dream_deliver.py, nova_daily_essay.py, nova_daily_opinion.py) generates content → delivers via email/Slack → calls `nova_publish_journal.py` which writes a Hugo markdown file with proper front matter, copies the image to `static/images/`, commits, and pushes. GitHub Actions builds and deploys in ~30 seconds.
+**Publishing flow:** Each script (dream_deliver.py, nova_daily_essay.py, nova_daily_opinion.py, nova_after_dark.py, nova_research_paper.py) generates content → delivers via email/Slack → calls `nova_publish_journal.py` which writes a Hugo markdown file with proper front matter, copies the image to `static/images/`, commits, and pushes. GitHub Actions builds and deploys in ~30 seconds.
+
+### After Dark
+
+Every night at **9:00 PM**, Nova writes a **late-night comedy monologue** in the style of Leno-era Tonight Show or early Stewart-era Daily Show. This is Nova's humor — warm, historical, educational, and genuinely funny.
+
+**Voice characteristics:**
+- Leno/Stewart tone: conversational, punchy, self-aware
+- Focuses on historical events that happened on this date
+- Every joke and fact is sourced (Wikipedia, memory database)
+- Educational humor — you learn something while laughing
+- Desk-style delivery: setup, callback, runner structure
+- Temperature: 0.90 (highest of all content types)
+
+**Pipeline:**
+
+1. **Fetch historical events** — Wikipedia "On This Day" for the current date.
+2. **Memory recall** — Cross-references events with Nova's knowledge base for unexpected connections.
+3. **Generate monologue** — Local LLM (qwen3-next:80b) writes 800-1200 words in desk monologue format.
+4. **Source verification** — Every claim must have a citation. No fabricated facts.
+5. **Deliver** — Posts to Slack, publishes to journal site, emails the herd.
+
+**Delivery channels:** GitHub Pages + Slack only.
+
+### Research Papers
+
+Every **Sunday at 7:00 PM**, Nova writes a full **academic research paper** in APA format. These are serious, well-sourced papers that synthesize Nova's vast memory database into formal academic output.
+
+**Paper specifications:**
+- APA format (title page, abstract, introduction, literature review, analysis, conclusion, references)
+- 2500-4000 words
+- 100+ memory sources consulted (25+ cited in-text)
+- 25+ web sources (SearXNG local search, no cloud)
+- Mermaid diagrams included where appropriate
+- Random topic selection from 203 memory domains (excluding private/work sources)
+- Proper academic voice (third person, no contractions, formal language)
+
+**Pipeline:**
+
+1. **Topic selection** — Random source from memory database (requires 50+ memories). Last 30 topics tracked to avoid repeats.
+2. **Deep research** — Queries 100+ relevant memories, performs local web searches via SearXNG.
+3. **Outline generation** — Structured APA outline with section headers.
+4. **Draft generation** — Local LLM (qwen3-next:80b) writes the full paper with citations.
+5. **Diagram generation** — Mermaid diagrams for key concepts.
+6. **Publish** — Journal site (tagged as Research), Slack notification, email delivery.
+
+**Example topics:** "The Persistence of Underground Radio in the Digital Age", "Mycological Applications in Bioremediation: A Meta-Analysis", "Security Threat Modeling in Residential IoT Deployments"
+
+---
+
+## Additional Architecture Diagrams
+
+### Boot Sequence
+
+```mermaid
+sequenceDiagram
+    participant launchd
+    participant Ollama
+    participant PG as PostgreSQL
+    participant Redis
+    participant Stack as nova_stack_restart.sh
+    participant GW as Gateway
+    participant Mem as Memory Server
+    participant Sched as Scheduler
+    participant Dash as Dashboard
+
+    launchd->>Ollama: Start ollama serve
+    launchd->>PG: Start postgresql@17
+    launchd->>Redis: Start redis-server
+    launchd->>Stack: Start nova_stack_restart.sh
+    Stack->>Stack: wait-for-port 11434 (Ollama)
+    Stack->>Stack: wait-for-port 5432 (PostgreSQL)
+    Stack->>Stack: wait-for-port 6379 (Redis)
+    Stack->>GW: Start gateway (port 18789)
+    Stack->>Mem: Start memory server
+    Stack->>Sched: Start scheduler (67 tasks)
+    Stack->>Dash: Start dashboard (port 37450)
+    Sched->>Ollama: Preload qwen3-next:80b
+    Sched->>Sched: Begin tick loop (1s interval)
+```
+
+### Memory Pipeline
+
+```mermaid
+flowchart LR
+    subgraph Sources
+        Email[Email Archive]
+        iMsg[iMessage]
+        YT[YouTube]
+        Web[Web/Safari]
+        Docs[Documents]
+        TV[TV Transcripts]
+        Slack[Slack History]
+    end
+
+    subgraph Ingestion
+        Ingest[Ingest Scripts]
+        Chunk[Chunking<br/>512-token windows]
+        Embed[nomic-embed-text<br/>768 dimensions]
+        Dedup[MD5 Dedup<br/>unique constraint]
+    end
+
+    subgraph Storage
+        PG[(PostgreSQL<br/>pgvector)]
+        HNSW[HNSW Index<br/>cosine similarity]
+        Redis[(Redis<br/>hot cache)]
+    end
+
+    subgraph Retrieval
+        Recall[/recall endpoint]
+        Deep[/recall/deep<br/>2-hop traversal]
+        Links[memory_links<br/>graph edges]
+    end
+
+    subgraph Maintenance
+        REM[REM Sleep<br/>3 AM nightly]
+        Vacuum[VACUUM ANALYZE<br/>weekly Sunday]
+        Reindex[HNSW Reindex<br/>monthly]
+    end
+
+    Sources --> Ingest
+    Ingest --> Chunk --> Embed --> Dedup --> PG
+    PG --> HNSW
+    PG --> Redis
+    Recall --> Redis
+    Recall --> HNSW
+    Deep --> Links --> PG
+    REM --> PG
+    Vacuum --> PG
+    Reindex --> HNSW
+```
+
+### Scheduler Task Flow
+
+```mermaid
+flowchart TD
+    Tick[Scheduler Tick<br/>every 1 second] --> Check{Task Due?}
+    Check -->|No| Tick
+    Check -->|Yes| Overlap{Already Running?}
+    Overlap -->|skip mode| Tick
+    Overlap -->|queue mode| Queue[Wait Queue]
+    Overlap -->|No| Group{LLM Group?}
+    Group -->|Yes| Serial{Group Lock Free?}
+    Serial -->|No| Queue
+    Serial -->|Yes| Quiet{Quiet Hours?}
+    Group -->|No| Quiet
+    Quiet -->|Yes + non-critical| Tick
+    Quiet -->|No or critical| Exec[Execute Script]
+    Exec --> Log[Log to nova_ops DB]
+    Log --> DMS[Update Dead Man's Switch]
+    DMS --> Tick
+    Queue --> Exec
+
+    style Tick fill:#2d2d2d,stroke:#4CAF50,color:#fff
+    style Exec fill:#2d2d2d,stroke:#2196F3,color:#fff
+    style Queue fill:#2d2d2d,stroke:#FF9800,color:#fff
+```
+
+---
 
 ### Plex Integration
 
@@ -407,7 +565,8 @@ Nova uses a **4-tier intent routing system** that determines where each request 
 | 4:00 PM | Context bridge | cron |
 | 6:00 PM | **Daily essay** (random subject → formal academic essay) | cron |
 | 7:00 PM | Plex on-deck reminders / Live TV Jeopardy companion (weekdays) | cron |
-| 9:00 PM | Daily journal | cron |
+| 9:00 PM | **After Dark** (late-night comedy monologue about historical events) | cron |
+| 9:15 PM | Daily journal | cron |
 | 10:30 PM | Nova's TV Time (autonomous viewing + review) | cron |
 | 11:00 PM | Nightly report | cron |
 | 11:20 PM | NAS health check | cron |
@@ -417,6 +576,7 @@ Nova uses a **4-tier intent routing system** that determines where each request 
 | Every 10 min | iMessage watch, Sky watcher | interval |
 | Every 15 min | Proactive peace, Live TV breaking news, What's On alerts | interval |
 | Every 30 min | Home watchdog, UniFi, Synology, Face recognition | interval |
+| Sundays 7 PM | **Research paper** (full APA academic paper from memory) | weekly |
 | Sundays | Plex weekly stats, shame board, rewatch index, PG maintenance | weekly |
 | Fridays | Plex recommendations | weekly |
 | Monthly | Plex seasonal drift analysis, Library sync | monthly |
@@ -499,13 +659,15 @@ Test markers: `unit` (default), `@pytest.mark.security`, `@pytest.mark.integrati
 ├── scripts/           170+ Python/Shell scripts (Nova's capabilities)
 │   ├── nova_config.py             Central config (secrets from Keychain)
 │   ├── nova_intent_router.py      Privacy-first AI routing (67+ intents)
-│   ├── nova_scheduler.py          Unified scheduler (38 tasks)
+│   ├── nova_scheduler.py          Unified scheduler (67 tasks)
 │   ├── nova_subagent.py           Subagent framework
 │   ├── nova_agent_*.py            5 subagent implementations
 │   ├── dream_generate.py          Unified dream pipeline (narrative + image + deliver)
 │   ├── nova_daily_essay.py        Daily formal essay pipeline (Haiku + fallback)
 │   ├── nova_daily_opinion.py      Daily news opinion pipeline (Haiku + fallback)
-│   ├── nova_publish_journal.py    Publish dreams/essays/opinions to GitHub Pages
+│   ├── nova_after_dark.py         Nightly comedy monologue (historical events)
+│   ├── nova_research_paper.py     Weekly APA research papers (Sunday evenings)
+│   ├── nova_publish_journal.py    Publish all content to GitHub Pages
 │   ├── nova_pg_maintain.sh        Weekly VACUUM ANALYZE + monthly HNSW reindex
 │   ├── nova_recent_memories.py    Query recent memory ingests by time window
 │   ├── nova_face_recognition.py   Local face recognition (dlib + PostgreSQL)
