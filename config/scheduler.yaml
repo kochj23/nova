@@ -475,6 +475,7 @@ tasks:
     schedule: every 15m
     timeout: 180
     overlap: skip
+    enabled: false
 
   livetv_news:
     script: nova_livetv.py

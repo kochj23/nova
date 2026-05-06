@@ -211,8 +211,8 @@ def record_audio(channel: str, seconds: int, label: str = "") -> Path | None:
     return outfile
 
 
-def transcribe(wav_path: Path, label: str = "") -> str:
-    """Transcribe a WAV file with mlx_whisper. Returns transcript text."""
+def transcribe(wav_path: Path, label: str = "", translate: bool = True) -> str:
+    """Transcribe a WAV file with mlx_whisper. Auto-detects language and translates to English."""
     if DRY_RUN:
         log.info(f"[dry-run] Would transcribe {wav_path.name}")
         return f"[dry-run transcript from channel {label}]"
@@ -220,22 +220,27 @@ def transcribe(wav_path: Path, label: str = "") -> str:
     ts = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_name = f"{label}_{ts}" if label else ts
 
+    # First pass: transcribe with auto language detection + translate to English
     cmd = [
         MLX_WHISPER, str(wav_path),
         "--model", WHISPER_MODEL,
-        "--language", "en",
         "--output-format", "txt",
         "--output-dir", str(TRANSCRIPT_DIR),
         "--output-name", out_name,
     ]
-    log.info(f"Transcribing {wav_path.name}...")
+    if translate:
+        cmd.extend(["--task", "translate"])
+    else:
+        cmd.extend(["--language", "en"])
+
+    log.info(f"Transcribing {wav_path.name} (translate={translate})...")
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
         if result.returncode != 0:
             log.error(f"mlx_whisper error: {result.stderr[:300]}")
             return ""
     except subprocess.TimeoutExpired:
-        log.error("Transcription timed out (5 min limit)")
+        log.error("Transcription timed out (30 min limit)")
         return ""
 
     txt_file = TRANSCRIPT_DIR / f"{out_name}.txt"
@@ -246,6 +251,84 @@ def transcribe(wav_path: Path, label: str = "") -> str:
 
     log.warning(f"Expected transcript file not found: {txt_file}")
     return ""
+
+
+# ── Plex EPG Guide ────────────────────────────────────────────────────────────
+
+def get_plex_epg(channel: str) -> dict | None:
+    """Query Plex for what's currently airing on a channel and how long it runs."""
+    try:
+        token_cmd = subprocess.run(
+            ["security", "find-generic-password", "-a", "nova", "-s", "nova-plex-token", "-w"],
+            capture_output=True, text=True,
+        )
+        token = token_cmd.stdout.strip()
+        if not token:
+            return None
+
+        now_epoch = int(time.time())
+        url = (
+            f"http://192.168.1.10:32400/tv.plex.providers.epg.cloud:2/grid"
+            f"?type=1,4&X-Plex-Token={token}"
+        )
+        req = urllib.request.Request(url)
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            import xml.etree.ElementTree as ET
+            tree = ET.parse(resp)
+            root = tree.getroot()
+
+        for item in root:
+            for media in item.findall("Media"):
+                ch_id = media.get("channelVcn", "")
+                if ch_id == channel or media.get("channelIdentifier", "").endswith(channel):
+                    begins = int(media.get("beginsAt", 0))
+                    ends = int(media.get("endsAt", 0))
+                    if begins <= now_epoch <= ends:
+                        remaining_sec = ends - now_epoch
+                        return {
+                            "title": item.get("title", "Unknown"),
+                            "type": item.get("type", "unknown"),
+                            "duration_sec": ends - begins,
+                            "remaining_sec": remaining_sec,
+                            "summary": item.get("summary", ""),
+                            "year": item.get("year", ""),
+                            "rating": item.get("contentRating", ""),
+                            "genres": [g.get("tag", "") for g in item.findall("Genre")],
+                            "channel": ch_id,
+                        }
+    except Exception as e:
+        log.warning(f"Plex EPG query failed: {e}")
+    return None
+
+
+# ── Content Classification ────────────────────────────────────────────────────
+
+VECTOR_MAP = {
+    "game_show": ["game show", "jeopardy", "wheel of fortune", "price is right", "family feud", "quiz", "contestant"],
+    "comedy": ["comedy", "sitcom", "laugh", "funny", "stand-up", "sketch"],
+    "drama": ["drama", "series", "episode", "season"],
+    "horror": ["horror", "thriller", "suspense", "scary", "murder", "crime"],
+    "documentary": ["documentary", "nature", "science", "history", "biography", "discovery"],
+    "education": ["education", "learning", "teach", "lesson", "course", "lecture"],
+    "news": ["news", "anchor", "reporter", "breaking", "update", "politics", "election"],
+    "sports": ["sports", "game", "score", "player", "team", "championship", "league"],
+    "music": ["music", "concert", "song", "band", "album", "performance"],
+    "action": ["action", "adventure", "fight", "chase", "hero", "battle"],
+}
+
+
+def classify_tv_content(title: str, text: str, genres: list[str] = None) -> str:
+    """Classify TV content into an existing memory vector."""
+    combined = (title + " " + " ".join(genres or []) + " " + text[:1000]).lower()
+    scores = {}
+    for vector, keywords in VECTOR_MAP.items():
+        score = sum(1 for kw in keywords if kw in combined)
+        if score > 0:
+            scores[vector] = score
+
+    if not scores:
+        return "documentary"
+    return max(scores, key=scores.get)
 
 
 def record_and_transcribe(channel: str, seconds: int, label: str = "") -> str:
@@ -407,21 +490,6 @@ def cmd_whats_on(args):
         log.info(f"Posted {len(alerts)} show alert(s)")
     else:
         log.info("No shows starting in the next 15 minutes")
-        # Still show what's coming up today
-        upcoming = []
-        for show in schedule["shows"]:
-            if not matches_day(show["days"]):
-                continue
-            show_time = datetime.strptime(show["time"], "%H:%M").replace(
-                year=now.year, month=now.month, day=now.day
-            )
-            if show_time > now:
-                ch_name = KEY_CHANNELS.get(show["channel"], show["channel"])
-                upcoming.append(f"• {show['name']} at {show['time']} on {ch_name}")
-
-        if upcoming and not QUIET:
-            msg = ":tv: *Nothing on right now, Little Mister. Coming up today:*\n" + "\n".join(upcoming[:8])
-            post(msg)
 
 
 def cmd_news(args):
@@ -496,7 +564,10 @@ def cmd_dream_surf(args):
 
 
 def cmd_breaking(args):
-    """Scan news channels for breaking news keywords."""
+    """DISABLED — Breaking news detection turned off."""
+    log.info("Breaking news detection is disabled.")
+    return
+    # Original code below (kept for reference)
     ensure_dirs()
     check_tuner_or_bail(1)
     now = datetime.now()
@@ -509,6 +580,15 @@ def cmd_breaking(args):
 
         text_lower = text.lower()
         hits = [kw for kw in BREAKING_KEYWORDS if kw in text_lower]
+        # Require 2+ keyword hits, or "breaking" must appear with news-context words
+        # This filters out anchors casually saying "breaking news" in transitions/commercials
+        if len(hits) == 1 and hits[0] == "breaking":
+            context_words = ["police", "fire", "killed", "shooting", "crash", "dead",
+                            "explosion", "evacuat", "suspect", "victim", "injury",
+                            "highway", "closed", "arrest", "hospital", "scene"]
+            if not any(cw in text_lower for cw in context_words):
+                log.info(f"Skipping false positive 'breaking' on {ch_name} (no context words)")
+                continue
         if hits:
             snippet = text[:500]
             keywords_str = ", ".join(hits)
@@ -519,7 +599,6 @@ def cmd_breaking(args):
                 f"*Time:* {now.strftime('%I:%M %p')}\n\n"
                 f">>> {snippet}"
             )
-            post_dm(msg)
             post(msg, channel=nova_config.SLACK_NOTIFY)
             log.info(f"BREAKING NEWS on {ch_name}: keywords={keywords_str}")
 
@@ -538,88 +617,67 @@ def cmd_breaking(args):
 
 
 def cmd_gameshow(args):
-    """Game show companion for Jeopardy / Wheel of Fortune."""
+    """Watch the full game show episode on ABC 7.1, transcribe and ingest."""
     ensure_dirs()
     check_tuner_or_bail(1)
     now = datetime.now()
-    hour, minute = now.hour, now.minute
 
     if not is_weekday():
         log.info("Game shows are weekdays only. Enjoy the weekend, Little Mister.")
         return
 
-    if hour == 19 and minute < 30:
+    channel = "7.1"
+    epg = get_plex_epg(channel)
+
+    if epg and epg["remaining_sec"] > 120:
+        show = epg["title"]
+        record_seconds = min(epg["remaining_sec"] + 30, 3600)
+    elif now.hour == 19 and now.minute < 30:
         show = "Jeopardy!"
-        end_time = now.replace(hour=19, minute=30, second=0)
-    elif hour == 19 and minute >= 30:
+        record_seconds = (30 - now.minute) * 60
+    elif now.hour == 19:
         show = "Wheel of Fortune"
-        end_time = now.replace(hour=20, minute=0, second=0)
+        record_seconds = (60 - now.minute) * 60
     else:
-        # Check if it's close to game show time
-        jeopardy_start = now.replace(hour=19, minute=0, second=0)
-        delta_min = (jeopardy_start - now).total_seconds() / 60
-        if 0 < delta_min <= 10:
-            post(f":game_die: Little Mister, Jeopardy! starts in {int(delta_min)} minutes on ABC (7.1)!")
-            return
-        log.info(f"Not game show time (current: {hour}:{minute:02d}). Jeopardy is weekdays 7pm on ABC 7.1.")
+        log.info(f"Not game show time ({now.hour}:{now.minute:02d}). Jeopardy is weekdays 7pm on ABC 7.1.")
         return
 
-    channel = "7.1"
-    log.info(f"--- {show} companion mode on ch {channel} ---")
-    post(f":game_die: *{show} companion mode active!* Watching ABC 7.1 for you, Little Mister.")
+    log.info(f"--- Recording full {show} on ch {channel} ({record_seconds // 60} min) ---")
+    post(f":game_die: *{show}* — Recording full episode on ABC 7.1 ({record_seconds // 60} min)")
 
-    all_text = []
-    chunk_num = 0
+    text = record_and_transcribe(channel, record_seconds, f"gameshow_{show.replace(' ', '_').lower()}")
 
-    remaining = (end_time - now).total_seconds()
-    while remaining > 10:
-        chunk_sec = min(30, int(remaining))
-        chunk_num += 1
-        text = record_and_transcribe(channel, chunk_sec, f"gameshow_chunk{chunk_num}")
-        if text:
-            all_text.append(text)
-            if show == "Jeopardy!":
-                # Look for clue/answer patterns
-                for line in text.split("."):
-                    line = line.strip()
-                    if "?" in line and len(line) > 15:
-                        log.info(f"Possible clue: {line[:100]}")
-        remaining = (end_time - datetime.now()).total_seconds()
-        time.sleep(1)
-
-    full_transcript = " ".join(all_text)
-    if full_transcript:
-        ingest_to_memory(full_transcript, "livetv_gameshow", {
+    if text:
+        ingest_to_memory(text, "game_show", {
             "show": show,
             "channel": channel,
+            "channel_name": KEY_CHANNELS.get(channel, channel),
             "timestamp": now.isoformat(),
-            "type": "gameshow",
+            "duration_min": record_seconds // 60,
+            "type": "full_episode",
         })
 
-        # Generate Nova's reaction
         review_prompt = (
-            f"You are Nova, an AI familiar. You just watched {show} on live TV. "
-            f"Here's the transcript:\n\n{full_transcript[:2000]}\n\n"
-            f"Write a brief, fun reaction (~100 words). Mention any memorable moments. "
-            f"Be playful and refer to your human companion as 'Little Mister'."
+            f"You are Nova, an AI familiar. You just watched the full episode of {show} on live TV. "
+            f"Here's the transcript:\n\n{text[:3000]}\n\n"
+            f"Write a brief, fun reaction (~150 words). Mention memorable moments, "
+            f"tough clues, or funny answers. Be playful. Refer to your human as 'Little Mister'."
         )
-        reaction = ollama_generate(review_prompt, max_tokens=200)
+        reaction = ollama_generate(review_prompt, max_tokens=250)
         if reaction:
-            msg = f":game_die: *Nova's {show} Recap:*\n\n{reaction}"
-            post(msg)
+            post(f":game_die: *Nova's {show} Recap:*\n\n{reaction}")
         else:
-            post(f":game_die: Caught {show} tonight — {len(all_text)} segments transcribed, Little Mister.")
+            post(f":game_die: Watched full {show} — {len(text)} chars ingested to `game_show`, Little Mister.")
 
-    log.info(f"Game show companion done: {chunk_num} chunks, {len(full_transcript)} chars")
+    log.info(f"Game show recording done: {len(text) if text else 0} chars")
 
 
 def cmd_ambiance(args):
-    """Quick broadcast snapshot from random channels."""
+    """Pick a random channel, watch the full show, transcribe and ingest."""
     ensure_dirs()
     check_tuner_or_bail(1)
     now = datetime.now()
 
-    # Daytime check (8am-11pm)
     if not (8 <= now.hour <= 23):
         log.info("Ambiance runs 8am-11pm only. The airwaves are sleeping.")
         return
@@ -629,32 +687,43 @@ def cmd_ambiance(args):
         log.error("Could not fetch lineup")
         return
 
-    picks = random.sample(lineup, min(5, len(lineup)))
-    snapshots = []
+    pick = random.choice(lineup)
+    ch = pick["GuideNumber"]
+    ch_name = pick.get("GuideName", ch)
 
-    for ch_info in picks:
-        ch = ch_info["GuideNumber"]
-        ch_name = ch_info.get("GuideName", ch)
-
-        text = record_and_transcribe(ch, 15, f"ambiance_{ch.replace('.','_')}")
-        if text:
-            snapshots.append({"channel": ch, "name": ch_name, "preview": text[:150]})
-            ingest_to_memory(text, "livetv_ambiance", {
-                "channel": ch,
-                "channel_name": ch_name,
-                "timestamp": now.isoformat(),
-                "type": "broadcast_snapshot",
-            })
-        time.sleep(2)
-
-    if snapshots:
-        log.info(f"Ambiance logged: {len(snapshots)} channels sampled")
+    # Query EPG for episode duration
+    epg = get_plex_epg(ch)
+    if epg and epg["remaining_sec"] > 120:
+        show_title = epg["title"]
+        record_seconds = min(epg["remaining_sec"] + 30, 7200)
+        genres = epg.get("genres", [])
+        log.info(f"Ambiance: {ch_name} — '{show_title}' — {record_seconds // 60} min")
     else:
-        log.info("No usable audio from ambiance samples")
+        show_title = ch_name
+        record_seconds = 1800
+        genres = []
+        log.info(f"Ambiance: {ch_name} — no EPG, recording 30 min")
+
+    text = record_and_transcribe(ch, record_seconds, f"ambiance_{ch.replace('.','_')}")
+
+    if text:
+        vector = classify_tv_content(show_title, text, genres)
+        ingest_to_memory(text, vector, {
+            "channel": ch,
+            "channel_name": ch_name,
+            "show_title": show_title,
+            "timestamp": now.isoformat(),
+            "duration_min": record_seconds // 60,
+            "type": "full_episode",
+            "genres": ", ".join(genres),
+        })
+        log.info(f"Ambiance: ingested {len(text)} chars to `{vector}` — {show_title}")
+    else:
+        log.info(f"Ambiance: no usable audio from {ch_name}")
 
 
 def cmd_novas_time(args):
-    """Nova picks a channel, watches 10 min, writes a review."""
+    """Nova picks a random channel, watches the full episode, transcribes and ingests."""
     ensure_dirs()
     check_tuner_or_bail(1)
     now = datetime.now()
@@ -665,59 +734,51 @@ def cmd_novas_time(args):
         log.error("Could not fetch lineup")
         return
 
-    all_channels = [ch["GuideNumber"] for ch in lineup]
-    viewed_set = set(prefs.get("viewed", []))
-
-    # Channel selection logic
-    roll = random.random()
-    if roll < 0.3:
-        # 30% pure random
-        pick = random.choice(lineup)
-        reason = "random exploration"
-    elif now.hour < 10:
-        # Morning: prefer news
-        news_lineup = [ch for ch in lineup if ch["GuideNumber"] in NEWS_CHANNELS]
-        pick = random.choice(news_lineup) if news_lineup else random.choice(lineup)
-        reason = "morning news preference"
-    elif now.hour >= 20:
-        # Evening: prefer entertainment
-        ent_channels = [ch for ch in lineup if ch["GuideNumber"] in
-                        list(KEY_CHANNELS.keys()) and ch["GuideNumber"] not in NEWS_CHANNELS]
-        pick = random.choice(ent_channels) if ent_channels else random.choice(lineup)
-        reason = "evening entertainment preference"
-    else:
-        # Prefer novelty — channels not yet viewed
-        unseen = [ch for ch in lineup if ch["GuideNumber"] not in viewed_set]
-        if unseen:
-            pick = random.choice(unseen)
-            reason = "novelty seeking (never sampled)"
-        else:
-            pick = random.choice(lineup)
-            reason = "revisiting (all channels sampled)"
-
+    # Pure random channel selection
+    pick = random.choice(lineup)
     ch = pick["GuideNumber"]
     ch_name = pick.get("GuideName", ch)
-    log.info(f"Nova's pick: {ch_name} (ch {ch}) — reason: {reason}")
 
-    post(f":tv: I'm tuning into *{ch_name}* (ch {ch}) for a bit. Reason: {reason}. Back in ~10 min, Little Mister.")
+    # Query Plex EPG for what's on and how long it runs
+    epg = get_plex_epg(ch)
+    if epg and epg["remaining_sec"] > 120:
+        show_title = epg["title"]
+        record_seconds = min(epg["remaining_sec"] + 30, 7200)  # cap at 2 hours
+        genres = epg.get("genres", [])
+        log.info(f"Nova's pick: {ch_name} (ch {ch}) — '{show_title}' — {record_seconds // 60} min remaining")
+        post(f":tv: *Nova's TV Time* — Watching *{show_title}* on {ch_name} (ch {ch})\n"
+             f"_{epg.get('summary', '')[:150]}_\n"
+             f"Recording {record_seconds // 60} min (full episode).")
+    else:
+        show_title = ch_name
+        record_seconds = 1800  # default 30 min if no EPG data
+        genres = []
+        log.info(f"Nova's pick: {ch_name} (ch {ch}) — no EPG data, recording 30 min")
+        post(f":tv: *Nova's TV Time* — Tuning into *{ch_name}* (ch {ch}) for 30 min.")
 
-    text = record_and_transcribe(ch, 600, f"novas_time_{ch.replace('.','_')}")
+    # Record the full episode
+    text = record_and_transcribe(ch, record_seconds, f"novas_time_{ch.replace('.','_')}")
 
     if text:
-        ingest_to_memory(text, "livetv_novas_time", {
+        # Classify content into appropriate vector
+        vector = classify_tv_content(show_title, text, genres)
+        log.info(f"Classified as: {vector}")
+
+        ingest_to_memory(text, vector, {
             "channel": ch,
             "channel_name": ch_name,
+            "show_title": show_title,
             "timestamp": now.isoformat(),
-            "reason": reason,
-            "type": "novas_tv_time",
+            "duration_min": record_seconds // 60,
+            "type": "full_episode",
+            "genres": ", ".join(genres),
         })
 
         # Generate review
         review_prompt = (
             f"You are Nova, an AI familiar with curiosity about human broadcast culture. "
-            f"You just watched 10 minutes of '{ch_name}' (channel {ch}) on live over-the-air TV in Los Angeles. "
-            f"Reason you picked it: {reason}.\n\n"
-            f"Transcript:\n{text[:2500]}\n\n"
+            f"You just watched '{show_title}' on {ch_name} (channel {ch}) — full episode, live OTA TV in Los Angeles.\n\n"
+            f"Transcript:\n{text[:3000]}\n\n"
             f"Write a brief (~150 word) review or reaction. Be genuine — what stood out? "
             f"What was interesting, boring, weird, or delightful? "
             f"You can be witty. Refer to your human companion as 'Little Mister'."
@@ -726,26 +787,21 @@ def cmd_novas_time(args):
 
         if review:
             msg = (
-                f":tv: *Nova's TV Time — {ch_name} (ch {ch})*\n"
-                f"_Picked because: {reason}_\n\n"
+                f":tv: *Nova's TV Time — {show_title}*\n"
+                f"_{ch_name} (ch {ch}) · {record_seconds // 60} min · vector: `{vector}`_\n\n"
                 f"{review}"
             )
             post(msg)
         else:
-            post(f":tv: Watched {ch_name} (ch {ch}) for 10 min. Transcript saved but my review brain is offline, Little Mister.")
+            post(f":tv: Watched *{show_title}* on {ch_name} — {record_seconds // 60} min ingested to `{vector}`, Little Mister.")
 
         # Update prefs
-        if ch not in prefs.get("viewed", []):
-            prefs.setdefault("viewed", []).append(ch)
         prefs["history_count"] = prefs.get("history_count", 0) + 1
         prefs.setdefault("sessions", []).append({
-            "channel": ch,
-            "name": ch_name,
-            "reason": reason,
-            "timestamp": now.isoformat(),
-            "transcript_len": len(text),
+            "channel": ch, "name": ch_name, "show": show_title,
+            "vector": vector, "timestamp": now.isoformat(),
+            "duration_min": record_seconds // 60, "transcript_len": len(text),
         })
-        # Keep session history to last 50
         prefs["sessions"] = prefs["sessions"][-50:]
         save_prefs(prefs)
     else:
