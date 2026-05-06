@@ -12,8 +12,8 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 
 | Metric | Value |
 |--------|-------|
-| Scripts | 210+ Python and Shell |
-| Scheduler tasks | 67 enabled (20 interval, 47 cron) |
+| Scripts | 220+ Python and Shell |
+| Scheduler tasks | 70 enabled (20 interval, 50 cron) |
 | Vector memories | 1,090,000 unique (deduplicated 2026-05-04) |
 | Memory sources | 203 domains |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
@@ -24,7 +24,7 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 | Database | PostgreSQL 17 + pgvector (nova_memories + nova_ops) + Redis |
 | Web dashboard | FastAPI + WebSocket (real-time, 44 cards + HUD) |
 | Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) — dreams, essays, opinions, research papers, after dark |
-| Test suite | 4,193 tests (unit + security + integration + functional + frame) |
+| Test suite | 4,404 tests (unit + security + integration + functional + frame) |
 
 ---
 
@@ -35,11 +35,11 @@ graph TD
     Jordan["Jordan<br/>(Slack / Discord / Signal)"]
     GW["OpenClaw Gateway<br/>ws://localhost:18789"]
     Ollama["Ollama<br/>qwen3-next:80b<br/>qwen3-coder:30b<br/>qwen3-vl:4b<br/>deepseek-r1:8b"]
-    Scheduler["Unified Scheduler<br/>67 tasks"]
+    Scheduler["Unified Scheduler<br/>70 tasks"]
     MemServer["Memory Server<br/>pgvector · 1.5M vectors"]
     FaceRec["Face Recognition<br/>15 cameras · dlib"]
     Dashboard["Web Dashboard<br/>FastAPI + WebSocket"]
-    Scripts["180+ Scripts<br/>Python / Shell"]
+    Scripts["220+ Scripts<br/>Python / Shell"]
     SearXNG["SearXNG<br/>Local Web Search"]
     Redis["Redis<br/>Cache + Queue"]
     Subagents["5 Subagents<br/>analyst · coder · lookout<br/>librarian · sentinel"]
@@ -115,7 +115,7 @@ Nova holds **1,090,000 unique vector memories** across 203 source domains, searc
 
 ### Scheduling
 
-Nova runs a **unified scheduler** with 67 enabled tasks across interval and cron modes. Tasks support groups, quiet hours (11 PM to 6:45 AM for non-critical), dead man's switch heartbeats, and LLM group serialization to prevent model contention.
+Nova runs a **unified scheduler** with 70 enabled tasks across interval and cron modes. Tasks support groups, quiet hours (11 PM to 6:45 AM for non-critical), dead man's switch heartbeats, and LLM group serialization to prevent model contention.
 
 ### Dreams
 
@@ -276,7 +276,7 @@ sequenceDiagram
     Stack->>Stack: wait-for-port 6379 (Redis)
     Stack->>GW: Start gateway (port 18789)
     Stack->>Mem: Start memory server
-    Stack->>Sched: Start scheduler (67 tasks)
+    Stack->>Sched: Start scheduler (70 tasks)
     Stack->>Dash: Start dashboard (port 37450)
     Sched->>Ollama: Preload qwen3-next:80b
     Sched->>Sched: Begin tick loop (1s interval)
@@ -359,11 +359,68 @@ flowchart TD
     style Queue fill:#2d2d2d,stroke:#FF9800,color:#fff
 ```
 
+### Daily News Ingest Pipeline
+
+```mermaid
+flowchart LR
+    subgraph Recording
+        HDHR["HDHomeRun QUATRO<br/>Channel 7.1 (KABC)"]
+        FFmpeg["ffmpeg<br/>30-min WAV capture"]
+    end
+
+    subgraph Transcription
+        Whisper["MLX Whisper<br/>large-v3-turbo"]
+        Chunks["Chunking<br/>2000-char windows"]
+    end
+
+    subgraph Storage
+        MemAPI["/remember endpoint<br/>async=1"]
+        PG[(PostgreSQL<br/>daily_news vector)]
+    end
+
+    subgraph Schedule
+        S5["5:00 PM"]
+        S6["6:00 PM"]
+        S11["11:00 PM"]
+    end
+
+    Schedule --> HDHR
+    HDHR --> FFmpeg
+    FFmpeg --> Whisper
+    Whisper --> Chunks
+    Chunks --> MemAPI
+    MemAPI --> PG
+```
+
+### Music Knowledge Crawl Pipeline
+
+```mermaid
+flowchart TD
+    Seed["Seed Wikipedia Page<br/>(e.g. Hardcore EDM)"]
+    BFS["BFS Crawler<br/>3+ levels deep"]
+    Filter["Link Filter<br/>music-related only"]
+    Chunk["512-token Chunking"]
+    Classify["Sub-genre Classification<br/>(gabber, speedcore, etc.)"]
+    Ingest["Memory Server<br/>/remember?async=1"]
+    PG[(PostgreSQL<br/>music_* vectors)]
+
+    Seed --> BFS
+    BFS --> Filter
+    Filter --> BFS
+    Filter --> Chunk
+    Chunk --> Classify
+    Classify --> Ingest
+    Ingest --> PG
+
+    style Seed fill:#2d2d2d,stroke:#9C27B0,color:#fff
+    style PG fill:#2d2d2d,stroke:#4CAF50,color:#fff
+```
+
 ---
 
 ### Plex Integration
 
-Nova connects to a local Plex Media Server (Synology NAS) for viewing awareness, habit tracking, and media intelligence. 13 subcommands in `nova_plex.py`:
+Nova connects to a local Plex Media Server (Synology NAS) for viewing awareness, habit tracking, and media intelligence. Authentication uses auto-token-exchange: if the Plex token in Keychain is expired/invalid, Nova automatically exchanges stored credentials (`nova-plex-email` + `nova-plex-password` from Keychain) for a fresh token via `plex.tv/users/sign_in.json`. 13 subcommands in `nova_plex.py`:
 
 | Feature | Schedule | Description |
 |---------|----------|-------------|
@@ -394,6 +451,38 @@ Nova has access to **224 OTA channels** in Los Angeles via an HDHomeRun CONNECT 
 | **Game show companion** | Weekdays 7 PM | Watches Jeopardy/Wheel of Fortune, transcribes, posts recap and "score" |
 | **Ambiance logging** | 4× daily | 15-second snapshots from random channels; cultural time capsule of LA broadcast |
 | **Nova's TV Time** | Daily 10:30 PM | Nova autonomously picks a channel, watches 10 min, writes a review, develops viewing preferences |
+| **Daily News Ingest** | 5 PM, 6 PM, 11 PM | Records 30 min KABC (ABC 7) news, transcribes via MLX Whisper, chunks and ingests into `daily_news` vector |
+
+### YouTube TVShows Downloader
+
+`nova_youtube_download.py` downloads YouTube channels into Plex-compatible TVShows structure with parallel execution:
+
+| Feature | Description |
+|---------|-------------|
+| **Season structure** | Playlist-based seasons (CrashCourse) or year-based seasons (others) |
+| **Parallel download** | ThreadPoolExecutor with configurable workers per channel |
+| **Rate limiting** | 32-second delay between videos to avoid throttling |
+| **Naming convention** | `ChannelName - SXXEXX - Title.mp4` (Plex-friendly) |
+| **Resume support** | Skips already-downloaded episodes via archive tracking |
+| **Resolution cap** | 720p max to save disk space |
+
+Configured channels: CrashCourse, Jay Leno's Garage, The Vintage Space, Jason Cammisa.
+
+### Music Knowledge Base (Wikipedia Crawlers)
+
+Seven genre-specific Wikipedia crawlers each perform BFS crawls (3+ levels deep) to build comprehensive music knowledge vectors. Each targets 10,000 chunks with content classified into sub-vectors:
+
+| Crawler | Starting Page | Sub-vectors |
+|---------|---------------|-------------|
+| `nova_hardcore_edm_ingest.py` | Hardcore EDM | Gabber, Happy Hardcore, Speedcore, Frenchcore, etc. |
+| `nova_idm_ingest.py` | Intelligent Dance Music | Warp Records, Aphex Twin, Autechre, Squarepusher, etc. |
+| `nova_nowave_ingest.py` | No Wave | NYC art-punk, Lydia Lunch, DNA, Teenage Jesus, etc. |
+| `nova_jazz_ingest.py` | Jazz | Bebop, Cool Jazz, Free Jazz, Fusion, standards, etc. |
+| `nova_metal_ingest.py` | Heavy Metal | Thrash, Death, Black, Doom, Progressive, NWOBHM, etc. |
+| `nova_newwave_ingest.py` | New Wave | Synth-pop, Post-punk, New Romantic, etc. |
+| `nova_gangstarap_ingest.py` | Gangsta Rap | West Coast, G-Funk, Compton, Death Row, etc. |
+
+All crawlers use the same pattern: BFS from seed page, follow internal Wikipedia links, chunk articles into 512-token windows, classify by sub-genre, and ingest via the memory server async endpoint.
 
 ### Memory Breakdown
 
@@ -486,6 +575,7 @@ When Jordan corrects Nova, those corrections are automatically promoted into per
 | **Prompt injection** | All active rules appended to every memory-first lookup output |
 | **Topic scoping** | Rules can be global or scoped to topics (people, apps, burnout, etc.) |
 | **Application tracking** | Tracks how often each rule is applied |
+| **Delimiter safety** | Uses `\x1f` (unit separator) instead of pipe `|` to prevent column-value confusion in psql output |
 
 ```bash
 # CLI usage
@@ -563,11 +653,14 @@ Nova uses a **4-tier intent routing system** that determines where each request 
 | 12:00 PM | **Daily opinion** (news + memories → unfiltered take) | cron |
 | 3:00 PM | This Day (history + personal memories) | cron |
 | 4:00 PM | Context bridge | cron |
+| 5:00 PM | **Daily news ingest** (KABC 30-min recording → transcription → ingest) | cron |
+| 6:00 PM | **Daily news ingest** (KABC 6pm news) | cron |
 | 6:00 PM | **Daily essay** (random subject → formal academic essay) | cron |
 | 7:00 PM | Plex on-deck reminders / Live TV Jeopardy companion (weekdays) | cron |
 | 9:00 PM | **After Dark** (late-night comedy monologue about historical events) | cron |
 | 9:15 PM | Daily journal | cron |
 | 10:30 PM | Nova's TV Time (autonomous viewing + review) | cron |
+| 11:00 PM | **Daily news ingest** (KABC 11pm news) | cron |
 | 11:00 PM | Nightly report | cron |
 | 11:20 PM | NAS health check | cron |
 | 11:40 PM | Protect camera audit | cron |
@@ -621,7 +714,7 @@ A secondary **HUD view** (`/hud`) provides a sci-fi radar visualization designed
 
 ### Testing
 
-Nova has a comprehensive **pytest test suite** (4,193 tests) organized by subsystem:
+Nova has a comprehensive **pytest test suite** (4,404 tests) organized by subsystem:
 
 ```
 scripts/tests/
@@ -636,8 +729,15 @@ scripts/tests/
 ├── test_ingest_utils.py        Reddit, YouTube, email, memory consolidation (150 tests)
 ├── test_intelligence.py        Morning brief, journal, context bridge, reports (132 tests)
 ├── test_peace_agents.py        Proactive peace, 5 subagents (108 tests)
+├── test_media_ingest.py        YouTube download, music crawlers, news ingest (45 tests)
+├── test_system_monitoring.py   Bandwidth, NAS, watchdog, dead man's switch (31 tests)
+├── test_daily_content.py       Essay, opinion, journal pipelines (31 tests)
+├── test_self_management.py     Goals, rules, correction tracking, self-improve (31 tests)
+├── test_research_paper.py      APA papers, citations, Mermaid diagrams (29 tests)
 ├── test_dream_pipeline.py      Dream generation, image, delivery (23 tests)
 ├── test_dream_extended.py      Narrative, circuit breaker, repetition trimming (44 tests)
+├── test_after_dark.py          Late-night monologue, sourcing, delivery (22 tests)
+├── test_journal_publish.py     Hugo publishing, front matter, PII scrubbing (22 tests)
 ├── test_memory_system.py       Recall, recent memories, consolidation (86 tests)
 ├── test_scheduler.py           Cron parsing, task execution, log rotation (73 tests)
 ├── test_mail.py                Herd mail, validation, retry logic (97 tests)
@@ -645,6 +745,8 @@ scripts/tests/
 ├── test_dashboard.py           Server collectors, alerts, history (40 tests)
 ├── test_dashboard_integration.py  WebSocket, API, frame tests (35 tests)
 ├── test_gateway.py             Context store CRUD, sessions (24 tests)
+├── test_plex.py                Plex integration, token exchange, commands (varies)
+├── test_livetv.py              HDHomeRun, tuning, transcription (varies)
 └── test_herd_config.py         Member validation (23 tests)
 ```
 
@@ -667,6 +769,9 @@ Test markers: `unit` (default), `@pytest.mark.security`, `@pytest.mark.integrati
 │   ├── nova_daily_opinion.py      Daily news opinion pipeline (Haiku + fallback)
 │   ├── nova_after_dark.py         Nightly comedy monologue (historical events)
 │   ├── nova_research_paper.py     Weekly APA research papers (Sunday evenings)
+│   ├── nova_daily_news_ingest.py  KABC news recording + transcription + vector ingest
+│   ├── nova_youtube_download.py   Parallel YouTube channel downloader (TVShows structure)
+│   ├── nova_*_ingest.py           7 Wikipedia music genre crawlers (10K chunks each)
 │   ├── nova_publish_journal.py    Publish all content to GitHub Pages
 │   ├── nova_pg_maintain.sh        Weekly VACUUM ANALYZE + monthly HNSW reindex
 │   ├── nova_recent_memories.py    Query recent memory ingests by time window
@@ -676,7 +781,7 @@ Test markers: `unit` (default), `@pytest.mark.security`, `@pytest.mark.integrati
 │   ├── nova_goals.py              Goal tracker (CRUD, gap analysis, git activity detection)
 │   ├── nova_goal_check.py         Daily goal accountability check (7:05 AM)
 │   ├── nova_rules.py              Correction-to-rule learning engine
-│   ├── tests/                     637 pytest tests (unit + integration + functional + frame)
+│   ├── tests/                     4,404 pytest tests (unit + integration + functional + frame)
 │   └── ...
 ├── config/            Scheduler YAML, RAG config, state files
 ├── gateway/           OpenClaw AI Gateway (FastAPI)

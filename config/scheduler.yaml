@@ -277,6 +277,29 @@ tasks:
     overlap: skip
     group: llm
 
+  # ── Daily: KABC news recording + ingest (5pm, 6pm, 11pm) ──────────────
+
+  daily_news_5pm:
+    script: nova_daily_news_ingest.py
+    schedule: cron 0 17 * * *
+    timeout: 2400
+    overlap: skip
+    group: livetv
+
+  daily_news_6pm:
+    script: nova_daily_news_ingest.py
+    schedule: cron 0 18 * * *
+    timeout: 2400
+    overlap: skip
+    group: livetv
+
+  daily_news_11pm:
+    script: nova_daily_news_ingest.py
+    schedule: cron 0 23 * * *
+    timeout: 2400
+    overlap: skip
+    group: livetv
+
   # ── Daily: night (digests, reports) ────────────────────────────────────
 
   nightly_report:

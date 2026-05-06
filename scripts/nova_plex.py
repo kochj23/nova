@@ -78,15 +78,57 @@ QUIET = False
 
 # ── Plex API ──────────────────────────────────────────────────────────────────
 
-def _plex_token() -> str:
+def _keychain_get(service: str) -> str:
     result = subprocess.run(
-        ["security", "find-generic-password", "-a", "nova", "-s", "nova-plex-token", "-w"],
+        ["security", "find-generic-password", "-a", "nova", "-s", service, "-w"],
         capture_output=True, text=True,
     )
-    token = result.stdout.strip()
-    if not token:
-        log.error("Plex token not found in Keychain")
+    return result.stdout.strip()
+
+
+def _keychain_set(service: str, value: str):
+    subprocess.run(
+        ["security", "delete-generic-password", "-a", "nova", "-s", service],
+        capture_output=True,
+    )
+    subprocess.run(
+        ["security", "add-generic-password", "-a", "nova", "-s", service, "-w", value],
+        capture_output=True,
+    )
+
+
+def _exchange_credentials_for_token() -> str:
+    email = _keychain_get("nova-plex-email")
+    password = _keychain_get("nova-plex-password")
+    if not email or not password:
+        log.error("Plex email/password not found in Keychain (nova-plex-email, nova-plex-password)")
         sys.exit(1)
+    data = urllib.parse.urlencode({"user[login]": email, "user[password]": password}).encode()
+    req = urllib.request.Request(
+        "https://plex.tv/users/sign_in.json",
+        data=data,
+        headers={
+            "X-Plex-Client-Identifier": "nova-local",
+            "X-Plex-Product": "Nova",
+            "Content-Type": "application/x-www-form-urlencoded",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            body = json.loads(resp.read())
+        new_token = body["user"]["authToken"]
+        _keychain_set("nova-plex-token", new_token)
+        log.info("Plex token obtained from credentials and saved to Keychain")
+        return new_token
+    except Exception as e:
+        log.error(f"Failed to exchange Plex credentials for token: {e}")
+        sys.exit(1)
+
+
+def _plex_token() -> str:
+    token = _keychain_get("nova-plex-token")
+    if not token:
+        token = _exchange_credentials_for_token()
     return token
 
 
