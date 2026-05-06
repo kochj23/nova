@@ -310,9 +310,9 @@ flowchart LR
     end
 
     subgraph Retrieval
-        Recall[/recall endpoint]
-        Deep[/recall/deep<br/>2-hop traversal]
-        Links[memory_links<br/>graph edges]
+        Recall["recall endpoint"]
+        Deep["recall deep<br/>2-hop traversal"]
+        Links["memory_links<br/>graph edges"]
     end
 
     subgraph Maintenance
