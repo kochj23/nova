@@ -523,3 +523,10 @@ tasks:
     timeout: 300
     overlap: skip
     enabled: false  # Disabled: duplicates morning_brief, hallucinates with deepseek-r1:8b
+
+  plex_auto_ingest:
+    script: nova_plex_auto_ingest.py
+    schedule: cron 0 23 * * *
+    timeout: 7200
+    overlap: skip
+    group: ingest
