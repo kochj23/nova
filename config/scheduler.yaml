@@ -254,10 +254,26 @@ tasks:
     overlap: skip
     group: llm
 
+  after_dark:
+    script: nova_after_dark.py
+    schedule: cron 0 21 * * *
+    timeout: 900
+    overlap: skip
+    group: llm
+
   daily_journal:
     script: nova_daily_journal.py
-    schedule: cron 0 21 * * *
+    schedule: cron 15 21 * * *
     timeout: 300
+    overlap: skip
+    group: llm
+
+  # ── Weekly: Sunday evening ─────────────────────────────────────────────
+
+  research_paper:
+    script: nova_research_paper.py
+    schedule: cron 0 19 * * 0
+    timeout: 1800
     overlap: skip
     group: llm
 
