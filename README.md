@@ -420,10 +420,11 @@ flowchart TD
 
 ### Plex Integration
 
-Nova connects to a local Plex Media Server (Synology NAS) for viewing awareness, habit tracking, and media intelligence. Authentication uses auto-token-exchange: if the Plex token in Keychain is expired/invalid, Nova automatically exchanges stored credentials (`nova-plex-email` + `nova-plex-password` from Keychain) for a fresh token via `plex.tv/users/sign_in.json`. 13 subcommands in `nova_plex.py`:
+Nova connects to a local Plex Media Server (Synology NAS) for viewing awareness, habit tracking, media intelligence, and **automatic content ingestion**. Authentication uses auto-token-exchange: if the Plex token in Keychain is expired/invalid, Nova automatically exchanges stored credentials (`nova-plex-email` + `nova-plex-password` from Keychain) for a fresh token via `plex.tv/users/sign_in.json`. 14 subcommands in `nova_plex.py` + auto-ingest pipeline:
 
 | Feature | Schedule | Description |
 |---------|----------|-------------|
+| **Auto-ingest** | Daily 11 PM | Detects new episodes/movies, transcribes audio, classifies, ingests to vector DB |
 | **Playing awareness** | Every 5 min | Knows when Jordan is watching something; suppresses non-critical notifications |
 | **Guest detective** | Every 5 min | Tracks which devices/IPs stream; flags unknown viewers |
 | **Watch history** | Daily 7:10 AM | Ingests yesterday's viewing into vector memory |
@@ -437,6 +438,39 @@ Nova connects to a local Plex Media Server (Synology NAS) for viewing awareness,
 | **Shame board** | Sundays | Roasts abandoned on-deck items (30+ days untouched) |
 | **Seasonal drift** | Monthly | Detects seasonal viewing patterns over time |
 | **Library sync** | Mondays | Compares Plex library vs. files on disk; reports unmatched content |
+
+```mermaid
+flowchart LR
+    subgraph Plex
+        New["New Episode/Movie<br/>added to library"]
+    end
+
+    subgraph "Auto-Ingest (11 PM daily)"
+        Detect["Detect new content<br/>(recentlyAdded API)"]
+        Extract["ffmpeg<br/>extract audio"]
+        Transcribe["MLX Whisper<br/>(translate if needed)"]
+        Classify["classify_content()<br/>title + genres + text"]
+    end
+
+    subgraph Vectors
+        V1[("comedy")]
+        V2[("drama")]
+        V3[("documentary")]
+        V4[("horror")]
+        V5[("automotive")]
+        V6[("...")]
+    end
+
+    New --> Detect --> Extract --> Transcribe --> Classify
+    Classify --> V1
+    Classify --> V2
+    Classify --> V3
+    Classify --> V4
+    Classify --> V5
+    Classify --> V6
+```
+
+**Auto-ingest** means Nova seamlessly absorbs all new Plex content — no manual bulk ingests needed. Every new episode or movie that hits the library is automatically transcribed, classified by subject matter, and ingested into the appropriate memory vector by the next morning.
 
 ### Live TV (HDHomeRun)
 
