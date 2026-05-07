@@ -276,7 +276,7 @@ def process_item(item, section_name: str) -> bool:
     duration_min = duration_ms // 60000
     genres = [g.get("tag", "") for g in item.get("Genre", [])]
 
-    # Get file path
+    # Get file path and translate Plex internal paths to local mount paths
     file_path = ""
     for media in item.get("Media", []):
         for part in media.get("Part", []):
@@ -286,6 +286,19 @@ def process_item(item, section_name: str) -> bool:
     if not file_path:
         log.warning(f"No file path for {title}")
         return False
+
+    # Plex on Synology reports paths like /external3/... but locally they're /Volumes/external/...
+    PATH_TRANSLATIONS = {
+        "/external3/": "/Volumes/external/",
+        "/external2/": "/Volumes/external/",
+        "/external/": "/Volumes/external/",
+        "/volume1/": "/Volumes/nas/",
+        "/volume2/": "/Volumes/nas/",
+    }
+    for plex_prefix, local_prefix in PATH_TRANSLATIONS.items():
+        if file_path.startswith(plex_prefix):
+            file_path = local_prefix + file_path[len(plex_prefix):]
+            break
 
     if duration_min > MAX_DURATION_MIN:
         log.info(f"Skipping {title} — too long ({duration_min} min)")
