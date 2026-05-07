@@ -417,6 +417,26 @@ def publish_to_hugo(article: str, topic_data: dict, image_path: str | None) -> s
             break
     article_body = "\n".join(body_lines[body_start:]).strip()
 
+    # Append sources section
+    sources_section = "\n\n---\n\n### Sources\n\n"
+    web_results = topic_data.get("web_results", [])
+    if web_results:
+        sources_section += "**Web Sources:**\n"
+        for r in web_results[:15]:
+            sources_section += f"- [{r.get('title', 'Source')}]({r.get('url', '')})\n"
+    memories_used = topic_data.get("memories", [])
+    if memories_used:
+        sources_section += "\n**Nova's Memories:**\n"
+        seen = set()
+        for m in memories_used[:10]:
+            text = m.get("text", "")[:100].strip()
+            if text and text not in seen:
+                seen.add(text)
+                meta = m.get("metadata", {})
+                label = meta.get("title") or meta.get("source", "memory")
+                sources_section += f"- *[{label}]* {text}...\n"
+    sources_section += "\n*— Nova*\n"
+
     frontmatter = f"""---
 title: "{title}"
 date: {iso_date}
@@ -432,7 +452,7 @@ description: "{description}"
 """
     frontmatter += "---\n\n"
 
-    filepath.write_text(frontmatter + article_body)
+    filepath.write_text(frontmatter + article_body + sources_section)
     log(f"Published to {filepath}")
     return str(filepath)
 
@@ -540,6 +560,8 @@ def main():
 
     # Step 6: Publish to Hugo
     log("Publishing to Hugo...")
+    topic_data["web_results"] = web_results
+    topic_data["memories"] = memories
     published_path = publish_to_hugo(article, topic_data, image_path)
     if not published_path:
         log("ABORT: Hugo publish failed")
