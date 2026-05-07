@@ -103,7 +103,7 @@ def ensure_dirs():
     WORKSPACE.mkdir(parents=True, exist_ok=True)
 
 
-def post(msg, channel=nova_config.SLACK_CHAN):
+def post(msg, channel=nova_config.SLACK_NOTIFY):
     if QUIET:
         log.info(f"[quiet mode] {msg}")
         return
