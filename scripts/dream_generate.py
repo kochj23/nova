@@ -883,6 +883,22 @@ def main():
     # Step 2: Generate dream image (mood-aware)
     log("Generating dream image...")
     image_path = generate_dream_image(narrative, dream_meta.get("mood", "surreal"))
+
+    if image_path is None or image_path == "":
+        log("First image attempt returned None — retrying once more...")
+        image_path = generate_dream_image(narrative, dream_meta.get("mood", "surreal"))
+    if image_path is None or image_path == "":
+        sys.path.insert(0, str(Path(__file__).parent))
+        try:
+            import nova_config as _nc
+            _nc.post_both(
+                f":warning: *Image generation failed* for Dream Journal — {TODAY} — published without cover image. SwarmUI may need attention.",
+                slack_channel="C0ATAF7NZG9"
+            )
+        except Exception:
+            log("Could not post image failure alert to Slack")
+        image_path = None
+
     if image_path:
         latest = WORKSPACE / "dream_latest.png"
         latest.unlink(missing_ok=True)

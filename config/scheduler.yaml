@@ -146,7 +146,7 @@ tasks:
 
   dream_pipeline:
     script: dream_generate.py
-    schedule: cron 0 5 * * *
+    schedule: cron 0 6 * * *
     timeout: 900
     overlap: skip
     group: llm
@@ -236,7 +236,7 @@ tasks:
 
   daily_essay:
     script: nova_daily_essay.py
-    schedule: cron 0 18 * * *
+    schedule: cron 0 9 * * *
     timeout: 600
     overlap: skip
     group: llm
@@ -256,7 +256,7 @@ tasks:
 
   after_dark:
     script: nova_after_dark.py
-    schedule: cron 0 21 * * *
+    schedule: cron 0 20 * * *
     timeout: 900
     overlap: skip
     group: llm
@@ -272,7 +272,7 @@ tasks:
 
   research_paper:
     script: nova_research_paper.py
-    schedule: cron 0 19 * * 0
+    schedule: cron 50 23 * * *
     timeout: 1800
     overlap: skip
     group: llm
@@ -400,9 +400,9 @@ tasks:
     timeout: 7200
     overlap: queue
 
-  weekly_digest:
+  daily_digest:
     script: nova_weekly_digest.py
-    schedule: cron 0 17 * * 0
+    schedule: cron 0 17 * * *
     timeout: 600
     overlap: skip
     group: llm

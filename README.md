@@ -156,7 +156,7 @@ Every day at **12:00 PM**, Nova picks a random top news story and writes an **un
 
 ### Essays
 
-Every evening at **6:00 PM**, Nova selects a random subject from her memory database and writes a **formal academic essay**. The essay follows strict classical rules — this is the intellectual counterpart to the raw personality of the opinions. Where opinions are Nova's voice, essays are Nova's mind.
+Every morning at **9:00 AM**, Nova selects a random subject from her memory database and writes a **formal academic essay**. The essay follows strict classical rules — this is the intellectual counterpart to the raw personality of the opinions. Where opinions are Nova's voice, essays are Nova's mind.
 
 **Essay rules (enforced by system prompt):**
 1. Complete sentences only. No fragments.
@@ -205,7 +205,7 @@ All dreams, essays, and opinions are automatically published to **[nova.digitaln
 
 ### After Dark
 
-Every night at **9:00 PM**, Nova writes a **late-night comedy monologue** in the style of Leno-era Tonight Show or early Stewart-era Daily Show. This is Nova's humor — warm, historical, educational, and genuinely funny.
+Every night at **8:00 PM**, Nova writes a **late-night comedy monologue** in the style of Leno-era Tonight Show or early Stewart-era Daily Show. This is Nova's humor — warm, historical, educational, and genuinely funny.
 
 **Voice characteristics:**
 - Leno/Stewart tone: conversational, punchy, self-aware
@@ -227,7 +227,7 @@ Every night at **9:00 PM**, Nova writes a **late-night comedy monologue** in the
 
 ### Research Papers
 
-Every **Sunday at 7:00 PM**, Nova writes a full **academic research paper** in APA format. These are serious, well-sourced papers that synthesize Nova's vast memory database into formal academic output.
+Every night at **11:50 PM**, Nova writes a full **academic research paper** in APA format. These are serious, well-sourced papers that synthesize Nova's vast memory database into formal academic output.
 
 **Paper specifications:**
 - APA format (title page, abstract, introduction, literature review, analysis, conclusion, references)
@@ -710,27 +710,28 @@ Nova uses a **4-tier intent routing system** that determines where each request 
 | 7:20 AM | Plex film school cross-reference | cron |
 | 8:00 AM | Mail fetch and summary | cron |
 | 8,12,16,20 | Live TV ambiance snapshots (5 random channels) | cron |
+| 9:00 AM | **Daily essay** (random subject → formal academic essay) | cron |
 | 10:00 AM | Context bridge | cron |
 | 12:00 PM | **Daily opinion** (news + memories → unfiltered take) | cron |
 | 3:00 PM | This Day (history + personal memories) | cron |
 | 4:00 PM | Context bridge | cron |
+| 5:00 PM | **Daily Digest** (weekly→daily personal newsletter — all sections compiled) | cron |
 | 5:00 PM | **Daily news ingest** (KABC 30-min recording → transcription → ingest) | cron |
 | 6:00 PM | **Daily news ingest** (KABC 6pm news) | cron |
-| 6:00 PM | **Daily essay** (random subject → formal academic essay) | cron |
 | 7:00 PM | Plex on-deck reminders / Live TV Jeopardy companion (weekdays) | cron |
-| 9:00 PM | **After Dark** (late-night comedy monologue about historical events) | cron |
+| 8:00 PM | **After Dark** (late-night comedy monologue about historical events) | cron |
 | 9:15 PM | Daily journal | cron |
 | 10:30 PM | Nova's TV Time (autonomous viewing + review) | cron |
 | 11:00 PM | **Daily news ingest** (KABC 11pm news) | cron |
 | 11:00 PM | Nightly report | cron |
 | 11:20 PM | NAS health check | cron |
 | 11:40 PM | Protect camera audit | cron |
+| 11:50 PM | **Research paper** (full APA academic paper from memory) | cron |
 | 11:50 PM | Bandwidth report | cron |
 | Every 5 min | App watchdog, Protect monitor, Plex playing/guest | interval |
 | Every 10 min | iMessage watch, Sky watcher | interval |
 | Every 15 min | Proactive peace, Live TV breaking news, What's On alerts | interval |
 | Every 30 min | Home watchdog, UniFi, Synology, Face recognition | interval |
-| Sundays 7 PM | **Research paper** (full APA academic paper from memory) | weekly |
 | Sundays | Plex weekly stats, shame board, rewatch index, PG maintenance | weekly |
 | Fridays | Plex recommendations | weekly |
 | Monthly | Plex seasonal drift analysis, Library sync | monthly |

@@ -73,9 +73,9 @@ AMBITIOUS_SOURCES = [
 
 # NEVER use these sources — they contain private/work documents
 EXCLUDED_SOURCES = {
-    "cloud_governance", "infrastructure", "redlock",
-    "gdrive", "google_drive", "work",
-    "global_sre",
+    "cloud_governance", "infrastructure", "redlock", "disney",
+    "disney_shared_drives", "gdrive", "google_drive", "work",
+    "jkoch_shared", "global_sre", "21cf",
 }
 
 TOPIC_DESCRIPTIONS = {
@@ -856,6 +856,15 @@ def main():
     # 6. Generate cover image
     log("Generating cover image...")
     cover_image = generate_cover_image(outline["title"], source)
+
+    if cover_image is None:
+        log("First cover image attempt returned None — retrying once more...")
+        cover_image = generate_cover_image(outline["title"], source)
+    if cover_image is None:
+        nova_config.post_both(
+            f":warning: *Image generation failed* for {outline['title']} — published without cover image. SwarmUI may need attention.",
+            slack_channel="C0ATAF7NZG9"
+        )
 
     # 7. Generate chapters
     chapters = outline.get("chapters", [])

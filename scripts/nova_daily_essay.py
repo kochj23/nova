@@ -570,6 +570,15 @@ def main():
     log("Generating illustration...")
     image_path = generate_essay_image(essay, source)
 
+    if image_path is None:
+        log("First image attempt returned None — retrying once more...")
+        image_path = generate_essay_image(essay, source)
+    if image_path is None:
+        nova_config.post_both(
+            f":warning: *Image generation failed* for {title} — published without cover image. SwarmUI may need attention.",
+            slack_channel="C0ATAF7NZG9"
+        )
+
     send_to_herd(essay, title, source, memories, image_path)
     post_to_slack(essay, title, source)
     publish_to_journal(essay, title, source, memories, image_path)

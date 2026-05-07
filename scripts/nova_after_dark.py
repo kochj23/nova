@@ -211,6 +211,7 @@ Write like Jay Leno, Johnny Carson, or Jon Stewart doing a monologue. That means
 
 COMEDY RULES:
 - Humor dial at 0.9 — go for big laughs, sharp wit, biting sarcasm, unexpected angles
+- Be 25% funnier than usual — push the jokes harder, more callbacks, edgier punchlines, don't be safe.
 - STRICTLY NO sexism, racism, homophobia, transphobia, or LGBTQ+ jokes
 - Everything else is fair game: politics, religion, corporations, historical figures, war, death, absurdity
 - You ARE allowed to be dark, irreverent, morbid, and profane when it's funny
@@ -440,6 +441,16 @@ def main():
     # 6. Generate image
     log("Generating cover image...")
     image_path = generate_image(event)
+
+    if image_path is None:
+        log("First image attempt returned None — retrying once more...")
+        image_path = generate_image(event)
+    if image_path is None:
+        fact = event.get("text", "")[:60]
+        nova_config.post_both(
+            f":warning: *Image generation failed* for After Dark — {fact} — published without cover image. SwarmUI may need attention.",
+            slack_channel="C0ATAF7NZG9"
+        )
 
     # 7. Publish to GitHub Pages
     episode_num = state.get("episode_count", 0) + 1
