@@ -369,6 +369,7 @@ def main():
     state = load_state()
     new_count = 0
     total_ingested = 0
+    ingested_details = []  # track what was ingested for the summary
 
     for section_key, section_name in SECTIONS.items():
         if shutdown:
@@ -386,9 +387,17 @@ def main():
             success = process_item(item, section_name)
             if success:
                 new_count += 1
+                show = item.get("grandparentTitle", "")
+                title = item.get("title", "")
+                display = f"{show} — {title}" if show else title
+                # Get the vector it was classified as (re-derive from item)
+                genres = [g.get("tag", "") for g in item.get("Genre", [])]
+                vector = classify_content(title, show, genres, "")
+                ingested_details.append({"display": display, "vector": vector})
                 state["ingested"][rating_key] = {
-                    "title": item.get("title", ""),
-                    "show": item.get("grandparentTitle", ""),
+                    "title": title,
+                    "show": show,
+                    "vector": vector,
                     "ingested_at": datetime.now().isoformat(),
                 }
                 save_state(state)
@@ -400,12 +409,27 @@ def main():
     save_state(state)
 
     if new_count > 0:
+        # Build detailed summary
+        by_vector = {}
+        for d in ingested_details:
+            by_vector.setdefault(d["vector"], []).append(d["display"])
+
+        detail_lines = []
+        for vector, items_list in sorted(by_vector.items(), key=lambda x: -len(x[1])):
+            detail_lines.append(f"\n*`{vector}`* ({len(items_list)}):")
+            for name in items_list[:8]:
+                detail_lines.append(f"  • {name[:80]}")
+            if len(items_list) > 8:
+                detail_lines.append(f"  _...and {len(items_list) - 8} more_")
+
         notify(
             f":clapper: *Plex Auto-Ingest Complete*\n"
             f"• New items processed: {new_count}\n"
-            f"• Sections scanned: {', '.join(SECTIONS.values())}\n"
-            f"• All transcribed + classified + ingested"
+            f"• Sections scanned: {', '.join(SECTIONS.values())}\n\n"
+            f"{''.join(detail_lines)}"
         )
+    else:
+        log.info("No new content to ingest.")
     log.info(f"Done. Processed {new_count} new items.")
 
 
