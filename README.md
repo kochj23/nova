@@ -725,6 +725,7 @@ Nova uses a **4-tier intent routing system** that determines where each request 
 | 11:00 PM | **Daily news ingest** (KABC 11pm news) | cron |
 | 11:00 PM | Nightly report | cron |
 | 11:20 PM | NAS health check | cron |
+| 11:30 PM | **Tech Today** (daily deep-dive on hottest tech story) | cron |
 | 11:40 PM | Protect camera audit | cron |
 | 11:50 PM | **Research paper** (full APA academic paper from memory) | cron |
 | 11:50 PM | Bandwidth report | cron |
