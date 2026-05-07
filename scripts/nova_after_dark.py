@@ -262,6 +262,15 @@ Write tonight's Nova After Dark monologue. Remember: 500-750 words, humor at 0.9
 # ── Image Generation ────────────────────────────────────────────────────────────
 
 def generate_image(event: dict) -> str | None:
+    # Ensure SwarmUI backend is healthy before attempting
+    try:
+        from nova_image_utils import ensure_backend
+        if not ensure_backend():
+            log("SwarmUI not available — skipping image")
+            return None
+    except ImportError:
+        pass
+
     year = event.get("year", "")
     fact = event.get("text", "")[:80]
 
