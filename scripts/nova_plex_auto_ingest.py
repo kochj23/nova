@@ -333,8 +333,26 @@ def process_item(item, section_name: str) -> bool:
     return True
 
 
+def trigger_library_scan():
+    """Tell Plex to scan all libraries so new downloads are detected."""
+    try:
+        token = plex_token()
+        for section_key in SECTIONS:
+            url = f"{PLEX_URL}/library/sections/{section_key}/refresh?X-Plex-Token={token}"
+            req = urllib.request.Request(url, method="GET")
+            urllib.request.urlopen(req, timeout=10)
+        log.info(f"Triggered Plex library scan for {len(SECTIONS)} sections")
+        time.sleep(30)  # Give Plex time to pick up new files
+    except Exception as e:
+        log.warning(f"Library scan trigger failed: {e} — continuing anyway")
+
+
 def main():
     log.info("=== Plex Auto-Ingest — Checking for new content ===")
+
+    # Trigger library scan first so Plex picks up any new downloads
+    trigger_library_scan()
+
     state = load_state()
     new_count = 0
     total_ingested = 0
