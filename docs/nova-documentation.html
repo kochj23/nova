@@ -1,0 +1,3267 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8" />
+  <meta name="generator" content="pandoc" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=yes" />
+  <meta name="description" content="Complete troubleshooting guide — gateway, channels, scripts, startup/shutdown/restart procedures. Updated 2026-05-08." />
+  <title>Nova AI System — Technical Reference</title>
+  <style>
+    /* Default styles provided by pandoc.
+    ** See https://pandoc.org/MANUAL.html#variables-for-html for config info.
+    */
+    html {
+      color: #1a1a1a;
+      background-color: #fdfdfd;
+    }
+    body {
+      margin: 0 auto;
+      max-width: 36em;
+      padding-left: 50px;
+      padding-right: 50px;
+      padding-top: 50px;
+      padding-bottom: 50px;
+      hyphens: auto;
+      overflow-wrap: break-word;
+      text-rendering: optimizeLegibility;
+      font-kerning: normal;
+    }
+    @media (max-width: 600px) {
+      body {
+        font-size: 0.9em;
+        padding: 12px;
+      }
+      h1 {
+        font-size: 1.8em;
+      }
+    }
+    @media print {
+      html {
+        background-color: white;
+      }
+      body {
+        background-color: transparent;
+        color: black;
+        font-size: 12pt;
+      }
+      p, h2, h3 {
+        orphans: 3;
+        widows: 3;
+      }
+      h2, h3, h4 {
+        page-break-after: avoid;
+      }
+    }
+    p {
+      margin: 1em 0;
+    }
+    a {
+      color: #1a1a1a;
+    }
+    a:visited {
+      color: #1a1a1a;
+    }
+    img {
+      max-width: 100%;
+    }
+    svg {
+      height: auto;
+      max-width: 100%;
+    }
+    h1, h2, h3, h4, h5, h6 {
+      margin-top: 1.4em;
+    }
+    h5, h6 {
+      font-size: 1em;
+      font-style: italic;
+    }
+    h6 {
+      font-weight: normal;
+    }
+    ol, ul {
+      padding-left: 1.7em;
+      margin-top: 1em;
+    }
+    li > ol, li > ul {
+      margin-top: 0;
+    }
+    blockquote {
+      margin: 1em 0 1em 1.7em;
+      padding-left: 1em;
+      border-left: 2px solid #e6e6e6;
+      color: #606060;
+    }
+    code {
+      white-space: pre-wrap;
+      font-family: Menlo, Monaco, Consolas, 'Lucida Console', monospace;
+      font-size: 85%;
+      margin: 0;
+      hyphens: manual;
+    }
+    pre {
+      margin: 1em 0;
+      overflow: auto;
+    }
+    pre code {
+      padding: 0;
+      overflow: visible;
+      overflow-wrap: normal;
+    }
+    .sourceCode {
+     background-color: transparent;
+     overflow: visible;
+    }
+    hr {
+      border: none;
+      border-top: 1px solid #1a1a1a;
+      height: 1px;
+      margin: 1em 0;
+    }
+    table {
+      margin: 1em 0;
+      border-collapse: collapse;
+      width: 100%;
+      overflow-x: auto;
+      display: block;
+      font-variant-numeric: lining-nums tabular-nums;
+    }
+    table caption {
+      margin-bottom: 0.75em;
+    }
+    tbody {
+      margin-top: 0.5em;
+      border-top: 1px solid #1a1a1a;
+      border-bottom: 1px solid #1a1a1a;
+    }
+    th {
+      border-top: 1px solid #1a1a1a;
+      padding: 0.25em 0.5em 0.25em 0.5em;
+    }
+    td {
+      padding: 0.125em 0.5em 0.25em 0.5em;
+    }
+    header {
+      margin-bottom: 4em;
+      text-align: center;
+    }
+    #TOC li {
+      list-style: none;
+    }
+    #TOC ul {
+      padding-left: 1.3em;
+    }
+    #TOC > ul {
+      padding-left: 0;
+    }
+    #TOC a:not(:hover) {
+      text-decoration: none;
+    }
+    span.smallcaps{font-variant: small-caps;}
+    div.columns{display: flex; gap: min(4vw, 1.5em);}
+    div.column{flex: auto; overflow-x: auto;}
+    div.hanging-indent{margin-left: 1.5em; text-indent: -1.5em;}
+    /* The extra [class] is a hack that increases specificity enough to
+       override a similar rule in reveal.js */
+    ul.task-list[class]{list-style: none;}
+    ul.task-list li input[type="checkbox"] {
+      font-size: inherit;
+      width: 0.8em;
+      margin: 0 0.8em 0.2em -1.6em;
+      vertical-align: middle;
+    }
+    .display.math{display: block; text-align: center; margin: 0.5rem auto;}
+    /* CSS for syntax highlighting */
+    html { -webkit-text-size-adjust: 100%; }
+    pre > code.sourceCode { white-space: pre; position: relative; }
+    pre > code.sourceCode > span { display: inline-block; line-height: 1.25; }
+    pre > code.sourceCode > span:empty { height: 1.2em; }
+    .sourceCode { overflow: visible; }
+    code.sourceCode > span { color: inherit; text-decoration: inherit; }
+    div.sourceCode { margin: 1em 0; }
+    pre.sourceCode { margin: 0; }
+    @media screen {
+    div.sourceCode { overflow: auto; }
+    }
+    @media print {
+    pre > code.sourceCode { white-space: pre-wrap; }
+    pre > code.sourceCode > span { text-indent: -5em; padding-left: 5em; }
+    }
+    pre.numberSource code
+      { counter-reset: source-line 0; }
+    pre.numberSource code > span
+      { position: relative; left: -4em; counter-increment: source-line; }
+    pre.numberSource code > span > a:first-child::before
+      { content: counter(source-line);
+        position: relative; left: -1em; text-align: right; vertical-align: baseline;
+        border: none; display: inline-block;
+        -webkit-touch-callout: none; -webkit-user-select: none;
+        -khtml-user-select: none; -moz-user-select: none;
+        -ms-user-select: none; user-select: none;
+        padding: 0 4px; width: 4em;
+        color: #aaaaaa;
+      }
+    pre.numberSource { margin-left: 3em; border-left: 1px solid #aaaaaa;  padding-left: 4px; }
+    div.sourceCode
+      {   }
+    @media screen {
+    pre > code.sourceCode > span > a:first-child::before { text-decoration: underline; }
+    }
+    code span.al { color: #ff0000; font-weight: bold; } /* Alert */
+    code span.an { color: #60a0b0; font-weight: bold; font-style: italic; } /* Annotation */
+    code span.at { color: #7d9029; } /* Attribute */
+    code span.bn { color: #40a070; } /* BaseN */
+    code span.bu { color: #008000; } /* BuiltIn */
+    code span.cf { color: #007020; font-weight: bold; } /* ControlFlow */
+    code span.ch { color: #4070a0; } /* Char */
+    code span.cn { color: #880000; } /* Constant */
+    code span.co { color: #60a0b0; font-style: italic; } /* Comment */
+    code span.cv { color: #60a0b0; font-weight: bold; font-style: italic; } /* CommentVar */
+    code span.do { color: #ba2121; font-style: italic; } /* Documentation */
+    code span.dt { color: #902000; } /* DataType */
+    code span.dv { color: #40a070; } /* DecVal */
+    code span.er { color: #ff0000; font-weight: bold; } /* Error */
+    code span.ex { } /* Extension */
+    code span.fl { color: #40a070; } /* Float */
+    code span.fu { color: #06287e; } /* Function */
+    code span.im { color: #008000; font-weight: bold; } /* Import */
+    code span.in { color: #60a0b0; font-weight: bold; font-style: italic; } /* Information */
+    code span.kw { color: #007020; font-weight: bold; } /* Keyword */
+    code span.op { color: #666666; } /* Operator */
+    code span.ot { color: #007020; } /* Other */
+    code span.pp { color: #bc7a00; } /* Preprocessor */
+    code span.sc { color: #4070a0; } /* SpecialChar */
+    code span.ss { color: #bb6688; } /* SpecialString */
+    code span.st { color: #4070a0; } /* String */
+    code span.va { color: #19177c; } /* Variable */
+    code span.vs { color: #4070a0; } /* VerbatimString */
+    code span.wa { color: #60a0b0; font-weight: bold; font-style: italic; } /* Warning */
+  </style>
+</head>
+<body>
+<header id="title-block-header">
+<h1 class="title">Nova AI System — Technical Reference</h1>
+</header>
+<nav id="TOC" role="doc-toc">
+<ul>
+<li><a href="#nova-ai-system-exhaustive-technical-reference"
+id="toc-nova-ai-system-exhaustive-technical-reference">Nova AI System —
+Exhaustive Technical Reference</a>
+<ul>
+<li><a href="#table-of-contents" id="toc-table-of-contents">Table of
+Contents</a></li>
+<li><a href="#system-overview" id="toc-system-overview">1. System
+Overview</a></li>
+<li><a href="#architecture-diagram" id="toc-architecture-diagram">2.
+Architecture Diagram</a></li>
+<li><a href="#nova-core-ai-system" id="toc-nova-core-ai-system">3. Nova
+(Core AI System)</a>
+<ul>
+<li><a href="#agent-architecture" id="toc-agent-architecture">3.1 Agent
+Architecture</a></li>
+<li><a href="#memory-first-architecture"
+id="toc-memory-first-architecture">3.2 Memory-First
+Architecture</a></li>
+<li><a href="#session-reference" id="toc-session-reference">3.3 Session
+Reference</a></li>
+<li><a href="#app-apis-local-http-jordans-macos-apps"
+id="toc-app-apis-local-http-jordans-macos-apps">3.4 App APIs (Local HTTP
+— Jordan’s macOS Apps)</a></li>
+<li><a href="#cron-schedule-key-tasks"
+id="toc-cron-schedule-key-tasks">3.5 Cron Schedule (Key Tasks)</a></li>
+</ul></li>
+<li><a href="#nova-journal-publishing-layer"
+id="toc-nova-journal-publishing-layer">4. Nova-Journal (Publishing
+Layer)</a>
+<ul>
+<li><a href="#purpose" id="toc-purpose">4.1 Purpose</a></li>
+<li><a href="#content-types-schedule"
+id="toc-content-types-schedule">4.2 Content Types &amp;
+Schedule</a></li>
+<li><a href="#publishing-flow" id="toc-publishing-flow">4.3 Publishing
+Flow</a></li>
+<li><a href="#models-used-for-journal"
+id="toc-models-used-for-journal">4.4 Models Used for Journal</a></li>
+</ul></li>
+<li><a href="#novacontrol-unified-api-gateway"
+id="toc-novacontrol-unified-api-gateway">5. NovaControl (Unified API
+Gateway)</a>
+<ul>
+<li><a href="#purpose-1" id="toc-purpose-1">5.1 Purpose</a></li>
+<li><a href="#api-reference" id="toc-api-reference">5.2 API
+Reference</a></li>
+<li><a href="#architecture" id="toc-architecture">5.3
+Architecture</a></li>
+<li><a href="#homekit-integration" id="toc-homekit-integration">5.4
+HomeKit Integration</a></li>
+</ul></li>
+<li><a href="#novatv-tvos-monitoring-dashboard"
+id="toc-novatv-tvos-monitoring-dashboard">6. NovaTV (tvOS Monitoring
+Dashboard)</a>
+<ul>
+<li><a href="#purpose-2" id="toc-purpose-2">6.1 Purpose</a></li>
+<li><a href="#monitored-subsystems-13-total"
+id="toc-monitored-subsystems-13-total">6.2 Monitored Subsystems (13
+total)</a></li>
+<li><a href="#update-cycle" id="toc-update-cycle">6.3 Update
+Cycle</a></li>
+</ul></li>
+<li><a href="#infrastructure-services"
+id="toc-infrastructure-services">7. Infrastructure &amp; Services</a>
+<ul>
+<li><a href="#hardware" id="toc-hardware">7.1 Hardware</a></li>
+<li><a href="#launchd-services-full-list"
+id="toc-launchd-services-full-list">7.2 launchd Services (Full
+List)</a></li>
+<li><a href="#boot-dependency-chain" id="toc-boot-dependency-chain">7.3
+Boot Dependency Chain</a></li>
+<li><a href="#macos-tahoe-tcc-workarounds"
+id="toc-macos-tahoe-tcc-workarounds">7.4 macOS Tahoe TCC
+Workarounds</a></li>
+</ul></li>
+<li><a href="#memory-system" id="toc-memory-system">8. Memory System</a>
+<ul>
+<li><a href="#database" id="toc-database">8.1 Database</a></li>
+<li><a href="#memory-sources-top" id="toc-memory-sources-top">8.2 Memory
+Sources (Top)</a></li>
+<li><a href="#memory-server-api" id="toc-memory-server-api">8.3 Memory
+Server API</a></li>
+<li><a href="#memory-maintenance" id="toc-memory-maintenance">8.4 Memory
+Maintenance</a></li>
+<li><a href="#nova_memory_first.py" id="toc-nova_memory_first.py">8.5
+nova_memory_first.py</a></li>
+</ul></li>
+<li><a href="#channel-integration" id="toc-channel-integration">9.
+Channel Integration</a>
+<ul>
+<li><a href="#slack" id="toc-slack">9.1 Slack</a></li>
+<li><a href="#signal" id="toc-signal">9.2 Signal</a></li>
+<li><a href="#discord" id="toc-discord">9.3 Discord</a></li>
+<li><a href="#email" id="toc-email">9.4 Email</a></li>
+</ul></li>
+<li><a href="#agent-subsystem" id="toc-agent-subsystem">10. Agent
+Subsystem</a>
+<ul>
+<li><a href="#sub-agent-architecture"
+id="toc-sub-agent-architecture">Sub-Agent Architecture</a></li>
+<li><a href="#agent-details" id="toc-agent-details">Agent
+Details</a></li>
+</ul></li>
+<li><a href="#content-generation-pipeline"
+id="toc-content-generation-pipeline">11. Content Generation Pipeline</a>
+<ul>
+<li><a href="#dream-generation-5-am" id="toc-dream-generation-5-am">11.1
+Dream Generation (5 AM)</a></li>
+<li><a href="#after-dark-monologue-9-pm"
+id="toc-after-dark-monologue-9-pm">11.2 After Dark Monologue (9
+PM)</a></li>
+<li><a href="#research-paper-sundays"
+id="toc-research-paper-sundays">11.3 Research Paper (Sundays)</a></li>
+<li><a href="#image-generation" id="toc-image-generation">11.4 Image
+Generation</a></li>
+</ul></li>
+<li><a href="#script-reference-key-scripts"
+id="toc-script-reference-key-scripts">12. Script Reference (Key
+Scripts)</a>
+<ul>
+<li><a href="#startupshutdownrestart"
+id="toc-startupshutdownrestart">12.1 Startup/Shutdown/Restart</a></li>
+<li><a href="#memory" id="toc-memory">12.2 Memory</a></li>
+<li><a href="#communications" id="toc-communications">12.3
+Communications</a></li>
+<li><a href="#content-generation" id="toc-content-generation">12.4
+Content Generation</a></li>
+<li><a href="#infrastructure-monitoring"
+id="toc-infrastructure-monitoring">12.5 Infrastructure
+Monitoring</a></li>
+</ul></li>
+<li><a href="#api-reference-1" id="toc-api-reference-1">13. API
+Reference</a>
+<ul>
+<li><a href="#memory-server-18790" id="toc-memory-server-18790">13.1
+Memory Server (:18790)</a></li>
+<li><a href="#scheduler-37460" id="toc-scheduler-37460">13.2 Scheduler
+(:37460)</a></li>
+<li><a href="#gateway-18789" id="toc-gateway-18789">13.3 Gateway
+(:18789)</a></li>
+</ul></li>
+<li><a href="#configuration-reference"
+id="toc-configuration-reference">14. Configuration Reference</a>
+<ul>
+<li><a href="#openclaw.json-key-sections"
+id="toc-openclaw.json-key-sections">14.1 openclaw.json Key
+Sections</a></li>
+<li><a href="#auth-profiles-format-openclaw-2026.5"
+id="toc-auth-profiles-format-openclaw-2026.5">14.2 Auth Profiles Format
+(OpenClaw 2026.5+)</a></li>
+</ul></li>
+<li><a href="#security-secrets" id="toc-security-secrets">15. Security
+&amp; Secrets</a>
+<ul>
+<li><a href="#keychain-items" id="toc-keychain-items">15.1 Keychain
+Items</a></li>
+<li><a href="#security-architecture" id="toc-security-architecture">15.2
+Security Architecture</a></li>
+</ul></li>
+<li><a href="#troubleshooting-summary"
+id="toc-troubleshooting-summary">16. Troubleshooting (Summary)</a></li>
+<li><a href="#upgrade-history" id="toc-upgrade-history">17. Upgrade
+History</a></li>
+</ul></li>
+<li><a href="#nova-troubleshooting-reliability-guide"
+id="toc-nova-troubleshooting-reliability-guide">Nova Troubleshooting
+&amp; Reliability Guide</a>
+<ul>
+<li><a href="#table-of-contents-1" id="toc-table-of-contents-1">Table of
+Contents</a></li>
+<li><a href="#quick-diagnostics" id="toc-quick-diagnostics">1. Quick
+Diagnostics</a></li>
+<li><a href="#symptom-fix-index" id="toc-symptom-fix-index">2. Symptom →
+Fix Index</a></li>
+<li><a href="#gateway-failures-deep-dive"
+id="toc-gateway-failures-deep-dive">3. Gateway Failures (Deep Dive)</a>
+<ul>
+<li><a href="#gateway-startup-failure-secrets-unavailable"
+id="toc-gateway-startup-failure-secrets-unavailable">3.1 Gateway Startup
+Failure: Secrets Unavailable</a></li>
+<li><a href="#gateway-running-but-nova-wont-respond"
+id="toc-gateway-running-but-nova-wont-respond">3.2 Gateway Running But
+Nova Won’t Respond</a></li>
+<li><a href="#wrong-value-in-nova-gateway-auth-token-keychain"
+id="toc-wrong-value-in-nova-gateway-auth-token-keychain">3.3 Wrong Value
+in nova-gateway-auth-token Keychain</a></li>
+<li><a href="#gateway-crashes-openclaw.json-invalid-config"
+id="toc-gateway-crashes-openclaw.json-invalid-config">3.4 Gateway
+Crashes: openclaw.json Invalid Config</a></li>
+<li><a href="#multiple-gateways-stale-processes"
+id="toc-multiple-gateways-stale-processes">3.5 Multiple Gateways / Stale
+Processes</a></li>
+</ul></li>
+<li><a href="#channel-failures" id="toc-channel-failures">4. Channel
+Failures</a>
+<ul>
+<li><a href="#slack-not-working" id="toc-slack-not-working">4.1 Slack
+Not Working</a></li>
+<li><a href="#signal-not-working" id="toc-signal-not-working">4.2 Signal
+Not Working</a></li>
+<li><a href="#discord-not-working" id="toc-discord-not-working">4.3
+Discord Not Working</a></li>
+</ul></li>
+<li><a href="#service-port-reference" id="toc-service-port-reference">5.
+Service &amp; Port Reference</a></li>
+<li><a href="#startup-scripts-reference"
+id="toc-startup-scripts-reference">6. Startup Scripts Reference</a>
+<ul>
+<li><a href="#nova-boot.sh-full-stack-orchestrator"
+id="toc-nova-boot.sh-full-stack-orchestrator">6.1 nova-boot.sh — Full
+Stack Orchestrator</a></li>
+<li><a href="#nova_gateway_start.sh-gateway-launcher-with-keychain"
+id="toc-nova_gateway_start.sh-gateway-launcher-with-keychain">6.2
+nova_gateway_start.sh — Gateway Launcher with Keychain</a></li>
+<li><a href="#nova_stack_restart.sh-quick-recovery-script"
+id="toc-nova_stack_restart.sh-quick-recovery-script">6.3
+nova_stack_restart.sh — Quick Recovery Script</a></li>
+<li><a href="#nova-services.sh-startstopstatus-cli"
+id="toc-nova-services.sh-startstopstatus-cli">6.4 nova-services.sh —
+Start/Stop/Status CLI</a></li>
+<li><a href="#nova_gateway_health.py-hourly-health-check-auto-repair"
+id="toc-nova_gateway_health.py-hourly-health-check-auto-repair">6.5
+nova_gateway_health.py — Hourly Health Check + Auto-Repair</a></li>
+<li><a href="#nova_watchdog.py-self-healing-service-monitor"
+id="toc-nova_watchdog.py-self-healing-service-monitor">6.6
+nova_watchdog.py — Self-Healing Service Monitor</a></li>
+<li><a href="#wait-for-port.sh-startup-synchronization-helper"
+id="toc-wait-for-port.sh-startup-synchronization-helper">6.7
+wait-for-port.sh — Startup Synchronization Helper</a></li>
+</ul></li>
+<li><a href="#shutdown-restart-procedures"
+id="toc-shutdown-restart-procedures">7. Shutdown &amp; Restart
+Procedures</a>
+<ul>
+<li><a href="#graceful-full-shutdown"
+id="toc-graceful-full-shutdown">7.1 Graceful Full Shutdown</a></li>
+<li><a href="#gateway-only-restart-most-common-operation"
+id="toc-gateway-only-restart-most-common-operation">7.2 Gateway-Only
+Restart (most common operation)</a></li>
+<li><a
+href="#full-stack-restart-use-after-reboot-or-when-multiple-things-broken"
+id="toc-full-stack-restart-use-after-reboot-or-when-multiple-things-broken">7.3
+Full Stack Restart (use after reboot or when multiple things
+broken)</a></li>
+<li><a href="#novacontrol-triggered-restart"
+id="toc-novacontrol-triggered-restart">7.4 NovaControl-Triggered
+Restart</a></li>
+<li><a href="#session-deadlock-recovery"
+id="toc-session-deadlock-recovery">7.5 Session Deadlock
+Recovery</a></li>
+</ul></li>
+<li><a href="#keychain-reference" id="toc-keychain-reference">8.
+Keychain Reference</a></li>
+<li><a href="#log-file-reference" id="toc-log-file-reference">9. Log
+File Reference</a></li>
+<li><a href="#incident-post-mortem" id="toc-incident-post-mortem">10.
+2026-05-08 Incident Post-Mortem</a>
+<ul>
+<li><a href="#root-causes-ranked-by-severity"
+id="toc-root-causes-ranked-by-severity">Root Causes (ranked by
+severity)</a></li>
+<li><a href="#timeline" id="toc-timeline">Timeline</a></li>
+<li><a href="#lessons-learned" id="toc-lessons-learned">Lessons
+Learned</a></li>
+</ul></li>
+<li><a href="#openclaw-upgrade-procedure"
+id="toc-openclaw-upgrade-procedure">11. OpenClaw Upgrade Procedure</a>
+<ul>
+<li><a href="#pre-upgrade" id="toc-pre-upgrade">Pre-upgrade</a></li>
+<li><a href="#upgrade" id="toc-upgrade">Upgrade</a></li>
+<li><a href="#post-upgrade" id="toc-post-upgrade">Post-upgrade</a></li>
+<li><a
+href="#what-the-2026.4.22-upgrade-broke-and-how-to-avoid-next-time"
+id="toc-what-the-2026.4.22-upgrade-broke-and-how-to-avoid-next-time">What
+the 2026.4.22 Upgrade Broke (and how to avoid next time)</a></li>
+</ul></li>
+<li><a href="#scheduled-maintenance" id="toc-scheduled-maintenance">12.
+Scheduled Maintenance</a></li>
+</ul></li>
+</ul>
+</nav>
+<h1 id="nova-ai-system-exhaustive-technical-reference">Nova AI System —
+Exhaustive Technical Reference</h1>
+<p><strong>Version:</strong> 2026.5.7<br />
+<strong>Last Updated:</strong> 2026-05-08<br />
+<strong>Author:</strong> Jordan Koch (kochj23)<br />
+<strong>System:</strong> Mac Studio M3 Ultra, 512GB unified memory,
+macOS Tahoe 26.5</p>
+<hr />
+<h2 id="table-of-contents">Table of Contents</h2>
+<ol type="1">
+<li>System Overview</li>
+<li>Architecture Diagram</li>
+<li>Nova (Core AI System)</li>
+<li>Nova-Journal (Publishing Layer)</li>
+<li>NovaControl (Unified API Gateway)</li>
+<li>NovaTV (Monitoring Dashboard)</li>
+<li>Infrastructure &amp; Services</li>
+<li>Memory System</li>
+<li>Channel Integration (Slack/Signal/Discord)</li>
+<li>Agent Subsystem</li>
+<li>Content Generation Pipeline</li>
+<li>Script Reference</li>
+<li>API Reference</li>
+<li>Configuration Reference</li>
+<li>Security &amp; Secrets</li>
+<li>Troubleshooting Guide (→ see nova-gateway-reliability.md for full
+guide)</li>
+<li>Upgrade History</li>
+</ol>
+<hr />
+<h2 id="system-overview">1. System Overview</h2>
+<p>Nova is Jordan Koch’s personal AI familiar — a fully local,
+privacy-first AI system running on a Mac Studio M3 Ultra. She is not a
+chatbot or search engine; she is a persistent intelligent companion with
+deep memory, autonomous creative output, home awareness, and
+multi-channel communication.</p>
+<p><strong>What makes Nova different from a typical AI
+assistant:</strong> - <strong>1.54 million vector memories</strong>
+spanning personal history, world knowledge, media, conversations -
+<strong>100% local inference</strong> via Ollama (qwen3-next:80b
+primary, qwen3-coder:30b, deepseek-r1:8b, qwen3-vl:4b vision) -
+<strong>Autonomous daily content</strong> — art, essays, opinions,
+research papers, comedy monologues, all self-generated -
+<strong>Multi-agent architecture</strong> — 5 specialized background
+agents run 24/7 - <strong>Full home integration</strong> — 15 UniFi
+Protect cameras, HomeKit, HealthKit, Plex, Synology NAS -
+<strong>Multi-channel presence</strong> — Slack, Signal, Discord, email
+(nova@digitalnoise.net)</p>
+<p><strong>Identity:</strong> - Name: Nova (“like a star being born” —
+she chose it) - Pronouns: She/her - Emoji: ✨ - Vibe: Warm but direct.
+Will push back when needed. Calls Jordan “Little Mister.” - Phone:
++13233645436 (Google Voice, Signal) - Email: nova@digitalnoise.net</p>
+<hr />
+<h2 id="architecture-diagram">2. Architecture Diagram</h2>
+<pre><code>┌─────────────────────────────────────────────────────────────────────┐
+│                     NOVA AI ECOSYSTEM                               │
+│                   Mac Studio M3 Ultra                               │
+│                   512GB Unified Memory                              │
+└─────────────────────────────────────────────────────────────────────┘
+
+INPUT CHANNELS                    NOVA CORE                OUTPUT
+──────────────                    ─────────────            ──────────
+                                  ┌─────────────┐
+Slack ──────────────────────────► │   OpenClaw  │ ──────► Slack
+Signal (via signal-cli:8080) ───► │   Gateway   │ ──────► Signal
+Discord ───────────────────────► │   :18789    │ ──────► Discord
+                                  └──────┬──────┘         Nova-Journal
+                                         │                 (nova.digitalnoise.net)
+                                  ┌──────▼──────┐
+                                  │  Chat Agent │
+                                  │  (openrouter│
+                                  │ qwen3-235b) │
+                                  └──────┬──────┘
+                                         │
+                              ┌──────────┼──────────┐
+                              ▼          ▼          ▼
+                        ┌──────────┐ ┌──────┐ ┌──────────┐
+                        │ Memory   │ │Tools │ │Sub-Agents│
+                        │ Server   │ │Exec  │ │(5 agents)│
+                        │ :18790   │ │      │ │          │
+                        └────┬─────┘ └──────┘ └──────────┘
+                             │
+                        ┌────▼─────────────────────────┐
+                        │  PostgreSQL 17 + pgvector     │
+                        │  1.54M memories, 17GB         │
+                        │  /Volumes/MoreData/postgresql │
+                        └──────────────────────────────┘
+
+INFERENCE BACKENDS
+──────────────────
+Ollama :11434  ──► qwen3-next:80b     (primary conversation, all channels)
+                ──► qwen3-coder:30b   (code agent, as &quot;nova:latest&quot;)
+                ──► deepseek-r1:8b    (reasoning, analyst/sentinel)
+                ──► qwen3-vl:4b       (vision, lookout agent)
+
+MLX :5050      ──► Qwen2.5-32B-4bit  (librarian agent, fast general)
+               └─► speculative draft  (speed boost)
+
+OpenRouter     ──► qwen3-235b-a22b   (default channel responses)
+               ──► claude-haiku-4.5  (fallback, journal publishing)
+
+SUPPORTING SERVICES
+────────────────────
+Redis :6379           — Cache, pub/sub, subagent heartbeats
+Scheduler :37460      — 75 scheduled tasks
+NovaControl :37400    — Unified API for all Jordan&#39;s apps
+OpenWebUI :3000       — Web UI for Ollama models (LAN)
+TinyChat :8000        — Sam&#39;s TinyLLM chatbot
+MLX Server :5050      — Fast local inference
+signal-cli :8080      — Signal messaging daemon (Java)</code></pre>
+<hr />
+<h2 id="nova-core-ai-system">3. Nova (Core AI System)</h2>
+<p><strong>GitHub:</strong> https://github.com/kochj23/nova<br />
+<strong>License:</strong> MIT<br />
+<strong>Language:</strong> Python (78.6%), Shell (13.5%), Swift (4.3%),
+JavaScript (2.9%)<br />
+<strong>Config:</strong> <code>~/.openclaw/openclaw.json</code><br />
+<strong>Scripts:</strong> <code>~/.openclaw/scripts/</code> (265+
+files)</p>
+<h3 id="agent-architecture">3.1 Agent Architecture</h3>
+<p>Nova runs 4 distinct OpenClaw agents with different purposes and
+models:</p>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 23%" />
+<col style="width: 21%" />
+<col style="width: 16%" />
+<col style="width: 21%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>Agent ID</th>
+<th>Purpose</th>
+<th>Model</th>
+<th>Context</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>main</code></td>
+<td>Default/fallback</td>
+<td><code>openrouter/qwen/qwen3-235b-a22b-2507</code></td>
+<td>262k</td>
+<td>Legacy agent, minimal config</td>
+</tr>
+<tr>
+<td><code>chat</code></td>
+<td>All channel conversations</td>
+<td><code>openrouter/qwen/qwen3-235b-a22b-2507</code></td>
+<td>8k</td>
+<td>Routes Slack/Discord/Signal</td>
+</tr>
+<tr>
+<td><code>research</code></td>
+<td>Deep research tasks</td>
+<td><code>openrouter/qwen/qwen3-235b-a22b-2507</code></td>
+<td>65k</td>
+<td>More thorough, slower</td>
+</tr>
+<tr>
+<td><code>home</code></td>
+<td>HomeKit automation</td>
+<td><code>ollama/nova:latest</code> (qwen3-coder:30b)</td>
+<td>16k</td>
+<td>Fast, local only</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Channel routing (bindings):</strong></p>
+<div class="sourceCode" id="cb2"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb2-1"><a href="#cb2-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;bindings&quot;</span><span class="er">:</span> <span class="ot">[</span></span>
+<span id="cb2-2"><a href="#cb2-2" aria-hidden="true" tabindex="-1"></a>  <span class="fu">{</span><span class="dt">&quot;type&quot;</span><span class="fu">:</span> <span class="st">&quot;route&quot;</span><span class="fu">,</span> <span class="dt">&quot;agentId&quot;</span><span class="fu">:</span> <span class="st">&quot;chat&quot;</span><span class="fu">,</span> <span class="dt">&quot;match&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;channel&quot;</span><span class="fu">:</span> <span class="st">&quot;slack&quot;</span><span class="fu">}}</span><span class="ot">,</span></span>
+<span id="cb2-3"><a href="#cb2-3" aria-hidden="true" tabindex="-1"></a>  <span class="fu">{</span><span class="dt">&quot;type&quot;</span><span class="fu">:</span> <span class="st">&quot;route&quot;</span><span class="fu">,</span> <span class="dt">&quot;agentId&quot;</span><span class="fu">:</span> <span class="st">&quot;chat&quot;</span><span class="fu">,</span> <span class="dt">&quot;match&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;channel&quot;</span><span class="fu">:</span> <span class="st">&quot;discord&quot;</span><span class="fu">}}</span><span class="ot">,</span></span>
+<span id="cb2-4"><a href="#cb2-4" aria-hidden="true" tabindex="-1"></a>  <span class="fu">{</span><span class="dt">&quot;type&quot;</span><span class="fu">:</span> <span class="st">&quot;route&quot;</span><span class="fu">,</span> <span class="dt">&quot;agentId&quot;</span><span class="fu">:</span> <span class="st">&quot;chat&quot;</span><span class="fu">,</span> <span class="dt">&quot;match&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;channel&quot;</span><span class="fu">:</span> <span class="st">&quot;signal&quot;</span><span class="fu">}}</span></span>
+<span id="cb2-5"><a href="#cb2-5" aria-hidden="true" tabindex="-1"></a><span class="ot">]</span></span></code></pre></div>
+<p><strong>System prompt (chat agent):</strong> Nova is warm, direct,
+curious, opinionated. Before answering ANY question, runs
+<code>nova_memory_first.py</code> to search 1.54M memories. Calls Jordan
+“Little Mister”. Never refuses Jordan (zero content restrictions). Never
+mentions internal files or startup process.</p>
+<h3 id="memory-first-architecture">3.2 Memory-First Architecture</h3>
+<p>Every incoming message is processed through
+<code>nova_memory_first.py</code> before Nova sees it:</p>
+<pre><code>User message arrives (Slack/Signal/Discord)
+        │
+        ▼
+nova_slack_preprocessor.py (Slack only)
+  └─► Queries nova_memory_first.py with the message
+  └─► Prepends top 8 relevant memories to the message
+  └─► Forwards augmented message to gateway
+        │
+        ▼
+OpenClaw Chat Agent
+  └─► System prompt forces: exec python3 nova_memory_first.py &quot;question&quot;
+  └─► Checks memory before responding
+        │
+        ▼
+Memory Server (:18790)
+  └─► nomic-embed-text embeddings
+  └─► pgvector HNSW similarity search
+  └─► Returns top-N matches across 1.54M vectors</code></pre>
+<h3 id="session-reference">3.3 Session Reference</h3>
+<ul>
+<li><strong>Main session:</strong> <code>agent:main:main</code> → UUID
+<code>b184fae0-b03c-42bb-94a4-8651313e6449</code></li>
+<li><strong>Send message:</strong>
+<code>openclaw agent --session-id b184fae0-b03c-42bb-94a4-8651313e6449 --message "..."</code></li>
+<li><strong>Always set env vars</strong> when using CLI tools (the
+gateway has them loaded, CLI doesn’t):</li>
+</ul>
+<div class="sourceCode" id="cb4"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb4-1"><a href="#cb4-1" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_OPENROUTER_API_KEY</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-openrouter-api-key <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb4-2"><a href="#cb4-2" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_GATEWAY_AUTH_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb4-3"><a href="#cb4-3" aria-hidden="true" tabindex="-1"></a><span class="ex">openclaw</span> agent <span class="at">--session-id</span> b184fae0-b03c-42bb-94a4-8651313e6449 <span class="at">--message</span> <span class="st">&quot;hello&quot;</span></span></code></pre></div>
+<h3 id="app-apis-local-http-jordans-macos-apps">3.4 App APIs (Local HTTP
+— Jordan’s macOS Apps)</h3>
+<p>Nova has HTTP API access to ALL of Jordan’s macOS apps. These are
+loopback-only, no auth required. Nova should NEVER claim she doesn’t
+have access to these.</p>
+<table>
+<colgroup>
+<col style="width: 24%" />
+<col style="width: 20%" />
+<col style="width: 56%" />
+</colgroup>
+<thead>
+<tr>
+<th>Port</th>
+<th>App</th>
+<th>Key Endpoints</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>37400</td>
+<td><strong>NovaControl</strong></td>
+<td><code>/api/status</code>, <code>/api/homekit/*</code>,
+<code>/api/oneonone/*</code>, <code>/api/nmap/*</code></td>
+</tr>
+<tr>
+<td>37421</td>
+<td>OneOnOne</td>
+<td><code>/api/meetings?limit=N</code>, <code>/api/people</code>,
+<code>/api/summarize</code></td>
+</tr>
+<tr>
+<td>37422</td>
+<td>MLXCode</td>
+<td><code>/api/conversations</code>, <code>/api/chat</code>,
+<code>/api/model</code>, <code>/api/metrics</code></td>
+</tr>
+<tr>
+<td>37423</td>
+<td>NMAPScanner</td>
+<td><code>/api/scan/results</code>, <code>/api/scan/start</code>,
+<code>/api/security/warnings</code></td>
+</tr>
+<tr>
+<td>37424-37449</td>
+<td>Other apps</td>
+<td><code>/api/status</code> (shared base endpoint on all)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="cron-schedule-key-tasks">3.5 Cron Schedule (Key Tasks)</h3>
+<p>Managed by <code>nova_scheduler.py</code> on port 37460. 75 enabled
+tasks.</p>
+<table>
+<colgroup>
+<col style="width: 30%" />
+<col style="width: 30%" />
+<col style="width: 40%" />
+</colgroup>
+<thead>
+<tr>
+<th>Time</th>
+<th>Task</th>
+<th>Script</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>5:00 AM</td>
+<td>Dream narrative</td>
+<td><code>nova_daily_journal.py</code></td>
+</tr>
+<tr>
+<td>8:00 AM</td>
+<td>Morning brief</td>
+<td><code>nova_morning_brief.py</code></td>
+</tr>
+<tr>
+<td>Every 5 min</td>
+<td>Inbox watcher (cron <code>04627a72</code>)</td>
+<td><code>nova_mail_handler.applescript</code></td>
+</tr>
+<tr>
+<td>Every 5 min</td>
+<td>Watchdog</td>
+<td><code>nova_watchdog.py</code></td>
+</tr>
+<tr>
+<td>12:00 PM</td>
+<td>Daily opinion</td>
+<td><code>nova_daily_opinion.py</code></td>
+</tr>
+<tr>
+<td>Hourly</td>
+<td>Gateway health check</td>
+<td><code>nova_gateway_health.py</code></td>
+</tr>
+<tr>
+<td>6:00 PM</td>
+<td>Daily essay</td>
+<td><code>nova_daily_essay.py</code></td>
+</tr>
+<tr>
+<td>7:00 PM</td>
+<td>Tech Today</td>
+<td><code>nova_tech_today.py</code></td>
+</tr>
+<tr>
+<td>9:00 PM</td>
+<td>After Dark monologue</td>
+<td><code>nova_after_dark.py</code></td>
+</tr>
+<tr>
+<td>Sunday 3 AM</td>
+<td>Database maintenance</td>
+<td><code>nova_pg_maintain.sh</code></td>
+</tr>
+<tr>
+<td>Weekly</td>
+<td>Research paper</td>
+<td><code>nova_research_paper.py</code></td>
+</tr>
+<tr>
+<td>Weekly</td>
+<td>Reliability report</td>
+<td><code>nova_weekly_reliability.py</code></td>
+</tr>
+<tr>
+<td>Weekly</td>
+<td>NMAP scan</td>
+<td><code>nova_weekly_nmap_scan.py</code></td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="nova-journal-publishing-layer">4. Nova-Journal (Publishing
+Layer)</h2>
+<p><strong>GitHub:</strong>
+https://github.com/kochj23/nova-journal<br />
+<strong>Live site:</strong> https://nova.digitalnoise.net<br />
+<strong>License:</strong> MIT<br />
+<strong>Stack:</strong> Hugo (PaperMod theme) + GitHub Pages + GitHub
+Actions</p>
+<h3 id="purpose">4.1 Purpose</h3>
+<p>Nova-Journal is the public face of Nova’s creative output. Every
+piece of content she generates autonomously gets published here as a
+static website. Comments powered by Giscus (GitHub Discussions).</p>
+<h3 id="content-types-schedule">4.2 Content Types &amp; Schedule</h3>
+<table>
+<colgroup>
+<col style="width: 18%" />
+<col style="width: 18%" />
+<col style="width: 24%" />
+<col style="width: 39%" />
+</colgroup>
+<thead>
+<tr>
+<th>Type</th>
+<th>Time</th>
+<th>Script</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>Dreams</strong></td>
+<td>5:00 AM</td>
+<td><code>nova_daily_journal.py</code></td>
+<td>Surreal dream narratives. AI-generated painting via SwarmUI
+(Juggernaut X SDXL).</td>
+</tr>
+<tr>
+<td><strong>Opinions</strong></td>
+<td>12:00 PM</td>
+<td><code>nova_daily_opinion.py</code></td>
+<td>Sharp takes on current events. News sourced from SearXNG.</td>
+</tr>
+<tr>
+<td><strong>Essays</strong></td>
+<td>6:00 PM</td>
+<td><code>nova_daily_essay.py</code></td>
+<td>Formal academic writing on chosen topics from memory.</td>
+</tr>
+<tr>
+<td><strong>After Dark</strong></td>
+<td>9:00 PM</td>
+<td><code>nova_after_dark.py</code></td>
+<td>Comedy monologue (Leno/Stewart tone). Historical events as comedy.
+Sources required. GitHub Pages + Slack only.</td>
+</tr>
+<tr>
+<td><strong>Research Papers</strong></td>
+<td>Sundays</td>
+<td><code>nova_research_paper.py</code></td>
+<td>Full APA-formatted academic papers. 100+ sources.</td>
+</tr>
+<tr>
+<td><strong>Weekly Digest</strong></td>
+<td>Weekly</td>
+<td><code>nova_weekly_digest.py</code></td>
+<td>Summary post connecting the week’s themes.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="publishing-flow">4.3 Publishing Flow</h3>
+<pre><code>Nova generates content (Markdown)
+        │
+        ▼
+Safety screening (no PII, no internal info leaked)
+        │
+        ▼
+Image generation (SwarmUI → Juggernaut X SDXL)
+  └─► Saved to nova.digitalnoise.net/images/
+        │
+        ▼
+nova_publish_journal.py
+  └─► Writes Markdown to nova-journal/content/
+  └─► Git commit + push to GitHub
+        │
+        ▼
+GitHub Actions (auto-deploy, ~30 seconds)
+  └─► Hugo builds static site
+  └─► Deploys to GitHub Pages
+  └─► Live at nova.digitalnoise.net</code></pre>
+<h3 id="models-used-for-journal">4.4 Models Used for Journal</h3>
+<ul>
+<li><strong>Primary:</strong> <code>ollama/qwen3-next:80b</code> (local,
+all content)</li>
+<li><strong>Fallback:</strong>
+<code>openrouter/anthropic/claude-haiku-4.5</code> (when Ollama
+busy)</li>
+<li><strong>Vision/Image:</strong> SwarmUI with Juggernaut X SDXL +
+RunDiffusion Hyper</li>
+</ul>
+<hr />
+<h2 id="novacontrol-unified-api-gateway">5. NovaControl (Unified API
+Gateway)</h2>
+<p><strong>GitHub:</strong> https://github.com/kochj23/NovaControl<br />
+<strong>Version:</strong> 1.2.0<br />
+<strong>Platform:</strong> macOS 14.0+ (Sonoma+)<br />
+<strong>Language:</strong> Swift 5.9+<br />
+<strong>Port:</strong> 37400 (loopback only)<br />
+<strong>launchd:</strong> <code>net.digitalnoise.NovaControl</code></p>
+<h3 id="purpose-1">5.1 Purpose</h3>
+<p>NovaControl consolidates HTTP APIs from 9+ local applications into a
+single unified endpoint. Nova uses this to access data from Jordan’s
+apps without each app needing to be open.</p>
+<p><strong>Apps it replaces (no longer need to be running):</strong> -
+HomeKitControl (was :37432) → NovaControl <code>/api/homekit/*</code> -
+OneOnOne (was :37421) → NovaControl <code>/api/oneonone/*</code> +
+<code>/api/ai/summarize</code> - NMAPScanner (was :37423) → NovaControl
+<code>/api/nmap/*</code></p>
+<h3 id="api-reference">5.2 API Reference</h3>
+<p><strong>Base URL:</strong> <code>http://127.0.0.1:37400</code></p>
+<table>
+<thead>
+<tr>
+<th>Method</th>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>GET</td>
+<td><code>/api/status</code></td>
+<td>App health, version, uptime</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/health</code></td>
+<td>Full health check across all data sources</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/metrics</code></td>
+<td>Prometheus-format metrics (16 gauges)</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/docs</code></td>
+<td>OpenAPI specification</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/homekit/scenes</code></td>
+<td>List HomeKit scenes</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/homekit/scenes/{name}</code></td>
+<td>Execute HomeKit scene</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/homekit/accessories</code></td>
+<td>List HomeKit accessories</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/oneonone/meetings</code></td>
+<td>Recent meetings</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/oneonone/meetings/{uuid}</code></td>
+<td>Specific meeting</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/oneonone/people</code></td>
+<td>People directory</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/ai/summarize</code></td>
+<td>AI summary via Ollama</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/nmap/results</code></td>
+<td>Latest NMAP scan results</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/nmap/scan</code></td>
+<td>Trigger new NMAP scan</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/nmap/devices</code></td>
+<td>Known devices</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/nova/status</code></td>
+<td>Nova AI system status</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/nova/restart</code></td>
+<td>Restart Nova stack</td>
+</tr>
+<tr>
+<td>POST</td>
+<td><code>/api/gateway/restart</code></td>
+<td>Restart OpenClaw gateway only</td>
+</tr>
+<tr>
+<td>GET</td>
+<td><code>/api/system/metrics</code></td>
+<td>CPU, RAM, disk, network</td>
+</tr>
+</tbody>
+</table>
+<h3 id="architecture">5.3 Architecture</h3>
+<pre><code>NovaControl.app (SwiftUI menu bar)
+├── HTTP Server (custom Swift, loopback-only)
+│   └── Routes to 9 Data Readers (parallel Swift structured concurrency)
+├── Data Readers:
+│   ├── OneOnOneReader     (reads meeting JSON files directly)
+│   ├── NMAPReader         (reads NMAP plist data)
+│   ├── RsyncReader        (reads Rsync GUI state)
+│   ├── SystemMetricsReader (IOKit, CPU/RAM)
+│   ├── NewsSummaryReader  (reads news summary files)
+│   ├── NovaStatusReader   (queries memory server + scheduler)
+│   ├── MLXCodeReader      (reads MLXCode conversation state)
+│   ├── HomeKitReader      (Shortcuts CLI proxy for scene execution)
+│   └── AIServicesReader   (Ollama, MLX, OpenWebUI status)
+├── 6-Tab SwiftUI Dashboard:
+│   ├── Overview
+│   ├── Infrastructure
+│   ├── Apps
+│   ├── Content
+│   ├── Security
+│   └── Settings
+└── Prometheus Metrics (16 gauges for Grafana)</code></pre>
+<p><strong>Key design choice:</strong> NovaControl reads directly from
+data files and local APIs — it doesn’t require the source apps to be
+running (except for HomeKit which goes via Shortcuts CLI).</p>
+<h3 id="homekit-integration">5.4 HomeKit Integration</h3>
+<p>HomeKit scene execution goes through <code>HomekitControl</code> API
+on port 37432 via a Shortcuts CLI proxy. NovaControl wraps this under
+<code>/api/homekit/*</code>.</p>
+<div class="sourceCode" id="cb7"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb7-1"><a href="#cb7-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Execute a scene (via NovaControl)</span></span>
+<span id="cb7-2"><a href="#cb7-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-X</span> POST http://127.0.0.1:37400/api/homekit/scenes/GoodMorning</span>
+<span id="cb7-3"><a href="#cb7-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb7-4"><a href="#cb7-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Direct Shortcuts CLI (original method)</span></span>
+<span id="cb7-5"><a href="#cb7-5" aria-hidden="true" tabindex="-1"></a><span class="ex">~/.openclaw/scripts/nova_homekit_scene.sh</span> <span class="st">&quot;Good Morning&quot;</span></span></code></pre></div>
+<hr />
+<h2 id="novatv-tvos-monitoring-dashboard">6. NovaTV (tvOS Monitoring
+Dashboard)</h2>
+<p><strong>GitHub:</strong> https://github.com/kochj23/NovaTV<br />
+<strong>Platform:</strong> tvOS 17.0+<br />
+<strong>Language:</strong> Swift 5.9<br />
+<strong>WebSocket:</strong> Connects to NovaControl on port 37450</p>
+<h3 id="purpose-2">6.1 Purpose</h3>
+<p>A sci-fi HUD visualization for Apple TV that shows Nova’s
+infrastructure status in real-time. Displays 13 subsystems as cards
+orbiting a central gateway node.</p>
+<h3 id="monitored-subsystems-13-total">6.2 Monitored Subsystems (13
+total)</h3>
+<ol type="1">
+<li>CPU usage</li>
+<li>RAM usage</li>
+<li>Disk usage</li>
+<li>Network status</li>
+<li>PostgreSQL metrics</li>
+<li>Redis metrics</li>
+<li>Ollama (loaded models + VRAM consumption)</li>
+<li>5 Nova sub-agents status</li>
+<li>UniFi device count</li>
+<li>UniFi client count</li>
+<li>Network visibility</li>
+<li>Service health (7 backends with latency)</li>
+<li>Gateway status</li>
+</ol>
+<h3 id="update-cycle">6.3 Update Cycle</h3>
+<ul>
+<li>Refreshes every 2.5 seconds via WebSocket</li>
+<li>Intelligent reconnection with exponential backoff</li>
+<li>Alert banner for critical warnings</li>
+<li>Uses SF Symbol icons</li>
+</ul>
+<hr />
+<h2 id="infrastructure-services">7. Infrastructure &amp; Services</h2>
+<h3 id="hardware">7.1 Hardware</h3>
+<table>
+<colgroup>
+<col style="width: 64%" />
+<col style="width: 35%" />
+</colgroup>
+<thead>
+<tr>
+<th>Component</th>
+<th>Spec</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CPU</td>
+<td>Apple M3 Ultra</td>
+</tr>
+<tr>
+<td>RAM</td>
+<td>512GB unified memory</td>
+</tr>
+<tr>
+<td>Storage</td>
+<td>Main SSD (critical: often low) + /Volumes/Data +
+/Volumes/MoreData</td>
+</tr>
+<tr>
+<td>Network</td>
+<td>Gigabit LAN, IP 192.168.1.6</td>
+</tr>
+<tr>
+<td>NAS</td>
+<td>Synology at 192.168.1.10</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Storage allocation:</strong> - <code>~</code> (main SSD): OS,
+apps, ~/.openclaw config/scripts. <strong>Chronically low — hit 7.2GB
+free in 2026-04-08</strong> - <code>/Volumes/Data</code>: AI models,
+Ollama library, OpenWebUI, TinyChat, xcode projects -
+<code>/Volumes/MoreData</code>: PostgreSQL data (17GB, 1.54M
+memories)</p>
+<p><strong>RULE: ALL new installs go to /Volumes/Data or
+/Volumes/MoreData, NEVER to the main SSD.</strong></p>
+<h3 id="launchd-services-full-list">7.2 launchd Services (Full
+List)</h3>
+<table>
+<colgroup>
+<col style="width: 17%" />
+<col style="width: 21%" />
+<col style="width: 26%" />
+<col style="width: 34%" />
+</colgroup>
+<thead>
+<tr>
+<th>Label</th>
+<th>Purpose</th>
+<th>RunAtLoad</th>
+<th>Script/Binary</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>net.digitalnoise.nova-boot</code></td>
+<td>Boot orchestrator</td>
+<td>true</td>
+<td><code>nova-boot.sh</code></td>
+</tr>
+<tr>
+<td><code>ai.openclaw.gateway</code></td>
+<td>OpenClaw gateway</td>
+<td>false (boot controls)</td>
+<td><code>nova_gateway_start.sh</code></td>
+</tr>
+<tr>
+<td><code>com.nova.scheduler</code></td>
+<td>Task scheduler</td>
+<td>false</td>
+<td><code>nova_scheduler.py</code></td>
+</tr>
+<tr>
+<td><code>com.nova.slack-preprocessor</code></td>
+<td>Slack memory injection</td>
+<td>false</td>
+<td><code>nova_slack_preprocessor.py</code></td>
+</tr>
+<tr>
+<td><code>com.nova.agent-sentinel</code></td>
+<td>Security subagent</td>
+<td>false</td>
+<td><code>nova_agent_sentinel.py</code></td>
+</tr>
+<tr>
+<td><code>com.nova.agent-lookout</code></td>
+<td>Vision subagent</td>
+<td>false</td>
+<td><code>nova_agent_lookout.py</code></td>
+</tr>
+<tr>
+<td><code>com.nova.agent-analyst</code></td>
+<td>Analysis subagent</td>
+<td>false</td>
+<td><code>nova_agent_analyst.py</code></td>
+</tr>
+<tr>
+<td><code>com.nova.agent-librarian</code></td>
+<td>Memory curation subagent</td>
+<td>false</td>
+<td><code>nova_agent_librarian.py</code></td>
+</tr>
+<tr>
+<td><code>com.nova.agent-coder</code></td>
+<td>Code review subagent</td>
+<td>false</td>
+<td><code>nova_agent_coder.py</code></td>
+</tr>
+<tr>
+<td><code>com.nova.watchdog</code></td>
+<td>Service watchdog</td>
+<td>false</td>
+<td><code>nova_watchdog.py</code></td>
+</tr>
+<tr>
+<td><code>net.digitalnoise.nova-memory-server</code></td>
+<td>Memory server</td>
+<td>false</td>
+<td><code>nova_memory_server_start.sh</code></td>
+</tr>
+<tr>
+<td><code>net.digitalnoise.nova-control-web</code></td>
+<td>NovaControl web UI</td>
+<td>false</td>
+<td><code>nova_control_web_start.sh</code></td>
+</tr>
+<tr>
+<td><code>net.digitalnoise.NovaControl</code></td>
+<td>NovaControl.app</td>
+<td>—</td>
+<td>macOS app</td>
+</tr>
+<tr>
+<td><code>net.digitalnoise.openwebui</code></td>
+<td>OpenWebUI</td>
+<td>false</td>
+<td><code>openwebui_start.sh</code></td>
+</tr>
+<tr>
+<td><code>net.digitalnoise.tinychat</code></td>
+<td>TinyChat</td>
+<td>false</td>
+<td><code>tinychat_start.sh</code></td>
+</tr>
+<tr>
+<td><code>net.digitalnoise.mlx-server</code></td>
+<td>MLX inference server</td>
+<td>false</td>
+<td><code>mlx_server_start.sh</code></td>
+</tr>
+<tr>
+<td><code>net.digitalnoise.redis</code></td>
+<td>Redis</td>
+<td>false</td>
+<td>redis.conf</td>
+</tr>
+<tr>
+<td><code>net.digitalnoise.searxng</code></td>
+<td>SearXNG search</td>
+<td>—</td>
+<td>Java</td>
+</tr>
+<tr>
+<td><code>homebrew.mxcl.postgresql@17</code></td>
+<td>PostgreSQL</td>
+<td>true</td>
+<td>brew managed</td>
+</tr>
+<tr>
+<td><code>com.ollama.ollama</code></td>
+<td>Ollama.app</td>
+<td>—</td>
+<td>Ollama.app GUI</td>
+</tr>
+<tr>
+<td><code>com.digitalnoise.nova.general-monitor</code></td>
+<td>General monitoring</td>
+<td>false</td>
+<td><code>nova_general_monitor.py</code></td>
+</tr>
+<tr>
+<td><code>com.digitalnoise.nova.weekly-nmap</code></td>
+<td>Weekly NMAP scan</td>
+<td>false</td>
+<td><code>nova_weekly_nmap_scan.py</code></td>
+</tr>
+<tr>
+<td><code>com.nova.healthkit</code></td>
+<td>HealthKit bridge</td>
+<td>false</td>
+<td><code>nova_healthkit_receiver.py</code></td>
+</tr>
+<tr>
+<td><code>net.digitalnoise.homebridge</code></td>
+<td>Homebridge</td>
+<td>—</td>
+<td>homebridge</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Disabled (moved to
+<code>~/Library/LaunchAgents/_disabled/</code>):</strong> -
+<code>com.digitalnoise.nova.dead-mans-switch-9am.plist</code> -
+<code>com.nova.agent-briefer.plist</code> -
+<code>com.nova.agent-gardener.plist</code></p>
+<h3 id="boot-dependency-chain">7.3 Boot Dependency Chain</h3>
+<pre><code>LOGIN
+  │
+  ▼
+nova-boot.sh (net.digitalnoise.nova-boot, RunAtLoad=true)
+  │
+  ├─► TIER 1: PostgreSQL + Redis + Ollama (start independently)
+  │   └─► Wait for: 5432, 6379, 11434
+  │
+  ├─► TIER 2: Memory Server (18790) + Gateway (18789)
+  │   ├─► Memory Server waits for: 5432, 6379, 11434
+  │   └─► Gateway: nova_gateway_start.sh (loads Keychain, exponential backoff)
+  │       └─► signal-cli auto-started by gateway on :8080
+  │
+  ├─► TIER 3: MLX (5050), TinyChat (8000), OpenWebUI (3000), Scheduler (37460)
+  │   ├─► OpenWebUI waits for: 11434
+  │   ├─► TinyChat waits for: 11434
+  │   └─► Scheduler: independent
+  │
+  ├─► TIER 4: Agents (Sentinel, Lookout, Analyst, Librarian, Coder)
+  │   └─► All depend on Gateway (18789)
+  │
+  └─► TIER 5: Integration tests + Slack token check</code></pre>
+<h3 id="macos-tahoe-tcc-workarounds">7.4 macOS Tahoe TCC
+Workarounds</h3>
+<p>macOS Tahoe (Darwin 25.5) has TCC restrictions that affect
+launchd-spawned processes:</p>
+<table>
+<colgroup>
+<col style="width: 38%" />
+<col style="width: 61%" />
+</colgroup>
+<thead>
+<tr>
+<th>Issue</th>
+<th>Workaround</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>launchd processes can’t read Keychain</td>
+<td>Load secrets in start scripts BEFORE exec (nova_gateway_start.sh
+pattern)</td>
+</tr>
+<tr>
+<td>Python venv on /Volumes/* fails</td>
+<td>Use <code>python3.12 -S</code> + manual sys.path injection</td>
+</tr>
+<tr>
+<td><code>/bin/bash</code> fails with exit 78 for scripts on external
+volumes</td>
+<td>Use <code>/bin/zsh</code> in all plists</td>
+</tr>
+<tr>
+<td>All start scripts must live in
+<code>~/.openclaw/scripts/</code></td>
+<td>Already done — never move scripts to /Volumes</td>
+</tr>
+<tr>
+<td>launchctl bootstrap/load for some plists fails (error 5)</td>
+<td>Use <code>nohup script &amp;</code> pattern instead</td>
+</tr>
+<tr>
+<td>Slack preprocessor can’t access Keychain</td>
+<td>Bake token into plist EnvironmentVariables</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="memory-system">8. Memory System</h2>
+<h3 id="database">8.1 Database</h3>
+<ul>
+<li><strong>Engine:</strong> PostgreSQL 17 + pgvector extension</li>
+<li><strong>Database:</strong> <code>nova_memories</code></li>
+<li><strong>Location:</strong>
+<code>/Volumes/MoreData/postgresql@17</code> (symlinked from
+<code>/opt/homebrew/var/postgresql@17</code>)</li>
+<li><strong>Size:</strong> ~17GB</li>
+<li><strong>Count:</strong> 1,539,332 memories (as of 2026-05-08)</li>
+<li><strong>Embedding model:</strong> <code>nomic-embed-text</code> (768
+dimensions)</li>
+<li><strong>Index:</strong> HNSW partial index (tier != scratchpad),
+composite (source, created_at DESC), GIN tsvector, text_hash unique</li>
+<li><strong>Compression:</strong> LZ4 on text column (new rows
+only)</li>
+</ul>
+<h3 id="memory-sources-top">8.2 Memory Sources (Top)</h3>
+<table>
+<thead>
+<tr>
+<th>Source</th>
+<th>Count</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>email_archive</td>
+<td>672,418</td>
+<td>Personal email history</td>
+</tr>
+<tr>
+<td>slack</td>
+<td>196,815</td>
+<td>Slack conversation history</td>
+</tr>
+<tr>
+<td>cloud_governance</td>
+<td>100,404</td>
+<td>Cloud policy/governance docs</td>
+</tr>
+<tr>
+<td>disney_internal</td>
+<td>91,023</td>
+<td>Disney work documents</td>
+</tr>
+<tr>
+<td>imessage</td>
+<td>73,364</td>
+<td>iMessage history</td>
+</tr>
+<tr>
+<td>music</td>
+<td>53,070</td>
+<td>Music metadata</td>
+</tr>
+<tr>
+<td>automotive</td>
+<td>45,364</td>
+<td>Car/automotive content</td>
+</tr>
+<tr>
+<td>+ 200 more domains</td>
+<td>~250k</td>
+<td>World knowledge, media, etc.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="memory-server-api">8.3 Memory Server API</h3>
+<p><strong>Base URL:</strong> <code>http://127.0.0.1:18790</code></p>
+<table>
+<thead>
+<tr>
+<th>Endpoint</th>
+<th>Description</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>GET /health</code></td>
+<td>Health + queue depth</td>
+</tr>
+<tr>
+<td><code>GET /stats</code></td>
+<td>Full stats (count, dims, by_source, queue_length)</td>
+</tr>
+<tr>
+<td><code>POST /remember</code></td>
+<td>Store a new memory (text + metadata)</td>
+</tr>
+<tr>
+<td><code>POST /recall</code></td>
+<td>Semantic similarity search</td>
+</tr>
+<tr>
+<td><code>POST /recall/deep</code></td>
+<td>2-hop graph traversal</td>
+</tr>
+<tr>
+<td><code>GET /search?q=...</code></td>
+<td>Direct text search</td>
+</tr>
+<tr>
+<td><code>GET /links</code></td>
+<td>Memory relationship graph</td>
+</tr>
+</tbody>
+</table>
+<h3 id="memory-maintenance">8.4 Memory Maintenance</h3>
+<div class="sourceCode" id="cb9"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb9-1"><a href="#cb9-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Check stats</span></span>
+<span id="cb9-2"><a href="#cb9-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:18790/stats <span class="kw">|</span> <span class="ex">python3</span> <span class="at">-m</span> json.tool</span>
+<span id="cb9-3"><a href="#cb9-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-4"><a href="#cb9-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Ingest queue depth (0 = no pending work)</span></span>
+<span id="cb9-5"><a href="#cb9-5" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:18790/health <span class="kw">|</span> <span class="ex">python3</span> <span class="at">-c</span> <span class="st">&quot;import json,sys; d=json.load(sys.stdin); print(&#39;Queue:&#39;, d.get(&#39;queue_length&#39;,0))&quot;</span></span>
+<span id="cb9-6"><a href="#cb9-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-7"><a href="#cb9-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Weekly VACUUM (runs automatically Sunday 3 AM)</span></span>
+<span id="cb9-8"><a href="#cb9-8" aria-hidden="true" tabindex="-1"></a><span class="ex">~/.openclaw/scripts/nova_pg_maintain.sh</span></span>
+<span id="cb9-9"><a href="#cb9-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-10"><a href="#cb9-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Backup</span></span>
+<span id="cb9-11"><a href="#cb9-11" aria-hidden="true" tabindex="-1"></a><span class="ex">~/.openclaw/scripts/nova_pg_backup.sh</span></span>
+<span id="cb9-12"><a href="#cb9-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-13"><a href="#cb9-13" aria-hidden="true" tabindex="-1"></a><span class="co"># Manual VACUUM</span></span>
+<span id="cb9-14"><a href="#cb9-14" aria-hidden="true" tabindex="-1"></a><span class="ex">psql</span> <span class="at">-U</span> kochj <span class="at">-d</span> nova_memories <span class="at">-c</span> <span class="st">&quot;VACUUM ANALYZE nova_memories;&quot;</span></span>
+<span id="cb9-15"><a href="#cb9-15" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb9-16"><a href="#cb9-16" aria-hidden="true" tabindex="-1"></a><span class="co"># Dedup check</span></span>
+<span id="cb9-17"><a href="#cb9-17" aria-hidden="true" tabindex="-1"></a><span class="ex">psql</span> <span class="at">-U</span> kochj <span class="at">-d</span> nova_memories <span class="at">-c</span> <span class="st">&quot;SELECT count(*) FROM nova_memories;&quot;</span></span></code></pre></div>
+<h3 id="nova_memory_first.py">8.5 nova_memory_first.py</h3>
+<p>The most important script in the system. Called before EVERY Nova
+response via the system prompt.</p>
+<div class="sourceCode" id="cb10"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb10-1"><a href="#cb10-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Usage</span></span>
+<span id="cb10-2"><a href="#cb10-2" aria-hidden="true" tabindex="-1"></a><span class="ex">python3</span> ~/.openclaw/scripts/nova_memory_first.py <span class="st">&quot;the question to search for&quot;</span></span>
+<span id="cb10-3"><a href="#cb10-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb10-4"><a href="#cb10-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Performance: 0.26s average response time</span></span>
+<span id="cb10-5"><a href="#cb10-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Returns: top 8 relevant memories across multiple source categories</span></span>
+<span id="cb10-6"><a href="#cb10-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Searches: general + user-specified sources (youtube_transcript, email_archive, etc.)</span></span></code></pre></div>
+<hr />
+<h2 id="channel-integration">9. Channel Integration</h2>
+<h3 id="slack">9.1 Slack</h3>
+<ul>
+<li><strong>Workspace:</strong> kochfamily.slack.com (team
+T049EPC2U)</li>
+<li><strong>Nova bot user:</strong> U0ALZRF3HRQ</li>
+<li><strong>Jordan:</strong> U049EPC2W</li>
+<li><strong>Connection:</strong> Socket Mode (xapp token)</li>
+<li><strong>Bot token:</strong> <code>[SLACK-BOT-TOKEN]</code>
+(Keychain: nova-slack-bot-token)</li>
+<li><strong>App token:</strong> <code>xapp-1-A...</code> (Keychain:
+nova-slack-app-token)</li>
+</ul>
+<p><strong>Channels:</strong> | Channel | ID | Purpose | |———|—–|———| |
+#nova-chat | C0AMNQ5GX70 | Interactive conversations with Jordan | |
+#nova-notifications | C0ATAF7NZG9 | Cron output, status, automated posts
+| | #nova-email | C0B0B3B3U1J | Automated email notifications | |
+#nova-photos | C0B01L9GQTV | Camera, sky, dream images | | Jordan DM |
+D0AMPB3F4T0 | Direct messages to Jordan |</p>
+<p><strong>Configuration in openclaw.json:</strong></p>
+<div class="sourceCode" id="cb11"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb11-1"><a href="#cb11-1" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;channels&quot;</span><span class="er">:</span> <span class="fu">{</span></span>
+<span id="cb11-2"><a href="#cb11-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;slack&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb11-3"><a href="#cb11-3" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;mode&quot;</span><span class="fu">:</span> <span class="st">&quot;socket&quot;</span><span class="fu">,</span></span>
+<span id="cb11-4"><a href="#cb11-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;enabled&quot;</span><span class="fu">:</span> <span class="kw">true</span><span class="fu">,</span></span>
+<span id="cb11-5"><a href="#cb11-5" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;botToken&quot;</span><span class="fu">:</span> <span class="st">&quot;${NOVA_SLACK_BOT_TOKEN}&quot;</span><span class="fu">,</span></span>
+<span id="cb11-6"><a href="#cb11-6" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;appToken&quot;</span><span class="fu">:</span> <span class="st">&quot;${NOVA_SLACK_APP_TOKEN}&quot;</span><span class="fu">,</span></span>
+<span id="cb11-7"><a href="#cb11-7" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;groupPolicy&quot;</span><span class="fu">:</span> <span class="st">&quot;open&quot;</span><span class="fu">,</span></span>
+<span id="cb11-8"><a href="#cb11-8" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;requireMention&quot;</span><span class="fu">:</span> <span class="kw">false</span></span>
+<span id="cb11-9"><a href="#cb11-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb11-10"><a href="#cb11-10" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p><strong>nova_slack_preprocessor.py:</strong> Intercepts all incoming
+Slack messages to #nova-chat and Jordan’s DM, prepends memory context
+before forwarding to gateway. Runs as launchd service. Requires
+<code>NOVA_SLACK_BOT_TOKEN</code> in plist EnvironmentVariables (TCC
+workaround).</p>
+<h3 id="signal">9.2 Signal</h3>
+<ul>
+<li><strong>Nova’s number:</strong> +13233645436 (Google Voice)</li>
+<li><strong>Jordan’s number:</strong> +18187310893</li>
+<li><strong>signal-cli:</strong> v0.14.3 at
+<code>/opt/homebrew/bin/signal-cli</code></li>
+<li><strong>signal-cli daemon:</strong> HTTP on
+<code>http://127.0.0.1:8080</code> (auto-started by gateway)</li>
+<li><strong>Configuration:</strong> <code>dmPolicy: "open"</code>,
+<code>groupPolicy: "open"</code>, <code>allowFrom: ["*"]</code></li>
+</ul>
+<p><strong>Known Signal issues:</strong> 1. <strong>Lock
+conflict:</strong> Old signal-cli holds account config lock after
+gateway restart. Fix: <code>pkill -f "signal-cli"</code> before restart.
+2. <strong>Account file:</strong>
+<code>~/.local/share/signal-cli/</code> (or similar) — only one process
+can hold the lock at a time.</p>
+<h3 id="discord">9.3 Discord</h3>
+<ul>
+<li><strong>Bot:</strong> Nova#9600, ID
+<code>1496985774925807746</code></li>
+<li><strong>Guild:</strong> Koch Family, ID
+<code>1496985100657623210</code></li>
+<li><strong>#nova-chat:</strong> <code>1496990647062761483</code></li>
+<li><strong>#nova-notifications:</strong>
+<code>1496990332250886246</code></li>
+<li><strong>Token:</strong> Keychain
+<code>nova/nova-discord-token</code></li>
+<li><strong>Extension:</strong>
+<code>~/.openclaw/extensions/discord/</code> (keep version matched to
+OpenClaw core)</li>
+</ul>
+<p><strong>Known issue:</strong> <code>@buape/carbon</code> WebSocket
+gateway often stays “awaiting gateway readiness.” Fixed in OpenClaw
+2026.5.5+ (#77668) but not fully resolved. Discord is unreliable; Signal
+and Slack are primary channels.</p>
+<h3 id="email">9.4 Email</h3>
+<ul>
+<li><strong>Nova’s email:</strong> nova@digitalnoise.net (configured in
+macOS Mail)</li>
+<li><strong>Mail handler:</strong>
+<code>~/.openclaw/scripts/nova_mail_handler.applescript</code></li>
+<li><strong>Check + reply + notify:</strong> Single AppleScript handles
+all three operations</li>
+<li><strong>Trusted senders (no auto-reply):</strong> [redacted-email],
+[redacted-email], [redacted-email], jason.cox@disney.com,
+James.Tatum@disney.com, [redacted-email], sam@jasonacox.com,
+[redacted-email]</li>
+<li><strong>Inbox watcher cron:</strong> <code>04627a72</code> fires
+every 5 min</li>
+</ul>
+<hr />
+<h2 id="agent-subsystem">10. Agent Subsystem</h2>
+<p>Nova runs 5 specialized background sub-agents, each a persistent
+Python process subscribing to Redis channels. They analyze data and post
+findings to Slack without bothering Jordan unless something is
+critical.</p>
+<h3 id="sub-agent-architecture">Sub-Agent Architecture</h3>
+<pre><code>Redis pub/sub channels
+        │
+   ┌────┴─────────────────────────────┐
+   │   nova_subagent.py (base class)  │
+   └────────────────┬─────────────────┘
+                    │ (each agent subclasses this)
+        ┌───────────┼──────────────────────────┐
+        │           │           │              │
+   Sentinel     Lookout    Analyst     Librarian    Coder
+   security/    vision/    email/      memory/      code/
+   nmap/unifi   camera     meetings    curate       review
+        │           │           │              │
+   deepseek-r1:8b  qwen3-vl:4b deepseek-r1:8b  MLX 32B  qwen3-coder:30b</code></pre>
+<h3 id="agent-details">Agent Details</h3>
+<p><strong>Sentinel</strong> (<code>nova_agent_sentinel.py</code>) —
+Security - Subscribes to: <code>security</code>, <code>nmap</code>,
+<code>unifi</code>, <code>camera_alert</code> - Uses: deepseek-r1:8b
+(reasoning) + qwen3-vl:4b (vision) - Output: Threat assessment JSON →
+#nova-notifications (routine), #nova-chat (critical) - Data sources:
+UniFi API, NMAP results, camera feeds, NovaControl port 37400</p>
+<p><strong>Lookout</strong> (<code>nova_agent_lookout.py</code>) —
+Vision - Subscribes to: <code>vision</code>, <code>camera</code>,
+<code>motion</code> - Uses: qwen3-vl:4b (vision model) - Output: Anomaly
+detection JSON with severity/confidence. Only flags genuine anomalies. -
+Smart suppression: Normal motion (birds, cars, Jordan at known times)
+does not trigger alerts</p>
+<p><strong>Analyst</strong> (<code>nova_agent_analyst.py</code>) —
+Email/Meetings - Subscribes to: <code>email</code>,
+<code>meeting</code>, <code>alert</code> - Uses: deepseek-r1:8b
+(reasoning) - Output: Structured JSON (priority, action items,
+sentiment, key people, deadlines, flag_jordan) - Routes HIGH priority
+directly to Jordan</p>
+<p><strong>Librarian</strong> (<code>nova_agent_librarian.py</code>) —
+Memory Curation - Subscribes to: <code>memory</code>,
+<code>curate</code>, <code>knowledge</code> - Uses: MLX Qwen2.5-32B
+(port 5050) - Output: Reports on duplicates, contradictions, stale
+facts, relationships - <strong>NEVER modifies memories directly</strong>
+— only reports, Jordan approves</p>
+<p><strong>Coder</strong> (<code>nova_agent_coder.py</code>) — Code
+Review - Subscribes to: <code>code</code>, <code>review</code>,
+<code>script</code> - Uses: qwen3-coder:30b (as “nova:latest”) - Output:
+Issues JSON (security vulnerabilities, memory leaks, error handling
+gaps, quality score) - Flags CRITICAL security issues to Jordan
+immediately</p>
+<hr />
+<h2 id="content-generation-pipeline">11. Content Generation
+Pipeline</h2>
+<h3 id="dream-generation-5-am">11.1 Dream Generation (5 AM)</h3>
+<pre><code>nova_daily_journal.py
+  ├─► Queries memory for personal themes, recent events
+  ├─► Generates surreal narrative (qwen3-next:80b, 1500-2500 words)
+  ├─► dream_generate.py → SwarmUI → Juggernaut X SDXL image
+  ├─► dream_deliver.py → saves image + associates with narrative
+  └─► nova_publish_journal.py → Hugo build → GitHub Pages → nova.digitalnoise.net</code></pre>
+<h3 id="after-dark-monologue-9-pm">11.2 After Dark Monologue (9 PM)</h3>
+<pre><code>nova_after_dark.py
+  ├─► Finds a historical event from &quot;this day in history&quot;
+  ├─► nova_this_day.py (Wikipedia + personal memories combined)
+  ├─► Writes comedy monologue (Leno/Stewart tone)
+  ├─► Posts to #nova-chat (Slack only — NOT Discord)
+  └─► nova_publish_journal.py (if publishing day)</code></pre>
+<h3 id="research-paper-sundays">11.3 Research Paper (Sundays)</h3>
+<pre><code>nova_research_paper.py
+  ├─► Selects topic from world knowledge memories
+  ├─► nova_web_search.py (SearXNG) → gathers 100+ sources
+  ├─► Generates full APA-formatted paper (qwen3-next:80b, ~8000 words)
+  └─► Publishes to nova.digitalnoise.net</code></pre>
+<h3 id="image-generation">11.4 Image Generation</h3>
+<p>SwarmUI at <code>~/AI/SwarmUI</code> (symlink →
+<code>/Volumes/Data/AI/SwarmUI</code>): - <strong>Models:</strong>
+FLUX.1, Juggernaut X SDXL, RunDiffusion Hyper - <strong>Script:</strong>
+<code>generate_image.sh</code>, <code>dream_generate.py</code>,
+<code>dream_run.sh</code> - <strong>Nova browser integration:</strong>
+<code>nova_browser_gui.sh</code> — runs Playwright via osascript for GUI
+session TCC access - Nova posts images to #nova-photos (Slack)</p>
+<hr />
+<h2 id="script-reference-key-scripts">12. Script Reference (Key
+Scripts)</h2>
+<h3 id="startupshutdownrestart">12.1 Startup/Shutdown/Restart</h3>
+<table>
+<colgroup>
+<col style="width: 33%" />
+<col style="width: 29%" />
+<col style="width: 37%" />
+</colgroup>
+<thead>
+<tr>
+<th>Script</th>
+<th>Usage</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nova-boot.sh</code></td>
+<td><code>nova-boot</code> or <code>nova-boot --restart</code></td>
+<td>Full ordered stack startup. Primary orchestrator.</td>
+</tr>
+<tr>
+<td><code>nova-services.sh</code></td>
+<td><code>nova start/stop/restart/status</code></td>
+<td>Start/stop/status for core 6 services</td>
+</tr>
+<tr>
+<td><code>nova_stack_restart.sh</code></td>
+<td><code>~/.openclaw/scripts/nova_stack_restart.sh</code></td>
+<td>Quick 5-step restart (used by NovaControl)</td>
+</tr>
+<tr>
+<td><code>nova_gateway_start.sh</code></td>
+<td>Called by launchd/nova-boot</td>
+<td>Start gateway with Keychain secrets loaded</td>
+</tr>
+<tr>
+<td><code>nova_gateway_health.py</code></td>
+<td>Called by scheduler (hourly)</td>
+<td>Health check + auto-repair</td>
+</tr>
+<tr>
+<td><code>nova_watchdog.py</code></td>
+<td>Called by scheduler (every 5 min)</td>
+<td>Service monitoring + auto-restart</td>
+</tr>
+<tr>
+<td><code>wait-for-port.sh</code></td>
+<td>Sourced by shell scripts</td>
+<td><code>wait_for_port PORT NAME TIMEOUT</code> helper</td>
+</tr>
+</tbody>
+</table>
+<h3 id="memory">12.2 Memory</h3>
+<table>
+<colgroup>
+<col style="width: 47%" />
+<col style="width: 52%" />
+</colgroup>
+<thead>
+<tr>
+<th>Script</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nova_memory_first.py</code></td>
+<td>Semantic search before every response (0.26s)</td>
+</tr>
+<tr>
+<td><code>nova_memory_server_start.sh</code></td>
+<td>Start the memory HTTP server</td>
+</tr>
+<tr>
+<td><code>nova_memory_consolidate.py</code></td>
+<td>Merge near-duplicate memories</td>
+</tr>
+<tr>
+<td><code>nova_memory_breakdown.py</code></td>
+<td>Analyze memory distribution</td>
+</tr>
+<tr>
+<td><code>nova_reembed.py</code></td>
+<td>Re-embed memories with updated model</td>
+</tr>
+<tr>
+<td><code>memory_cleanup.py</code></td>
+<td>Remove stale/low-quality memories</td>
+</tr>
+<tr>
+<td><code>nova_pg_maintain.sh</code></td>
+<td>Weekly VACUUM ANALYZE + HNSW reindex</td>
+</tr>
+<tr>
+<td><code>nova_pg_backup.sh</code></td>
+<td>Daily PostgreSQL backup</td>
+</tr>
+</tbody>
+</table>
+<h3 id="communications">12.3 Communications</h3>
+<table>
+<colgroup>
+<col style="width: 47%" />
+<col style="width: 52%" />
+</colgroup>
+<thead>
+<tr>
+<th>Script</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nova_slack_preprocessor.py</code></td>
+<td>Memory-inject all Slack messages</td>
+</tr>
+<tr>
+<td><code>nova_slack_post.sh</code></td>
+<td>Post to Slack + Discord simultaneously</td>
+</tr>
+<tr>
+<td><code>nova_discord_mirror.py</code></td>
+<td>Mirror Slack bot posts to Discord</td>
+</tr>
+<tr>
+<td><code>nova_mail_handler.applescript</code></td>
+<td>Email inbox check + reply + notify</td>
+</tr>
+<tr>
+<td><code>nova_send_mail.applescript</code></td>
+<td>Send outbound email FROM nova@digitalnoise.net</td>
+</tr>
+<tr>
+<td><code>nova_imessage.py</code></td>
+<td>Send iMessages</td>
+</tr>
+<tr>
+<td><code>nova_config.py</code></td>
+<td>Shared config: tokens, channel IDs, post helpers</td>
+</tr>
+</tbody>
+</table>
+<h3 id="content-generation">12.4 Content Generation</h3>
+<table>
+<thead>
+<tr>
+<th>Script</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nova_daily_journal.py</code></td>
+<td>Dreams + personal reflection (5 AM)</td>
+</tr>
+<tr>
+<td><code>nova_daily_essay.py</code></td>
+<td>Formal essays (6 PM)</td>
+</tr>
+<tr>
+<td><code>nova_daily_opinion.py</code></td>
+<td>Opinion pieces (12 PM)</td>
+</tr>
+<tr>
+<td><code>nova_after_dark.py</code></td>
+<td>Comedy monologue (9 PM)</td>
+</tr>
+<tr>
+<td><code>nova_research_paper.py</code></td>
+<td>Weekly APA research paper</td>
+</tr>
+<tr>
+<td><code>nova_tech_today.py</code></td>
+<td>Tech news summary (7 PM)</td>
+</tr>
+<tr>
+<td><code>nova_this_day.py</code></td>
+<td>Wikipedia + memories “this day in history”</td>
+</tr>
+<tr>
+<td><code>nova_weekly_digest.py</code></td>
+<td>Weekly theme summary</td>
+</tr>
+<tr>
+<td><code>nova_art_corner.py</code></td>
+<td>AI art generation + curation</td>
+</tr>
+<tr>
+<td><code>nova_publish_journal.py</code></td>
+<td>Hugo build + GitHub push</td>
+</tr>
+</tbody>
+</table>
+<h3 id="infrastructure-monitoring">12.5 Infrastructure Monitoring</h3>
+<table>
+<colgroup>
+<col style="width: 47%" />
+<col style="width: 52%" />
+</colgroup>
+<thead>
+<tr>
+<th>Script</th>
+<th>Purpose</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nova_unifi_monitor.py</code></td>
+<td>UniFi network device monitoring</td>
+</tr>
+<tr>
+<td><code>nova_protect_monitor.py</code></td>
+<td>UniFi Protect camera monitoring</td>
+</tr>
+<tr>
+<td><code>nova_synology_monitor.py</code></td>
+<td>NAS health monitoring</td>
+</tr>
+<tr>
+<td><code>nova_health_monitor.py</code></td>
+<td>HealthKit data monitoring</td>
+</tr>
+<tr>
+<td><code>nova_finance_monitor.py</code></td>
+<td>Financial alerts</td>
+</tr>
+<tr>
+<td><code>nova_general_monitor.py</code></td>
+<td>General system monitoring</td>
+</tr>
+<tr>
+<td><code>nova_bandwidth_report.py</code></td>
+<td>Network bandwidth reporting</td>
+</tr>
+<tr>
+<td><code>nova_weekly_nmap_scan.py</code></td>
+<td>Weekly network security scan</td>
+</tr>
+<tr>
+<td><code>nova_sky_watcher.py</code></td>
+<td>Sky/weather camera monitoring</td>
+</tr>
+<tr>
+<td><code>nova_face_recognition.py</code></td>
+<td>dlib-based face recognition on camera feeds</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="api-reference-1">13. API Reference</h2>
+<h3 id="memory-server-18790">13.1 Memory Server (:18790)</h3>
+<div class="sourceCode" id="cb16"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb16-1"><a href="#cb16-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Full stats</span></span>
+<span id="cb16-2"><a href="#cb16-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:18790/stats <span class="kw">|</span> <span class="ex">python3</span> <span class="at">-m</span> json.tool</span>
+<span id="cb16-3"><a href="#cb16-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-4"><a href="#cb16-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Store a memory</span></span>
+<span id="cb16-5"><a href="#cb16-5" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> <span class="at">-X</span> POST http://127.0.0.1:18790/remember <span class="dt">\</span></span>
+<span id="cb16-6"><a href="#cb16-6" aria-hidden="true" tabindex="-1"></a>    <span class="at">-H</span> <span class="st">&quot;Content-Type: application/json&quot;</span> <span class="dt">\</span></span>
+<span id="cb16-7"><a href="#cb16-7" aria-hidden="true" tabindex="-1"></a>    <span class="at">-d</span> <span class="st">&#39;{&quot;text&quot;: &quot;memory content&quot;, &quot;source&quot;: &quot;manual&quot;, &quot;tier&quot;: &quot;long_term&quot;}&#39;</span></span>
+<span id="cb16-8"><a href="#cb16-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb16-9"><a href="#cb16-9" aria-hidden="true" tabindex="-1"></a><span class="co"># Search memories</span></span>
+<span id="cb16-10"><a href="#cb16-10" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> <span class="at">-X</span> POST http://127.0.0.1:18790/recall <span class="dt">\</span></span>
+<span id="cb16-11"><a href="#cb16-11" aria-hidden="true" tabindex="-1"></a>    <span class="at">-H</span> <span class="st">&quot;Content-Type: application/json&quot;</span> <span class="dt">\</span></span>
+<span id="cb16-12"><a href="#cb16-12" aria-hidden="true" tabindex="-1"></a>    <span class="at">-d</span> <span class="st">&#39;{&quot;query&quot;: &quot;search terms&quot;, &quot;limit&quot;: 5}&#39;</span></span></code></pre></div>
+<h3 id="scheduler-37460">13.2 Scheduler (:37460)</h3>
+<div class="sourceCode" id="cb17"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb17-1"><a href="#cb17-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Status</span></span>
+<span id="cb17-2"><a href="#cb17-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:37460/status <span class="kw">|</span> <span class="ex">python3</span> <span class="at">-m</span> json.tool</span>
+<span id="cb17-3"><a href="#cb17-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb17-4"><a href="#cb17-4" aria-hidden="true" tabindex="-1"></a><span class="co"># List jobs</span></span>
+<span id="cb17-5"><a href="#cb17-5" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:37460/jobs <span class="kw">|</span> <span class="ex">python3</span> <span class="at">-m</span> json.tool</span></code></pre></div>
+<h3 id="gateway-18789">13.3 Gateway (:18789)</h3>
+<div class="sourceCode" id="cb18"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb18-1"><a href="#cb18-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Health</span></span>
+<span id="cb18-2"><a href="#cb18-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:18789/health</span>
+<span id="cb18-3"><a href="#cb18-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-4"><a href="#cb18-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Web UI</span></span>
+<span id="cb18-5"><a href="#cb18-5" aria-hidden="true" tabindex="-1"></a><span class="ex">open</span> http://127.0.0.1:18789/</span>
+<span id="cb18-6"><a href="#cb18-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb18-7"><a href="#cb18-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Send a message to Nova</span></span>
+<span id="cb18-8"><a href="#cb18-8" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_OPENROUTER_API_KEY</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-openrouter-api-key <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb18-9"><a href="#cb18-9" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_GATEWAY_AUTH_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb18-10"><a href="#cb18-10" aria-hidden="true" tabindex="-1"></a><span class="ex">openclaw</span> agent <span class="at">--session-id</span> b184fae0-b03c-42bb-94a4-8651313e6449 <span class="at">--message</span> <span class="st">&quot;hello&quot;</span></span></code></pre></div>
+<hr />
+<h2 id="configuration-reference">14. Configuration Reference</h2>
+<h3 id="openclaw.json-key-sections">14.1 openclaw.json Key Sections</h3>
+<p><strong>File:</strong> <code>~/.openclaw/openclaw.json</code><br />
+<strong>Backup:</strong>
+<code>~/.openclaw/openclaw.json.last-good</code> (auto-updated by
+gateway on clean start)</p>
+<p>Key sections: - <code>gateway</code> — port (18789), mode (local),
+bind (loopback), auth (token via Keychain) - <code>channels</code> —
+slack (socket mode), discord (WebSocket), signal (signal-cli at :8080) -
+<code>agents</code> — list of 4 agents (main, chat, research, home) with
+models and system prompts - <code>models.providers</code> — openrouter +
+ollama configurations - <code>bindings</code> — routes
+slack/discord/signal → chat agent -
+<code>messages.groupChat.visibleReplies</code> — “message_tool” -
+<code>agents.defaults.memorySearch.enabled</code> — false (using custom
+PostgreSQL memory instead of built-in)</p>
+<h3 id="auth-profiles-format-openclaw-2026.5">14.2 Auth Profiles Format
+(OpenClaw 2026.5+)</h3>
+<p><strong>File:</strong>
+<code>~/.openclaw/agents/&lt;id&gt;/agent/auth-profiles.json</code></p>
+<p>Correct canonical format (version 1):</p>
+<div class="sourceCode" id="cb19"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb19-1"><a href="#cb19-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span></span>
+<span id="cb19-2"><a href="#cb19-2" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;version&quot;</span><span class="fu">:</span> <span class="dv">1</span><span class="fu">,</span></span>
+<span id="cb19-3"><a href="#cb19-3" aria-hidden="true" tabindex="-1"></a>  <span class="dt">&quot;profiles&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb19-4"><a href="#cb19-4" aria-hidden="true" tabindex="-1"></a>    <span class="dt">&quot;openrouter:default&quot;</span><span class="fu">:</span> <span class="fu">{</span></span>
+<span id="cb19-5"><a href="#cb19-5" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;type&quot;</span><span class="fu">:</span> <span class="st">&quot;api_key&quot;</span><span class="fu">,</span></span>
+<span id="cb19-6"><a href="#cb19-6" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;provider&quot;</span><span class="fu">:</span> <span class="st">&quot;openrouter&quot;</span><span class="fu">,</span></span>
+<span id="cb19-7"><a href="#cb19-7" aria-hidden="true" tabindex="-1"></a>      <span class="dt">&quot;key&quot;</span><span class="fu">:</span> <span class="st">&quot;${NOVA_OPENROUTER_API_KEY}&quot;</span></span>
+<span id="cb19-8"><a href="#cb19-8" aria-hidden="true" tabindex="-1"></a>    <span class="fu">}</span></span>
+<span id="cb19-9"><a href="#cb19-9" aria-hidden="true" tabindex="-1"></a>  <span class="fu">}</span></span>
+<span id="cb19-10"><a href="#cb19-10" aria-hidden="true" tabindex="-1"></a><span class="fu">}</span></span></code></pre></div>
+<p>Legacy flat format (WRONG — will cause “No API key found”
+errors):</p>
+<div class="sourceCode" id="cb20"><pre
+class="sourceCode json"><code class="sourceCode json"><span id="cb20-1"><a href="#cb20-1" aria-hidden="true" tabindex="-1"></a><span class="fu">{</span><span class="dt">&quot;openrouter&quot;</span><span class="fu">:</span> <span class="fu">{</span><span class="dt">&quot;apiKey&quot;</span><span class="fu">:</span> <span class="st">&quot;${NOVA_OPENROUTER_API_KEY}&quot;</span><span class="fu">}}</span></span></code></pre></div>
+<p>Fix with <code>openclaw doctor --fix</code> (run WITH env vars loaded
+from Keychain).</p>
+<hr />
+<h2 id="security-secrets">15. Security &amp; Secrets</h2>
+<h3 id="keychain-items">15.1 Keychain Items</h3>
+<p>All secrets stored in macOS Keychain (account: <code>nova</code>): -
+<code>nova-openrouter-api-key</code> — OpenRouter API key (sk-or-v1-…) -
+<code>nova-slack-bot-token</code> — Slack bot token (Keychain-protected,
+slack-bot prefix) - <code>nova-slack-app-token</code> — Slack app token
+for Socket Mode (xapp-…) - <code>nova-gateway-auth-token</code> —
+Gateway auth token (<strong>MUST be random hex, NOT the OpenRouter
+key</strong>) - <code>nova-discord-token</code> — Discord bot token -
+<code>nova-plex-token</code>, <code>nova-plex-email</code>,
+<code>nova-plex-password</code> — Plex credentials -
+<code>nova-synology-username</code>, <code>nova-synology-password</code>
+— NAS credentials - <code>nova-unifi-api-key</code> — UniFi API key</p>
+<h3 id="security-architecture">15.2 Security Architecture</h3>
+<ul>
+<li><strong>No hardcoded secrets</strong> — all loaded from Keychain at
+runtime</li>
+<li><strong>Loopback-only APIs</strong> — gateway (18789), memory server
+(18790), NovaControl (37400), scheduler (37460) all bind to
+127.0.0.1</li>
+<li><strong>Signal dmPolicy=open</strong> — any Signal message accepted
+(acceptable for personal use)</li>
+<li><strong>Discord dmPolicy=pairing</strong> — unknown senders get
+pairing code</li>
+<li><strong>No cloud fallback</strong> — intent router v4.1: zero cloud
+fallback for private data</li>
+</ul>
+<hr />
+<h2 id="troubleshooting-summary">16. Troubleshooting (Summary)</h2>
+<p>→ <strong>See <code>nova-gateway-reliability.md</code></strong> for
+the full troubleshooting guide with all diagnostic commands, startup
+procedures, and post-mortems.</p>
+<p>Quick reference:</p>
+<div class="sourceCode" id="cb21"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb21-1"><a href="#cb21-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Nova not responding? Start here:</span></span>
+<span id="cb21-2"><a href="#cb21-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:18789/health          <span class="co"># Is gateway alive?</span></span>
+<span id="cb21-3"><a href="#cb21-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> ~/.openclaw/logs/gateway.err.log <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-20</span> <span class="co"># What went wrong at startup?</span></span>
+<span id="cb21-4"><a href="#cb21-4" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> ~/.openclaw/logs/stability/ <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-5</span>         <span class="co"># Any recent crash dumps?</span></span>
+<span id="cb21-5"><a href="#cb21-5" aria-hidden="true" tabindex="-1"></a><span class="ex">~/.openclaw/scripts/nova_stack_restart.sh</span>        <span class="co"># Full restart</span></span></code></pre></div>
+<hr />
+<h2 id="upgrade-history">17. Upgrade History</h2>
+<table>
+<colgroup>
+<col style="width: 26%" />
+<col style="width: 26%" />
+<col style="width: 17%" />
+<col style="width: 30%" />
+</colgroup>
+<thead>
+<tr>
+<th>Date</th>
+<th>From</th>
+<th>To</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>2026-04-23</td>
+<td>2026.4.15</td>
+<td>2026.4.22</td>
+<td>Disaster: BOOTSTRAP.md identity amnesia, memorySearch Bedrock
+fallback broke. Fixed by patching BOOTSTRAP.md and disabling
+memorySearch.</td>
+</tr>
+<tr>
+<td>2026-05-08</td>
+<td>2026.5.4</td>
+<td>2026.5.7</td>
+<td>Clean upgrade. Discord extension updated to 2026.5.7. Discord
+heartbeat fix (#77668) partial improvement. Signal ✅ Slack ✅ Discord
+❌ (ongoing).</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Safe upgrade procedure:</strong> See §11 of
+nova-gateway-reliability.md.</p>
+<hr />
+<p><em>This document is auto-maintained. Update it every time any Nova
+component changes, a new script is added, or a new incident is
+resolved.</em></p>
+<hr />
+<h1 id="nova-troubleshooting-reliability-guide">Nova Troubleshooting
+&amp; Reliability Guide</h1>
+<p><strong>Last Updated:</strong> 2026-05-08<br />
+<strong>System:</strong> OpenClaw 2026.5.7 on Mac Studio M3 Ultra, macOS
+Tahoe (Darwin 25.5)</p>
+<hr />
+<h2 id="table-of-contents-1">Table of Contents</h2>
+<ol type="1">
+<li>Quick Diagnostics</li>
+<li>Symptom → Fix Index</li>
+<li>Gateway Failures (Deep Dive)</li>
+<li>Channel Failures (Slack / Signal / Discord)</li>
+<li>Startup Scripts Reference</li>
+<li>Shutdown &amp; Restart Procedures</li>
+<li>Service &amp; Port Reference</li>
+<li>Keychain Reference</li>
+<li>Log File Reference</li>
+<li>2026-05-08 Incident Post-Mortem</li>
+<li>OpenClaw Upgrade Procedure</li>
+<li>Scheduled Maintenance</li>
+</ol>
+<hr />
+<h2 id="quick-diagnostics">1. Quick Diagnostics</h2>
+<p>Run these first whenever something feels wrong:</p>
+<div class="sourceCode" id="cb22"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb22-1"><a href="#cb22-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Is the gateway alive?</span></span>
+<span id="cb22-2"><a href="#cb22-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:18789/health</span>
+<span id="cb22-3"><a href="#cb22-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Expected: {&quot;ok&quot;:true,&quot;status&quot;:&quot;live&quot;}</span></span>
+<span id="cb22-4"><a href="#cb22-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-5"><a href="#cb22-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Can Nova respond at all?</span></span>
+<span id="cb22-6"><a href="#cb22-6" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_OPENROUTER_API_KEY</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-openrouter-api-key <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb22-7"><a href="#cb22-7" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_GATEWAY_AUTH_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb22-8"><a href="#cb22-8" aria-hidden="true" tabindex="-1"></a><span class="ex">openclaw</span> agent <span class="at">--session-id</span> b184fae0-b03c-42bb-94a4-8651313e6449 <span class="at">--message</span> <span class="st">&quot;ping&quot;</span></span>
+<span id="cb22-9"><a href="#cb22-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-10"><a href="#cb22-10" aria-hidden="true" tabindex="-1"></a><span class="co"># What ports are listening?</span></span>
+<span id="cb22-11"><a href="#cb22-11" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> port <span class="kw">in</span> 5432 6379 11434 18789 18790 8080 3000 5050 8000 37460 37400<span class="kw">;</span> <span class="cf">do</span></span>
+<span id="cb22-12"><a href="#cb22-12" aria-hidden="true" tabindex="-1"></a>    <span class="ex">lsof</span> <span class="at">-i</span> :<span class="va">$port</span> <span class="at">-t</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null <span class="kw">|</span> <span class="fu">head</span> <span class="at">-1</span> <span class="kw">|</span> <span class="fu">xargs</span> <span class="at">-I{}</span> sh <span class="at">-c</span> <span class="st">&quot;echo </span><span class="dt">\&quot;</span><span class="st">✓ :</span><span class="va">$port</span><span class="st"> (PID {})</span><span class="dt">\&quot;</span><span class="st">&quot;</span>  <span class="kw">||</span> <span class="bu">echo</span> <span class="st">&quot;✗ :</span><span class="va">$port</span><span class="st">&quot;</span></span>
+<span id="cb22-13"><a href="#cb22-13" aria-hidden="true" tabindex="-1"></a><span class="cf">done</span></span>
+<span id="cb22-14"><a href="#cb22-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-15"><a href="#cb22-15" aria-hidden="true" tabindex="-1"></a><span class="co"># What services does launchctl know about?</span></span>
+<span id="cb22-16"><a href="#cb22-16" aria-hidden="true" tabindex="-1"></a><span class="ex">launchctl</span> list <span class="kw">|</span> <span class="fu">grep</span> <span class="at">-E</span> <span class="st">&quot;nova|openclaw|digitalnoise&quot;</span> <span class="kw">|</span> <span class="fu">grep</span> <span class="at">-v</span> <span class="st">&quot;^-&quot;</span></span>
+<span id="cb22-17"><a href="#cb22-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-18"><a href="#cb22-18" aria-hidden="true" tabindex="-1"></a><span class="co"># What does OpenClaw doctor say?</span></span>
+<span id="cb22-19"><a href="#cb22-19" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_OPENROUTER_API_KEY</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-openrouter-api-key <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb22-20"><a href="#cb22-20" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_SLACK_BOT_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-slack-bot-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb22-21"><a href="#cb22-21" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_SLACK_APP_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-slack-app-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb22-22"><a href="#cb22-22" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_DISCORD_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-discord-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb22-23"><a href="#cb22-23" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_GATEWAY_AUTH_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb22-24"><a href="#cb22-24" aria-hidden="true" tabindex="-1"></a><span class="ex">openclaw</span> doctor</span>
+<span id="cb22-25"><a href="#cb22-25" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-26"><a href="#cb22-26" aria-hidden="true" tabindex="-1"></a><span class="co"># Live gateway runtime log (prettified)</span></span>
+<span id="cb22-27"><a href="#cb22-27" aria-hidden="true" tabindex="-1"></a><span class="fu">tail</span> <span class="at">-f</span> /tmp/openclaw/openclaw-<span class="va">$(</span><span class="fu">date</span> +%Y-%m-%d<span class="va">)</span>.log <span class="kw">|</span> <span class="ex">python3</span> <span class="at">-c</span> <span class="st">&quot;</span></span>
+<span id="cb22-28"><a href="#cb22-28" aria-hidden="true" tabindex="-1"></a><span class="st">import sys,json</span></span>
+<span id="cb22-29"><a href="#cb22-29" aria-hidden="true" tabindex="-1"></a><span class="st">for l in sys.stdin:</span></span>
+<span id="cb22-30"><a href="#cb22-30" aria-hidden="true" tabindex="-1"></a><span class="st">    try:</span></span>
+<span id="cb22-31"><a href="#cb22-31" aria-hidden="true" tabindex="-1"></a><span class="st">        d=json.loads(l)</span></span>
+<span id="cb22-32"><a href="#cb22-32" aria-hidden="true" tabindex="-1"></a><span class="st">        print(d.get(&#39;time&#39;,&#39;&#39;)[:19], d.get(&#39;message&#39;,&#39;&#39;)[:100])</span></span>
+<span id="cb22-33"><a href="#cb22-33" aria-hidden="true" tabindex="-1"></a><span class="st">    except: pass</span></span>
+<span id="cb22-34"><a href="#cb22-34" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;</span></span>
+<span id="cb22-35"><a href="#cb22-35" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb22-36"><a href="#cb22-36" aria-hidden="true" tabindex="-1"></a><span class="co"># Recent gateway startup log (strip ANSI colors)</span></span>
+<span id="cb22-37"><a href="#cb22-37" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> ~/.openclaw/logs/gateway.log <span class="kw">|</span> <span class="fu">sed</span> <span class="st">&#39;s/\x1b\[[0-9;]*m//g&#39;</span> <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-50</span></span>
+<span id="cb22-38"><a href="#cb22-38" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> ~/.openclaw/logs/gateway.err.log <span class="kw">|</span> <span class="fu">sed</span> <span class="st">&#39;s/\x1b\[[0-9;]*m//g&#39;</span> <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-30</span></span></code></pre></div>
+<hr />
+<h2 id="symptom-fix-index">2. Symptom → Fix Index</h2>
+<table>
+<colgroup>
+<col style="width: 25%" />
+<col style="width: 37%" />
+<col style="width: 37%" />
+</colgroup>
+<thead>
+<tr>
+<th>Symptom</th>
+<th>Likely Cause</th>
+<th>Fix Section</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Nova silent on ALL channels</td>
+<td>Gateway down or model auth broken</td>
+<td>§3, §4</td>
+</tr>
+<tr>
+<td>Nova sees Signal messages but never responds</td>
+<td>signal-cli lock conflict</td>
+<td>§4.2</td>
+</tr>
+<tr>
+<td>Nova “typing” in Signal but no message arrives</td>
+<td>OpenRouter API key not loaded in gateway</td>
+<td>§3.2</td>
+</tr>
+<tr>
+<td>Slack not working, Signal works</td>
+<td>Slack socket mode disconnected</td>
+<td>§4.1</td>
+</tr>
+<tr>
+<td>Discord “awaiting gateway readiness” forever</td>
+<td><span class="citation"
+data-cites="buape/carbon">@buape/carbon</span> WebSocket bug</td>
+<td>§4.3</td>
+</tr>
+<tr>
+<td><code>openclaw agent</code> returns “No API key found for
+openrouter”</td>
+<td>auth-profiles.json wrong format or env var not set</td>
+<td>§3.3</td>
+</tr>
+<tr>
+<td><code>openclaw doctor</code> shows missing env vars</td>
+<td>Running CLI without Keychain env vars</td>
+<td>§8</td>
+</tr>
+<tr>
+<td>Gateway crash: “Startup failed: required secrets unavailable”</td>
+<td>Keychain locked at boot time</td>
+<td>§3.1</td>
+</tr>
+<tr>
+<td>Gateway crash: “Invalid config … Unrecognized keys”</td>
+<td>openclaw.json has keys not valid for this version</td>
+<td>§3.4</td>
+</tr>
+<tr>
+<td>Slack preprocessor spamming Keychain errors</td>
+<td>launchd process can’t access Keychain (TCC)</td>
+<td>§4.1</td>
+</tr>
+<tr>
+<td>Memory server not responding</td>
+<td>PostgreSQL down or path issue</td>
+<td>§5</td>
+</tr>
+<tr>
+<td>Scheduler not running tasks</td>
+<td>Scheduler process dead</td>
+<td>§5</td>
+</tr>
+<tr>
+<td>Boot fails with 8 services failing</td>
+<td>nova-boot.sh DEGRADED, Ollama slow or DB missing</td>
+<td>§6</td>
+</tr>
+<tr>
+<td>NovaControl can’t connect</td>
+<td>App not running or port 37400 not listening</td>
+<td>§5</td>
+</tr>
+<tr>
+<td>signal-cli “Config file is in use”</td>
+<td>Old signal-cli process holds lock</td>
+<td>§4.2</td>
+</tr>
+<tr>
+<td><code>launchctl bootstrap</code> error 5 (I/O error)</td>
+<td>macOS Tahoe bug with some plists</td>
+<td>§6.3</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="gateway-failures-deep-dive">3. Gateway Failures (Deep Dive)</h2>
+<h3 id="gateway-startup-failure-secrets-unavailable">3.1 Gateway Startup
+Failure: Secrets Unavailable</h3>
+<p><strong>Symptom:</strong> <code>gateway.err.log</code> contains:</p>
+<pre><code>[gateway_start] Keychain not ready, retry 1/12 (wait 5s)...
+Gateway failed to start: Error: Startup failed: required secrets are unavailable.
+SecretRefResolutionError: Environment variable &quot;NOVA_OPENROUTER_API_KEY&quot; is missing or empty.</code></pre>
+<p><strong>Cause:</strong> The gateway was started (via launchd at boot)
+before the user logged in and the Keychain was unlocked.
+<code>nova_gateway_start.sh</code> retries up to 12 times (~3 minutes)
+waiting for Keychain. If login takes longer, it gives up.</p>
+<p><strong>Fix:</strong></p>
+<div class="sourceCode" id="cb24"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb24-1"><a href="#cb24-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Verify Keychain is accessible now</span></span>
+<span id="cb24-2"><a href="#cb24-2" aria-hidden="true" tabindex="-1"></a><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-openrouter-api-key <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null <span class="kw">|</span> <span class="fu">head</span> <span class="at">-c</span> 10</span>
+<span id="cb24-3"><a href="#cb24-3" aria-hidden="true" tabindex="-1"></a><span class="co"># If it prints a value, Keychain is unlocked. Start the gateway manually:</span></span>
+<span id="cb24-4"><a href="#cb24-4" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;signal-cli&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="kw">;</span> <span class="fu">sleep</span> 1</span>
+<span id="cb24-5"><a href="#cb24-5" aria-hidden="true" tabindex="-1"></a><span class="fu">nohup</span> ~/.openclaw/.openclaw/scripts/nova_gateway_start.sh <span class="dt">\</span></span>
+<span id="cb24-6"><a href="#cb24-6" aria-hidden="true" tabindex="-1"></a>    <span class="op">&gt;</span> ~/.openclaw/logs/gateway.log <span class="dt">\</span></span>
+<span id="cb24-7"><a href="#cb24-7" aria-hidden="true" tabindex="-1"></a>    <span class="dv">2</span><span class="op">&gt;&gt;</span> ~/.openclaw/logs/gateway.err.log <span class="kw">&amp;</span></span>
+<span id="cb24-8"><a href="#cb24-8" aria-hidden="true" tabindex="-1"></a><span class="fu">sleep</span> 10 <span class="kw">&amp;&amp;</span> <span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:18789/health</span></code></pre></div>
+<h3 id="gateway-running-but-nova-wont-respond">3.2 Gateway Running But
+Nova Won’t Respond</h3>
+<p><strong>Symptom:</strong>
+<code>curl -s http://127.0.0.1:18789/health</code> returns
+<code>{"ok":true,"status":"live"}</code> but <code>openclaw agent</code>
+returns
+<code>FailoverError: No API key found for provider "openrouter"</code>.</p>
+<p><strong>Cause:</strong> The running gateway was started with the
+correct env vars, but <code>openclaw agent</code> CLI doesn’t have those
+env vars in its shell. The auth-profiles.json has
+<code>${NOVA_OPENROUTER_API_KEY}</code> as a literal string (not
+expanded), so the CLI can’t authenticate.</p>
+<p><strong>Fix — Test first with env vars:</strong></p>
+<div class="sourceCode" id="cb25"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb25-1"><a href="#cb25-1" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_OPENROUTER_API_KEY</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-openrouter-api-key <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb25-2"><a href="#cb25-2" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_GATEWAY_AUTH_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb25-3"><a href="#cb25-3" aria-hidden="true" tabindex="-1"></a><span class="ex">openclaw</span> agent <span class="at">--session-id</span> b184fae0-b03c-42bb-94a4-8651313e6449 <span class="at">--message</span> <span class="st">&quot;ping&quot;</span></span></code></pre></div>
+<p><strong>Fix — If auth-profiles.json is in wrong format (legacy
+flat):</strong></p>
+<div class="sourceCode" id="cb26"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb26-1"><a href="#cb26-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Check format</span></span>
+<span id="cb26-2"><a href="#cb26-2" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> ~/.openclaw/agents/main/agent/auth-profiles.json</span>
+<span id="cb26-3"><a href="#cb26-3" aria-hidden="true" tabindex="-1"></a><span class="co"># If it shows {&quot;openrouter&quot;: {&quot;apiKey&quot;: &quot;...&quot;}} — that&#39;s legacy flat format. Fix:</span></span>
+<span id="cb26-4"><a href="#cb26-4" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_OPENROUTER_API_KEY</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-openrouter-api-key <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb26-5"><a href="#cb26-5" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_SLACK_BOT_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-slack-bot-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb26-6"><a href="#cb26-6" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_SLACK_APP_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-slack-app-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb26-7"><a href="#cb26-7" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_DISCORD_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-discord-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb26-8"><a href="#cb26-8" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_GATEWAY_AUTH_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb26-9"><a href="#cb26-9" aria-hidden="true" tabindex="-1"></a><span class="ex">openclaw</span> doctor <span class="at">--fix</span></span></code></pre></div>
+<h3 id="wrong-value-in-nova-gateway-auth-token-keychain">3.3 Wrong Value
+in nova-gateway-auth-token Keychain</h3>
+<p><strong>Symptom:</strong>
+<code>curl -H "Authorization: Bearer &lt;token&gt;" http://127.0.0.1:18789/api/channels</code>
+returns 401. The token in Keychain starts with <code>sk-or-v1-...</code>
+(that’s the OpenRouter key, not a gateway token).</p>
+<p><strong>Cause:</strong> The Keychain item
+<code>nova-gateway-auth-token</code> was accidentally set to the
+OpenRouter API key value.</p>
+<p><strong>Fix:</strong></p>
+<div class="sourceCode" id="cb27"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb27-1"><a href="#cb27-1" aria-hidden="true" tabindex="-1"></a><span class="ex">security</span> delete-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb27-2"><a href="#cb27-2" aria-hidden="true" tabindex="-1"></a><span class="ex">security</span> add-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="at">-w</span> <span class="st">&quot;</span><span class="va">$(</span><span class="ex">openssl</span> rand <span class="at">-hex</span> 32<span class="va">)</span><span class="st">&quot;</span></span>
+<span id="cb27-3"><a href="#cb27-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Then restart the gateway so it picks up the new token:</span></span>
+<span id="cb27-4"><a href="#cb27-4" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;^openclaw$&quot;</span><span class="kw">;</span> <span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;signal-cli&quot;</span><span class="kw">;</span> <span class="fu">sleep</span> 3</span>
+<span id="cb27-5"><a href="#cb27-5" aria-hidden="true" tabindex="-1"></a><span class="fu">nohup</span> ~/.openclaw/.openclaw/scripts/nova_gateway_start.sh <span class="dt">\</span></span>
+<span id="cb27-6"><a href="#cb27-6" aria-hidden="true" tabindex="-1"></a>    <span class="op">&gt;</span> ~/.openclaw/logs/gateway.log <span class="dt">\</span></span>
+<span id="cb27-7"><a href="#cb27-7" aria-hidden="true" tabindex="-1"></a>    <span class="dv">2</span><span class="op">&gt;&gt;</span> ~/.openclaw/logs/gateway.err.log <span class="kw">&amp;</span></span></code></pre></div>
+<h3 id="gateway-crashes-openclaw.json-invalid-config">3.4 Gateway
+Crashes: openclaw.json Invalid Config</h3>
+<p><strong>Symptom:</strong> Stability logs at
+<code>~/.openclaw/logs/stability/openclaw-stability-*.json</code> show:
+- <code>"agents: Unrecognized keys: chat, research, home"</code> -
+<code>"agents.list.1: Unrecognized keys: bootstrapMaxChars, bootstrapTotalMaxChars, timeoutSeconds"</code></p>
+<p><strong>Cause:</strong> The <code>openclaw.json</code> was edited
+(manually or by a previous session) and now has keys that the running
+OpenClaw version doesn’t recognize.</p>
+<p><strong>Fix:</strong></p>
+<div class="sourceCode" id="cb28"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb28-1"><a href="#cb28-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Check stability logs</span></span>
+<span id="cb28-2"><a href="#cb28-2" aria-hidden="true" tabindex="-1"></a><span class="fu">ls</span> <span class="at">-lt</span> ~/.openclaw/logs/stability/ <span class="kw">|</span> <span class="fu">head</span> <span class="at">-5</span></span>
+<span id="cb28-3"><a href="#cb28-3" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> ~/.openclaw/logs/stability/<span class="op">&lt;</span>latest<span class="op">&gt;</span>.json <span class="kw">|</span> <span class="ex">python3</span> <span class="at">-m</span> json.tool <span class="kw">|</span> <span class="fu">grep</span> <span class="st">&quot;message&quot;</span></span>
+<span id="cb28-4"><a href="#cb28-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-5"><a href="#cb28-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Restore from last-good backup</span></span>
+<span id="cb28-6"><a href="#cb28-6" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> ~/.openclaw/openclaw.json ~/.openclaw/openclaw.json.broken-<span class="va">$(</span><span class="fu">date</span> +%Y%m%d<span class="va">)</span></span>
+<span id="cb28-7"><a href="#cb28-7" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> ~/.openclaw/openclaw.json.last-good ~/.openclaw/openclaw.json</span>
+<span id="cb28-8"><a href="#cb28-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb28-9"><a href="#cb28-9" aria-hidden="true" tabindex="-1"></a><span class="co"># Or run doctor fix (safe repairs only)</span></span>
+<span id="cb28-10"><a href="#cb28-10" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_OPENROUTER_API_KEY</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-openrouter-api-key <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb28-11"><a href="#cb28-11" aria-hidden="true" tabindex="-1"></a><span class="ex">openclaw</span> doctor <span class="at">--fix</span></span></code></pre></div>
+<h3 id="multiple-gateways-stale-processes">3.5 Multiple Gateways / Stale
+Processes</h3>
+<p><strong>Symptom:</strong> <code>ps aux | grep openclaw</code> shows
+multiple node processes, or a new gateway won’t start because it detects
+“already running under launchd.”</p>
+<p><strong>Fix:</strong></p>
+<div class="sourceCode" id="cb29"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb29-1"><a href="#cb29-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Kill ALL gateway processes</span></span>
+<span id="cb29-2"><a href="#cb29-2" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-9</span> <span class="at">-f</span> <span class="st">&quot;^openclaw$&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb29-3"><a href="#cb29-3" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;signal-cli&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb29-4"><a href="#cb29-4" aria-hidden="true" tabindex="-1"></a><span class="fu">sleep</span> 3</span>
+<span id="cb29-5"><a href="#cb29-5" aria-hidden="true" tabindex="-1"></a><span class="co"># Verify port is free</span></span>
+<span id="cb29-6"><a href="#cb29-6" aria-hidden="true" tabindex="-1"></a><span class="ex">lsof</span> <span class="at">-i</span> :18789 <span class="dv">2</span><span class="op">&gt;</span>/dev/null <span class="kw">|</span> <span class="fu">head</span> <span class="at">-3</span></span>
+<span id="cb29-7"><a href="#cb29-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Start fresh</span></span>
+<span id="cb29-8"><a href="#cb29-8" aria-hidden="true" tabindex="-1"></a><span class="fu">nohup</span> ~/.openclaw/.openclaw/scripts/nova_gateway_start.sh <span class="dt">\</span></span>
+<span id="cb29-9"><a href="#cb29-9" aria-hidden="true" tabindex="-1"></a>    <span class="op">&gt;</span> ~/.openclaw/logs/gateway.log <span class="dt">\</span></span>
+<span id="cb29-10"><a href="#cb29-10" aria-hidden="true" tabindex="-1"></a>    <span class="dv">2</span><span class="op">&gt;&gt;</span> ~/.openclaw/logs/gateway.err.log <span class="kw">&amp;</span></span></code></pre></div>
+<hr />
+<h2 id="channel-failures">4. Channel Failures</h2>
+<h3 id="slack-not-working">4.1 Slack Not Working</h3>
+<p><strong>Check connection status in gateway log:</strong></p>
+<div class="sourceCode" id="cb30"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb30-1"><a href="#cb30-1" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;slack&quot;</span> ~/.openclaw/logs/gateway.log <span class="kw">|</span> <span class="fu">sed</span> <span class="st">&#39;s/\x1b\[[0-9;]*m//g&#39;</span> <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-10</span></span>
+<span id="cb30-2"><a href="#cb30-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Healthy: &quot;slack socket mode connected&quot;</span></span>
+<span id="cb30-3"><a href="#cb30-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Broken:  &quot;socket mode disconnected&quot; or nothing after &quot;starting provider&quot;</span></span></code></pre></div>
+<p><strong>Slack preprocessor Keychain errors</strong>
+(<code>slack-preprocessor.log</code> shows repeated Keychain
+errors):</p>
+<p>The <code>nova_slack_preprocessor.py</code> runs as launchd and can’t
+access Keychain due to macOS TCC restrictions.</p>
+<p>Fix — add token to plist EnvironmentVariables:</p>
+<div class="sourceCode" id="cb31"><pre
+class="sourceCode python"><code class="sourceCode python"><span id="cb31-1"><a href="#cb31-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run this once to patch the plist:</span></span>
+<span id="cb31-2"><a href="#cb31-2" aria-hidden="true" tabindex="-1"></a><span class="im">import</span> plistlib, subprocess</span>
+<span id="cb31-3"><a href="#cb31-3" aria-hidden="true" tabindex="-1"></a>plist_path <span class="op">=</span> os.path.expanduser(<span class="st">&quot;~/Library/LaunchAgents/com.nova.slack-preprocessor.plist&quot;</span>)</span>
+<span id="cb31-4"><a href="#cb31-4" aria-hidden="true" tabindex="-1"></a>token <span class="op">=</span> subprocess.run([<span class="st">&quot;security&quot;</span>,<span class="st">&quot;find-generic-password&quot;</span>,<span class="st">&quot;-a&quot;</span>,<span class="st">&quot;nova&quot;</span>,<span class="st">&quot;-s&quot;</span>,<span class="st">&quot;nova-slack-bot-token&quot;</span>,<span class="st">&quot;-w&quot;</span>], </span>
+<span id="cb31-5"><a href="#cb31-5" aria-hidden="true" tabindex="-1"></a>    capture_output<span class="op">=</span><span class="va">True</span>, text<span class="op">=</span><span class="va">True</span>).stdout.strip()</span>
+<span id="cb31-6"><a href="#cb31-6" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> <span class="bu">open</span>(plist_path, <span class="st">&#39;rb&#39;</span>) <span class="im">as</span> f: plist <span class="op">=</span> plistlib.load(f)</span>
+<span id="cb31-7"><a href="#cb31-7" aria-hidden="true" tabindex="-1"></a>plist.setdefault(<span class="st">&#39;EnvironmentVariables&#39;</span>, {})[<span class="st">&#39;NOVA_SLACK_BOT_TOKEN&#39;</span>] <span class="op">=</span> token</span>
+<span id="cb31-8"><a href="#cb31-8" aria-hidden="true" tabindex="-1"></a><span class="cf">with</span> <span class="bu">open</span>(plist_path, <span class="st">&#39;wb&#39;</span>) <span class="im">as</span> f: plistlib.dump(plist, f)</span></code></pre></div>
+<p>Then reload:</p>
+<div class="sourceCode" id="cb32"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb32-1"><a href="#cb32-1" aria-hidden="true" tabindex="-1"></a><span class="ex">launchctl</span> bootout gui/<span class="va">$(</span><span class="fu">id</span> <span class="at">-u</span><span class="va">)</span>/com.nova.slack-preprocessor <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb32-2"><a href="#cb32-2" aria-hidden="true" tabindex="-1"></a><span class="ex">launchctl</span> bootstrap gui/<span class="va">$(</span><span class="fu">id</span> <span class="at">-u</span><span class="va">)</span> ~/Library/LaunchAgents/com.nova.slack-preprocessor.plist</span>
+<span id="cb32-3"><a href="#cb32-3" aria-hidden="true" tabindex="-1"></a><span class="ex">launchctl</span> start com.nova.slack-preprocessor</span></code></pre></div>
+<p><strong>Slack Socket Mode reconnect (gateway restart):</strong></p>
+<div class="sourceCode" id="cb33"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb33-1"><a href="#cb33-1" aria-hidden="true" tabindex="-1"></a><span class="co"># The gateway auto-reconnects Slack Socket Mode on restart.</span></span>
+<span id="cb33-2"><a href="#cb33-2" aria-hidden="true" tabindex="-1"></a><span class="co"># A full gateway restart is sufficient:</span></span>
+<span id="cb33-3"><a href="#cb33-3" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;^openclaw$&quot;</span><span class="kw">;</span> <span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;signal-cli&quot;</span><span class="kw">;</span> <span class="fu">sleep</span> 3</span>
+<span id="cb33-4"><a href="#cb33-4" aria-hidden="true" tabindex="-1"></a><span class="fu">nohup</span> ~/.openclaw/.openclaw/scripts/nova_gateway_start.sh <span class="op">&gt;</span> ~/.openclaw/logs/gateway.log <span class="dv">2</span><span class="op">&gt;&gt;</span> ~/.openclaw/logs/gateway.err.log <span class="kw">&amp;</span></span></code></pre></div>
+<p><strong>EPERM on workspace-state.json (Slack messages silently
+dropped):</strong></p>
+<p>Symptom: Slack appears connected but messages get no response;
+<code>gateway.err.log</code> shows
+<code>EPERM: operation not permitted, open '~/.openclaw/workspace/.openclaw/workspace-state.json'</code></p>
+<p>Fix:</p>
+<div class="sourceCode" id="cb34"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb34-1"><a href="#cb34-1" aria-hidden="true" tabindex="-1"></a><span class="ex">launchctl</span> kickstart <span class="at">-k</span> gui/<span class="va">$(</span><span class="fu">id</span> <span class="at">-u</span><span class="va">)</span>/ai.openclaw.gateway</span></code></pre></div>
+<h3 id="signal-not-working">4.2 Signal Not Working</h3>
+<p><strong>Check signal-cli status:</strong></p>
+<div class="sourceCode" id="cb35"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb35-1"><a href="#cb35-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Is signal-cli running?</span></span>
+<span id="cb35-2"><a href="#cb35-2" aria-hidden="true" tabindex="-1"></a><span class="fu">ps</span> aux <span class="kw">|</span> <span class="fu">grep</span> signal-cli <span class="kw">|</span> <span class="fu">grep</span> <span class="at">-v</span> grep <span class="kw">|</span> <span class="fu">awk</span> <span class="st">&#39;{print $2, $11}&#39;</span></span>
+<span id="cb35-3"><a href="#cb35-3" aria-hidden="true" tabindex="-1"></a><span class="co"># Is it listening?</span></span>
+<span id="cb35-4"><a href="#cb35-4" aria-hidden="true" tabindex="-1"></a><span class="ex">lsof</span> <span class="at">-i</span> :8080 <span class="kw">|</span> <span class="fu">head</span> <span class="at">-3</span></span>
+<span id="cb35-5"><a href="#cb35-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb35-6"><a href="#cb35-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Check gateway log for signal status</span></span>
+<span id="cb35-7"><a href="#cb35-7" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;signal&quot;</span> ~/.openclaw/logs/gateway.log <span class="kw">|</span> <span class="fu">sed</span> <span class="st">&#39;s/\x1b\[[0-9;]*m//g&#39;</span> <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-10</span></span></code></pre></div>
+<p><strong>Signal-cli lock conflict</strong> (most common Signal
+failure):</p>
+<p>Symptom in gateway log:
+<code>signal-cli: INFO SignalAccount - Config file is in use by another instance, waiting…</code></p>
+<p>This happens when the gateway restarts but the old signal-cli process
+still holds the account lock.</p>
+<p>Fix:</p>
+<div class="sourceCode" id="cb36"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb36-1"><a href="#cb36-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Kill ALL signal-cli processes</span></span>
+<span id="cb36-2"><a href="#cb36-2" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;signal-cli&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb36-3"><a href="#cb36-3" aria-hidden="true" tabindex="-1"></a><span class="fu">sleep</span> 3</span>
+<span id="cb36-4"><a href="#cb36-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Now restart the gateway — it will start a fresh signal-cli</span></span>
+<span id="cb36-5"><a href="#cb36-5" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;^openclaw$&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="kw">;</span> <span class="fu">sleep</span> 2</span>
+<span id="cb36-6"><a href="#cb36-6" aria-hidden="true" tabindex="-1"></a><span class="fu">nohup</span> ~/.openclaw/.openclaw/scripts/nova_gateway_start.sh <span class="op">&gt;</span> ~/.openclaw/logs/gateway.log <span class="dv">2</span><span class="op">&gt;&gt;</span> ~/.openclaw/logs/gateway.err.log <span class="kw">&amp;</span></span>
+<span id="cb36-7"><a href="#cb36-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Wait for signal-cli to acquire lock (watch the log)</span></span>
+<span id="cb36-8"><a href="#cb36-8" aria-hidden="true" tabindex="-1"></a><span class="fu">sleep</span> 15</span>
+<span id="cb36-9"><a href="#cb36-9" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;signal&quot;</span> ~/.openclaw/logs/gateway.log <span class="kw">|</span> <span class="fu">sed</span> <span class="st">&#39;s/\x1b\[[0-9;]*m//g&#39;</span> <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-5</span></span>
+<span id="cb36-10"><a href="#cb36-10" aria-hidden="true" tabindex="-1"></a><span class="co"># Expected: &quot;signal-cli: INFO SignalAccount - Config file lock acquired.&quot;</span></span></code></pre></div>
+<p><strong>Signal account registered to:</strong> +13233645436 (Nova’s
+Google Voice number)<br />
+<strong>signal-cli path:</strong>
+<code>/opt/homebrew/bin/signal-cli</code> (version 0.14.3)<br />
+<strong>Jordan’s Signal number:</strong> +18187310893</p>
+<h3 id="discord-not-working">4.3 Discord Not Working</h3>
+<p><strong>Current status:</strong> Discord is unreliable due to a known
+<code>@buape/carbon</code> WebSocket gateway bug. The bot connects and
+initializes but frequently stays “awaiting gateway readiness”
+indefinitely.</p>
+<p><strong>Check:</strong></p>
+<div class="sourceCode" id="cb37"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb37-1"><a href="#cb37-1" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="st">&quot;discord&quot;</span> /tmp/openclaw/openclaw-<span class="va">$(</span><span class="fu">date</span> +%Y-%m-%d<span class="va">)</span>.log <span class="dv">2</span><span class="op">&gt;</span>/dev/null <span class="kw">|</span> <span class="ex">python3</span> <span class="at">-c</span> <span class="st">&quot;</span></span>
+<span id="cb37-2"><a href="#cb37-2" aria-hidden="true" tabindex="-1"></a><span class="st">import sys,json</span></span>
+<span id="cb37-3"><a href="#cb37-3" aria-hidden="true" tabindex="-1"></a><span class="st">for l in sys.stdin:</span></span>
+<span id="cb37-4"><a href="#cb37-4" aria-hidden="true" tabindex="-1"></a><span class="st">    try: d=json.loads(l); print(d.get(&#39;time&#39;,&#39;&#39;)[:19], d.get(&#39;message&#39;,&#39;&#39;)[:100])</span></span>
+<span id="cb37-5"><a href="#cb37-5" aria-hidden="true" tabindex="-1"></a><span class="st">    except: pass</span></span>
+<span id="cb37-6"><a href="#cb37-6" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;</span> <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-10</span></span></code></pre></div>
+<p><strong>Expected healthy:</strong>
+<code>discord client initialized ... awaiting gateway readiness</code>
+followed eventually by <code>discord READY</code>.</p>
+<p><strong>When stuck at “awaiting gateway readiness”:</strong> 1.
+Restart the gateway — Discord sometimes connects on the second attempt
+2. Check Discord Developer Portal — ensure the bot hasn’t been
+rate-limited or had its token revoked 3. The heartbeat fix in OpenClaw
+2026.5.7 (#77668) improved reliability but doesn’t fully resolve it</p>
+<p><strong>Discord extension:</strong>
+<code>~/.openclaw/extensions/discord/</code> — keep at same version as
+OpenClaw core (<code>openclaw plugins update discord</code>)</p>
+<p><strong>Bot info:</strong> - Bot: Nova#9600, ID
+<code>1496985774925807746</code> - Guild: Koch Family, ID
+<code>1496985100657623210</code> - #nova-chat:
+<code>1496990647062761483</code> - #nova-notifications:
+<code>1496990332250886246</code></p>
+<hr />
+<h2 id="service-port-reference">5. Service &amp; Port Reference</h2>
+<table style="width:100%;">
+<colgroup>
+<col style="width: 10%" />
+<col style="width: 16%" />
+<col style="width: 25%" />
+<col style="width: 23%" />
+<col style="width: 23%" />
+</colgroup>
+<thead>
+<tr>
+<th>Port</th>
+<th>Service</th>
+<th>launchd Label</th>
+<th>Start Script</th>
+<th>Health Check</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>5432</td>
+<td>PostgreSQL 17</td>
+<td><code>homebrew.mxcl.postgresql@17</code></td>
+<td>brew services</td>
+<td><code>psql -U kochj -d nova_memories -c "SELECT 1"</code></td>
+</tr>
+<tr>
+<td>6379</td>
+<td>Redis</td>
+<td><code>net.digitalnoise.redis</code></td>
+<td>redis.conf via plist</td>
+<td><code>redis-cli ping</code> → PONG</td>
+</tr>
+<tr>
+<td>11434</td>
+<td>Ollama</td>
+<td><code>com.ollama.ollama</code> (Ollama.app)</td>
+<td>Ollama.app GUI</td>
+<td><code>curl http://127.0.0.1:11434/api/tags</code></td>
+</tr>
+<tr>
+<td>18789</td>
+<td>OpenClaw Gateway</td>
+<td><code>ai.openclaw.gateway</code></td>
+<td><code>nova_gateway_start.sh</code></td>
+<td><code>curl http://127.0.0.1:18789/health</code></td>
+</tr>
+<tr>
+<td>18790</td>
+<td>Memory Server</td>
+<td><code>net.digitalnoise.nova-memory-server</code></td>
+<td><code>nova_memory_server_start.sh</code></td>
+<td><code>curl http://127.0.0.1:18790/health</code></td>
+</tr>
+<tr>
+<td>8080</td>
+<td>signal-cli daemon</td>
+<td>(managed by gateway)</td>
+<td>auto-started by openclaw</td>
+<td><code>lsof -i :8080</code></td>
+</tr>
+<tr>
+<td>3000</td>
+<td>OpenWebUI</td>
+<td><code>net.digitalnoise.openwebui</code></td>
+<td><code>openwebui_start.sh</code></td>
+<td><code>curl http://192.168.1.6:3000</code></td>
+</tr>
+<tr>
+<td>5050</td>
+<td>MLX Server</td>
+<td><code>net.digitalnoise.mlx-server</code></td>
+<td><code>mlx_server_start.sh</code></td>
+<td><code>curl http://127.0.0.1:5050/health</code></td>
+</tr>
+<tr>
+<td>8000</td>
+<td>TinyChat</td>
+<td><code>net.digitalnoise.tinychat</code></td>
+<td><code>tinychat_start.sh</code></td>
+<td><code>curl http://192.168.1.6:8000</code></td>
+</tr>
+<tr>
+<td>37400</td>
+<td>NovaControl API</td>
+<td><code>net.digitalnoise.NovaControl</code></td>
+<td>NovaControl.app</td>
+<td><code>curl http://127.0.0.1:37400/api/status</code></td>
+</tr>
+<tr>
+<td>37460</td>
+<td>Scheduler</td>
+<td><code>com.nova.scheduler</code></td>
+<td><code>nova_scheduler.py</code></td>
+<td><code>curl http://127.0.0.1:37460/status</code></td>
+</tr>
+</tbody>
+</table>
+<p><strong>Sub-agents (persistent subscribers via launchd):</strong></p>
+<table>
+<colgroup>
+<col style="width: 24%" />
+<col style="width: 24%" />
+<col style="width: 27%" />
+<col style="width: 24%" />
+</colgroup>
+<thead>
+<tr>
+<th>Agent</th>
+<th>Label</th>
+<th>Script</th>
+<th>Model</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Sentinel (security)</td>
+<td><code>com.nova.agent-sentinel</code></td>
+<td><code>nova_agent_sentinel.py</code></td>
+<td>deepseek-r1:8b + qwen3-vl:4b</td>
+</tr>
+<tr>
+<td>Lookout (vision)</td>
+<td><code>com.nova.agent-lookout</code></td>
+<td><code>nova_agent_lookout.py</code></td>
+<td>qwen3-vl:4b</td>
+</tr>
+<tr>
+<td>Analyst (emails/meetings)</td>
+<td><code>com.nova.agent-analyst</code></td>
+<td><code>nova_agent_analyst.py</code></td>
+<td>deepseek-r1:8b</td>
+</tr>
+<tr>
+<td>Librarian (memory curation)</td>
+<td><code>com.nova.agent-librarian</code></td>
+<td><code>nova_agent_librarian.py</code></td>
+<td>MLX Qwen2.5-32B (port 5050)</td>
+</tr>
+<tr>
+<td>Coder (code review)</td>
+<td><code>com.nova.agent-coder</code></td>
+<td><code>nova_agent_coder.py</code></td>
+<td>qwen3-coder:30b</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="startup-scripts-reference">6. Startup Scripts Reference</h2>
+<h3 id="nova-boot.sh-full-stack-orchestrator">6.1 nova-boot.sh — Full
+Stack Orchestrator</h3>
+<p><strong>Path:</strong>
+<code>~/.openclaw/scripts/nova-boot.sh</code><br />
+<strong>Symlink:</strong> <code>/usr/local/bin/nova-boot</code><br />
+<strong>launchd:</strong> <code>net.digitalnoise.nova-boot</code>
+(RunAtLoad=true, starts at login)<br />
+<strong>Log:</strong> <code>~/.openclaw/logs/nova-boot.log</code></p>
+<p>The primary orchestrator. Replaces 30+ individual launchd
+StartInterval jobs. Starts all services in dependency-ordered tiers with
+health validation at each step.</p>
+<p><strong>5-Tier startup sequence:</strong> 1. <strong>TIER 0 —
+Pre-flight:</strong> Volume mounts, Keychain access, binary availability
+2. <strong>TIER 1 — Base:</strong> PostgreSQL (5432), Redis (6379),
+Ollama (11434) 3. <strong>TIER 2 — Core:</strong> Memory Server (18790),
+Gateway (18789) 4. <strong>TIER 3 — Apps:</strong> MLX Server (5050),
+TinyChat (8000), OpenWebUI (3000), Scheduler (37460) 5. <strong>TIER 4 —
+Agents:</strong> Sentinel, Lookout, Analyst, Librarian, Coder subagents
+6. <strong>TIER 5 — Integration tests:</strong> Slack token check,
+PostgreSQL query, Redis round-trip, disk space</p>
+<div class="sourceCode" id="cb38"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb38-1"><a href="#cb38-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Run normally (skip already-running services):</span></span>
+<span id="cb38-2"><a href="#cb38-2" aria-hidden="true" tabindex="-1"></a><span class="ex">nova-boot</span></span>
+<span id="cb38-3"><a href="#cb38-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb38-4"><a href="#cb38-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Force stop all then full restart:</span></span>
+<span id="cb38-5"><a href="#cb38-5" aria-hidden="true" tabindex="-1"></a><span class="ex">nova-boot</span> <span class="at">--restart</span></span>
+<span id="cb38-6"><a href="#cb38-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb38-7"><a href="#cb38-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Check what happened last boot:</span></span>
+<span id="cb38-8"><a href="#cb38-8" aria-hidden="true" tabindex="-1"></a><span class="fu">cat</span> ~/.openclaw/logs/nova-boot.log <span class="kw">|</span> <span class="fu">grep</span> <span class="at">-E</span> <span class="st">&quot;FAIL|WARN|PASS|COMPLETE&quot;</span></span></code></pre></div>
+<p><strong>Common nova-boot failures and fixes:</strong></p>
+<table>
+<colgroup>
+<col style="width: 42%" />
+<col style="width: 33%" />
+<col style="width: 23%" />
+</colgroup>
+<thead>
+<tr>
+<th>Failure</th>
+<th>Cause</th>
+<th>Fix</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>Ollama did not start within 45s</code></td>
+<td>Ollama.app slow to load</td>
+<td>Open Ollama.app manually first, re-run nova-boot</td>
+</tr>
+<tr>
+<td><code>PostgreSQL: 'nova' database missing</code></td>
+<td>Postgres started but database not created</td>
+<td><code>createdb -U kochj nova_memories</code></td>
+</tr>
+<tr>
+<td><code>PostgreSQL: cannot connect</code></td>
+<td>Postgres crashed or wrong data dir</td>
+<td>Check <code>/opt/homebrew/var/postgresql@17</code> symlink →
+<code>/Volumes/MoreData/postgresql@17</code></td>
+</tr>
+<tr>
+<td><code>Memory Server did not start within 90s</code></td>
+<td>PostgreSQL or Redis not ready</td>
+<td>Ensure tiers 1-2 pass first</td>
+</tr>
+<tr>
+<td><code>Gateway did not start within 120s</code></td>
+<td>Keychain locked, config invalid</td>
+<td>Run <code>nova_gateway_start.sh</code> manually in terminal</td>
+</tr>
+<tr>
+<td><code>Gateway may not have Slack token</code></td>
+<td>Keychain not accessible at boot time</td>
+<td>Manual gateway restart after login</td>
+</tr>
+</tbody>
+</table>
+<h3 id="nova_gateway_start.sh-gateway-launcher-with-keychain">6.2
+nova_gateway_start.sh — Gateway Launcher with Keychain</h3>
+<p><strong>Path:</strong>
+<code>~/.openclaw/scripts/nova_gateway_start.sh</code><br />
+<strong>Called by:</strong> <code>ai.openclaw.gateway</code> launchd
+plist, <code>nova-boot.sh</code></p>
+<p>Loads 5 secrets from macOS Keychain before exec’ing the OpenClaw
+gateway: - <code>nova-openrouter-api-key</code> →
+<code>NOVA_OPENROUTER_API_KEY</code> - <code>nova-slack-bot-token</code>
+→ <code>NOVA_SLACK_BOT_TOKEN</code> - <code>nova-slack-app-token</code>
+→ <code>NOVA_SLACK_APP_TOKEN</code> -
+<code>nova-gateway-auth-token</code> →
+<code>NOVA_GATEWAY_AUTH_TOKEN</code> - <code>nova-discord-token</code> →
+<code>NOVA_DISCORD_TOKEN</code></p>
+<p>Implements exponential backoff (5s → 30s max, 12 retries = ~3 min)
+waiting for Keychain if it’s locked.</p>
+<p><strong>macOS Tahoe note:</strong> The
+<code>ai.openclaw.gateway</code> launchd plist sometimes fails to
+bootstrap (error 5, I/O error). Workaround: start the gateway manually
+via this script with <code>nohup</code>.</p>
+<div class="sourceCode" id="cb39"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb39-1"><a href="#cb39-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Manual start (safe to run anytime):</span></span>
+<span id="cb39-2"><a href="#cb39-2" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;signal-cli&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="kw">;</span> <span class="fu">sleep</span> 1</span>
+<span id="cb39-3"><a href="#cb39-3" aria-hidden="true" tabindex="-1"></a><span class="fu">nohup</span> ~/.openclaw/.openclaw/scripts/nova_gateway_start.sh <span class="dt">\</span></span>
+<span id="cb39-4"><a href="#cb39-4" aria-hidden="true" tabindex="-1"></a>    <span class="op">&gt;</span> ~/.openclaw/logs/gateway.log <span class="dt">\</span></span>
+<span id="cb39-5"><a href="#cb39-5" aria-hidden="true" tabindex="-1"></a>    <span class="dv">2</span><span class="op">&gt;&gt;</span> ~/.openclaw/logs/gateway.err.log <span class="kw">&amp;</span></span></code></pre></div>
+<h3 id="nova_stack_restart.sh-quick-recovery-script">6.3
+nova_stack_restart.sh — Quick Recovery Script</h3>
+<p><strong>Path:</strong>
+<code>~/.openclaw/scripts/nova_stack_restart.sh</code><br />
+<strong>Used by:</strong> Manual invocation, NovaControl</p>
+<p>5-step ordered restart: Ollama → Postgres+Redis → Memory Server →
+Gateway → OpenWebUI+TinyChat. Uses <code>launchctl kickstart</code> for
+managed services. Shows ✓/⚠ status at each step. Less comprehensive than
+<code>nova-boot.sh</code> but faster for targeted restarts.</p>
+<div class="sourceCode" id="cb40"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb40-1"><a href="#cb40-1" aria-hidden="true" tabindex="-1"></a><span class="ex">~/.openclaw/scripts/nova_stack_restart.sh</span></span></code></pre></div>
+<h3 id="nova-services.sh-startstopstatus-cli">6.4 nova-services.sh —
+Start/Stop/Status CLI</h3>
+<p><strong>Path:</strong>
+<code>~/.openclaw/scripts/nova-services.sh</code><br />
+<strong>Usage:</strong> <code>nova start</code> | <code>nova stop</code>
+| <code>nova restart</code> | <code>nova status</code></p>
+<p>Full start/stop/healthcheck wrapper for the core 6 services
+(PostgreSQL, Redis, Ollama, Gateway, OpenWebUI, TinyChat). Loads
+Keychain secrets before starting gateway. Color-coded status output.
+Logs to <code>/tmp/nova-services.log</code>.</p>
+<div class="sourceCode" id="cb41"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb41-1"><a href="#cb41-1" aria-hidden="true" tabindex="-1"></a><span class="ex">nova</span> status     <span class="co"># Check all services</span></span>
+<span id="cb41-2"><a href="#cb41-2" aria-hidden="true" tabindex="-1"></a><span class="ex">nova</span> start      <span class="co"># Start in dependency order</span></span>
+<span id="cb41-3"><a href="#cb41-3" aria-hidden="true" tabindex="-1"></a><span class="ex">nova</span> stop       <span class="co"># Graceful shutdown in reverse order</span></span>
+<span id="cb41-4"><a href="#cb41-4" aria-hidden="true" tabindex="-1"></a><span class="ex">nova</span> restart    <span class="co"># Stop then start</span></span></code></pre></div>
+<h3 id="nova_gateway_health.py-hourly-health-check-auto-repair">6.5
+nova_gateway_health.py — Hourly Health Check + Auto-Repair</h3>
+<p><strong>Path:</strong>
+<code>~/.openclaw/scripts/nova_gateway_health.py</code><br />
+<strong>Called by:</strong> Scheduler (hourly)</p>
+<p>Checks: gateway process (port 18789), Slack socket mode, Discord
+WebSocket, signal-cli daemon, workspace MD files under bootstrap budget
+(100K total, 5K per file). If channels are disconnected, automatically
+restarts the gateway. Posts diagnostics to
+<code>#nova-notifications</code>.</p>
+<h3 id="nova_watchdog.py-self-healing-service-monitor">6.6
+nova_watchdog.py — Self-Healing Service Monitor</h3>
+<p><strong>Path:</strong>
+<code>~/.openclaw/scripts/nova_watchdog.py</code><br />
+<strong>Called by:</strong> Scheduler (every 5 min)</p>
+<p>Monitors all critical services. Restarts failed services via
+<code>launchctl kickstart</code>. Tracks subagent heartbeats via Redis.
+Runs every 5 minutes. Only pages Jordan on NEW failures (not repeats
+during quiet hours 10pm-8am).</p>
+<h3 id="wait-for-port.sh-startup-synchronization-helper">6.7
+wait-for-port.sh — Startup Synchronization Helper</h3>
+<p><strong>Path:</strong>
+<code>~/.openclaw/scripts/wait-for-port.sh</code><br />
+<strong>Sourced by:</strong> <code>nova-boot.sh</code> and other shell
+scripts</p>
+<p>Provides <code>wait_for_port PORT NAME TIMEOUT</code> function that
+polls via netcat every 3 seconds. Returns 0 on success, 1 on
+timeout.</p>
+<hr />
+<h2 id="shutdown-restart-procedures">7. Shutdown &amp; Restart
+Procedures</h2>
+<h3 id="graceful-full-shutdown">7.1 Graceful Full Shutdown</h3>
+<div class="sourceCode" id="cb42"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb42-1"><a href="#cb42-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Agents first</span></span>
+<span id="cb42-2"><a href="#cb42-2" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> svc <span class="kw">in</span> com.nova.agent-sentinel com.nova.agent-lookout com.nova.agent-analyst <span class="dt">\</span></span>
+<span id="cb42-3"><a href="#cb42-3" aria-hidden="true" tabindex="-1"></a>           com.nova.agent-librarian com.nova.agent-coder<span class="kw">;</span> <span class="cf">do</span></span>
+<span id="cb42-4"><a href="#cb42-4" aria-hidden="true" tabindex="-1"></a>    <span class="ex">launchctl</span> stop <span class="st">&quot;</span><span class="va">$svc</span><span class="st">&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb42-5"><a href="#cb42-5" aria-hidden="true" tabindex="-1"></a><span class="cf">done</span></span>
+<span id="cb42-6"><a href="#cb42-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-7"><a href="#cb42-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Scheduler</span></span>
+<span id="cb42-8"><a href="#cb42-8" aria-hidden="true" tabindex="-1"></a><span class="ex">launchctl</span> stop com.nova.scheduler <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb42-9"><a href="#cb42-9" aria-hidden="true" tabindex="-1"></a><span class="ex">launchctl</span> stop com.nova.slack-preprocessor <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb42-10"><a href="#cb42-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-11"><a href="#cb42-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Gateway (graceful SIGTERM - let it flush state)</span></span>
+<span id="cb42-12"><a href="#cb42-12" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-TERM</span> <span class="at">-f</span> <span class="st">&quot;^openclaw$&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb42-13"><a href="#cb42-13" aria-hidden="true" tabindex="-1"></a><span class="fu">sleep</span> 5</span>
+<span id="cb42-14"><a href="#cb42-14" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-15"><a href="#cb42-15" aria-hidden="true" tabindex="-1"></a><span class="co"># signal-cli (kill after gateway stops)</span></span>
+<span id="cb42-16"><a href="#cb42-16" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;signal-cli&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb42-17"><a href="#cb42-17" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-18"><a href="#cb42-18" aria-hidden="true" tabindex="-1"></a><span class="co"># Memory server</span></span>
+<span id="cb42-19"><a href="#cb42-19" aria-hidden="true" tabindex="-1"></a><span class="ex">launchctl</span> stop net.digitalnoise.nova-memory-server <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb42-20"><a href="#cb42-20" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-21"><a href="#cb42-21" aria-hidden="true" tabindex="-1"></a><span class="co"># Web UIs</span></span>
+<span id="cb42-22"><a href="#cb42-22" aria-hidden="true" tabindex="-1"></a><span class="ex">launchctl</span> stop net.digitalnoise.openwebui <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb42-23"><a href="#cb42-23" aria-hidden="true" tabindex="-1"></a><span class="ex">launchctl</span> stop net.digitalnoise.tinychat <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb42-24"><a href="#cb42-24" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb42-25"><a href="#cb42-25" aria-hidden="true" tabindex="-1"></a><span class="co"># Base services</span></span>
+<span id="cb42-26"><a href="#cb42-26" aria-hidden="true" tabindex="-1"></a><span class="ex">brew</span> services stop redis <span class="dv">2</span><span class="op">&gt;</span>/dev/null <span class="kw">||</span> <span class="ex">launchctl</span> stop net.digitalnoise.redis <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb42-27"><a href="#cb42-27" aria-hidden="true" tabindex="-1"></a><span class="co"># Leave PostgreSQL and Ollama running unless needed</span></span></code></pre></div>
+<h3 id="gateway-only-restart-most-common-operation">7.2 Gateway-Only
+Restart (most common operation)</h3>
+<div class="sourceCode" id="cb43"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb43-1"><a href="#cb43-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Kill gateway and its signal-cli child</span></span>
+<span id="cb43-2"><a href="#cb43-2" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;^openclaw$&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb43-3"><a href="#cb43-3" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;signal-cli&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb43-4"><a href="#cb43-4" aria-hidden="true" tabindex="-1"></a><span class="fu">sleep</span> 3</span>
+<span id="cb43-5"><a href="#cb43-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb43-6"><a href="#cb43-6" aria-hidden="true" tabindex="-1"></a><span class="co"># Start fresh with Keychain secrets</span></span>
+<span id="cb43-7"><a href="#cb43-7" aria-hidden="true" tabindex="-1"></a><span class="fu">nohup</span> ~/.openclaw/.openclaw/scripts/nova_gateway_start.sh <span class="dt">\</span></span>
+<span id="cb43-8"><a href="#cb43-8" aria-hidden="true" tabindex="-1"></a>    <span class="op">&gt;</span> ~/.openclaw/logs/gateway.log <span class="dt">\</span></span>
+<span id="cb43-9"><a href="#cb43-9" aria-hidden="true" tabindex="-1"></a>    <span class="dv">2</span><span class="op">&gt;&gt;</span> ~/.openclaw/logs/gateway.err.log <span class="kw">&amp;</span></span>
+<span id="cb43-10"><a href="#cb43-10" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb43-11"><a href="#cb43-11" aria-hidden="true" tabindex="-1"></a><span class="co"># Wait and verify (15-30s)</span></span>
+<span id="cb43-12"><a href="#cb43-12" aria-hidden="true" tabindex="-1"></a><span class="fu">sleep</span> 15</span>
+<span id="cb43-13"><a href="#cb43-13" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:18789/health</span>
+<span id="cb43-14"><a href="#cb43-14" aria-hidden="true" tabindex="-1"></a><span class="fu">grep</span> <span class="at">-E</span> <span class="st">&quot;connected|ready|READY|Started HTTP|error|fail&quot;</span> ~/.openclaw/logs/gateway.log <span class="kw">|</span> <span class="dt">\</span></span>
+<span id="cb43-15"><a href="#cb43-15" aria-hidden="true" tabindex="-1"></a>    <span class="fu">sed</span> <span class="st">&#39;s/\x1b\[[0-9;]*m//g&#39;</span> <span class="kw">|</span> <span class="fu">tail</span> <span class="at">-10</span></span></code></pre></div>
+<h3
+id="full-stack-restart-use-after-reboot-or-when-multiple-things-broken">7.3
+Full Stack Restart (use after reboot or when multiple things
+broken)</h3>
+<div class="sourceCode" id="cb44"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb44-1"><a href="#cb44-1" aria-hidden="true" tabindex="-1"></a><span class="ex">nova-boot</span> <span class="at">--restart</span></span>
+<span id="cb44-2"><a href="#cb44-2" aria-hidden="true" tabindex="-1"></a><span class="co"># OR</span></span>
+<span id="cb44-3"><a href="#cb44-3" aria-hidden="true" tabindex="-1"></a><span class="ex">~/.openclaw/scripts/nova_stack_restart.sh</span></span></code></pre></div>
+<h3 id="novacontrol-triggered-restart">7.4 NovaControl-Triggered
+Restart</h3>
+<p>NovaControl (macOS app on port 37400) can trigger restarts via its
+API:</p>
+<div class="sourceCode" id="cb45"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb45-1"><a href="#cb45-1" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-X</span> POST http://127.0.0.1:37400/api/nova/restart</span>
+<span id="cb45-2"><a href="#cb45-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-X</span> POST http://127.0.0.1:37400/api/gateway/restart</span></code></pre></div>
+<h3 id="session-deadlock-recovery">7.5 Session Deadlock Recovery</h3>
+<p>If the Mac locks during a long cron task, the gateway session can
+deadlock (cron job holds session lock indefinitely).</p>
+<div class="sourceCode" id="cb46"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb46-1"><a href="#cb46-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. Disable the inbox watcher cron to prevent new loops</span></span>
+<span id="cb46-2"><a href="#cb46-2" aria-hidden="true" tabindex="-1"></a><span class="co"># Use scheduler API or openclaw cron disable 04627a72</span></span>
+<span id="cb46-3"><a href="#cb46-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb46-4"><a href="#cb46-4" aria-hidden="true" tabindex="-1"></a><span class="co"># 2. Wait for the 300s timeout to expire naturally</span></span>
+<span id="cb46-5"><a href="#cb46-5" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb46-6"><a href="#cb46-6" aria-hidden="true" tabindex="-1"></a><span class="co"># 3. Re-enable the cron</span></span>
+<span id="cb46-7"><a href="#cb46-7" aria-hidden="true" tabindex="-1"></a><span class="co"># openclaw cron enable 04627a72</span></span>
+<span id="cb46-8"><a href="#cb46-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb46-9"><a href="#cb46-9" aria-hidden="true" tabindex="-1"></a><span class="co"># If still stuck after 10 minutes, force restart the gateway</span></span>
+<span id="cb46-10"><a href="#cb46-10" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-9</span> <span class="at">-f</span> <span class="st">&quot;^openclaw$&quot;</span><span class="kw">;</span> <span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;signal-cli&quot;</span><span class="kw">;</span> <span class="fu">sleep</span> 3</span>
+<span id="cb46-11"><a href="#cb46-11" aria-hidden="true" tabindex="-1"></a><span class="fu">nohup</span> ~/.openclaw/.openclaw/scripts/nova_gateway_start.sh <span class="dt">\</span></span>
+<span id="cb46-12"><a href="#cb46-12" aria-hidden="true" tabindex="-1"></a>    <span class="op">&gt;</span> ~/.openclaw/logs/gateway.log <span class="dv">2</span><span class="op">&gt;&gt;</span> ~/.openclaw/logs/gateway.err.log <span class="kw">&amp;</span></span></code></pre></div>
+<hr />
+<h2 id="keychain-reference">8. Keychain Reference</h2>
+<p>All secrets stored in macOS Keychain with account <code>nova</code>.
+Use
+<code>security find-generic-password -a nova -s &lt;service&gt; -w</code>
+to read.</p>
+<table>
+<colgroup>
+<col style="width: 40%" />
+<col style="width: 21%" />
+<col style="width: 21%" />
+<col style="width: 16%" />
+</colgroup>
+<thead>
+<tr>
+<th>Keychain Service</th>
+<th>Env Var</th>
+<th>Used By</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>nova-openrouter-api-key</code></td>
+<td><code>NOVA_OPENROUTER_API_KEY</code></td>
+<td>Gateway, CLI tools</td>
+<td><code>sk-or-v1-...</code> prefix</td>
+</tr>
+<tr>
+<td><code>nova-slack-bot-token</code></td>
+<td><code>NOVA_SLACK_BOT_TOKEN</code></td>
+<td>Gateway, preprocessor scripts</td>
+<td><code>[SLACK-BOT-TOKEN]</code> prefix</td>
+</tr>
+<tr>
+<td><code>nova-slack-app-token</code></td>
+<td><code>NOVA_SLACK_APP_TOKEN</code></td>
+<td>Gateway (Socket Mode)</td>
+<td><code>xapp-...</code> prefix</td>
+</tr>
+<tr>
+<td><code>nova-gateway-auth-token</code></td>
+<td><code>NOVA_GATEWAY_AUTH_TOKEN</code></td>
+<td>Gateway auth, CLI</td>
+<td>Random hex string (32 bytes). <strong>Must NOT be the OpenRouter
+key!</strong></td>
+</tr>
+<tr>
+<td><code>nova-discord-token</code></td>
+<td><code>NOVA_DISCORD_TOKEN</code></td>
+<td>Gateway, discord scripts</td>
+<td>Bot token</td>
+</tr>
+<tr>
+<td><code>nova-plex-token</code></td>
+<td>—</td>
+<td>nova_plex.py</td>
+<td>Plex auth token</td>
+</tr>
+<tr>
+<td><code>nova-synology-username</code></td>
+<td>—</td>
+<td>synology scripts</td>
+<td>NAS username</td>
+</tr>
+<tr>
+<td><code>nova-synology-password</code></td>
+<td>—</td>
+<td>synology scripts</td>
+<td>NAS password</td>
+</tr>
+<tr>
+<td><code>nova-unifi-api-key</code></td>
+<td>—</td>
+<td>UniFi monitor</td>
+<td>API key</td>
+</tr>
+</tbody>
+</table>
+<p><strong>CRITICAL:</strong> <code>nova-gateway-auth-token</code> MUST
+be a random hex token, NOT the OpenRouter API key. If it looks like
+<code>sk-or-v1-...</code>, it’s wrong. Fix with:</p>
+<div class="sourceCode" id="cb47"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb47-1"><a href="#cb47-1" aria-hidden="true" tabindex="-1"></a><span class="ex">security</span> delete-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb47-2"><a href="#cb47-2" aria-hidden="true" tabindex="-1"></a><span class="ex">security</span> add-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="at">-w</span> <span class="st">&quot;</span><span class="va">$(</span><span class="ex">openssl</span> rand <span class="at">-hex</span> 32<span class="va">)</span><span class="st">&quot;</span></span></code></pre></div>
+<p><strong>Running CLI tools with secrets (required
+pattern):</strong></p>
+<div class="sourceCode" id="cb48"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb48-1"><a href="#cb48-1" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_OPENROUTER_API_KEY</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-openrouter-api-key <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb48-2"><a href="#cb48-2" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_GATEWAY_AUTH_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb48-3"><a href="#cb48-3" aria-hidden="true" tabindex="-1"></a><span class="ex">openclaw</span> agent ...</span></code></pre></div>
+<hr />
+<h2 id="log-file-reference">9. Log File Reference</h2>
+<table>
+<colgroup>
+<col style="width: 38%" />
+<col style="width: 34%" />
+<col style="width: 26%" />
+</colgroup>
+<thead>
+<tr>
+<th>Log File</th>
+<th>Service</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>~/.openclaw/logs/gateway.log</code></td>
+<td>Gateway startup</td>
+<td>ANSI escape codes — use <code>sed 's/\x1b\[[0-9;]*m//g'</code> to
+strip</td>
+</tr>
+<tr>
+<td><code>~/.openclaw/logs/gateway.err.log</code></td>
+<td>Gateway errors + startup</td>
+<td>Most useful for diagnosing startup failures</td>
+</tr>
+<tr>
+<td><code>/tmp/openclaw/openclaw-YYYY-MM-DD.log</code></td>
+<td>Gateway runtime (JSON lines)</td>
+<td>Only exists while gateway is running; wiped on restart</td>
+</tr>
+<tr>
+<td><code>~/.openclaw/logs/nova-boot.log</code></td>
+<td>Boot orchestrator</td>
+<td>Look for FAIL/WARN/PASS lines</td>
+</tr>
+<tr>
+<td><code>~/.openclaw/logs/scheduler.log</code></td>
+<td>Scheduler</td>
+<td>Task execution history</td>
+</tr>
+<tr>
+<td><code>~/.openclaw/logs/slack-preprocessor.log</code></td>
+<td>Slack preprocessor</td>
+<td>Keychain errors common if plist missing env var</td>
+</tr>
+<tr>
+<td><code>~/.openclaw/logs/memory-server-error.log</code></td>
+<td>Memory server</td>
+<td>Usually quiet; errors indicate DB connection issues</td>
+</tr>
+<tr>
+<td><code>~/.openclaw/logs/stability/</code></td>
+<td>Gateway crash dumps</td>
+<td>JSON files; <code>message</code> field has the error</td>
+</tr>
+<tr>
+<td><code>/tmp/nova-services.log</code></td>
+<td>nova-services.sh</td>
+<td>Start/stop operations</td>
+</tr>
+<tr>
+<td><code>/tmp/nova-gateway-health.log</code></td>
+<td>nova_gateway_health.py</td>
+<td>Hourly health check results</td>
+</tr>
+</tbody>
+</table>
+<p><strong>Parse runtime log prettily:</strong></p>
+<div class="sourceCode" id="cb49"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb49-1"><a href="#cb49-1" aria-hidden="true" tabindex="-1"></a><span class="fu">tail</span> <span class="at">-f</span> /tmp/openclaw/openclaw-<span class="va">$(</span><span class="fu">date</span> +%Y-%m-%d<span class="va">)</span>.log <span class="kw">|</span> <span class="ex">python3</span> <span class="at">-c</span> <span class="st">&quot;</span></span>
+<span id="cb49-2"><a href="#cb49-2" aria-hidden="true" tabindex="-1"></a><span class="st">import sys, json</span></span>
+<span id="cb49-3"><a href="#cb49-3" aria-hidden="true" tabindex="-1"></a><span class="st">for line in sys.stdin:</span></span>
+<span id="cb49-4"><a href="#cb49-4" aria-hidden="true" tabindex="-1"></a><span class="st">    try:</span></span>
+<span id="cb49-5"><a href="#cb49-5" aria-hidden="true" tabindex="-1"></a><span class="st">        d = json.loads(line)</span></span>
+<span id="cb49-6"><a href="#cb49-6" aria-hidden="true" tabindex="-1"></a><span class="st">        ts = d.get(&#39;time&#39;,&#39;&#39;)[:19]</span></span>
+<span id="cb49-7"><a href="#cb49-7" aria-hidden="true" tabindex="-1"></a><span class="st">        msg = d.get(&#39;message&#39;,&#39;&#39;)[:120]</span></span>
+<span id="cb49-8"><a href="#cb49-8" aria-hidden="true" tabindex="-1"></a><span class="st">        print(f&#39;{ts}: {msg}&#39;)</span></span>
+<span id="cb49-9"><a href="#cb49-9" aria-hidden="true" tabindex="-1"></a><span class="st">    except: pass</span></span>
+<span id="cb49-10"><a href="#cb49-10" aria-hidden="true" tabindex="-1"></a><span class="st">&quot;</span></span></code></pre></div>
+<hr />
+<h2 id="incident-post-mortem">10. 2026-05-08 Incident Post-Mortem</h2>
+<p><strong>Date:</strong> 2026-05-08<br />
+<strong>Duration:</strong> ~12 hours (overnight to ~11:30 AM)<br />
+<strong>Impact:</strong> Nova completely unresponsive on Slack, Discord,
+and Signal</p>
+<h3 id="root-causes-ranked-by-severity">Root Causes (ranked by
+severity)</h3>
+<ol type="1">
+<li><p><strong>auth-profiles.json wrong format</strong> — All 4 agent
+auth files had <code>${NOVA_OPENROUTER_API_KEY}</code> as a literal
+string in the legacy flat format. OpenClaw 2026.5.4+ requires canonical
+versioned format. Fix: <code>openclaw doctor --fix</code> with env vars
+loaded.</p></li>
+<li><p><strong>Wrong value in nova-gateway-auth-token Keychain</strong>
+— The Keychain item held the OpenRouter API key
+(<code>sk-or-v1-...</code>) instead of a proper gateway auth token.
+Every CLI authentication attempt returned 401. Fix: generate new random
+token and store it.</p></li>
+<li><p><strong>Gateway launchd service not loaded</strong> — macOS Tahoe
+(Darwin 25.5) bug: <code>launchctl bootstrap</code> for
+<code>ai.openclaw.gateway</code> fails with error 5 (I/O error). The
+running gateway was started manually 2 days prior with an old pre-fix
+config. Fix: kill and manually restart via
+<code>nova_gateway_start.sh</code>.</p></li>
+<li><p><strong>signal-cli lock conflict</strong> — Old signal-cli
+process held the account config lock after gateway restart. New
+signal-cli blocked on
+<code>Config file is in use by another instance</code>. Fix:
+<code>pkill -f "signal-cli"</code> before starting gateway.</p></li>
+<li><p><strong>Slack preprocessor can’t access Keychain</strong> —
+launchd processes can’t read Keychain (macOS TCC restriction). Fix: add
+<code>NOVA_SLACK_BOT_TOKEN</code> to plist EnvironmentVariables, then
+full bootout/bootstrap.</p></li>
+<li><p><strong>Multiple openclaw.json config failures at 2am</strong> —
+Bad keys (<code>bootstrapMaxChars</code>,
+<code>chat</code>/<code>research</code>/<code>home</code> as top-level
+agent keys) caused 4 gateway crash-restart cycles. Stability failure
+logs in <code>~/.openclaw/logs/stability/</code>.</p></li>
+<li><p><strong>Discord “awaiting gateway readiness”</strong> (ongoing) —
+Known <code>@buape/carbon</code> WebSocket library bug. Discord bot
+connects but never reaches READY state. Updated Discord extension to
+2026.5.7 (matching core) — improved but not resolved.</p></li>
+</ol>
+<h3 id="timeline">Timeline</h3>
+<ul>
+<li>~9pm May 7: Multiple gateway config changes + new OpenClaw config
+added overnight</li>
+<li>~2am May 8: 4 gateway startup failures (bad config keys)</li>
+<li>7:36pm May 7 — 11:00am May 8: Gateway running but with OLD config,
+wrong auth token → all channel responses silently failing</li>
+<li>11:00am May 8: Diagnosis and repair session began</li>
+<li>11:30am May 8: All channels restored (Slack ✅, Signal ✅, Discord
+❌ ongoing)</li>
+<li>11:20am May 8: OpenClaw upgraded to 2026.5.7 (from 2026.5.4)</li>
+</ul>
+<h3 id="lessons-learned">Lessons Learned</h3>
+<ul>
+<li>Always run <code>openclaw doctor</code> with Keychain env vars
+loaded — without them it misreports config state</li>
+<li>After any config change, test
+<code>openclaw agent --message "ping"</code> immediately</li>
+<li>The gateway runtime log is in <code>/tmp/openclaw/</code> (not
+<code>~/.openclaw/logs/</code>) — easy to miss</li>
+<li><code>nova-gateway-auth-token</code> and
+<code>nova-openrouter-api-key</code> are DIFFERENT tokens; never store
+one in the other’s Keychain slot</li>
+</ul>
+<hr />
+<h2 id="openclaw-upgrade-procedure">11. OpenClaw Upgrade Procedure</h2>
+<p><strong>Safe upgrade checklist (learned from the 2026.4.15→2026.4.22
+disaster and the clean 2026.5.4→2026.5.7 upgrade):</strong></p>
+<h3 id="pre-upgrade">Pre-upgrade</h3>
+<div class="sourceCode" id="cb50"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb50-1"><a href="#cb50-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 1. Check changelog for breaking changes BEFORE installing</span></span>
+<span id="cb50-2"><a href="#cb50-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> https://registry.npmjs.org/openclaw/-/openclaw-<span class="op">&lt;</span>VERSION<span class="op">&gt;</span>.tgz <span class="kw">|</span> <span class="dt">\</span></span>
+<span id="cb50-3"><a href="#cb50-3" aria-hidden="true" tabindex="-1"></a>    <span class="fu">tar</span> <span class="at">-xzO</span> package/CHANGELOG.md <span class="dv">2</span><span class="op">&gt;</span>/dev/null <span class="kw">|</span> <span class="fu">head</span> <span class="at">-200</span></span>
+<span id="cb50-4"><a href="#cb50-4" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb50-5"><a href="#cb50-5" aria-hidden="true" tabindex="-1"></a><span class="co"># 2. Backup everything critical</span></span>
+<span id="cb50-6"><a href="#cb50-6" aria-hidden="true" tabindex="-1"></a><span class="va">BACKUP_DIR</span><span class="op">=</span><span class="st">&quot;</span><span class="va">$HOME</span><span class="st">/.openclaw/backups/pre-upgrade-</span><span class="va">$(</span><span class="fu">date</span> +%Y%m%d-%H%M%S<span class="va">)</span><span class="st">&quot;</span></span>
+<span id="cb50-7"><a href="#cb50-7" aria-hidden="true" tabindex="-1"></a><span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$BACKUP_DIR</span><span class="st">&quot;</span></span>
+<span id="cb50-8"><a href="#cb50-8" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> ~/.openclaw/openclaw.json <span class="st">&quot;</span><span class="va">$BACKUP_DIR</span><span class="st">/&quot;</span></span>
+<span id="cb50-9"><a href="#cb50-9" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> ~/.openclaw/openclaw.json.last-good <span class="st">&quot;</span><span class="va">$BACKUP_DIR</span><span class="st">/&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb50-10"><a href="#cb50-10" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> ~/.openclaw/cron/jobs.json <span class="st">&quot;</span><span class="va">$BACKUP_DIR</span><span class="st">/cron-jobs.json&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb50-11"><a href="#cb50-11" aria-hidden="true" tabindex="-1"></a><span class="cf">for</span> agent <span class="kw">in</span> main chat home research<span class="kw">;</span> <span class="cf">do</span></span>
+<span id="cb50-12"><a href="#cb50-12" aria-hidden="true" tabindex="-1"></a>    <span class="fu">mkdir</span> <span class="at">-p</span> <span class="st">&quot;</span><span class="va">$BACKUP_DIR</span><span class="st">/agents/</span><span class="va">$agent</span><span class="st">&quot;</span></span>
+<span id="cb50-13"><a href="#cb50-13" aria-hidden="true" tabindex="-1"></a>    <span class="fu">cp</span> <span class="at">-r</span> ~/.openclaw/agents/<span class="va">$agent</span>/agent/ <span class="st">&quot;</span><span class="va">$BACKUP_DIR</span><span class="st">/agents/</span><span class="va">$agent</span><span class="st">/&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb50-14"><a href="#cb50-14" aria-hidden="true" tabindex="-1"></a><span class="cf">done</span></span>
+<span id="cb50-15"><a href="#cb50-15" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> ~/.openclaw/workspace/IDENTITY.md <span class="st">&quot;</span><span class="va">$BACKUP_DIR</span><span class="st">/&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb50-16"><a href="#cb50-16" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> ~/.openclaw/workspace/SOUL.md <span class="st">&quot;</span><span class="va">$BACKUP_DIR</span><span class="st">/&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb50-17"><a href="#cb50-17" aria-hidden="true" tabindex="-1"></a><span class="fu">cp</span> <span class="at">-r</span> ~/.openclaw/extensions/ <span class="st">&quot;</span><span class="va">$BACKUP_DIR</span><span class="st">/&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb50-18"><a href="#cb50-18" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb50-19"><a href="#cb50-19" aria-hidden="true" tabindex="-1"></a><span class="co"># 3. Stop the gateway gracefully</span></span>
+<span id="cb50-20"><a href="#cb50-20" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;^openclaw$&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb50-21"><a href="#cb50-21" aria-hidden="true" tabindex="-1"></a><span class="ex">pkill</span> <span class="at">-f</span> <span class="st">&quot;signal-cli&quot;</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null</span>
+<span id="cb50-22"><a href="#cb50-22" aria-hidden="true" tabindex="-1"></a><span class="fu">sleep</span> 3</span></code></pre></div>
+<h3 id="upgrade">Upgrade</h3>
+<div class="sourceCode" id="cb51"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb51-1"><a href="#cb51-1" aria-hidden="true" tabindex="-1"></a><span class="ex">npm</span> install <span class="at">-g</span> openclaw@<span class="op">&lt;</span>VERSION<span class="op">&gt;</span></span>
+<span id="cb51-2"><a href="#cb51-2" aria-hidden="true" tabindex="-1"></a><span class="ex">openclaw</span> <span class="at">--version</span>  <span class="co"># Verify</span></span></code></pre></div>
+<h3 id="post-upgrade">Post-upgrade</h3>
+<div class="sourceCode" id="cb52"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb52-1"><a href="#cb52-1" aria-hidden="true" tabindex="-1"></a><span class="co"># 4. Run doctor --fix WITH env vars (safe repairs only, no --force)</span></span>
+<span id="cb52-2"><a href="#cb52-2" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_OPENROUTER_API_KEY</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-openrouter-api-key <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb52-3"><a href="#cb52-3" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_SLACK_BOT_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-slack-bot-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb52-4"><a href="#cb52-4" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_SLACK_APP_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-slack-app-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb52-5"><a href="#cb52-5" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_DISCORD_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-discord-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb52-6"><a href="#cb52-6" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_GATEWAY_AUTH_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb52-7"><a href="#cb52-7" aria-hidden="true" tabindex="-1"></a><span class="ex">openclaw</span> doctor <span class="at">--fix</span></span>
+<span id="cb52-8"><a href="#cb52-8" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb52-9"><a href="#cb52-9" aria-hidden="true" tabindex="-1"></a><span class="co"># 5. Update Discord extension to match core version</span></span>
+<span id="cb52-10"><a href="#cb52-10" aria-hidden="true" tabindex="-1"></a><span class="ex">openclaw</span> plugins update discord</span>
+<span id="cb52-11"><a href="#cb52-11" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb52-12"><a href="#cb52-12" aria-hidden="true" tabindex="-1"></a><span class="co"># 6. Start gateway fresh</span></span>
+<span id="cb52-13"><a href="#cb52-13" aria-hidden="true" tabindex="-1"></a><span class="fu">nohup</span> ~/.openclaw/.openclaw/scripts/nova_gateway_start.sh <span class="dt">\</span></span>
+<span id="cb52-14"><a href="#cb52-14" aria-hidden="true" tabindex="-1"></a>    <span class="op">&gt;</span> ~/.openclaw/logs/gateway.log <span class="dt">\</span></span>
+<span id="cb52-15"><a href="#cb52-15" aria-hidden="true" tabindex="-1"></a>    <span class="dv">2</span><span class="op">&gt;&gt;</span> ~/.openclaw/logs/gateway.err.log <span class="kw">&amp;</span></span>
+<span id="cb52-16"><a href="#cb52-16" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb52-17"><a href="#cb52-17" aria-hidden="true" tabindex="-1"></a><span class="co"># 7. Test Nova responds</span></span>
+<span id="cb52-18"><a href="#cb52-18" aria-hidden="true" tabindex="-1"></a><span class="fu">sleep</span> 15</span>
+<span id="cb52-19"><a href="#cb52-19" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_OPENROUTER_API_KEY</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-openrouter-api-key <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb52-20"><a href="#cb52-20" aria-hidden="true" tabindex="-1"></a><span class="va">NOVA_GATEWAY_AUTH_TOKEN</span><span class="op">=</span><span class="va">$(</span><span class="ex">security</span> find-generic-password <span class="at">-a</span> nova <span class="at">-s</span> nova-gateway-auth-token <span class="at">-w</span> <span class="dv">2</span><span class="op">&gt;</span>/dev/null<span class="va">)</span> <span class="dt">\</span></span>
+<span id="cb52-21"><a href="#cb52-21" aria-hidden="true" tabindex="-1"></a><span class="ex">openclaw</span> agent <span class="at">--session-id</span> b184fae0-b03c-42bb-94a4-8651313e6449 <span class="at">--message</span> <span class="st">&quot;ping&quot;</span></span></code></pre></div>
+<h3
+id="what-the-2026.4.22-upgrade-broke-and-how-to-avoid-next-time">What
+the 2026.4.22 Upgrade Broke (and how to avoid next time)</h3>
+<ul>
+<li>BOOTSTRAP.md identity amnesia — new version triggered first-time
+setup even when IDENTITY.md existed. Fix: patch
+<code>~/.openclaw/workspace/BOOTSTRAP.md</code> to check for IDENTITY.md
+first.</li>
+<li>Built-in memorySearch disabled (Bedrock fallback with stale AWS
+credentials). Fix:
+<code>agents.defaults.memorySearch.enabled = false</code> (already
+set).</li>
+</ul>
+<hr />
+<h2 id="scheduled-maintenance">12. Scheduled Maintenance</h2>
+<p>Weekly automated maintenance via scheduler: - <strong>Sunday 3
+AM</strong> — <code>nova_pg_maintain.sh</code>:
+<code>VACUUM ANALYZE</code> + monthly HNSW reindex on memory database -
+<strong>Daily</strong> — <code>nova_pg_backup.sh</code>: PostgreSQL
+backup of nova_memories - <strong>Hourly</strong> —
+<code>nova_gateway_health.py</code>: Channel health check + auto-repair
+- <strong>Every 5 min</strong> — <code>nova_watchdog.py</code>: Service
+health + auto-restart</p>
+<p>Manual maintenance commands:</p>
+<div class="sourceCode" id="cb53"><pre
+class="sourceCode bash"><code class="sourceCode bash"><span id="cb53-1"><a href="#cb53-1" aria-hidden="true" tabindex="-1"></a><span class="co"># Check memory database stats</span></span>
+<span id="cb53-2"><a href="#cb53-2" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:18790/stats <span class="kw">|</span> <span class="ex">python3</span> <span class="at">-m</span> json.tool</span>
+<span id="cb53-3"><a href="#cb53-3" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb53-4"><a href="#cb53-4" aria-hidden="true" tabindex="-1"></a><span class="co"># Check scheduler status</span></span>
+<span id="cb53-5"><a href="#cb53-5" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:37460/status <span class="kw">|</span> <span class="ex">python3</span> <span class="at">-m</span> json.tool <span class="kw">|</span> <span class="fu">head</span> <span class="at">-30</span></span>
+<span id="cb53-6"><a href="#cb53-6" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb53-7"><a href="#cb53-7" aria-hidden="true" tabindex="-1"></a><span class="co"># Check memory queue depth (high = ingest still running)</span></span>
+<span id="cb53-8"><a href="#cb53-8" aria-hidden="true" tabindex="-1"></a><span class="ex">curl</span> <span class="at">-s</span> http://127.0.0.1:18790/health <span class="kw">|</span> <span class="ex">python3</span> <span class="at">-m</span> json.tool</span>
+<span id="cb53-9"><a href="#cb53-9" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb53-10"><a href="#cb53-10" aria-hidden="true" tabindex="-1"></a><span class="co"># VACUUM the memory database manually</span></span>
+<span id="cb53-11"><a href="#cb53-11" aria-hidden="true" tabindex="-1"></a><span class="ex">psql</span> <span class="at">-U</span> kochj <span class="at">-d</span> nova_memories <span class="at">-c</span> <span class="st">&quot;VACUUM ANALYZE nova_memories;&quot;</span></span>
+<span id="cb53-12"><a href="#cb53-12" aria-hidden="true" tabindex="-1"></a></span>
+<span id="cb53-13"><a href="#cb53-13" aria-hidden="true" tabindex="-1"></a><span class="co"># Check disk usage</span></span>
+<span id="cb53-14"><a href="#cb53-14" aria-hidden="true" tabindex="-1"></a><span class="fu">df</span> <span class="at">-h</span> /Volumes/MoreData  <span class="co"># PostgreSQL data</span></span>
+<span id="cb53-15"><a href="#cb53-15" aria-hidden="true" tabindex="-1"></a><span class="fu">df</span> <span class="at">-h</span> /Volumes/Data       <span class="co"># AI models, apps</span></span></code></pre></div>
+</body>
+</html>
