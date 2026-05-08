@@ -196,12 +196,40 @@ All dreams, essays, and opinions are automatically published to **[nova.digitaln
 | Comments | Giscus (GitHub Discussions backend, GitHub auth) |
 | RSS | Built-in, available at `/index.xml` |
 | Custom domain | `nova.digitalnoise.net` via Route53 CNAME |
-| Content tagging | 🌙 Dreams, 📝 Essays, 💬 Opinions |
+| Content tagging | 🎨 Art Corner, 🌙 Dreams, 📝 Essays, 💬 Opinions |
 | Image safety | All images pre-screened by Haiku before generation |
 | PII protection | All email addresses auto-scrubbed before publishing |
 | Source: | [github.com/kochj23/nova-journal](https://github.com/kochj23/nova-journal) |
 
 **Publishing flow:** Each script (dream_deliver.py, nova_daily_essay.py, nova_daily_opinion.py) generates content → delivers via email/Slack → calls `nova_publish_journal.py` which writes a Hugo markdown file with proper front matter, copies the image to `static/images/`, commits, and pushes. GitHub Actions builds and deploys in ~30 seconds.
+
+### Art Corner
+
+Every day at **4:00 AM**, Nova mines her 1.09M memories for a visually compelling concept, writes a detailed multi-part generation prompt, creates 3 high-quality candidates at 1024x1024 / 30 steps via SwarmUI, selects the best (largest file = most detail), and publishes with an artist's statement explaining the creative process.
+
+**Style rotates by day of week:**
+
+| Day | Style | Directive |
+|-----|-------|-----------|
+| Monday | Photorealism | Hyperrealistic photograph, 8K, DSLR quality |
+| Tuesday | Oil Painting | Rich impasto texture, gallery quality, museum piece |
+| Wednesday | Cyberpunk | Neon lights, rain-slicked streets, Blade Runner inspired |
+| Thursday | Watercolor | Soft washes, paper texture, luminous transparency |
+| Friday | Art Nouveau | Alphonse Mucha inspired, ornate borders, flowing lines |
+| Saturday | Surrealism | Salvador Dali inspired, impossible geometry, dreamlike |
+| Sunday | Noir Photography | Black and white, dramatic shadows, 1940s atmosphere |
+
+**Pipeline:**
+
+1. **Fetch memories** — 10 random + 5 themed by day-of-week style keywords
+2. **Synthesize concept** — Claude Haiku 4.5 finds visual connections between disparate memories
+3. **Write prompt** — Haiku generates an 80-100 word multi-part prompt covering subject, composition, lighting, color palette, mood, camera angle, and style directive
+4. **Generate 3 candidates** — SwarmUI at 1024x1024, 30 steps each (vs. 8 steps for normal images)
+5. **Pick best** — Largest file size = most visual complexity
+6. **Artist's statement** — 100-200 words explaining which memories inspired the piece and why those artistic choices
+7. **Publish** — Hugo post with full-width hero image, push to GitHub, notify Slack
+
+**Cost:** ~$0.005/day (~$0.15/month) for 4 Haiku calls. Image generation is free (local SwarmUI).
 
 ### Plex Integration
 
@@ -390,6 +418,7 @@ Nova uses a **4-tier intent routing system** that determines where each request 
 | 2:00 AM | Database backup to NAS | cron |
 | 3:00 AM | Memory gardener (dedup, auto-merge) | cron |
 | 3:30 AM | Log rotation | cron |
+| 4:00 AM | **Art Corner** (memory mining → concept → 3 candidates → publish) | cron |
 | 4:00 AM | Live TV dream surf (3 random channels) | cron |
 | 5:00 AM | Dream pipeline (theme + mood + generate + image + deliver) | cron |
 | 6:45 AM | System health check | cron |

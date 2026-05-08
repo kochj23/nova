@@ -144,9 +144,16 @@ tasks:
     timeout: 10800
     overlap: queue
 
+  art_corner:
+    script: nova_art_corner.py
+    schedule: cron 0 4 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
   dream_pipeline:
     script: dream_generate.py
-    schedule: cron 0 5 * * *
+    schedule: cron 0 6 * * *
     timeout: 900
     overlap: skip
     group: llm
@@ -236,7 +243,7 @@ tasks:
 
   daily_essay:
     script: nova_daily_essay.py
-    schedule: cron 0 18 * * *
+    schedule: cron 0 9 * * *
     timeout: 600
     overlap: skip
     group: llm
@@ -254,14 +261,60 @@ tasks:
     overlap: skip
     group: llm
 
+  after_dark:
+    script: nova_after_dark.py
+    schedule: cron 0 20 * * *
+    timeout: 900
+    overlap: skip
+    group: llm
+
   daily_journal:
     script: nova_daily_journal.py
-    schedule: cron 0 21 * * *
+    schedule: cron 15 21 * * *
     timeout: 300
     overlap: skip
     group: llm
 
-  # ── Daily: night (digests, reports) ────────────────────────────────────
+  # ── Weekly: Sunday evening ─────────────────────────────────────────────
+
+  research_paper:
+    script: nova_research_paper.py
+    schedule: cron 50 23 * * *
+    timeout: 1800
+    overlap: skip
+    group: llm
+
+  # ── Daily: KABC news recording + ingest (5pm, 6pm, 11pm) ──────────────
+
+  daily_news_5pm:
+    script: nova_daily_news_ingest.py
+    schedule: cron 0 17 * * *
+    timeout: 2400
+    overlap: skip
+    group: livetv
+
+  daily_news_6pm:
+    script: nova_daily_news_ingest.py
+    schedule: cron 0 18 * * *
+    timeout: 2400
+    overlap: skip
+    group: livetv
+
+  daily_news_11pm:
+    script: nova_daily_news_ingest.py
+    schedule: cron 0 23 * * *
+    timeout: 2400
+    overlap: skip
+    group: livetv
+
+  # ── Daily: night (tech today, digests, reports) ─────────────────────────
+
+  tech_today:
+    script: nova_tech_today.py
+    schedule: cron 30 23 * * *
+    timeout: 900
+    overlap: skip
+    group: llm
 
   nightly_report:
     script: nova_nightly_report.py
@@ -361,9 +414,9 @@ tasks:
     timeout: 7200
     overlap: queue
 
-  weekly_digest:
+  daily_digest:
     script: nova_weekly_digest.py
-    schedule: cron 0 17 * * 0
+    schedule: cron 0 17 * * *
     timeout: 600
     overlap: skip
     group: llm
@@ -436,6 +489,7 @@ tasks:
     schedule: every 15m
     timeout: 180
     overlap: skip
+    enabled: false
 
   livetv_news:
     script: nova_livetv.py
@@ -483,3 +537,16 @@ tasks:
     timeout: 300
     overlap: skip
     enabled: false  # Disabled: duplicates morning_brief, hallucinates with deepseek-r1:8b
+
+  plex_auto_ingest:
+    script: nova_plex_auto_ingest.py
+    schedule: cron 0 23 * * *
+    timeout: 7200
+    overlap: skip
+    group: ingest
+
+  fix_missing_images:
+    script: nova_fix_missing_images.py
+    schedule: every 1h
+    timeout: 1800
+    overlap: skip
