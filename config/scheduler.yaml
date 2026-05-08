@@ -448,6 +448,20 @@ tasks:
     timeout: 120
     overlap: skip
 
+  weekly_synthesis:
+    script: nova_weekly_synthesis.py
+    schedule: cron 0 19 * * 0
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  meta_analysis:
+    script: nova_meta_analysis.py
+    schedule: cron 0 20 * * 0
+    timeout: 900
+    overlap: skip
+    group: llm
+
   canary:
     script: nova_canary.py
     schedule: every 5m

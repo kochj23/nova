@@ -20,12 +20,41 @@ import sys
 import time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).parent))
+
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
 CONTENT_DREAMS = HUGO_ROOT / "content/dreams"
 CONTENT_ESSAYS = HUGO_ROOT / "content/essays"
 IMAGES_DREAMS = HUGO_ROOT / "static/images/dreams"
 IMAGES_ESSAYS = HUGO_ROOT / "static/images/essays"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_publish.log"
+
+
+def _get_tags(title: str, text: str, category: str) -> list[str]:
+    """Extract tags using nova_tag_extractor, fall back to category seed on failure."""
+    try:
+        from nova_tag_extractor import extract_tags
+        return extract_tags(title, text, category, n=5)
+    except Exception as e:
+        log(f"Tag extraction failed ({e}) — using defaults")
+        defaults = {"dreams": ["dream"], "essays": ["essay", "culture"],
+                    "opinions": ["opinion", "tech"], "tech-today": ["technology", "AI"],
+                    "after-dark": ["history", "comedy"], "art": ["art", "generative"],
+                    "research": ["research", "academic"]}
+        return defaults.get(category, ["journal"])
+
+
+def _get_related(text: str, category: str, slug: str) -> str:
+    """Find cross-category related posts, return as YAML frontmatter block."""
+    try:
+        from nova_cross_linker import find_related, format_related_frontmatter
+        related = find_related(text, category, slug)
+        if related:
+            log(f"Found {len(related)} related posts")
+        return format_related_frontmatter(related)
+    except Exception as e:
+        log(f"Cross-link search failed ({e}) — skipping related posts")
+        return ""
 
 EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
 SAFE_EMAILS = {"nova@digitalnoise.net"}
@@ -117,16 +146,24 @@ def publish_dream(md_path: str, image_path: str | None = None):
     text = text.lstrip('-\n ')
 
     # Build Hugo post
+    dream_timestamp = time.strftime("%Y-%m-%dT%H:%M:%S-07:00")
+    slug = date
+    tags = _get_tags(theme, text, "dreams")
+    tags_yaml = json.dumps(tags)
+    related_yaml = _get_related(text, "dreams", slug)
+
     front_matter = f"""---
 title: "🌙 {theme}"
-date: {date}T05:00:00-07:00
+date: {dream_timestamp}
 draft: false
 categories: ["dreams"]
-tags: ["{mood}"]
+tags: {tags_yaml}
 description: "A {mood} dream about {theme}"
 """
     if hugo_image:
         front_matter += f'cover:\n  image: "{hugo_image}"\n  alt: "Dream illustration"\n  relative: false\n'
+    if related_yaml:
+        front_matter += related_yaml + "\n"
     front_matter += "---\n\n"
 
     CONTENT_DREAMS.mkdir(parents=True, exist_ok=True)
@@ -154,16 +191,22 @@ def publish_essay(title: str, source: str, essay_text: str, image_path: str | No
         log(f"Essay image copied: {img_dest.name}")
 
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S-07:00")
+    tags = _get_tags(title, essay_text, "essays")
+    tags_yaml = json.dumps(tags)
+    related_yaml = _get_related(essay_text, "essays", slug)
+
     front_matter = f"""---
 title: "📝 {title}"
 date: {timestamp}
 draft: false
 categories: ["essays"]
-tags: ["{source_label}"]
+tags: {tags_yaml}
 description: "A formal essay on {source_label}"
 """
     if hugo_image:
         front_matter += f'cover:\n  image: "{hugo_image}"\n  alt: "Essay illustration"\n  relative: false\n'
+    if related_yaml:
+        front_matter += related_yaml + "\n"
     front_matter += "---\n\n"
 
     CONTENT_ESSAYS.mkdir(parents=True, exist_ok=True)
