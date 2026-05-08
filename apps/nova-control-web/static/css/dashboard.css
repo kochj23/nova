@@ -476,3 +476,24 @@ footer {
 /* Disk usage detail */
 .disk-usage-item { margin-bottom: 6px; }
 .disk-detail { font-size: 10px; color: var(--text-dim); margin-top: 2px; }
+
+/* Multi-Agent Architecture grid */
+.multi-agent-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+.multi-agent-card {
+  background: rgba(255,255,255,0.03);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.multi-agent-name {
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 6px;
+  color: var(--text-primary);
+}

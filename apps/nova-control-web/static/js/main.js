@@ -125,6 +125,7 @@ function renderCards(state) {
   for (const name of ['analyst', 'sentinel', 'coder', 'lookout', 'librarian']) {
     renderAgent(name, state.agents?.[name]);
   }
+  renderMultiAgents(state.multi_agents);
 }
 
 // --- System Resources ---
@@ -692,6 +693,51 @@ function renderAgent(name, agent) {
   if (agent.last_error) html += `<div class="error-text">${escapeHtml(agent.last_error.substring(0, 120))}</div>`;
   if (agent.error) html += `<div class="error-text">${escapeHtml(agent.error)}</div>`;
   body.innerHTML = html;
+}
+
+// --- Multi-Agent Architecture Card ---
+function renderMultiAgents(data) {
+  const card = document.getElementById('card-multi-agents');
+  if (!card) return;
+  if (!data || !data.agents) { card.dataset.status = 'unknown'; return; }
+
+  const agents = data.agents;
+  const anyActive = agents.some(a => a.status === 'active');
+  card.dataset.status = agents.length > 0 ? (anyActive ? 'healthy' : 'degraded') : 'down';
+
+  const body = card.querySelector('.card-body');
+  let html = '<div class="multi-agent-grid">';
+
+  for (const agent of agents) {
+    const st = agent.status === 'active' ? 'green' : agent.status === 'idle' ? 'yellow' : 'red';
+    const modelShort = agent.model ? agent.model.split('/').pop() : 'unknown';
+    const wsSize = agent.workspace_chars > 1024 ? (agent.workspace_chars / 1024).toFixed(1) + ' KB' : agent.workspace_chars + ' B';
+    const channels = agent.channels.length > 0 ? agent.channels.join(', ') : 'none';
+    const lastMsg = agent.last_message_ts ? formatTimeAgo(agent.last_message_ts) : 'never';
+
+    html += `<div class="multi-agent-card">`;
+    html += `<div class="multi-agent-name">${escapeHtml(agent.name || agent.id)}</div>`;
+    html += statRow('Status', agent.status, st);
+    html += statRow('Model', modelShort, 'cyan');
+    html += statRow('Workspace', wsSize);
+    html += statRow('Sessions', agent.active_sessions || 0);
+    html += statRow('Last Message', lastMsg);
+    html += statRow('Channels', channels, channels !== 'none' ? 'magenta' : '');
+    html += `</div>`;
+  }
+
+  html += '</div>';
+  if (data.error) html += `<div class="error-text">${escapeHtml(data.error)}</div>`;
+  body.innerHTML = html;
+}
+
+function formatTimeAgo(ts) {
+  if (!ts) return 'never';
+  const diff = Math.floor(Date.now() / 1000 - ts);
+  if (diff < 60) return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
 }
 
 // --- Token counter delta tracking ---
@@ -1367,7 +1413,7 @@ const CARD_SERVICE_MAP = {
   'card-unifi': 'unifi', 'card-conversations': 'conversations',
   'card-agent-analyst': 'agent-analyst', 'card-agent-sentinel': 'agent-sentinel',
   'card-agent-coder': 'agent-coder', 'card-agent-lookout': 'agent-lookout',
-  'card-agent-librarian': 'agent-librarian',
+  'card-agent-librarian': 'agent-librarian', 'card-multi-agents': 'agents',
   'card-cost-tracker': 'cost_tracker', 'card-memory-growth': 'memory_growth',
   'card-disk-usage': 'disk_usage', 'card-searxng-stats': 'searxng_stats',
   'card-backup-status': 'backup_status', 'card-response-time': 'response_time',

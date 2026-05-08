@@ -32,6 +32,8 @@ HOMEKIT_API = "http://127.0.0.1:37400"
 MLX_MODELS_URL = "http://192.168.1.6:5050/v1/models"
 
 AGENTS = ["analyst", "sentinel", "coder", "lookout", "librarian"]
+OPENCLAW_CONFIG = Path.home() / ".openclaw" / "openclaw.json"
+AGENTS_DIR = Path.home() / ".openclaw" / "agents"
 
 PLEX_BASE = "http://192.168.1.10:32400"
 PLEX_EXCLUDED_LIBS = {"23"}
@@ -204,6 +206,8 @@ async def service_detail(service: str):
             return JSONResponse(await _detail_memory())
         elif service == "model_usage":
             return JSONResponse(await _detail_model_usage())
+        elif service == "agents":
+            return JSONResponse(await collect_multi_agents())
         elif service.startswith("agent-"):
             agent_name = service.replace("agent-", "")
             return JSONResponse(await _detail_agent(agent_name))
@@ -849,6 +853,91 @@ async def collect_agents(redis_client: aioredis.Redis) -> dict:
         return agents
     except Exception as e:
         return {name: {"status": "unknown", "error": str(e)} for name in AGENTS}
+
+
+async def collect_multi_agents() -> dict:
+    """Collect status for the new multi-agent architecture (chat, research, home).
+
+    Reads agent config from openclaw.json and checks workspace sizes,
+    session counts, and channel bindings.
+    """
+    try:
+        config = _json.loads(OPENCLAW_CONFIG.read_text())
+    except Exception:
+        return {"agents": [], "error": "cannot read openclaw.json"}
+
+    agent_list = config.get("agents", {}).get("list", [])
+    bindings = config.get("bindings", [])
+
+    # Build channel map: agentId -> [channel names]
+    channel_map: dict[str, list[str]] = {}
+    for b in bindings:
+        if isinstance(b, dict) and b.get("type") == "route":
+            aid = b.get("agentId", "")
+            ch = b.get("match", {}).get("channel", "")
+            if aid and ch:
+                channel_map.setdefault(aid, []).append(ch)
+
+    agents_out = []
+    for agent in agent_list:
+        agent_id = agent.get("id", "")
+        if agent_id == "main":
+            continue  # Skip the default main agent
+
+        model = agent.get("model", config.get("agents", {}).get("defaults", {}).get("model", {}).get("primary", "unknown"))
+        workspace_path = agent.get("workspace", "")
+
+        # Measure workspace size in characters
+        workspace_chars = 0
+        if workspace_path:
+            wp = Path(workspace_path)
+            if wp.exists():
+                for f in wp.rglob("*"):
+                    if f.is_file():
+                        try:
+                            workspace_chars += f.stat().st_size
+                        except OSError:
+                            pass
+
+        # Count active sessions
+        sessions_dir = AGENTS_DIR / agent_id / "sessions"
+        active_sessions = 0
+        last_message_ts = None
+        if sessions_dir.exists():
+            for sf in sessions_dir.iterdir():
+                if sf.suffix == ".jsonl" and ".deleted" not in sf.name:
+                    active_sessions += 1
+                    mtime = sf.stat().st_mtime
+                    if last_message_ts is None or mtime > last_message_ts:
+                        last_message_ts = mtime
+
+        # Determine status from Redis if possible
+        status = "idle"
+        try:
+            r = app.state.redis
+            raw = await r.get(f"nova:agent:{agent_id}:status")
+            if raw:
+                status = raw.decode() if isinstance(raw, bytes) else raw
+        except Exception:
+            pass
+
+        # If no redis status but has recent activity (< 5 min), mark active
+        if status == "idle" and last_message_ts:
+            if time.time() - last_message_ts < 300:
+                status = "active"
+
+        agents_out.append({
+            "id": agent_id,
+            "name": agent.get("name", agent_id),
+            "model": model,
+            "workspace_chars": workspace_chars,
+            "channels": channel_map.get(agent_id, []),
+            "status": status,
+            "active_sessions": active_sessions,
+            "last_message_ts": last_message_ts,
+        })
+
+    return {"agents": agents_out}
 
 
 async def collect_gateway(session: aiohttp.ClientSession) -> dict:
@@ -2609,6 +2698,7 @@ async def poll_loop():
             collect_homebridge_status(),     # 27
             collect_plex(session),           # 28
             collect_hdhr(session),           # 29
+            collect_multi_agents(),          # 30
             return_exceptions=True,
         )
 
@@ -2656,6 +2746,7 @@ async def poll_loop():
             "homebridge": safe(27),
             "plex": safe(28),
             "hdhr": safe(29),
+            "multi_agents": safe(30),
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }
