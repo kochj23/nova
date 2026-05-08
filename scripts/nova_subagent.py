@@ -210,19 +210,37 @@ class SubAgent(ABC):
 
     # ── LLM Inference ────────────────────────────────────────────────────────
 
+    INFERENCE_TIMEOUT = 120  # seconds — prevent hung agents blocking the agent loop
+
     async def infer(self, prompt: str, system: str = "", model: str = None,
                     temperature: float = None, max_tokens: int = None) -> str:
-        """Send a prompt to the configured LLM backend and return the response text."""
+        """Send a prompt to the configured LLM backend and return the response text.
+
+        Times out after INFERENCE_TIMEOUT seconds to prevent Ollama/MLX load
+        from hanging the agent loop indefinitely during heavy system load.
+        """
         model = model or self.model
         temp = temperature if temperature is not None else self.temperature
         tokens = max_tokens or self.max_tokens
 
-        if self.backend == "ollama":
-            return await self._infer_ollama(prompt, system, model, temp, tokens)
-        elif self.backend == "mlx":
-            return await self._infer_mlx(prompt, system, model, temp, tokens)
-        else:
-            raise ValueError(f"Unknown backend: {self.backend}")
+        try:
+            if self.backend == "ollama":
+                result = await asyncio.wait_for(
+                    self._infer_ollama(prompt, system, model, temp, tokens),
+                    timeout=self.INFERENCE_TIMEOUT,
+                )
+            elif self.backend == "mlx":
+                result = await asyncio.wait_for(
+                    self._infer_mlx(prompt, system, model, temp, tokens),
+                    timeout=self.INFERENCE_TIMEOUT,
+                )
+            else:
+                raise ValueError(f"Unknown backend: {self.backend}")
+            return result
+        except asyncio.TimeoutError:
+            log(f"Inference timed out after {self.INFERENCE_TIMEOUT}s — skipping task",
+                level=LOG_WARN, source=f"subagent.{self.name}")
+            raise TimeoutError(f"Inference timeout after {self.INFERENCE_TIMEOUT}s")
 
     async def _infer_ollama(self, prompt, system, model, temp, tokens) -> str:
         payload = json.dumps({

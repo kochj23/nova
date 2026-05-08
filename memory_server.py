@@ -49,7 +49,7 @@ from pydantic import BaseModel
 logger = logging.getLogger("memory_server")
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-PG_DSN      = "postgresql://localhost/nova_memories"
+PG_DSN      = "postgresql://localhost:6432/nova_memories"  # via PgBouncer :6432 → PG :5432
 REDIS_URL   = "redis://localhost:6379"
 REDIS_QUEUE = "nova:memory:ingest"          # list key for write queue
 REDIS_CACHE      = "nova:memory:cache"      # hash key for recall cache
@@ -100,6 +100,11 @@ async def _ingest_worker():
     logger.info("Redis ingest worker started")
     while True:
         try:
+            # Pause during maintenance window (HNSW reindex, VACUUM) to avoid lock contention
+            if await _redis.get("nova:maintenance:active"):
+                await asyncio.sleep(30)
+                continue
+
             item = await _redis.blpop(REDIS_QUEUE, timeout=5)
             if item is None:
                 continue
@@ -159,9 +164,9 @@ async def lifespan(app: FastAPI):
         await conn.execute("SET hnsw.ef_search = 400")
 
     _pg_pool = await asyncpg.create_pool(
-        PG_DSN, min_size=5, max_size=20, init=_pg_init,
-        max_inactive_connection_lifetime=3600.0,  # recycle idle connections after 1h
-        command_timeout=120.0,                     # per-query timeout (longer for startup during reindex)
+        PG_DSN, min_size=2, max_size=8, init=_pg_init,
+        max_inactive_connection_lifetime=600.0,   # recycle idle PgBouncer connections after 10min
+        command_timeout=120.0,                     # per-query timeout
     )
     _redis   = aioredis.from_url(REDIS_URL, decode_responses=True)
 

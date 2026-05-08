@@ -87,6 +87,7 @@ LAN_IP = "192.168.1.6"  # Mac Studio LAN IP — some services bind here, not loo
 SERVICES = [
     # name, host, port, launchd_label, is_critical, health_url_path
     ("PostgreSQL",    "127.0.0.1", 5432,  "homebrew.mxcl.postgresql@17",         True,  None),
+    ("PgBouncer",     "127.0.0.1", 6432,  "net.digitalnoise.pgbouncer",           True,  None),
     ("Redis",         "127.0.0.1", 6379,  "net.digitalnoise.redis",               True,  None),
     ("Ollama",        "127.0.0.1", 11434, None,                                   True,  "/api/tags"),
     ("Memory Server", "127.0.0.1", 18790, "net.digitalnoise.nova-memory-server",  True,  "/health"),
@@ -125,6 +126,9 @@ _last_gateway_restart: float = 0.0
 # Discord 3-strike before restart — timeouts ≠ disconnect
 _discord_timeout_count: int = 0
 DISCORD_STRIKE_THRESHOLD = 3
+
+# Signal gap tracking — log when signal-cli goes unreachable and for how long
+_signal_down_since: float = 0.0   # 0 = currently up
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -760,10 +764,27 @@ def _scan_log_file(log_file: Path) -> list:
 
 # ── Full Health Sweep ─────────────────────────────────────────────────────────
 
+def _is_maintenance_mode() -> bool:
+    """Check Redis maintenance flag set by pg_maintain / manual ops."""
+    try:
+        import redis
+        r = redis.from_url("redis://localhost:6379", decode_responses=True)
+        return bool(r.get("nova:maintenance:active"))
+    except Exception:
+        return False
+
+
 def _full_sweep():
     """Run all checks and heal everything that can be healed."""
     issues = []
     fixes = []
+
+    # ── Skip restarts during maintenance window (pg_maintain sets this flag) ──
+    if _is_maintenance_mode():
+        log("Maintenance mode active — skipping service restarts this sweep",
+            level=LOG_INFO, source="big-brother")
+        return
+
     protected_running = _is_protected_task_running()
 
     # ── Flush pending restarts if protection lifted ──────────────────────────
@@ -970,6 +991,51 @@ def _full_sweep():
     # ── PostgreSQL idle cleanup ───────────────────────────────────────────────
     if _port_open("127.0.0.1", 5432):
         _cleanup_postgres_idle()
+
+    # ── Signal gap tracking ───────────────────────────────────────────────────
+    global _signal_down_since
+    signal_up = _port_open("127.0.0.1", 8080)
+    if not signal_up:
+        if _signal_down_since == 0.0:
+            _signal_down_since = time.time()
+            log("Signal-cli went down — starting gap timer", level=LOG_INFO, source="big-brother")
+        else:
+            gap_s = int(time.time() - _signal_down_since)
+            if gap_s > 120:  # Only alert if down >2 min (normal respawn takes <60s)
+                _record_event("warning",
+                              f"Signal-cli unreachable for {gap_s}s — messages during this window lost",
+                              "OpenClaw will auto-respawn; if >5min check signal-cli lock",
+                              "Signal-cli")
+    else:
+        if _signal_down_since > 0.0:
+            gap_s = int(time.time() - _signal_down_since)
+            if gap_s > 60:
+                _notify(f":signal_strength: Signal-cli recovered after {gap_s}s gap. Messages sent during that window may have been lost.")
+                log(f"Signal-cli recovered after {gap_s}s", level=LOG_INFO, source="big-brother")
+            _signal_down_since = 0.0
+
+    # ── Gateway memory check ───────────────────────────────────────────────────
+    gw_pids = []
+    try:
+        result = subprocess.run(["pgrep", "-f", "^openclaw$"], capture_output=True, text=True)
+        gw_pids = [int(p) for p in result.stdout.strip().split() if p]
+    except Exception:
+        pass
+    for pid in gw_pids:
+        try:
+            result = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)],
+                                    capture_output=True, text=True)
+            rss_kb = int(result.stdout.strip() or "0")
+            rss_gb = rss_kb / 1024 / 1024
+            if rss_gb > 2.0:
+                _record_event("warning",
+                              f"Gateway RSS {rss_gb:.1f} GB — possible memory leak",
+                              "Restart gateway during next quiet window",
+                              "Gateway")
+                log(f"Gateway RSS high: {rss_gb:.1f} GB (PID {pid})", level=LOG_WARN,
+                    source="big-brother")
+        except Exception:
+            pass
 
     # ── Disk space ───────────────────────────────────────────────────────────
     disk_warnings = _check_disk_space()

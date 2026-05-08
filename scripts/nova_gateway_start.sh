@@ -33,6 +33,21 @@ if [ -z "$NOVA_SLACK_BOT_TOKEN" ]; then
     exit 1
 fi
 
+# Validate openclaw.json before starting — catches bad keys that crash the gateway
+if ! /bin/zsh "$HOME/.openclaw/scripts/nova_config_validate.sh" check 2>/dev/null; then
+    echo "[gateway_start] FATAL: openclaw.json is invalid — restoring last-good backup" >&2
+    if [ -f "$HOME/.openclaw/openclaw.json.last-good" ]; then
+        cp "$HOME/.openclaw/openclaw.json.last-good" "$HOME/.openclaw/openclaw.json"
+        echo "[gateway_start] Restored openclaw.json from last-good backup" >&2
+    else
+        echo "[gateway_start] No last-good backup found — cannot auto-recover" >&2
+        exit 1
+    fi
+fi
+
+# Save a timed backup now that we know the config is valid and Keychain is unlocked
+/bin/zsh "$HOME/.openclaw/scripts/nova_config_validate.sh" before-write 2>/dev/null
+
 exec /opt/homebrew/opt/node/bin/node \
     /opt/homebrew/lib/node_modules/openclaw/dist/entry.js \
     gateway --port 18789

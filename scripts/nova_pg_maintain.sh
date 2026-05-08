@@ -33,6 +33,16 @@ fi
 START=$(date +%s)
 log "Starting weekly maintenance..."
 
+# ── Set maintenance mode flag — pauses ingest queue and Big Brother restarts ──
+redis-cli SET nova:maintenance:active "1" EX 14400 > /dev/null 2>&1  # expires in 4h as safety net
+log "Maintenance mode ON (nova:maintenance:active = 1)"
+
+cleanup_maintenance() {
+    redis-cli DEL nova:maintenance:active > /dev/null 2>&1
+    log "Maintenance mode OFF"
+}
+trap cleanup_maintenance EXIT INT TERM
+
 # ── Gather pre-maintenance stats ─────────────────────────────────────────────
 ROW_COUNT=$(psql -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT count(*) FROM memories;" 2>/dev/null || echo "?")
 DEAD_TUPLES=$(psql -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT n_dead_tup FROM pg_stat_user_tables WHERE relname = 'memories';" 2>/dev/null || echo "?")

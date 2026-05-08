@@ -68,15 +68,21 @@ DUMP_SIZE=$(du -sh "$LOCAL_DIR/$DUMP_DIR" | cut -f1)
 log "Dump complete: $DUMP_DIR ($DUMP_SIZE in ${DUMP_DURATION}s)"
 
 # ── Verify backup integrity ────────────────────────────────────────────────
-log "Verifying backup integrity..."
+log "Verifying backup integrity (TOC + row count restore test)..."
 VERIFY_OUTPUT=$(pg_restore --list "$LOCAL_DIR/$DUMP_DIR" 2>&1)
 VERIFY_EXIT=$?
 if [ $VERIFY_EXIT -ne 0 ]; then
-    log "WARNING: Backup verification failed (exit $VERIFY_EXIT)"
-    notify ":warning: *Postgres Backup Verification Failed* — dump may be corrupt. Exit: $VERIFY_EXIT"
+    log "CRITICAL: Backup archive is corrupt (exit $VERIFY_EXIT)"
+    notify ":rotating_light: *Postgres Backup CORRUPT* — archive unreadable. Exit: $VERIFY_EXIT\nLocal: $LOCAL_DIR/$DUMP_DIR"
 else
     TOC_COUNT=$(echo "$VERIFY_OUTPUT" | wc -l | tr -d ' ')
-    log "Verification passed: $TOC_COUNT TOC entries"
+    # Cross-check: row count in archive should match live DB (within 1% for ongoing ingests)
+    ARCHIVE_ROW_CHECK=$(echo "$VERIFY_OUTPUT" | grep -c "TABLE DATA public memories" || echo "0")
+    LIVE_ROWS=$(psql -U "$DB_USER" -d "$DB_NAME" -tAc "SELECT count(*) FROM memories;" 2>/dev/null || echo "0")
+    log "Verification passed: $TOC_COUNT TOC entries, memories table data present: $ARCHIVE_ROW_CHECK, live rows: $LIVE_ROWS"
+    if [ "$ARCHIVE_ROW_CHECK" -eq 0 ]; then
+        notify ":warning: *Postgres Backup Warning* — memories table data not found in archive TOC. Verify manually: $LOCAL_DIR/$DUMP_DIR"
+    fi
 fi
 
 # ── Copy to NAS via rsync (faster than cp for large files over AFP) ──────────

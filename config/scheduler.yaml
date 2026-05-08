@@ -448,6 +448,18 @@ tasks:
     timeout: 120
     overlap: skip
 
+  canary:
+    script: nova_canary.py
+    schedule: every 5m
+    timeout: 15
+    overlap: skip
+
+  dead_letter_replay:
+    script: nova_dead_letter_replay.py
+    schedule: cron 0 4 * * 0
+    timeout: 300
+    overlap: skip
+
   plex_stats:
     script: nova_plex.py
     args: ["stats"]

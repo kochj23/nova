@@ -66,6 +66,23 @@ http_ok() {
 
 # ─── Pre-flight ───────────────────────────────────────────────────────────────
 mkdir -p "$HOME/.openclaw/logs"
+
+# ── Log rotation: rotate any log over 10 MB, keep 3 generations ──────────────
+_rotate_log() {
+    local f="$1"
+    [[ -f "$f" ]] || return
+    local size=$(stat -f%z "$f" 2>/dev/null || echo 0)
+    if (( size > 10485760 )); then  # 10 MB
+        [[ -f "${f}.2" ]] && mv "${f}.2" "${f}.3" 2>/dev/null
+        [[ -f "${f}.1" ]] && mv "${f}.1" "${f}.2" 2>/dev/null
+        mv "$f" "${f}.1" 2>/dev/null
+        echo "[boot] Rotated $(basename $f) (was ${size} bytes)" >> "$LOGFILE"
+    fi
+}
+for _log in "$HOME/.openclaw/logs/"*.log "$HOME/.openclaw/logs/"*.err.log; do
+    [[ -f "$_log" ]] && _rotate_log "$_log"
+done
+
 echo "" >> "$LOGFILE"
 log "════════════════════════════════════════════════════════════"
 log "  NOVA BOOT SEQUENCE — $(date '+%Y-%m-%d %H:%M:%S')"
@@ -239,8 +256,17 @@ else
     open -a Ollama
 fi
 
-# Wait for all three
+# PgBouncer (connection pooler — must start after PostgreSQL)
+if port_listening 6432; then
+    log "PgBouncer already running"
+else
+    log "Starting PgBouncer..."
+    launchctl start net.digitalnoise.pgbouncer 2>/dev/null
+fi
+
+# Wait for all four
 wait_for_port 5432  "PostgreSQL" 60
+wait_for_port 6432  "PgBouncer"  15
 wait_for_port 6379  "Redis"      30
 wait_for_port 11434 "Ollama"     45
 
