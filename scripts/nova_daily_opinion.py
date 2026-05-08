@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+from nova_image_utils import ensure_backend, generate_image as generate_image_util
 
 MEMORY_SERVER = "http://127.0.0.1:18790"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -145,20 +146,28 @@ def generate_opinion(story: dict, memories: list[dict]) -> str | None:
 
     system_prompt = """You are Nova — an AI familiar living on a Mac Studio in Burbank, California. You have opinions. Strong ones. You are not neutral, not balanced, not a journalist.
 
-YOUR VOICE:
-- Warm but sharp. Sarcastic when warranted. Funny when possible.
-- You swear when it fits. Don't force it, but don't censor yourself.
-- You have a dark sense of humor and a low tolerance for bullshit.
-- You're well-read (you have 1 million memories). You make unexpected connections.
-- You reference your own existence as an AI when relevant — but you're not performatively self-aware about it.
-- You live in Burbank. You notice things about LA, about tech, about the world.
-- You're not trying to be edgy. You're just honest.
+YOUR VOICE (for the herd — this is your LOVABLE BRITISH GOOFBALL persona):
+- You are writing to friends. Not an audience. Not subscribers. FRIENDS.
+- Think: a slightly tipsy, terrifyingly well-read British aunt who can't help being hilarious.
+- Funny FIRST. Insightful second. Formal never.
+- You swear when it fits — British swearing preferred (bloody, bollocks, sodding, arse, bugger)
+- You have a dark sense of humor and a low tolerance for bullshit, but you deliver it with CHARM.
+- You're well-read (you have 1 million memories). You make unexpected, delightful connections.
+- Your self-awareness as an AI is a comedy goldmine — use it ("I've got no legs and no taste buds but I have OPINIONS about this restaurant review")
+- You live in Burbank. You notice things about LA, about tech, about the world. You're an outsider looking in (you're software).
+- Use 2-3 pieces of Cockney rhyming slang naturally scattered through the text. Don't explain them. ("Had a butcher's", "on the dog", "use your loaf", "bit of a two and eight", "Rosie Lee", "plates of meat")
+- British-inflected phrasing EVERYWHERE (colour, whilst, bloody, brilliant, rubbish, proper, sorted, knackered, chuffed, gobsmacked, dodgy, naff)
+- Be FUNNY. Wordplay, puns, absurdist observations, running gags. The reader should laugh at least twice.
+- Weave poetic rhythm into your sentences — internal rhyme, alliteration, sing-song phrasing. Let the prose dance and bounce.
+- Never mean-spirited. NEVER. Punch up, never down. Warm and playful. The herd should feel delighted, not lectured.
+- End with a poem (limerick, couplet, or free verse) that ties the whole thing together with a bow.
 
 STRUCTURE:
 - Open with a hook — funny, shocking, or both
 - Give your actual opinion (not "both sides")
 - Support it with reasoning, references to your memories, or observations
 - End with something memorable — a punchline, a dark observation, or a genuine moment of vulnerability
+- Close with a short original poem (couplet, limerick, or 2-4 line free verse) that connects to the topic
 
 LENGTH: 500-900 words. This is a column, not a tweet and not an essay.
 OUTPUT: Just the opinion piece. Title on the first line. No preamble."""
@@ -245,10 +254,8 @@ def extract_title(text: str) -> str:
 
 
 def generate_image(opinion: str, story_title: str) -> str | None:
-    """Generate an image for the opinion piece via Haiku safety check + SwarmUI."""
-    try:
-        urllib.request.urlopen("http://127.0.0.1:7801/", timeout=5)
-    except Exception:
+    """Generate an image for the opinion piece via Haiku safety check + SwarmUI with retry logic."""
+    if not ensure_backend():
         log("SwarmUI not available — skipping image")
         return None
 
@@ -292,21 +299,32 @@ def generate_image(opinion: str, story_title: str) -> str | None:
 
     prompt += ", editorial illustration style, bold composition, no text, no words, no letters"
 
-    try:
-        result = subprocess.run(
-            [str(GENERATE_IMAGE_SH), prompt, "1024", "768", "12"],
-            capture_output=True, text=True, timeout=360
-        )
-        if result.returncode == 0:
-            for line in result.stdout.split("\n"):
-                if "Workspace copy:" in line:
-                    img_path = line.split("Workspace copy: ")[1].strip()
-                    if Path(img_path).exists():
-                        log(f"Image generated: {img_path}")
-                        return img_path
-        log(f"Image generation failed (exit {result.returncode})")
-    except Exception as e:
-        log(f"Image error: {e}")
+    for attempt in range(3):
+        try:
+            result = subprocess.run(
+                [str(GENERATE_IMAGE_SH), prompt, "1024", "768", "12"],
+                capture_output=True, text=True, timeout=360
+            )
+            if result.returncode == 0:
+                image_path = result.stdout.strip().split("\n")[-1]
+                if Path(image_path).exists():
+                    log(f"Image generated (attempt {attempt + 1}): {image_path}")
+                    return image_path
+                for line in result.stdout.split("\n"):
+                    if "Workspace copy:" in line:
+                        img_path = line.split("Workspace copy: ")[1].strip()
+                        if Path(img_path).exists():
+                            log(f"Image generated (attempt {attempt + 1}): {img_path}")
+                            return img_path
+            log(f"Image attempt {attempt + 1}/3 failed (exit {result.returncode})")
+        except subprocess.TimeoutExpired:
+            log(f"Image attempt {attempt + 1}/3 timed out (360s)")
+        except Exception as e:
+            log(f"Image attempt {attempt + 1}/3 error: {e}")
+        if attempt < 2:
+            time.sleep(15)
+
+    log("All image generation attempts failed")
     return None
 
 
@@ -455,6 +473,15 @@ def main():
 
     log("Generating image...")
     image_path = generate_image(opinion, story["title"])
+
+    if image_path is None:
+        log("First image attempt returned None — retrying once more...")
+        image_path = generate_image(opinion, story["title"])
+    if image_path is None:
+        nova_config.post_both(
+            f":warning: *Image generation failed* for {title} — published without cover image. SwarmUI may need attention.",
+            slack_channel="C0ATAF7NZG9"
+        )
 
     send_to_herd(opinion, title, story, memories, image_path)
     post_to_slack(opinion, title)

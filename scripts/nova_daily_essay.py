@@ -366,32 +366,79 @@ def _get_safe_image_prompt(source: str, title: str) -> str:
         )
 
 
-def generate_essay_image(essay: str, source: str) -> str | None:
-    """Generate an illustration for the essay via SwarmUI."""
+def _ensure_swarmui_backend() -> bool:
+    """Check SwarmUI is up and has a working backend. Restart backends if errored."""
     import urllib.request
-
     try:
         urllib.request.urlopen("http://127.0.0.1:7801/", timeout=5)
     except Exception:
+        log("SwarmUI not reachable")
+        return False
+
+    try:
+        # Get a session and check backend status
+        import json as _json
+        sess_resp = urllib.request.urlopen(
+            urllib.request.Request("http://127.0.0.1:7801/API/GetNewSession",
+                                  data=b'{}', headers={"Content-Type": "application/json"}),
+            timeout=5)
+        sess = _json.loads(sess_resp.read())["session_id"]
+
+        backends_resp = urllib.request.urlopen(
+            urllib.request.Request("http://127.0.0.1:7801/API/ListBackends",
+                                  data=_json.dumps({"session_id": sess}).encode(),
+                                  headers={"Content-Type": "application/json"}),
+            timeout=5)
+        backends = _json.loads(backends_resp.read())
+
+        has_running = any(b.get("status") == "running" for b in backends.values())
+        if not has_running:
+            log("No running SwarmUI backends — attempting restart...")
+            urllib.request.urlopen(
+                urllib.request.Request("http://127.0.0.1:7801/API/RestartBackends",
+                                      data=_json.dumps({"session_id": sess}).encode(),
+                                      headers={"Content-Type": "application/json"}),
+                timeout=10)
+            time.sleep(30)
+        return True
+    except Exception as e:
+        log(f"SwarmUI backend check failed: {e}")
+        return True  # Still try — the API might work even if this check fails
+
+
+def generate_essay_image(essay: str, source: str) -> str | None:
+    """Generate an illustration for the essay via SwarmUI. Retries 3 times."""
+    if not _ensure_swarmui_backend():
         log("SwarmUI not available — skipping image generation")
         return None
 
     title = extract_title(essay)
-    prompt = _get_safe_image_prompt(source, title)
 
-    try:
-        result = subprocess.run(
-            [str(GENERATE_IMAGE_SH), prompt, "1024", "768", "12"],
-            capture_output=True, text=True, timeout=360
-        )
-        if result.returncode == 0 and result.stdout.strip():
-            image_path = result.stdout.strip().split("\n")[-1]
-            if Path(image_path).exists():
-                log(f"Image generated: {image_path}")
-                return image_path
-        log(f"Image generation returned no path (exit {result.returncode})")
-    except Exception as e:
-        log(f"Image generation error: {e}")
+    for attempt in range(3):
+        prompt = _get_safe_image_prompt(source, title)
+        if not prompt:
+            prompt = f"abstract artistic illustration related to {source.replace('_', ' ')}, warm lighting, detailed"
+
+        try:
+            result = subprocess.run(
+                [str(GENERATE_IMAGE_SH), prompt, "1024", "768", "12"],
+                capture_output=True, text=True, timeout=360
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                image_path = result.stdout.strip().split("\n")[-1]
+                if Path(image_path).exists():
+                    log(f"Image generated (attempt {attempt + 1}): {image_path}")
+                    return image_path
+            log(f"Image attempt {attempt + 1} failed (exit {result.returncode}): {result.stderr[-100:] if result.stderr else 'no stderr'}")
+        except subprocess.TimeoutExpired:
+            log(f"Image attempt {attempt + 1} timed out")
+        except Exception as e:
+            log(f"Image attempt {attempt + 1} error: {e}")
+
+        if attempt < 2:
+            time.sleep(15)
+
+    log("Image generation failed after 3 attempts")
     return None
 
 
@@ -522,6 +569,15 @@ def main():
 
     log("Generating illustration...")
     image_path = generate_essay_image(essay, source)
+
+    if image_path is None:
+        log("First image attempt returned None — retrying once more...")
+        image_path = generate_essay_image(essay, source)
+    if image_path is None:
+        nova_config.post_both(
+            f":warning: *Image generation failed* for {title} — published without cover image. SwarmUI may need attention.",
+            slack_channel="C0ATAF7NZG9"
+        )
 
     send_to_herd(essay, title, source, memories, image_path)
     post_to_slack(essay, title, source)

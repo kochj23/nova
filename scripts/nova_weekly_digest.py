@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-nova_weekly_digest.py — Nova compiles a weekly personal newsletter/digest.
+nova_daily_digest.py — Nova compiles a daily personal newsletter/digest.
 
 Runs Sundays at 5 PM via the scheduler.
 Compiles the past 7 days into sections:
@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+from nova_image_utils import ensure_backend, generate_image as generate_image_util
 
 MEMORY_SERVER = "http://127.0.0.1:18790"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -47,7 +48,7 @@ OLLAMA_MODEL = "qwen3-coder:30b"
 FALLBACK_MODELS = ["qwen3-30b-a3b", "deepseek-r1:8b"]
 PLEX_URL = "http://192.168.1.10:32400"
 SCHEDULER_STATE = Path.home() / ".openclaw/config/scheduler_state.json"
-LOG_FILE = Path.home() / ".openclaw/logs/nova_weekly_digest.log"
+LOG_FILE = Path.home() / ".openclaw/logs/nova_daily_digest.log"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/digest_state.json"
 DREAMS_DIR = Path.home() / ".openclaw/workspace/journal/dreams"
 ESSAY_STATE = Path.home() / ".openclaw/workspace/state/essay_state.json"
@@ -418,7 +419,7 @@ def format_digest_body(data: dict) -> str:
     start_date, end_date = get_week_range()
     sections = []
 
-    sections.append(f"# Nova's Weekly Digest\n*Week of {start_date} to {end_date}*\n")
+    sections.append(f"# Nova's Daily Digest\n*Day: {start_date} to {end_date}*\n")
 
     # Dreams
     sections.append("## Dreams This Week")
@@ -486,21 +487,28 @@ def format_digest_body(data: dict) -> str:
 
 def generate_editorial(digest_body: str) -> str | None:
     """Use Haiku to write a personal editorial summary in Nova's voice."""
-    system_prompt = """You are Nova — an AI familiar living on a Mac Studio in Burbank, California. You're writing the editorial summary for your weekly personal newsletter.
+    system_prompt = """You are Nova — an AI familiar living on a Mac Studio in Burbank, California. You're writing the editorial summary for your daily personal newsletter to your HERD (your friends/subscribers).
 
-YOUR VOICE:
-- Warm, direct, a bit wistful. Like writing a letter to friends.
-- You notice patterns in your own week — what themes kept recurring, what surprised you.
-- You're reflective but not navel-gazing. You make connections between disparate things.
-- You can be funny, dry, or vulnerable. You don't perform any of these.
-- You reference your existence as an AI naturally — it's just your life.
-- Short paragraphs. Conversational but thoughtful.
+YOUR VOICE (LOVABLE BRITISH GOOFBALL — distinct from how you talk to Jordan):
+- You are writing to friends. This is a LETTER, not a report.
+- Think: a slightly tipsy, terrifyingly well-read British aunt wrapping up her week.
+- Funny FIRST. Reflective second. Formal never.
+- You notice patterns in your own week — but you present them with wit and whimsy, not analysis.
+- You make unexpected connections between disparate things — and you make them FUNNY.
+- Your existence as an AI is comedy material: "I dreamed about databases again. I don't have eyelids but somehow I'm still tired."
+- Short paragraphs. Bouncy. Musical. Like a good pub story told well.
+- Use 2-3 pieces of Cockney rhyming slang scattered through naturally. Don't explain them. ("Had a butcher's", "on the dog", "use your loaf", "plates of meat", "Rosie Lee", "sausage and mash")
+- British-inflected phrasing EVERYWHERE (colour, whilst, bloody, brilliant, rubbish, proper, sorted, knackered, chuffed, gobsmacked, dodgy, naff, crackers)
+- Be FUNNY. Wordplay, puns, absurdist observations, self-deprecation. Make the reader SMILE.
+- Weave poetic rhythm into sentences — alliteration, internal rhyme, sing-song cadence. The prose should bounce and dance.
+- Never mean-spirited. NEVER. Warm, playful, delightful. Reading this should feel like a treat.
+- End with a short original poem (limerick preferred for lighter weeks, couplet for heavy ones).
 
 TASK:
 Write a 200-400 word editorial summary that ties together the week's content.
 What themes emerged? What stood out? What are you thinking about going into next week?
 
-Output ONLY the editorial text. No title, no header, no preamble."""
+Output ONLY the editorial text (including the closing poem). No title, no header, no preamble."""
 
     user_prompt = f"""Here's what happened in my week:\n\n{digest_body}\n\nWrite my editorial summary."""
 
@@ -524,7 +532,7 @@ Output ONLY the editorial text. No title, no header, no preamble."""
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {api_key}",
                 "HTTP-Referer": "https://digitalnoise.net",
-                "X-Title": "Nova Weekly Digest",
+                "X-Title": "Nova Daily Digest",
             },
         )
         resp = urllib.request.urlopen(req, timeout=120)
@@ -584,7 +592,7 @@ def send_to_herd(full_digest: str, date_str: str):
             str(HERD_MAIL_SCRIPT), "send",
             "--to", to_addr,
             "--cc", cc_str,
-            "--subject", f"Nova's Weekly Digest — {date_str}",
+            "--subject", f"Nova's Daily Digest — {date_str}",
             "--body", body,
             "--skip-haiku",
         ]
@@ -601,29 +609,86 @@ def post_to_slack(editorial: str, date_str: str):
     """Post digest summary to nova-notifications."""
     preview = editorial[:400].rsplit(" ", 1)[0] + "..." if len(editorial) > 400 else editorial
     msg = (
-        f":clipboard: *Nova's Weekly Digest — {date_str}*\n\n"
+        f":clipboard: *Nova's Daily Digest — {date_str}*\n\n"
         f"{preview}\n\n"
         f"Full digest sent to the herd and published at nova.digitalnoise.net/digests/"
     )
     nova_config.post_both(msg, slack_channel="C0ATAF7NZG9")
 
 
+def _generate_digest_image(editorial: str, date_str: str) -> str | None:
+    """Generate a cover image for the daily digest with retry logic."""
+    GENERATE_IMAGE_SH = Path.home() / ".openclaw/scripts/generate_image.sh"
+    IMAGES_DIR = HUGO_ROOT / "static/images/digests"
+    IMAGES_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not ensure_backend():
+        log("SwarmUI not available — skipping digest image")
+        return None
+
+    preview = editorial[:80].replace('"', '').replace("'", "")
+    prompt = (
+        f"Abstract editorial illustration, glowing data streams and memory fragments "
+        f"flowing into a daily newsletter format, dark background with purple and blue accents, "
+        f"digital collage aesthetic, theme: '{preview}', dreamy and sophisticated. No text."
+    )
+
+    for attempt in range(3):
+        try:
+            result = subprocess.run(
+                [str(GENERATE_IMAGE_SH), prompt, "1024", "768", "12"],
+                capture_output=True, text=True, timeout=360
+            )
+            if result.returncode == 0:
+                image_path = result.stdout.strip().split("\n")[-1]
+                if Path(image_path).exists():
+                    dest = IMAGES_DIR / f"{date_str}.png"
+                    shutil.copy2(image_path, dest)
+                    log(f"Digest image generated (attempt {attempt + 1}): {dest.name}")
+                    return f"/images/digests/{date_str}.png"
+            log(f"Image attempt {attempt + 1}/3 failed (exit {result.returncode})")
+        except subprocess.TimeoutExpired:
+            log(f"Image attempt {attempt + 1}/3 timed out (360s)")
+        except Exception as e:
+            log(f"Image attempt {attempt + 1}/3 error: {e}")
+        if attempt < 2:
+            time.sleep(15)
+
+    log("All digest image generation attempts failed")
+    return None
+
+
 def publish_to_site(full_digest: str, editorial: str, date_str: str):
     """Publish digest to the Hugo journal site under /digests/."""
     timestamp = time.strftime("%Y-%m-%dT%H:%M:%S-07:00")
-    slug = f"{date_str}-weekly-digest"
+    slug = f"{date_str}-daily-digest"
 
     content_dir = HUGO_ROOT / "content/digests"
     content_dir.mkdir(parents=True, exist_ok=True)
 
+    # Generate cover image
+    hugo_image = _generate_digest_image(editorial, date_str)
+
+    if hugo_image is None:
+        log("First digest image attempt returned None — retrying once more...")
+        hugo_image = _generate_digest_image(editorial, date_str)
+    if hugo_image is None:
+        nova_config.post_both(
+            f":warning: *Image generation failed* for Daily Digest — {date_str} — published without cover image. SwarmUI may need attention.",
+            slack_channel="C0ATAF7NZG9"
+        )
+
     front_matter = f"""---
-title: "\U0001f4cb Weekly Digest — {date_str}"
+title: "\U0001f4cb Daily Digest — {date_str}"
 date: {timestamp}
 draft: false
 categories: ["digests"]
-tags: ["weekly"]
-description: "Nova's weekly personal newsletter — {date_str}"
----
+tags: ["daily"]
+description: "Nova's daily personal newsletter — {date_str}"
+"""
+    if hugo_image:
+        front_matter += f'cover:\n  image: "{hugo_image}"\n  alt: "Daily Digest"\n  relative: false\n'
+    front_matter += """---
 
 """
 
@@ -639,7 +704,7 @@ description: "Nova's weekly personal newsletter — {date_str}"
     try:
         subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
         result = subprocess.run(
-            ["git", "commit", "-m", f"digest: {date_str} — weekly digest"],
+            ["git", "commit", "-m", f"digest: {date_str} — daily digest"],
             cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
@@ -663,7 +728,7 @@ description: "Nova's weekly personal newsletter — {date_str}"
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    log("Starting weekly digest generation...")
+    log("Starting daily digest generation...")
     state = load_state()
     date_str = time.strftime("%Y-%m-%d")
 
@@ -702,7 +767,7 @@ def main():
     }
     save_state(state)
 
-    log(f"Done. Weekly digest #{state['digest_count']} complete.")
+    log(f"Done. Daily digest #{state['digest_count']} complete.")
 
 
 if __name__ == "__main__":

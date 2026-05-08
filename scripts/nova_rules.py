@@ -43,7 +43,7 @@ CORRECTIONS_FILE = STATE_DIR / "corrections.json"
 def _query(sql, db=DB):
     try:
         result = subprocess.run(
-            ["psql", "-U", "kochj", "-d", db, "-tAc", sql],
+            ["psql", "-U", "kochj", "-d", db, "-tA", "-F", "\x1f", "-c", sql],
             capture_output=True, text=True, timeout=10,
         )
         if result.returncode != 0:
@@ -157,7 +157,7 @@ def get_active_rules(topic=None):
     """)
     rules = []
     for row in rows:
-        parts = row.split("|")
+        parts = row.split("\x1f")
         if len(parts) >= 6:
             rules.append({
                 "id": parts[0],
@@ -178,7 +178,7 @@ def get_all_rules():
     """)
     rules = []
     for row in rows:
-        parts = row.split("|")
+        parts = row.split("\x1f")
         if len(parts) >= 7:
             rules.append({
                 "id": parts[0],
