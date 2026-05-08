@@ -531,6 +531,8 @@ def run_pipeline(retry_simplified: bool = False):
         statement = f"Today's piece was generated in the {style['name']} style, drawing from Nova's daily observations and memories. The simplified approach allowed the visual style to speak for itself."
     else:
         statement = write_artist_statement(concept, all_memories, style, prompt)
+    # Strip any leading markdown headers the LLM might prepend
+    statement = re.sub(r'^#+\s*.*?\n+', '', statement).strip()
     log(f"Statement: {len(statement)} chars")
 
     # Publish to Hugo
