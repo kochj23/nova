@@ -99,14 +99,22 @@ def get_source_counts_from_db() -> list[dict]:
     return sources
 
 
+PRIVATE_SOURCES = frozenset({
+    "disney_internal", "cloud_governance", "disney_work", "work_memo",
+    "disney_employee", "internal", "disney_governance", "safari_history",
+})
+
 def pick_subject(state: dict) -> str | None:
-    """Pick a random source, avoiding recent picks."""
+    """Pick a random source, avoiding recent picks and private/work sources."""
     sources = get_sources_with_counts()
     if not sources:
         sources = get_source_counts_from_db()
     if not sources:
         log("ERROR: No sources available")
         return None
+
+    # Never pick internal Disney/work sources for public essays
+    sources = [s for s in sources if s["source"] not in PRIVATE_SOURCES]
 
     recent = set(state.get("recent_sources", []))
     candidates = [s for s in sources if s["source"] not in recent]
@@ -442,13 +450,27 @@ def generate_essay_image(essay: str, source: str) -> str | None:
     return None
 
 
+_SCRUB_PATTERNS = [
+    r"kochjpar@gmail\.com", r"kochjpar@", r"jordan\.koch@disney\.com",
+    r"kochj@digitalnoise\.net", r"kochj23@gmail\.com",
+    r"/Users/kochj/",
+]
+
+def _scrub_personal(text: str) -> str:
+    """Remove personal identifiers from memory snippets before publishing."""
+    import re
+    for pat in _SCRUB_PATTERNS:
+        text = re.sub(pat, "[redacted]", text, flags=re.IGNORECASE)
+    return text
+
+
 def format_sources(memories: list[dict], source: str) -> str:
     """Format source citations matching the dream journal style. Full citations, no truncation."""
     source_label = source.replace("_", " ").title()
     lines = ["\n\n---\n\n### Memories that informed this essay"]
     seen = set()
     for m in memories[:ESSAY_MEMORIES]:
-        preview = m["text"][:200].strip()
+        preview = _scrub_personal(m["text"][:200].strip())
         if preview in seen:
             continue
         seen.add(preview)
@@ -516,11 +538,11 @@ def publish_to_journal(essay: str, title: str, source: str, memories: list[dict]
         if image_path and Path(image_path).exists():
             cmd.append(image_path)
 
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=180)
         if result.returncode == 0:
             log("Published to journal site")
         else:
-            log(f"Journal publish failed: {result.stderr[:200]}")
+            log(f"Journal publish failed: {result.stderr[:300]}")
     except Exception as e:
         log(f"Journal publish error: {e}")
     finally:

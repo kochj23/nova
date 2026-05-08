@@ -328,14 +328,20 @@ def generate_image(opinion: str, story_title: str) -> str | None:
     return None
 
 
+PRIVATE_SOURCES = frozenset({
+    "disney_internal", "cloud_governance", "disney_work", "work_memo",
+    "disney_employee", "internal", "disney_governance", "safari_history",
+})
+
 def format_sources(story: dict, memories: list[dict]) -> str:
     """Format the news source and related memories as citations."""
     lines = ["\n\n---\n\n### Sources"]
     lines.append(f"- **[news]** [{story['title']}]({story.get('link', '')})")
-    if memories:
+    public_memories = [m for m in memories if m.get("source", "") not in PRIVATE_SOURCES]
+    if public_memories:
         lines.append("")
         lines.append("### Related memories Nova drew from")
-        for m in memories:
+        for m in public_memories:
             preview = m.get("text", "")[:200].strip()
             source = m.get("source", "unknown")
             lines.append(f"- **[{source}]** {preview}")
