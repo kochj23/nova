@@ -78,20 +78,31 @@ case "${1:-help}" in
 
     health)
         echo "=== Subagent Health ==="
-        redis-cli --no-auth-warning KEYS "nova:agent:*:meta" 2>/dev/null | while read key; do
+        # Use SCAN instead of KEYS to avoid blocking Redis on large keyspace
+        cursor=0
+        keys=()
+        while true; do
+            result=$(redis-cli --no-auth-warning SCAN "$cursor" MATCH "nova:agent:*:meta" COUNT 100 2>/dev/null)
+            cursor=$(echo "$result" | head -1)
+            batch=$(echo "$result" | tail -n +2)
+            while IFS= read -r k; do
+                [[ -n "$k" ]] && keys+=("$k")
+            done <<< "$batch"
+            [[ "$cursor" == "0" ]] && break
+        done
+        for key in "${keys[@]}"; do
             [[ -z "$key" ]] && continue
             name=$(echo "$key" | sed 's/nova:agent://;s/:meta//')
-            tasks=$(redis-cli --no-auth-warning HGET "$key" tasks_completed 2>/dev/null || echo "0")
-            uptime=$(redis-cli --no-auth-warning HGET "$key" uptime_s 2>/dev/null || echo "0")
-            model=$(redis-cli --no-auth-warning HGET "$key" model 2>/dev/null || echo "?")
-            error=$(redis-cli --no-auth-warning HGET "$key" last_error 2>/dev/null || echo "")
+            # Use HMGET to fetch all fields in a single round-trip
+            read tasks uptime model error <<< $(redis-cli --no-auth-warning HMGET "$key" \
+                tasks_completed uptime_s model last_error 2>/dev/null | tr '\n' ' ')
             agent_status=$(redis-cli --no-auth-warning GET "nova:agent:${name}:status" 2>/dev/null || echo "unknown")
             echo "  $name:"
             echo "    status: ${agent_status:-unknown}"
             echo "    model: ${model:-?}"
             echo "    tasks: ${tasks:-0}"
             echo "    uptime: ${uptime:-0}s"
-            if [[ -n "${error:-}" ]]; then
+            if [[ -n "${error:-}" && "$error" != "nil" ]]; then
                 echo "    last_error: $error"
             fi
         done

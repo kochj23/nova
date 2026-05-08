@@ -89,7 +89,7 @@ class ProtectClient:
             log(f"Login failed: {e}", level=LOG_ERROR, source="protect")
             return False
 
-    def _get(self, path):
+    def _get(self, path, _retry=True):
         if not self._logged_in:
             if not self.login():
                 return None
@@ -100,6 +100,17 @@ class ProtectClient:
                 req.add_header("X-CSRF-Token", self._csrf_token)
             resp = self._opener.open(req, timeout=15)
             return json.loads(resp.read())
+        except urllib.error.HTTPError as e:
+            if e.code == 401 and _retry:
+                # Session expired — re-authenticate once and retry
+                log("Session expired (401) — re-authenticating", level=LOG_INFO, source="protect")
+                self._logged_in = False
+                self._csrf_token = None
+                self._cj.clear()
+                if self.login():
+                    return self._get(path, _retry=False)
+            log(f"API error ({path}): HTTP {e.code}", level=LOG_ERROR, source="protect")
+            return None
         except Exception as e:
             log(f"API error ({path}): {e}", level=LOG_ERROR, source="protect")
             return None

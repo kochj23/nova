@@ -446,26 +446,20 @@ launchctl list 2>/dev/null | grep -q "net.digitalnoise.searxng" && \
     launchctl start net.digitalnoise.searxng 2>/dev/null
 log "SearXNG started"
 
-# Wait for critical Tier 3 services (with generous timeouts for model loading)
-wait_for_port 8000 "TinyChat"   60
-log "Waiting for MLX Server (model loading)..."
-wait_for_port 5050 "MLX Server" 120
-log "Waiting for OpenWebUI (embeddings + migrations)..."
+# TinyChat, MLX Server, OpenWebUI are non-critical — they bind to LAN IP and
+# load large models. Boot completes successfully even if these are slow.
+# Big Brother monitors and restarts them if needed.
+log "Waiting for TinyChat (non-blocking, up to 180s)..."
+ELAPSED=0; while ! /usr/bin/nc -z "$LAN_IP" 8000 2>/dev/null && [ $ELAPSED -lt 180 ]; do sleep 5; ELAPSED=$((ELAPSED+5)); done
+if /usr/bin/nc -z "$LAN_IP" 8000 2>/dev/null; then log "TinyChat ready (${ELAPSED}s)"; else warn "TinyChat not ready after 180s — non-critical, continuing"; fi
 
-# OpenWebUI binds to LAN IP, not localhost — use nc directly
-OW_ELAPSED=0
-OW_TIMEOUT=180
-while ! /usr/bin/nc -z "$LAN_IP" 3000 2>/dev/null; do
-    if [ "$OW_ELAPSED" -ge "$OW_TIMEOUT" ]; then
-        fail "OpenWebUI did not start within ${OW_TIMEOUT}s (port 3000 on $LAN_IP)"
-        break
-    fi
-    sleep 5
-    OW_ELAPSED=$((OW_ELAPSED + 5))
-done
-if [ "$OW_ELAPSED" -lt "$OW_TIMEOUT" ]; then
-    log "OpenWebUI ready on $LAN_IP:3000 (${OW_ELAPSED}s)"
-fi
+log "Waiting for MLX Server (non-blocking, up to 180s)..."
+ELAPSED=0; while ! /usr/bin/nc -z "$LAN_IP" 5050 2>/dev/null && [ $ELAPSED -lt 180 ]; do sleep 5; ELAPSED=$((ELAPSED+5)); done
+if /usr/bin/nc -z "$LAN_IP" 5050 2>/dev/null; then log "MLX Server ready (${ELAPSED}s)"; else warn "MLX Server not ready after 180s — non-critical, continuing"; fi
+
+log "Waiting for OpenWebUI (non-blocking, up to 240s)..."
+ELAPSED=0; while ! /usr/bin/nc -z "$LAN_IP" 3000 2>/dev/null && [ $ELAPSED -lt 240 ]; do sleep 5; ELAPSED=$((ELAPSED+5)); done
+if /usr/bin/nc -z "$LAN_IP" 3000 2>/dev/null; then log "OpenWebUI ready on $LAN_IP:3000 (${ELAPSED}s)"; else warn "OpenWebUI not ready after 240s — non-critical, continuing"; fi
 
 # ─── Tier 3 Tests ─────────────────────────────────────────────────────────────
 log ""

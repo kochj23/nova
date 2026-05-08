@@ -495,6 +495,9 @@ class NovaScheduler:
         max_conc = self.sched_cfg.get("max_concurrent", 6)
         hb_interval = self.sched_cfg.get("heartbeat_interval", 3600)
 
+        _post_wake_stagger_until: float = 0.0  # wall time until stagger delay is over
+        _stagger_slot: int = 0                  # which task slot we're on during stagger
+
         while self._running:
             now = time.time()
 
@@ -504,6 +507,10 @@ class NovaScheduler:
                 log(f"Time jump: {gap:.0f}s gap — likely wake from sleep", level=LOG_WARN, source="scheduler")
                 self._recalculate_next_runs()
                 await self._slack_post(f":sunrise: *Scheduler resumed* — {gap/60:.0f}m gap, recalculating timers")
+                # Stagger post-wake task launches over 60s to prevent thundering herd.
+                # Tasks that became overdue will be launched 5s apart instead of all at once.
+                _post_wake_stagger_until = now + 60.0
+                _stagger_slot = 0
             self._last_tick = now
 
             # Find due tasks
@@ -528,6 +535,14 @@ class NovaScheduler:
                     )
                     if group_busy:
                         continue  # will retry on next tick
+
+                # Post-wake stagger: delay each overdue task by 5s * slot
+                if now < _post_wake_stagger_until:
+                    stagger_delay = _stagger_slot * 5.0
+                    task.state.next_run = now + stagger_delay
+                    _stagger_slot += 1
+                    if stagger_delay > 0:
+                        continue  # will be picked up on the next tick(s)
 
                 asyncio.create_task(self.execute_task(task))
 

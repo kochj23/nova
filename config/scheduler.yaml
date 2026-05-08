@@ -52,7 +52,7 @@ tasks:
   imessage_watch:
     script: nova_imessage.py
     schedule: every 10m
-    timeout: 30
+    timeout: 120
     overlap: skip
 
   watchdog:
@@ -68,7 +68,7 @@ tasks:
     script: nova_subagent_ctl.sh
     args: ["health"]
     schedule: every 10m
-    timeout: 30
+    timeout: 60
     overlap: skip
 
   mail_agent:
@@ -122,7 +122,7 @@ tasks:
     script: nova_session_reset.sh
     args: ["--threshold", "12"]
     schedule: every 1h
-    timeout: 30
+    timeout: 90
     overlap: skip
 
   ollama_preload:
@@ -347,7 +347,7 @@ tasks:
     script: nova_plex.py
     args: ["playing"]
     schedule: every 5m
-    timeout: 30
+    timeout: 90
     overlap: skip
 
   plex_history:
@@ -397,7 +397,7 @@ tasks:
     script: nova_plex.py
     args: ["guest"]
     schedule: every 5m
-    timeout: 30
+    timeout: 90
     overlap: skip
 
   plex_rewatch:
@@ -481,7 +481,7 @@ tasks:
     script: nova_livetv.py
     args: ["whats-on"]
     schedule: every 15m
-    timeout: 30
+    timeout: 120
     overlap: skip
 
   livetv_breaking:

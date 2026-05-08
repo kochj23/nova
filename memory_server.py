@@ -52,13 +52,16 @@ logger = logging.getLogger("memory_server")
 PG_DSN      = "postgresql://localhost/nova_memories"
 REDIS_URL   = "redis://localhost:6379"
 REDIS_QUEUE = "nova:memory:ingest"          # list key for write queue
-REDIS_CACHE = "nova:memory:cache"           # hash key for recall cache
-CACHE_TTL   = 300                           # 5-minute recall cache TTL
-OLLAMA_BASE = "http://127.0.0.1:11434"
-EMBED_MODEL = "nomic-embed-text"
-DIMS        = 768
-DEFAULT_N   = 5
-MAX_N       = 50
+REDIS_CACHE      = "nova:memory:cache"      # hash key for recall cache
+CACHE_TTL        = 300                      # 5-minute recall cache TTL
+REDIS_DEAD_LETTER = "nova:memory:dead-letter"  # items that fail 3× go here
+OLLAMA_BASE      = "http://127.0.0.1:11434"
+EMBED_MODEL      = "nomic-embed-text"
+DIMS             = 768
+DEFAULT_N        = 5
+MAX_N            = 50
+MAX_EMBED_CHARS  = 16000  # nomic-embed-text ~8k token limit; ~2 chars/token ≈ 16k chars
+MAX_INGEST_RETRIES = 3    # items that fail this many times go to dead-letter
 
 # ── Global connections ──────────────────────────────────────────────────────────
 _pg_pool:    asyncpg.Pool | None = None
@@ -79,8 +82,21 @@ async def embed(text: str) -> list[float]:
     return embeddings[0] if isinstance(embeddings[0], list) else embeddings
 
 # ── Redis ingest worker ──────────────────────────────────────────────────────────
+def _sanitize_text(text: str) -> str:
+    """Strip null bytes, control chars, and truncate to embed limit."""
+    text = text.replace('\x00', '')                    # null bytes → Postgres UTF8 error
+    text = ''.join(c for c in text if c >= ' ' or c in '\n\r\t')  # strip other control chars
+    if len(text) > MAX_EMBED_CHARS:
+        text = text[:MAX_EMBED_CHARS]                  # truncate — Ollama embed token limit
+    return text.strip()
+
+
 async def _ingest_worker():
-    """Background worker: drains Redis queue → embeds → inserts into PostgreSQL."""
+    """Background worker: drains Redis queue → embeds → inserts into PostgreSQL.
+
+    Sanitizes text before embedding (null bytes, truncation).
+    After MAX_INGEST_RETRIES failures, moves item to dead-letter queue.
+    """
     logger.info("Redis ingest worker started")
     while True:
         try:
@@ -88,11 +104,17 @@ async def _ingest_worker():
             if item is None:
                 continue
             data = json.loads(item[1])
-            text      = data["text"]
+            raw_text  = data["text"]
             source    = data.get("source", "unknown")
             metadata  = data.get("metadata", {})
             memory_id = data.get("id", str(uuid.uuid4()))
             created   = data.get("created_at", datetime.utcnow().isoformat())
+            retries   = data.get("_retries", 0)
+
+            text = _sanitize_text(raw_text)
+            if not text:
+                logger.debug(f"Skipping empty text after sanitization for {memory_id}")
+                continue
 
             try:
                 vector = await embed(text)
@@ -110,10 +132,18 @@ async def _ingest_worker():
                         memory_id, text, json.dumps(metadata), vec_str, source, created_dt, text_hash
                     )
             except Exception as e:
-                logger.warning(f"Worker failed to ingest {memory_id}: {e}")
-                # Re-queue with a delay marker (simple retry)
-                await _redis.rpush(REDIS_QUEUE, item[1])
-                await asyncio.sleep(3)
+                retries += 1
+                logger.warning(f"Worker failed to ingest {memory_id} (attempt {retries}): {e}")
+                if retries >= MAX_INGEST_RETRIES:
+                    # Move to dead-letter — item is unprocessable after max retries
+                    dead_item = json.dumps({**data, "_retries": retries, "_error": str(e)})
+                    await _redis.rpush(REDIS_DEAD_LETTER, dead_item)
+                    logger.error(f"Dead-lettered {memory_id} after {retries} failures: {e}")
+                else:
+                    # Re-queue with incremented retry count and short delay
+                    retry_item = json.dumps({**data, "_retries": retries})
+                    await _redis.rpush(REDIS_QUEUE, retry_item)
+                    await asyncio.sleep(3)
         except Exception as e:
             logger.error(f"Worker error: {e}")
             await asyncio.sleep(1)
@@ -131,11 +161,12 @@ async def lifespan(app: FastAPI):
     _pg_pool = await asyncpg.create_pool(
         PG_DSN, min_size=5, max_size=20, init=_pg_init,
         max_inactive_connection_lifetime=3600.0,  # recycle idle connections after 1h
-        command_timeout=30.0,                      # per-query timeout
+        command_timeout=120.0,                     # per-query timeout (longer for startup during reindex)
     )
     _redis   = aioredis.from_url(REDIS_URL, decode_responses=True)
 
-    # Ensure pgvector extension and table exist
+    # Ensure pgvector extension and table exist — skip index creation if table already has rows
+    # (indexes are maintained separately; don't block startup during HNSW reindex)
     async with _pg_pool.acquire() as conn:
         await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         await conn.execute("""
@@ -148,24 +179,28 @@ async def lifespan(app: FastAPI):
                 created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS memories_source_idx ON memories (source)"
-        )
-        await conn.execute(
-            "CREATE INDEX IF NOT EXISTS memories_created_idx ON memories (created_at DESC)"
-        )
-        # HNSW index — only create if not already present (slow to build on large tables)
-        exists = await conn.fetchval(
-            "SELECT 1 FROM pg_indexes WHERE indexname = 'memories_embedding_hnsw'"
-        )
-        if not exists:
-            logger.info("Creating HNSW index (first run only, takes ~1 min on 100K rows)...")
-            await conn.execute("""
-                CREATE INDEX memories_embedding_hnsw
-                ON memories USING hnsw (embedding vector_cosine_ops)
-                WITH (m = 16, ef_construction = 64)
-            """)
-            logger.info("HNSW index created")
+        # Only create indexes if the table is new (has no rows) — avoids blocking on restart
+        row_count = await conn.fetchval("SELECT count(*) FROM memories")
+        if row_count == 0:
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS memories_source_idx ON memories (source)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS memories_created_idx ON memories (created_at DESC)"
+            )
+        # HNSW index — only create on a fresh empty table; never block on restart
+        if row_count == 0:
+            exists = await conn.fetchval(
+                "SELECT 1 FROM pg_indexes WHERE indexname = 'memories_embedding_hnsw'"
+            )
+            if not exists:
+                logger.info("Creating HNSW index (first run only)...")
+                await conn.execute("""
+                    CREATE INDEX memories_embedding_hnsw
+                    ON memories USING hnsw (embedding vector_cosine_ops)
+                    WITH (m = 16, ef_construction = 64)
+                """)
+                logger.info("HNSW index created")
 
     # Start Redis ingest worker pool (4 parallel workers)
     _worker_tasks = [asyncio.create_task(_ingest_worker()) for _ in range(4)]
@@ -213,8 +248,9 @@ def _row_to_result(row, score: float) -> MemoryResult:
 @app.post("/remember")
 async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="async")):
     """Store a memory. Use ?async=1 for fire-and-forget bulk ingest (returns immediately)."""
-    if not req.text.strip():
-        raise HTTPException(status_code=400, detail="text cannot be empty")
+    clean_text = _sanitize_text(req.text)
+    if not clean_text:
+        raise HTTPException(status_code=400, detail="text cannot be empty after sanitization")
 
     memory_id = str(uuid.uuid4())
     created   = datetime.utcnow().isoformat()
@@ -222,7 +258,7 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
     if async_mode:
         # Push to Redis queue — returns instantly
         payload = json.dumps({
-            "id": memory_id, "text": req.text,
+            "id": memory_id, "text": clean_text,
             "source": req.source, "metadata": req.metadata,
             "created_at": created,
         })
@@ -231,8 +267,8 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
         return {"id": memory_id, "status": "queued", "queue_length": queue_len}
 
     # Sync path: embed + insert immediately
-    vector = await embed(req.text)
-    text_hash = hashlib.md5(req.text.encode()).hexdigest()
+    vector = await embed(clean_text)
+    text_hash = hashlib.md5(clean_text.encode()).hexdigest()
     try:
         created_dt = datetime.fromisoformat(created).replace(tzinfo=timezone.utc)
     except Exception:
@@ -242,7 +278,7 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
             """INSERT INTO memories (id, text, metadata, embedding, source, created_at, text_hash)
                VALUES ($1, $2, $3, $4::vector, $5, $6, $7)
                ON CONFLICT (text_hash) DO NOTHING""",
-            memory_id, req.text, json.dumps(req.metadata),
+            memory_id, clean_text, json.dumps(req.metadata),
             _vec_str(vector), req.source, created_dt, text_hash,
         )
     return {"id": memory_id, "dims": len(vector), "status": "stored"}
@@ -641,7 +677,27 @@ async def stats():
 @app.get("/queue/stats")
 async def queue_stats():
     queue_len = await _redis.llen(REDIS_QUEUE)
-    return {"queue": REDIS_QUEUE, "pending": queue_len}
+    dead_len  = await _redis.llen(REDIS_DEAD_LETTER)
+    return {"queue": REDIS_QUEUE, "pending": queue_len,
+            "dead_letter": REDIS_DEAD_LETTER, "dead_letter_count": dead_len}
+
+
+@app.get("/queue/dead-letter")
+async def dead_letter_queue(n: int = Query(20)):
+    """Inspect items that failed MAX_INGEST_RETRIES times and were dead-lettered."""
+    items_raw = await _redis.lrange(REDIS_DEAD_LETTER, 0, n - 1)
+    items = []
+    for raw in items_raw:
+        try:
+            d = json.loads(raw)
+            items.append({
+                "id": d.get("id"), "source": d.get("source"),
+                "retries": d.get("_retries"), "error": d.get("_error"),
+                "text_preview": (d.get("text") or "")[:80],
+            })
+        except Exception:
+            pass
+    return {"count": len(items), "total": await _redis.llen(REDIS_DEAD_LETTER), "items": items}
 
 
 @app.get("/search")

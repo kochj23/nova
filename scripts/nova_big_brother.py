@@ -82,6 +82,8 @@ QUIET_END = 8
 DISK_WARN_GB = 10.0
 
 # Services to monitor
+LAN_IP = "192.168.1.6"  # Mac Studio LAN IP — some services bind here, not loopback
+
 SERVICES = [
     # name, host, port, launchd_label, is_critical, health_url_path
     ("PostgreSQL",    "127.0.0.1", 5432,  "homebrew.mxcl.postgresql@17",         True,  None),
@@ -90,10 +92,10 @@ SERVICES = [
     ("Memory Server", "127.0.0.1", 18790, "net.digitalnoise.nova-memory-server",  True,  "/health"),
     ("Gateway",       "127.0.0.1", 18789, "ai.openclaw.gateway",                  True,  "/health"),
     ("Scheduler",     "127.0.0.1", 37460, "com.nova.scheduler",                   True,  "/status"),
-    ("MLX Server",    "127.0.0.1", 5050,  "net.digitalnoise.mlx-server",          False, "/health"),
+    ("MLX Server",    LAN_IP,      5050,  "net.digitalnoise.mlx-server",          False, "/v1/models"),
     ("SwarmUI",       "127.0.0.1", 7801,  None,                                   False, None),
-    ("TinyChat",      "127.0.0.1", 8000,  "net.digitalnoise.tinychat",            False, None),
-    ("OpenWebUI",     "127.0.0.1", 3000,  "net.digitalnoise.openwebui",           False, None),
+    ("TinyChat",      LAN_IP,      8000,  "net.digitalnoise.tinychat",            False, None),
+    ("OpenWebUI",     LAN_IP,      3000,  "net.digitalnoise.openwebui",           False, None),
     ("Signal-cli",    "127.0.0.1", 8080,  None,                                   False, None),
     ("NovaControl",   "127.0.0.1", 37400, "net.digitalnoise.NovaControl",         False, "/api/status"),
 ]
@@ -115,6 +117,14 @@ _alerted_issues: set = set()             # issues seen in quiet hours (suppress 
 _start_time = time.time()
 _lock = threading.Lock()
 _shutdown = threading.Event()
+
+# Gateway restart cooldown — don't restart more than once per 5 minutes
+GATEWAY_RESTART_COOLDOWN = 300  # seconds
+_last_gateway_restart: float = 0.0
+
+# Discord 3-strike before restart — timeouts ≠ disconnect
+_discord_timeout_count: int = 0
+DISCORD_STRIKE_THRESHOLD = 3
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -303,10 +313,25 @@ def _do_restart(service_name: str) -> bool:
 
 
 def _restart_gateway() -> bool:
-    """Kill gateway + signal-cli, restart via nova_gateway_start.sh."""
+    """Kill gateway + signal-cli, restart via nova_gateway_start.sh.
+
+    Enforces a 5-minute cooldown to prevent restart loops. Reaps the
+    spawned child process after it execs to prevent zombies.
+    """
+    global _last_gateway_restart
+    now = time.time()
+    if now - _last_gateway_restart < GATEWAY_RESTART_COOLDOWN:
+        remaining = int(GATEWAY_RESTART_COOLDOWN - (now - _last_gateway_restart))
+        log(f"Gateway restart skipped — cooldown active ({remaining}s remaining)",
+            level=LOG_INFO, source="big-brother")
+        return True  # Don't report as failure, just throttled
+
+    _last_gateway_restart = now
+
     subprocess.run(["pkill", "-9", "-f", "^openclaw$"], capture_output=True)
     subprocess.run(["pkill", "-f", "signal-cli"], capture_output=True)
     time.sleep(3)
+
     start_script = SCRIPTS / "nova_gateway_start.sh"
     gw_log = LOG_DIR / "gateway.log"
     gw_err = LOG_DIR / "gateway.err.log"
@@ -318,13 +343,23 @@ def _restart_gateway() -> bool:
             start_new_session=True,
         )
         log(f"Gateway restart initiated (PID {proc.pid})", level=LOG_INFO, source="big-brother")
+        # Reap the child after a short wait so it doesn't become a zombie.
+        # The gateway execs into node so the shell wrapper exits quickly.
+        threading.Thread(
+            target=lambda p: p.wait(timeout=30),
+            args=(proc,), daemon=True
+        ).start()
     except Exception as e:
         log(f"Gateway restart failed: {e}", level=LOG_ERROR, source="big-brother")
         return False
-    # Wait up to 30s for gateway to come up
-    for _ in range(30):
+
+    # Wait up to 45s for gateway to come up, then 30s for channels to settle
+    for _ in range(45):
         time.sleep(1)
         if _port_open("127.0.0.1", 18789):
+            log("Gateway port up — waiting 30s for channels to settle",
+                level=LOG_INFO, source="big-brother")
+            time.sleep(30)  # Let Slack/Discord/Signal connect before next channel check
             return True
     return False
 
@@ -381,11 +416,15 @@ def _check_gateway_log_channels() -> dict:
                 status["slack"] = "connected"
             elif "socket disconnected" in clean or "socket mode disconnected" in clean:
                 status["slack"] = "disconnected"
+            # timeout is NOT a disconnect — skip
         if "discord" in clean:
             if "channels resolved" in clean or "discord ready" in clean or "discord client initialized" in clean:
                 status["discord"] = "connected"
             elif "gateway websocket closed" in clean or "enotfound" in clean:
                 status["discord"] = "disconnected"
+            # fetch-timeout on discord.com is NOT a disconnect — it's a slow API
+            elif "fetch timeout" in clean and "discord.com" in clean:
+                status["discord"] = "timeout"  # will be handled with strike counting
         if "signal" in clean:
             if "started http server" in clean or "config file lock acquired" in clean:
                 status["signal"] = "connected"
@@ -826,9 +865,26 @@ def _full_sweep():
                     _alerted_issues.discard(issue_key)
 
     # ── Channel health (only if gateway is up) ───────────────────────────────
+    global _discord_timeout_count
     gateway_up = _port_open("127.0.0.1", 18789)
     if gateway_up:
         channels = _check_gateway_log_channels()
+
+        # Discord timeout strike counting — don't restart on a single timeout
+        if channels.get("discord") == "timeout":
+            _discord_timeout_count += 1
+            if _discord_timeout_count >= DISCORD_STRIKE_THRESHOLD:
+                log(f"Discord timeout strike {_discord_timeout_count} — treating as disconnect",
+                    level=LOG_WARN, source="big-brother")
+                channels["discord"] = "disconnected"
+                _discord_timeout_count = 0
+            else:
+                log(f"Discord timeout strike {_discord_timeout_count}/{DISCORD_STRIKE_THRESHOLD} — not restarting yet",
+                    level=LOG_INFO, source="big-brother")
+                channels["discord"] = "unknown"  # Don't count as disconnected
+        elif channels.get("discord") == "connected":
+            _discord_timeout_count = 0  # Reset on confirmed connection
+
         disconnected = [ch for ch, st in channels.items() if st == "disconnected"]
         if disconnected:
             issues.append(f"Channels disconnected: {', '.join(disconnected)}")
