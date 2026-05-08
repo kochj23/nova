@@ -128,7 +128,7 @@ tasks:
   ollama_preload:
     script: nova_ollama_preload.sh
     schedule: every 4h
-    timeout: 120
+    timeout: 300
     overlap: skip
 
   reddit_ingest:
@@ -136,6 +136,7 @@ tasks:
     schedule: every 4h
     timeout: 3600
     overlap: skip
+    enabled: false  # Script no longer exists — disabled until re-implemented
 
   # ── Daily: overnight (heavy compute, staggered) ────────────────────────
 
@@ -198,7 +199,7 @@ tasks:
   dead_mans_switch:
     script: nova_dead_mans_switch.py
     schedule: cron 15 9 * * *
-    timeout: 120
+    timeout: 300
     overlap: skip
 
   sam_blog_ingest:
@@ -368,7 +369,7 @@ tasks:
     script: nova_plex.py
     args: ["filmschool"]
     schedule: cron 20 7 * * *
-    timeout: 120
+    timeout: 300
     overlap: skip
     group: llm
 
@@ -518,14 +519,14 @@ tasks:
     script: nova_livetv.py
     args: ["ambiance"]
     schedule: cron 0 8,12,16,20 * * *
-    timeout: 300
+    timeout: 600
     overlap: skip
 
   livetv_novas_time:
     script: nova_livetv.py
     args: ["novas-time"]
     schedule: cron 30 22 * * *
-    timeout: 1200
+    timeout: 2400
     overlap: skip
     group: llm
 

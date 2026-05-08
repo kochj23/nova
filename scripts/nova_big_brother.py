@@ -428,7 +428,14 @@ def _check_gateway_log_channels() -> dict:
         if "signal" in clean:
             if "started http server" in clean or "config file lock acquired" in clean:
                 status["signal"] = "connected"
-            elif "connection closed unexpectedly" in clean or "config file is in use" in clean:
+            elif "config file is in use" in clean:
+                # Lock conflict — real problem, signal-cli can't start
+                status["signal"] = "disconnected"
+            elif "daemon exited" in clean and "code=0" in clean:
+                # Clean exit (code=0) = WebSocket timeout; OpenClaw respawns automatically.
+                # Don't treat as disconnected — let OpenClaw handle it.
+                pass
+            elif "connection closed unexpectedly" in clean:
                 status["signal"] = "disconnected"
 
     return status
@@ -546,24 +553,34 @@ def _restart_subagent(name: str):
 # ── Slack Preprocessor TCC Fix ────────────────────────────────────────────────
 
 def _fix_slack_preprocessor_tcc():
-    """Inject NOVA_SLACK_BOT_TOKEN into the slack preprocessor plist if missing."""
+    """Inject NOVA_SLACK_BOT_TOKEN into the slack preprocessor plist if missing.
+
+    Now that the plist uses the secure wrapper script, this function only fires
+    if the ProgramArguments still point to the old direct python invocation.
+    """
     import plistlib
     plist_path = Path.home() / "Library/LaunchAgents/com.nova.slack-preprocessor.plist"
     if not plist_path.exists():
-        return False
-
-    token = nova_config.slack_bot_token()
-    if not token:
         return False
 
     try:
         with open(plist_path, "rb") as f:
             plist = plistlib.load(f)
 
+        # Check if plist is already using the secure wrapper script
+        args = plist.get("ProgramArguments", [])
+        if any("nova_slack_preprocessor_start.sh" in str(a) for a in args):
+            return False  # Already secure — wrapper script handles Keychain
+
+        # Legacy plist: still pointing directly to python — needs upgrade
+        token = nova_config.slack_bot_token()
+        if not token:
+            return False
+
         env = plist.setdefault("EnvironmentVariables", {})
         current = env.get("NOVA_SLACK_BOT_TOKEN", "")
         if current == token:
-            return False  # Already correct
+            return False  # Token already injected
 
         env["NOVA_SLACK_BOT_TOKEN"] = token
         with open(plist_path, "wb") as f:
@@ -630,14 +647,22 @@ def _check_disk_space() -> list:
 # ── Nova Memory / Redis Health ────────────────────────────────────────────────
 
 def _check_memory_server_recall() -> bool:
-    """Quick recall test — ensures memory server can actually query Postgres."""
-    try:
-        url = "http://127.0.0.1:18790/recall?q=test&n=1"
-        resp = urllib.request.urlopen(url, timeout=10)
-        data = json.loads(resp.read())
-        return isinstance(data, list)  # Should return array (possibly empty)
-    except Exception:
-        return False
+    """Quick recall test — ensures memory server can actually query Postgres.
+
+    Uses a 30s timeout and 2 retries to avoid false alarms during HNSW
+    reindex or heavy PG load. Only returns False if all attempts fail.
+    """
+    for attempt in range(3):
+        try:
+            url = "http://127.0.0.1:18790/recall?q=test&n=1"
+            resp = urllib.request.urlopen(url, timeout=30)
+            data = json.loads(resp.read())
+            if isinstance(data, list):
+                return True
+        except Exception:
+            if attempt < 2:
+                time.sleep(5)
+    return False
 
 
 def _check_redis_memory_cache() -> bool:
