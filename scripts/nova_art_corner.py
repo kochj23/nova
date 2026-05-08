@@ -278,13 +278,21 @@ def generate_title(concept: str, style: dict) -> str:
 
 def generate_candidates(prompt: str) -> list[Path]:
     """Generate NUM_CANDIDATES images and return their paths."""
+    from nova_image_utils import get_model_for_today, MODELS
+    model_key = get_model_for_today()
+    model_info = MODELS.get(model_key, MODELS["flux_dev"])
+    model_file = model_info["file"]
+    # Use the model's optimal steps or our configured steps, whichever is higher
+    actual_steps = max(IMAGE_STEPS, model_info.get("optimal_steps", 20))
+    log(f"Model: {model_info['name']} ({model_key}), {actual_steps} steps")
+
     candidates = []
 
     for i in range(NUM_CANDIDATES):
         log(f"Generating candidate {i + 1}/{NUM_CANDIDATES}...")
         try:
             result = subprocess.run(
-                [str(GENERATE_IMAGE_SH), prompt, str(IMAGE_WIDTH), str(IMAGE_HEIGHT), str(IMAGE_STEPS)],
+                [str(GENERATE_IMAGE_SH), prompt, str(IMAGE_WIDTH), str(IMAGE_HEIGHT), str(actual_steps), model_file],
                 capture_output=True, text=True, timeout=360,
             )
             if result.returncode == 0 and result.stdout.strip():
