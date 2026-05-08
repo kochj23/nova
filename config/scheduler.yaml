@@ -300,7 +300,14 @@ tasks:
     overlap: skip
     group: livetv
 
-  # ── Daily: night (digests, reports) ────────────────────────────────────
+  # ── Daily: night (tech today, digests, reports) ─────────────────────────
+
+  tech_today:
+    script: nova_tech_today.py
+    schedule: cron 30 23 * * *
+    timeout: 900
+    overlap: skip
+    group: llm
 
   nightly_report:
     script: nova_nightly_report.py
@@ -530,3 +537,9 @@ tasks:
     timeout: 7200
     overlap: skip
     group: ingest
+
+  fix_missing_images:
+    script: nova_fix_missing_images.py
+    schedule: every 1h
+    timeout: 1800
+    overlap: skip
