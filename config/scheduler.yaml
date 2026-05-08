@@ -273,7 +273,7 @@ tasks:
   daily_journal:
     script: nova_daily_journal.py
     schedule: cron 15 21 * * *
-    timeout: 300
+    timeout: 600
     overlap: skip
     group: llm
 
@@ -438,7 +438,7 @@ tasks:
   self_improve:
     script: nova_self_improve.py
     schedule: cron 0 21 * * 0
-    timeout: 600
+    timeout: 1800
     overlap: skip
     group: llm
 
