@@ -27,7 +27,7 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 | Web dashboard | FastAPI + WebSocket (real-time, 44 cards + HUD) |
 | Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) — dreams, essays, opinions, research papers, after dark, art corner, tech today |
 | Knowledge crawlers | 14 foundational + 7 music + bestsellers + special topics |
-| Test suite | 4,404 tests (unit + security + integration + functional + frame) |
+| Test suite | 4,460 tests (unit + security + integration + functional + frame) |
 
 ---
 
@@ -694,11 +694,12 @@ Nova has access to **224 OTA channels** in Los Angeles via an HDHomeRun CONNECT 
 | 11:40 PM | Protect camera audit | cron |
 | 11:50 PM | **Research paper** (full APA academic paper from memory) | cron |
 | 11:50 PM | Bandwidth report | cron |
-| Every 5 min | App watchdog, Protect monitor, Plex playing/guest, Watchdog | interval |
+| Continuous | Big Brother daemon (kqueue log watch + 60s sweep) | launchd persistent |
+| Every 5 min | App watchdog, Protect monitor, Plex playing/guest | interval |
 | Every 10 min | iMessage watch, Sky watcher, Mail agent, Subagent health | interval |
 | Every 15 min | Proactive peace, Live TV What's On | interval |
 | Every 30 min | Home watchdog, UniFi, Synology, Face recognition | interval |
-| Every 1 hour | Gateway health (auto-repair + workspace management), Fix missing images, Session watchdog | interval |
+| Every 1 hour | Fix missing images, Session watchdog | interval |
 | Every 4 hours | Ollama preload, Reddit ingest | interval |
 | Sundays | Plex weekly stats, shame board, rewatch index, PG maintenance, Weekly reliability | weekly |
 | Fridays | Plex recommendations | weekly |
@@ -710,8 +711,13 @@ Nova has access to **224 OTA channels** in Los Angeles via an HDHomeRun CONNECT 
 
 Nova is designed to recover from failures without human intervention.
 
-- **Service watchdog** monitors all running services and auto-restarts on failure with exponential backoff (max 3 restarts per hour per service).
-- **Gateway health** (hourly) verifies channel connections (Slack/Discord/Signal), workspace size budgets, and auto-restarts the gateway if channels drop.
+- **Big Brother** (`nova_big_brother.py`, `net.digitalnoise.big-brother` launchd) — persistent daemon (not cron) that replaces the old watchdog + gateway_health scripts. Uses macOS kqueue to watch log files in real time, detects failures within seconds, and heals before Jordan notices:
+  - Restarts dead services (PostgreSQL, Redis, Ollama, Memory Server, Gateway, Scheduler, and all subagents)
+  - Detects and fixes gateway EPERM, signal-cli lock conflicts, auth-profiles.json drift, and openclaw.json invalid keys
+  - Protects long-running tasks (ingest, reindex, pg_backup) — queues restarts until the task completes
+  - Falls back to direct signal-cli when the gateway is completely offline
+  - HTTP diagnostics API on `:37461` consumed by NovaControl Diagnostics tab
+  - Posts all heal events to #nova-notifications on Slack + Discord
 - **App watchdog** pings every app API port every 5 minutes. If a critical app is unreachable, it restarts it and posts a state-transition alert.
 - **Image repair** (hourly) detects and fixes missing images from published journal posts.
 - **Dead man's switch** verifies that the scheduler is still alive. If the heartbeat file goes stale, an alert fires.
@@ -767,7 +773,7 @@ A secondary **HUD view** (`/hud`) provides a sci-fi radar visualization designed
 
 ### Testing
 
-Nova has a comprehensive **pytest test suite** (4,404 tests) organized by subsystem:
+Nova has a comprehensive **pytest test suite** (4,460 tests) organized by subsystem:
 
 ```
 scripts/tests/
@@ -841,7 +847,7 @@ When Jordan corrects Nova, those corrections are automatically promoted into per
 │   ├── nova_config.py             Central config (secrets from Keychain)
 │   ├── nova_intent_router.py      Privacy-first AI routing (67+ intents)
 │   ├── nova_scheduler.py          Unified scheduler (75 tasks)
-│   ├── nova_gateway_health.py     Hourly gateway health + auto-restart
+│   ├── nova_big_brother.py        Persistent self-healing daemon (replaces watchdog + gateway_health)
 │   ├── nova_image_utils.py        Shared image gen (5 models, rotation, retry)
 │   ├── nova_art_corner.py         Daily art generation (4 AM)
 │   ├── nova_tech_today.py         Daily tech deep-dive (11:30 PM)
@@ -859,10 +865,10 @@ When Jordan corrects Nova, those corrections are automatically promoted into per
 │   ├── nova_plex_auto_ingest.py   Automatic Plex content ingestion
 │   ├── nova_face_recognition.py   Local face recognition (dlib + PostgreSQL)
 │   ├── nova_protect_monitor.py    UniFi Protect event handler
-│   ├── nova_watchdog.py           Service health monitor
+│   ├── nova_watchdog.py           Service health monitor (superseded by nova_big_brother.py)
 │   ├── nova_goals.py              Goal tracker
 │   ├── nova_rules.py              Correction-to-rule learning engine
-│   ├── tests/                     4,404 pytest tests
+│   ├── tests/                     4,460 pytest tests
 │   └── ...
 ├── config/            Scheduler YAML, RAG config, state files
 ├── gateway/           OpenClaw AI Gateway (FastAPI)
