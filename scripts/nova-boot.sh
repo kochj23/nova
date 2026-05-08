@@ -90,6 +90,10 @@ if [[ "${1:-}" == "--restart" ]]; then
     # Kill Ollama.app
     pkill -f "Ollama" 2>/dev/null
 
+    # Kill any orphaned signal-cli processes (prevent lock file conflicts on restart)
+    pkill -f "signal-cli" 2>/dev/null
+    sleep 1
+
     # Stop Postgres
     brew services stop postgresql@17 >/dev/null 2>&1
 
@@ -339,12 +343,16 @@ else
     launchctl start net.digitalnoise.nova-memory-server 2>/dev/null
 fi
 
-# Gateway
+# Gateway — kill any orphaned signal-cli before starting to avoid lock conflicts
+pkill -f "signal-cli" 2>/dev/null
+sleep 1
 if port_listening 18789; then
     log "Gateway already running"
 else
     log "Starting Gateway..."
-    launchctl start ai.openclaw.gateway 2>/dev/null
+    nohup ~/.openclaw/scripts/nova_gateway_start.sh \
+        >> ~/.openclaw/logs/gateway.log \
+        2>> ~/.openclaw/logs/gateway.err.log &
 fi
 
 wait_for_port 18790 "Memory Server" 90

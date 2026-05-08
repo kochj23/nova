@@ -633,7 +633,7 @@ python3 ~/.openclaw/scripts/nova_memory_first.py "the question to search for"
 - **Nova's email:** nova@digitalnoise.net (configured in macOS Mail)
 - **Mail handler:** `~/.openclaw/scripts/nova_mail_handler.applescript`
 - **Check + reply + notify:** Single AppleScript handles all three operations
-- **Trusted senders (no auto-reply):** [redacted-email], [redacted-email], [redacted-email], jason.cox@disney.com, James.Tatum@disney.com, [redacted-email], sam@jasonacox.com, [redacted-email]
+- **Trusted senders (no auto-reply):** [redacted-email], [redacted-email], [redacted-email], [redacted-email], [redacted-email], [redacted-email], [redacted-email], [redacted-email]
 - **Inbox watcher cron:** `04627a72` fires every 5 min
 
 ---
