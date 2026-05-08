@@ -550,3 +550,9 @@ tasks:
     schedule: every 1h
     timeout: 1800
     overlap: skip
+
+  gateway_health:
+    script: nova_gateway_health.py
+    schedule: every 1h
+    timeout: 120
+    overlap: skip
