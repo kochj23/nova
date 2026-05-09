@@ -650,12 +650,36 @@ def _check_disk_space() -> list:
 
 # ── Nova Memory / Redis Health ────────────────────────────────────────────────
 
+def _hnsw_reindex_running() -> bool:
+    """Return True if a CONCURRENT HNSW reindex is active in PostgreSQL.
+
+    During a concurrent reindex, HNSW recall queries are slower than normal
+    and may time out. This is not a bug — don't alert.
+    """
+    try:
+        result = subprocess.run(
+            ["psql", "-U", "kochj", "-d", "nova_memories", "-tAc",
+             "SELECT count(*) FROM pg_stat_activity WHERE datname='nova_memories' "
+             "AND query ILIKE '%REINDEX%' AND state='active';"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return int(result.stdout.strip() or "0") > 0
+    except Exception:
+        return False
+
+
 def _check_memory_server_recall() -> bool:
     """Quick recall test — ensures memory server can actually query Postgres.
 
     Uses a 30s timeout and 2 retries to avoid false alarms during HNSW
-    reindex or heavy PG load. Only returns False if all attempts fail.
+    reindex or heavy PG load. Skips entirely if a REINDEX is running.
+    Only returns False if all attempts fail AND no reindex is active.
     """
+    # Skip recall test when HNSW reindex is running — queries are slow by design
+    if _hnsw_reindex_running():
+        log("HNSW reindex active — skipping recall check", level=LOG_DEBUG, source="big-brother")
+        return True
+
     for attempt in range(3):
         try:
             url = "http://127.0.0.1:18790/recall?q=test&n=1"

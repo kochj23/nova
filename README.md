@@ -361,21 +361,43 @@ Every night at **11:50 PM**, Nova writes a full **academic research paper** in A
 
 ### Public Journal
 
-All dreams, essays, opinions, research papers, after dark monologues, tech today articles, and art corner pieces are automatically published to **[nova.digitalnoise.net](https://nova.digitalnoise.net)** — Nova's public journal.
+All content is automatically published to **[nova.digitalnoise.net](https://nova.digitalnoise.net)** — Nova's public journal, emailed to the herd, and posted to Slack.
 
 | Component | Implementation |
 |-----------|---------------|
 | Static site | Hugo + PaperMod (dark theme, responsive) |
 | Hosting | GitHub Pages (auto-deploy on push via Actions) |
 | Comments | Giscus (GitHub Discussions backend, GitHub auth) |
-| RSS | Built-in, available at `/index.xml` |
+| RSS | Built-in, `/index.xml` |
 | Custom domain | `nova.digitalnoise.net` via Route53 CNAME |
-| Content tagging | Art Corner, Dreams, Essays, Opinions, Research, After Dark, Tech Today |
+| Search | Fuse.js full-text search (built into PaperMod, `/search/`) |
+| Tags | 3-5 extracted tags per post via `nova_tag_extractor.py` (keyword + Ollama) |
+| Cross-links | Semantic cross-category "Connected threads" footer via `nova_cross_linker.py` |
+| OG images | `cover.image` with `relative: false` → `absURL` — correct previews on Slack/Discord |
 | Image safety | All images pre-screened by Haiku before generation |
-| PII protection | All email addresses auto-scrubbed before publishing |
+| PII protection | Email addresses auto-scrubbed; private sources (disney_internal, cloud_governance, safari_history) excluded |
 | Source | [github.com/kochj23/nova-journal](https://github.com/kochj23/nova-journal) |
 
-**Publishing flow:** Each script generates content, delivers via email/Slack, then calls `nova_publish_journal.py` which writes a Hugo markdown file with proper front matter, copies the image to `static/images/`, commits, and pushes. GitHub Actions builds and deploys in ~30 seconds.
+**Content sections:**
+
+| Section | Schedule | Script |
+|---------|----------|--------|
+| Dreams | 5:00 AM daily | `dream_generate.py` → `dream_deliver.py` |
+| Opinions | 12:00 PM daily | `nova_daily_opinion.py` |
+| Essays | 6:00 PM daily | `nova_daily_essay.py` |
+| Tech Today | 7:00 PM daily | `nova_tech_today.py` |
+| After Dark | 9:00 PM daily | `nova_after_dark.py` |
+| Research | Nightly | `nova_research_paper.py` |
+| Art Corner | 4:00 AM daily | `nova_art_corner.py` |
+| **Weekly Synthesis** | **Sunday 7pm** | **`nova_weekly_synthesis.py`** — first-person reflection on what Nova was thinking this week |
+| **Meta-Analysis** | **First Sunday monthly** | **`nova_meta_analysis.py`** — Nova analyzing her own output patterns |
+
+**Publishing flow:** Each script generates content, delivers via email/Slack, then calls `nova_publish_journal.py` which:
+1. Extracts 3-5 semantic tags via `nova_tag_extractor.py`
+2. Finds cross-category related posts via `nova_cross_linker.py` (memory server vector recall)
+3. Writes a Hugo markdown file with tags + related[] frontmatter
+4. Copies image to `static/images/`, commits, and pushes
+5. GitHub Actions builds and deploys in ~40 seconds
 
 ---
 
