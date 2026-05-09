@@ -329,7 +329,7 @@ def get_memory_stats():
 
 
 def vector_recall(query, n=8, source=None):
-    """Semantic search against vector memory."""
+    """Semantic search against vector memory, excluding private sources."""
     try:
         params = f"q={urllib.parse.quote(query)}&n={n}"
         if source:
@@ -338,7 +338,8 @@ def vector_recall(query, n=8, source=None):
         with urllib.request.urlopen(req, timeout=15) as r:
             data = json.loads(r.read())
         return [m.get("text", "")[:300] for m in data.get("memories", [])
-                if m.get("score", 0) >= 0.4]
+                if m.get("score", 0) >= 0.4
+                and not nova_config.is_private_source(m.get("source", ""))]
     except Exception as e:
         logging.warning(f"Recall error for '{query[:40]}': {e}")
         return []

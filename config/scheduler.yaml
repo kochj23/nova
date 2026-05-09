@@ -424,6 +424,12 @@ tasks:
     overlap: skip
     group: llm
 
+  journal_stats_poller:
+    script: nova_journal_stats_poller.py
+    schedule: every 6h
+    timeout: 120
+    overlap: skip
+
   weekly_journal:
     script: nova_weekly_journal.py
     schedule: cron 0 17 * * 0
@@ -579,6 +585,7 @@ tasks:
     schedule: every 1h
     timeout: 1800
     overlap: skip
+    enabled: false  # Replaced by Big Brother — _check_journal_images() in nova_big_brother.py
 
   gateway_health:
     script: nova_gateway_health.py

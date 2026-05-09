@@ -357,16 +357,19 @@ def main():
         if not re.match(r"!\[Dream\]\(\[", line)
     ).strip()
 
-    # Append specific memories that inspired the dream
+    # Append specific memories that inspired the dream — exclude private sources
     if inspirations:
         seen = set()
         insp_lines = []
         for i in inspirations:
-            key = f"{i.get('source','')}:{i.get('label','')}"
+            src = i.get('source', '')
+            if nova_config.is_private_source(src):
+                continue
+            key = f"{src}:{i.get('label','')}"
             if key not in seen:
                 seen.add(key)
                 memory_text = i.get("memory", i.get("snippet", ""))[:200]
-                insp_lines.append(f"  • *[{i.get('source', '?')}]* {memory_text}")
+                insp_lines.append(f"  • *[{src}]* {memory_text}")
         if insp_lines:
             narrative += "\n\n_Memories that inspired this dream:_\n" + "\n".join(insp_lines)
 

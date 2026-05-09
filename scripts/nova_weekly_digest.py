@@ -38,6 +38,19 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+
+# ── Date override for backfill ────────────────────────────────────────────────
+# Set NOVA_FOR_DATE=YYYY-MM-DD to generate a digest for a specific past date.
+import os as _os
+_FOR_DATE = _os.environ.get("NOVA_FOR_DATE", "").strip()
+if _FOR_DATE:
+    from datetime import date as _date_cls
+    _override_dt = datetime.strptime(_FOR_DATE, "%Y-%m-%d")
+    def _now() -> datetime: return _override_dt.replace(hour=17, minute=0, second=10)
+    def _today_str() -> str: return _FOR_DATE
+else:
+    def _now() -> datetime: return datetime.now()
+    def _today_str() -> str: return time.strftime("%Y-%m-%d")
 from nova_image_utils import ensure_backend, generate_image as generate_image_util
 
 MEMORY_SERVER = "http://127.0.0.1:18790"
@@ -84,6 +97,23 @@ def scrub_emails(text: str) -> str:
     return EMAIL_PATTERN.sub(replace_email, text)
 
 
+def scrub_private_sources(text: str) -> str:
+    """Remove any mention of private memory source names from public text."""
+    import re as _re
+    for term in (
+        "cloud_governance", "cloud governance", "disney_internal", "disney internal",
+        "disney_work", "disney work", "work_memo", "disney_work_general",
+        "disney internals",
+    ):
+        # Replace standalone mentions (case-insensitive), keep surrounding context intact
+        text = _re.sub(r'(?i)\b' + _re.escape(term) + r'\b', "[memory source]", text)
+        # Also remove any bullet/list line that consists only of a private source count
+        text = _re.sub(
+            r'(?im)^\s*[-*]\s*\*\*' + _re.escape(term) + r'\*\*.*$\n?', '', text
+        )
+    return text
+
+
 def load_state() -> dict:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     if STATE_FILE.exists():
@@ -117,7 +147,7 @@ def get_plex_token() -> str:
 
 def get_week_range() -> tuple[str, str]:
     """Return (start_date, end_date) strings for the past 7 days."""
-    end = datetime.now()
+    end = _now()
     start = end - timedelta(days=7)
     return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
 
@@ -354,7 +384,7 @@ def gather_herd_activity() -> str:
 # ── Section: Notable Memories ────────────────────────────────────────────────
 
 def gather_memory_sources() -> list[dict]:
-    """Count new memories per source this week."""
+    """Count new memories per source this week, excluding private sources."""
     start_date, _ = get_week_range()
     try:
         result = subprocess.run(
@@ -368,7 +398,10 @@ def gather_memory_sources() -> list[dict]:
         for line in result.stdout.strip().split("\n"):
             if "|" in line:
                 parts = line.split("|")
-                sources.append({"source": parts[0].strip(), "count": int(parts[1].strip())})
+                source_name = parts[0].strip()
+                if nova_config.is_private_source(source_name):
+                    continue
+                sources.append({"source": source_name, "count": int(parts[1].strip())})
         return sources
     except Exception as e:
         log(f"Memory sources query failed: {e}")
@@ -640,7 +673,14 @@ def _generate_digest_image(editorial: str, date_str: str) -> str | None:
                 capture_output=True, text=True, timeout=360
             )
             if result.returncode == 0:
-                image_path = result.stdout.strip().split("\n")[-1]
+                # Extract path from "Workspace copy: /path/to/file" line
+                image_path = ""
+                for line in result.stdout.splitlines():
+                    if line.startswith("Workspace copy:"):
+                        image_path = line.split(":", 1)[1].strip()
+                        break
+                if not image_path:
+                    image_path = result.stdout.strip().split("\n")[-1]
                 if Path(image_path).exists():
                     dest = IMAGES_DIR / f"{date_str}.png"
                     shutil.copy2(image_path, dest)
@@ -660,7 +700,7 @@ def _generate_digest_image(editorial: str, date_str: str) -> str | None:
 
 def publish_to_site(full_digest: str, editorial: str, date_str: str):
     """Publish digest to the Hugo journal site under /digests/."""
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S-07:00")
+    timestamp = _now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
     slug = f"{date_str}-daily-digest"
 
     content_dir = HUGO_ROOT / "content/digests"
@@ -695,6 +735,7 @@ description: "Nova's daily personal newsletter — {date_str}"
     # Combine editorial + full digest data
     body = f"## Editorial\n\n{editorial}\n\n---\n\n{full_digest}"
     body = scrub_emails(body)
+    body = scrub_private_sources(body)
 
     output = content_dir / f"{slug}.md"
     output.write_text(front_matter + body)
@@ -730,7 +771,7 @@ description: "Nova's daily personal newsletter — {date_str}"
 def main():
     log("Starting daily digest generation...")
     state = load_state()
-    date_str = time.strftime("%Y-%m-%d")
+    date_str = _today_str()
 
     # Compile all data
     data = compile_digest_data()

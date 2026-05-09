@@ -28,6 +28,20 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 
+# ── Date override for backfill ────────────────────────────────────────────────
+import os as _os
+_FOR_DATE = _os.environ.get("NOVA_FOR_DATE", "").strip()
+if _FOR_DATE:
+    from datetime import datetime as _dt_cls
+    _override_dt = _dt_cls.strptime(_FOR_DATE, "%Y-%m-%d")
+    def _today_str() -> str: return _FOR_DATE
+    def _now_dt() -> _dt_cls: return _override_dt.replace(hour=9, minute=0, second=0)
+else:
+    def _today_str() -> str: return time.strftime("%Y-%m-%d")
+    def _now_dt():
+        from datetime import datetime as _dt_cls2
+        return _dt_cls2.now()
+
 MEMORY_SERVER = "http://127.0.0.1:18790"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
@@ -433,7 +447,13 @@ def generate_essay_image(essay: str, source: str) -> str | None:
                 capture_output=True, text=True, timeout=360
             )
             if result.returncode == 0 and result.stdout.strip():
-                image_path = result.stdout.strip().split("\n")[-1]
+                image_path = ""
+                for line in result.stdout.splitlines():
+                    if line.startswith("Workspace copy:"):
+                        image_path = line.split(":", 1)[1].strip()
+                        break
+                if not image_path:
+                    image_path = result.stdout.strip().split("\n")[-1]
                 if Path(image_path).exists():
                     log(f"Image generated (attempt {attempt + 1}): {image_path}")
                     return image_path
@@ -610,7 +630,7 @@ def main():
     state["last_essay"] = {
         "source": source,
         "title": title,
-        "date": time.strftime("%Y-%m-%d"),
+        "date": _today_str(),
         "chars": len(essay),
     }
     save_state(state)

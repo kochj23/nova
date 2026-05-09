@@ -29,6 +29,20 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 import nova_config
 from nova_image_utils import ensure_backend, generate_image as generate_image_util
 
+# ── Date override for backfill ────────────────────────────────────────────────
+import os as _os
+_FOR_DATE = _os.environ.get("NOVA_FOR_DATE", "").strip()
+if _FOR_DATE:
+    from datetime import datetime as _dt_cls
+    _override_dt = _dt_cls.strptime(_FOR_DATE, "%Y-%m-%d")
+    def _today_str() -> str: return _FOR_DATE
+    def _now_dt() -> _dt_cls: return _override_dt.replace(hour=12, minute=0, second=0)
+else:
+    def _today_str() -> str: return time.strftime("%Y-%m-%d")
+    def _now_dt():
+        from datetime import datetime as _dt_cls2
+        return _dt_cls2.now()
+
 MEMORY_SERVER = "http://127.0.0.1:18790"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
@@ -396,8 +410,8 @@ def publish_to_site(opinion: str, title: str, story: dict, memories: list[dict],
     """Publish opinion to the Hugo journal site."""
     import shutil
 
-    date = time.strftime("%Y-%m-%d")
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S-07:00")
+    date = _today_str()
+    timestamp = _now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00")
     slug = title[:60].lower()
     import re
     slug = re.sub(r'[^a-z0-9]+', '-', slug).strip('-')
@@ -498,7 +512,7 @@ def main():
     state["last_opinion"] = {
         "story": story["title"],
         "title": title,
-        "date": time.strftime("%Y-%m-%d"),
+        "date": _today_str(),
         "chars": len(opinion),
     }
     save_state(state)

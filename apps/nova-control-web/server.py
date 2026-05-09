@@ -1828,6 +1828,39 @@ async def collect_hdhr(session: aiohttp.ClientSession) -> dict:
 BB_API = "http://127.0.0.1:37461"
 
 
+@app.get("/journal")
+async def journal_dashboard():
+    """Serve the Nova Journal analytics dashboard."""
+    return FileResponse("static/journal-dashboard.html")
+
+
+@app.get("/api/journal/stats")
+async def journal_stats():
+    """Return the latest journal stats snapshot from the poller."""
+    from pathlib import Path as _Path
+    stats_file = _Path.home() / ".openclaw/workspace/state/journal_stats.json"
+    if not stats_file.exists():
+        return {"error": "Stats not yet available — poller may not have run"}
+    try:
+        return _json.loads(stats_file.read_text())
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.post("/api/journal/poll")
+async def journal_poll_now():
+    """Trigger an immediate journal stats poll."""
+    from pathlib import Path as _P
+    script = str(_P.home() / ".openclaw/scripts/nova_journal_stats_poller.py")
+    proc = await asyncio.create_subprocess_exec(
+        "python3", script,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    asyncio.create_task(proc.wait())
+    return {"queued": True}
+
+
 @app.get("/bb")
 async def bb_dashboard():
     """Serve the Big Brother oversight dashboard."""
@@ -1863,6 +1896,23 @@ async def bb_events():
     import urllib.request as _ur
     try:
         with _ur.urlopen(f"{BB_API}/bb/events", timeout=5) as r:
+            return _json.loads(r.read())
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/bb-graphs")
+async def bb_graphs_dashboard():
+    """Serve the Big Brother metrics/graphs dashboard (MRTG-style)."""
+    return FileResponse("static/bb-graphs.html")
+
+
+@app.get("/api/bb/metrics")
+async def bb_metrics():
+    """Proxy to Big Brother's /bb/metrics ring buffer (up to 7 days of per-minute buckets)."""
+    import urllib.request as _ur
+    try:
+        with _ur.urlopen(f"{BB_API}/bb/metrics", timeout=10) as r:
             return _json.loads(r.read())
     except Exception as e:
         return {"error": str(e)}
@@ -2922,6 +2972,37 @@ async def poll_loop():
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }
+
+        # Inject journal stats (read from poller file — fast, no network call)
+        _journal_stats_path = Path.home() / ".openclaw/workspace/state/journal_stats.json"
+        try:
+            _js = _json.loads(_journal_stats_path.read_text())
+            # Slim down for WS broadcast — full stats available via /api/journal/stats
+            state["journal"] = {
+                "polled_at":      _js.get("polled_at"),
+                "totals":         _js.get("totals", {}),
+                "traffic":        {k: _js["traffic"][k] for k in ("total_count","total_uniques") if k in _js.get("traffic",{})},
+                "section_views":  _js.get("section_views", {}),
+                "stale_sections": [s for s, v in _js.get("sections", {}).items() if (v.get("age_hours") or 9999) > {"dreams":26,"essays":26,"opinions":26,"after-dark":26,"tech-today":26,"research":50,"digests":26}.get(s, 26)],
+                "sections": {s: {"age_hours": v.get("age_hours"), "latest_title": v.get("latest_title",""), "posts_this_week": v.get("posts_this_week",0), "post_count": v.get("post_count",0)} for s, v in _js.get("sections", {}).items()},
+                "last_deploy":    (_js.get("recent_deploys") or [{}])[0],
+            }
+        except Exception:
+            state["journal"] = {"error": "stats not yet available"}
+
+        # Inject Big Brother summary (read from BB API — quick loopback call)
+        try:
+            import urllib.request as _ur2
+            with _ur2.urlopen("http://127.0.0.1:37461/bb/status", timeout=1) as _r:
+                _bb = _json.loads(_r.read())
+            state["big_brother"] = {
+                "uptime_s":       _bb.get("uptime_s"),
+                "events_total":   _bb.get("events_total"),
+                "services_down":  _bb.get("services_down", []),
+                "pending_restarts": _bb.get("pending_restarts", []),
+            }
+        except Exception:
+            state["big_brother"] = {"error": "Big Brother unreachable"}
 
         # Evaluate alerts every poll cycle
         state["alerts"] = evaluate_alerts(state)

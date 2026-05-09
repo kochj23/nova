@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Journal Dashboard — Nova</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    .jd-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 18px;
+      padding: 20px 24px;
+    }
+    @media (max-width: 900px) { .jd-grid { grid-template-columns: 1fr; } }
+    .jd-wide { grid-column: span 2; }
+    @media (max-width: 900px) { .jd-wide { grid-column: span 1; } }
+
+    /* ── Cards ── */
+    .jd-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-glow);
+      border-radius: 6px;
+      padding: 14px 16px 12px;
+    }
+    .jd-title {
+      font-size: 11px; letter-spacing: 0.12em; color: var(--text-dim);
+      text-transform: uppercase; margin-bottom: 10px;
+      display: flex; justify-content: space-between; align-items: center;
+    }
+    .jd-title span { color: var(--accent-cyan); font-size: 10px; letter-spacing: 0; }
+
+    /* ── Summary bar ── */
+    .summary-bar {
+      display: flex; gap: 24px; flex-wrap: wrap;
+      padding: 10px 24px 0; margin-bottom: 4px;
+    }
+    .sb-item { text-align: center; }
+    .sb-val { font-size: 26px; font-weight: 700; color: var(--accent-cyan); line-height: 1; }
+    .sb-lbl { font-size: 9px; color: var(--text-dim); letter-spacing: 0.1em; margin-top: 3px; }
+
+    /* ── Section health grid ── */
+    .section-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+    .section-card {
+      border: 1px solid var(--border-glow); border-radius: 4px;
+      padding: 10px 12px; position: relative;
+    }
+    .section-card.stale  { border-color: rgba(255,51,68,0.4); }
+    .section-card.warn   { border-color: rgba(255,204,0,0.4); }
+    .section-card.ok     { border-color: rgba(0,255,102,0.2); }
+    .sc-name { font-size: 12px; font-weight: 700; color: var(--text-primary); }
+    .sc-age  { font-size: 11px; margin-top: 2px; }
+    .sc-age.ok    { color: var(--accent-green); }
+    .sc-age.warn  { color: var(--accent-yellow); }
+    .sc-age.crit  { color: var(--accent-red); animation: pulse-red 1s infinite; }
+    .sc-title { font-size: 10px; color: var(--text-dim); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .sc-meta  { font-size: 10px; color: var(--text-dim); margin-top: 4px; display: flex; gap: 8px; }
+    .sc-meta .tag { background: rgba(0,255,200,0.07); padding: 1px 6px; border-radius: 2px; }
+
+    /* ── 7-day coverage heatmap ── */
+    .heatmap-table { width: 100%; border-collapse: collapse; }
+    .heatmap-table th { font-size: 9px; color: var(--text-dim); text-align: center; padding: 2px 4px; font-weight: 400; letter-spacing: 0.06em; }
+    .heatmap-table td { text-align: center; padding: 3px; }
+    .hm-section { font-size: 10px; color: var(--text-secondary); text-align: left !important; padding-right: 8px !important; white-space: nowrap; }
+    .hm-cell {
+      width: 22px; height: 22px; border-radius: 3px; display: inline-block;
+      font-size: 9px; line-height: 22px; cursor: default;
+    }
+    .hm-cell.has  { background: rgba(0,255,102,0.35); color: var(--accent-green); }
+    .hm-cell.miss { background: rgba(255,51,68,0.15); color: var(--accent-red); }
+    .hm-cell.future { background: rgba(255,255,255,0.04); color: var(--text-dim); }
+
+    /* ── Schedule ── */
+    .schedule-list { display: flex; flex-direction: column; gap: 6px; }
+    .sched-item {
+      display: flex; align-items: center; gap: 10px; padding: 6px 10px;
+      border: 1px solid var(--border-glow); border-radius: 4px; font-size: 11px;
+    }
+    .sched-item.next { border-color: var(--border-glow-bright); background: rgba(0,255,200,0.04); }
+    .sched-time { color: var(--accent-cyan); font-weight: 700; min-width: 42px; }
+    .sched-section { color: var(--text-primary); flex: 1; }
+    .sched-countdown { color: var(--text-dim); font-size: 10px; }
+    .sched-status { font-size: 10px; }
+    .sched-ok   { color: var(--accent-green); }
+    .sched-fail { color: var(--accent-red); }
+    .sched-due  { color: var(--accent-yellow); animation: pulse-red 1s infinite; }
+
+    /* ── Traffic sparkline ── */
+    .chart-wrap-sm { position: relative; height: 80px; }
+    .chart-wrap-md { position: relative; height: 110px; }
+
+    /* ── Deploy feed ── */
+    .deploy-feed { max-height: 260px; overflow-y: auto; }
+    .deploy-item { padding: 6px 0; border-bottom: 1px solid var(--border-glow); font-size: 11px; }
+    .deploy-item:last-child { border-bottom: none; }
+    .deploy-ts    { color: var(--text-dim); font-size: 10px; }
+    .deploy-title { color: var(--text-primary); }
+    .deploy-ok    { color: var(--accent-green); }
+    .deploy-fail  { color: var(--accent-red); }
+    .deploy-cancel{ color: var(--text-dim); }
+
+    /* ── Top pages ── */
+    .top-pages { display: flex; flex-direction: column; gap: 4px; }
+    .tp-item { display: flex; align-items: center; gap: 8px; font-size: 11px; }
+    .tp-bar-bg { flex: 1; height: 5px; background: rgba(255,255,255,0.06); border-radius: 2px; }
+    .tp-bar    { height: 5px; background: var(--accent-cyan); border-radius: 2px; transition: width 0.4s; }
+    .tp-count  { color: var(--accent-cyan); font-weight: 700; min-width: 28px; text-align: right; }
+    .tp-label  { color: var(--text-secondary); min-width: 90px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 10px; }
+
+    /* ── Referrers ── */
+    .ref-item { display: flex; justify-content: space-between; padding: 4px 0; border-bottom: 1px solid var(--border-glow); font-size: 11px; }
+    .ref-item:last-child { border-bottom: none; }
+    .ref-name  { color: var(--text-secondary); }
+    .ref-count { color: var(--accent-cyan); font-weight: 700; }
+
+    /* ── Poll button ── */
+    .poll-btn {
+      font-size: 10px; padding: 2px 10px; cursor: pointer;
+      background: rgba(0,255,200,0.08); border: 1px solid var(--border-glow);
+      color: var(--accent-cyan); border-radius: 3px; font-family: var(--font-mono);
+    }
+    .poll-btn:hover { background: rgba(0,255,200,0.2); }
+
+    /* ── Stale alert banner ── */
+    .stale-banner {
+      margin: 6px 24px 0; padding: 8px 14px;
+      background: rgba(255,51,68,0.12); border: 1px solid var(--accent-red);
+      border-radius: 4px; color: var(--accent-red); font-size: 12px; display: none;
+    }
+    .stale-banner.visible { display: block; }
+
+    /* ── Nav ── */
+    .nav-link {
+      font-size: 11px; color: var(--text-dim); text-decoration: none;
+      padding: 3px 10px; border: 1px solid var(--border-glow); border-radius: 3px;
+    }
+    .nav-link:hover { color: var(--accent-cyan); border-color: var(--border-glow-bright); }
+
+    /* ── Animations ── */
+    @keyframes pulse-red { 0%,100%{opacity:1} 50%{opacity:0.4} }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <h1>JOURNAL DASHBOARD</h1>
+    <span class="header-subtitle">nova.digitalnoise.net · publishing pipeline &amp; analytics</span>
+  </div>
+  <div class="header-right">
+    <a href="https://nova.digitalnoise.net" target="_blank" class="nav-link">Live Site ↗</a>
+    <a href="/bb" class="nav-link">Big Brother</a>
+    <button class="poll-btn" onclick="pollNow()">↻ Refresh</button>
+    <button id="theme-toggle" class="theme-toggle" title="Toggle theme">&#9789;</button>
+    <span id="poll-latency" class="meta-text"></span>
+    <div id="connection-status" class="status-dot"></div>
+  </div>
+</header>
+
+<div id="stale-banner" class="stale-banner"></div>
+
+<!-- Summary bar -->
+<div class="summary-bar">
+  <div class="sb-item"><div class="sb-val" id="sb-posts">—</div><div class="sb-lbl">TOTAL POSTS</div></div>
+  <div class="sb-item"><div class="sb-val" id="sb-week">—</div><div class="sb-lbl">THIS WEEK</div></div>
+  <div class="sb-item"><div class="sb-val" id="sb-words">—</div><div class="sb-lbl">WORDS THIS WEEK</div></div>
+  <div class="sb-item"><div class="sb-val" id="sb-views">—</div><div class="sb-lbl">TOTAL VIEWS (14d)</div></div>
+  <div class="sb-item"><div class="sb-val" id="sb-uniques">—</div><div class="sb-lbl">UNIQUE VISITORS (14d)</div></div>
+  <div class="sb-item"><div class="sb-val" id="sb-deploys">—</div><div class="sb-lbl">DEPLOYS TODAY</div></div>
+  <div class="sb-item" style="margin-left:auto"><div class="sb-val" style="font-size:13px;color:var(--text-dim)" id="sb-polled">—</div><div class="sb-lbl">LAST POLLED</div></div>
+</div>
+
+<div class="jd-grid">
+
+  <!-- Section Health -->
+  <div class="jd-card jd-wide">
+    <div class="jd-title">Section Health <span id="health-stale-count"></span></div>
+    <div class="section-grid" id="section-grid"></div>
+  </div>
+
+  <!-- 7-Day Coverage Heatmap -->
+  <div class="jd-card jd-wide">
+    <div class="jd-title">7-Day Coverage</div>
+    <table class="heatmap-table" id="heatmap"></table>
+  </div>
+
+  <!-- Today's Schedule -->
+  <div class="jd-card">
+    <div class="jd-title">Today's Schedule</div>
+    <div class="schedule-list" id="schedule-list"></div>
+  </div>
+
+  <!-- Traffic Trend -->
+  <div class="jd-card">
+    <div class="jd-title">Daily Views (14d) <span id="traffic-total"></span></div>
+    <div class="chart-wrap-md"><canvas id="chart-traffic"></canvas></div>
+    <div id="traffic-stats" style="margin-top:8px;font-size:10px;color:var(--text-dim)"></div>
+  </div>
+
+  <!-- Top Pages -->
+  <div class="jd-card">
+    <div class="jd-title">Top Pages <span>(GitHub 14d)</span></div>
+    <div class="top-pages" id="top-pages"></div>
+  </div>
+
+  <!-- Section Views Breakdown -->
+  <div class="jd-card">
+    <div class="jd-title">Views by Section <span>(inferred from top paths)</span></div>
+    <div class="chart-wrap-md"><canvas id="chart-sections"></canvas></div>
+  </div>
+
+  <!-- Referrers -->
+  <div class="jd-card">
+    <div class="jd-title">Traffic Sources</div>
+    <div id="referrers"></div>
+  </div>
+
+  <!-- Deploy Feed -->
+  <div class="jd-card jd-wide">
+    <div class="jd-title">Deploy History <span id="deploy-meta"></span></div>
+    <div class="deploy-feed" id="deploy-feed"></div>
+  </div>
+
+</div>
+
+<script>
+const API = '/api/journal/stats';
+const POLL_MS = 120_000;  // 2 min — poller runs every 6h, but we refresh display live
+const STALENESS = { dreams: 26, essays: 26, opinions: 26, 'after-dark': 26, 'tech-today': 26, research: 50, digests: 26 };
+const SECTION_ICONS = { dreams: '🌙', essays: '📝', opinions: '💬', 'after-dark': '🌃', 'tech-today': '💻', research: '📄', digests: '📋' };
+let chartTraffic = null, chartSections = null;
+
+const $ = id => document.getElementById(id);
+
+function fmt(n) {
+  if (n === undefined || n === null) return '—';
+  if (n >= 1e6) return (n/1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+  return String(n);
+}
+function fmtWords(n) {
+  if (!n) return '—';
+  if (n >= 1000) return (n/1000).toFixed(1) + 'k words';
+  return n + ' words';
+}
+function fmtAge(h) {
+  if (!h || h > 9000) return 'never';
+  if (h < 1) return Math.round(h * 60) + 'm ago';
+  if (h < 24) return h.toFixed(1) + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+function fmtTs(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', {month:'short', day:'numeric'}) + ' ' +
+         d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:false});
+}
+function fmtPolled(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso), now = new Date();
+  const diff = Math.round((now - d) / 60000);
+  if (diff < 2) return 'just now';
+  if (diff < 60) return diff + 'm ago';
+  return Math.round(diff / 60) + 'h ago';
+}
+function ageClass(h, threshold) {
+  if (h > threshold) return 'crit';
+  if (h > threshold * 0.75) return 'warn';
+  return 'ok';
+}
+function isDark() { return document.documentElement.dataset.theme !== 'light'; }
+function themeColors() {
+  return {
+    grid: isDark() ? 'rgba(0,255,200,0.06)' : 'rgba(0,100,80,0.08)',
+    tick: isDark() ? '#555570' : '#8888a0',
+  };
+}
+
+// ── Section countdown clock (live, ticks every minute) ──────────────────────
+let scheduleData = [];
+function renderSchedule() {
+  if (!scheduleData.length) return;
+  const now = new Date();
+  let nextIdx = -1, minDiff = Infinity;
+  const rows = scheduleData.map((item, i) => {
+    const [h, m] = item.fires_at.split(':').map(Number);
+    let fire = new Date(now);
+    fire.setHours(h, m, 0, 0);
+    if (fire <= now) fire.setDate(fire.getDate() + 1);
+    const diffMs = fire - now;
+    const diffH = Math.floor(diffMs / 3600000);
+    const diffM = Math.floor((diffMs % 3600000) / 60000);
+    const countdown = diffH > 0 ? `in ${diffH}h ${diffM}m` : `in ${diffM}m`;
+    const isPast = fire.getDate() > now.getDate() ? false : fire < now;
+
+    if (diffMs < minDiff) { minDiff = diffMs; nextIdx = i; }
+
+    const sched = scheduleData[i];
+    const failures = sched.consecutive_failures || 0;
+    const lastExit = sched.last_exit_code;
+    const statusHtml = failures >= 3
+      ? `<span class="sched-fail">✗ ${failures} fails</span>`
+      : lastExit === 0
+        ? `<span class="sched-ok">✓ ok</span>`
+        : `<span class="sched-status" style="color:var(--text-dim)">—</span>`;
+
+    return { item, fire, countdown, statusHtml, diffMs };
+  });
+
+  // Sort by next fire time
+  rows.sort((a, b) => a.diffMs - b.diffMs);
+
+  $('schedule-list').innerHTML = rows.map((r, i) => `
+    <div class="sched-item ${i === 0 ? 'next' : ''}">
+      <span class="sched-time">${r.item.fires_at}</span>
+      <span class="sched-section">${SECTION_ICONS[r.item.section] || ''} ${r.item.section}</span>
+      <span class="sched-countdown">${r.countdown}</span>
+      ${r.statusHtml}
+    </div>`).join('');
+}
+setInterval(renderSchedule, 60_000);
+
+// ── Traffic chart ────────────────────────────────────────────────────────────
+function renderTrafficChart(history) {
+  // history is a dict of date -> {count, uniques}
+  const entries = Object.entries(history).sort((a,b) => a[0].localeCompare(b[0])).slice(-14);
+  const labels  = entries.map(([d]) => d.slice(5)); // MM-DD
+  const counts  = entries.map(([,v]) => v.count);
+  const uniques = entries.map(([,v]) => v.uniques);
+  const tc = themeColors();
+
+  if (chartTraffic) { chartTraffic.destroy(); chartTraffic = null; }
+  chartTraffic = new Chart($('chart-traffic'), {
+    type: 'bar',
+    data: {
+      labels,
+      datasets: [
+        { label: 'Views',   data: counts,  backgroundColor: 'rgba(0,255,200,0.3)', borderColor: '#00ffc8', borderWidth: 1 },
+        { label: 'Uniques', data: uniques, backgroundColor: 'rgba(0,255,102,0.2)', borderColor: '#00ff66', borderWidth: 1 },
+      ],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { labels: { color: tc.tick, boxWidth: 10, font: { size: 9 } } }, tooltip: { mode: 'index' } },
+      scales: {
+        x: { grid: { color: tc.grid }, ticks: { color: tc.tick, maxRotation: 0 }, border: { color: 'transparent' } },
+        y: { grid: { color: tc.grid }, ticks: { color: tc.tick, maxTicksLimit: 4 }, border: { color: 'transparent' }, min: 0 },
+      },
+    },
+  });
+
+  const peak = Math.max(...counts);
+  const peakDay = entries[counts.indexOf(peak)]?.[0] || '';
+  $('traffic-stats').textContent = `Peak: ${peak} views on ${peakDay}  ·  ${counts.reduce((a,b)=>a+b,0)} total in window`;
+}
+
+// ── Section views doughnut ───────────────────────────────────────────────────
+function renderSectionsChart(sectionViews) {
+  const labels  = Object.keys(sectionViews).filter(k => sectionViews[k] > 0);
+  const values  = labels.map(k => sectionViews[k]);
+  if (!labels.length) { return; }
+  const COLORS = ['#00ffc8','#00ff66','#ffcc00','#ff3344','#4488ff','#ff0080','#ff8844'];
+  if (chartSections) { chartSections.destroy(); chartSections = null; }
+  chartSections = new Chart($('chart-sections'), {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{ data: values, backgroundColor: COLORS.slice(0, labels.length), borderWidth: 0 }],
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { position: 'right', labels: { color: isDark() ? '#a0a0b8' : '#4a4a68', boxWidth: 10, font: { size: 9 } } },
+      },
+    },
+  });
+}
+
+// ── Heatmap ──────────────────────────────────────────────────────────────────
+function renderHeatmap(sections) {
+  const now = new Date();
+  // Day headers (today … 6 days ago)
+  const days = Array.from({length: 7}, (_, i) => {
+    const d = new Date(now);
+    d.setDate(d.getDate() - i);
+    return d.toLocaleDateString('en-US', {weekday:'short', month:'numeric', day:'numeric'});
+  });
+
+  let html = '<thead><tr><th></th>' + days.map(d => `<th>${d}</th>`).join('') + '</tr></thead><tbody>';
+  for (const [section, data] of Object.entries(sections)) {
+    html += `<tr><td class="hm-section">${SECTION_ICONS[section] || ''} ${section}</td>`;
+    const cov = data.coverage_7d || [];
+    const titles = data.coverage_titles || [];
+    for (let i = 0; i < 7; i++) {
+      const has = cov[i];
+      const cls = has ? 'has' : 'miss';
+      const tip = has ? (titles[i] || '✓').slice(0, 60) : '✗';
+      html += `<td><span class="hm-cell ${cls}" title="${tip}">${has ? '✓' : '✗'}</span></td>`;
+    }
+    html += '</tr>';
+  }
+  html += '</tbody>';
+  $('heatmap').innerHTML = html;
+}
+
+// ── Main render ──────────────────────────────────────────────────────────────
+function render(d) {
+  const totals   = d.totals || {};
+  const traffic  = d.traffic || {};
+  const sections = d.sections || {};
+  const sched    = d.schedule || [];
+  const deploys  = d.recent_deploys || [];
+  const paths    = d.top_paths || [];
+  const refs     = d.referrers || [];
+  const svcSched = d.scheduler || {};
+
+  // Summary bar
+  $('sb-posts').textContent   = totals.posts || 0;
+  $('sb-week').textContent    = totals.posts_this_week || 0;
+  $('sb-words').textContent   = totals.words_this_week ? Math.round(totals.words_this_week / 1000) + 'k' : '—';
+  $('sb-views').textContent   = fmt(traffic.total_count || 0);
+  $('sb-uniques').textContent = fmt(traffic.total_uniques || 0);
+  const today = new Date().toISOString().slice(0, 10);
+  $('sb-deploys').textContent = deploys.filter(r => r.created_at?.startsWith(today)).length;
+  $('sb-polled').textContent  = fmtPolled(d.polled_at);
+
+  // Stale alert banner
+  const stale = Object.entries(sections).filter(([s, v]) => (v.age_hours || 9999) > (STALENESS[s] || 26));
+  if (stale.length) {
+    $('stale-banner').textContent = '⚠ Stale sections: ' + stale.map(([s]) => s).join(', ');
+    $('stale-banner').classList.add('visible');
+  } else {
+    $('stale-banner').classList.remove('visible');
+  }
+
+  // Section health cards
+  let healthHtml = '';
+  for (const [section, data] of Object.entries(sections)) {
+    const th = STALENESS[section] || 26;
+    const age = data.age_hours || 9999;
+    const cls  = age > th ? 'stale' : age > th * 0.75 ? 'warn' : 'ok';
+    const aCls = age > th ? 'crit'  : age > th * 0.75 ? 'warn' : 'ok';
+    const delta = (data.posts_this_week || 0) - (data.posts_last_week || 0);
+    const deltaStr = delta > 0 ? `↑${delta}` : delta < 0 ? `↓${Math.abs(delta)}` : '=';
+    const deltaColor = delta > 0 ? 'var(--accent-green)' : delta < 0 ? 'var(--accent-red)' : 'var(--text-dim)';
+    healthHtml += `
+      <div class="section-card ${cls}">
+        <div class="sc-name">${SECTION_ICONS[section] || ''} ${section}</div>
+        <div class="sc-age ${aCls}">${fmtAge(age)}</div>
+        <div class="sc-title" title="${data.latest_title || ''}">${data.latest_title || '—'}</div>
+        <div class="sc-meta">
+          <span class="tag">${data.post_count || 0} total</span>
+          <span class="tag">${data.posts_this_week || 0} this wk</span>
+          <span class="tag" style="color:${deltaColor}">${deltaStr} vs last wk</span>
+        </div>
+      </div>`;
+  }
+  $('section-grid').innerHTML = healthHtml;
+  const staleCount = stale.length;
+  $('health-stale-count').textContent = staleCount > 0 ? `${staleCount} stale` : 'all current';
+  $('health-stale-count').style.color = staleCount > 0 ? 'var(--accent-red)' : 'var(--accent-green)';
+
+  // Heatmap
+  renderHeatmap(sections);
+
+  // Schedule — merge scheduler state into schedule items
+  scheduleData = sched.map(item => ({
+    ...item,
+    consecutive_failures: svcSched[item.section]?.consecutive_failures || 0,
+    last_exit_code:        svcSched[item.section]?.last_exit_code,
+  }));
+  renderSchedule();
+
+  // Traffic chart
+  if (d.traffic_history) renderTrafficChart(d.traffic_history);
+
+  // Section views doughnut
+  if (d.section_views) renderSectionsChart(d.section_views);
+
+  // Top pages
+  const maxCount = Math.max(...paths.map(p => p.count), 1);
+  $('top-pages').innerHTML = paths.slice(0, 10).map(p => {
+    const barPct = Math.round((p.count / maxCount) * 100);
+    const label = p.path.replace('/kochj23/nova-journal', '').replace('/blob/main/content', '') || p.path;
+    return `<div class="tp-item">
+      <span class="tp-label" title="${p.path}">${label.slice(0, 40)}</span>
+      <div class="tp-bar-bg"><div class="tp-bar" style="width:${barPct}%"></div></div>
+      <span class="tp-count">${p.count}</span>
+    </div>`;
+  }).join('') || '<span class="dim">No path data yet</span>';
+
+  // Referrers
+  $('referrers').innerHTML = refs.length
+    ? refs.map(r => `<div class="ref-item"><span class="ref-name">${r.referrer || 'direct'}</span><span class="ref-count">${r.count} <span style="color:var(--text-dim)">(${r.uniques} uniq)</span></span></div>`).join('')
+    : '<span class="dim" style="font-size:11px">No referrer data yet</span>';
+
+  // Deploy feed
+  const todayDeploys = deploys.filter(r => r.created_at?.startsWith(today)).length;
+  $('deploy-meta').textContent = `${todayDeploys} today`;
+  $('deploy-feed').innerHTML = deploys.map(r => {
+    const cls = r.conclusion === 'success' ? 'deploy-ok' : r.conclusion === 'cancelled' ? 'deploy-cancel' : 'deploy-fail';
+    const icon = r.conclusion === 'success' ? '✓' : r.conclusion === 'cancelled' ? '—' : '✗';
+    return `<div class="deploy-item">
+      <span class="deploy-ts">${fmtTs(r.created_at)}</span>
+      <span class="${cls}" style="margin:0 8px">${icon}</span>
+      <span class="deploy-title">${r.title}</span>
+    </div>`;
+  }).join('') || '<span class="dim">No deploy history</span>';
+}
+
+// ── Poll ─────────────────────────────────────────────────────────────────────
+async function poll() {
+  const t0 = performance.now();
+  try {
+    const res = await fetch(API + '?_=' + Date.now());
+    if (!res.ok) throw new Error(res.status);
+    const d = await res.json();
+    if (d.error) throw new Error(d.error);
+    $('poll-latency').textContent = Math.round(performance.now() - t0) + 'ms';
+    $('connection-status').className = 'status-dot connected';
+    render(d);
+  } catch(e) {
+    $('connection-status').className = 'status-dot error';
+    $('poll-latency').textContent = 'err';
+  }
+  setTimeout(poll, POLL_MS);
+}
+
+async function pollNow() {
+  try { await fetch('/api/journal/poll', {method:'POST'}); } catch(e) {}
+  setTimeout(poll, 3000);
+}
+
+// ── Theme ────────────────────────────────────────────────────────────────────
+$('theme-toggle').addEventListener('click', () => {
+  document.documentElement.dataset.theme =
+    document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  // Rebuild charts with new colors
+  if (chartTraffic) { chartTraffic.destroy(); chartTraffic = null; }
+  if (chartSections) { chartSections.destroy(); chartSections = null; }
+  poll();
+});
+
+poll();
+</script>
+</body>
+</html>

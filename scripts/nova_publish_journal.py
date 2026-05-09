@@ -22,6 +22,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+# ── Date override for backfill ────────────────────────────────────────────────
+import os as _os
+from datetime import datetime as _dt_cls
+_FOR_DATE = _os.environ.get("NOVA_FOR_DATE", "").strip()
+if _FOR_DATE:
+    _override_dt = _dt_cls.strptime(_FOR_DATE, "%Y-%m-%d")
+    def _today() -> str: return _FOR_DATE
+    def _now_dt() -> _dt_cls: return _override_dt.replace(hour=9, minute=0, second=0)
+else:
+    def _today() -> str: return time.strftime("%Y-%m-%d")
+    def _now_dt() -> _dt_cls: return _dt_cls.now()
+
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
 CONTENT_DREAMS = HUGO_ROOT / "content/dreams"
 CONTENT_ESSAYS = HUGO_ROOT / "content/essays"
@@ -177,7 +189,7 @@ description: "A {mood} dream about {theme}"
 
 def publish_essay(title: str, source: str, essay_text: str, image_path: str | None = None):
     """Publish an essay to the Hugo site."""
-    date = time.strftime("%Y-%m-%d")
+    date = _today()
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
     source_label = source.replace("_", " ").title()
 
@@ -190,7 +202,7 @@ def publish_essay(title: str, source: str, essay_text: str, image_path: str | No
         hugo_image = f"/images/essays/{date}.png"
         log(f"Essay image copied: {img_dest.name}")
 
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S-07:00")
+    timestamp = _now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00")
     tags = _get_tags(title, essay_text, "essays")
     tags_yaml = json.dumps(tags)
     related_yaml = _get_related(essay_text, "essays", slug)

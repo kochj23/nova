@@ -42,6 +42,17 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 
+# ── Date override for backfill ────────────────────────────────────────────────
+import os as _os
+_FOR_DATE = _os.environ.get("NOVA_FOR_DATE", "").strip()
+if _FOR_DATE:
+    _override_dt = datetime.strptime(_FOR_DATE, "%Y-%m-%d")
+    def _today_str() -> str: return _FOR_DATE
+    def _now_dt() -> datetime: return _override_dt.replace(hour=23, minute=50, second=0)
+else:
+    def _today_str() -> str: return time.strftime("%Y-%m-%d")
+    def _now_dt() -> datetime: return datetime.now()
+
 # ── Config ──────────────────────────────────────────────────────────────────────
 
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -695,10 +706,10 @@ def _generate_image_direct(prompt: str) -> str | None:
 
 def publish_to_hugo(paper: str, outline: dict, cover_image: str | None,
                     chapter_images: list[str | None], paper_num: int) -> bool:
-    date = time.strftime("%Y-%m-%d")
+    date = _today_str()
     title = outline.get("title", "Untitled Research Paper")
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower().replace("'", "")).strip('-')[:60]
-    timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
+    timestamp = _now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00")
 
     # Use subprocess for mkdir/cp to work around potential TCC restrictions
     subprocess.run(["mkdir", "-p", str(CONTENT_DIR)], capture_output=True)
@@ -751,7 +762,7 @@ description: "{outline.get('thesis', '')[:150]}"
         front_matter += f'cover:\n  image: "{hugo_cover}"\n  alt: "Research paper illustration"\n  relative: false\n'
     front_matter += "---\n\n"
 
-    footer = f"\n\n---\n\n*Nova Research Paper #{paper_num} · {datetime.now().strftime('%B %d, %Y')}*\n"
+    footer = f"\n\n---\n\n*Nova Research Paper #{paper_num} · {_now_dt().strftime('%B %d, %Y')}*\n"
     footer += "*Generated locally on Apple Silicon · APA format · Sources verified via SearXNG and Nova Memory Database*\n"
 
     output = CONTENT_DIR / f"{date}-{slug}.md"

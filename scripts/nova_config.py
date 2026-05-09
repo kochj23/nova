@@ -100,6 +100,29 @@ NC_PLEX       = f"{NOVACONTROL}/api/plex"           # now playing, on deck, libr
 NC_CALENDAR   = f"{NOVACONTROL}/api/calendar"       # today's events, upcoming
 
 
+# ── Private memory sources — NEVER appear in any public journal output ────────
+# These sources contain confidential work documents, internal corporate data,
+# or personally identifiable information that must not surface on the public
+# nova.digitalnoise.net website, in digest emails to the herd, or in any
+# Slack/Discord post that could be logged or forwarded.
+PRIVATE_SOURCES: set = {
+    "cloud_governance",
+    "disney_internal",
+    "disney_work",
+    "work_memo",
+    "disney_work_general",
+    "internal",
+    "corporate",
+}
+
+def is_private_source(source: str) -> bool:
+    """Return True if a memory source must never appear in public journal output."""
+    if not source:
+        return False
+    s = source.lower().strip()
+    return s in PRIVATE_SOURCES or "disney" in s or "cloud_gov" in s or "work_memo" in s
+
+
 # ── OpenRouter ───────────────────────────────────────────────────────────────
 
 def openrouter_api_key() -> str:

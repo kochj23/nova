@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Big Brother — Metrics Graphs</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <style>
+    /* ── Layout ──────────────────────────────────────────────────────────── */
+    .graphs-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 18px;
+      padding: 20px 24px;
+    }
+    @media (max-width: 900px) { .graphs-grid { grid-template-columns: 1fr; } }
+    .graph-wide { grid-column: span 2; }
+    @media (max-width: 900px) { .graph-wide { grid-column: span 1; } }
+
+    /* ── Panel ───────────────────────────────────────────────────────────── */
+    .graph-panel {
+      background: var(--bg-card);
+      border: 1px solid var(--border-glow);
+      border-radius: 6px;
+      padding: 14px 16px 10px;
+      position: relative;
+    }
+    .panel-title {
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .panel-title span { color: var(--accent-cyan); }
+
+    /* ── Per-panel stats strip (MRTG-style: cur/avg/max/min) ─────────────── */
+    .panel-stats {
+      display: flex;
+      gap: 18px;
+      margin-top: 8px;
+      flex-wrap: wrap;
+    }
+    .ps-item { text-align: center; }
+    .ps-val  { font-size: 13px; font-weight: 700; color: var(--text-primary); }
+    .ps-lbl  { font-size: 9px;  color: var(--text-dim); letter-spacing: 0.08em; margin-top: 1px; }
+
+    /* ── Time range selector ─────────────────────────────────────────────── */
+    .range-bar {
+      display: flex;
+      gap: 8px;
+      padding: 8px 24px 0;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .range-bar label { font-size: 11px; color: var(--text-dim); letter-spacing: 0.1em; }
+    .range-btn {
+      font-size: 11px;
+      padding: 3px 12px;
+      cursor: pointer;
+      background: rgba(0,255,200,0.06);
+      border: 1px solid var(--border-glow);
+      color: var(--text-secondary);
+      border-radius: 3px;
+      font-family: var(--font-mono);
+      transition: all 0.15s;
+    }
+    .range-btn:hover, .range-btn.active {
+      background: rgba(0,255,200,0.18);
+      border-color: var(--border-glow-bright);
+      color: var(--accent-cyan);
+    }
+    .refresh-note { font-size: 10px; color: var(--text-dim); margin-left: auto; }
+
+    /* ── Canvas sizing ───────────────────────────────────────────────────── */
+    .chart-wrap { position: relative; height: 130px; }
+
+    /* ── Status banner ───────────────────────────────────────────────────── */
+    .graphs-banner {
+      margin: 8px 24px 0;
+      padding: 8px 14px;
+      background: rgba(0,255,200,0.06);
+      border: 1px solid var(--border-glow);
+      border-radius: 4px;
+      font-size: 11px;
+      color: var(--text-secondary);
+      display: flex;
+      gap: 20px;
+      flex-wrap: wrap;
+    }
+    .banner-item { display: flex; gap: 6px; align-items: center; }
+    .banner-val  { color: var(--accent-cyan); font-weight: 700; }
+
+    /* ── No-data overlay ─────────────────────────────────────────────────── */
+    .no-data-overlay {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; color: var(--text-dim);
+      background: rgba(10,10,20,0.7);
+      border-radius: 4px;
+      pointer-events: none;
+    }
+
+    /* ── Nav link back ───────────────────────────────────────────────────── */
+    .nav-back {
+      font-size: 11px; color: var(--text-dim);
+      text-decoration: none; padding: 3px 10px;
+      border: 1px solid var(--border-glow);
+      border-radius: 3px;
+    }
+    .nav-back:hover { color: var(--accent-cyan); border-color: var(--border-glow-bright); }
+  </style>
+</head>
+<body>
+
+<header>
+  <div class="header-left">
+    <h1>BIG BROTHER — GRAPHS</h1>
+    <span class="header-subtitle">mrtg-style system metrics · 7-day rolling window</span>
+  </div>
+  <div class="header-right">
+    <a href="/bb" class="nav-back">← Oversight</a>
+    <button id="theme-toggle" class="theme-toggle" title="Toggle theme">&#9789;</button>
+    <span id="poll-latency" class="meta-text"></span>
+    <div id="connection-status" class="status-dot"></div>
+  </div>
+</header>
+
+<!-- Time range selector -->
+<div class="range-bar">
+  <label>RANGE:</label>
+  <button class="range-btn" data-minutes="60">1h</button>
+  <button class="range-btn active" data-minutes="360">6h</button>
+  <button class="range-btn" data-minutes="1440">24h</button>
+  <button class="range-btn" data-minutes="10080">7d</button>
+  <span class="refresh-note" id="last-update">Loading…</span>
+</div>
+
+<!-- Summary banner -->
+<div class="graphs-banner" id="summary-banner">
+  <div class="banner-item">Buckets: <span class="banner-val" id="b-total">—</span></div>
+  <div class="banner-item">Window: <span class="banner-val" id="b-window">—</span></div>
+  <div class="banner-item">Latest sweep: <span class="banner-val" id="b-sweep">—</span></div>
+  <div class="banner-item">Services down (latest): <span class="banner-val" id="b-down">—</span></div>
+  <div class="banner-item">Total fixes (window): <span class="banner-val" id="b-fixes">—</span></div>
+</div>
+
+<!-- Graph panels -->
+<div class="graphs-grid">
+
+  <!-- 1. Services Up / Down -->
+  <div class="graph-panel graph-wide" id="panel-services">
+    <div class="panel-title">Service Health <span id="stats-services"></span></div>
+    <div class="chart-wrap"><canvas id="chart-services"></canvas></div>
+    <div class="panel-stats" id="pstats-services"></div>
+  </div>
+
+  <!-- 2. Heal Fixes per sweep -->
+  <div class="graph-panel" id="panel-fixes">
+    <div class="panel-title">Heal Fixes / Sweep <span id="stats-fixes"></span></div>
+    <div class="chart-wrap"><canvas id="chart-fixes"></canvas></div>
+    <div class="panel-stats" id="pstats-fixes"></div>
+  </div>
+
+  <!-- 3. Issue Count per sweep -->
+  <div class="graph-panel" id="panel-issues">
+    <div class="panel-title">Issues Detected / Sweep <span id="stats-issues"></span></div>
+    <div class="chart-wrap"><canvas id="chart-issues"></canvas></div>
+    <div class="panel-stats" id="pstats-issues"></div>
+  </div>
+
+  <!-- 4. Sweep Duration -->
+  <div class="graph-panel" id="panel-sweep">
+    <div class="panel-title">Sweep Duration (ms) <span id="stats-sweep"></span></div>
+    <div class="chart-wrap"><canvas id="chart-sweep"></canvas></div>
+    <div class="panel-stats" id="pstats-sweep"></div>
+  </div>
+
+  <!-- 5. Memory Recall Count -->
+  <div class="graph-panel" id="panel-memory">
+    <div class="panel-title">Memory Count <span id="stats-memory"></span></div>
+    <div class="chart-wrap"><canvas id="chart-memory"></canvas></div>
+    <div class="panel-stats" id="pstats-memory"></div>
+  </div>
+
+  <!-- 6. Memory Ingest Queue + Dead Letter -->
+  <div class="graph-panel" id="panel-queue">
+    <div class="panel-title">Memory Queue &amp; Dead Letter <span id="stats-queue"></span></div>
+    <div class="chart-wrap"><canvas id="chart-queue"></canvas></div>
+    <div class="panel-stats" id="pstats-queue"></div>
+  </div>
+
+  <!-- 7. Redis Memory % -->
+  <div class="graph-panel" id="panel-redis">
+    <div class="panel-title">Redis Memory % <span id="stats-redis"></span></div>
+    <div class="chart-wrap"><canvas id="chart-redis"></canvas></div>
+    <div class="panel-stats" id="pstats-redis"></div>
+  </div>
+
+  <!-- 8. Gateway RSS -->
+  <div class="graph-panel" id="panel-gateway">
+    <div class="panel-title">Gateway Memory (MB) <span id="stats-gateway"></span></div>
+    <div class="chart-wrap"><canvas id="chart-gateway"></canvas></div>
+    <div class="panel-stats" id="pstats-gateway"></div>
+  </div>
+
+  <!-- 9. Disk Free -->
+  <div class="graph-panel graph-wide" id="panel-disk">
+    <div class="panel-title">Disk Free — /Volumes/Data &amp; /Volumes/MoreData (GB) <span id="stats-disk"></span></div>
+    <div class="chart-wrap"><canvas id="chart-disk"></canvas></div>
+    <div class="panel-stats" id="pstats-disk"></div>
+  </div>
+
+  <!-- 10. Ollama Warm Models -->
+  <div class="graph-panel" id="panel-ollama">
+    <div class="panel-title">Ollama Warm Models <span id="stats-ollama"></span></div>
+    <div class="chart-wrap"><canvas id="chart-ollama"></canvas></div>
+    <div class="panel-stats" id="pstats-ollama"></div>
+  </div>
+
+  <!-- 11. Scheduler Failures + Journal Fixed -->
+  <div class="graph-panel" id="panel-sched">
+    <div class="panel-title">Scheduler Failures &amp; Journal Fixes <span id="stats-sched"></span></div>
+    <div class="chart-wrap"><canvas id="chart-sched"></canvas></div>
+    <div class="panel-stats" id="pstats-sched"></div>
+  </div>
+
+</div>
+
+<script>
+// ── Config ────────────────────────────────────────────────────────────────────
+
+const API_METRICS = '/api/bb/metrics';
+const POLL_MS = 60_000;       // refresh every 60s (matches BB sweep interval)
+let selectedMinutes = 360;    // default: 6h
+let allBuckets = [];
+let chartInstances = {};
+
+const $ = id => document.getElementById(id);
+
+// ── Theme-aware Chart.js defaults ─────────────────────────────────────────────
+
+function isDark() {
+  return document.documentElement.dataset.theme !== 'light';
+}
+
+function themeColors() {
+  return {
+    grid:      isDark() ? 'rgba(0,255,200,0.06)' : 'rgba(0,100,80,0.08)',
+    tick:      isDark() ? '#555570'               : '#8888a0',
+    tooltip:   isDark() ? '#0a0a14'               : '#ffffff',
+    tooltipTxt:isDark() ? '#e0e0e8'               : '#1a1a2e',
+  };
+}
+
+Chart.defaults.font.family = "'JetBrains Mono', 'Fira Code', monospace";
+Chart.defaults.font.size   = 10;
+Chart.defaults.animation   = { duration: 200 };
+
+// ── Palette ───────────────────────────────────────────────────────────────────
+
+const C = {
+  cyan:    '#00ffc8',
+  green:   '#00ff66',
+  yellow:  '#ffcc00',
+  red:     '#ff3344',
+  blue:    '#4488ff',
+  magenta: '#ff0080',
+  orange:  '#ff8844',
+  dim:     '#555570',
+};
+
+// ── Downsampling ──────────────────────────────────────────────────────────────
+// For 7d (10080 pts) → target 500 pts; for 1h (60 pts) → no downsampling.
+// Uses LTTB-lite: max-in-bucket aggregation, preserves spikes.
+
+function downsample(buckets, targetPts) {
+  if (buckets.length <= targetPts) return buckets;
+  const ratio = Math.ceil(buckets.length / targetPts);
+  const out = [];
+  for (let i = 0; i < buckets.length; i += ratio) {
+    const chunk = buckets.slice(i, i + ratio);
+    // Keep the bucket with the highest issues_count (to preserve spikes),
+    // but use the last bucket's ts for the time label.
+    let best = chunk[chunk.length - 1];
+    for (const b of chunk) {
+      if ((b.issues_count || 0) + (b.services_down || 0) >
+          (best.issues_count || 0) + (best.services_down || 0)) best = b;
+    }
+    // Average numeric fields across the chunk for smooth series,
+    // but keep spike-preserved fields from 'best'.
+    const avg = k => chunk.reduce((s, b) => s + (b[k] || 0), 0) / chunk.length;
+    out.push({
+      ts:             chunk[chunk.length - 1].ts,
+      services_up:    avg('services_up'),
+      services_down:  best.services_down,     // spike-preserved
+      heal_fixes:     best.heal_fixes,         // spike-preserved
+      issues_count:   best.issues_count,       // spike-preserved
+      sweep_ms:       avg('sweep_ms'),
+      memory_count:   avg('memory_count'),
+      mem_queue:      avg('mem_queue'),
+      redis_pct:      avg('redis_pct'),
+      gateway_rss_mb: avg('gateway_rss_mb'),
+      sched_failures: chunk[chunk.length - 1].sched_failures,
+      dead_letter:    best.dead_letter,        // spike-preserved
+      disk_data_gb:   avg('disk_data_gb'),
+      disk_more_gb:   avg('disk_more_gb'),
+      ollama_warm:    avg('ollama_warm'),
+      journal_fixed:  chunk[chunk.length - 1].journal_fixed,
+    });
+  }
+  return out;
+}
+
+// ── Time helpers ──────────────────────────────────────────────────────────────
+
+function fmtLabel(ts, totalMinutes) {
+  const d = new Date(ts * 1000);
+  if (totalMinutes <= 60)
+    return d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+  if (totalMinutes <= 1440)
+    return d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:false});
+  return d.toLocaleDateString('en-US', {month:'short', day:'numeric'}) + ' ' +
+         d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', hour12:false});
+}
+
+function fmtTs(ts) {
+  const d = new Date(ts * 1000);
+  return d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+}
+
+// ── Stats strip ───────────────────────────────────────────────────────────────
+
+function statsHtml(values, unit = '', decimals = 0) {
+  if (!values.length) return '<span style="color:var(--text-dim)">no data</span>';
+  const cur = values[values.length - 1];
+  const avg = values.reduce((s, v) => s + v, 0) / values.length;
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const fmt = v => (decimals > 0 ? v.toFixed(decimals) : Math.round(v)) + unit;
+  return `
+    <div class="ps-item"><div class="ps-val">${fmt(cur)}</div><div class="ps-lbl">CUR</div></div>
+    <div class="ps-item"><div class="ps-val" style="color:var(--text-secondary)">${fmt(avg)}</div><div class="ps-lbl">AVG</div></div>
+    <div class="ps-item"><div class="ps-val" style="color:var(--accent-yellow)">${fmt(max)}</div><div class="ps-lbl">MAX</div></div>
+    <div class="ps-item"><div class="ps-val" style="color:var(--text-dim)">${fmt(min)}</div><div class="ps-lbl">MIN</div></div>`;
+}
+
+// ── Chart factory ─────────────────────────────────────────────────────────────
+
+function makeChart(id, datasets, yOpts = {}) {
+  const canvas = $(id);
+  if (!canvas) return null;
+  const tc = themeColors();
+  if (chartInstances[id]) {
+    chartInstances[id].destroy();
+    delete chartInstances[id];
+  }
+  const chart = new Chart(canvas, {
+    type: 'line',
+    data: { labels: [], datasets },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: {
+        legend: {
+          display: datasets.length > 1,
+          labels: { color: tc.tick, boxWidth: 10, font: { size: 9 } },
+        },
+        tooltip: {
+          backgroundColor: tc.tooltip,
+          titleColor: tc.tooltipTxt,
+          bodyColor:  tc.tooltipTxt,
+          borderColor: 'rgba(0,255,200,0.3)',
+          borderWidth: 1,
+        },
+      },
+      scales: {
+        x: {
+          grid:   { color: tc.grid, drawTicks: false },
+          ticks:  { color: tc.tick, maxRotation: 0, autoSkip: true, maxTicksLimit: 8 },
+          border: { color: 'transparent' },
+        },
+        y: {
+          grid:   { color: tc.grid, drawTicks: false },
+          ticks:  { color: tc.tick, ...(yOpts.ticks || {}), maxTicksLimit: 5 },
+          border: { color: 'transparent' },
+          min:    yOpts.min,
+          max:    yOpts.max,
+          ...yOpts,
+        },
+        ...(yOpts.y2 ? {
+          y2: {
+            position: 'right',
+            grid:   { drawOnChartArea: false, drawTicks: false },
+            ticks:  { color: tc.tick, maxTicksLimit: 5 },
+            border: { color: 'transparent' },
+            ...yOpts.y2,
+          }
+        } : {}),
+      },
+    },
+  });
+  chartInstances[id] = chart;
+  return chart;
+}
+
+function alpha(hex, a) {
+  const r = parseInt(hex.slice(1,3),16), g = parseInt(hex.slice(3,5),16), b = parseInt(hex.slice(5,7),16);
+  return `rgba(${r},${g},${b},${a})`;
+}
+
+function lineDs(label, data, color, opts = {}) {
+  return {
+    label,
+    data,
+    borderColor: color,
+    backgroundColor: alpha(color, 0.08),
+    borderWidth: 1.5,
+    pointRadius: 0,
+    tension: 0.3,
+    fill: opts.fill !== false,
+    yAxisID: opts.yAxisID,
+    ...opts,
+  };
+}
+
+// ── Render all panels ─────────────────────────────────────────────────────────
+
+function render(buckets) {
+  const labels = buckets.map(b => fmtLabel(b.ts, selectedMinutes));
+
+  // ── 1. Services Up / Down ────────────────────────────────────────────────
+  const svcUp   = buckets.map(b => b.services_up   || 0);
+  const svcDown = buckets.map(b => b.services_down  || 0);
+  const ch1 = makeChart('chart-services', [
+    lineDs('Up',   svcUp,   C.green, { fill: true }),
+    lineDs('Down', svcDown, C.red,   { fill: true }),
+  ], { min: 0 });
+  if (ch1) { ch1.data.labels = labels; ch1.update('none'); }
+  $('pstats-services').innerHTML = statsHtml(svcUp) +
+    '<div style="width:1px;background:var(--border-glow);margin:0 8px"></div>' +
+    statsHtml(svcDown, ' down');
+
+  // ── 2. Heal Fixes ────────────────────────────────────────────────────────
+  const fixes = buckets.map(b => b.heal_fixes || 0);
+  const ch2 = makeChart('chart-fixes', [
+    { ...lineDs('Fixes', fixes, C.cyan, { fill: true }),
+      type: 'bar', backgroundColor: alpha(C.cyan, 0.25), borderColor: C.cyan,
+      borderWidth: 0, pointRadius: 0 },
+  ], { min: 0 });
+  if (ch2) { ch2.data.labels = labels; ch2.update('none'); }
+  $('pstats-fixes').innerHTML = statsHtml(fixes);
+
+  // ── 3. Issues ────────────────────────────────────────────────────────────
+  const issues = buckets.map(b => b.issues_count || 0);
+  const ch3 = makeChart('chart-issues', [
+    { ...lineDs('Issues', issues, C.yellow, { fill: true }),
+      type: 'bar', backgroundColor: alpha(C.yellow, 0.2), borderColor: C.yellow,
+      borderWidth: 0, pointRadius: 0 },
+  ], { min: 0 });
+  if (ch3) { ch3.data.labels = labels; ch3.update('none'); }
+  $('pstats-issues').innerHTML = statsHtml(issues);
+
+  // ── 4. Sweep Duration ────────────────────────────────────────────────────
+  const swMs = buckets.map(b => b.sweep_ms || 0);
+  const ch4 = makeChart('chart-sweep', [
+    lineDs('ms', swMs, C.blue, { fill: true }),
+  ], { min: 0 });
+  if (ch4) { ch4.data.labels = labels; ch4.update('none'); }
+  $('pstats-sweep').innerHTML = statsHtml(swMs, 'ms');
+
+  // ── 5. Memory Count ──────────────────────────────────────────────────────
+  const memCnt = buckets.map(b => b.memory_count || 0);
+  const ch5 = makeChart('chart-memory', [
+    lineDs('Memories', memCnt, C.cyan, { fill: false }),
+  ]);
+  if (ch5) { ch5.data.labels = labels; ch5.update('none'); }
+  $('pstats-memory').innerHTML = statsHtml(memCnt, '', 0);
+
+  // ── 6. Queue + Dead Letter ───────────────────────────────────────────────
+  const queue = buckets.map(b => b.mem_queue  || 0);
+  const dead  = buckets.map(b => b.dead_letter || 0);
+  const ch6 = makeChart('chart-queue', [
+    lineDs('Queue',       queue, C.orange, { fill: true }),
+    lineDs('Dead Letter', dead,  C.red,    { fill: true }),
+  ], { min: 0 });
+  if (ch6) { ch6.data.labels = labels; ch6.update('none'); }
+  $('pstats-queue').innerHTML = statsHtml(queue, '', 0) +
+    '<div style="width:1px;background:var(--border-glow);margin:0 8px"></div>' +
+    statsHtml(dead, '', 0);
+
+  // ── 7. Redis % ───────────────────────────────────────────────────────────
+  const redis = buckets.map(b => b.redis_pct || 0);
+  const ch7 = makeChart('chart-redis', [
+    lineDs('Redis %', redis, C.magenta, { fill: true }),
+  ], { min: 0, max: 100, ticks: { callback: v => v + '%' } });
+  if (ch7) { ch7.data.labels = labels; ch7.update('none'); }
+  $('pstats-redis').innerHTML = statsHtml(redis, '%', 1);
+
+  // ── 8. Gateway RSS ───────────────────────────────────────────────────────
+  const gwRss = buckets.map(b => b.gateway_rss_mb || 0);
+  const ch8 = makeChart('chart-gateway', [
+    lineDs('RSS MB', gwRss, C.blue, { fill: true }),
+  ], { min: 0 });
+  if (ch8) { ch8.data.labels = labels; ch8.update('none'); }
+  $('pstats-gateway').innerHTML = statsHtml(gwRss, 'MB', 0);
+
+  // ── 9. Disk Free (wide, dual line) ───────────────────────────────────────
+  const diskD = buckets.map(b => b.disk_data_gb  || 0);
+  const diskM = buckets.map(b => b.disk_more_gb  || 0);
+  const ch9 = makeChart('chart-disk', [
+    lineDs('/Data',      diskD, C.cyan,  { fill: false }),
+    lineDs('/MoreData',  diskM, C.green, { fill: false }),
+  ], { min: 0, ticks: { callback: v => v + 'GB' } });
+  if (ch9) { ch9.data.labels = labels; ch9.update('none'); }
+  $('pstats-disk').innerHTML =
+    '<span style="color:var(--accent-cyan);font-size:10px">/Data</span>&nbsp;' +
+    statsHtml(diskD, 'GB', 0) +
+    '<div style="width:1px;background:var(--border-glow);margin:0 8px"></div>' +
+    '<span style="color:var(--accent-green);font-size:10px">/MoreData</span>&nbsp;' +
+    statsHtml(diskM, 'GB', 0);
+
+  // ── 10. Ollama Warm ──────────────────────────────────────────────────────
+  const warm = buckets.map(b => b.ollama_warm || 0);
+  const ch10 = makeChart('chart-ollama', [
+    { ...lineDs('Warm Models', warm, C.green, { fill: true }),
+      stepped: true },
+  ], { min: 0, ticks: { stepSize: 1 } });
+  if (ch10) { ch10.data.labels = labels; ch10.update('none'); }
+  $('pstats-ollama').innerHTML = statsHtml(warm, '', 0);
+
+  // ── 11. Scheduler Failures + Journal Fixed ───────────────────────────────
+  const schedF  = buckets.map(b => b.sched_failures || 0);
+  const jFix    = buckets.map(b => b.journal_fixed  || 0);
+  const ch11 = makeChart('chart-sched', [
+    lineDs('Sched Fails',  schedF, C.red,    { fill: false }),
+    lineDs('Journal Fixed',jFix,  C.yellow, { fill: false }),
+  ], { min: 0 });
+  if (ch11) { ch11.data.labels = labels; ch11.update('none'); }
+  $('pstats-sched').innerHTML = statsHtml(schedF, ' fails') +
+    '<div style="width:1px;background:var(--border-glow);margin:0 8px"></div>' +
+    statsHtml(jFix, ' fixed');
+}
+
+// ── Banner update ─────────────────────────────────────────────────────────────
+
+function updateBanner(raw, filtered) {
+  const total = raw.length;
+  const latest = raw[raw.length - 1];
+  const winH = Math.round(selectedMinutes / 60);
+  const winLabel = selectedMinutes >= 1440
+    ? Math.round(selectedMinutes / 1440) + 'd'
+    : winH + 'h';
+  $('b-total').textContent  = total + ' (7d)';
+  $('b-window').textContent = winLabel + ' → ' + filtered.length + ' pts';
+  $('b-sweep').textContent  = latest ? (latest.sweep_ms || 0) + 'ms' : '—';
+  $('b-down').textContent   = latest ? (latest.services_down || 0) : '—';
+  $('b-fixes').textContent  = filtered.reduce((s, b) => s + (b.heal_fixes || 0), 0);
+  $('last-update').textContent = 'last update: ' + new Date().toLocaleTimeString('en-US', {hour12:false});
+}
+
+// ── Main poll/slice/render cycle ──────────────────────────────────────────────
+
+async function poll() {
+  const t0 = performance.now();
+  try {
+    const res = await fetch(API_METRICS + '?_=' + Date.now());
+    if (!res.ok) throw new Error(res.status);
+    const raw = await res.json();
+    if (raw.error) throw new Error(raw.error);
+    const ms = Math.round(performance.now() - t0);
+    $('poll-latency').textContent = ms + 'ms';
+    $('connection-status').className = 'status-dot connected';
+    allBuckets = Array.isArray(raw) ? raw : [];
+    renderSlice();
+  } catch(e) {
+    $('connection-status').className = 'status-dot error';
+    $('poll-latency').textContent = 'err';
+  }
+  setTimeout(poll, POLL_MS);
+}
+
+function renderSlice() {
+  if (!allBuckets.length) return;
+  const cutoff = (Date.now() / 1000) - selectedMinutes * 60;
+  const filtered = allBuckets.filter(b => b.ts >= cutoff);
+  const TARGET_PTS = selectedMinutes <= 60 ? 60 : selectedMinutes <= 360 ? 180 : selectedMinutes <= 1440 ? 360 : 500;
+  const pts = downsample(filtered, TARGET_PTS);
+  render(pts);
+  updateBanner(allBuckets, pts);
+}
+
+// ── Range button handling ─────────────────────────────────────────────────────
+
+document.querySelectorAll('.range-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.range-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    selectedMinutes = parseInt(btn.dataset.minutes, 10);
+    renderSlice();
+  });
+});
+
+// ── Theme toggle ──────────────────────────────────────────────────────────────
+
+$('theme-toggle').addEventListener('click', () => {
+  document.documentElement.dataset.theme =
+    document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+  // Rebuild charts with new theme colors
+  renderSlice();
+});
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+
+poll();
+</script>
+</body>
+</html>

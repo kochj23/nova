@@ -27,6 +27,17 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 import nova_config
 from nova_image_utils import ensure_backend, generate_image
 
+# ── Date override for backfill ────────────────────────────────────────────────
+import os as _os
+_FOR_DATE = _os.environ.get("NOVA_FOR_DATE", "").strip()
+if _FOR_DATE:
+    _override_dt = datetime.strptime(_FOR_DATE, "%Y-%m-%d")
+    def _today_str() -> str: return _FOR_DATE
+    def _now_dt() -> datetime: return _override_dt.replace(hour=23, minute=30, second=0)
+else:
+    def _today_str() -> str: return datetime.now().strftime("%Y-%m-%d")
+    def _now_dt() -> datetime: return datetime.now()
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 MEMORY_SERVER = "http://127.0.0.1:18790"
@@ -386,7 +397,7 @@ def publish_to_hugo(article: str, topic_data: dict, image_path: str | None) -> s
 
     title = extract_title(article)
     slug = slugify(title)
-    date_str = datetime.now().strftime("%Y-%m-%d")
+    date_str = _today_str()
     filename = f"{date_str}-{slug}.md"
     filepath = CONTENT_DIR / filename
 
@@ -402,7 +413,7 @@ def publish_to_hugo(article: str, topic_data: dict, image_path: str | None) -> s
 
     # Build frontmatter
     pacific = timezone(timedelta(hours=-7))
-    now = datetime.now(pacific)
+    now = _now_dt().replace(tzinfo=pacific)
     iso_date = now.strftime("%Y-%m-%dT23:30:00-07:00")
     keywords = topic_data.get("keywords", ["technology"])
     tags_str = json.dumps(keywords[:5])
@@ -579,7 +590,7 @@ def main():
     state["last_article"] = {
         "topic": topic,
         "title": title,
-        "date": time.strftime("%Y-%m-%d"),
+        "date": _today_str(),
         "words": word_count,
         "has_image": image_path is not None,
     }

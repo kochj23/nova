@@ -125,26 +125,22 @@ def add_image_to_post(post: dict, image_path: str) -> bool:
     content = md_file.read_text()
     cover_ref = f"/images/{section}/{img_filename}"
 
-    if "cover:" in content and "image:" in content:
-        # Replace existing broken reference
-        content = re.sub(
-            r'cover:\s*\n\s*image:\s*"[^"]*"',
-            f'cover:\n  image: "{cover_ref}"',
-            content
-        )
-    else:
-        # Add cover block after description or last frontmatter field before ---
-        content = re.sub(
-            r'(---\s*\n)',
-            f'cover:\n  image: "{cover_ref}"\n  alt: "Nova"\n\\1',
-            content,
-            count=1  # Only match the closing ---
-        )
-        # More reliable: insert before the closing ---
-        parts = content.split("---")
-        if len(parts) >= 3:
-            parts[1] = parts[1].rstrip() + f'\ncover:\n  image: "{cover_ref}"\n  alt: "Nova"\n'
-            content = "---".join(parts)
+    # Split on frontmatter delimiters — content is between first and second ---
+    fm_parts = content.split("---", 2)
+    if len(fm_parts) < 3:
+        log(f"  Malformed frontmatter in {md_file.name} — skipping")
+        return False
+
+    frontmatter, body = fm_parts[1], fm_parts[2]
+
+    # Remove any existing (possibly duplicate or broken) cover block from frontmatter
+    frontmatter = re.sub(r'\ncover:[\s\S]*?(?=\n\S|\Z)', '', frontmatter)
+    frontmatter = frontmatter.rstrip()
+
+    # Append cover block cleanly inside frontmatter
+    frontmatter += f'\ncover:\n  image: "{cover_ref}"\n  alt: "Nova"\n'
+
+    content = "---" + frontmatter + "---" + body
 
     md_file.write_text(content)
     log(f"  Added image: {cover_ref}")

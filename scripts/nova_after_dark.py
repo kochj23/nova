@@ -33,6 +33,17 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 
+# ── Date override for backfill ────────────────────────────────────────────────
+import os as _os
+_FOR_DATE = _os.environ.get("NOVA_FOR_DATE", "").strip()
+if _FOR_DATE:
+    _override_dt = datetime.strptime(_FOR_DATE, "%Y-%m-%d")
+    def _now() -> datetime: return _override_dt.replace(hour=20, minute=0, second=0)
+    def _today_str() -> str: return _FOR_DATE
+else:
+    def _now() -> datetime: return datetime.now()
+    def _today_str() -> str: return time.strftime("%Y-%m-%d")
+
 # ── Config ──────────────────────────────────────────────────────────────────────
 
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
@@ -79,7 +90,7 @@ def save_state(state: dict):
 # ── Wikipedia: This Day in History ──────────────────────────────────────────────
 
 def fetch_today_in_history() -> list[dict]:
-    now = datetime.now()
+    now = _now()
     url = f"{WIKI_API}/{now.month:02d}/{now.day:02d}"
     req = urllib.request.Request(
         url, headers={"User-Agent": "Nova/1.0 nova_after_dark.py", "Accept": "application/json"}
@@ -289,7 +300,13 @@ def generate_image(event: dict) -> str | None:
                 capture_output=True, text=True, timeout=240
             )
             if result.returncode == 0:
-                image_path = result.stdout.strip().split("\n")[-1]
+                image_path = ""
+                for line in result.stdout.splitlines():
+                    if line.startswith("Workspace copy:"):
+                        image_path = line.split(":", 1)[1].strip()
+                        break
+                if not image_path:
+                    image_path = result.stdout.strip().split("\n")[-1]
                 if Path(image_path).exists():
                     log(f"Image generated: {image_path}")
                     return image_path
@@ -309,11 +326,11 @@ def generate_image(event: dict) -> str | None:
 
 def publish_to_hugo(monologue: str, event: dict, image_path: str | None,
                     search_results: list[dict], memories: list[str], episode_num: int) -> bool:
-    date = time.strftime("%Y-%m-%d")
+    date = _today_str()
     year = event.get("year", "???")
     fact = event.get("text", "")[:60]
     slug = re.sub(r'[^a-z0-9]+', '-', fact.lower()).strip('-')[:50]
-    timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
+    timestamp = _now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
 
     # Copy image if available — use slug in filename to avoid same-day collisions
     hugo_image = ""
@@ -338,7 +355,7 @@ description: "Nova After Dark — {fact}"
     front_matter += "---\n\n"
 
     # Build footer with sources
-    footer = f"\n\n---\n\n*Nova After Dark · Episode {episode_num} · {datetime.now().strftime('%B %d, %Y')}*\n"
+    footer = f"\n\n---\n\n*Nova After Dark · Episode {episode_num} · {_now().strftime('%B %d, %Y')}*\n"
     footer += "*Generated locally on Apple Silicon · No cloud, no sponsors, no pants*\n"
 
     # Sources section
@@ -350,7 +367,7 @@ description: "Nova After Dark — {fact}"
             content = r.get("content", "")[:100]
             if title and url:
                 footer += f'- **[web]** [{title}]({url}) — {content}\n'
-    footer += f'- **[wikimedia]** [Wikipedia On This Day API](https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/all/{datetime.now().month:02d}/{datetime.now().day:02d}) — Historical events feed\n'
+    footer += f'- **[wikimedia]** [Wikipedia On This Day API](https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/all/{_now().month:02d}/{_now().day:02d}) — Historical events feed\n'
 
     # Related memories
     if memories:

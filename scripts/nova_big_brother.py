@@ -114,14 +114,10 @@ SERVICES = [
     # ── External / LAN (monitored but not auto-restarted) ────────────────────
     ("Plex",          PLEX_IP,     32400, None,                                   False, "/web"),
     ("HDHomeRun",     HDHR_IP,     80,    None,                                   False, None),
-    ("Homebridge",    "127.0.0.1", 8581,  "net.digitalnoise.homebridge",          False, None),
 ]
 
 # Services that are monitored (shown in dashboard) but never trigger alerts.
-# Add names here when a service is intentionally down or you don't care if it's off.
-SILENCED_SERVICES = {
-    "Homebridge",          # Runs intermittently, not critical
-}
+SILENCED_SERVICES = {}
 
 # launchd services to monitor beyond the SERVICES port list.
 # Format: (label, friendly_name, can_restart, silence)
@@ -131,7 +127,6 @@ LAUNCHD_MONITORED = [
     ("com.nova.healthkit",                  "HealthKit Export",    False, True),   # needs app container, can't auto-fix
     ("com.digitalnoise.nova.general-monitor","General Monitor",    True,  False),
     ("net.digitalnoise.nova-memory-server", "Memory Server",       True,  False),  # also in SERVICES — belt+suspenders
-    ("net.digitalnoise.homebridge",         "Homebridge",          True,  True),   # silenced — intermittent
 ]
 
 # External services — just connectivity checks, no restart capability
@@ -175,6 +170,44 @@ DISCORD_STRIKE_THRESHOLD = 3
 
 # Signal gap tracking — log when signal-cli goes unreachable and for how long
 _signal_down_since: float = 0.0   # 0 = currently up
+
+# Journal image repair — hourly check for posts missing cover images
+JOURNAL_IMAGE_CHECK_INTERVAL = 3600  # seconds
+_last_journal_image_check: float = 0.0
+_journal_image_status: dict = {
+    "last_run_ts": None,
+    "last_run_iso": None,
+    "fixed": 0,
+    "failed": 0,
+    "skipped_swarmui_down": False,
+    "last_error": None,
+}
+
+# ── Metrics ring buffer (MRTG-style, 7 days × 1-min buckets) ─────────────────
+METRICS_MAXLEN = 10080          # 7 × 24 × 60
+METRICS_FILE   = Path.home() / ".openclaw/run/bb-metrics.json"
+_metrics: deque = deque(maxlen=METRICS_MAXLEN)
+_metrics_flush_counter: int = 0
+METRICS_FLUSH_EVERY = 10        # persist to disk every N sweeps
+
+def _load_metrics():
+    """Restore ring buffer from disk on startup."""
+    global _metrics
+    if METRICS_FILE.exists():
+        try:
+            raw = json.loads(METRICS_FILE.read_text())
+            if isinstance(raw, list):
+                _metrics = deque(raw[-METRICS_MAXLEN:], maxlen=METRICS_MAXLEN)
+        except Exception:
+            pass
+
+def _flush_metrics():
+    """Persist ring buffer to disk (called periodically from _full_sweep)."""
+    try:
+        METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        METRICS_FILE.write_text(json.dumps(list(_metrics), default=str))
+    except Exception as e:
+        log(f"metrics flush failed: {e}", level=LOG_WARN, source="big-brother")
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -868,6 +901,97 @@ def _scan_log_file(log_file: Path) -> list:
     return found
 
 
+# ── Journal Staleness Monitor ─────────────────────────────────────────────────
+# Maps section → (scheduler_task_id, stale_threshold_hours, backfill_env_var_needed)
+# threshold: how many hours before we declare it stale and trigger a backfill
+JOURNAL_SECTIONS = {
+    "dreams":     ("daily_journal",  26),
+    "essays":     ("daily_essay",    26),
+    "opinions":   ("daily_opinion",  26),
+    "after-dark": ("after_dark",     26),
+    "tech-today": ("tech_today",     26),
+    "research":   ("research_paper", 50),   # research runs nightly, wider window
+    "digests":    ("daily_digest",   26),
+}
+JOURNAL_CONTENT_DIR = Path("/Volumes/Data/xcode/nova-journal/content")
+_journal_backfill_cooldown: dict = {}   # section -> last_backfill_ts
+JOURNAL_BACKFILL_COOLDOWN = 7200        # don't re-trigger same section within 2h
+
+
+def _latest_journal_entry_age(section: str) -> float | None:
+    """Return age in hours of the most recent entry in a journal section, or None if unreadable."""
+    section_dir = JOURNAL_CONTENT_DIR / section
+    if not section_dir.exists():
+        return None
+    latest_ts = 0.0
+    for md_file in section_dir.glob("*.md"):
+        if md_file.name == "_index.md":
+            continue
+        try:
+            text = md_file.read_text(errors="replace")
+            m = re.search(r'^date:\s*["\']?(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})', text, re.MULTILINE)
+            if m:
+                dt = datetime.fromisoformat(m.group(1))
+                ts = dt.timestamp()
+                if ts > latest_ts:
+                    latest_ts = ts
+        except Exception:
+            pass
+    if latest_ts == 0.0:
+        return None
+    return (time.time() - latest_ts) / 3600.0
+
+
+def _check_journal_staleness(issues: list, fixes: list):
+    """
+    Check every journal section. If the latest entry is older than its threshold,
+    trigger a backfill by running the responsible scheduler task via /run/ endpoint.
+    Includes a 2-hour per-section cooldown so we don't spam.
+    Called from every _full_sweep().
+    """
+    now = time.time()
+    scheduler_up = _port_open("127.0.0.1", 37460)
+
+    for section, (task_id, threshold_h) in JOURNAL_SECTIONS.items():
+        age_h = _latest_journal_entry_age(section)
+        if age_h is None:
+            continue
+        if age_h < threshold_h:
+            continue
+
+        # Stale — check cooldown
+        last_backfill = _journal_backfill_cooldown.get(section, 0.0)
+        if now - last_backfill < JOURNAL_BACKFILL_COOLDOWN:
+            log(f"[journal-staleness] {section} stale ({age_h:.1f}h) but backfill on cooldown",
+                level=LOG_INFO, source="big-brother")
+            continue
+
+        log(f"[journal-staleness] {section} stale: {age_h:.1f}h since last entry (threshold: {threshold_h}h)",
+            level=LOG_WARN, source="big-brother")
+
+        _record_event("warning",
+                      f"Journal {section} stale: {age_h:.1f}h since last entry",
+                      f"Triggering scheduler task: {task_id}",
+                      "Journal")
+        issues.append(f"Journal/{section} stale ({age_h:.1f}h)")
+
+        if scheduler_up:
+            try:
+                req = urllib.request.Request(
+                    f"http://127.0.0.1:37460/run/{task_id}",
+                    method="POST", data=b""
+                )
+                urllib.request.urlopen(req, timeout=5)
+                fixes.append(f"Triggered {task_id} for stale {section}")
+                _journal_backfill_cooldown[section] = now
+                log(f"[journal-staleness] Triggered {task_id} for {section}", level=LOG_INFO, source="big-brother")
+            except Exception as e:
+                log(f"[journal-staleness] Failed to trigger {task_id}: {e}", level=LOG_WARN, source="big-brother")
+        else:
+            log(f"[journal-staleness] Scheduler down — cannot trigger {task_id}", level=LOG_WARN, source="big-brother")
+            fixes.append(f"Could not trigger {task_id} — scheduler unreachable")
+
+
 # ── Full Health Sweep ─────────────────────────────────────────────────────────
 
 def _is_maintenance_mode() -> bool:
@@ -891,6 +1015,87 @@ _ALLOWED_MODELS = {
     "openrouter/qwen/qwen3-235b-a22b-2507",
 }
 _OPENROUTER_ALLOWED_AGENTS = {"research"}
+
+
+def _check_journal_images():
+    """
+    Hourly: scan nova-journal for posts missing cover images and regenerate them.
+    Only runs when SwarmUI is up. Updates _journal_image_status for the /bb/journal endpoint.
+    Called from _full_sweep() gated by JOURNAL_IMAGE_CHECK_INTERVAL.
+    """
+    global _last_journal_image_check, _journal_image_status
+
+    now = time.time()
+    if now - _last_journal_image_check < JOURNAL_IMAGE_CHECK_INTERVAL:
+        return
+
+    _last_journal_image_check = now
+
+    # SwarmUI must be up — no point running if image gen will fail
+    if not _port_open("127.0.0.1", 7801):
+        _journal_image_status.update({
+            "last_run_ts": now,
+            "last_run_iso": _now_iso(),
+            "skipped_swarmui_down": True,
+        })
+        log("Journal image check skipped — SwarmUI not running", level=LOG_INFO, source="big-brother")
+        return
+
+    script = Path.home() / ".openclaw/scripts/nova_fix_missing_images.py"
+    if not script.exists():
+        log(f"Journal image script not found: {script}", level=LOG_WARN, source="big-brother")
+        return
+
+    log("Running journal image repair scan", level=LOG_INFO, source="big-brother")
+    try:
+        result = subprocess.run(
+            ["python3", str(script)],
+            capture_output=True, text=True, timeout=600,
+        )
+        output = result.stdout + result.stderr
+
+        # Parse summary line from script output: "Done. Fixed: N, Failed: M"
+        fixed = 0
+        failed = 0
+        m = re.search(r"Done\. Fixed: (\d+), Failed: (\d+)", output)
+        if m:
+            fixed, failed = int(m.group(1)), int(m.group(2))
+
+        _journal_image_status.update({
+            "last_run_ts": now,
+            "last_run_iso": _now_iso(),
+            "fixed": fixed,
+            "failed": failed,
+            "skipped_swarmui_down": False,
+            "last_error": None if result.returncode == 0 else output[-300:],
+        })
+
+        if fixed > 0:
+            _record_event("info", f"Journal image repair: fixed {fixed} missing covers",
+                          f"nova_fix_missing_images.py", "Journal")
+            log(f"Journal image repair: fixed={fixed} failed={failed}", level=LOG_INFO, source="big-brother")
+        elif failed > 0:
+            _record_event("warning", f"Journal image repair: {failed} posts still missing covers",
+                          "SwarmUI may be struggling — check /tmp/nova-fix-images.log", "Journal")
+            log(f"Journal image repair failures: {failed}", level=LOG_WARN, source="big-brother")
+        else:
+            log("Journal image scan: all posts have covers", level=LOG_INFO, source="big-brother")
+
+    except subprocess.TimeoutExpired:
+        _journal_image_status.update({
+            "last_run_ts": now,
+            "last_run_iso": _now_iso(),
+            "last_error": "Timed out after 600s",
+        })
+        _record_event("warning", "Journal image repair timed out (600s)",
+                      "SwarmUI may be overloaded — check /tmp/nova-fix-images.log", "Journal")
+    except Exception as e:
+        _journal_image_status.update({
+            "last_run_ts": now,
+            "last_run_iso": _now_iso(),
+            "last_error": str(e),
+        })
+        log(f"Journal image check error: {e}", level=LOG_ERROR, source="big-brother")
 
 
 def _check_privacy_routing(issues: list):
@@ -956,8 +1161,108 @@ def _check_privacy_routing(issues: list):
         log("[privacy] Model routing OK — all channels local", level=LOG_INFO, source="big-brother")
 
 
+def _record_metrics(issues: list, fixes: list, sweep_start: float):
+    """
+    Snapshot a single per-minute metrics bucket and append to the ring buffer.
+    Called at the end of every _full_sweep(). Collects:
+      ts, services_up/down, heal_fixes, issues_count, sweep_duration_ms,
+      memory_count, mem_queue, redis_pct, gateway_rss_mb,
+      sched_failures, dead_letter, disk_data_gb, disk_more_gb,
+      ollama_warm_count, journal_fixed_total
+    """
+    global _metrics_flush_counter
+
+    bucket: dict = {
+        "ts": int(time.time()),
+        "services_up":        0,
+        "services_down":      0,
+        "heal_fixes":         len(fixes),
+        "issues_count":       len(issues),
+        "sweep_ms":           int((time.time() - sweep_start) * 1000),
+        "memory_count":       0,
+        "mem_queue":          0,
+        "redis_pct":          0.0,
+        "gateway_rss_mb":     0.0,
+        "sched_failures":     0,
+        "dead_letter":        0,
+        "disk_data_gb":       0.0,
+        "disk_more_gb":       0.0,
+        "ollama_warm":        0,
+        "journal_fixed":      _journal_image_status.get("fixed", 0),
+    }
+
+    # Services up/down from cached status
+    with _lock:
+        svc = dict(_service_status)
+    bucket["services_up"]   = sum(1 for s in svc.values() if s.get("up", True))
+    bucket["services_down"] = sum(1 for s in svc.values() if not s.get("up", True))
+
+    # Memory server stats
+    try:
+        r = urllib.request.urlopen("http://127.0.0.1:18790/stats", timeout=3)
+        ms = json.loads(r.read())
+        bucket["memory_count"] = ms.get("count", 0)
+        bucket["mem_queue"]    = ms.get("queue_length", 0)
+        bucket["dead_letter"]  = ms.get("dead_letter_count", 0)
+    except Exception:
+        pass
+
+    # Redis memory %
+    try:
+        import redis as _rds
+        rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+        ri = rc.info("memory")
+        if ri.get("maxmemory"):
+            bucket["redis_pct"] = round(ri["used_memory"] / ri["maxmemory"] * 100, 1)
+    except Exception:
+        pass
+
+    # Gateway RSS
+    try:
+        r2 = subprocess.run(["pgrep", "-f", "^openclaw$"], capture_output=True, text=True)
+        pids = [p for p in r2.stdout.strip().split() if p]
+        if pids:
+            r3 = subprocess.run(["ps", "-o", "rss=", "-p", pids[0]],
+                                 capture_output=True, text=True)
+            bucket["gateway_rss_mb"] = round(int(r3.stdout.strip() or "0") / 1024, 1)
+    except Exception:
+        pass
+
+    # Scheduler failures
+    try:
+        r4 = urllib.request.urlopen("http://127.0.0.1:37460/status", timeout=3)
+        sc = json.loads(r4.read())
+        bucket["sched_failures"] = sc.get("total_failures", 0)
+    except Exception:
+        pass
+
+    # Disk free on /Volumes/Data and /Volumes/MoreData
+    for vol, key in [("/Volumes/Data", "disk_data_gb"), ("/Volumes/MoreData", "disk_more_gb")]:
+        try:
+            st = os.statvfs(vol)
+            bucket[key] = round(st.f_bavail * st.f_frsize / 1e9, 1)
+        except Exception:
+            pass
+
+    # Ollama warm model count
+    try:
+        r5 = urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=3)
+        bucket["ollama_warm"] = len(json.loads(r5.read()).get("models", []))
+    except Exception:
+        pass
+
+    with _lock:
+        _metrics.append(bucket)
+
+    _metrics_flush_counter += 1
+    if _metrics_flush_counter >= METRICS_FLUSH_EVERY:
+        _metrics_flush_counter = 0
+        threading.Thread(target=_flush_metrics, daemon=True).start()
+
+
 def _full_sweep():
     """Run all checks and heal everything that can be healed."""
+    _sweep_start = time.time()
     issues = []
     fixes = []
 
@@ -1338,6 +1643,12 @@ def _full_sweep():
         except Exception:
             pass
 
+    # ── Journal staleness monitor (every sweep, auto-triggers backfill if stale) ──
+    _check_journal_staleness(issues, fixes)
+
+    # ── Journal cover image repair (hourly, gated by JOURNAL_IMAGE_CHECK_INTERVAL) ──
+    _check_journal_images()
+
     # ── Privacy / PII leak monitor ───────────────────────────────────────────
     _check_privacy_routing(issues)
 
@@ -1395,6 +1706,7 @@ def _full_sweep():
             _alerted_issues.clear()
         log("All systems healthy", level=LOG_INFO, source="big-brother")
 
+    _record_metrics(issues, fixes, _sweep_start)
     _save_state()
 
 
@@ -1621,6 +1933,19 @@ class BBHandler(BaseHTTPRequestHandler):
                 "alerted_count": len(_alerted_issues),
                 "pending_restarts": list(_pending_restart),
             })
+        elif self.path == "/bb/metrics":
+            # Return the full ring buffer (up to 10080 one-minute buckets = 7 days)
+            with _lock:
+                data = list(_metrics)
+            self._json(data)
+        elif self.path == "/bb/journal":
+            next_run_in = max(0, int(JOURNAL_IMAGE_CHECK_INTERVAL - (time.time() - _last_journal_image_check)))
+            self._json({
+                **_journal_image_status,
+                "check_interval_s": JOURNAL_IMAGE_CHECK_INTERVAL,
+                "next_run_in_s": next_run_in,
+                "swarmui_up": _port_open("127.0.0.1", 7801),
+            })
         else:
             self.send_response(404)
             self.end_headers()
@@ -1628,6 +1953,12 @@ class BBHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         if self.path == "/bb/force-check":
             threading.Thread(target=_full_sweep, daemon=True).start()
+            self._json({"queued": True})
+        elif self.path == "/bb/journal/run":
+            # Manually trigger an immediate journal image repair (ignores cooldown)
+            global _last_journal_image_check
+            _last_journal_image_check = 0.0
+            threading.Thread(target=_check_journal_images, daemon=True).start()
             self._json({"queued": True})
         else:
             self.send_response(404)
@@ -1691,6 +2022,10 @@ def main():
 
     _write_pid()
     log(f"Big Brother v{VERSION} starting (PID {os.getpid()})", level=LOG_INFO, source="big-brother")
+
+    # Restore metrics ring buffer from disk
+    _load_metrics()
+    log(f"Loaded {len(_metrics)} metric buckets from disk", level=LOG_INFO, source="big-brother")
 
     # Seed log file positions so we don't flood on startup
     for lf in LOG_FILES_TO_WATCH:
