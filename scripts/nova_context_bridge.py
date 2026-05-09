@@ -107,7 +107,7 @@ def gather_today_signals():
     try:
         r = subprocess.run(
             ["curl", "-s", "--connect-timeout", "2",
-             "http://127.0.0.1:37421/api/oneonone/meetings?limit=5"],
+             "http://127.0.0.1:37400/api/oneonone/meetings?limit=5"],
             capture_output=True, text=True, timeout=5
         )
         if r.returncode == 0 and r.stdout.strip():

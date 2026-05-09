@@ -13,18 +13,20 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 | Metric | Value |
 |--------|-------|
 | Scripts | 275+ Python and Shell |
-| Scheduler tasks | 75 enabled (20 interval, 55 cron) |
-| Vector memories | 1,440,000 unique (deduplicated, HNSW-indexed) |
+| Scheduler tasks | 79 defined (72 enabled, 7 disabled) |
+| Vector memories | 1,482,791 unique (deduplicated, HNSW-indexed) |
 | Memory sources | 217 domains |
 | Agents | 3 (Chat, Research, Home) |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Image models | 5 (FLUX.1 dev, FLUX.1 schnell, Juggernaut XL Hyper, Z-Image Turbo, LongCat-Image) |
 | Security cameras | 15 UniFi Protect with face recognition |
-| AI backends | Ollama (qwen3-235b, qwen3-coder:30b, qwen3-vl:4b, deepseek-r1:8b) + Claude Haiku 4.5 via OpenRouter (essays/opinions only) |
+| Primary AI backend | Ollama — qwen3-next:80b (conversation), qwen3-coder:30b (code), qwen3-vl:4b (vision), deepseek-r1:8b (reasoning) |
+| Research agent | OpenRouter (qwen3-235b) — cloud, research-only, non-private queries |
 | Channels | Slack + Discord + Signal + iMessage + Email |
-| Privacy model | 4-tier intent routing, local-first |
+| Privacy model | 4-tier intent routing, 100% local except research agent |
 | Database | PostgreSQL 17 + pgvector (nova_memories + nova_ops) + Redis |
-| Web dashboard | FastAPI + WebSocket (real-time, 44 cards + HUD) |
+| Unified API | NovaControl on port 37400 (replaces individual per-app ports) |
+| Web dashboard | FastAPI + WebSocket (real-time, 44 cards + HUD + Big Brother tab) |
 | Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) — dreams, essays, opinions, research papers, after dark, art corner, tech today |
 | Knowledge crawlers | 14 foundational + 7 music + bestsellers + special topics |
 | Test suite | 4,460 tests (unit + security + integration + functional + frame) |
@@ -40,11 +42,11 @@ graph TD
     Slack --> Router
     Discord --> Router
     Signal --> Router
-    Router --> ChatAgent["Chat Agent<br/>Fast, 5K context<br/>qwen3-235b"]
-    Router --> ResearchAgent["Research Agent<br/>Full context, 100K<br/>qwen3-235b"]
+    Router --> ChatAgent["Chat Agent<br/>Fast, 5K context<br/>qwen3-next:80b"]
+    Router --> ResearchAgent["Research Agent<br/>Full context, 100K<br/>OpenRouter qwen3-235b"]
     Router --> HomeAgent["Home Agent<br/>Local only<br/>qwen3-coder:30b"]
     ChatAgent --> Ollama
-    ResearchAgent --> Ollama
+    ResearchAgent --> OpenRouter["OpenRouter<br/>research-only"]
     HomeAgent --> Ollama
     ChatAgent --> Memory
     ResearchAgent --> Memory
@@ -56,17 +58,19 @@ graph TD
 graph TD
     Jordan["Jordan<br/>(Slack / Discord / Signal)"]
     GW["OpenClaw Gateway<br/>ws://localhost:18789"]
-    Ollama["Ollama<br/>qwen3-235b<br/>qwen3-coder:30b<br/>qwen3-vl:4b<br/>deepseek-r1:8b"]
-    Scheduler["Unified Scheduler<br/>75 tasks"]
-    MemServer["Memory Server<br/>pgvector · 1.44M vectors"]
+    Ollama["Ollama<br/>qwen3-next:80b<br/>qwen3-coder:30b<br/>qwen3-vl:4b<br/>deepseek-r1:8b"]
+    Scheduler["Unified Scheduler<br/>72 active tasks"]
+    MemServer["Memory Server<br/>pgvector · 1.48M vectors"]
+    BigBrother["Big Brother<br/>Self-healing daemon<br/>kqueue + 60s sweep"]
+    NovaControl["NovaControl<br/>Unified API · port 37400"]
     FaceRec["Face Recognition<br/>15 cameras · dlib"]
-    Dashboard["Web Dashboard<br/>FastAPI + WebSocket"]
+    Dashboard["Web Dashboard<br/>FastAPI + WebSocket<br/>port 37450"]
     Scripts["275+ Scripts<br/>Python / Shell"]
     SearXNG["SearXNG<br/>Local Web Search"]
     Redis["Redis<br/>Cache + Queue"]
     Subagents["5 Subagents<br/>analyst · coder · lookout<br/>librarian · sentinel"]
     Plex["Plex Media Server<br/>Synology NAS · 14 features"]
-    HDHomeRun["HDHomeRun QUATRO<br/>224 OTA channels · 4 tuners"]
+    HDHomeRun["HDHomeRun QUATRO<br/>224 OTA channels · 4 tuners<br/>bad-channel tracking"]
     MLXWhisper["MLX Whisper<br/>large-v3-turbo · transcription"]
     SwarmUI["SwarmUI<br/>5 image models"]
     KnowledgeCrawlers["Knowledge Crawlers<br/>14 foundational domains"]
@@ -83,14 +87,74 @@ graph TD
     Scripts --> SearXNG
     Scripts --> Plex
     Scripts --> HDHomeRun
+    Scripts --> NovaControl
     Scripts --> SwarmUI
     HDHomeRun --> MLXWhisper
     MLXWhisper --> MemServer
     Plex --> MemServer
     KnowledgeCrawlers --> MemServer
+    BigBrother --> GW
+    BigBrother --> Ollama
+    BigBrother --> MemServer
+    BigBrother --> Scheduler
     Dashboard --> GW
     Dashboard --> MemServer
     Dashboard --> Scheduler
+    Dashboard --> BigBrother
+    NovaControl --> Scripts
+```
+
+### Self-Healing Layer (Big Brother)
+
+```mermaid
+graph TD
+    BB["Big Brother<br/>nova_big_brother.py<br/>launchd persistent daemon"]
+
+    subgraph "Monitoring Inputs"
+        KQ["kqueue<br/>log file watches<br/>real-time"]
+        Sweep["60-second sweep<br/>full system check"]
+    end
+
+    subgraph "What It Watches"
+        Procs["Process health<br/>Gateway · Memory Server<br/>Scheduler · Subagents"]
+        Launchd["launchd services<br/>PostgreSQL · Redis · Ollama<br/>Homebridge · HealthKit"]
+        Volumes["Volume mounts<br/>/Volumes/Data<br/>/Volumes/MoreData"]
+        ExtSvc["External services<br/>Synology NAS · UniFi"]
+        RedMem["Redis memory<br/>utilization %"]
+        OllamaWarm["Ollama warmup state<br/>model loaded?"]
+        DLQ["Memory dead-letter<br/>queue depth"]
+        SchedFail["Scheduler<br/>per-task failure rate"]
+        Logs["Log file size<br/>watchdog"]
+        Privacy["Privacy routing<br/>audit (sentinel)"]
+    end
+
+    subgraph "Actions"
+        Restart["Universal launchd<br/>restart logic"]
+        PostAlert["Post to<br/>#nova-notifications"]
+        BBAPI["Diagnostics API<br/>:37461/bb/*"]
+    end
+
+    BB --> KQ
+    BB --> Sweep
+    KQ --> Procs
+    Sweep --> Procs
+    Sweep --> Launchd
+    Sweep --> Volumes
+    Sweep --> ExtSvc
+    Sweep --> RedMem
+    Sweep --> OllamaWarm
+    Sweep --> DLQ
+    Sweep --> SchedFail
+    Sweep --> Logs
+    Sweep --> Privacy
+    Procs --> Restart
+    Launchd --> Restart
+    Restart --> PostAlert
+    BB --> BBAPI
+
+    style BB fill:#2d2d2d,stroke:#e91e63,color:#fff
+    style BBAPI fill:#2d2d2d,stroke:#2196F3,color:#fff
+    style Restart fill:#2d2d2d,stroke:#4CAF50,color:#fff
 ```
 
 ---
@@ -110,7 +174,7 @@ All automated notifications post to both Slack and Discord simultaneously via `p
 
 ### Memory
 
-Nova holds **1,440,000 unique vector memories** across 217 source domains, searchable in under 5 ms. Deduplication is enforced via md5 text hashing with a unique constraint. Weekly VACUUM ANALYZE maintenance runs automatically on Sundays at 3 AM.
+Nova holds **1,482,791 unique vector memories** across 217 source domains, searchable in under 5 ms. Deduplication is enforced via md5 text hashing with a unique constraint. Weekly VACUUM ANALYZE maintenance runs automatically on Sundays at 3 AM.
 
 | Component | Implementation |
 |-----------|---------------|
@@ -124,6 +188,22 @@ Nova holds **1,440,000 unique vector memories** across 217 source domains, searc
 **Memory-first resolution order:** Every query checks Nova's own memories before falling back to local LLM, then local web search via SearXNG, then cloud. Personal data never leaves the machine.
 
 **API endpoints:** `/remember`, `/recall`, `/recall/deep`, `/search`, `/links`, `/random`, `/health`, `/stats`
+
+### NovaControl — Unified API Layer
+
+All of Jordan's apps now expose their data through a **single unified API** on port 37400. Scripts use named constants from `nova_config.py` instead of hardcoded port numbers. This replaces the old per-app port layout (37421–37449).
+
+| Constant | Endpoint | Purpose |
+|----------|----------|---------|
+| `NC_ONEONONE` | `/api/oneonone` | Meetings, people, action items, goals |
+| `NC_NMAP` | `/api/nmap` | Network scan, devices, threats |
+| `NC_RSYNC` | `/api/rsync` | Sync jobs and history |
+| `NC_HOMEKIT` | `/api/homekit` | Scenes, accessories |
+| `NC_SYSTEM` | `/api/system` | CPU, RAM, processes |
+| `NC_NEWS` | `/api/news` | Breaking news, favorites |
+| `NC_HEALTH` | `/api/health` | HealthKit snapshot |
+| `NC_PLEX` | `/api/plex` | Now playing, on deck, library |
+| `NC_CALENDAR` | `/api/calendar` | Today's events, upcoming |
 
 ### Image Generation
 
@@ -153,19 +233,17 @@ All image generation is free (local SwarmUI on Apple Silicon GPU). `nova_image_u
 
 ### Art Corner
 
-Every day at **4:00 AM**, Nova mines her 1.44M memories for a visually compelling concept, writes a detailed multi-part generation prompt, creates 3 high-quality candidates at 1024x1024 / 30 steps via SwarmUI, selects the best (largest file = most detail), and publishes with an artist's statement explaining the creative process.
+Every day at **4:00 AM**, Nova mines her 1.48M memories for a visually compelling concept, writes a detailed multi-part generation prompt, creates 3 high-quality candidates at 1024x1024 / 30 steps via SwarmUI, selects the best (largest file = most detail), and publishes with an artist's statement explaining the creative process.
 
 **Pipeline:**
 
 1. **Fetch memories** — 10 random + 5 themed by day-of-week style keywords
-2. **Synthesize concept** — Claude Haiku 4.5 finds visual connections between disparate memories
-3. **Write prompt** — Haiku generates an 80-100 word multi-part prompt covering subject, composition, lighting, color palette, mood, camera angle, and style directive
+2. **Synthesize concept** — LLM finds visual connections between disparate memories
+3. **Write prompt** — 80-100 word multi-part prompt covering subject, composition, lighting, color palette, mood, camera angle, and style directive
 4. **Generate 3 candidates** — SwarmUI at 1024x1024, 30 steps each (vs. 8 steps for normal images), model rotated by day-of-week
 5. **Pick best** — Largest file size = most visual complexity
 6. **Artist's statement** — 100-200 words explaining which memories inspired the piece and why those artistic choices
 7. **Publish** — Hugo post with full-width hero image, push to GitHub, notify Slack
-
-**Cost:** ~$0.005/day (~$0.15/month) for 4 Haiku calls. Image generation is free (local SwarmUI).
 
 ### Knowledge Base
 
@@ -230,7 +308,7 @@ This ensures Nova never goes silent due to a dropped WebSocket or stale gateway 
 
 ### Scheduling
 
-Nova runs a **unified scheduler** with 75 enabled tasks across interval and cron modes. Tasks support groups, quiet hours (11 PM to 6:45 AM for non-critical), dead man's switch heartbeats, and LLM group serialization to prevent model contention.
+Nova runs a **unified scheduler** with 79 tasks defined (72 enabled, 7 disabled). Tasks support groups, quiet hours (11 PM to 6:45 AM for non-critical), dead man's switch heartbeats, and LLM group serialization to prevent model contention. The `subagent_health` cron task has been disabled — Big Brother handles subagent heartbeat checks directly as a persistent daemon.
 
 ---
 
@@ -280,9 +358,9 @@ Every day at **12:00 PM**, Nova picks a random top news story and writes an **un
 
 1. **Fetch news** — Google News RSS top stories (38+ daily, US English).
 2. **Pick story** — Random selection from the pool, deduplicating against the last 30 picks to avoid repetition.
-3. **Semantic recall** — Searches her 1.44M memories for anything semantically related to the headline.
-4. **Generate opinion** — Claude Haiku 4.5 via OpenRouter (primary). Falls back to qwen3-coder:30b if OpenRouter is down. 500-900 words, column format.
-5. **Generate image** — Haiku writes a safe image prompt (editorial/satirical style), then SwarmUI renders it locally.
+3. **Semantic recall** — Searches her 1.48M memories for anything semantically related to the headline.
+4. **Generate opinion** — Local qwen3-next:80b (primary). Falls back to qwen3-coder:30b if primary is unavailable. 500-900 words, column format.
+5. **Generate image** — Writes a safe image prompt (editorial/satirical style), then SwarmUI renders it locally.
 6. **Deliver** — Single email to all herd members (CC Jordan), Slack notification with preview, auto-publish to the journal site.
 7. **State tracking** — Recent stories tracked in `opinion_state.json` to prevent repeats.
 
@@ -304,12 +382,11 @@ Every morning at **9:00 AM**, Nova selects a random subject from her memory data
 
 1. **Pick subject** — Random source from 217 memory categories. Requires 50+ memories to ensure enough material. Tracks the last 30 subjects to avoid repetition.
 2. **Fetch memories** — 25 random memories from the chosen source as raw material.
-3. **Generate essay** — Claude Haiku 4.5 via OpenRouter (primary). Falls back through local Ollama models (qwen3-coder:30b → deepseek-r1:8b). 800-1200 words.
-4. **Generate image** — Haiku first evaluates the topic for safety:
+3. **Generate essay** — Local LLM (qwen3-next:80b primary, falls back through qwen3-coder:30b → deepseek-r1:8b). 800-1200 words.
+4. **Generate image** — Evaluates topic for safety before generation:
    - **Sensitive topics** (race, culture, gangs, religion, violence, sexual content, stereotypes) → abstract geometric art only. No people, no faces.
    - **Safe topics** (technology, science, automotive, food, music, architecture) → realistic illustrations. People are fine.
-   - This prevents Stable Diffusion's training biases from producing offensive imagery.
-5. **Format citations** — All 25 source memories are cited at the bottom in full, matching the dream citation format.
+5. **Format citations** — All 25 source memories are cited at the bottom in full.
 6. **Deliver** — Single email to all herd members (CC Jordan), Slack notification with preview, auto-publish to journal site.
 7. **Email scrubbing** — All email addresses are automatically redacted from published content before it hits the public site.
 
@@ -329,7 +406,7 @@ Every night at **8:00 PM**, Nova writes a **late-night comedy monologue** in the
 
 1. **Fetch historical events** — Wikipedia "On This Day" for the current date.
 2. **Memory recall** — Cross-references events with Nova's knowledge base for unexpected connections.
-3. **Generate monologue** — Local LLM (qwen3-235b) writes 800-1200 words in desk monologue format.
+3. **Generate monologue** — Local LLM (qwen3-next:80b) writes 800-1200 words in desk monologue format.
 4. **Source verification** — Every claim must have a citation. No fabricated facts.
 5. **Deliver** — Posts to Slack, publishes to journal site, emails the herd.
 
@@ -341,8 +418,8 @@ Every night at **11:30 PM**, Nova writes a **daily deep-dive article** on the ho
 
 1. **Web search** — SearXNG queries for trending technology news.
 2. **Topic selection** — Picks the most compelling story, deduplicating against recent picks.
-3. **Memory enrichment** — Searches 1.44M memories for related context.
-4. **Generate article** — Claude Haiku 4.5 (primary) or local fallback. 1500-2000 words.
+3. **Memory enrichment** — Searches 1.48M memories for related context.
+4. **Generate article** — Local LLM or research agent fallback. 1500-2000 words.
 5. **Generate cover image** — SwarmUI renders an editorial-style cover.
 6. **Publish** — Hugo post, Slack notification, email delivery.
 
@@ -374,7 +451,7 @@ All content is automatically published to **[nova.digitalnoise.net](https://nova
 | Tags | 3-5 extracted tags per post via `nova_tag_extractor.py` (keyword + Ollama) |
 | Cross-links | Semantic cross-category "Connected threads" footer via `nova_cross_linker.py` |
 | OG images | `cover.image` with `relative: false` → `absURL` — correct previews on Slack/Discord |
-| Image safety | All images pre-screened by Haiku before generation |
+| Image safety | All images pre-screened before generation |
 | PII protection | Email addresses auto-scrubbed; private sources (disney_internal, cloud_governance, safari_history) excluded |
 | Source | [github.com/kochj23/nova-journal](https://github.com/kochj23/nova-journal) |
 
@@ -416,6 +493,7 @@ sequenceDiagram
     participant Mem as Memory Server
     participant Sched as Scheduler
     participant Dash as Dashboard
+    participant BB as Big Brother
 
     launchd->>Ollama: Start ollama serve
     launchd->>PG: Start postgresql@17
@@ -426,10 +504,12 @@ sequenceDiagram
     Stack->>Stack: wait-for-port 6379 (Redis)
     Stack->>GW: Start gateway (port 18789)
     Stack->>Mem: Start memory server
-    Stack->>Sched: Start scheduler (75 tasks)
+    Stack->>Sched: Start scheduler (72 active tasks)
     Stack->>Dash: Start dashboard (port 37450)
-    Sched->>Ollama: Preload qwen3-235b
+    launchd->>BB: Start Big Brother daemon (port 37461)
+    Sched->>Ollama: Preload qwen3-next:80b
     Sched->>Sched: Begin tick loop (1s interval)
+    BB->>BB: Begin kqueue log watch + 60s sweep
 ```
 
 ### Memory Pipeline
@@ -458,6 +538,7 @@ flowchart LR
         PG[(PostgreSQL<br/>pgvector)]
         HNSW[HNSW Index<br/>cosine similarity]
         Redis[(Redis<br/>hot cache)]
+        DLQ[Dead-letter queue<br/>embedding failures]
     end
 
     subgraph Retrieval
@@ -474,6 +555,7 @@ flowchart LR
 
     Sources --> Ingest
     Ingest --> Chunk --> Embed --> Dedup --> PG
+    Embed -->|failure| DLQ
     PG --> HNSW
     PG --> Redis
     Recall --> Redis
@@ -665,13 +747,15 @@ Nova connects to a local Plex Media Server (Synology NAS) for viewing awareness,
 
 Nova has access to **224 OTA channels** in Los Angeles via an HDHomeRun CONNECT QUATRO (4 tuners). She records **full episodes**, transcribes with MLX Whisper (auto-translating non-English content from Armenian, Spanish, and Asian language channels), classifies content, and ingests into the appropriate memory vector.
 
+Channels that consistently fail signal checks are tracked in a **bad-channel registry** (`nova_livetv.py`). After 2 consecutive failures, a channel is flagged and skipped in dream-surf and ambiance tasks. The separate `nova_channel_scan.py` script scans all 224 channels for live signal and builds a clean whitelist used to seed the registry.
+
 | Feature | Schedule | Description |
 |---------|----------|-------------|
 | **What's On** | Every 15 min | Alerts when shows Jordan cares about are starting |
 | **Morning news** | Daily 7:05 AM | Records 5 min from CBS/NBC/ABC, transcribes, ingests |
-| **Dream surf** | Daily 4:00 AM | Random channels for 60s; ephemeral dream fuel |
+| **Dream surf** | Daily 4:00 AM | Random channels (bad channels skipped) for 60s; ephemeral dream fuel |
 | **Game show companion** | Weekdays 7 PM | Records full episode of Jeopardy/Wheel of Fortune |
-| **Ambiance** | 4x daily | Picks random channel, records full episode |
+| **Ambiance** | 4x daily | Picks random channel (bad channels skipped), records full episode |
 | **Nova's TV Time** | Daily 10:30 PM | Random channel, full episode, review |
 | **Daily News Ingest** | 5 PM, 6 PM, 11 PM | Records 30 min KABC, transcribes, summarizes, ingests |
 
@@ -686,7 +770,7 @@ Nova has access to **224 OTA channels** in Los Angeles via an HDHomeRun CONNECT 
 | 3:00 AM | Memory gardener (dedup, auto-merge) | cron |
 | 3:30 AM | Log rotation | cron |
 | 4:00 AM | **Art Corner** (memory mining, 3 candidates at 30 steps, model rotation, artist statement) | cron |
-| 4:00 AM | Live TV dream surf (3 random channels) | cron |
+| 4:00 AM | Live TV dream surf (3 random channels, bad channels skipped) | cron |
 | 6:00 AM | **Dream pipeline** (theme + mood + generate + image + deliver) | cron |
 | 6:45 AM | System health check | cron |
 | 7:00 AM | Morning brief | cron |
@@ -716,9 +800,9 @@ Nova has access to **224 OTA channels** in Los Angeles via an HDHomeRun CONNECT 
 | 11:40 PM | Protect camera audit | cron |
 | 11:50 PM | **Research paper** (full APA academic paper from memory) | cron |
 | 11:50 PM | Bandwidth report | cron |
-| Continuous | Big Brother daemon (kqueue log watch + 60s sweep) | launchd persistent |
+| Continuous | **Big Brother daemon** (kqueue log watch + 60s sweep, launchd persistent) | launchd persistent |
 | Every 5 min | App watchdog, Protect monitor, Plex playing/guest | interval |
-| Every 10 min | iMessage watch, Sky watcher, Mail agent, Subagent health | interval |
+| Every 10 min | iMessage watch, Sky watcher, Mail agent | interval |
 | Every 15 min | Proactive peace, Live TV What's On | interval |
 | Every 30 min | Home watchdog, UniFi, Synology, Face recognition | interval |
 | Every 1 hour | Fix missing images, Session watchdog | interval |
@@ -733,13 +817,27 @@ Nova has access to **224 OTA channels** in Los Angeles via an HDHomeRun CONNECT 
 
 Nova is designed to recover from failures without human intervention.
 
-- **Big Brother** (`nova_big_brother.py`, `net.digitalnoise.big-brother` launchd) — persistent daemon (not cron) that replaces the old watchdog + gateway_health scripts. Uses macOS kqueue to watch log files in real time, detects failures within seconds, and heals before Jordan notices:
-  - Restarts dead services (PostgreSQL, Redis, Ollama, Memory Server, Gateway, Scheduler, and all subagents)
-  - Detects and fixes gateway EPERM, signal-cli lock conflicts, auth-profiles.json drift, and openclaw.json invalid keys
-  - Protects long-running tasks (ingest, reindex, pg_backup) — queues restarts until the task completes
-  - Falls back to direct signal-cli when the gateway is completely offline
-  - HTTP diagnostics API on `:37461` consumed by NovaControl Diagnostics tab
+- **Big Brother** (`nova_big_brother.py`, `net.digitalnoise.big-brother` launchd) — persistent daemon (not cron) that is the primary self-healing overseer for the entire system. Uses macOS kqueue to watch log files in real time, detects failures within seconds, and heals before Jordan notices:
+  - **Universal launchd restart logic** — any service in `LAUNCHD_MONITORED` can be restarted with the same `launchctl stop/start` pattern, no per-service special cases
+  - **Silence flags** — Homebridge and HealthKit export are marked silenced (intermittent by design); Big Brother watches them but does not alert or restart on expected churn
+  - **Volume mount checks** — verifies `/Volumes/Data` and `/Volumes/MoreData` are mounted before attempting restarts that depend on them
+  - **External service checks** — pings Synology NAS and UniFi directly to distinguish between "service down" and "network down"
+  - **Redis memory monitoring** — alerts when Redis utilization exceeds threshold; prevents OOM evictions mid-task
+  - **Ollama warmup state** — detects whether the primary conversation model is loaded and warm; alerts if it has been unloaded unexpectedly
+  - **Scheduler per-task failure rate** — tracks failure counts per task; alerts when a specific task is failing repeatedly (not just global health)
+  - **Log file size watchdog** — catches runaway log writers before they fill the SSD
+  - **Expanded ERROR_PATTERNS** — dead-letter queue entries, embedding failures, auth drift, gateway EPERM, signal-cli lock conflicts
+  - **Dead-letter queue check** — queries the memory server's `/queue/dead-letter` endpoint; alerts when embedding failures accumulate
+  - **kqueue bug fix** — corrected `NOTE_WRITE` → `KQ_NOTE_WRITE` (select module constant, not kevent flag integer)
+  - **Feedback loop fix** — `big-brother.err.log` removed from the watched-files list; was causing spurious self-restart cycles
+  - **HTTP diagnostics API** on `:37461` — consumed by the NovaControl Big Brother tab in the web dashboard:
+    - `GET /bb/status` — daemon health + summary
+    - `GET /bb/events?n=100` — recent heal events feed
+    - `GET /bb/services` — per-service status
+    - `GET /bb/health` — JSON health snapshot (volumes, Redis, Ollama warmup, external services)
+    - `POST /bb/force-check` — trigger a manual full sweep
   - Posts all heal events to #nova-notifications on Slack + Discord
+
 - **App watchdog** pings every app API port every 5 minutes. If a critical app is unreachable, it restarts it and posts a state-transition alert.
 - **Image repair** (hourly) detects and fixes missing images from published journal posts.
 - **Dead man's switch** verifies that the scheduler is still alive. If the heartbeat file goes stale, an alert fires.
@@ -750,19 +848,24 @@ Nova is designed to recover from failures without human intervention.
 
 ## Privacy Model
 
-Nova uses a **4-tier intent routing system** that determines where each request is processed.
+Nova uses a **4-tier intent routing system** that determines where each request is processed. The system is **100% local for all scheduled tasks** — cloud is used only for real-time interactive chat via the research agent.
 
 | Tier | Scope | Examples | Cloud allowed? |
 |------|-------|----------|----------------|
-| **Cloud** | 5 intents | Conversational chat via Slack/Discord/Signal | Yes (response speed) |
+| **Cloud** | 5 intents | Research agent (OpenRouter, non-private queries) | Yes — research agent only |
 | **Private** | 20 intents | Health, email, memory, face recognition, iMessage | **Never.** Hard-fail if local is down. |
 | **Sensitive** | 6 intents | Camera analysis, HomeKit summary, log analysis | No. Soft-fail. |
 | **Local** | 40+ intents | Code, reports, dreams, journals, data extraction | No. Everything on-device. |
 
+**Privacy monitoring** is built into the sentinel subagent and Big Brother sweep:
+
+- `nova_agent_sentinel.py` — `_check_privacy_routing()` performs a full model routing audit: reads `openclaw.json`, verifies that only the `research` agent is configured with OpenRouter, checks gateway logs for unexpected cloud model invocations from non-research agents, and logs violations/warnings.
+- The `OPENROUTER_ALLOWED_AGENTS` constant in `nova_big_brother.py` enforces the policy at the sweep level — any agent other than `research` using OpenRouter triggers a violation alert.
+
 **Key principles:**
 
 - All cron jobs, memory queries, face recognition, dream generation, and health processing are 100% local. No exceptions.
-- Only interactive chat (Slack/Discord/Signal) uses a cloud LLM for response speed.
+- Only the research agent (vague/non-private queries) routes to OpenRouter (cloud).
 - No PII is included in cloud calls from scheduled scripts.
 - All credentials are stored in macOS Keychain. No secrets in files, environment variables, or source code.
 - Temperature is tuned per intent (0.20 for security analysis through 0.92 for creative writing).
@@ -775,10 +878,10 @@ Nova uses **two PostgreSQL databases** (SQLite fully eliminated from Nova-owned 
 
 | Database | Purpose | Size |
 |----------|---------|------|
-| **nova_memories** | 1.44M unique vector memories, pgvector HNSW index, memory links, consolidation | ~15 GB |
+| **nova_memories** | 1.48M unique vector memories, pgvector HNSW index, memory links, consolidation | ~15 GB |
 | **nova_ops** | Task runs, flow runs, face recognition, dashboard history, gateway context, goals, rules | ~50 MB |
 
-Redis handles caching (5-min TTL on hot recall queries) and the async memory ingest queue.
+Redis handles caching (5-min TTL on hot recall queries) and the async memory ingest queue. Big Brother monitors Redis memory utilization to catch OOM conditions before they impact task execution.
 
 ### Dashboard
 
@@ -790,8 +893,21 @@ The **Nova Control** web dashboard (port 37450) provides real-time system monito
 - Intelligence (dream pipeline, knowledge ingestion, briefings, memory growth)
 - Operations (scheduler health, app watchdog, dead man's switch, traffic flow)
 - Home automation (HomeKit, Homebridge, weather)
+- **Big Brother tab** — service health, privacy routing audit, Ollama warmup state, Redis memory utilization, volume mounts, external service reachability, per-task scheduler failure rates, heal event feed, log error stream
 
 A secondary **HUD view** (`/hud`) provides a sci-fi radar visualization designed for TV display, with orbital nodes representing each subsystem, animated data flow particles, and real-time status.
+
+The NovaControl web server (`apps/nova-control-web/server.py`) proxies the Big Brother diagnostics API and privacy monitor via:
+
+| Endpoint | Source | Purpose |
+|----------|--------|---------|
+| `GET /api/bb/health` | Big Brother `:37461/bb/health` | Volume mounts, Redis, Ollama warmup, external services |
+| `GET /api/bb/events` | Big Brother `:37461/bb/events` | Recent heal event feed |
+| `POST /api/bb/force-check` | Big Brother `:37461/bb/force-check` | Trigger manual sweep |
+| `GET /api/privacy/status` | Sentinel subagent | Current routing audit result |
+| `GET /api/privacy/channels` | openclaw.json | Per-agent model assignments |
+| `GET /api/health/latest` | nova_ops DB | Latest system health snapshot |
+| `GET /api/health/history` | nova_ops DB | Health history for trend charts |
 
 ### Testing
 
@@ -866,10 +982,11 @@ When Jordan corrects Nova, those corrections are automatically promoted into per
 ```
 ~/.openclaw/
 ├── scripts/           275+ Python/Shell scripts (Nova's capabilities)
-│   ├── nova_config.py             Central config (secrets from Keychain)
+│   ├── nova_config.py             Central config — secrets from Keychain, NOVACONTROL + NC_* constants
 │   ├── nova_intent_router.py      Privacy-first AI routing (67+ intents)
-│   ├── nova_scheduler.py          Unified scheduler (75 tasks)
-│   ├── nova_big_brother.py        Persistent self-healing daemon (replaces watchdog + gateway_health)
+│   ├── nova_scheduler.py          Unified scheduler (79 tasks defined, 72 enabled)
+│   ├── nova_big_brother.py        Self-healing daemon — kqueue + sweep, LAUNCHD_MONITORED, /bb/* API
+│   ├── nova_agent_sentinel.py     Subagent: privacy routing audit, model drift detection
 │   ├── nova_image_utils.py        Shared image gen (5 models, rotation, retry)
 │   ├── nova_art_corner.py         Daily art generation (4 AM)
 │   ├── nova_tech_today.py         Daily tech deep-dive (11:30 PM)
@@ -881,15 +998,16 @@ When Jordan corrects Nova, those corrections are automatically promoted into per
 │   ├── nova_daily_opinion.py      Daily news opinion pipeline
 │   ├── nova_after_dark.py         Nightly comedy monologue
 │   ├── nova_research_paper.py     Nightly APA research papers
-│   ├── nova_daily_news_ingest.py  KABC news recording + transcription
+│   ├── nova_livetv.py             Live TV (bad-channel tracking, dream surf, ambiance)
+│   ├── nova_channel_scan.py       HDHomeRun full 224-channel signal scan + whitelist
+│   ├── nova_healthkit_export.py   HealthKit export (Swift closure fix, /tmp paths)
 │   ├── nova_*_ingest.py           14 foundational + 7 music + special crawlers
 │   ├── nova_publish_journal.py    Publish all content to GitHub Pages
-│   ├── nova_plex_auto_ingest.py   Automatic Plex content ingestion
 │   ├── nova_face_recognition.py   Local face recognition (dlib + PostgreSQL)
 │   ├── nova_protect_monitor.py    UniFi Protect event handler
-│   ├── nova_watchdog.py           Service health monitor (superseded by nova_big_brother.py)
 │   ├── nova_goals.py              Goal tracker
 │   ├── nova_rules.py              Correction-to-rule learning engine
+│   ├── nova_ollama_preload.sh     Ollama model warmup (uses /api/embed for embed models)
 │   ├── tests/                     4,460 pytest tests
 │   └── ...
 ├── config/            Scheduler YAML, RAG config, state files
@@ -898,8 +1016,10 @@ When Jordan corrects Nova, those corrections are automatically promoted into per
 │   └── config.yaml                Routing rules
 ├── apps/              Native applications
 │   ├── Nova-Desktop/              macOS monitoring dashboard (SwiftUI)
-│   ├── NovaControl/               Unified API app (SwiftUI)
-│   └── nova-control-web/          Web dashboard (FastAPI + WebSocket, 44 cards + HUD)
+│   ├── NovaControl/               Unified API app — port 37400 (SwiftUI)
+│   └── nova-control-web/          Web dashboard (FastAPI + WebSocket, 44 cards + HUD + Big Brother tab)
+│       └── static/bb.html         Big Brother dashboard (service health, privacy, heal events)
+├── memory_server.py   Vector memory HTTP server (datetime.utcnow deprecation fixed)
 ├── workspace/         Runtime data (journals, faces, metrics)
 ├── identity/          Nova's identity and personality docs
 ├── docs/              Screenshots and documentation
@@ -915,7 +1035,7 @@ When Jordan corrects Nova, those corrections are automatically promoted into per
 | Dependency | Purpose |
 |------------|---------|
 | macOS (Apple Silicon) | Required for MLX acceleration and Ollama performance |
-| [Ollama](https://ollama.ai) | Local LLM serving (qwen3-235b, qwen3-coder, deepseek-r1, qwen3-vl) |
+| [Ollama](https://ollama.ai) | Local LLM serving (qwen3-next:80b, qwen3-coder, deepseek-r1, qwen3-vl) |
 | [OpenClaw](https://openclaw.ai) | Gateway, scheduler, channel bindings |
 | PostgreSQL 17 + pgvector | Vector memory storage and HNSW search |
 | Redis | Response caching and async write queue |
@@ -942,7 +1062,7 @@ When Jordan corrects Nova, those corrections are automatically promoted into per
 brew install ollama postgresql@17 redis python@3.11 dlib ffmpeg
 
 # 2. Pull required models
-ollama pull qwen3:235b
+ollama pull qwen3-next:80b
 ollama pull qwen3-coder:30b
 ollama pull qwen3-vl:4b
 ollama pull deepseek-r1:8b

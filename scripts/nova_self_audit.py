@@ -46,7 +46,7 @@ EXPECTED_SERVICES = {
     18789: {"name": "OpenClaw Gateway", "path": "/health"},
     18790: {"name": "Memory Server", "path": "/health"},
     11434: {"name": "Ollama", "path": "/"},
-    37421: {"name": "OneOnOne", "path": "/api/status"},
+    37400: {"name": "OneOnOne", "path": "/api/status"},
     37400: {"name": "NovaControl", "path": "/api/status"},
 }
 

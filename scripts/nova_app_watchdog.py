@@ -233,7 +233,7 @@ def main():
 
         # OneOnOne preemptive restart: if alive but responding very slowly (>2s),
         # the HTTP server is likely hanging — restart before it goes fully dead.
-        if port == 37421 and alive and elapsed > 2.0:
+        if port == 37400 and alive and elapsed > 2.0:
             log(f"OneOnOne responding slowly ({elapsed:.1f}s) — preemptive restart")
             diag_path = capture_diagnostics(port, app_name)
             log(f"Diagnostics captured: {diag_path}")

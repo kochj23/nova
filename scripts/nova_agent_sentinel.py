@@ -2,9 +2,10 @@
 """
 nova_agent_sentinel.py — Security Sentinel background agent.
 
-Monitors UniFi, camera feeds, and nmap results. Combines:
+Monitors UniFi, camera feeds, nmap results, and privacy/PII leaks. Combines:
   - Vision analysis (qwen3-vl:4b) for camera anomalies
   - Reasoning (deepseek-r1:8b) for threat assessment
+  - Privacy monitor: detects model routing drift and unintended cloud traffic
 
 Only alerts on genuine anomalies. Posts to #nova-notifications for
 routine events, flags critical threats to Jordan via Slack #nova-chat.
@@ -14,7 +15,10 @@ Runs as a persistent daemon subscribed to security channels.
 Written by Jordan Koch.
 """
 
+import glob
 import json
+import re
+import subprocess
 import sys
 import urllib.request
 from datetime import datetime, timezone
@@ -23,6 +27,36 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_subagent import SubAgent
 from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN
+
+# Models that should NEVER appear in gateway config (anything other than these
+# local identifiers is a potential PII leak vector).
+ALLOWED_MODELS = {
+    "ollama/qwen3-next:80b",
+    "ollama/nova:latest",
+    "ollama/qwen3-coder:30b",
+    "ollama/deepseek-r1:8b",
+    "ollama/qwen3-vl:4b",
+    "mlx:qwen2.5-32b",
+    # Research agent only — intentional cloud use for vague/non-private queries
+    "openrouter/qwen/qwen3-235b-a22b-2507",
+}
+
+# Channels/agents that are explicitly allowed to use the research (OpenRouter) model
+OPENROUTER_ALLOWED_AGENTS = {"research"}
+
+# Outbound hosts that are acceptable for the openclaw process
+ALLOWED_OUTBOUND_HOSTS = {
+    "openrouter.ai",        # research agent only
+    "slack.com",            # Slack Socket Mode
+    "wss-primary.slack.com",
+    "discord.com",          # Discord gateway
+    "gateway.discord.gg",
+    "signal.org",           # Signal registration (rare)
+    "cdnjs.cloudflare.com", # Discord CDN
+    "localhost",
+    "127.0.0.1",
+    "192.168.1.",           # LAN only
+}
 
 NMAP_RESULTS = Path.home() / "Library/Containers/com.digitalnoise.nmapscanner.macos"
 NOVACONTROL_API = "http://127.0.0.1:37400"
@@ -47,8 +81,128 @@ class SecuritySentinel(SubAgent):
             return await self._analyze_unifi(task)
         elif task_type == "threat_assessment":
             return await self._threat_assessment(task)
+        elif task_type == "privacy_monitor":
+            return await self._privacy_monitor(task)
         else:
             return await self._generic_security(task)
+
+    async def _privacy_monitor(self, task: dict) -> dict:
+        """
+        Check for model routing drift and unintended cloud traffic.
+        Runs every 5 minutes via scheduler. Alerts Jordan immediately on any violation.
+        """
+        violations = []
+        warnings = []
+
+        # 1. Check gateway config for unexpected cloud models
+        try:
+            config_path = Path.home() / ".openclaw/openclaw.json"
+            with open(config_path) as f:
+                config = json.load(f)
+
+            agents_conf = config.get("agents", {})
+            defaults_model = agents_conf.get("defaults", {}).get("model", {})
+            primary = defaults_model.get("primary", "") if isinstance(defaults_model, dict) else str(defaults_model)
+            if primary and primary not in ALLOWED_MODELS:
+                violations.append(f"agents.defaults.model = `{primary}` — NOT in allowed list")
+
+            for agent in agents_conf.get("list", []):
+                aid = agent.get("id", "?")
+                m = agent.get("model", "")
+                if m and m not in ALLOWED_MODELS:
+                    violations.append(f"agent[{aid}].model = `{m}` — NOT in allowed list")
+                # Research is the only agent allowed to use OpenRouter
+                if m and "openrouter" in m and aid not in OPENROUTER_ALLOWED_AGENTS:
+                    violations.append(f"agent[{aid}] using OpenRouter — only `research` agent is permitted")
+
+            mbc = config.get("channels", {}).get("modelByChannel", {})
+            for channel, entries in mbc.items():
+                for key, model in entries.items():
+                    if model not in ALLOWED_MODELS:
+                        violations.append(f"channels.modelByChannel.{channel}.{key} = `{model}` — NOT allowed")
+                    if "openrouter" in model:
+                        violations.append(f"channels.modelByChannel.{channel}.{key} routes to OpenRouter — conversations may leak")
+
+        except Exception as e:
+            warnings.append(f"Could not read openclaw.json: {e}")
+
+        # 2. Check gateway runtime log for unexpected outbound model calls
+        try:
+            log_date = datetime.now().strftime("%Y-%m-%d")
+            runtime_log = Path(f"/tmp/openclaw/openclaw-{log_date}.log")
+            if runtime_log.exists():
+                recent_lines = runtime_log.read_text(errors="replace").splitlines()[-200:]
+                for line in recent_lines:
+                    try:
+                        entry = json.loads(line)
+                        msg = entry.get("message", "")
+                        # Look for model invocations that reference cloud providers
+                        if re.search(r"openrouter|anthropic\.com|api\.openai|bedrock", msg, re.I):
+                            agent_ctx = entry.get("agent", entry.get("session", "unknown"))
+                            if "research" not in str(agent_ctx).lower():
+                                warnings.append(f"Outbound model call from non-research context: {msg[:120]}")
+                    except (json.JSONDecodeError, KeyError):
+                        pass
+        except Exception as e:
+            warnings.append(f"Could not read gateway runtime log: {e}")
+
+        # 3. Check active network connections from openclaw process for unexpected outbound hosts
+        try:
+            result = subprocess.run(
+                ["lsof", "-i", "-n", "-P", "-a", "-p",
+                 subprocess.run(["pgrep", "-f", "^openclaw$"], capture_output=True, text=True).stdout.strip()],
+                capture_output=True, text=True, timeout=10
+            )
+            for line in result.stdout.splitlines():
+                if "ESTABLISHED" not in line:
+                    continue
+                # Extract remote host from lsof output
+                match = re.search(r"->(\S+?):\d+\s", line)
+                if not match:
+                    continue
+                remote = match.group(1)
+                # Resolve to hostname if it's an IP
+                is_allowed = any(
+                    remote.startswith(h) or remote.endswith(h)
+                    for h in ALLOWED_OUTBOUND_HOSTS
+                )
+                if not is_allowed and not remote.startswith("192.168.") and remote not in ("127.0.0.1", "::1"):
+                    warnings.append(f"Unexpected outbound connection: {remote}")
+        except Exception as e:
+            warnings.append(f"Could not check network connections: {e}")
+
+        # 4. Check that Signal is still locked down
+        try:
+            with open(Path.home() / ".openclaw/openclaw.json") as f:
+                config = json.load(f)
+            signal_conf = config.get("channels", {}).get("signal", {})
+            if signal_conf.get("dmPolicy") != "allowlist":
+                violations.append(f"Signal dmPolicy = `{signal_conf.get('dmPolicy')}` — should be allowlist")
+            if signal_conf.get("groupPolicy") != "allowlist":
+                violations.append(f"Signal groupPolicy = `{signal_conf.get('groupPolicy')}` — should be allowlist")
+        except Exception:
+            pass
+
+        # Build result
+        if violations:
+            risk = "critical"
+            summary = f":rotating_light: *Privacy/PII Leak Risk Detected*\n"
+            summary += "\n".join(f"  :x: {v}" for v in violations)
+            if warnings:
+                summary += "\n" + "\n".join(f"  :warning: {w}" for w in warnings)
+            await self.report_to_jordan(summary)
+            log(LOG_ERROR, f"[privacy_monitor] VIOLATIONS: {violations}")
+        elif warnings:
+            risk = "medium"
+            summary = f":warning: *Privacy Monitor — Warnings*\n"
+            summary += "\n".join(f"  :warning: {w}" for w in warnings[:5])
+            await self.notify(summary)
+            log(LOG_WARN, f"[privacy_monitor] warnings: {warnings}")
+        else:
+            risk = "none"
+            log(LOG_INFO, "[privacy_monitor] OK — no routing drift or PII leak vectors detected")
+
+        return {"risk_level": risk, "violations": violations, "warnings": warnings}
 
     async def _analyze_nmap(self, task: dict) -> dict:
         """Analyze nmap scan results for new/unexpected devices or open ports."""

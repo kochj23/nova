@@ -8,7 +8,7 @@ Author: Jordan Koch / kochj23
 
 import json, urllib.request, urllib.parse, time
 
-ONEONONE = "http://127.0.0.1:37421/api"
+ONEONONE = "http://127.0.0.1:37400/api"
 MEMORY   = "http://127.0.0.1:18790/remember"
 SOURCE   = "oneonone"
 

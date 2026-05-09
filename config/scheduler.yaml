@@ -70,6 +70,7 @@ tasks:
     schedule: every 10m
     timeout: 60
     overlap: skip
+    enabled: false  # Replaced by Big Brother subagent heartbeat checks
 
   mail_agent:
     script: nova_mail_agent.py

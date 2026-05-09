@@ -124,9 +124,29 @@ def get_model_for_today() -> str:
 
 
 def get_random_model() -> str:
-    """Pick a random model from available ones."""
-    available = [k for k, v in MODELS.items() if (Path.home() / f"AI/SwarmUI/Models/Stable-Diffusion/{v['file']}").exists()]
+    """Pick a random model from available ones (checks via SwarmUI API)."""
+    available = [k for k, v in MODELS.items() if _model_available_via_api(v["file"])]
     return random.choice(available) if available else DEFAULT_MODEL
+
+
+def _model_available_via_api(model_file: str) -> bool:
+    """Check if a model file is available in SwarmUI via the API (works even when /Volumes/Data is TCC-restricted)."""
+    try:
+        session_resp = urllib.request.urlopen(
+            urllib.request.Request(f"{SWARMUI_URL}/API/GetNewSession",
+                data=b'{}', headers={"Content-Type": "application/json"}), timeout=5)
+        session_id = json.loads(session_resp.read())["session_id"]
+        req = urllib.request.Request(
+            f"{SWARMUI_URL}/API/ListModels",
+            data=json.dumps({"session_id": session_id, "path": "", "depth": 2, "subtype": "Stable-Diffusion"}).encode(),
+            headers={"Content-Type": "application/json"})
+        resp = urllib.request.urlopen(req, timeout=10)
+        files = json.loads(resp.read()).get("files", [])
+        available = {f.get("name", "") for f in files}
+        return model_file in available
+    except Exception:
+        # If API unreachable, assume available (generate_image will handle the error)
+        return True
 
 
 def generate_image(prompt: str, width: int = 1024, height: int = 768, steps: int = 12, model: str = None) -> str | None:
@@ -147,10 +167,9 @@ def generate_image(prompt: str, width: int = 1024, height: int = 768, steps: int
     model_info = MODELS.get(model_key, MODELS[DEFAULT_MODEL])
     model_file = model_info["file"]
 
-    # Check if model file exists, fall back to default
-    model_path = Path.home() / f"AI/SwarmUI/Models/Stable-Diffusion/{model_file}"
-    if not model_path.exists():
-        _log(f"Model {model_file} not found, falling back to {DEFAULT_MODEL}")
+    # Check if model file exists via SwarmUI API (avoids /Volumes/Data TCC issues)
+    if not _model_available_via_api(model_file):
+        _log(f"Model {model_file} not found in SwarmUI, falling back to {DEFAULT_MODEL}")
         model_file = MODELS[DEFAULT_MODEL]["file"]
 
     _log(f"Using model: {model_info['name']} ({model_file}), {steps} steps")

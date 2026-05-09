@@ -82,23 +82,69 @@ QUIET_END = 8
 DISK_WARN_GB = 10.0
 
 # Services to monitor
-LAN_IP = "192.168.1.6"  # Mac Studio LAN IP — some services bind here, not loopback
+LAN_IP  = "192.168.1.6"   # Mac Studio LAN IP
+PLEX_IP = "192.168.1.10"  # Synology NAS running Plex
+NAS_IP  = "192.168.1.11"  # Synology DSM
+HDHR_IP = "192.168.1.89"  # HDHomeRun TV tuner
+UNIFI_IP = "192.168.1.1"  # UniFi Dream Machine
 
 SERVICES = [
     # name, host, port, launchd_label, is_critical, health_url_path
+    # ── Core (critical — Nova can't function without these) ──────────────────
     ("PostgreSQL",    "127.0.0.1", 5432,  "homebrew.mxcl.postgresql@17",         True,  None),
     ("PgBouncer",     "127.0.0.1", 6432,  "net.digitalnoise.pgbouncer",           True,  None),
     ("Redis",         "127.0.0.1", 6379,  "net.digitalnoise.redis",               True,  None),
-    ("Ollama",        "127.0.0.1", 11434, None,                                   True,  "/api/tags"),
+    ("Ollama",        "127.0.0.1", 11434, None,                                   True,  "/api/version"),
     ("Memory Server", "127.0.0.1", 18790, "net.digitalnoise.nova-memory-server",  True,  "/health"),
     ("Gateway",       "127.0.0.1", 18789, "ai.openclaw.gateway",                  True,  "/health"),
     ("Scheduler",     "127.0.0.1", 37460, "com.nova.scheduler",                   True,  "/status"),
+    # ── AI inference (non-critical — can recover from) ───────────────────────
     ("MLX Server",    LAN_IP,      5050,  "net.digitalnoise.mlx-server",          False, "/v1/models"),
     ("SwarmUI",       "127.0.0.1", 7801,  None,                                   False, None),
+    ("ComfyUI",       "127.0.0.1", 8188,  None,                                   False, None),
     ("TinyChat",      LAN_IP,      8000,  "net.digitalnoise.tinychat",            False, None),
     ("OpenWebUI",     LAN_IP,      3000,  "net.digitalnoise.openwebui",           False, None),
+    ("SearXNG",       "127.0.0.1", 8888,  "net.digitalnoise.searxng",             False, None),
+    # ── Channels ─────────────────────────────────────────────────────────────
     ("Signal-cli",    "127.0.0.1", 8080,  None,                                   False, None),
+    # ── Nova apps ────────────────────────────────────────────────────────────
     ("NovaControl",   "127.0.0.1", 37400, "net.digitalnoise.NovaControl",         False, "/api/status"),
+    ("NovaControl Web","127.0.0.1",37450, "net.digitalnoise.nova-control-web",    False, None),
+    ("Big Brother",   "127.0.0.1", 37461, None,                                   False, "/bb/status"),
+    # ── External / LAN (monitored but not auto-restarted) ────────────────────
+    ("Plex",          PLEX_IP,     32400, None,                                   False, "/web"),
+    ("HDHomeRun",     HDHR_IP,     80,    None,                                   False, None),
+    ("Homebridge",    "127.0.0.1", 8581,  "net.digitalnoise.homebridge",          False, None),
+]
+
+# Services that are monitored (shown in dashboard) but never trigger alerts.
+# Add names here when a service is intentionally down or you don't care if it's off.
+SILENCED_SERVICES = {
+    "Homebridge",          # Runs intermittently, not critical
+}
+
+# launchd services to monitor beyond the SERVICES port list.
+# Format: (label, friendly_name, can_restart, silence)
+# can_restart=True  → Big Brother will kickstart it on failure
+# silence=True      → monitor/log but never alert Jordan
+LAUNCHD_MONITORED = [
+    ("com.nova.healthkit",                  "HealthKit Export",    False, True),   # needs app container, can't auto-fix
+    ("com.digitalnoise.nova.general-monitor","General Monitor",    True,  False),
+    ("net.digitalnoise.nova-memory-server", "Memory Server",       True,  False),  # also in SERVICES — belt+suspenders
+    ("net.digitalnoise.homebridge",         "Homebridge",          True,  True),   # silenced — intermittent
+]
+
+# External services — just connectivity checks, no restart capability
+EXTERNAL_CHECKS = [
+    ("Synology NAS",  NAS_IP,   5001),
+    ("UniFi",         UNIFI_IP, 443),
+]
+
+# Volume mounts that must be accessible for Nova to function
+REQUIRED_MOUNTS = [
+    ("/Volumes/Data",     "AI models, Xcode, Nova work"),
+    ("/Volumes/MoreData", "PostgreSQL data (1.4M memories)"),
+    ("/Volumes/external", "NAS media store"),
 ]
 
 SUBAGENTS = ["sentinel", "lookout", "analyst", "librarian", "coder"]
@@ -381,7 +427,7 @@ def _port_open(host: str, port: int, timeout: float = 3.0) -> bool:
         return False
 
 
-def _http_healthy(host: str, port: int, path: str, timeout: float = 5.0) -> bool:
+def _http_healthy(host: str, port: int, path: str, timeout: float = 10.0) -> bool:
     try:
         url = f"http://{host}:{port}{path}"
         resp = urllib.request.urlopen(url, timeout=timeout)
@@ -726,17 +772,34 @@ _SEEN_ERRORS: dict = {}  # log_file -> last_position
 
 ERROR_PATTERNS = [
     # Pattern, severity, service, friendly description
-    (r"EPERM.*workspace-state\.json", "critical", "Gateway", "EPERM on workspace-state.json"),
-    (r"Startup failed.*required secrets", "critical", "Gateway", "Gateway secrets unavailable at startup"),
-    (r"Config file is in use by another instance", "warning", "Signal-cli", "signal-cli lock conflict"),
-    (r"Unrecognized keys.*bootstrapMaxChars", "critical", "Gateway", "openclaw.json invalid config keys"),
-    (r"FailoverError.*No API key found for provider", "critical", "Gateway", "OpenRouter API key missing"),
-    (r"FATAL.*nova_memories", "critical", "PostgreSQL", "PostgreSQL fatal error on nova_memories"),
+    # Gateway
+    (r"EPERM.*workspace-state\.json",              "critical", "Gateway",       "EPERM on workspace-state.json"),
+    (r"Startup failed.*required secrets",           "critical", "Gateway",       "Gateway secrets unavailable at startup"),
+    (r"Unrecognized keys.*bootstrapMaxChars",       "critical", "Gateway",       "openclaw.json invalid config keys"),
+    (r"FailoverError.*No API key found for provider","critical", "Gateway",      "OpenRouter API key missing"),
+    (r"invalid config.*must NOT have additional",   "critical", "Gateway",       "openclaw.json schema violation"),
+    # Channels
+    (r"Config file is in use by another instance",  "warning",  "Signal-cli",   "signal-cli lock conflict"),
+    (r"socket mode failed to start",                "warning",  "Slack",        "Slack socket mode failed"),
+    (r"getaddrinfo ENOTFOUND slack\.com",           "warning",  "Slack",        "Slack DNS resolution failure"),
+    # Data stores
+    (r"FATAL.*nova_memories",                       "critical", "PostgreSQL",   "PostgreSQL fatal error on nova_memories"),
     (r"redis\.exceptions\.(ConnectionError|TimeoutError)", "critical", "Redis", "Redis connection error"),
-    (r"HNSW index.*not found", "warning", "Memory Server", "HNSW index missing — recall degraded"),
-    (r"pg_dump.*error", "warning", "PostgreSQL", "pg_dump backup error"),
-    (r"CRITICAL.*nova_watchdog\|CRITICAL.*scheduler", "critical", "Scheduler", "Scheduler critical error"),
-    (r"OOM|out of memory|cannot allocate", "critical", "System", "Out of memory condition"),
+    (r"MISCONF.*Redis",                             "critical", "Redis",        "Redis MISCONF — RDB save failing"),
+    (r"HNSW index.*not found",                      "warning",  "Memory Server","HNSW index missing — recall degraded"),
+    (r"Dead-lettered.*after 3 failures",            "warning",  "Memory Server","Memory ingest dead-lettered item"),
+    (r"pg_dump.*error",                             "warning",  "PostgreSQL",   "pg_dump backup error"),
+    # Scheduler
+    (r"ERROR.*Timed out after \d+s",                "warning",  "Scheduler",    "Scheduler task timeout"),
+    (r"consecutive.failures.*[5-9]\d*",             "warning",  "Scheduler",    "Scheduler task repeated failures"),
+    (r"slack_bot_token unavailable",                "warning",  "Scheduler",    "Scheduler can't read Slack token from Keychain"),
+    # Subagents
+    (r"\[ERROR\].*agent-\w+",                       "warning",  "Subagent",     "Subagent error"),
+    (r"Subagent.*stale|heartbeat.*missing",         "warning",  "Subagent",     "Subagent stale heartbeat"),
+    # System
+    (r"OOM|out of memory|cannot allocate",          "critical", "System",       "Out of memory condition"),
+    (r"No space left on device",                    "critical", "System",       "Disk full"),
+    (r"TimeoutExpired.*launchctl",                  "warning",  "Big Brother",  "launchctl kickstart timed out"),
 ]
 
 _COMPILED_PATTERNS = [(re.compile(p, re.IGNORECASE), sev, svc, desc)
@@ -749,6 +812,25 @@ LOG_FILES_TO_WATCH = [
     LOG_DIR / "memory-server-error.log",
     LOG_DIR / "nova.jsonl",
     LOG_DIR / "daily-journal.log",
+    # Subagent logs
+    LOG_DIR / "agent-sentinel.log",
+    LOG_DIR / "agent-lookout.log",
+    LOG_DIR / "agent-analyst.log",
+    LOG_DIR / "agent-librarian.log",
+    LOG_DIR / "agent-coder.log",
+    LOG_DIR / "agent-briefer.log",
+    LOG_DIR / "agent-gardener.log",
+    LOG_DIR / "nova_mail_agent.log",
+    # Note: big-brother.err.log intentionally excluded — would create feedback loop
+    # Service logs
+    LOG_DIR / "openwebui" / "openwebui-error.log",
+    LOG_DIR / "tinychat-error.log",
+    LOG_DIR / "mlx-server-error.log",
+    LOG_DIR / "pgbouncer.log",
+    LOG_DIR / "nova-control-web-error.log",
+    Path("/tmp/nova-livetv.log"),
+    Path("/tmp/nova-canary.log"),
+    Path("/tmp/nova-channel-scan.log"),
 ]
 
 
@@ -796,6 +878,82 @@ def _is_maintenance_mode() -> bool:
         return bool(r.get("nova:maintenance:active"))
     except Exception:
         return False
+
+
+_ALLOWED_MODELS = {
+    "ollama/qwen3-next:80b",
+    "ollama/nova:latest",
+    "ollama/qwen3-coder:30b",
+    "ollama/deepseek-r1:8b",
+    "ollama/qwen3-vl:4b",
+    "mlx:qwen2.5-32b",
+    # Research agent only — intentional cloud use for vague/non-private queries
+    "openrouter/qwen/qwen3-235b-a22b-2507",
+}
+_OPENROUTER_ALLOWED_AGENTS = {"research"}
+
+
+def _check_privacy_routing(issues: list):
+    """
+    Detect model routing drift — any channel or agent pointing to a cloud
+    model other than the explicitly allowed research agent is a PII leak risk.
+    Appends violations directly to the issues list so they appear in the sweep report
+    and trigger an immediate alert to Jordan.
+    """
+    try:
+        config_path = Path.home() / ".openclaw/openclaw.json"
+        with open(config_path) as f:
+            config = json.load(f)
+    except Exception as e:
+        log(f"[privacy] Could not read openclaw.json: {e}", level=LOG_WARN, source="big-brother")
+        return
+
+    violations = []
+
+    # Check agents.defaults.model
+    defaults_model = config.get("agents", {}).get("defaults", {}).get("model", {})
+    primary = defaults_model.get("primary", "") if isinstance(defaults_model, dict) else str(defaults_model)
+    if primary and primary not in _ALLOWED_MODELS:
+        violations.append(f"agents.defaults.model = `{primary}` — unexpected cloud model")
+
+    # Check per-agent model overrides
+    for agent in config.get("agents", {}).get("list", []):
+        aid = agent.get("id", "?")
+        m = agent.get("model", "")
+        if not m:
+            continue
+        if m not in _ALLOWED_MODELS:
+            violations.append(f"agent[{aid}].model = `{m}` — NOT in allowed list")
+        elif "openrouter" in m and aid not in _OPENROUTER_ALLOWED_AGENTS:
+            violations.append(f"agent[{aid}] using OpenRouter — only `research` agent is permitted")
+
+    # Check per-channel model overrides
+    mbc = config.get("channels", {}).get("modelByChannel", {})
+    for channel, entries in mbc.items():
+        for key, model in entries.items():
+            if model not in _ALLOWED_MODELS:
+                violations.append(f"channels.{channel}.{key} = `{model}` — NOT in allowed list")
+            elif "openrouter" in model:
+                violations.append(f"channels.{channel}.{key} → OpenRouter — conversations may leak PII")
+
+    # Check Signal is locked down
+    signal_conf = config.get("channels", {}).get("signal", {})
+    if signal_conf.get("dmPolicy") != "allowlist":
+        violations.append(f"Signal dmPolicy = `{signal_conf.get('dmPolicy', 'unset')}` — must be allowlist")
+    if signal_conf.get("groupPolicy") != "allowlist":
+        violations.append(f"Signal groupPolicy = `{signal_conf.get('groupPolicy', 'unset')}` — must be allowlist")
+    allow_from = signal_conf.get("allowFrom", ["*"])
+    if allow_from == ["*"] or "*" in allow_from:
+        violations.append("Signal allowFrom = ['*'] — open to anyone, must be restricted to Jordan's number")
+
+    if violations:
+        for v in violations:
+            issues.append(f":rotating_light: PRIVACY VIOLATION: {v}")
+            _record_event("critical", f"Privacy routing violation: {v}",
+                          "Check openclaw.json model config immediately", "Privacy")
+        log(f"[privacy] {len(violations)} violation(s) detected", level=LOG_ERROR, source="big-brother")
+    else:
+        log("[privacy] Model routing OK — all channels local", level=LOG_INFO, source="big-brother")
 
 
 def _full_sweep():
@@ -861,6 +1019,9 @@ def _full_sweep():
             }
 
         if not up:
+            if name in SILENCED_SERVICES:
+                log(f"[sweep] {name} down but silenced — skipping alert", level=LOG_INFO, source="big-brother")
+                continue
             issues.append(f"{name} (:{port}) DOWN")
             if not critical and name not in ("SwarmUI", "TinyChat"):
                 _record_event("warning", f"{name} not responding on :{port}", "No action (non-critical)", name)
@@ -872,43 +1033,44 @@ def _full_sweep():
                 _record_event("warning", f"{name} DOWN", "Queued restart", name)
                 continue
 
-            if name == "PostgreSQL":
-                subprocess.run(["pg_isready"], capture_output=True, timeout=5)
-                if label:
-                    uid = os.getuid()
-                    subprocess.run(
-                        ["launchctl", "kickstart", "-k", f"gui/{uid}/{label}"],
-                        capture_output=True, timeout=15,
+            def _kickstart(lbl: str, timeout: int = 15) -> bool:
+                try:
+                    r = subprocess.run(
+                        ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{lbl}"],
+                        capture_output=True, timeout=timeout,
                     )
+                    return r.returncode == 0
+                except subprocess.TimeoutExpired:
+                    log(f"launchctl kickstart timed out for {lbl}", level=LOG_WARN, source="big-brother")
+                    return False
+                except Exception as e:
+                    log(f"launchctl kickstart failed for {lbl}: {e}", level=LOG_ERROR, source="big-brother")
+                    return False
+
+            if name == "PostgreSQL":
+                try:
+                    subprocess.run(["pg_isready"], capture_output=True, timeout=5)
+                except Exception:
+                    pass
+                if label:
+                    _kickstart(label)
                 fixes.append("Restarted PostgreSQL")
                 _record_event("critical", "PostgreSQL DOWN", "Restarted via launchctl", "PostgreSQL")
 
             elif name == "Redis":
                 if label:
-                    uid = os.getuid()
-                    subprocess.run(
-                        ["launchctl", "kickstart", "-k", f"gui/{uid}/{label}"],
-                        capture_output=True, timeout=15,
-                    )
+                    _kickstart(label)
                 fixes.append("Restarted Redis")
                 _record_event("critical", "Redis DOWN", "Restarted via launchctl", "Redis")
 
             elif name == "Memory Server" and label:
-                uid = os.getuid()
-                subprocess.run(
-                    ["launchctl", "kickstart", "-k", f"gui/{uid}/{label}"],
-                    capture_output=True, timeout=15,
-                )
+                _kickstart(label)
                 fixes.append("Restarted Memory Server")
                 _record_event("critical", "Memory Server DOWN", "Restarted via launchctl", "Memory Server")
 
             elif name == "Scheduler":
                 if not _check_scheduler_heartbeat():
-                    uid = os.getuid()
-                    subprocess.run(
-                        ["launchctl", "kickstart", "-k", f"gui/{uid}/com.nova.scheduler"],
-                        capture_output=True, timeout=15,
-                    )
+                    _kickstart("com.nova.scheduler")
                     fixes.append("Restarted Scheduler (stale heartbeat)")
                     _record_event("critical", "Scheduler stale heartbeat", "Kickstarted via launchctl", "Scheduler")
 
@@ -920,11 +1082,7 @@ def _full_sweep():
                               fix_msg, "Gateway")
 
             elif label:
-                uid = os.getuid()
-                subprocess.run(
-                    ["launchctl", "kickstart", "-k", f"gui/{uid}/{label}"],
-                    capture_output=True, timeout=15,
-                )
+                _kickstart(label)
                 fixes.append(f"Restarted {name}")
                 _record_event("warning", f"{name} DOWN", f"Restarted {name}", name)
 
@@ -1061,6 +1219,153 @@ def _full_sweep():
         except Exception:
             pass
 
+    # ── Volume mount checks ──────────────────────────────────────────────────
+    for mount_path, desc in REQUIRED_MOUNTS:
+        p = Path(mount_path)
+        if not p.exists() or not p.is_mount():
+            issues.append(f"Volume NOT mounted: {mount_path} ({desc})")
+            _record_event("critical", f"Volume unmounted: {mount_path}",
+                          "Re-mount or check NAS/drive connection", "System")
+        else:
+            # Check we can actually read it (not just that it's mounted)
+            try:
+                list(p.iterdir())
+            except PermissionError:
+                issues.append(f"Volume mounted but unreadable: {mount_path}")
+                _record_event("warning", f"Volume unreadable: {mount_path}",
+                              "Check TCC/permissions", "System")
+
+    # ── External LAN service checks ──────────────────────────────────────────
+    for name, host, port in EXTERNAL_CHECKS:
+        if not _port_open(host, port, timeout=5.0):
+            issues.append(f"{name} ({host}:{port}) unreachable")
+            _record_event("warning", f"{name} unreachable",
+                          "Check device power and LAN connection", name)
+
+    # ── Broken launchd services ──────────────────────────────────────────────
+    for label, name, can_restart, silenced in LAUNCHD_MONITORED:
+        try:
+            r = subprocess.run(
+                ["launchctl", "list", label],
+                capture_output=True, text=True, timeout=5
+            )
+            if r.returncode != 0:
+                continue  # service not loaded at all — skip
+            pid_m    = re.search(r'"PID"\s*=\s*(\d+)',         r.stdout)
+            exit_m   = re.search(r'"LastExitStatus"\s*=\s*(-?\d+)', r.stdout)
+            pid      = pid_m.group(1)  if pid_m  else None
+            exit_code = int(exit_m.group(1)) if exit_m else None
+            if pid is not None or exit_code in (None, 0):
+                continue  # running fine
+            if silenced:
+                log(f"[sweep] {name} ({label}) not running (exit {exit_code}) — silenced",
+                    level=LOG_INFO, source="big-brother")
+                continue
+            if can_restart:
+                try:
+                    subprocess.run(
+                        ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"],
+                        capture_output=True, timeout=15,
+                    )
+                    fixes.append(f"Kickstarted {name} ({label})")
+                    _record_event("warning", f"{name} crashed (exit {exit_code})",
+                                  f"Auto-kickstarted via launchctl", name)
+                except subprocess.TimeoutExpired:
+                    issues.append(f"{name} crashed (exit {exit_code}) — kickstart timed out")
+                    _record_event("critical", f"{name} crashed, kickstart timed out",
+                                  "Restart manually", name)
+            else:
+                issues.append(f"{name} not running (exit {exit_code}) — needs manual fix")
+                _record_event("warning", f"{name} crashed (exit {exit_code})",
+                              "Cannot auto-restart — check underlying dependency", name)
+        except Exception:
+            pass
+
+    # ── Redis memory utilization ─────────────────────────────────────────────
+    try:
+        import redis as _redis
+        r = _redis.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+        info = r.info("memory")
+        used = info.get("used_memory", 0)
+        max_mem = info.get("maxmemory", 0)
+        if max_mem > 0:
+            pct = used / max_mem * 100
+            if pct > 85:
+                issues.append(f"Redis memory {pct:.0f}% full ({used//1e6:.0f}MB / {max_mem//1e6:.0f}MB)")
+                _record_event("warning", f"Redis at {pct:.0f}% capacity",
+                              "Check for cache bloat; allkeys-lru will evict if full", "Redis")
+    except Exception:
+        pass
+
+    # ── Ollama model warmup state ─────────────────────────────────────────────
+    try:
+        resp = urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=8)
+        ps_data = json.loads(resp.read())
+        loaded = [m["name"] for m in ps_data.get("models", [])]
+        needed = {"qwen3-next:80b", "qwen3-coder:30b"}
+        cold = needed - {m.split(":")[0] + ":" + m.split(":")[1] if ":" in m else m for m in loaded}
+        # Only warn during active hours — models unload when idle
+        if cold and not _is_quiet_hours():
+            log(f"[ollama] Cold models (next request will be slow): {cold}",
+                level=LOG_INFO, source="big-brother")
+    except Exception:
+        pass
+
+    # ── Scheduler per-task failure visibility ────────────────────────────────
+    try:
+        resp = urllib.request.urlopen("http://127.0.0.1:37460/tasks", timeout=5)
+        tasks = json.loads(resp.read())
+        if isinstance(tasks, list):
+            for t in tasks:
+                name = t.get("name", "?")
+                fails = t.get("consecutive_failures", 0)
+                if fails >= 3:
+                    issues.append(f"Scheduler task '{name}' failing: {fails} consecutive failures")
+                    _record_event("warning", f"Scheduler task '{name}' {fails} consecutive failures",
+                                  "Check scheduler.log for error details", "Scheduler")
+    except Exception:
+        pass
+
+    # ── Log file size watchdog ────────────────────────────────────────────────
+    warn_size_mb = 100
+    for log_path in LOG_FILES_TO_WATCH:
+        try:
+            size_mb = log_path.stat().st_size / 1e6 if log_path.exists() else 0
+            if size_mb > warn_size_mb:
+                issues.append(f"Log file too large: {log_path.name} ({size_mb:.0f}MB)")
+                _record_event("warning", f"{log_path.name} is {size_mb:.0f}MB",
+                              "Run nova_log_rotate.py or truncate manually", "System")
+        except Exception:
+            pass
+
+    # ── Privacy / PII leak monitor ───────────────────────────────────────────
+    _check_privacy_routing(issues)
+
+    # ── Memory dead-letter queue ──────────────────────────────────────────────
+    try:
+        resp = urllib.request.urlopen("http://127.0.0.1:18790/stats", timeout=5)
+        stats = json.loads(resp.read())
+        dead = stats.get("dead_letter_count", 0)
+        if dead > 10:
+            issues.append(f"Memory dead-letter queue has {dead} items — embedding failures")
+            _record_event("warning", f"Memory dead-letter queue: {dead} items",
+                          "Check /queue/dead-letter endpoint and Ollama embed model", "Memory Server")
+    except Exception:
+        pass
+
+    # ── Scheduler failure rate ────────────────────────────────────────────────
+    try:
+        resp = urllib.request.urlopen("http://127.0.0.1:37460/status", timeout=5)
+        sched = json.loads(resp.read())
+        total_runs = sched.get("total_runs", 0)
+        total_fail = sched.get("total_failures", 0)
+        if total_runs > 10 and total_fail / total_runs > 0.15:
+            issues.append(f"Scheduler failure rate high: {total_fail}/{total_runs} ({total_fail*100//total_runs}%)")
+            _record_event("warning", f"Scheduler failure rate: {total_fail}/{total_runs}",
+                          "Check ~/.openclaw/logs/scheduler.log for timed-out tasks", "Scheduler")
+    except Exception:
+        pass
+
     # ── Disk space ───────────────────────────────────────────────────────────
     disk_warnings = _check_disk_space()
     for dw in disk_warnings:
@@ -1124,7 +1429,7 @@ def _log_watcher_thread():
     kevents = [
         select.kevent(fd, filter=select.KQ_FILTER_VNODE,
                       flags=select.KQ_EV_ADD | select.KQ_EV_CLEAR,
-                      fflags=select.NOTE_WRITE | select.NOTE_EXTEND)
+                      fflags=select.KQ_NOTE_WRITE | select.KQ_NOTE_EXTEND)
         for fd in watched_fds
     ]
 
@@ -1185,6 +1490,137 @@ class BBHandler(BaseHTTPRequestHandler):
         elif self.path == "/bb/services":
             with _lock:
                 self._json(dict(_service_status))
+        elif self.path == "/bb/health":
+            # Full health snapshot for the Big Brother dashboard
+            with _lock:
+                events = list(_heal_events)
+                svc    = dict(_service_status)
+            uptime = int(time.time() - _start_time)
+
+            # Scheduler stats
+            sched_stats = {}
+            try:
+                r = urllib.request.urlopen("http://127.0.0.1:37460/status", timeout=5)
+                sched_stats = json.loads(r.read())
+            except Exception:
+                pass
+
+            # Memory stats
+            mem_stats = {}
+            try:
+                r = urllib.request.urlopen("http://127.0.0.1:18790/stats", timeout=5)
+                mem_stats = json.loads(r.read())
+            except Exception:
+                pass
+
+            # Ollama model list + warmup state
+            ollama_models = []
+            ollama_warm = []
+            try:
+                r = urllib.request.urlopen("http://127.0.0.1:11434/api/tags", timeout=8)
+                ollama_models = [m["name"] for m in json.loads(r.read()).get("models", [])]
+            except Exception:
+                pass
+            try:
+                r = urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=5)
+                ollama_warm = [m["name"] for m in json.loads(r.read()).get("models", [])]
+            except Exception:
+                pass
+
+            # Redis memory stats
+            redis_mem = {}
+            try:
+                import redis as _rds
+                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+                ri = rc.info("memory")
+                redis_mem = {
+                    "used_mb": round(ri.get("used_memory", 0) / 1e6, 1),
+                    "max_mb": round(ri.get("maxmemory", 0) / 1e6, 1),
+                    "pct": round(ri.get("used_memory", 0) / ri.get("maxmemory", 1) * 100, 1)
+                    if ri.get("maxmemory") else 0,
+                }
+            except Exception:
+                pass
+
+            # Volume mount status
+            volume_status = {}
+            for mount_path, desc in REQUIRED_MOUNTS:
+                p = Path(mount_path)
+                volume_status[mount_path] = {
+                    "mounted": p.exists() and p.is_mount(),
+                    "desc": desc,
+                }
+
+            # External service reachability
+            external_status = {}
+            for name, host, port in EXTERNAL_CHECKS:
+                external_status[name] = _port_open(host, port, timeout=5.0)
+
+            # Scheduler per-task detail
+            sched_tasks = []
+            try:
+                r = urllib.request.urlopen("http://127.0.0.1:37460/tasks", timeout=5)
+                raw = json.loads(r.read())
+                if isinstance(raw, list):
+                    sched_tasks = raw
+            except Exception:
+                pass
+
+            # Privacy routing snapshot
+            privacy_ok = True
+            privacy_violations = []
+            try:
+                with open(str(Path.home() / ".openclaw/openclaw.json")) as f:
+                    cfg = json.load(f)
+                for agent in cfg.get("agents", {}).get("list", []):
+                    m = agent.get("model", "")
+                    if "openrouter" in m and agent.get("id") not in _OPENROUTER_ALLOWED_AGENTS:
+                        privacy_violations.append(f"agent[{agent['id']}] → {m}")
+                        privacy_ok = False
+                sig = cfg.get("channels", {}).get("signal", {})
+                if sig.get("dmPolicy") != "allowlist" or sig.get("groupPolicy") != "allowlist":
+                    privacy_violations.append(f"Signal open: dm={sig.get('dmPolicy')} group={sig.get('groupPolicy')}")
+                    privacy_ok = False
+            except Exception:
+                pass
+
+            # Recent errors by service (last 50 events)
+            service_errors: dict = {}
+            for ev in events[:50]:
+                svc_name = ev.get("service", "unknown")
+                if ev.get("severity") in ("critical", "warning"):
+                    service_errors.setdefault(svc_name, []).append({
+                        "ts": ev.get("ts"), "issue": ev.get("issue"), "fix": ev.get("fix"),
+                        "severity": ev.get("severity"),
+                    })
+
+            self._json({
+                "daemon": "big-brother",
+                "version": VERSION,
+                "pid": os.getpid(),
+                "uptime_s": uptime,
+                "sweep_interval_s": SWEEP_INTERVAL,
+                "services": svc,
+                "services_down": [n for n, s in svc.items() if not s.get("up", True)],
+                "events_total": len(events),
+                "recent_events": events[:20],
+                "service_errors": service_errors,
+                "scheduler": sched_stats,
+                "memory": mem_stats,
+                "ollama_models": ollama_models,
+                "privacy": {
+                    "ok": privacy_ok,
+                    "violations": privacy_violations,
+                },
+                "ollama_models": ollama_models,
+                "ollama_warm": ollama_warm,
+                "redis_mem": redis_mem,
+                "volumes": volume_status,
+                "external": external_status,
+                "scheduler_tasks": sched_tasks,
+                "alerted_count": len(_alerted_issues),
+                "pending_restarts": list(_pending_restart),
+            })
         else:
             self.send_response(404)
             self.end_headers()

@@ -168,7 +168,7 @@ def get_meetings_oneonone():
     """Fallback: get meetings from OneOnOne app."""
     try:
         r = subprocess.run(
-            ["curl", "-s", "--connect-timeout", "2", "http://127.0.0.1:37421/api/oneonone/meetings?limit=5"],
+            ["curl", "-s", "--connect-timeout", "2", "http://127.0.0.1:37400/api/oneonone/meetings?limit=5"],
             capture_output=True, text=True, timeout=5
         )
         if r.returncode != 0 or not r.stdout.strip():

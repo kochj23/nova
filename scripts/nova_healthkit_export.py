@@ -34,22 +34,24 @@ import Foundation
 
 let healthStore = HKHealthStore()
 
-// Define types to read
-guard let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis) else { exit(1) }
-guard let hrvType = HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN) else { exit(1) }
-guard let hrType = HKObjectType.quantityType(forIdentifier: .heartRate) else { exit(1) }
-guard let stepType = HKObjectType.quantityType(forIdentifier: .stepCount) else { exit(1) }
-
-do {
-    try healthStore.requestAuthorization(toShare: [], read: [sleepType, hrvType, hrType, stepType])
-} catch {
-    print("Auth failed: \(error)")
-    exit(1)
-}
-
 class DataCollector: NSObject {
     var results = [String: Any]()
     let group = DispatchGroup()
+
+    // HealthKit types defined as class properties — required in Swift 5.9+
+    // to avoid "class cannot close over value defined in outer scope" error
+    let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
+    let hrvType   = HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN)!
+    let hrType    = HKObjectType.quantityType(forIdentifier: .heartRate)!
+    let stepType  = HKObjectType.quantityType(forIdentifier: .stepCount)!
+
+    func requestAuth(completion: @escaping () -> Void) {
+        let typesToRead: Set<HKObjectType> = [sleepType, hrvType, hrType, stepType]
+        healthStore.requestAuthorization(toShare: [], read: typesToRead) { _, error in
+            if let error = error { print("Auth failed: \(error)"); exit(1) }
+            completion()
+        }
+    }
     
     // Get sleep from last 24h
     func fetchSleep() {
@@ -118,13 +120,14 @@ class DataCollector: NSObject {
     }
     
     func collect(completion: @escaping ([String: Any]) -> Void) {
-        fetchSleep()
-        fetchHRV()
-        fetchRestingHR()
-        fetchSteps()
-        
-        group.notify(queue: .main) {
-            completion(self.results)
+        requestAuth {
+            self.fetchSleep()
+            self.fetchHRV()
+            self.fetchRestingHR()
+            self.fetchSteps()
+            self.group.notify(queue: .main) {
+                completion(self.results)
+            }
         }
     }
 }
@@ -144,7 +147,7 @@ sem.wait()
 
 def main():
     # Write Swift script to temp file
-    swift_path = Path.home() / f"Library/Containers/com.digitalnoise.healthkitexport/Data/swift_script_{uuid.uuid4().hex}.swift"
+    swift_path = Path("/tmp") / f"nova_healthkit_{uuid.uuid4().hex}.swift"
     swift_path.write_text(SWIFT_SCRIPT)
     swift_path.chmod(0o600)
 

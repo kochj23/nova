@@ -52,7 +52,7 @@ def main():
 
     # Apps
     apps = [
-        app_status(37421, "OneOnOne"),
+        app_status(37400, "OneOnOne"),
         app_status(37422, "MLXCode"),
         app_status(37423, "NMAPScanner"),
         app_status(37424, "RsyncGUI"),

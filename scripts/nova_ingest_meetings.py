@@ -2,7 +2,7 @@
 """
 nova_ingest_meetings.py — Pull meetings from OneOnOne app API and store in Nova's memory.
 
-Fetches all meetings from the OneOnOne app (port 37421), resolves attendee UUIDs
+Fetches all meetings from the OneOnOne app (port 37400), resolves attendee UUIDs
 to names, and ingests each meeting as a structured memory into the PostgreSQL
 vector store (port 18790).
 
@@ -23,7 +23,7 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timedelta, timezone
 
-ONEONONE_API = "http://127.0.0.1:37421"
+ONEONONE_API = "http://127.0.0.1:37400"
 MEMORY_API = "http://127.0.0.1:18790"
 SOURCE = "oneonone_meetings"
 

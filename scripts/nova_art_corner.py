@@ -278,13 +278,18 @@ def generate_title(concept: str, style: dict) -> str:
 
 def generate_candidates(prompt: str) -> list[Path]:
     """Generate NUM_CANDIDATES images and return their paths."""
-    from nova_image_utils import get_model_for_today, MODELS
+    from nova_image_utils import get_model_for_today, MODELS, _model_available_via_api
     model_key = get_model_for_today()
     model_info = MODELS.get(model_key, MODELS["flux_dev"])
     model_file = model_info["file"]
+    # Fall back to juggernaut if the scheduled model isn't installed
+    if not _model_available_via_api(model_file):
+        log(f"Model {model_file} not found in SwarmUI, falling back to juggernaut")
+        model_info = MODELS["juggernaut"]
+        model_file = model_info["file"]
     # Use the model's optimal steps or our configured steps, whichever is higher
     actual_steps = max(IMAGE_STEPS, model_info.get("optimal_steps", 20))
-    log(f"Model: {model_info['name']} ({model_key}), {actual_steps} steps")
+    log(f"Model: {model_info['name']} ({model_file}), {actual_steps} steps")
 
     candidates = []
 

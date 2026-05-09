@@ -1823,6 +1823,178 @@ async def collect_hdhr(session: aiohttp.ClientSession) -> dict:
         return _hdhr_cache or {"status": "error", "error": str(e), "total_tuners": 4, "active_tuners": 0, "channel_count": 0}
 
 
+# --- Big Brother Dashboard + API Proxy ---
+
+BB_API = "http://127.0.0.1:37461"
+
+
+@app.get("/bb")
+async def bb_dashboard():
+    """Serve the Big Brother oversight dashboard."""
+    return FileResponse("static/bb.html")
+
+
+@app.get("/api/bb/health")
+async def bb_health():
+    """Proxy to Big Brother's /bb/health — full system snapshot for the dashboard."""
+    import urllib.request as _ur
+    try:
+        with _ur.urlopen(f"{BB_API}/bb/health", timeout=8) as r:
+            return _json.loads(r.read())
+    except Exception as e:
+        return {"error": str(e), "big_brother_up": False}
+
+
+@app.post("/api/bb/force-check")
+async def bb_force_check():
+    """Trigger an immediate Big Brother sweep."""
+    import urllib.request as _ur
+    try:
+        req = _ur.Request(f"{BB_API}/bb/force-check", method="POST", data=b"")
+        with _ur.urlopen(req, timeout=5) as r:
+            return _json.loads(r.read())
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/bb/events")
+async def bb_events():
+    """Proxy to Big Brother's event log."""
+    import urllib.request as _ur
+    try:
+        with _ur.urlopen(f"{BB_API}/bb/events", timeout=5) as r:
+            return _json.loads(r.read())
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/privacy/status")
+async def privacy_status():
+    """
+    Proxy to Big Brother's /bb/status + /bb/events, filtered to privacy violations.
+    Used by the NovaControl Diagnostics tab to surface model routing drift and PII leak risks.
+    """
+    import urllib.request as _ur
+    result = {
+        "ok": False,
+        "big_brother_up": False,
+        "routing_clean": False,
+        "violations": [],
+        "last_check": None,
+        "recent_events": [],
+    }
+    try:
+        with _ur.urlopen(f"{BB_API}/bb/status", timeout=5) as r:
+            bb = _json.loads(r.read())
+            result["big_brother_up"] = True
+            result["last_check"] = bb.get("last_sweep")
+    except Exception:
+        result["big_brother_up"] = False
+        return result
+
+    try:
+        with _ur.urlopen(f"{BB_API}/bb/events?n=50", timeout=5) as r:
+            events = _json.loads(r.read()).get("events", [])
+            privacy_events = [
+                e for e in events
+                if "privacy" in e.get("issue", "").lower()
+                or "routing" in e.get("issue", "").lower()
+                or "openrouter" in e.get("issue", "").lower()
+                or "pii" in e.get("issue", "").lower()
+            ]
+            result["recent_events"] = privacy_events[-10:]
+            result["violations"] = [e["issue"] for e in privacy_events if e.get("severity") == "critical"]
+    except Exception:
+        pass
+
+    result["routing_clean"] = len(result["violations"]) == 0
+    result["ok"] = result["big_brother_up"] and result["routing_clean"]
+    return result
+
+
+@app.get("/api/privacy/channels")
+async def privacy_channels():
+    """Return current model-per-channel routing from openclaw.json for the UI."""
+    import urllib.request as _ur
+    try:
+        config_path = Path.home() / ".openclaw/openclaw.json"
+        with open(config_path) as f:
+            config = _json.load(f)
+        mbc = config.get("channels", {}).get("modelByChannel", {})
+        defaults = config.get("agents", {}).get("defaults", {}).get("model", {})
+        agents = [
+            {"id": a.get("id"), "model": a.get("model", "(inherited)")}
+            for a in config.get("agents", {}).get("list", [])
+        ]
+        return {
+            "defaults": defaults,
+            "agents": agents,
+            "channels": mbc,
+            "signal_policy": {
+                "dmPolicy": config.get("channels", {}).get("signal", {}).get("dmPolicy"),
+                "groupPolicy": config.get("channels", {}).get("signal", {}).get("groupPolicy"),
+            }
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
+
+# --- HealthKit API Endpoint ---
+
+HEALTH_DIR = Path.home() / ".openclaw/private/health"
+
+
+@app.get("/api/health/latest")
+async def health_latest():
+    """Return latest HealthKit data. Triggers a fresh export if data is stale (>2h)."""
+    import subprocess as _sp
+    output_path = HEALTH_DIR / "latest.json"
+
+    # Trigger refresh if missing or older than 2 hours
+    stale = True
+    if output_path.exists():
+        age_hours = (time.time() - output_path.stat().st_mtime) / 3600
+        stale = age_hours > 2.0
+
+    if stale:
+        try:
+            result = _sp.run(
+                ["/usr/bin/python3",
+                 str(Path.home() / ".openclaw/scripts/nova_healthkit_export.py")],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode != 0:
+                return {"error": "HealthKit export failed", "stderr": result.stderr[-300:]}
+        except _sp.TimeoutExpired:
+            return {"error": "HealthKit export timed out"}
+        except Exception as e:
+            return {"error": str(e)}
+
+    if not output_path.exists():
+        return {"error": "No health data available"}
+
+    try:
+        with open(output_path) as f:
+            data = _json.load(f)
+        data["_stale_before_refresh"] = stale
+        return data
+    except Exception as e:
+        return {"error": str(e)}
+
+
+@app.get("/api/health/history")
+async def health_history(days: int = 7):
+    """Return health data files from the last N days."""
+    files = sorted(HEALTH_DIR.glob("*.json"), reverse=True)[:days]
+    result = []
+    for f in files:
+        try:
+            result.append(_json.loads(f.read_text()))
+        except Exception:
+            pass
+    return result
+
+
 # --- History API Endpoint ---
 
 RANGE_MAP = {"1h": 3600, "6h": 21600, "24h": 86400, "7d": 604800}

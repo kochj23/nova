@@ -29,7 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 import nova_config
 
-ONEONONE_URL = "http://127.0.0.1:37421/api"
+ONEONONE_URL = "http://127.0.0.1:37400/api"
 MEMORY_URL   = "http://127.0.0.1:18790"
 SLACK_TOKEN  = nova_config.slack_bot_token()
 SLACK_CHAN    = nova_config.SLACK_EMAIL

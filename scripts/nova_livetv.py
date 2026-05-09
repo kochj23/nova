@@ -447,7 +447,25 @@ def load_prefs() -> dict:
             return json.loads(PREFS_FILE.read_text())
         except Exception:
             pass
-    return {"viewed": [], "favorites": [], "history_count": 0}
+    return {"viewed": [], "favorites": [], "history_count": 0, "bad_channels": {}}
+
+
+def mark_bad_channel(prefs: dict, ch: str, ch_name: str, reason: str = "no signal"):
+    """Record a channel as unwatchable. Persists across sessions."""
+    bad = prefs.setdefault("bad_channels", {})
+    entry = bad.get(ch, {"ch": ch, "name": ch_name, "failures": 0, "last_failed": ""})
+    entry["failures"] = entry.get("failures", 0) + 1
+    entry["last_failed"] = datetime.now().isoformat()
+    entry["reason"] = reason
+    bad[ch] = entry
+    log.info(f"Marked ch {ch} ({ch_name}) as bad — {entry['failures']} failure(s), reason: {reason}")
+    save_prefs(prefs)
+
+
+def get_bad_channels(prefs: dict) -> set:
+    """Return set of channel numbers that have failed 2+ times."""
+    bad = prefs.get("bad_channels", {})
+    return {ch for ch, info in bad.items() if info.get("failures", 0) >= 2}
 
 
 def save_prefs(prefs: dict):
@@ -535,13 +553,18 @@ def cmd_dream_surf(args):
     ensure_dirs()
     check_tuner_or_bail(1)
     now = datetime.now()
+    prefs = load_prefs()
 
     lineup = get_lineup()
     if not lineup:
         log.error("Could not fetch channel lineup")
         return
 
-    picks = random.sample(lineup, min(3, len(lineup)))
+    bad = get_bad_channels(prefs)
+    watchable = [c for c in lineup if c["GuideNumber"] not in bad]
+    if not watchable:
+        watchable = lineup
+    picks = random.sample(watchable, min(3, len(watchable)))
     log.info(f"Dream surfing: {[p['GuideNumber'] for p in picks]}")
 
     for ch_info in picks:
@@ -558,6 +581,8 @@ def cmd_dream_surf(args):
                 "pipeline": "dream",
                 "type": "channel_surf",
             })
+        else:
+            mark_bad_channel(prefs, ch, ch_name, reason="no signal during dream surf")
         time.sleep(2)
 
     log.info("Dream surf complete")
@@ -734,8 +759,19 @@ def cmd_novas_time(args):
         log.error("Could not fetch lineup")
         return
 
-    # Pure random channel selection
-    pick = random.choice(lineup)
+    # Filter out channels with 2+ signal failures
+    bad = get_bad_channels(prefs)
+    watchable = [c for c in lineup if c["GuideNumber"] not in bad]
+    if not watchable:
+        log.warning("All channels marked bad — resetting bad channel list")
+        prefs["bad_channels"] = {}
+        save_prefs(prefs)
+        watchable = lineup
+
+    if bad:
+        log.info(f"Skipping {len(bad)} known-bad channel(s): {sorted(bad)}")
+
+    pick = random.choice(watchable)
     ch = pick["GuideNumber"]
     ch_name = pick.get("GuideName", ch)
 
@@ -805,7 +841,14 @@ def cmd_novas_time(args):
         prefs["sessions"] = prefs["sessions"][-50:]
         save_prefs(prefs)
     else:
-        post(f":tv: Tried to watch {ch_name} (ch {ch}) but couldn't get a good signal. Oh well, Little Mister.")
+        mark_bad_channel(prefs, ch, ch_name, reason="no signal / no transcript")
+        failures = prefs.get("bad_channels", {}).get(ch, {}).get("failures", 1)
+        if failures >= 2:
+            post(f":tv: Tried to watch {ch_name} (ch {ch}) but no signal again (#{failures}). "
+                 f"Marking it unwatchable — won't tune here again, Little Mister.")
+        else:
+            post(f":tv: Tried to watch {ch_name} (ch {ch}) but couldn't get a good signal. "
+                 f"Oh well, Little Mister. (Will skip after 1 more failure.)")
 
     log.info("Nova's TV time complete")
 

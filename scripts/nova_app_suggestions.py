@@ -39,7 +39,7 @@ DATA_FILE = Path.home() / ".openclaw" / "workspace" / "app_usage_log.json"
 # (port, name, bundle, data_endpoint, stale_days_threshold)
 # stale_days_threshold: if app hasn't been seen running in this many days, suggest it
 APPS = [
-    (37421, "OneOnOne",       "OneOnOne",       "/api/oneonone/actionitems?completed=false", 3),
+    (37400, "NovaControl",       "OneOnOne",       "/api/oneonone/actionitems?completed=false", 3),
     (37422, "MLXCode",        "MLX Code",       "/api/conversations",                         7),
     (37423, "NMAPScanner",    "NMAPScanner",    "/api/scan/results",                          14),
     (37424, "RsyncGUI",       "RsyncGUI",       None,                                         7),

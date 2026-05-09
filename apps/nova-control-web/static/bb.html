@@ -1,0 +1,465 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Big Brother — Nova Oversight</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <style>
+    .bb-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+      gap: 16px;
+      padding: 20px 24px;
+    }
+    .bb-grid .card-wide { grid-column: span 2; }
+    @media (max-width: 700px) { .bb-grid .card-wide { grid-column: span 1; } }
+
+    /* Service status table */
+    .svc-table { width: 100%; border-collapse: collapse; }
+    .svc-table tr { border-bottom: 1px solid var(--border-glow); }
+    .svc-table tr:last-child { border-bottom: none; }
+    .svc-table td { padding: 5px 4px; font-size: 12px; }
+    .svc-table td:first-child { color: var(--text-secondary); width: 130px; }
+    .svc-name { font-weight: 600; }
+    .svc-port { color: var(--text-dim); font-size: 11px; margin-left: 4px; }
+    .svc-up   { color: var(--accent-green); }
+    .svc-down { color: var(--accent-red); font-weight: 600; animation: pulse-red 1s infinite; }
+
+    /* Event feed */
+    .event-feed { max-height: 340px; overflow-y: auto; }
+    .event-item { padding: 7px 0; border-bottom: 1px solid var(--border-glow); font-size: 12px; }
+    .event-item:last-child { border-bottom: none; }
+    .event-ts { color: var(--text-dim); font-size: 11px; }
+    .event-svc { color: var(--accent-cyan); font-size: 11px; margin: 0 6px; }
+    .event-issue { color: var(--text-primary); }
+    .event-fix { color: var(--text-secondary); font-size: 11px; margin-top: 2px; padding-left: 8px; }
+    .sev-critical { border-left: 3px solid var(--accent-red); padding-left: 8px; }
+    .sev-warning  { border-left: 3px solid var(--accent-yellow); padding-left: 8px; }
+    .sev-info     { border-left: 3px solid var(--accent-cyan); padding-left: 8px; }
+
+    /* Privacy panel */
+    .privacy-ok   { color: var(--accent-green); font-weight: 600; }
+    .privacy-fail { color: var(--accent-red); font-weight: 600; animation: pulse-red 1s infinite; }
+    .violation-item { color: var(--accent-red); font-size: 12px; padding: 3px 0; }
+
+    /* Model list */
+    .model-chip {
+      display: inline-block; padding: 2px 8px; margin: 2px;
+      background: rgba(0,255,200,0.08); border: 1px solid var(--border-glow-bright);
+      border-radius: 3px; font-size: 11px; color: var(--accent-cyan);
+    }
+
+    /* Stats row */
+    .stat-row { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 4px; }
+    .stat-item { text-align: center; }
+    .stat-value { font-size: 22px; font-weight: 700; color: var(--accent-cyan); }
+    .stat-label { font-size: 10px; color: var(--text-dim); letter-spacing: 0.1em; margin-top: 2px; }
+    .stat-value.warn { color: var(--accent-yellow); }
+    .stat-value.crit { color: var(--accent-red); }
+
+    /* Alerts */
+    .bb-alert-banner {
+      margin: 0 24px 0 24px; padding: 10px 16px;
+      background: rgba(255,51,68,0.15); border: 1px solid var(--accent-red);
+      border-radius: 4px; color: var(--accent-red); font-size: 13px;
+      display: none;
+    }
+    .bb-alert-banner.visible { display: block; }
+
+    /* Pulse animation */
+    @keyframes pulse-red {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* Scheduler task table */
+    .task-list { max-height: 220px; overflow-y: auto; }
+    .task-row { display: flex; justify-content: space-between; padding: 4px 0;
+                border-bottom: 1px solid var(--border-glow); font-size: 12px; }
+    .task-row:last-child { border-bottom: none; }
+    .task-name { color: var(--text-secondary); }
+    .task-ok   { color: var(--accent-green); }
+    .task-fail { color: var(--accent-red); }
+    .task-dim  { color: var(--text-dim); }
+
+    /* Uptime badge */
+    .uptime-badge {
+      font-size: 11px; color: var(--text-dim);
+      background: rgba(255,255,255,0.05); padding: 2px 8px; border-radius: 3px;
+    }
+
+    /* Log error list */
+    .log-errors { max-height: 180px; overflow-y: auto; }
+    .log-error-item { font-size: 11px; color: var(--accent-yellow); padding: 3px 0;
+                      border-bottom: 1px solid var(--border-glow); white-space: nowrap;
+                      overflow: hidden; text-overflow: ellipsis; }
+    .log-error-item.crit { color: var(--accent-red); }
+    .log-error-svc { color: var(--text-dim); margin-right: 6px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>BIG BROTHER</h1>
+      <span class="header-subtitle">nova oversight &amp; self-healing</span>
+    </div>
+    <div class="header-right">
+      <span id="bb-uptime" class="uptime-badge">—</span>
+      <button id="theme-toggle" class="theme-toggle" title="Toggle theme">&#9789;</button>
+      <span id="poll-latency" class="meta-text"></span>
+      <div id="connection-status" class="status-dot"></div>
+    </div>
+  </header>
+
+  <div id="bb-alert" class="bb-alert-banner"></div>
+
+  <div class="bb-grid">
+
+    <!-- Summary Stats -->
+    <div class="card card-wide" id="card-summary">
+      <div class="card-header"><span class="card-title">System Status</span><span class="card-dot"></span></div>
+      <div class="card-body">
+        <div class="stat-row" id="stat-row">
+          <div class="stat-item"><div class="stat-value" id="stat-services-up">—</div><div class="stat-label">SERVICES UP</div></div>
+          <div class="stat-item"><div class="stat-value" id="stat-services-down">—</div><div class="stat-label">DOWN</div></div>
+          <div class="stat-item"><div class="stat-value" id="stat-events">—</div><div class="stat-label">HEAL EVENTS</div></div>
+          <div class="stat-item"><div class="stat-value" id="stat-mem-count">—</div><div class="stat-label">MEMORIES</div></div>
+          <div class="stat-item"><div class="stat-value" id="stat-dead-letter">—</div><div class="stat-label">DEAD LETTERS</div></div>
+          <div class="stat-item"><div class="stat-value" id="stat-sched-fail">—</div><div class="stat-label">SCHED FAILS</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Service Health -->
+    <div class="card card-wide" id="card-services">
+      <div class="card-header"><span class="card-title">Service Health</span><span class="card-dot"></span></div>
+      <div class="card-body">
+        <table class="svc-table" id="svc-table">
+          <tbody><tr><td colspan="3" class="dim">Loading...</td></tr></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Privacy Routing -->
+    <div class="card" id="card-privacy">
+      <div class="card-header"><span class="card-title">Privacy Routing</span><span class="card-dot"></span></div>
+      <div class="card-body">
+        <div id="privacy-status" class="privacy-ok">Checking...</div>
+        <div id="privacy-violations"></div>
+      </div>
+    </div>
+
+    <!-- Ollama Models -->
+    <div class="card" id="card-ollama">
+      <div class="card-header"><span class="card-title">Ollama</span><span class="card-dot"></span></div>
+      <div class="card-body">
+        <div id="ollama-warm" style="margin-bottom:6px"></div>
+        <div id="ollama-models"><span class="dim">Loading...</span></div>
+      </div>
+    </div>
+
+    <!-- Redis Memory -->
+    <div class="card" id="card-redis-mem">
+      <div class="card-header"><span class="card-title">Redis Memory</span><span class="card-dot"></span></div>
+      <div class="card-body" id="redis-mem-body"><span class="dim">Loading...</span></div>
+    </div>
+
+    <!-- Volumes -->
+    <div class="card" id="card-volumes">
+      <div class="card-header"><span class="card-title">Volume Mounts</span><span class="card-dot"></span></div>
+      <div class="card-body" id="volume-body"><span class="dim">Loading...</span></div>
+    </div>
+
+    <!-- External Services -->
+    <div class="card" id="card-external">
+      <div class="card-header"><span class="card-title">External Services</span><span class="card-dot"></span></div>
+      <div class="card-body" id="external-body"><span class="dim">Loading...</span></div>
+    </div>
+
+    <!-- Scheduler -->
+    <div class="card" id="card-scheduler">
+      <div class="card-header"><span class="card-title">Scheduler</span><span class="card-dot"></span></div>
+      <div class="card-body">
+        <div id="sched-summary" class="dim">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Scheduler Tasks -->
+    <div class="card card-wide" id="card-sched-tasks">
+      <div class="card-header"><span class="card-title">Scheduler Tasks</span><span class="card-dot"></span></div>
+      <div class="card-body">
+        <div class="task-list" id="sched-tasks"><span class="dim">Loading...</span></div>
+      </div>
+    </div>
+
+    <!-- Memory System -->
+    <div class="card" id="card-memory">
+      <div class="card-header"><span class="card-title">Memory System</span><span class="card-dot"></span></div>
+      <div class="card-body">
+        <div id="memory-summary" class="dim">Loading...</div>
+      </div>
+    </div>
+
+    <!-- Heal Event Feed -->
+    <div class="card card-wide" id="card-events">
+      <div class="card-header">
+        <span class="card-title">Heal Event Feed</span>
+        <button onclick="forceSweep()" style="font-size:11px;padding:2px 10px;cursor:pointer;
+          background:rgba(0,255,200,0.1);border:1px solid var(--border-glow-bright);
+          color:var(--accent-cyan);border-radius:3px;">Force Sweep</button>
+      </div>
+      <div class="card-body">
+        <div class="event-feed" id="event-feed"><span class="dim">No events yet.</span></div>
+      </div>
+    </div>
+
+    <!-- Service Error Log -->
+    <div class="card card-wide" id="card-log-errors">
+      <div class="card-header"><span class="card-title">Recent Log Errors</span><span class="card-dot"></span></div>
+      <div class="card-body">
+        <div class="log-errors" id="log-errors"><span class="dim">No errors detected.</span></div>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    const BB_API = '/api/bb/health';
+    const POLL_MS = 10000;
+    let lastHash = '';
+
+    const $ = id => document.getElementById(id);
+
+    function fmt(n) {
+      if (n === undefined || n === null) return '—';
+      if (n >= 1e6) return (n/1e6).toFixed(2) + 'M';
+      if (n >= 1e3) return (n/1e3).toFixed(1) + 'K';
+      return String(n);
+    }
+
+    function fmtUptime(s) {
+      if (!s) return '—';
+      const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+      if (h > 0) return `up ${h}h ${m}m`;
+      return `up ${m}m`;
+    }
+
+    function fmtTs(iso) {
+      if (!iso) return '';
+      try {
+        const d = new Date(iso);
+        return d.toLocaleTimeString('en-US', {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false});
+      } catch { return iso.slice(11,19); }
+    }
+
+    async function poll() {
+      const t0 = performance.now();
+      try {
+        const res = await fetch(BB_API);
+        if (!res.ok) throw new Error(`${res.status}`);
+        const d = await res.json();
+        const ms = Math.round(performance.now() - t0);
+        $('poll-latency').textContent = `${ms}ms`;
+        $('connection-status').className = 'status-dot connected';
+        render(d);
+      } catch(e) {
+        $('connection-status').className = 'status-dot error';
+        $('poll-latency').textContent = 'err';
+      }
+      setTimeout(poll, POLL_MS);
+    }
+
+    function render(d) {
+      $('bb-uptime').textContent = fmtUptime(d.uptime_s);
+
+      // Alert banner
+      const down = d.services_down || [];
+      const privFail = !d.privacy?.ok;
+      if (down.length > 0 || privFail) {
+        const msgs = [];
+        if (down.length) msgs.push(`DOWN: ${down.join(', ')}`);
+        if (privFail) msgs.push('PRIVACY VIOLATION');
+        $('bb-alert').textContent = '⚠ ' + msgs.join('  |  ');
+        $('bb-alert').classList.add('visible');
+      } else {
+        $('bb-alert').classList.remove('visible');
+      }
+
+      // Summary stats
+      const svcs = Object.values(d.services || {});
+      const nUp = svcs.filter(s => s.up).length;
+      const nDown = down.length;
+      $('stat-services-up').textContent = nUp;
+      $('stat-services-up').className = 'stat-value' + (nUp > 0 ? '' : ' crit');
+      $('stat-services-down').textContent = nDown;
+      $('stat-services-down').className = 'stat-value' + (nDown > 0 ? ' crit' : '');
+      $('stat-events').textContent = d.events_total || 0;
+      const memCount = d.memory?.count;
+      $('stat-mem-count').textContent = fmt(memCount);
+      const dead = d.memory?.dead_letter_count || 0;
+      $('stat-dead-letter').textContent = dead;
+      $('stat-dead-letter').className = 'stat-value' + (dead > 10 ? ' warn' : '');
+      const schedFail = d.scheduler?.total_failures || 0;
+      $('stat-sched-fail').textContent = schedFail;
+      $('stat-sched-fail').className = 'stat-value' + (schedFail > 5 ? ' warn' : '');
+
+      // Service table
+      const svcMap = d.services || {};
+      const SILENCED = new Set(['Homebridge']);
+      const rows = Object.entries(svcMap).map(([name, s]) => {
+        const silenced = SILENCED.has(name) && !s.up;
+        const cls = s.up ? 'svc-up' : silenced ? 'task-dim' : 'svc-down';
+        const icon = s.up ? '✓' : silenced ? '—' : '✗';
+        const label = s.up ? 'UP' : silenced ? 'silenced' : 'DOWN';
+        const since = s.last_seen ? fmtTs(s.last_seen) : '';
+        const restarts = s.restarts > 0 ? `<span style="color:var(--accent-yellow)">(${s.restarts}↺)</span>` : '';
+        return `<tr${silenced ? ' style="opacity:0.4"' : ''}>
+          <td class="svc-name">${name}</td>
+          <td class="${cls}">${icon} ${label} ${restarts}</td>
+          <td class="task-dim">${since}</td>
+        </tr>`;
+      }).join('');
+      $('svc-table').querySelector('tbody').innerHTML = rows || '<tr><td colspan="3" class="dim">No data</td></tr>';
+
+      // Privacy
+      const pOk = d.privacy?.ok !== false;
+      const pViols = d.privacy?.violations || [];
+      $('privacy-status').textContent = pOk ? '✓ All routing local' : `✗ ${pViols.length} violation(s)`;
+      $('privacy-status').className = pOk ? 'privacy-ok' : 'privacy-fail';
+      $('privacy-violations').innerHTML = pViols.map(v =>
+        `<div class="violation-item">⚠ ${v}</div>`).join('');
+
+      // Ollama
+      const warm = d.ollama_warm || [];
+      const models = d.ollama_models || [];
+      $('ollama-warm').innerHTML = warm.length
+        ? `<span style="color:var(--accent-green);font-size:11px">🔥 ${warm.length} warm:</span> ` +
+          warm.map(m => `<span class="model-chip" style="border-color:var(--accent-green)">${m.replace(':latest','')}</span>`).join('')
+        : `<span style="color:var(--text-dim);font-size:11px">❄ No models warm (cold start on next request)</span>`;
+      $('ollama-models').innerHTML = models.length
+        ? models.map(m => `<span class="model-chip">${m.replace(':latest','')}</span>`).join('')
+        : '<span class="dim">No models found</span>';
+
+      // Redis memory
+      const rm = d.redis_mem || {};
+      if (rm.used_mb !== undefined) {
+        const pct = rm.pct || 0;
+        const color = pct > 85 ? 'var(--accent-red)' : pct > 65 ? 'var(--accent-yellow)' : 'var(--accent-green)';
+        const barW = Math.min(pct, 100);
+        $('redis-mem-body').innerHTML = `
+          <div style="font-size:13px;color:${color};font-weight:600">${pct.toFixed(1)}%</div>
+          <div style="background:rgba(255,255,255,0.1);border-radius:3px;height:6px;margin:6px 0">
+            <div style="background:${color};width:${barW}%;height:6px;border-radius:3px;transition:width 0.5s"></div>
+          </div>
+          <div class="task-dim">${rm.used_mb}MB / ${rm.max_mb}MB max</div>`;
+      } else {
+        $('redis-mem-body').innerHTML = '<span class="dim">No data</span>';
+      }
+
+      // Volumes
+      const vols = d.volumes || {};
+      $('volume-body').innerHTML = Object.entries(vols).map(([path, info]) => {
+        const ok = info.mounted;
+        const cls = ok ? 'svc-up' : 'svc-down';
+        return `<div class="task-row">
+          <span class="task-name" style="font-size:11px">${path}</span>
+          <span class="${cls}">${ok ? '✓ mounted' : '✗ UNMOUNTED'}</span>
+        </div>`;
+      }).join('') || '<span class="dim">No volume data</span>';
+
+      // External services
+      const ext = d.external || {};
+      $('external-body').innerHTML = Object.entries(ext).map(([name, up]) => {
+        const cls = up ? 'svc-up' : 'svc-down';
+        return `<div class="task-row">
+          <span class="task-name">${name}</span>
+          <span class="${cls}">${up ? '✓ reachable' : '✗ UNREACHABLE'}</span>
+        </div>`;
+      }).join('') || '<span class="dim">No external data</span>';
+
+      // Scheduler tasks table
+      const tasks = d.scheduler_tasks || [];
+      if (tasks.length) {
+        const failing = tasks.filter(t => (t.consecutive_failures || 0) >= 3);
+        const sorted = [...failing, ...tasks.filter(t => (t.consecutive_failures || 0) < 3)]
+          .slice(0, 40);
+        $('sched-tasks').innerHTML = sorted.map(t => {
+          const fails = t.consecutive_failures || 0;
+          const runs = t.run_count || 0;
+          const cls = fails >= 3 ? 'task-fail' : fails > 0 ? '' : 'task-ok';
+          const status = fails >= 3 ? `✗ ${fails} fails` : fails > 0 ? `⚠ ${fails} fail` : `✓`;
+          const lastRun = t.last_run ? fmtTs(new Date(t.last_run * 1000).toISOString()) : '—';
+          return `<div class="task-row">
+            <span class="task-name">${t.name || '?'}</span>
+            <span class="${cls}" style="min-width:80px;text-align:right">${status}</span>
+            <span class="task-dim" style="min-width:60px;text-align:right">${runs} runs</span>
+            <span class="task-dim" style="min-width:55px;text-align:right">${lastRun}</span>
+          </div>`;
+        }).join('');
+      } else {
+        $('sched-tasks').innerHTML = '<span class="dim">No task data (scheduler may not expose /tasks endpoint)</span>';
+      }
+
+      // Scheduler
+      const sc = d.scheduler || {};
+      $('sched-summary').innerHTML = sc.status
+        ? `<span class="${sc.status === 'running' ? 'svc-up' : 'svc-down'}">${sc.status.toUpperCase()}</span>
+           <span class="task-dim"> · ${sc.tasks_total||0} tasks · ${sc.total_runs||0} runs · ${sc.total_failures||0} failures · uptime ${fmtUptime(sc.uptime_s)}</span>`
+        : '<span class="dim">Scheduler unreachable</span>';
+
+      // Memory
+      const mem = d.memory || {};
+      $('memory-summary').innerHTML = mem.status
+        ? `<span class="${mem.status === 'ok' ? 'svc-up' : 'svc-down'}">${mem.status.toUpperCase()}</span>
+           <span class="task-dim"> · ${fmt(mem.count)} memories · queue: ${mem.queue_length||0} · dead: ${mem.dead_letter_count||0}</span>
+           <br><span class="task-dim">model: ${mem.model||'?'} · ${mem.backend||'?'}</span>`
+        : '<span class="dim">Memory server unreachable</span>';
+
+      // Event feed
+      const events = d.recent_events || [];
+      if (events.length === 0) {
+        $('event-feed').innerHTML = '<span class="dim" style="color:var(--accent-green)">✓ No heal events — all systems nominal</span>';
+      } else {
+        $('event-feed').innerHTML = events.map(ev => `
+          <div class="event-item sev-${ev.severity||'info'}">
+            <span class="event-ts">${fmtTs(ev.ts)}</span>
+            <span class="event-svc">[${ev.service||'?'}]</span>
+            <span class="event-issue">${ev.issue||''}</span>
+            <div class="event-fix">↳ ${ev.fix||''}</div>
+          </div>`).join('');
+      }
+
+      // Service errors by service
+      const svcErrors = d.service_errors || {};
+      const allErrors = Object.entries(svcErrors).flatMap(([svc, errs]) =>
+        errs.map(e => ({...e, svc}))
+      ).sort((a,b) => (b.ts||'').localeCompare(a.ts||'')).slice(0, 30);
+
+      if (allErrors.length === 0) {
+        $('log-errors').innerHTML = '<span class="dim" style="color:var(--accent-green)">✓ No recent log errors</span>';
+      } else {
+        $('log-errors').innerHTML = allErrors.map(e => `
+          <div class="log-error-item ${e.severity==='critical'?'crit':''}">
+            <span class="log-error-svc">[${e.svc}]</span>${e.issue||''}
+          </div>`).join('');
+      }
+    }
+
+    async function forceSweep() {
+      try {
+        await fetch('/api/bb/force-check', {method:'POST'});
+        setTimeout(poll, 2000);
+      } catch(e) {}
+    }
+
+    // Theme toggle
+    $('theme-toggle').addEventListener('click', () => {
+      const html = document.documentElement;
+      html.dataset.theme = html.dataset.theme === 'dark' ? 'light' : 'dark';
+    });
+
+    poll();
+  </script>
+</body>
+</html>

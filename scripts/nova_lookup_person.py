@@ -16,7 +16,7 @@ import sys
 import urllib.request
 from difflib import SequenceMatcher
 
-ONEONONE = "http://127.0.0.1:37421/api"
+ONEONONE = "http://127.0.0.1:37400/api"
 
 
 def get(path):
@@ -93,7 +93,7 @@ def main():
     meetings = get("/meetings?limit=500")
 
     if not people:
-        print(json.dumps({"error": "OneOnOne app not running (port 37421)"}))
+        print(json.dumps({"error": "OneOnOne app not running (port 37400)"}))
         sys.exit(1)
 
     id_to_name = {p["id"]: p["name"].strip() for p in people}

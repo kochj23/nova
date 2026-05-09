@@ -82,6 +82,23 @@ JORDAN_SIGNAL = "+1" + "8187310893"         # noqa: Jordan's Signal
 VECTOR_URL    = "http://127.0.0.1:18790/remember"
 SCRIPTS_DIR   = str(__import__('pathlib').Path.home() / ".openclaw/scripts")
 
+# ── NovaControl unified API (port 37400) ─────────────────────────────────────
+# Single app serves data for all of Jordan's apps so Nova never needs multiple
+# processes running. Use these constants instead of hardcoding port numbers.
+
+NOVACONTROL   = "http://127.0.0.1:37400"
+
+# App data endpoints
+NC_ONEONONE   = f"{NOVACONTROL}/api/oneonone"      # meetings, people, action items, goals
+NC_NMAP       = f"{NOVACONTROL}/api/nmap"           # network scan, devices, threats
+NC_RSYNC      = f"{NOVACONTROL}/api/rsync"          # sync jobs and history
+NC_HOMEKIT    = f"{NOVACONTROL}/api/homekit"        # scenes, accessories
+NC_SYSTEM     = f"{NOVACONTROL}/api/system"         # CPU, RAM, processes
+NC_NEWS       = f"{NOVACONTROL}/api/news"           # breaking news, favorites
+NC_HEALTH     = f"{NOVACONTROL}/api/health"         # HealthKit snapshot
+NC_PLEX       = f"{NOVACONTROL}/api/plex"           # now playing, on deck, library
+NC_CALENDAR   = f"{NOVACONTROL}/api/calendar"       # today's events, upcoming
+
 
 # ── OpenRouter ───────────────────────────────────────────────────────────────
 

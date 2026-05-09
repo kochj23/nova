@@ -113,7 +113,7 @@ async def _ingest_worker():
             source    = data.get("source", "unknown")
             metadata  = data.get("metadata", {})
             memory_id = data.get("id", str(uuid.uuid4()))
-            created   = data.get("created_at", datetime.utcnow().isoformat())
+            created   = data.get("created_at", datetime.now(timezone.utc).isoformat())
             retries   = data.get("_retries", 0)
 
             text = _sanitize_text(raw_text)
@@ -258,7 +258,7 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
         raise HTTPException(status_code=400, detail="text cannot be empty after sanitization")
 
     memory_id = str(uuid.uuid4())
-    created   = datetime.utcnow().isoformat()
+    created   = datetime.now(timezone.utc).isoformat()
 
     if async_mode:
         # Push to Redis queue — returns instantly

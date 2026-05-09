@@ -862,7 +862,7 @@ def meeting_notes():
     try:
         r = subprocess.run(
             ["curl", "-s", "--connect-timeout", "2",
-             "http://127.0.0.1:37421/api/oneonone/meetings?limit=20"],
+             "http://127.0.0.1:37400/api/oneonone/meetings?limit=20"],
             capture_output=True, text=True, timeout=5
         )
         if r.returncode != 0 or not r.stdout.strip():
