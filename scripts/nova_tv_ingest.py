@@ -433,13 +433,19 @@ def process_video(video: Path, state: dict, work_dir: Path) -> dict | None:
     })
 
     # Per-episode notification to #nova-notifications
+    # Try to pull an existing memory for this show; fall back to one of the
+    # just-ingested chunks so there's always something to show.
     memory_snippet = random_memory_for_show(show_name)
+    if not memory_snippet and chunks:
+        snippet_chunk = random.choice(chunks)
+        memory_snippet = re.sub(r"^\[.*?\]\s*", "", snippet_chunk)[:200]
+
     notif_lines = [
         f":clapper: *{show_name}* — _{title[:80]}_",
         f":brain: {ingested} memories stored `[{source}]` · {word_count} words transcribed",
     ]
     if memory_snippet:
-        notif_lines.append(f":thought_balloon: _\"{memory_snippet[:160]}…\"_")
+        notif_lines.append(f":thought_balloon: _\"{memory_snippet[:180]}…\"_")
     post_slack("\n".join(notif_lines))
 
     return {

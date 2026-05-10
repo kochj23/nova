@@ -227,7 +227,7 @@ tasks:
   mail_deliver_midday:
     script: nova_mail_deliver.py
     schedule: cron 5 12 * * *
-    timeout: 120
+    timeout: 300
     overlap: skip
 
   context_bridge_am:
@@ -260,7 +260,7 @@ tasks:
   mail_deliver_pm:
     script: nova_mail_deliver.py
     schedule: cron 0 18 * * *
-    timeout: 120
+    timeout: 300
     overlap: skip
 
   herd_profiles:

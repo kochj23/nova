@@ -771,6 +771,7 @@ def _check_disk_space() -> list:
         ("/Volumes/Data", "Data volume (AI models)"),
         ("/Volumes/MoreData", "MoreData volume (PostgreSQL)"),
         (str(Path.home()), "Main SSD (~/)"),
+        ("/Volumes/external", "External media volume"),
     ]
     for path, label in volumes:
         try:
@@ -1747,6 +1748,96 @@ def _full_sweep():
     for dw in disk_warnings:
         issues.append(f"Low disk: {dw}")
         _record_event("warning", f"Low disk space: {dw}", "No auto-fix — manual cleanup needed", "System")
+
+    # ── Ollama auto-restart if port is down ──────────────────────────────────
+    if not _port_open("127.0.0.1", 11434):
+        try:
+            subprocess.run(["open", "-a", "Ollama"], capture_output=True, timeout=10)
+            fixes.append("Opened Ollama.app (was not running)")
+            _record_event("critical", "Ollama (:11434) DOWN", "Launched Ollama.app via `open -a`", "Ollama")
+        except Exception as exc:
+            _record_event("critical", "Ollama (:11434) DOWN", f"Failed to launch Ollama.app: {exc}", "Ollama")
+
+    # ── SwarmUI backend error detection ──────────────────────────────────────
+    try:
+        resp = urllib.request.urlopen(
+            "http://127.0.0.1:7801/API/GetStatus", timeout=6
+        )
+        swarm = json.loads(resp.read())
+        # SwarmUI returns {"status": "running"} or {"status": "error", "error": "..."}
+        if swarm.get("status") == "error":
+            err = swarm.get("error", "unknown error")
+            _maybe_notify(
+                "swarmui_backend_error",
+                f":warning: *SwarmUI backend error* — {err[:120]}\n"
+                f"Art Corner and image generation will fail until resolved.",
+                is_critical=False,
+            )
+            _record_event("warning", f"SwarmUI backend error: {err[:80]}",
+                          "Check SwarmUI logs; may need model reload", "SwarmUI")
+    except Exception:
+        pass
+
+    # ── Synology + UNAS state file staleness ─────────────────────────────────
+    _STATE_DIR = Path.home() / ".openclaw/workspace/state"
+    _NAS_STATES = [
+        (_STATE_DIR / "nova_synology_state.json", "Synology monitor", 7200),   # 2h
+        (_STATE_DIR / "nova_unas_status.json",    "UNAS Pro monitor",  600),   # 10m
+    ]
+    for state_path, label, max_age in _NAS_STATES:
+        try:
+            if state_path.exists():
+                age = time.time() - state_path.stat().st_mtime
+                if age > max_age:
+                    age_min = int(age // 60)
+                    issues.append(f"{label} state stale ({age_min}m since last update)")
+                    _record_event("warning", f"{label} state stale ({age_min}m)",
+                                  "Check scheduler — monitor may not be running", label)
+            else:
+                issues.append(f"{label} state file missing — monitor not yet run")
+                _record_event("warning", f"{label} state file missing",
+                              "Run nova_synology_monitor.py or nova_unas_monitor.py manually", label)
+        except Exception:
+            pass
+
+    # ── External volume disk space (/Volumes/external, /Volumes/NAS) ─────────
+    for ext_vol, label in [("/Volumes/external", "External media (/Volumes/external)"),
+                            ("/Volumes/NAS", "NAS mount (/Volumes/NAS)")]:
+        try:
+            st = os.statvfs(ext_vol)
+            free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
+            total_gb = (st.f_blocks * st.f_frsize) / (1024 ** 3)
+            used_pct = 100 * (1 - st.f_bavail / max(st.f_blocks, 1))
+            if used_pct > 90:
+                issues.append(f"{label}: {used_pct:.0f}% full ({free_gb:.0f}GB free)")
+                _record_event("warning", f"{label} {used_pct:.0f}% full",
+                              "Delete old recordings or expand storage", "Storage")
+        except Exception:
+            pass  # not mounted — volume mount check handles this
+
+    # ── Scheduler script existence check ─────────────────────────────────────
+    # Catches the case where a script was deleted but its scheduler task remains.
+    try:
+        resp = urllib.request.urlopen("http://127.0.0.1:37460/tasks", timeout=5)
+        tasks = json.loads(resp.read())
+        if isinstance(tasks, list):
+            for t in tasks:
+                script = t.get("script", "")
+                if not script:
+                    continue
+                script_path = SCRIPTS / script
+                if not script_path.exists():
+                    task_name = t.get("name", script)
+                    _maybe_notify(
+                        f"missing_script_{script}",
+                        f":x: *Scheduler script missing*: `{script}`\n"
+                        f"Task `{task_name}` will fail every run until restored.",
+                        is_critical=False,
+                    )
+                    _record_event("warning", f"Scheduler script missing: {script}",
+                                  "Restore script or disable task in scheduler.yaml", "Scheduler")
+    except Exception:
+        pass
 
     # ── Notify ───────────────────────────────────────────────────────────────
     if issues:
