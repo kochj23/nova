@@ -319,7 +319,7 @@ tasks:
   tv_ingest:
     script: nova_tv_ingest.py
     schedule: cron 0 23 * * *
-    timeout: 14400
+    timeout: 28800
     overlap: skip
     group: livetv
 
