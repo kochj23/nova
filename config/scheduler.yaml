@@ -316,6 +316,13 @@ tasks:
     overlap: skip
     group: livetv
 
+  tv_ingest:
+    script: nova_tv_ingest.py
+    schedule: cron 0 23 * * *
+    timeout: 14400
+    overlap: skip
+    group: livetv
+
   # ── Daily: night (tech today, digests, reports) ─────────────────────────
 
   tech_today:

@@ -167,6 +167,11 @@ _last_gateway_restart: float = 0.0
 
 # Discord 3-strike before restart — timeouts ≠ disconnect
 _discord_timeout_count: int = 0
+
+# Internet outage tracking — suppress channel-disconnect storm when WAN is down
+_internet_down: bool = False
+_internet_down_since: float = 0.0
+_internet_down_alerted: bool = False
 DISCORD_STRIKE_THRESHOLD = 3
 
 # Signal gap tracking — log when signal-cli goes unreachable and for how long
@@ -394,6 +399,56 @@ def _do_restart(service_name: str) -> bool:
             return False
 
     return False
+
+
+def _check_internet() -> bool:
+    """Quick DNS probe to verify internet connectivity. Returns True if internet is up."""
+    import socket
+    try:
+        socket.setdefaulttimeout(3)
+        socket.getaddrinfo("dns.google", 443)
+        return True
+    except Exception:
+        return False
+
+
+def _handle_internet_state(issues: list, fixes: list):
+    """
+    Detect internet outages and fire a single alert instead of per-restart
+    channel-disconnect spam. Modifies issues/fixes in place.
+    Updates the global _internet_down / _internet_down_alerted state.
+    """
+    global _internet_down, _internet_down_since, _internet_down_alerted
+
+    internet_up = _check_internet()
+
+    if not internet_up and not _internet_down:
+        # Internet just went down
+        _internet_down = True
+        _internet_down_since = time.time()
+        _internet_down_alerted = False
+        log("Internet DOWN — will suppress channel-disconnect alerts",
+            level=LOG_WARN, source="big-brother")
+
+    if not internet_up and _internet_down and not _internet_down_alerted:
+        # Fire one alert
+        duration_s = int(time.time() - _internet_down_since)
+        issues.append("Internet connection DOWN")
+        _record_event("critical", "Internet connection DOWN",
+                      "Waiting for WAN to recover", "Network")
+        _internet_down_alerted = True
+        log("Internet DOWN alert fired", level=LOG_WARN, source="big-brother")
+
+    if internet_up and _internet_down:
+        # Internet came back
+        down_secs = int(time.time() - _internet_down_since)
+        _internet_down = False
+        _internet_down_alerted = False
+        fixes.append(f"Internet restored after {down_secs // 60}m {down_secs % 60}s")
+        _record_event("critical", "Internet DOWN",
+                      f"Internet restored after {down_secs // 60}m {down_secs % 60}s",
+                      "Network")
+        log(f"Internet restored after {down_secs}s", level=LOG_INFO, source="big-brother")
 
 
 def _restart_gateway() -> bool:
@@ -1398,7 +1453,10 @@ def _full_sweep():
                 if issue_key in _alerted_issues:
                     _alerted_issues.discard(issue_key)
 
-    # ── Channel health (only if gateway is up) ───────────────────────────────
+    # ── Internet outage detection (runs before channel checks) ──────────────
+    _handle_internet_state(issues, fixes)
+
+    # ── Channel health (only if gateway is up and internet is up) ────────────
     global _discord_timeout_count
     gateway_up = _port_open("127.0.0.1", 18789)
     if gateway_up:
@@ -1421,17 +1479,23 @@ def _full_sweep():
 
         disconnected = [ch for ch, st in channels.items() if st == "disconnected"]
         if disconnected:
-            issues.append(f"Channels disconnected: {', '.join(disconnected)}")
-            _record_event("critical",
-                          f"Channels disconnected: {', '.join(disconnected)}",
-                          "Restarting gateway",
-                          "Gateway")
-            if not protected_running:
-                success = _restart_gateway()
-                if success:
-                    fixes.append(f"Restarted gateway (channels: {', '.join(disconnected)})")
-                else:
-                    fixes.append("FAILED to restart gateway for channel reconnect")
+            # Suppress per-restart channel alerts when internet is down —
+            # the disconnect is caused by WAN loss, not a Nova config problem.
+            if _internet_down:
+                log(f"Channel disconnects suppressed — internet is DOWN",
+                    level=LOG_INFO, source="big-brother")
+            else:
+                issues.append(f"Channels disconnected: {', '.join(disconnected)}")
+                _record_event("critical",
+                              f"Channels disconnected: {', '.join(disconnected)}",
+                              "Restarting gateway",
+                              "Gateway")
+                if not protected_running:
+                    success = _restart_gateway()
+                    if success:
+                        fixes.append(f"Restarted gateway (channels: {', '.join(disconnected)})")
+                    else:
+                        fixes.append("FAILED to restart gateway for channel reconnect")
 
         # EPERM check
         if _check_gateway_eperm():

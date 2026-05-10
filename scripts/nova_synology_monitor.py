@@ -33,6 +33,7 @@ import json
 import ssl
 import subprocess
 import sys
+import time
 import urllib.request
 import urllib.parse
 from datetime import datetime, date
@@ -1062,7 +1063,7 @@ def find_problems(sysinfo, utilization, storage):
                 "category": "temperature",
                 "message": f"System temperature: {temp} C (DSM warning flag set)",
             })
-        elif temp and temp > 65:
+        elif temp and temp > 72:
             problems.append({
                 "severity": "medium",
                 "category": "temperature",
@@ -1268,12 +1269,14 @@ def full_check(session):
             ram_pct = ((total_kb - avail_kb) / total_kb) * 100
         # Network throughput (bytes/sec, summed across all interfaces)
         for iface in utilization.get("network", []):
-            net_tx_bps += iface.get("tx", 0)
-            net_rx_bps += iface.get("rx", 0)
+            if isinstance(iface, dict):
+                net_tx_bps += iface.get("tx", 0)
+                net_rx_bps += iface.get("rx", 0)
         # Disk I/O (bytes/sec, summed across all volumes)
         for disk in utilization.get("disk", []):
-            disk_read_bps  += disk.get("read_byte",  disk.get("rd_byte",  0))
-            disk_write_bps += disk.get("write_byte", disk.get("wr_byte", 0))
+            if isinstance(disk, dict):
+                disk_read_bps  += disk.get("read_byte",  disk.get("rd_byte",  0))
+                disk_write_bps += disk.get("write_byte", disk.get("wr_byte", 0))
 
     vol_summary = ""
     if storage:
@@ -1289,27 +1292,59 @@ def full_check(session):
     log(f"Volumes: {vol_summary}")
     log(f"Problems: {len(problems)}")
 
-    # Post to Slack ONLY if there are problems
+    # Post to Slack ONLY if there are problems — with per-category dedup
+    # Temperature alerts suppressed for 2h once fired to avoid every-30min spam.
     if problems:
-        lines = [f"*Synology NAS Alert — {model} — {NOW.strftime('%I:%M %p')}*"]
-        high = [p for p in problems if p["severity"] == "high"]
-        med = [p for p in problems if p["severity"] == "medium"]
-        low = [p for p in problems if p["severity"] == "low"]
+        # Load dedup state
+        dedup_file = STATE_DIR / "synology_alert_dedup.json"
+        try:
+            dedup = json.loads(dedup_file.read_text()) if dedup_file.exists() else {}
+        except Exception:
+            dedup = {}
 
-        if high:
-            lines.append("*Critical:*")
-            for p in high:
-                lines.append(f"  !! {p['message']}")
-        if med:
-            lines.append("*Warnings:*")
-            for p in med:
-                lines.append(f"  ! {p['message']}")
-        if low:
-            for p in low:
-                lines.append(f"  {p['message']}")
+        TEMP_COOLDOWN_SECS = 7200   # 2 hours between temperature alerts
+        now_ts = time.time()
 
-        report = "\n".join(lines)
-        slack_post(report)
+        # Filter out problems that are still in cooldown
+        def in_cooldown(p):
+            cat = p.get("category", "")
+            if cat == "temperature":
+                last = dedup.get("temperature", 0)
+                return (now_ts - last) < TEMP_COOLDOWN_SECS
+            return False
+
+        alertable = [p for p in problems if not in_cooldown(p)]
+
+        if alertable:
+            lines = [f"*Synology NAS Alert — {model} — {NOW.strftime('%I:%M %p')}*"]
+            high = [p for p in alertable if p["severity"] == "high"]
+            med = [p for p in alertable if p["severity"] == "medium"]
+            low = [p for p in alertable if p["severity"] == "low"]
+
+            if high:
+                lines.append("*Critical:*")
+                for p in high:
+                    lines.append(f"  !! {p['message']}")
+            if med:
+                lines.append("*Warnings:*")
+                for p in med:
+                    lines.append(f"  ! {p['message']}")
+            if low:
+                for p in low:
+                    lines.append(f"  {p['message']}")
+
+            report = "\n".join(lines)
+            slack_post(report)
+
+            # Update dedup timestamps for fired categories
+            for p in alertable:
+                cat = p.get("category", "")
+                if cat:
+                    dedup[cat] = now_ts
+            try:
+                dedup_file.write_text(json.dumps(dedup))
+            except Exception:
+                pass
 
     # Also check for backup problems (non-blocking if API unavailable)
     backup_data = get_backup_tasks(session)
