@@ -145,6 +145,21 @@ def classify_source(show_name: str, title: str, snippet: str) -> str:
     text = (show_name + " " + title + " " + snippet[:400]).lower()
     show = show_name.lower()
 
+    # ── Explicit show-name overrides (checked first, highest priority) ────────
+    # Food/cooking channels
+    if any(w in show for w in ["meat church", "arnitex", "arnie tex",
+                                "good eats", "binging with babish", "babish",
+                                "ethan chlebowski", "food wishes"]):
+        return "cooking"
+    # Film/movie criticism and reviews
+    if any(w in show for w in ["red letter media", "redlettermedia", "half in the bag",
+                                "best of the worst", "re:view"]):
+        return "film_criticism"
+    # Automotive channels (explicit — before content-based fallback)
+    if any(w in show for w in ["vin_tra", "vin tra", "rob dahm", "jason cammisa",
+                                "jay leno", "jasoncommisa"]):
+        return "automotive"
+
     if any(w in show for w in ["forgotten weapon", "forbidden weapon"]):
         return "military_history"
     if any(w in show for w in ["jeopardy", "wheel of fortune", "game show", "price is right"]):
@@ -157,7 +172,7 @@ def classify_source(show_name: str, title: str, snippet: str) -> str:
     if any(w in show for w in ["car", "auto", "garage", "engine", "motor", "mustang",
                                 "corvette", "racing", "drift", "truck", "wheels", "horsepower",
                                 "finnegan", "car wizard", "chasing classic", "dream car",
-                                "build or bust", "car craft", "arnie"]):
+                                "build or bust", "car craft"]):
         return "automotive"
     if any(w in show for w in ["combat", "war", "battle", "military", "bonanza", "western",
                                 "cannon", "batman", "21 jump"]):
