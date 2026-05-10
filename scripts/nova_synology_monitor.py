@@ -1254,6 +1254,10 @@ def full_check(session):
 
     cpu_pct = 0
     ram_pct = 0
+    net_tx_bps = 0
+    net_rx_bps = 0
+    disk_read_bps = 0
+    disk_write_bps = 0
     if utilization:
         cpu = utilization.get("cpu", {})
         cpu_pct = cpu.get("user_load", 0) + cpu.get("system_load", 0)
@@ -1262,6 +1266,14 @@ def full_check(session):
         avail_kb = mem.get("avail_real", 0)
         if total_kb > 0:
             ram_pct = ((total_kb - avail_kb) / total_kb) * 100
+        # Network throughput (bytes/sec, summed across all interfaces)
+        for iface in utilization.get("network", []):
+            net_tx_bps += iface.get("tx", 0)
+            net_rx_bps += iface.get("rx", 0)
+        # Disk I/O (bytes/sec, summed across all volumes)
+        for disk in utilization.get("disk", []):
+            disk_read_bps  += disk.get("read_byte",  disk.get("rd_byte",  0))
+            disk_write_bps += disk.get("write_byte", disk.get("wr_byte", 0))
 
     vol_summary = ""
     if storage:
@@ -1324,13 +1336,17 @@ def full_check(session):
     )
     vector_remember(summary, {"date": TODAY, "type": "nas_health"})
 
-    # Save state
+    # Save state (read by SynologyReader.swift in NovaControl)
     state = {
         "last_check": NOW.isoformat(),
         "model": model,
         "firmware": firmware,
         "cpu_pct": cpu_pct,
         "ram_pct": round(ram_pct, 1),
+        "net_tx_bps": round(net_tx_bps, 1),
+        "net_rx_bps": round(net_rx_bps, 1),
+        "disk_read_bps": round(disk_read_bps, 1),
+        "disk_write_bps": round(disk_write_bps, 1),
         "problem_count": len(problems),
         "problems": [p["message"] for p in problems],
         "volumes": vol_summary,

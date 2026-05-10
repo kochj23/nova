@@ -117,6 +117,12 @@ tasks:
     timeout: 60
     overlap: skip
 
+  unas_monitor:
+    script: nova_unas_monitor.py
+    schedule: every 5m
+    timeout: 60
+    overlap: skip
+
   # ── Every 1-4 hours ────────────────────────────────────────────────────
 
   session_watchdog:
