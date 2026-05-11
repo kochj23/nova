@@ -21,31 +21,40 @@ RETRY_DELAY = 15
 TIMEOUT = 360
 
 # Available models with their optimal settings
+# NOTE: FP8 models (flux1-dev-fp8, flux1-schnell-fp8, ZImage FP8Mix) are BROKEN on
+# macOS MPS as of 2026-05-10 — ComfyUI throws:
+#   "Trying to convert Float8_e4m3fn to the MPS backend but it does not have support for that dtype"
+# BF16 replacements need to be downloaded from HuggingFace (requires login — gated repos).
+# Pending download: flux1-dev.safetensors, flux1-schnell.safetensors (BF16, ~23GB each)
+# Interim: all slots use Juggernaut or LongCat until BF16 models are downloaded.
 MODELS = {
     "juggernaut": {
         "file": "Juggernaut_X_RunDiffusion_Hyper.safetensors",
         "name": "Juggernaut XL v10 Hyper",
-        "best_for": "photorealism, fast generation",
+        "best_for": "photorealism, textures, fast generation",
         "optimal_steps": 8,
         "max_steps": 15,
     },
+    # FP8 — broken on MPS. Will be restored once BF16 file downloaded.
     "zimage": {
         "file": "ZImage/SwarmUI_Z-Image-Turbo-FP8Mix.safetensors",
-        "name": "Z-Image Turbo",
+        "name": "Z-Image Turbo (FP8 — MPS broken, using juggernaut fallback)",
         "best_for": "realism, speed",
         "optimal_steps": 6,
         "max_steps": 12,
     },
+    # FP8 — broken on MPS. Pending: flux1-schnell.safetensors (BF16)
     "flux_schnell": {
         "file": "flux1-schnell-fp8.safetensors",
-        "name": "FLUX.1 schnell",
+        "name": "FLUX.1 schnell (FP8 — MPS broken, using longcat fallback)",
         "best_for": "quality, prompt adherence, fast",
         "optimal_steps": 4,
         "max_steps": 8,
     },
+    # FP8 — broken on MPS. Pending: flux1-dev.safetensors (BF16)
     "flux_dev": {
         "file": "flux1-dev-fp8.safetensors",
-        "name": "FLUX.1 dev",
+        "name": "FLUX.1 dev (FP8 — MPS broken, using juggernaut fallback)",
         "best_for": "top quality, best prompt adherence",
         "optimal_steps": 20,
         "max_steps": 50,
@@ -53,7 +62,7 @@ MODELS = {
     "longcat": {
         "file": "LongCat-Image.safetensors",
         "name": "LongCat-Image",
-        "best_for": "text rendering, complex prompts",
+        "best_for": "text rendering, complex prompts, watercolor",
         "optimal_steps": 20,
         "max_steps": 40,
     },
@@ -63,14 +72,16 @@ MODELS = {
 DEFAULT_MODEL = "juggernaut"
 
 # Art Corner rotation — matches day-of-week styles to models
+# INTERIM: FP8 slots replaced with working SDXL models until BF16 FLUX downloaded.
+# Restore once flux1-dev.safetensors + flux1-schnell.safetensors are in Models dir.
 ART_MODEL_ROTATION = {
-    0: "flux_dev",      # Monday: Photorealism → FLUX dev (best quality)
-    1: "juggernaut",    # Tuesday: Oil Painting → Juggernaut (great textures)
-    2: "flux_dev",      # Wednesday: Cyberpunk → FLUX dev (prompt adherence)
+    0: "juggernaut",    # Monday: Photorealism → Juggernaut (was: flux_dev FP8 broken)
+    1: "juggernaut",    # Tuesday: Oil Painting → Juggernaut (textures)
+    2: "longcat",       # Wednesday: Cyberpunk → LongCat (complex prompt adherence)
     3: "longcat",       # Thursday: Watercolor → LongCat (complex prompts)
-    4: "flux_schnell",  # Friday: Art Nouveau → FLUX schnell (decorative detail)
-    5: "flux_dev",      # Saturday: Surrealism → FLUX dev (impossible scenes)
-    6: "zimage",        # Sunday: Noir Photography → Z-Image (realism)
+    4: "juggernaut",    # Friday: Art Nouveau → Juggernaut (was: flux_schnell FP8 broken)
+    5: "longcat",       # Saturday: Surrealism → LongCat (was: flux_dev FP8 broken)
+    6: "juggernaut",    # Sunday: Noir Photography → Juggernaut (was: zimage FP8 broken)
 }
 
 

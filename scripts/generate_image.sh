@@ -1,9 +1,9 @@
 #!/bin/bash
 #
-# generate_image.sh — Generate an image via SwarmUI for Nova
+# generate_image.sh — Generate an image via ComfyUI for Nova
 #
 # TOOL FOR NOVA: Use this script to generate images from text prompts.
-# SwarmUI runs locally at http://localhost:7801 and uses Stable Diffusion SDXL.
+# Calls ComfyUI directly on port 8188 (more reliable than SwarmUI API which requires WebSocket).
 #
 # Usage: generate_image.sh "your prompt here" [width] [height] [steps] [model]
 #
@@ -28,8 +28,10 @@ WIDTH="${2:-1024}"
 HEIGHT="${3:-1024}"
 STEPS="${4:-8}"
 MODEL="${5:-Juggernaut_X_RunDiffusion_Hyper.safetensors}"
-SWARM_URL="http://localhost:7801"
+COMFY_URL="http://127.0.0.1:8188"
 OUTPUT_BASE="$HOME/AI/SwarmUI/Output/local/raw"
+WORKSPACE="$HOME/.openclaw/workspace"
+TIMEOUT=600   # 10 min max per generation
 
 if [ -z "$PROMPT" ]; then
     echo "ERROR: No prompt provided." >&2
@@ -37,75 +39,143 @@ if [ -z "$PROMPT" ]; then
     exit 1
 fi
 
-# Get a session
-SESSION=$(curl -sf -X POST "$SWARM_URL/API/GetNewSession" \
-    -H "Content-Type: application/json" \
-    -d '{}' | python3 -c "import sys,json; print(json.load(sys.stdin)['session_id'])")
-
-if [ -z "$SESSION" ]; then
-    echo "ERROR: Could not connect to SwarmUI at $SWARM_URL" >&2
-    echo "Is SwarmUI running? Check: launchctl list | grep swarmui" >&2
+# Check ComfyUI is running
+if ! curl -sf "$COMFY_URL/system_stats" -o /dev/null --max-time 5 2>/dev/null; then
+    echo "ERROR: ComfyUI not responding at $COMFY_URL" >&2
     exit 1
 fi
 
-# Generate the image
-PAYLOAD=$(python3 -c "
-import json, sys
-print(json.dumps({
-    'session_id': sys.argv[1],
-    'images': 1,
-    'prompt': sys.argv[2],
-    'model': sys.argv[3],
-    'width': int(sys.argv[4]),
-    'height': int(sys.argv[5]),
-    'steps': int(sys.argv[6]),
-    'cfgscale': 2,
-    'seed': -1
-}))
-" "$SESSION" "$PROMPT" "$MODEL" "$WIDTH" "$HEIGHT" "$STEPS")
+# Build ComfyUI workflow and submit, then poll for result
+RESULT=$(python3 - "$PROMPT" "$MODEL" "$WIDTH" "$HEIGHT" "$STEPS" "$OUTPUT_BASE" "$WORKSPACE" "$TIMEOUT" <<'PYEOF'
+import json, sys, time, uuid, urllib.request, urllib.parse, os
+from pathlib import Path
+from datetime import datetime
 
-RESPONSE=$(curl -sf -X POST "$SWARM_URL/API/GenerateText2Image" \
-    -H "Content-Type: application/json" \
-    -d "$PAYLOAD")
+PROMPT, MODEL, WIDTH, HEIGHT, STEPS, OUTPUT_BASE, WORKSPACE, TIMEOUT = sys.argv[1:]
+COMFY = "http://127.0.0.1:8188"
+client_id = str(uuid.uuid4())
 
-# Extract the relative image path from the response
-REL_PATH=$(echo "$RESPONSE" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-if 'images' in data and data['images']:
-    # Strip the 'View/local/raw/' prefix to get the date/filename part
-    path = data['images'][0]
-    # path looks like: View/local/raw/2026-03-19/filename.png
-    parts = path.split('/', 3)
-    print(parts[3].strip() if len(parts) == 4 else path.strip())
-elif 'error' in data:
-    print('ERROR: ' + data['error'], file=sys.stderr)
+workflow = {
+    "4": {
+        "class_type": "CheckpointLoaderSimple",
+        "inputs": {"ckpt_name": MODEL}
+    },
+    "5": {
+        "class_type": "EmptyLatentImage",
+        "inputs": {"width": int(WIDTH), "height": int(HEIGHT), "batch_size": 1}
+    },
+    "6": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {"text": PROMPT, "clip": ["4", 1]}
+    },
+    "7": {
+        "class_type": "CLIPTextEncode",
+        "inputs": {"text": "blurry, low quality, distorted, watermark, text, logo", "clip": ["4", 1]}
+    },
+    "8": {
+        "class_type": "KSampler",
+        "inputs": {
+            "model": ["4", 0],
+            "positive": ["6", 0],
+            "negative": ["7", 0],
+            "latent_image": ["5", 0],
+            "seed": int(time.time()) % 2**31,
+            "steps": int(STEPS),
+            "cfg": 7.0,
+            "sampler_name": "euler",
+            "scheduler": "normal",
+            "denoise": 1.0
+        }
+    },
+    "9": {
+        "class_type": "VAEDecode",
+        "inputs": {"samples": ["8", 0], "vae": ["4", 2]}
+    },
+    "10": {
+        "class_type": "SaveImage",
+        "inputs": {
+            "images": ["9", 0],
+            "filename_prefix": datetime.now().strftime("%H%M")
+        }
+    }
+}
+
+# Submit to ComfyUI
+payload = json.dumps({"prompt": workflow, "client_id": client_id}).encode()
+req = urllib.request.Request(
+    f"{COMFY}/prompt", data=payload,
+    headers={"Content-Type": "application/json"}
+)
+with urllib.request.urlopen(req, timeout=15) as r:
+    result = json.loads(r.read())
+    prompt_id = result.get("prompt_id")
+
+if not prompt_id:
+    print("ERROR: No prompt_id returned", file=sys.stderr)
     sys.exit(1)
-else:
-    print('ERROR: Unexpected response: ' + str(data), file=sys.stderr)
-    sys.exit(1)
-" 2>/dev/null)
-REL_PATH="${REL_PATH//[$'\t\r\n']}"
 
-FULL_PATH="$OUTPUT_BASE/$REL_PATH"
+# Poll for completion
+deadline = time.time() + int(TIMEOUT)
+while time.time() < deadline:
+    time.sleep(3)
+    with urllib.request.urlopen(f"{COMFY}/history/{prompt_id}", timeout=5) as r:
+        hist = json.loads(r.read())
+    if not hist:
+        continue
+    job = hist.get(prompt_id, {})
+    status = job.get("status", {})
+    if status.get("status_str") == "success" and status.get("completed"):
+        for node_id, output in job.get("outputs", {}).items():
+            for img in output.get("images", []):
+                fname = img["filename"]
+                subdir = img.get("subfolder", "")
+                # ComfyUI saves to its output dir
+                comfy_output = Path("/Volumes/Data/AI/SwarmUI/dlbackend/ComfyUI/output")
+                if subdir:
+                    src = comfy_output / subdir / fname
+                else:
+                    src = comfy_output / fname
+                if not src.exists():
+                    # Try SwarmUI output dir as fallback
+                    today = datetime.now().strftime("%Y-%m-%d")
+                    src = Path(OUTPUT_BASE) / today / fname
+                                # Download from ComfyUI /view endpoint (most reliable path)
+                    dest = Path(WORKSPACE) / fname
+                    view_url = f"{COMFY}/view?filename={urllib.parse.quote(fname)}&subfolder={urllib.parse.quote(subdir)}&type=output"
+                    try:
+                        with urllib.request.urlopen(view_url, timeout=30) as img_resp:
+                            dest.write_bytes(img_resp.read())
+                        # Also copy to SwarmUI output for compatibility
+                        today = datetime.now().strftime("%Y-%m-%d")
+                        out_dir = Path(OUTPUT_BASE) / today
+                        out_dir.mkdir(parents=True, exist_ok=True)
+                        import shutil
+                        shutil.copy2(dest, out_dir / fname)
+                        swarm_path = out_dir / fname
+                        print(f"Image generated successfully.")
+                        print(f"SwarmUI path: {swarm_path}")
+                        print(f"Workspace copy: {dest}")
+                        print(f"Open with: open \"{dest}\"")
+                        sys.exit(0)
+                    except Exception as e:
+                        print(f"ERROR downloading image: {e}", file=sys.stderr)
+                        sys.exit(1)
+    elif status.get("status_str") in ("error", "failed"):
+        msgs = status.get("messages", [])
+        for msg in msgs:
+            if msg[0] == "execution_error":
+                print(f"ERROR: {msg[1].get('exception_message','unknown error')}", file=sys.stderr)
+        sys.exit(1)
 
-# Wait for file to appear (SwarmUI async flush can take a moment)
-for i in 1 2 3 4 5; do
-    [ -f "$FULL_PATH" ] && break
-    sleep 1
-done
+print("ERROR: Generation timed out", file=sys.stderr)
+sys.exit(1)
+PYEOF
+)
 
-if [ ! -f "$FULL_PATH" ]; then
-    echo "ERROR: Image was reported generated but file not found at: $FULL_PATH" >&2
-    exit 1
-fi
-
-# Copy to Nova's workspace for easy access
+echo "$RESULT"
 WORKSPACE="$HOME/.openclaw/workspace"
-DEST="$WORKSPACE/$(basename "$FULL_PATH")"
-cp "$FULL_PATH" "$DEST"
-
-echo "Image generated successfully."
-echo "SwarmUI path: $FULL_PATH"
-echo "Workspace copy: $DEST"
-echo "Open with: open \"$DEST\""
+# Extract workspace path for callers that need just the path
+DEST_PATH=$(echo "$RESULT" | grep "^Workspace copy:" | sed 's/Workspace copy: //')
+if [ -z "$DEST_PATH" ] || [ ! -f "$DEST_PATH" ]; then
+    exit 1
+fi
