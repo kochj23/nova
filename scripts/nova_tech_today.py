@@ -135,13 +135,15 @@ def gather_web_results() -> list[dict]:
 # ── Memory Recall ─────────────────────────────────────────────────────────────
 
 def recall_memories(query: str, n: int = 50) -> list[dict]:
-    """Query Nova's memory server for related memories."""
+    """Query Nova's memory server for related memories, filtering private/work sources."""
     params = urllib.parse.urlencode({"q": query, "n": n})
     url = f"{MEMORY_SERVER}/recall?{params}"
     try:
         resp = urllib.request.urlopen(url, timeout=15)
         data = json.loads(resp.read())
         memories = data if isinstance(data, list) else data.get("memories", data.get("results", []))
+        # Filter private/work sources — must never appear in public journal output
+        memories = nova_config.filter_private_memories(memories)
         log(f"Recalled {len(memories)} memories for '{query[:40]}...'")
         return memories
     except Exception as e:

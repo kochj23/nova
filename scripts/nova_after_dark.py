@@ -147,7 +147,9 @@ def recall_memories(query: str, n: int = 8) -> list[str]:
         url = f"{MEMORY_SERVER}/recall?{params}"
         resp = urllib.request.urlopen(url, timeout=10)
         data = json.loads(resp.read())
-        return [m.get("text", "")[:300] for m in data.get("memories", []) if m.get("text")]
+        # Filter private/work sources — must never appear in public journal output
+        memories = nova_config.filter_private_memories(data.get("memories", []))
+        return [m.get("text", "")[:300] for m in memories if m.get("text")]
     except Exception:
         return []
 

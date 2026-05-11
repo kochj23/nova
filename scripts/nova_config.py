@@ -106,21 +106,64 @@ NC_CALENDAR   = f"{NOVACONTROL}/api/calendar"       # today's events, upcoming
 # nova.digitalnoise.net website, in digest emails to the herd, or in any
 # Slack/Discord post that could be logged or forwarded.
 PRIVATE_SOURCES: set = {
+    # Disney / work — NEVER in journal, NEVER in public output
     "cloud_governance",
     "disney_internal",
     "disney_work",
-    "work_memo",
     "disney_work_general",
+    "disney_shared_drives",
+    "disney_employee",
+    "work_memo",
+    "work_knowledge",
+    "financial_documents",  # tax docs, HSA, bank statements
     "internal",
     "corporate",
+    "global_sre",
+    "21cf",
+    "jkoch_shared",
+    # Personal privacy
+    "home_address",
+    "family_contacts",
+    "apple_health",
+    "healthkit",
+    "threat-documentation",
+    # iMessages and email - may contain private conversations
+    "imessage",
+    "email_archive",
+    "email",
 }
 
 def is_private_source(source: str) -> bool:
-    """Return True if a memory source must never appear in public journal output."""
+    """
+    Return True if a memory source must NEVER appear in public journal output,
+    Nova's dreams, essays, opinions, art corner, after dark, research papers,
+    or any other content published to nova.digitalnoise.net.
+
+    This is the single authoritative gate. All content generation scripts
+    MUST call this before including ANY memory in public output.
+    """
     if not source:
         return False
     s = source.lower().strip()
-    return s in PRIVATE_SOURCES or "disney" in s or "cloud_gov" in s or "work_memo" in s
+    # Exact match
+    if s in PRIVATE_SOURCES:
+        return True
+    # Substring matches for known private namespaces
+    for keyword in ("disney", "cloud_gov", "work_memo", "work_knowledge",
+                    "internal", "corporate", "financial", "health", "imessage",
+                    "email_archive", "email"):
+        if keyword in s:
+            return True
+    return False
+
+
+def filter_private_memories(memories: list[dict]) -> list[dict]:
+    """
+    Filter a list of memory dicts, removing any from private sources.
+    Use this on ALL memory recall results before passing to LLM prompts
+    for journal/creative content generation.
+    """
+    return [m for m in memories if not is_private_source(m.get("source", ""))]
 
 
 # ── OpenRouter ───────────────────────────────────────────────────────────────

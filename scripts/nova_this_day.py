@@ -65,7 +65,7 @@ def vector_remember(text: str, metadata: dict = None):
 
 
 def vector_recall(query, n=10, source=None):
-    """Semantic search of vector memory."""
+    """Semantic search of vector memory. Filters private/work sources."""
     params = f"q={urllib.parse.quote(query)}&n={n}"
     if source:
         params += f"&source={source}"
@@ -73,13 +73,14 @@ def vector_recall(query, n=10, source=None):
         url = f"{VECTOR_URL}/recall?{params}"
         resp = urllib.request.urlopen(url, timeout=10)
         data = json.loads(resp.read())
-        return data.get("memories", [])
+        memories = data.get("memories", [])
+        return nova_config.filter_private_memories(memories)
     except Exception:
         return []
 
 
 def vector_search(query, n=10, source=None):
-    """Text search of vector memory."""
+    """Text search of vector memory. Filters private/work sources."""
     params = f"q={urllib.parse.quote(query)}&n={n}"
     if source:
         params += f"&source={source}"
@@ -87,7 +88,8 @@ def vector_search(query, n=10, source=None):
         url = f"{VECTOR_URL}/search?{params}"
         resp = urllib.request.urlopen(url, timeout=10)
         data = json.loads(resp.read())
-        return data.get("memories", [])
+        memories = data.get("memories", [])
+        return nova_config.filter_private_memories(memories)
     except Exception:
         return []
 

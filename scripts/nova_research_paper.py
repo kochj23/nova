@@ -161,7 +161,10 @@ def recall_memories(query: str, n: int = 20, source: str = None) -> list[dict]:
             resp = urllib.request.urlopen(url, timeout=60)
             data = json.loads(resp.read())
             memories = data.get("memories", data if isinstance(data, list) else [])
+            # Filter private/work sources — must never appear in public research papers
+            memories = nova_config.filter_private_memories(memories)
             return [{"text": m.get("text", ""), "metadata": m.get("metadata", {}),
+                     "source": m.get("source", ""),
                      "score": m.get("score", 0)} for m in memories if m.get("text")]
         except Exception as e:
             if attempt < 2:
