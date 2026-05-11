@@ -325,22 +325,25 @@ def process_video(video: Path, state: dict, next_title: str | None) -> bool:
     save_state(state)
     registry.mark_ingested(path_key, ingested, SOURCE)
 
-    # Notification
-    memory_snippet = recall_fw_memory()
-    if not memory_snippet and chunks:
-        memory_snippet = re.sub(r"^\[.*?\]\s*", "", random.choice(chunks))[:200]
+    # Only notify when new memories were actually stored — suppress if all chunks
+    # were deduplicated (ingested == 0 means the DB already had this content)
+    if ingested > 0:
+        memory_snippet = recall_fw_memory()
+        if not memory_snippet and chunks:
+            memory_snippet = re.sub(r"^\[.*?\]\s*", "", random.choice(chunks))[:200]
 
-    lines = [
-        f":gun: *Forgotten Weapons* — _{display_title[:80]}_",
-        f":brain: {ingested} new memories · {word_count:,} words",
-    ]
-    if memory_snippet:
-        lines.append(f":thought_balloon: _\"{memory_snippet[:180]}…\"_")
-    if next_title:
-        clean_next = re.sub(r"^S\d+E\d+\s*-\s*", "", next_title, flags=re.IGNORECASE).strip()
-        lines.append(f":arrow_forward: *Next:* _{clean_next[:80]}_")
+        lines = [
+            f":gun: *Forgotten Weapons* — _{display_title[:80]}_",
+            f":brain: {ingested} new memories · {word_count:,} words",
+        ]
+        if memory_snippet:
+            lines.append(f":thought_balloon: _\"{memory_snippet[:180]}…\"_")
+        if next_title:
+            clean_next = re.sub(r"^S\d+E\d+\s*-\s*", "", next_title, flags=re.IGNORECASE).strip()
+            lines.append(f":arrow_forward: *Next:* _{clean_next[:80]}_")
 
-    post_slack("\n".join(lines))
+        post_slack("\n".join(lines))
+
     return True
 
 

@@ -92,6 +92,7 @@ WORK_DIR        = Path("/Volumes/Data/nova-nightly-media")
 LOG_FILE        = Path.home() / ".openclaw/logs/nova_nightly_media.log"
 SLACK_NOTIFY    = nova_config.SLACK_NOTIFY
 SLACK_CHAT      = nova_config.SLACK_CHAN
+RECALL_URL      = "http://127.0.0.1:18790/recall"
 
 CHUNK_WORDS         = 400
 MIN_CHUNK_WORDS     = 10
@@ -563,6 +564,36 @@ def show_name_from_path(video: Path) -> str:
     return video.parent.name
 
 
+# ── Random memory recall for notifications ───────────────────────────────────
+
+def recall_memory_for_show(show_name: str, chunks: list[str] | None = None) -> str | None:
+    """Pull a random existing memory for this show from the vector DB."""
+    try:
+        payload = json.dumps({
+            "query": f"{show_name} television episode",
+            "limit": 20,
+        }).encode()
+        req = urllib.request.Request(
+            RECALL_URL,
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+            memories = data.get("memories", data.get("results", []))
+            if memories:
+                m = random.choice(memories)
+                text = re.sub(r"^\[.*?\]\s*", "", m.get("text", ""))
+                return text[:200].strip()
+    except Exception:
+        pass
+    # Fallback: pick a random chunk from the current transcript
+    if chunks:
+        return re.sub(r"^\[.*?\]\s*", "", random.choice(chunks))[:200].strip()
+    return None
+
+
 # ── Ingest a single video file ────────────────────────────────────────────────
 
 def ingest_video(video: Path, show_name: str, title: str, source_hint: str | None = None) -> dict:
@@ -626,7 +657,12 @@ def ingest_video(video: Path, show_name: str, title: str, source_hint: str | Non
         registry.mark_status(path_key, "no_transcript", notes="all chunks rejected by memory endpoint")
         log(f"    0 chunks stored — {title[:50]}")
 
-    return {"status": "ingested" if ingested > 0 else "no_transcript", "chunks": ingested, "words": word_count}
+    return {
+        "status": "ingested" if ingested > 0 else "no_transcript",
+        "chunks": ingested,
+        "words": word_count,
+        "chunks_text": chunks,   # raw chunk list for memory snippet fallback
+    }
 
 
 # ── Phase 1: YT download + inline ingest ─────────────────────────────────────
@@ -992,7 +1028,7 @@ def run_phase2(resume_path: str | None = None) -> None:
     ingested_count = 0
     checkpoint_counter = 0
 
-    for video in all_videos:
+    for idx, video in enumerate(all_videos):
         if _sigterm_received:
             break
 
@@ -1000,19 +1036,17 @@ def run_phase2(resume_path: str | None = None) -> None:
 
         if resuming:
             if path_key == resume_path:
-                resuming = False  # Start from here
+                resuming = False
             else:
-                # Still fast-forwarding — but registry.is_done() will handle per-file dedup
-                # so we don't need to skip, we just use is_done() as normal
                 resuming = False if path_key == resume_path else resuming
                 if resuming:
                     continue
 
-        # Skip if already fully processed (registry handles dedup across runs)
+        # Skip if already fully processed
         if registry.is_done(path_key):
             continue
 
-        # Skip music paths entirely (no transcription, no notification)
+        # Skip music paths entirely
         if _is_music_path(video):
             registry.register_file(path_key,
                                    show_name=video.parent.name,
@@ -1023,6 +1057,13 @@ def run_phase2(resume_path: str | None = None) -> None:
 
         show_name = show_name_from_path(video)
         title = video.stem
+
+        # Peek at the next non-music, non-done video for the "Next:" line
+        next_title = None
+        for nxt in all_videos[idx + 1:idx + 20]:
+            if not registry.is_done(str(nxt)) and not _is_music_path(nxt):
+                next_title = nxt.stem
+                break
 
         registry.register_file(path_key,
                                show_name=show_name,
@@ -1035,11 +1076,16 @@ def run_phase2(resume_path: str | None = None) -> None:
 
         if result["chunks"] > 0:
             ingested_count += 1
-            notify(
-                f":clapper: *{show_name}* — _{title[:80]}_\n"
+            memory_snippet = recall_memory_for_show(show_name, result.get("chunks_text"))
+            notif_lines = [
+                f":clapper: *{show_name}* — _{title[:80]}_",
                 f":brain: {result['chunks']} memories · {result['words']:,} words",
-                channel=SLACK_NOTIFY,
-            )
+            ]
+            if memory_snippet:
+                notif_lines.append(f":thought_balloon: _\"{memory_snippet[:180]}…\"_")
+            if next_title:
+                notif_lines.append(f":arrow_forward: *Next:* _{next_title[:80]}_")
+            notify("\n".join(notif_lines), channel=SLACK_NOTIFY)
 
         # Checkpoint every 10 files
         if checkpoint_counter >= 10:
