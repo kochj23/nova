@@ -114,7 +114,7 @@ SERVICES = [
     # ── External / LAN (monitored but not auto-restarted) ────────────────────
     ("Plex",          PLEX_IP,     32400, None,                                   False, "/web"),
     ("HDHomeRun",     HDHR_IP,     80,    None,                                   False, None),
-    ("UNAS Pro 8",    "192.168.1.69", 443, None,                                  False, "/api/system"),
+    ("UNAS Pro 8",    "192.168.1.69", 443, None,                                  False, None),  # HTTPS+auth required; TCP port check only
 ]
 
 # Services that are monitored (shown in dashboard) but never trigger alerts.
