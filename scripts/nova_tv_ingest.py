@@ -359,6 +359,24 @@ def process_video(video: Path, state: dict, work_dir: Path,
     registry.register_file(path_key, show_name=show_name, title=title,
                            ingest_script="nova_tv_ingest.py")
 
+    # Check nova_memories directly — if memories already exist for this file,
+    # mark done silently without transcribing or notifying
+    try:
+        import psycopg2 as _pg2
+        _c = _pg2.connect(dbname="nova_memories")
+        _cur2 = _c.cursor()
+        _cur2.execute("SELECT COUNT(*) FROM memories WHERE metadata->>'source_file' = %s", (path_key,))
+        _existing = _cur2.fetchone()[0]
+        _c.close()
+        if _existing > 0:
+            log(f"  ~ already in nova_memories ({_existing} chunks) — skipping silently")
+            mark_done(state, path_key, {"show": show_name, "title": title,
+                                        "status": "ingested", "chunks": _existing})
+            registry.mark_ingested(path_key, _existing, "")
+            return None
+    except Exception:
+        pass
+
     # Unique WAV name per video to avoid collisions between parallel workers
     wav_stem = f"{video.stem[:60]}_{abs(hash(path_key)) % 100000}"
     wav = work_dir / f"{wav_stem}.wav"

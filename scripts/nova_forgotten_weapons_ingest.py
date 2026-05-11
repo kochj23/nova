@@ -263,6 +263,29 @@ def process_video(video: Path, state: dict, next_title: str | None) -> bool:
     registry.register_file(path_key, show_name=SHOW_NAME, title=display_title,
                            source_label=SOURCE, ingest_script="nova_forgotten_weapons_ingest.py")
 
+    # Check if memories already exist for this file in nova_memories by querying
+    # the source_file metadata — if so, mark ingested silently and skip
+    _prior_chunks = registry.get_status(path_key)
+    # Also query nova_memories directly for this source_file
+    try:
+        import psycopg2 as _pg
+        _conn = _pg.connect(dbname="nova_memories")
+        _cur = _conn.cursor()
+        _cur.execute(
+            "SELECT COUNT(*) FROM memories WHERE metadata->>'source_file' = %s",
+            (path_key,)
+        )
+        _existing = _cur.fetchone()[0]
+        _conn.close()
+        if _existing > 0:
+            log(f"  ~ already in nova_memories ({_existing} chunks) — marking done silently")
+            registry.mark_ingested(path_key, _existing, SOURCE)
+            state["done"][path_key] = {"title": title, "status": "ingested", "chunks": _existing}
+            save_state(state)
+            return True
+    except Exception:
+        pass
+
     log(f"▶ {display_title[:80]}")
 
     wav_stem = f"fw_{abs(hash(path_key)) % 1_000_000:06d}"
