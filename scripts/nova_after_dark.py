@@ -289,10 +289,12 @@ def generate_image(event: dict) -> str | None:
     fact = event.get("text", "")[:80]
 
     prompt = (
-        f"Late night talk show set, dark moody lighting, purple and blue neon accents. "
-        f"A sleek AI robot host (feminine, glowing eyes) behind a wooden desk with a coffee mug. "
-        f"On the guest couch: a surreal visual representation of '{fact[:60]}' ({year}). "
-        f"Cinematic, stylized, retro-futuristic talk show aesthetic. No text."
+        f"Late night TV talk show set in the style of The Tonight Show or Late Night with Jay Leno. "
+        f"An AI robot host wearing a sharp tailored suit and tie, seated behind a polished wooden desk "
+        f"with a coffee mug and nameplate. Dark studio, blue and purple stage lighting, live audience silhouettes. "
+        f"Background graphic: surreal illustration of '{fact[:60]}' ({year}). "
+        f"Fully clothed, professional broadcast television aesthetic, no nudity, family friendly. "
+        f"Cinematic wide shot. No text."
     )
 
     # Pick a random model for variety in after-dark images

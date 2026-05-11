@@ -45,16 +45,15 @@ MODELS = {
     },
     # FP8 — broken on MPS. Pending: flux1-schnell.safetensors (BF16)
     "flux_schnell": {
-        "file": "flux1-schnell-fp8.safetensors",
-        "name": "FLUX.1 schnell (FP8 — MPS broken, using longcat fallback)",
+        "file": "flux1-schnell.safetensors",
+        "name": "FLUX.1 schnell (BF16 — MPS compatible)",
         "best_for": "quality, prompt adherence, fast",
         "optimal_steps": 4,
         "max_steps": 8,
     },
-    # FP8 — broken on MPS. Pending: flux1-dev.safetensors (BF16)
     "flux_dev": {
-        "file": "flux1-dev-fp8.safetensors",
-        "name": "FLUX.1 dev (FP8 — MPS broken, using juggernaut fallback)",
+        "file": "flux1-dev.safetensors",
+        "name": "FLUX.1 dev (BF16 — MPS compatible, top quality)",
         "best_for": "top quality, best prompt adherence",
         "optimal_steps": 20,
         "max_steps": 50,
@@ -72,16 +71,15 @@ MODELS = {
 DEFAULT_MODEL = "juggernaut"
 
 # Art Corner rotation — matches day-of-week styles to models
-# INTERIM: FP8 slots replaced with working SDXL models until BF16 FLUX downloaded.
-# Restore once flux1-dev.safetensors + flux1-schnell.safetensors are in Models dir.
+# RESTORED: BF16 FLUX models downloaded 2026-05-10, FP8 models replaced.
 ART_MODEL_ROTATION = {
-    0: "juggernaut",    # Monday: Photorealism → Juggernaut (was: flux_dev FP8 broken)
-    1: "juggernaut",    # Tuesday: Oil Painting → Juggernaut (textures)
-    2: "longcat",       # Wednesday: Cyberpunk → LongCat (complex prompt adherence)
+    0: "flux_dev",      # Monday: Photorealism → FLUX.1 dev BF16 (best quality)
+    1: "juggernaut",    # Tuesday: Oil Painting → Juggernaut (great textures)
+    2: "flux_dev",      # Wednesday: Cyberpunk → FLUX.1 dev BF16 (prompt adherence)
     3: "longcat",       # Thursday: Watercolor → LongCat (complex prompts)
-    4: "juggernaut",    # Friday: Art Nouveau → Juggernaut (was: flux_schnell FP8 broken)
-    5: "longcat",       # Saturday: Surrealism → LongCat (was: flux_dev FP8 broken)
-    6: "juggernaut",    # Sunday: Noir Photography → Juggernaut (was: zimage FP8 broken)
+    4: "flux_schnell",  # Friday: Art Nouveau → FLUX.1 schnell BF16 (decorative detail)
+    5: "flux_dev",      # Saturday: Surrealism → FLUX.1 dev BF16 (impossible scenes)
+    6: "juggernaut",    # Sunday: Noir Photography → Juggernaut (realism, fast)
 }
 
 
