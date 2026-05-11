@@ -1062,7 +1062,8 @@ def _is_maintenance_mode() -> bool:
 
 
 _ALLOWED_MODELS = {
-    "ollama/qwen3-next:80b",
+    "ollama/qwen3-next:80b",      # original primary — removed from Ollama, will be restored
+    "ollama/qwen3:30b-a3b",       # interim replacement while qwen3-next:80b unavailable
     "ollama/nova:latest",
     "ollama/qwen3-coder:30b",
     "ollama/deepseek-r1:8b",
@@ -1673,7 +1674,7 @@ def _full_sweep():
         resp = urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=8)
         ps_data = json.loads(resp.read())
         loaded = [m["name"] for m in ps_data.get("models", [])]
-        needed = {"qwen3-next:80b", "qwen3-coder:30b"}
+        needed = {"qwen3:30b-a3b", "qwen3-coder:30b"}  # qwen3-next:80b replaced by 30b-a3b interim
         cold = needed - {m.split(":")[0] + ":" + m.split(":")[1] if ":" in m else m for m in loaded}
         # Only warn during active hours — models unload when idle
         if cold and not _is_quiet_hours():
