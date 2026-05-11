@@ -287,28 +287,32 @@ def generate_image(event: dict) -> str | None:
 
     year = event.get("year", "")
     fact = event.get("text", "")[:80]
+    # Derive a brief guest description from the event for the couch subject
+    guest = fact[:60] if fact else "a historical figure"
 
     prompt = (
-        f"Bright colorful late night television talk show studio set, photorealistic. "
-        f"Robot host in a tailored navy suit sitting behind a polished wood desk with a coffee mug, "
-        f"brightly lit by warm studio key lights, smiling at camera. "
-        f"Vibrant illuminated cityscape backdrop behind the desk glowing with blue and gold city lights. "
-        f"Large bright LED screen on the left showing imagery related to '{fact[:60]}' ({year}). "
-        f"Rows of studio audience seats visible, well-lit stage floor, colorful stage lighting rigs overhead. "
-        f"Inspired by The Tonight Show Starring Jimmy Fallon or The Late Show with Stephen Colbert. "
-        f"High key broadcast lighting, vivid saturated colors, sharp focus, 4K television production quality. "
-        f"Fully clothed professional talent, no nudity, family friendly. Wide establishing shot."
+        f"Late night TV talk show set interior, wide shot, photorealistic, bright colorful broadcast lighting. "
+        f"On the left side of the frame a curved wooden anchor desk behind which sits a glowing blue humanoid "
+        f"figure with electric crackling lightning hair wearing a navy blazer — the AI host. "
+        f"On the right side of the frame a cushioned guest couch where a person related to '{guest}' ({year}) "
+        f"sits in period-appropriate clothing, engaged in animated conversation. "
+        f"Vibrant neon city skyline backdrop glowing bright blue and purple behind them. "
+        f"Large LED screen showing vivid imagery of the topic. "
+        f"Studio audience visible in warm light. Colorful overhead stage rigs. "
+        f"Tonight Show style — high key broadcast lighting, vivid saturated colors, sharp focus, 4K quality. "
+        f"Fully clothed, family friendly, no nudity. Cinematic wide establishing shot."
     )
 
     # Pick a random model for variety in after-dark images
     try:
-        from nova_image_utils import get_random_model, MODELS
-        _img_model_key = get_random_model()
-        _img_model_file = MODELS.get(_img_model_key, MODELS["juggernaut"])["file"]
-        _img_steps = str(MODELS.get(_img_model_key, MODELS["juggernaut"]).get("optimal_steps", 12))
+        # After Dark always uses Juggernaut — FLUX models time out on the complex
+        # two-character talk show scene prompt, and random model selection was
+        # picking broken/slow models that produced black images.
+        _img_model_file = "Juggernaut_X_RunDiffusion_Hyper.safetensors"
+        _img_steps = "18"
     except Exception:
         _img_model_file = "Juggernaut_X_RunDiffusion_Hyper.safetensors"
-        _img_steps = "12"
+        _img_steps = "18"
 
     for attempt in range(3):
         try:
