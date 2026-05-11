@@ -215,6 +215,19 @@ tasks:
     timeout: 120
     overlap: skip
 
+  forgotten_weapons_ingest:
+    script: nova_forgotten_weapons_ingest.py
+    schedule: cron 0 2 * * *
+    timeout: 86400
+    overlap: skip
+
+  yt_new_episodes:
+    script: nova_yt_new_episodes.py
+    schedule: cron 15 10 * * 1
+    timeout: 14400
+    overlap: skip
+    enabled: false
+
   # ── Daily: daytime (enrichment, reflection) ────────────────────────────
 
   daily_opinion:
@@ -315,6 +328,12 @@ tasks:
     timeout: 2400
     overlap: skip
     group: livetv
+
+  nightly_media:
+    script: nova_nightly_media.py
+    schedule: cron 0 22 * * *
+    timeout: 28800
+    overlap: skip
 
   tv_ingest:
     script: nova_tv_ingest.py

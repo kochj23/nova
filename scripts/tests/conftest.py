@@ -19,6 +19,16 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS_DIR))
 
+# Pre-import psycopg2 for real before any test file can shadow it with a MagicMock.
+# test_dashboard.py patches sys.modules["psycopg2"] during server.py import at module
+# scope, which under importlib mode can leave the mock cached for subsequent test files.
+# Importing the real psycopg2 here first ensures it's locked in sys.modules first.
+try:
+    import psycopg2        # noqa: F401
+    import psycopg2.extras # noqa: F401
+except ImportError:
+    pass
+
 # ── Slack notification on test failures ──────────────────────────────────────
 
 SLACK_NOTIFY_CHANNEL = "C0ATAF7NZG9"  # #nova-notifications

@@ -38,6 +38,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+import nova_media_registry as registry
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -47,7 +48,7 @@ VIDEO_EXTS      = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".m4v", ".wmv", ".flv"
 STATE_FILE      = Path.home() / ".openclaw/workspace/state/tv_ingest_state.json"
 WORK_DIR        = Path("/Volumes/Data/nova-livetv/tv-ingest")
 LOG_FILE        = Path.home() / ".openclaw/logs/nova_tv_ingest.log"
-MEMORY_URL      = nova_config.VECTOR_URL + "/remember"
+MEMORY_URL      = "http://127.0.0.1:18790/remember"
 SLACK_CHANNEL   = nova_config.SLACK_NOTIFY
 
 WHISPER_BIN     = "/opt/homebrew/bin/mlx_whisper"
@@ -345,8 +346,18 @@ def process_video(video: Path, state: dict, work_dir: Path,
         if path_key in state["done"]:
             return None
 
+    # Second-layer dedup: check the nova_media DB (survives state file resets)
+    if registry.is_done(path_key):
+        with _STATE_LOCK:
+            state["done"][path_key] = {"status": "registry_done", "marked_at": datetime.now().isoformat()}
+        return None
+
     show_name = show_name_from_path(video)
     title = video.stem
+
+    # Register in the nova_media DB (no-op if already present)
+    registry.register_file(path_key, show_name=show_name, title=title,
+                           ingest_script="nova_tv_ingest.py")
 
     # Unique WAV name per video to avoid collisions between parallel workers
     wav_stem = f"{video.stem[:60]}_{abs(hash(path_key)) % 100000}"
@@ -357,6 +368,7 @@ def process_video(video: Path, state: dict, work_dir: Path,
     if not extract_audio(video, wav):
         log(f"  ✗ audio failed: {title[:50]}")
         mark_done(state, path_key, {"show": show_name, "title": title, "status": "audio_failed", "chunks": 0})
+        registry.mark_status(path_key, "audio_failed")
         return None
 
     transcript = transcribe(wav, work_dir, wav_stem)
@@ -365,6 +377,7 @@ def process_video(video: Path, state: dict, work_dir: Path,
     if not transcript:
         log(f"  ✗ no transcript: {title[:50]}")
         mark_done(state, path_key, {"show": show_name, "title": title, "status": "no_transcript", "chunks": 0})
+        registry.mark_status(path_key, "no_transcript")
         return None
 
     word_count = len(transcript.split())
@@ -375,6 +388,7 @@ def process_video(video: Path, state: dict, work_dir: Path,
     if trash_ratio > TRASH_RATIO or len(chunks) == 0:
         log(f"  ✗ garbage ({trash_ratio:.0%}): {title[:50]}")
         mark_done(state, path_key, {"show": show_name, "title": title, "status": "trash", "chunks": 0})
+        registry.mark_status(path_key, "trash")
         return None
 
     source = classify_source(show_name, title, transcript[:500])
@@ -398,6 +412,8 @@ def process_video(video: Path, state: dict, work_dir: Path,
         "status": status, "chunks": ingested,
         "source": source, "words": word_count,
     })
+    if ingested > 0:
+        registry.mark_ingested(path_key, ingested, source)
 
     # Per-episode notification — always show a memory snippet, show what's next
     memory_snippet = random_memory_for_show(show_name)
@@ -405,19 +421,15 @@ def process_video(video: Path, state: dict, work_dir: Path,
         memory_snippet = re.sub(r"^\[.*?\]\s*", "", random.choice(chunks))[:200]
 
     if ingested > 0:
-        memory_line = f":brain: {ingested} new memories `[{source}]` · {word_count:,} words"
-    else:
-        memory_line = f":repeat: Already in memory `[{source}]` · {word_count:,} words ({dupes} chunks existed)"
-
-    notif_lines = [
-        f":clapper: *{show_name}* — _{title[:80]}_",
-        memory_line,
-    ]
-    if memory_snippet:
-        notif_lines.append(f":thought_balloon: _\"{memory_snippet[:180]}…\"_")
-    if next_title:
-        notif_lines.append(f":arrow_forward: *Next:* _{next_title[:80]}_")
-    post_slack("\n".join(notif_lines))
+        notif_lines = [
+            f":clapper: *{show_name}* — _{title[:80]}_",
+            f":brain: {ingested} new memories `[{source}]` · {word_count:,} words",
+        ]
+        if memory_snippet:
+            notif_lines.append(f":thought_balloon: _\"{memory_snippet[:180]}…\"_")
+        if next_title:
+            notif_lines.append(f":arrow_forward: *Next:* _{next_title[:80]}_")
+        post_slack("\n".join(notif_lines))
 
     return {"show": show_name, "title": title, "source": source,
             "chunks": ingested, "words": word_count}

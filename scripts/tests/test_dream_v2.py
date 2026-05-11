@@ -31,11 +31,19 @@ def dream_module():
     import importlib
     if "dream_generate" in sys.modules:
         del sys.modules["dream_generate"]
-    # Ensure psycopg2 doesn't cause import failures
-    if "psycopg2" not in sys.modules:
+    # Mock psycopg2 only if the real one isn't already loaded — and restore after
+    _real_psycopg2 = sys.modules.get("psycopg2")
+    _injected = False
+    if _real_psycopg2 is None:
         sys.modules["psycopg2"] = MagicMock()
-    import dream_generate
-    return dream_generate
+        _injected = True
+    try:
+        import dream_generate
+        return dream_generate
+    finally:
+        # Always restore — don't leave a MagicMock in sys.modules for other tests
+        if _injected:
+            del sys.modules["psycopg2"]
 
 
 @pytest.fixture
@@ -540,12 +548,16 @@ class TestDreamFrameTests:
         """dream_generate.py can be imported without side effects."""
         if "dream_generate" in sys.modules:
             del sys.modules["dream_generate"]
-        if "psycopg2" not in sys.modules:
+        _had_psycopg2 = "psycopg2" in sys.modules
+        if not _had_psycopg2:
             sys.modules["psycopg2"] = MagicMock()
         try:
             import dream_generate
         except Exception as e:
             pytest.fail(f"Import failed: {e}")
+        finally:
+            if not _had_psycopg2:
+                sys.modules.pop("psycopg2", None)
 
     def test_main_skips_if_pending_exists(self, dream_module, tmp_path):
         """main() should skip generation if pending delivery exists for today."""

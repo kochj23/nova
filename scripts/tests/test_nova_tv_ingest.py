@@ -235,6 +235,11 @@ class TestIntegration(unittest.TestCase):
     def _make_state(self, done_paths=None):
         return {"done": {p: {"status": "ingested"} for p in (done_paths or [])}, "last_run": None}
 
+    def _no_registry(self):
+        """Context manager: mock registry.is_done() to always return False so
+        DB state from previous test runs doesn't cause early-exit short-circuits."""
+        return patch("nova_tv_ingest.registry.is_done", return_value=False)
+
     def test_already_done_video_skipped(self):
         state = self._make_state(["/fake/video.mp4"])
         result = tv.process_video(Path("/fake/video.mp4"), state, Path("/tmp"))
@@ -242,7 +247,7 @@ class TestIntegration(unittest.TestCase):
 
     def test_audio_extraction_failure_marked_done(self):
         state = self._make_state()
-        with patch("nova_tv_ingest.extract_audio", return_value=False):
+        with self._no_registry(), patch("nova_tv_ingest.extract_audio", return_value=False):
             result = tv.process_video(Path("/fake/test.mp4"), state, Path("/tmp"))
         self.assertIsNone(result)
         self.assertIn("/fake/test.mp4", state["done"])
@@ -251,7 +256,8 @@ class TestIntegration(unittest.TestCase):
     def test_no_transcript_marked_done(self):
         state = self._make_state()
         mock_stat = MagicMock(); mock_stat.st_size = 10000
-        with patch("nova_tv_ingest.extract_audio", return_value=True), \
+        with self._no_registry(), \
+             patch("nova_tv_ingest.extract_audio", return_value=True), \
              patch("nova_tv_ingest.transcribe", return_value=None), \
              patch.object(Path, "unlink"), \
              patch.object(Path, "stat", return_value=mock_stat):
@@ -285,7 +291,8 @@ class TestIntegration(unittest.TestCase):
         state = self._make_state()
         garbage = "♪ la la la ♪ mm mm mm ♪ na na na ♪ " * 50
         mock_stat = MagicMock(); mock_stat.st_size = 10000
-        with patch("nova_tv_ingest.extract_audio", return_value=True), \
+        with self._no_registry(), \
+             patch("nova_tv_ingest.extract_audio", return_value=True), \
              patch("nova_tv_ingest.transcribe", return_value=garbage), \
              patch.object(Path, "unlink"), \
              patch.object(Path, "stat", return_value=mock_stat):
@@ -297,7 +304,8 @@ class TestIntegration(unittest.TestCase):
         state = self._make_state()
         video = Path("/Volumes/external/videos/TVShows/Forgotten Weapons/Season 01/S01E01 - Gewehr 98.mp4")
         mock_stat = MagicMock(); mock_stat.st_size = 500000
-        with patch("nova_tv_ingest.extract_audio", return_value=True), \
+        with self._no_registry(), \
+             patch("nova_tv_ingest.extract_audio", return_value=True), \
              patch("nova_tv_ingest.transcribe", return_value=self._good_transcript()), \
              patch("nova_tv_ingest.remember", return_value=True), \
              patch.object(Path, "unlink"), \
