@@ -70,7 +70,7 @@ workflow = {
     },
     "7": {
         "class_type": "CLIPTextEncode",
-        "inputs": {"text": "blurry, low quality, distorted, watermark, text, logo, nudity, nude, nsfw, explicit, nipples, sexual content, bare skin, revealing clothing", "clip": ["4", 1]}
+        "inputs": {"text": "blurry, low quality, distorted, watermark, text, logo, nudity, nude, nsfw, explicit, nipples, sexual content, bare skin, revealing clothing, dark, underexposed, too dark, black image, nearly black, dim, murky, low light, pitch black, unlit", "clip": ["4", 1]}
     },
     "8": {
         "class_type": "KSampler",

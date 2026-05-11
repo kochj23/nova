@@ -289,12 +289,15 @@ def generate_image(event: dict) -> str | None:
     fact = event.get("text", "")[:80]
 
     prompt = (
-        f"Late night TV talk show set in the style of The Tonight Show or Late Night with Jay Leno. "
-        f"An AI robot host wearing a sharp tailored suit and tie, seated behind a polished wooden desk "
-        f"with a coffee mug and nameplate. Dark studio, blue and purple stage lighting, live audience silhouettes. "
-        f"Background graphic: surreal illustration of '{fact[:60]}' ({year}). "
-        f"Fully clothed, professional broadcast television aesthetic, no nudity, family friendly. "
-        f"Cinematic wide shot. No text."
+        f"Bright colorful late night television talk show studio set, photorealistic. "
+        f"Robot host in a tailored navy suit sitting behind a polished wood desk with a coffee mug, "
+        f"brightly lit by warm studio key lights, smiling at camera. "
+        f"Vibrant illuminated cityscape backdrop behind the desk glowing with blue and gold city lights. "
+        f"Large bright LED screen on the left showing imagery related to '{fact[:60]}' ({year}). "
+        f"Rows of studio audience seats visible, well-lit stage floor, colorful stage lighting rigs overhead. "
+        f"Inspired by The Tonight Show Starring Jimmy Fallon or The Late Show with Stephen Colbert. "
+        f"High key broadcast lighting, vivid saturated colors, sharp focus, 4K television production quality. "
+        f"Fully clothed professional talent, no nudity, family friendly. Wide establishing shot."
     )
 
     # Pick a random model for variety in after-dark images
