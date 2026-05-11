@@ -733,8 +733,17 @@ def generate_dream_image(narrative: str, mood: str = "surreal") -> str:
     log(f"Image prompt: {prompt[:80]}...")
 
     try:
+        # Pick a random model for variety across dream images
+        try:
+            from nova_image_utils import get_random_model, MODELS
+            model_key = get_random_model()
+            model_file = MODELS.get(model_key, MODELS["juggernaut"])["file"]
+            optimal_steps = str(MODELS.get(model_key, MODELS["juggernaut"]).get("optimal_steps", 20))
+        except Exception:
+            model_file = "Juggernaut_X_RunDiffusion_Hyper.safetensors"
+            optimal_steps = "20"
         result = subprocess.run(
-            [str(GENERATE_IMAGE_SH), prompt, "1024", "1024", "20"],
+            [str(GENERATE_IMAGE_SH), prompt, "1024", "1024", optimal_steps, model_file],
             capture_output=True, text=True, timeout=360,
         )
         if result.returncode != 0:

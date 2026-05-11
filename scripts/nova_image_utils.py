@@ -163,32 +163,51 @@ def _model_available_via_api(model_file: str) -> bool:
 def generate_image(prompt: str, width: int = 1024, height: int = 768, steps: int = 12, model: str = None) -> str | None:
     """Generate an image with retry logic. Returns file path or None.
 
+    When model is None, picks a random working model for variety across all
+    journal sections (dreams, essays, opinions, research, tech, after dark).
+    Art Corner uses get_model_for_today() for its own day-of-week rotation.
+
     Args:
         prompt: Image generation prompt
         width: Image width (default 1024)
         height: Image height (default 768)
         steps: Generation steps (default 12, override for quality)
-        model: Model key from MODELS dict, or None for default
+        model: Model key from MODELS dict, or None to pick randomly
     """
     if not ensure_backend():
         return None
 
-    # Resolve model file
-    model_key = model or DEFAULT_MODEL
+    # Resolve model — random when not specified (all sections get variety)
+    if model:
+        model_key = model
+    else:
+        model_key = get_random_model()
+
     model_info = MODELS.get(model_key, MODELS[DEFAULT_MODEL])
     model_file = model_info["file"]
 
     # Check if model file exists via SwarmUI API (avoids /Volumes/Data TCC issues)
     if not _model_available_via_api(model_file):
-        _log(f"Model {model_file} not found in SwarmUI, falling back to {DEFAULT_MODEL}")
-        model_file = MODELS[DEFAULT_MODEL]["file"]
+        _log(f"Model {model_file} not found in SwarmUI, trying another random model")
+        # Try once more with a different random model, then fall back to default
+        alt_key = get_random_model()
+        alt_info = MODELS.get(alt_key, MODELS[DEFAULT_MODEL])
+        if _model_available_via_api(alt_info["file"]):
+            model_info = alt_info
+            model_file = alt_info["file"]
+        else:
+            model_info = MODELS[DEFAULT_MODEL]
+            model_file = MODELS[DEFAULT_MODEL]["file"]
 
-    _log(f"Using model: {model_info['name']} ({model_file}), {steps} steps")
+    # Use steps from model's optimal setting when caller doesn't override
+    actual_steps = steps if steps != 12 else model_info.get("optimal_steps", steps)
+
+    _log(f"Using model: {model_info['name']} ({model_file}), {actual_steps} steps")
 
     for attempt in range(MAX_RETRIES):
         try:
             result = subprocess.run(
-                [str(GENERATE_IMAGE_SH), prompt, str(width), str(height), str(steps), model_file],
+                [str(GENERATE_IMAGE_SH), prompt, str(width), str(height), str(actual_steps), model_file],
                 capture_output=True, text=True, timeout=TIMEOUT,
             )
             if result.returncode == 0 and result.stdout.strip():

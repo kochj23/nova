@@ -442,8 +442,15 @@ def generate_essay_image(essay: str, source: str) -> str | None:
             prompt = f"abstract artistic illustration related to {source.replace('_', ' ')}, warm lighting, detailed"
 
         try:
+            try:
+                from nova_image_utils import get_random_model, MODELS
+                _mk = get_random_model()
+                _mf = MODELS.get(_mk, MODELS["juggernaut"])["file"]
+                _ms = str(MODELS.get(_mk, MODELS["juggernaut"]).get("optimal_steps", 12))
+            except Exception:
+                _mf = "Juggernaut_X_RunDiffusion_Hyper.safetensors"; _ms = "12"
             result = subprocess.run(
-                [str(GENERATE_IMAGE_SH), prompt, "1024", "768", "12"],
+                [str(GENERATE_IMAGE_SH), prompt, "1024", "768", _ms, _mf],
                 capture_output=True, text=True, timeout=360
             )
             if result.returncode == 0 and result.stdout.strip():

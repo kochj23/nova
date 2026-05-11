@@ -295,10 +295,20 @@ def generate_image(event: dict) -> str | None:
         f"Cinematic, stylized, retro-futuristic talk show aesthetic. No text."
     )
 
+    # Pick a random model for variety in after-dark images
+    try:
+        from nova_image_utils import get_random_model, MODELS
+        _img_model_key = get_random_model()
+        _img_model_file = MODELS.get(_img_model_key, MODELS["juggernaut"])["file"]
+        _img_steps = str(MODELS.get(_img_model_key, MODELS["juggernaut"]).get("optimal_steps", 12))
+    except Exception:
+        _img_model_file = "Juggernaut_X_RunDiffusion_Hyper.safetensors"
+        _img_steps = "12"
+
     for attempt in range(3):
         try:
             result = subprocess.run(
-                [str(GENERATE_IMAGE_SH), prompt, "1024", "768", "12"],
+                [str(GENERATE_IMAGE_SH), prompt, "1024", "768", _img_steps, _img_model_file],
                 capture_output=True, text=True, timeout=240
             )
             if result.returncode == 0:
