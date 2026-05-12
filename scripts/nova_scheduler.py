@@ -26,6 +26,7 @@ import re
 import signal
 import sys
 import time
+import uuid
 import urllib.request
 import urllib.parse
 from dataclasses import dataclass, field, asdict
@@ -35,6 +36,7 @@ from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+import nova_ops_writer
 from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN, LOG_DEBUG
 
 CONFIG_PATH = Path.home() / ".openclaw/config/scheduler.yaml"
@@ -258,6 +260,22 @@ class NovaScheduler:
         task.state.running = True
         self._running_count += 1
         start = time.time()
+        run_id = str(uuid.uuid4())
+        scheduled_at_ms = int(task.state.next_run * 1000)
+        started_at_ms   = int(start * 1000)
+        was_retry = bool(task.state._retry_pending)
+
+        nova_ops_writer.record_run_start(
+            run_id=run_id,
+            task_id=task.id,
+            task_script=task.script,
+            task_group=task.group or "",
+            scheduled_at_ms=scheduled_at_ms,
+            started_at_ms=started_at_ms,
+            consecutive_failures=task.state.consecutive_failures,
+            run_count=task.state.run_count,
+            was_retry=was_retry,
+        )
 
         script_path = SCRIPTS_DIR / task.script
         if task.script.endswith(".py"):
@@ -272,6 +290,11 @@ class NovaScheduler:
         env["PYTHONPATH"] = self.sched_cfg.get("env", {}).get("PYTHONPATH", str(SCRIPTS_DIR))
         env.update(task.env)
 
+        _run_status = "success"
+        _stdout_tail = ""
+        _error_tail  = ""
+        _retry_recovered = False
+
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
@@ -284,13 +307,17 @@ class NovaScheduler:
             except asyncio.TimeoutError:
                 proc.kill()
                 await proc.wait()
+                _run_status = "timeout"
                 raise TimeoutError(f"Timed out after {task.timeout}s")
 
             task.state.last_exit_code = proc.returncode
             task.state.last_duration = time.time() - start
+            _stdout_tail = stdout.decode(errors="replace")[-200:].strip() if stdout else ""
 
             if proc.returncode != 0:
+                _run_status = "failure"
                 task.state.last_error = (stderr.decode(errors="replace"))[-500:]
+                _error_tail = task.state.last_error
                 if not task.state._retry_pending and task.state.consecutive_failures == 0:
                     # First failure — schedule a retry in 60s instead of counting it
                     task.state._retry_pending = True
@@ -309,7 +336,9 @@ class NovaScheduler:
                         await self._slack_alert(f":x: *{task.id}* — {task.state.consecutive_failures} consecutive failures. "
                                                f"Last error: {task.state.last_error[:200]}")
             else:
+                _run_status = "success"
                 if task.state._retry_pending:
+                    _retry_recovered = True
                     log(f"RETRY OK {task.id} — recovered on retry",
                         level=LOG_INFO, source="scheduler")
                 elif task.state.consecutive_failures > 0:
@@ -320,8 +349,11 @@ class NovaScheduler:
                 task.state.last_error = ""
 
         except Exception as e:
+            if _run_status == "success":  # not already set to timeout/failure above
+                _run_status = "failure"
             task.state.consecutive_failures += 1
             task.state.last_error = str(e)
+            _error_tail = str(e)[:500]
             task.state.last_duration = time.time() - start
             self._total_failures += 1
             log(f"ERROR {task.id}: {e}", level=LOG_ERROR, source="scheduler")
@@ -329,6 +361,20 @@ class NovaScheduler:
                 await self._slack_alert(f":x: *{task.id}* — {e}")
 
         finally:
+            ended_at_ms  = int(time.time() * 1000)
+            duration_ms  = ended_at_ms - started_at_ms
+
+            nova_ops_writer.record_run_end(
+                run_id=run_id,
+                ended_at_ms=ended_at_ms,
+                duration_ms=duration_ms,
+                exit_code=task.state.last_exit_code,
+                status=_run_status,
+                error_tail=_error_tail,
+                stdout_tail=_stdout_tail,
+                retry_recovered=_retry_recovered,
+            )
+
             task.state.running = False
             task.state.pid = 0
             task.state.last_run = start
@@ -444,6 +490,49 @@ class NovaScheduler:
                     body = json.dumps({"queued": task_id}).encode()
                 else:
                     body = json.dumps({"error": "unknown task"}).encode()
+            elif path == "/runs" or path.startswith("/runs/"):
+                # Serve run history from nova_ops.scheduler_runs
+                try:
+                    import asyncpg
+                    conn = await asyncpg.connect("postgresql://kochj@localhost:5432/nova_ops")
+                    try:
+                        if path == "/runs":
+                            # Last 50 runs across all tasks
+                            rows = await conn.fetch(
+                                "SELECT run_id, task_id, task_script, task_group, "
+                                "started_at, ended_at, duration_ms, exit_code, status, "
+                                "error_tail, was_retry, retry_recovered "
+                                "FROM scheduler_runs ORDER BY started_at DESC LIMIT 50"
+                            )
+                        else:
+                            tid = path[6:]
+                            rows = await conn.fetch(
+                                "SELECT run_id, task_id, task_script, task_group, "
+                                "started_at, ended_at, duration_ms, exit_code, status, "
+                                "error_tail, was_retry, retry_recovered "
+                                "FROM scheduler_runs WHERE task_id=$1 "
+                                "ORDER BY started_at DESC LIMIT 20",
+                                tid,
+                            )
+                        body = json.dumps([dict(r) for r in rows], default=str).encode()
+                    finally:
+                        await conn.close()
+                except Exception as e:
+                    body = json.dumps({"error": str(e)}).encode()
+            elif path == "/stats":
+                # Aggregate stats per task from nova_ops view
+                try:
+                    import asyncpg
+                    conn = await asyncpg.connect("postgresql://kochj@localhost:5432/nova_ops")
+                    try:
+                        rows = await conn.fetch(
+                            "SELECT * FROM scheduler_task_stats ORDER BY total_runs DESC"
+                        )
+                        body = json.dumps([dict(r) for r in rows], default=str).encode()
+                    finally:
+                        await conn.close()
+                except Exception as e:
+                    body = json.dumps({"error": str(e)}).encode()
             else:
                 body = b'{"error":"not found"}'
 
@@ -561,6 +650,7 @@ class NovaScheduler:
         # Shutdown
         log("Scheduler shutting down", level=LOG_INFO, source="scheduler")
         self._save_state()
+        await nova_ops_writer.close()
         if self.slack_cfg.get("startup", True):
             await self._slack_post(":octagonal_sign: *Nova Scheduler stopped*")
 

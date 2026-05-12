@@ -1376,11 +1376,11 @@ def _full_sweep():
     issues = []
     fixes = []
 
-    # ── Skip restarts during maintenance window (pg_maintain sets this flag) ──
-    if _is_maintenance_mode():
-        log("Maintenance mode active — skipping service restarts this sweep",
-            level=LOG_INFO, source="big-brother")
-        return
+    # ── Check maintenance mode — suppress restarts + alerts, still collect metrics ──
+    maintenance_active = _is_maintenance_mode()
+    if maintenance_active:
+        log("Maintenance mode active — checks running, restarts + Slack alerts suppressed",
+            level=LOG_WARN, source="big-brother")
 
     protected_running = _is_protected_task_running()
 
@@ -1438,17 +1438,17 @@ def _full_sweep():
                 log(f"[sweep] {name} down but silenced — skipping alert", level=LOG_INFO, source="big-brother")
                 continue
             issues.append(f"{name} (:{port}) DOWN")
-            if not critical and name not in ("SwarmUI", "TinyChat"):
-                _record_event("warning", f"{name} not responding on :{port}", "No action (non-critical)", name)
+
+            # Global or per-service maintenance brake — record but don't restart or alert
+            if maintenance_active or _is_service_in_maintenance(name):
+                reason = "global maintenance" if maintenance_active else "per-service maintenance"
+                log(f"[sweep] {name} DOWN but {reason} active — skipping restart",
+                    level=LOG_WARN, source="big-brother")
+                _record_event("warning", f"{name} DOWN ({reason})", "Skipped restart — maintenance brake", name)
                 continue
 
-            # Per-service maintenance brake — suppresses restart for this service only.
-            # Set via: redis-cli SET nova:maintenance:service:memory_server 1 EX 3600
-            # or via the /bb/maintenance API endpoint.
-            if _is_service_in_maintenance(name):
-                log(f"[sweep] {name} DOWN but in per-service maintenance — skipping restart",
-                    level=LOG_WARN, source="big-brother")
-                _record_event("warning", f"{name} DOWN (maintenance)", "Skipped restart — maintenance brake", name)
+            if not critical and name not in ("SwarmUI", "TinyChat"):
+                _record_event("warning", f"{name} not responding on :{port}", "No action (non-critical)", name)
                 continue
 
             if protected_running and name not in ("Gateway", "Signal-cli"):
@@ -1546,6 +1546,9 @@ def _full_sweep():
             # the disconnect is caused by WAN loss, not a Nova config problem.
             if _internet_down:
                 log(f"Channel disconnects suppressed — internet is DOWN",
+                    level=LOG_INFO, source="big-brother")
+            elif maintenance_active:
+                log(f"Channel disconnects suppressed — maintenance mode active",
                     level=LOG_INFO, source="big-brother")
             else:
                 issues.append(f"Channels disconnected: {', '.join(disconnected)}")
@@ -1923,15 +1926,20 @@ def _full_sweep():
             for sev in [ev.get("severity", "")]
         )
 
-        msg = ":robot_face: *Big Brother Report*\n"
-        msg += "\n".join(f"  :red_circle: {i}" for i in issues)
-        if fixes:
-            msg += "\n*Healed:*\n"
-            msg += "\n".join(f"  :white_check_mark: {f}" for f in fixes)
+        if maintenance_active:
+            # During maintenance: log to file only, skip Slack/Discord/Signal
+            log(f"Sweep (maintenance): {len(issues)} issues suppressed — {', '.join(issues[:3])}{'...' if len(issues) > 3 else ''}",
+                level=LOG_WARN, source="big-brother")
+        else:
+            msg = ":robot_face: *Big Brother Report*\n"
+            msg += "\n".join(f"  :red_circle: {i}" for i in issues)
+            if fixes:
+                msg += "\n*Healed:*\n"
+                msg += "\n".join(f"  :white_check_mark: {f}" for f in fixes)
 
-        issue_key = "::".join(sorted(issues))
-        _maybe_notify(issue_key, msg, is_critical=any("DOWN" in i for i in issues))
-        log(f"Sweep: {len(issues)} issues, {len(fixes)} fixes", level=LOG_WARN, source="big-brother")
+            issue_key = "::".join(sorted(issues))
+            _maybe_notify(issue_key, msg, is_critical=any("DOWN" in i for i in issues))
+            log(f"Sweep: {len(issues)} issues, {len(fixes)} fixes", level=LOG_WARN, source="big-brother")
     else:
         with _lock:
             _alerted_issues.clear()
@@ -2010,6 +2018,18 @@ class BBHandler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/bb/status":
+            # Fetch maintenance info from Redis for the status response
+            maint_info = {"global": False, "global_ttl_s": -1, "services": {}}
+            try:
+                import redis as _rds
+                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+                maint_info["global"] = bool(rc.get("nova:maintenance:active"))
+                maint_info["global_ttl_s"] = rc.ttl("nova:maintenance:active")
+                for key in rc.scan_iter("nova:maintenance:service:*"):
+                    svc = key.replace("nova:maintenance:service:", "")
+                    maint_info["services"][svc] = rc.ttl(key)
+            except Exception:
+                pass
             self._json({
                 "daemon": "big-brother",
                 "version": VERSION,
@@ -2019,6 +2039,7 @@ class BBHandler(BaseHTTPRequestHandler):
                 "services_down": [n for n, s in _service_status.items() if not s.get("up", True)],
                 "pending_restarts": list(_pending_restart),
                 "alerted_count": len(_alerted_issues),
+                "maintenance": maint_info,
             })
         elif self.path.startswith("/bb/events"):
             n = 100

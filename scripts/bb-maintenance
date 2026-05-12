@@ -1,0 +1,142 @@
+#!/usr/bin/env python3
+"""
+bb-maintenance — CLI to set/clear/check Big Brother maintenance mode.
+
+Usage:
+  bb-maintenance on [--ttl SECONDS] [--service "Service Name"]
+  bb-maintenance off [--service "Service Name"]
+  bb-maintenance status
+
+  --ttl     Seconds until maintenance mode expires automatically (default: 3600)
+  --service Apply brake to a single service only. Omit for global (all services).
+
+Examples:
+  bb-maintenance on                          # global maintenance for 1 hour
+  bb-maintenance on --ttl 7200               # global for 2 hours
+  bb-maintenance on --service "Memory Server" --ttl 600   # memory server only, 10 min
+  bb-maintenance off                         # clear global maintenance immediately
+  bb-maintenance off --service "PostgreSQL"  # clear a specific service brake
+  bb-maintenance status                      # show what's currently set
+
+Written by Jordan Koch.
+"""
+
+import argparse
+import json
+import sys
+import urllib.request
+import urllib.error
+
+BB_URL = "http://127.0.0.1:37461"
+
+
+def _post(path: str, body: dict) -> dict:
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        BB_URL + path,
+        data=data,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def _get(path: str) -> dict:
+    with urllib.request.urlopen(BB_URL + path, timeout=10) as resp:
+        return json.loads(resp.read())
+
+
+def cmd_on(service: str | None, ttl: int):
+    body = {"ttl": ttl}
+    if service:
+        body["service"] = service
+    result = _post("/bb/maintenance/set", body)
+
+    target = f"service '{service}'" if service else "GLOBAL (all services)"
+    mins = ttl // 60
+    secs = ttl % 60
+    duration = f"{mins}m {secs}s" if mins else f"{secs}s"
+    print(f"✓  Maintenance ON  — {target}  (expires in {duration})")
+    print(f"   Redis key: {result.get('set')}")
+    print(f"   Big Brother will log issues but NOT restart services or alert Slack.")
+
+
+def cmd_off(service: str | None):
+    body = {}
+    if service:
+        body["service"] = service
+    result = _post("/bb/maintenance/clear", body)
+    target = f"service '{service}'" if service else "GLOBAL"
+    print(f"✓  Maintenance OFF — {target}")
+    print(f"   Cleared: {result.get('cleared')}")
+
+
+def cmd_status():
+    data = _get("/bb/maintenance")
+    print("═══ Big Brother Maintenance Status ═══")
+
+    if data.get("global_maintenance"):
+        ttl = data.get("global_ttl_s", -1)
+        ttl_str = f"{ttl // 60}m {ttl % 60}s remaining" if ttl > 0 else "no expiry"
+        print(f"  🔴 GLOBAL maintenance ACTIVE  — {ttl_str}")
+        print(f"     All restarts and Slack alerts are suppressed.")
+    else:
+        print(f"  ✅ Global maintenance: OFF")
+
+    svc_flags = data.get("service_maintenance", {})
+    if svc_flags:
+        print(f"\n  Per-service brakes:")
+        for svc, val in svc_flags.items():
+            # val may be {"active": True, "ttl_s": N} or a raw int depending on endpoint
+            if isinstance(val, dict):
+                ttl_int = int(val.get("ttl_s", -1))
+            else:
+                ttl_int = int(val) if val is not None else -1
+            ttl_str = f"{ttl_int // 60}m {ttl_int % 60}s remaining" if ttl_int > 0 else "no expiry"
+            print(f"    🔴 {svc:<25} {ttl_str}")
+    else:
+        print(f"  ✅ Per-service brakes: none")
+
+    print(f"\n  Commands:")
+    print(f"    bb-maintenance on [--ttl N] [--service NAME]")
+    print(f"    bb-maintenance off [--service NAME]")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Control Big Brother maintenance mode",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__,
+    )
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    on_p = sub.add_parser("on", help="Enable maintenance mode")
+    on_p.add_argument("--ttl", type=int, default=3600, help="Expiry in seconds (default: 3600)")
+    on_p.add_argument("--service", type=str, default=None, help="Service name (omit for global)")
+
+    off_p = sub.add_parser("off", help="Disable maintenance mode")
+    off_p.add_argument("--service", type=str, default=None, help="Service name (omit for global)")
+
+    sub.add_parser("status", help="Show current maintenance state")
+
+    args = parser.parse_args()
+
+    try:
+        if args.cmd == "on":
+            cmd_on(args.service, args.ttl)
+        elif args.cmd == "off":
+            cmd_off(args.service)
+        elif args.cmd == "status":
+            cmd_status()
+    except urllib.error.URLError as e:
+        print(f"✗  Cannot reach Big Brother at {BB_URL}: {e}", file=sys.stderr)
+        print("   Is Big Brother running? Check: launchctl list net.digitalnoise.big-brother", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"✗  Error: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
