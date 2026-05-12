@@ -22,4 +22,4 @@ if [ -z "$TOKEN" ]; then
 fi
 
 export NOVA_SLACK_BOT_TOKEN="$TOKEN"
-exec /opt/homebrew/bin/python3 /Users/kochj/.openclaw/scripts/nova_slack_preprocessor.py
+exec /opt/homebrew/bin/python3 "$HOME/.openclaw/scripts/nova_slack_preprocessor.py"
