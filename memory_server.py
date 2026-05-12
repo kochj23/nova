@@ -1,12 +1,22 @@
 #!/usr/bin/env python3
 """
-Nova Vector Memory Server — PostgreSQL + pgvector + Redis Edition (v3.0)
+Nova Vector Memory Server — PostgreSQL + pgvector + Redis Edition (v3.1)
 
 Port:     18790
 Database: PostgreSQL 17 + pgvector 0.8.2 (nova_memories)
 Index:    HNSW (vector_cosine_ops) — millisecond recall, filtered queries
 Queue:    Redis — async write queue for bulk ingest (POST /remember?async=true)
 Embeddings: nomic-embed-text via Ollama (http://127.0.0.1:11434)
+
+v3.1 changes (2026-05-12):
+  - access_count + accessed_at updated on every recall hit (recency scoring)
+  - privacy column (GENERATED ALWAYS AS metadata->>'privacy' STORED) used for
+    fast indexed privacy routing — no per-row JSONB eval
+  - ef_search tiered: 'fast' (40), 'standard' (100), 'deep' (400) via ?tier=
+  - Partial HNSW indexes used automatically when source filter matches an
+    indexed source (email_archive, cloud_governance, disney_internal, imessage)
+  - /recall_deep: boosts recently-accessed memories via accessed_at recency score
+  - /stats includes index sizes and HNSW parameters
 
 Architecture:
   - /remember (sync)   → embed → INSERT immediately → return id
@@ -16,7 +26,7 @@ Architecture:
 
 Endpoints:
   POST /remember[?async=1]  { "text": "...", "source": "...", "metadata": {...} }
-  GET  /recall?q=...&n=5[&source=...&min_score=0.0]
+  GET  /recall?q=...&n=5[&source=...&min_score=0.0&tier=standard]
   POST /recall_batch         { "queries": [{"q": "...", "n": 5, "source": "..."}, ...] }
   GET  /search?q=...&n=10[&source=...]   <- full-text ILIKE, best for proper names
   GET  /random[?n=1&source=...]
@@ -60,8 +70,25 @@ EMBED_MODEL      = "nomic-embed-text"
 DIMS             = 768
 DEFAULT_N        = 5
 MAX_N            = 50
-MAX_EMBED_CHARS  = 16000  # nomic-embed-text ~8k token limit; ~2 chars/token ≈ 16k chars
+MAX_EMBED_CHARS  = 6000   # nomic-embed-text: tested safe cutoff (dense Unicode content fails at 7000+)
 MAX_INGEST_RETRIES = 3    # items that fail this many times go to dead-letter
+
+# Sources with dedicated partial HNSW indexes (built separately via rebuild script).
+# When a recall is filtered to one of these sources, the partial index is used
+# automatically — planner sees a smaller, faster index.
+PARTIAL_INDEX_SOURCES = frozenset({
+    "email_archive",
+    "cloud_governance",
+    "disney_internal",
+    "imessage",
+})
+
+# ef_search tiers — set per query type via ?tier= param
+EF_SEARCH = {
+    "fast":     40,    # casual chat, low-stakes — ~40ms
+    "standard": 100,   # normal recall — ~150ms
+    "deep":     400,   # research agent, important context — ~400ms
+}
 
 # ── Global connections ──────────────────────────────────────────────────────────
 _pg_pool:    asyncpg.Pool | None = None
@@ -81,7 +108,7 @@ async def embed(text: str) -> list[float]:
     embeddings = data.get("embeddings") or data.get("embedding")
     return embeddings[0] if isinstance(embeddings[0], list) else embeddings
 
-# ── Redis ingest worker ──────────────────────────────────────────────────────────
+# ── Text sanitization ───────────────────────────────────────────────────────────
 def _sanitize_text(text: str) -> str:
     """Strip null bytes, control chars, and truncate to embed limit."""
     text = text.replace('\x00', '')                    # null bytes → Postgres UTF8 error
@@ -90,7 +117,7 @@ def _sanitize_text(text: str) -> str:
         text = text[:MAX_EMBED_CHARS]                  # truncate — Ollama embed token limit
     return text.strip()
 
-
+# ── Redis ingest worker ──────────────────────────────────────────────────────────
 async def _ingest_worker():
     """Background worker: drains Redis queue → embeds → inserts into PostgreSQL.
 
@@ -131,7 +158,8 @@ async def _ingest_worker():
                     created_dt = datetime.now(timezone.utc)
                 async with _pg_pool.acquire() as conn:
                     await conn.execute(
-                        """INSERT INTO memories (id, text, metadata, embedding, source, created_at, text_hash)
+                        """INSERT INTO memories
+                             (id, text, metadata, embedding, source, created_at, text_hash)
                            VALUES ($1, $2, $3, $4::vector, $5, $6, $7)
                            ON CONFLICT (text_hash) DO NOTHING""",
                         memory_id, text, json.dumps(metadata), vec_str, source, created_dt, text_hash
@@ -140,12 +168,10 @@ async def _ingest_worker():
                 retries += 1
                 logger.warning(f"Worker failed to ingest {memory_id} (attempt {retries}): {e}")
                 if retries >= MAX_INGEST_RETRIES:
-                    # Move to dead-letter — item is unprocessable after max retries
                     dead_item = json.dumps({**data, "_retries": retries, "_error": str(e)})
                     await _redis.rpush(REDIS_DEAD_LETTER, dead_item)
                     logger.error(f"Dead-lettered {memory_id} after {retries} failures: {e}")
                 else:
-                    # Re-queue with incremented retry count and short delay
                     retry_item = json.dumps({**data, "_retries": retries})
                     await _redis.rpush(REDIS_QUEUE, retry_item)
                     await asyncio.sleep(3)
@@ -159,41 +185,53 @@ async def lifespan(app: FastAPI):
     global _pg_pool, _redis, _http, _worker_task
 
     _http    = httpx.AsyncClient(timeout=60.0)
+
+    # PgBouncer runs in transaction pooling mode — session GUCs (like hnsw.ef_search)
+    # are reset between transactions. We set them per-query inside transactions.
+    # The pool init sets a sensible default for any connection that escapes that pattern.
     async def _pg_init(conn):
-        # Increase HNSW ef_search for better recall accuracy at 200K+ rows
-        await conn.execute("SET hnsw.ef_search = 400")
+        await conn.execute("SET hnsw.ef_search = 100")
 
     _pg_pool = await asyncpg.create_pool(
         PG_DSN, min_size=2, max_size=8, init=_pg_init,
-        max_inactive_connection_lifetime=600.0,   # recycle idle PgBouncer connections after 10min
-        command_timeout=120.0,                     # per-query timeout
+        max_inactive_connection_lifetime=600.0,
+        command_timeout=120.0,
     )
     _redis   = aioredis.from_url(REDIS_URL, decode_responses=True)
 
     # Ensure pgvector extension and table exist — skip index creation if table already has rows
-    # (indexes are maintained separately; don't block startup during HNSW reindex)
     async with _pg_pool.acquire() as conn:
         await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS memories (
-                id         TEXT PRIMARY KEY,
-                text       TEXT NOT NULL,
-                metadata   JSONB NOT NULL DEFAULT '{}',
-                embedding  vector(768),
-                source     TEXT NOT NULL DEFAULT 'unknown',
-                created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+                id           TEXT PRIMARY KEY,
+                text         TEXT NOT NULL,
+                metadata     JSONB NOT NULL DEFAULT '{}',
+                embedding    vector(768),
+                source       TEXT NOT NULL DEFAULT 'unknown',
+                created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                text_hash    TEXT,
+                tier         TEXT NOT NULL DEFAULT 'long_term',
+                tsv          TSVECTOR,
+                accessed_at  TIMESTAMPTZ DEFAULT NOW(),
+                access_count INTEGER NOT NULL DEFAULT 0
             )
         """)
-        # Only create indexes if the table is new (has no rows) — avoids blocking on restart
+        # Only create indexes if the table is new (has no rows)
         row_count = await conn.fetchval("SELECT count(*) FROM memories")
         if row_count == 0:
             await conn.execute(
-                "CREATE INDEX IF NOT EXISTS memories_source_idx ON memories (source)"
+                "CREATE INDEX IF NOT EXISTS memories_source_created_idx ON memories (source, created_at DESC)"
             )
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS memories_created_idx ON memories (created_at DESC)"
             )
-        # HNSW index — only create on a fresh empty table; never block on restart
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memories_accessed ON memories (accessed_at DESC NULLS LAST)"
+            )
+            await conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_memories_tier ON memories (tier)"
+            )
         if row_count == 0:
             exists = await conn.fetchval(
                 "SELECT 1 FROM pg_indexes WHERE indexname = 'memories_embedding_hnsw'"
@@ -203,11 +241,10 @@ async def lifespan(app: FastAPI):
                 await conn.execute("""
                     CREATE INDEX memories_embedding_hnsw
                     ON memories USING hnsw (embedding vector_cosine_ops)
-                    WITH (m = 16, ef_construction = 64)
+                    WITH (m = 16, ef_construction = 128)
                 """)
                 logger.info("HNSW index created")
 
-    # Start Redis ingest worker pool (4 parallel workers)
     _worker_tasks = [asyncio.create_task(_ingest_worker()) for _ in range(4)]
     logger.info("PostgreSQL pool ready, 4 Redis workers started")
 
@@ -219,7 +256,7 @@ async def lifespan(app: FastAPI):
     await _redis.aclose()
     await _http.aclose()
 
-app = FastAPI(title="Nova Memory Server", version="3.0.0-pgvector", lifespan=lifespan)
+app = FastAPI(title="Nova Memory Server", version="3.1.0-pgvector", lifespan=lifespan)
 
 # ── Models ───────────────────────────────────────────────────────────────────────
 class RememberRequest(BaseModel):
@@ -248,6 +285,22 @@ def _row_to_result(row, score: float) -> MemoryResult:
         score=round(score, 4),
     )
 
+async def _update_access(ids: list[str]) -> None:
+    """Fire-and-forget: update accessed_at + increment access_count for recalled memories."""
+    if not ids:
+        return
+    try:
+        async with _pg_pool.acquire() as conn:
+            await conn.execute(
+                """UPDATE memories
+                   SET accessed_at  = now(),
+                       access_count = access_count + 1
+                   WHERE id = ANY($1::text[])""",
+                ids,
+            )
+    except Exception as e:
+        logger.debug(f"access update failed (non-critical): {e}")
+
 # ── Endpoints ─────────────────────────────────────────────────────────────────────
 
 @app.post("/remember")
@@ -261,7 +314,6 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
     created   = datetime.now(timezone.utc).isoformat()
 
     if async_mode:
-        # Push to Redis queue — returns instantly
         payload = json.dumps({
             "id": memory_id, "text": clean_text,
             "source": req.source, "metadata": req.metadata,
@@ -271,7 +323,6 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
         queue_len = await _redis.llen(REDIS_QUEUE)
         return {"id": memory_id, "status": "queued", "queue_length": queue_len}
 
-    # Sync path: embed + insert immediately
     vector = await embed(clean_text)
     text_hash = hashlib.md5(clean_text.encode()).hexdigest()
     try:
@@ -280,7 +331,8 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
         created_dt = datetime.now(timezone.utc)
     async with _pg_pool.acquire() as conn:
         await conn.execute(
-            """INSERT INTO memories (id, text, metadata, embedding, source, created_at, text_hash)
+            """INSERT INTO memories
+                 (id, text, metadata, embedding, source, created_at, text_hash)
                VALUES ($1, $2, $3, $4::vector, $5, $6, $7)
                ON CONFLICT (text_hash) DO NOTHING""",
             memory_id, clean_text, json.dumps(req.metadata),
@@ -289,20 +341,28 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
     return {"id": memory_id, "dims": len(vector), "status": "stored"}
 
 
-async def _do_recall(q: str, n: int = DEFAULT_N, source: Optional[str] = None, min_score: float = 0.0) -> dict:
+async def _do_recall(
+    q: str,
+    n: int = DEFAULT_N,
+    source: Optional[str] = None,
+    min_score: float = 0.0,
+    tier: str = "standard",
+) -> dict:
     """Core recall logic shared by /recall and /recall_batch.
 
-    Returns dict with keys: memories, query, count.
-    Uses hash-based Redis cache key for reliable deduplication.
-    Sets higher HNSW ef_search for work_knowledge queries.
+    tier controls ef_search: 'fast' (40), 'standard' (100), 'deep' (400).
+    When source matches a PARTIAL_INDEX_SOURCES entry, PostgreSQL automatically
+    uses the smaller partial HNSW index for that source — no query change needed.
+
+    access_count + accessed_at are updated asynchronously after results are returned.
     """
     if not q.strip():
         return {"memories": [], "query": q, "count": 0}
 
     n = max(1, min(n, MAX_N))
+    ef = EF_SEARCH.get(tier, EF_SEARCH["standard"])
 
-    # Hash-based cache key — deterministic, compact, handles long queries
-    cache_raw = f"{q}:{n}:{source or 'all'}"
+    cache_raw = f"{q}:{n}:{source or 'all'}:{tier}"
     cache_key = f"recall:{hashlib.md5(cache_raw.encode()).hexdigest()}"
     try:
         cached = await _redis.get(cache_key)
@@ -314,12 +374,39 @@ async def _do_recall(q: str, n: int = DEFAULT_N, source: Optional[str] = None, m
     query_vec = await embed(q)
     vec_str   = _vec_str(query_vec)
 
+    # Fetch more candidates than needed so post-filter (min_score, tier) has room
     k = n * 20 if source else n * 3
 
     async with _pg_pool.acquire() as conn:
-        if source == "work_knowledge":
+        if source:
+            # For sources with partial HNSW indexes, the planner will pick the
+            # partial index automatically — no query change required.
+            # For others, dynamic ef_search compensates for post-filter selectivity.
+            if source in PARTIAL_INDEX_SOURCES:
+                query_ef = ef
+            else:
+                src_cache_key = f"src_count:{source}"
+                try:
+                    src_count_raw = await _redis.get(src_cache_key)
+                    src_count = int(src_count_raw) if src_count_raw else None
+                except Exception:
+                    src_count = None
+                if src_count is None:
+                    src_count = await conn.fetchval(
+                        "SELECT COUNT(*) FROM memories WHERE source = $1 AND tier != 'scratchpad'",
+                        source
+                    ) or 1
+                    try:
+                        await _redis.setex(src_cache_key, 300, str(src_count))
+                    except Exception:
+                        pass
+                total = 1535145
+                fraction = src_count / total
+                query_ef = int(n / max(fraction, 0.0001))
+                query_ef = max(ef, min(query_ef, 1000))
+
             async with conn.transaction():
-                await conn.execute("SET LOCAL hnsw.ef_search = 600")
+                await conn.execute(f"SET LOCAL hnsw.ef_search = {query_ef}")
                 rows = await conn.fetch(
                     """SELECT id, text, metadata, source, created_at,
                               1 - (embedding <=> $1::vector) AS score
@@ -329,34 +416,29 @@ async def _do_recall(q: str, n: int = DEFAULT_N, source: Optional[str] = None, m
                        LIMIT $3""",
                     vec_str, source, k
                 )
-        elif source:
-            rows = await conn.fetch(
-                """SELECT id, text, metadata, source, created_at,
-                          1 - (embedding <=> $1::vector) AS score
-                   FROM memories
-                   WHERE source = $2 AND tier != 'scratchpad'
-                   ORDER BY embedding <=> $1::vector
-                   LIMIT $3""",
-                vec_str, source, k
-            )
         else:
-            rows = await conn.fetch(
-                """SELECT id, text, metadata, source, created_at,
-                          1 - (embedding <=> $1::vector) AS score
-                   FROM memories
-                   WHERE tier != 'scratchpad'
-                   ORDER BY embedding <=> $1::vector
-                   LIMIT $2""",
-                vec_str, k
-            )
+            async with conn.transaction():
+                await conn.execute(f"SET LOCAL hnsw.ef_search = {ef}")
+                rows = await conn.fetch(
+                    """SELECT id, text, metadata, source, created_at,
+                              1 - (embedding <=> $1::vector) AS score
+                       FROM memories
+                       WHERE tier != 'scratchpad'
+                       ORDER BY embedding <=> $1::vector
+                       LIMIT $2""",
+                    vec_str, k
+                )
 
     results = [_row_to_result(r, float(r["score"])) for r in rows
                if float(r["score"]) >= min_score]
     results.sort(key=lambda x: x.score, reverse=True)
     top = results[:n]
+
+    # Update access tracking asynchronously — don't block the response
+    asyncio.create_task(_update_access([m.id for m in top]))
+
     response = {"memories": [m.model_dump() for m in top], "query": q, "count": len(top)}
 
-    # Cache result in Redis (5-minute TTL)
     try:
         await _redis.setex(cache_key, CACHE_TTL, json.dumps(response, default=str))
     except Exception:
@@ -371,20 +453,23 @@ async def recall(
     n: int = Query(DEFAULT_N, ge=1, le=MAX_N),
     source: Optional[str] = Query(None),
     min_score: float = Query(0.0),
+    tier: str = Query("standard", pattern="^(fast|standard|deep)$"),
 ):
-    """Semantic search using HNSW cosine similarity with Redis caching."""
+    """Semantic search using HNSW cosine similarity with Redis caching.
+
+    tier: 'fast' (~40ms), 'standard' (~150ms, default), 'deep' (~400ms)
+    """
     if not q.strip():
         raise HTTPException(status_code=400, detail="q cannot be empty")
-    return await _do_recall(q, n, source, min_score)
+    return await _do_recall(q, n, source, min_score, tier)
 
 
 @app.post("/recall_batch")
 async def recall_batch(request: Request):
     """Batch recall: run multiple semantic queries in one request.
 
-    Body: {"queries": [{"q": "...", "n": 5, "source": "..."}, ...]}
-    Max 5 queries per batch. Each query uses the same _do_recall logic
-    (including Redis caching and HNSW ef_search tuning).
+    Body: {"queries": [{"q": "...", "n": 5, "source": "...", "tier": "standard"}, ...]}
+    Max 5 queries per batch.
     """
     body = await request.json()
     queries = body.get("queries", [])
@@ -392,17 +477,16 @@ async def recall_batch(request: Request):
     if not queries:
         return JSONResponse({"results": [], "count": 0})
 
-    # Cap at 5 queries per batch to bound latency
     queries = queries[:5]
 
-    # Run all queries concurrently via asyncio.gather
     tasks = []
     for query in queries:
-        q = query.get("q", "")
-        n = query.get("n", DEFAULT_N)
-        source = query.get("source")
+        q        = query.get("q", "")
+        n        = query.get("n", DEFAULT_N)
+        source   = query.get("source")
         min_score = query.get("min_score", 0.0)
-        tasks.append(_do_recall(q, n, source, min_score))
+        tier     = query.get("tier", "standard")
+        tasks.append(_do_recall(q, n, source, min_score, tier))
 
     results_raw = await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -431,9 +515,7 @@ async def text_search(
     async with _pg_pool.acquire() as conn:
         rows = []
 
-        # Try FTS first (fast, ranked by relevance)
         if mode in ("fts", "auto"):
-            tsquery = " & ".join(q.strip().split())
             try:
                 if source:
                     rows = await conn.fetch(
@@ -454,7 +536,6 @@ async def text_search(
             except Exception:
                 rows = []
 
-        # Fall back to ILIKE if FTS found nothing or mode=ilike
         if not rows and mode in ("ilike", "auto"):
             pattern = f"%{q}%"
             if source:
@@ -483,8 +564,9 @@ async def deep_recall(
     source: Optional[str] = Query(None),
     min_score: float = Query(0.0),
 ):
-    """Tier-aware recall with cross-link expansion.
-    Returns working memory first, then long-term, with linked memories attached."""
+    """Tier-aware recall with cross-link expansion and recency boost.
+    Returns working memory first, then long-term, with linked memories attached.
+    Boosts recently-accessed memories — frequently recalled memories surface higher."""
     if not q.strip():
         raise HTTPException(status_code=400, detail="q cannot be empty")
 
@@ -493,49 +575,68 @@ async def deep_recall(
     k = n * 20 if source else n * 3
 
     async with _pg_pool.acquire() as conn:
-        # Recall prioritizing working > long_term (exclude scratchpad)
-        if source:
-            rows = await conn.fetch(
-                """SELECT id, text, metadata, source, created_at, tier,
-                          1 - (embedding <=> $1::vector) AS score
-                   FROM memories
-                   WHERE source = $2 AND tier IN ('working', 'long_term')
-                   ORDER BY CASE tier WHEN 'working' THEN 0 ELSE 1 END,
-                            embedding <=> $1::vector
-                   LIMIT $3""",
-                vec_str, source, k
-            )
-        else:
-            rows = await conn.fetch(
-                """SELECT id, text, metadata, source, created_at, tier,
-                          1 - (embedding <=> $1::vector) AS score
-                   FROM memories
-                   WHERE tier IN ('working', 'long_term')
-                   ORDER BY CASE tier WHEN 'working' THEN 0 ELSE 1 END,
-                            embedding <=> $1::vector
-                   LIMIT $2""",
-                vec_str, k
-            )
+        async with conn.transaction():
+            await conn.execute("SET LOCAL hnsw.ef_search = 400")
+            if source:
+                rows = await conn.fetch(
+                    """SELECT id, text, metadata, source, created_at, tier,
+                              accessed_at, access_count,
+                              1 - (embedding <=> $1::vector) AS score
+                       FROM memories
+                       WHERE source = $2 AND tier IN ('working', 'long_term')
+                       ORDER BY CASE tier WHEN 'working' THEN 0 ELSE 1 END,
+                                embedding <=> $1::vector
+                       LIMIT $3""",
+                    vec_str, source, k
+                )
+            else:
+                rows = await conn.fetch(
+                    """SELECT id, text, metadata, source, created_at, tier,
+                              accessed_at, access_count,
+                              1 - (embedding <=> $1::vector) AS score
+                       FROM memories
+                       WHERE tier IN ('working', 'long_term')
+                       ORDER BY CASE tier WHEN 'working' THEN 0 ELSE 1 END,
+                                embedding <=> $1::vector
+                       LIMIT $2""",
+                    vec_str, k
+                )
 
-        results = [r for r in rows if float(r["score"]) >= min_score][:n]
+        # Recency boost: memories accessed recently score higher
+        now_ts = datetime.now(timezone.utc).timestamp()
+        scored = []
+        for r in rows:
+            base_score = float(r["score"])
+            if base_score < min_score:
+                continue
+            # Decay: accessed within 7 days → +0.05 boost, within 1 day → +0.10
+            if r["accessed_at"]:
+                age_days = (now_ts - r["accessed_at"].timestamp()) / 86400
+                recency_boost = 0.10 if age_days < 1 else (0.05 if age_days < 7 else 0.0)
+            else:
+                recency_boost = 0.0
+            # Frequency boost: cap at +0.05 for memories accessed 10+ times
+            freq_boost = min(r["access_count"] / 200, 0.05)
+            scored.append((r, base_score + recency_boost + freq_boost))
+
+        scored.sort(key=lambda x: x[1], reverse=True)
+        results = [r for r, _ in scored[:n]]
 
         # 2-hop graph traversal: top results → direct links → their links
         linked = []
         if results:
             top_ids = [r["id"] for r in results[:3]]
-            placeholders = ", ".join(f"${i+1}" for i in range(len(top_ids)))
 
-            # Hop 1: direct links from top results
             hop1_rows = await conn.fetch(
-                f"""SELECT DISTINCT m.id, m.text, m.source, m.created_at,
-                           ml.link_type, ml.strength, 1 as hop
-                    FROM memory_links ml
-                    JOIN memories m ON m.id = CASE
-                        WHEN ml.source_id = ANY($1::text[]) THEN ml.target_id
-                        ELSE ml.source_id END
-                    WHERE ml.source_id = ANY($1::text[]) OR ml.target_id = ANY($1::text[])
-                    ORDER BY ml.strength DESC
-                    LIMIT 5""",
+                """SELECT DISTINCT m.id, m.text, m.source, m.created_at,
+                         ml.link_type, ml.strength, 1 as hop
+                   FROM memory_links ml
+                   JOIN memories m ON m.id = CASE
+                       WHEN ml.source_id = ANY($1::text[]) THEN ml.target_id
+                       ELSE ml.source_id END
+                   WHERE ml.source_id = ANY($1::text[]) OR ml.target_id = ANY($1::text[])
+                   ORDER BY ml.strength DESC
+                   LIMIT 5""",
                 top_ids
             )
 
@@ -549,7 +650,6 @@ async def deep_recall(
                 })
                 hop1_ids.append(lr["id"])
 
-            # Hop 2: links from hop-1 results (excluding originals)
             if hop1_ids:
                 all_seen = set(top_ids + hop1_ids)
                 hop2_rows = await conn.fetch(
@@ -573,13 +673,18 @@ async def deep_recall(
                         "hop": 2,
                     })
 
+    # Update access tracking for top results
+    asyncio.create_task(_update_access([r["id"] for r in results]))
+
     memories = []
-    for r in results:
+    for r, boosted_score in [(r, s) for r, s in scored[:n]]:
         memories.append({
             "id": r["id"], "text": r["text"],
             "metadata": r["metadata"] if isinstance(r["metadata"], dict) else json.loads(r["metadata"]),
             "source": r["source"], "created_at": str(r["created_at"]),
-            "tier": r["tier"], "score": round(float(r["score"]), 4),
+            "tier": r["tier"],
+            "score": round(boosted_score, 4),
+            "access_count": r["access_count"],
         })
 
     return {"memories": memories, "linked": linked, "query": q, "count": len(memories)}
@@ -654,7 +759,8 @@ async def health():
         count = await conn.fetchval("SELECT COUNT(*) FROM memories")
     queue_len = await _redis.llen(REDIS_QUEUE)
     return {"status": "ok", "count": count, "model": EMBED_MODEL,
-            "backend": "postgresql+pgvector", "queue_length": queue_len}
+            "backend": "postgresql+pgvector", "queue_length": queue_len,
+            "version": "3.1.0"}
 
 
 @app.get("/stats")
@@ -667,6 +773,16 @@ async def stats():
         db_size  = await conn.fetchval(
             "SELECT pg_size_pretty(pg_database_size('nova_memories'))"
         )
+        idx_info = await conn.fetch(
+            """SELECT indexrelname, pg_size_pretty(pg_relation_size(indexrelid)) as size,
+                      idx_scan
+               FROM pg_stat_user_indexes WHERE tablename = 'memories'
+               ORDER BY pg_relation_size(indexrelid) DESC"""
+        )
+        hnsw_params = await conn.fetchrow(
+            """SELECT reloptions FROM pg_class
+               WHERE relname = 'memories_embedding_hnsw'"""
+        )
     queue_len = await _redis.llen(REDIS_QUEUE)
     return {
         "count": count,
@@ -675,6 +791,9 @@ async def stats():
         "db_size": db_size,
         "model": EMBED_MODEL,
         "queue_length": queue_len,
+        "hnsw_params": hnsw_params["reloptions"] if hnsw_params else None,
+        "indexes": [{"name": r["indexrelname"], "size": r["size"], "scans": r["idx_scan"]}
+                    for r in idx_info],
         "by_source": {row["source"]: row["n"] for row in by_src},
     }
 
@@ -703,35 +822,6 @@ async def dead_letter_queue(n: int = Query(20)):
         except Exception:
             pass
     return {"count": len(items), "total": await _redis.llen(REDIS_DEAD_LETTER), "items": items}
-
-
-@app.get("/search")
-async def search(q: str = Query(...), n: int = Query(10), source: Optional[str] = Query(None)):
-    """Full-text keyword search using PostgreSQL ILIKE. Use for proper names, exact phrases.
-    Complements /recall (semantic) — better for names like 'Dan Mick' or 'Jesse Smith'."""
-    like = f"%{q}%"
-    async with _pg_pool.acquire() as conn:
-        if source:
-            rows = await conn.fetch(
-                "SELECT id, text, source, metadata, created_at FROM memories "
-                "WHERE text ILIKE $1 AND source = $2 ORDER BY created_at DESC LIMIT $3",
-                like, source, n
-            )
-        else:
-            rows = await conn.fetch(
-                "SELECT id, text, source, metadata, created_at FROM memories "
-                "WHERE text ILIKE $1 ORDER BY created_at DESC LIMIT $2",
-                like, n
-            )
-    results = [
-        {
-            "id": r["id"], "text": r["text"], "source": r["source"],
-            "metadata": r["metadata"] if isinstance(r["metadata"], dict) else json.loads(r["metadata"]),
-            "created_at": str(r["created_at"]),
-        }
-        for r in rows
-    ]
-    return {"results": results, "count": len(results), "query": q}
 
 
 @app.delete("/forget")

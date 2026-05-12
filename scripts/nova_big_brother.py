@@ -1052,11 +1052,27 @@ def _check_journal_staleness(issues: list, fixes: list):
 # ── Full Health Sweep ─────────────────────────────────────────────────────────
 
 def _is_maintenance_mode() -> bool:
-    """Check Redis maintenance flag set by pg_maintain / manual ops."""
+    """Check Redis global maintenance flag set by pg_maintain / manual ops."""
     try:
         import redis
         r = redis.from_url("redis://localhost:6379", decode_responses=True)
         return bool(r.get("nova:maintenance:active"))
+    except Exception:
+        return False
+
+
+def _is_service_in_maintenance(service_name: str) -> bool:
+    """Check per-service maintenance flag: nova:maintenance:service:<name>.
+
+    Set via /bb/maintenance API or manually:
+      redis-cli SET nova:maintenance:service:"Memory Server" 1 EX 3600
+    Cleared automatically on TTL expiry or via /bb/maintenance/clear.
+    """
+    try:
+        import redis
+        r = redis.from_url("redis://localhost:6379", decode_responses=True)
+        safe_name = service_name.replace(" ", "_").lower()
+        return bool(r.get(f"nova:maintenance:service:{safe_name}"))
     except Exception:
         return False
 
@@ -1388,6 +1404,15 @@ def _full_sweep():
             issues.append(f"{name} (:{port}) DOWN")
             if not critical and name not in ("SwarmUI", "TinyChat"):
                 _record_event("warning", f"{name} not responding on :{port}", "No action (non-critical)", name)
+                continue
+
+            # Per-service maintenance brake — suppresses restart for this service only.
+            # Set via: redis-cli SET nova:maintenance:service:memory_server 1 EX 3600
+            # or via the /bb/maintenance API endpoint.
+            if _is_service_in_maintenance(name):
+                log(f"[sweep] {name} DOWN but in per-service maintenance — skipping restart",
+                    level=LOG_WARN, source="big-brother")
+                _record_event("warning", f"{name} DOWN (maintenance)", "Skipped restart — maintenance brake", name)
                 continue
 
             if protected_running and name not in ("Gateway", "Signal-cli"):
@@ -2103,6 +2128,25 @@ class BBHandler(BaseHTTPRequestHandler):
                 "next_run_in_s": next_run_in,
                 "swarmui_up": _port_open("127.0.0.1", 7801),
             })
+        elif self.path == "/bb/maintenance":
+            # List all active maintenance flags (global + per-service)
+            try:
+                import redis as _rds
+                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+                global_flag = bool(rc.get("nova:maintenance:active"))
+                global_ttl  = rc.ttl("nova:maintenance:active")
+                svc_flags = {}
+                for key in rc.scan_iter("nova:maintenance:service:*"):
+                    svc = key.replace("nova:maintenance:service:", "")
+                    svc_flags[svc] = {"active": True, "ttl_s": rc.ttl(key)}
+                self._json({
+                    "global_maintenance": global_flag,
+                    "global_ttl_s": global_ttl,
+                    "service_maintenance": svc_flags,
+                    "note": "POST /bb/maintenance/set to activate, POST /bb/maintenance/clear to deactivate",
+                })
+            except Exception as e:
+                self._json({"error": str(e)})
         else:
             self.send_response(404)
             self.end_headers()
@@ -2117,6 +2161,50 @@ class BBHandler(BaseHTTPRequestHandler):
             _last_journal_image_check = 0.0
             threading.Thread(target=_check_journal_images, daemon=True).start()
             self._json({"queued": True})
+        elif self.path == "/bb/maintenance/set":
+            # Body: {"service": "Memory Server", "ttl": 3600}
+            # service=null or omitted → global flag
+            # Sets the maintenance brake. Big Brother will NOT restart the named service
+            # (or any service if global) until the TTL expires or /clear is called.
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}") if length else {}
+                ttl  = int(body.get("ttl", 3600))
+                svc  = body.get("service")
+                import redis as _rds
+                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+                if svc:
+                    safe = svc.replace(" ", "_").lower()
+                    rc.setex(f"nova:maintenance:service:{safe}", ttl, "1")
+                    key_set = f"nova:maintenance:service:{safe}"
+                else:
+                    rc.setex("nova:maintenance:active", ttl, "1")
+                    key_set = "nova:maintenance:active"
+                log(f"Maintenance brake SET for {'global' if not svc else svc} (TTL {ttl}s)",
+                    level=LOG_WARN, source="big-brother")
+                self._json({"set": key_set, "ttl_s": ttl, "service": svc or "global"})
+            except Exception as e:
+                self._json({"error": str(e)})
+        elif self.path == "/bb/maintenance/clear":
+            # Body: {"service": "Memory Server"} or {} for global
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                body = json.loads(self.rfile.read(length) or b"{}") if length else {}
+                svc  = body.get("service")
+                import redis as _rds
+                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+                if svc:
+                    safe = svc.replace(" ", "_").lower()
+                    rc.delete(f"nova:maintenance:service:{safe}")
+                    cleared = f"nova:maintenance:service:{safe}"
+                else:
+                    rc.delete("nova:maintenance:active")
+                    cleared = "nova:maintenance:active"
+                log(f"Maintenance brake CLEARED for {'global' if not svc else svc}",
+                    level=LOG_INFO, source="big-brother")
+                self._json({"cleared": cleared, "service": svc or "global"})
+            except Exception as e:
+                self._json({"error": str(e)})
         else:
             self.send_response(404)
             self.end_headers()
