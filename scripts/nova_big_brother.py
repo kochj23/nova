@@ -174,6 +174,16 @@ _internet_down_since: float = 0.0
 _internet_down_alerted: bool = False
 DISCORD_STRIKE_THRESHOLD = 3
 
+# External LAN check failure dampening — require 2 consecutive failures before alerting.
+# Prevents a single port-open timeout from triggering a false alarm.
+_external_fail_counts: dict = {}   # name → consecutive failure count
+EXTERNAL_FAIL_THRESHOLD = 2        # must fail this many sweeps in a row to alert
+
+# How far back to look in the gateway log for channel state (seconds).
+# Lines older than this are ignored — prevents stale "websocket closed" lines from
+# triggering a restart loop after the gateway successfully reconnects.
+GATEWAY_LOG_WINDOW_SECS = 120
+
 # Signal gap tracking — log when signal-cli goes unreachable and for how long
 _signal_down_since: float = 0.0   # 0 = currently up
 
@@ -536,7 +546,14 @@ def _service_is_up(name: str, host: str, port: int, health_path) -> bool:
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
 
 def _check_gateway_log_channels() -> dict:
-    """Parse recent gateway log for channel state. Returns {slack, discord, signal}."""
+    """Parse recent gateway log for channel state. Returns {slack, discord, signal}.
+
+    Only considers log lines timestamped within GATEWAY_LOG_WINDOW_SECS seconds.
+    This prevents stale 'websocket closed' lines from appearing as a current
+    disconnect after the gateway has already successfully reconnected — which was
+    causing an infinite restart loop (close line stays in log → BB restarts gateway
+    → new close line written → repeat).
+    """
     status = {"slack": "unknown", "discord": "unknown", "signal": "unknown"}
 
     log_file = LOG_DIR / "gateway.log"
@@ -544,37 +561,56 @@ def _check_gateway_log_channels() -> dict:
         return status
 
     try:
-        lines = log_file.read_text(errors="replace").split("\n")[-200:]
+        lines = log_file.read_text(errors="replace").split("\n")[-400:]
     except Exception:
         return status
 
+    now = datetime.now(timezone.utc)
+    cutoff = now.timestamp() - GATEWAY_LOG_WINDOW_SECS
+
+    # ISO timestamp pattern used by OpenClaw gateway: 2026-05-12T12:26:54.061-07:00
+    _ts_re = re.compile(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2}))')
+
     for line in lines:
-        clean = _ANSI_RE.sub("", line).lower()
-        if "slack" in clean:
-            if "socket mode connected" in clean:
+        clean = _ANSI_RE.sub("", line)
+
+        # Parse line timestamp — skip lines older than the window
+        ts_m = _ts_re.match(clean)
+        if ts_m:
+            try:
+                ts_str = ts_m.group(1)
+                ts = datetime.fromisoformat(ts_str)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                if ts.timestamp() < cutoff:
+                    continue  # line is too old — ignore
+            except Exception:
+                pass  # unparseable timestamp — include the line (safe fallback)
+
+        lower = clean.lower()
+
+        if "slack" in lower:
+            if "socket mode connected" in lower:
                 status["slack"] = "connected"
-            elif "socket disconnected" in clean or "socket mode disconnected" in clean:
+            elif "socket disconnected" in lower or "socket mode disconnected" in lower:
                 status["slack"] = "disconnected"
-            # timeout is NOT a disconnect — skip
-        if "discord" in clean:
-            if "channels resolved" in clean or "discord ready" in clean or "discord client initialized" in clean:
+
+        if "discord" in lower:
+            if "channels resolved" in lower or "discord ready" in lower or "discord client initialized" in lower:
                 status["discord"] = "connected"
-            elif "gateway websocket closed" in clean or "enotfound" in clean:
+            elif "gateway websocket closed" in lower or "enotfound" in lower:
                 status["discord"] = "disconnected"
-            # fetch-timeout on discord.com is NOT a disconnect — it's a slow API
-            elif "fetch timeout" in clean and "discord.com" in clean:
-                status["discord"] = "timeout"  # will be handled with strike counting
-        if "signal" in clean:
-            if "started http server" in clean or "config file lock acquired" in clean:
+            elif "fetch timeout" in lower and "discord.com" in lower:
+                status["discord"] = "timeout"
+
+        if "signal" in lower:
+            if "started http server" in lower or "config file lock acquired" in lower:
                 status["signal"] = "connected"
-            elif "config file is in use" in clean:
-                # Lock conflict — real problem, signal-cli can't start
+            elif "config file is in use" in lower:
                 status["signal"] = "disconnected"
-            elif "daemon exited" in clean and "code=0" in clean:
-                # Clean exit (code=0) = WebSocket timeout; OpenClaw respawns automatically.
-                # Don't treat as disconnected — let OpenClaw handle it.
-                pass
-            elif "connection closed unexpectedly" in clean:
+            elif "daemon exited" in lower and "code=0" in lower:
+                pass  # clean exit — OpenClaw respawns, not our problem
+            elif "connection closed unexpectedly" in lower:
                 status["signal"] = "disconnected"
 
     return status
@@ -1635,9 +1671,22 @@ def _full_sweep():
     # ── External LAN service checks ──────────────────────────────────────────
     for name, host, port in EXTERNAL_CHECKS:
         if not _port_open(host, port, timeout=5.0):
-            issues.append(f"{name} ({host}:{port}) unreachable")
-            _record_event("warning", f"{name} unreachable",
-                          "Check device power and LAN connection", name)
+            with _lock:
+                _external_fail_counts[name] = _external_fail_counts.get(name, 0) + 1
+                count = _external_fail_counts[name]
+            if count >= EXTERNAL_FAIL_THRESHOLD:
+                issues.append(f"{name} ({host}:{port}) unreachable")
+                _record_event("warning", f"{name} unreachable ({count} consecutive failures)",
+                              "Check device power and LAN connection", name)
+            else:
+                log(f"[sweep] {name} ({host}:{port}) check failed ({count}/{EXTERNAL_FAIL_THRESHOLD}) — not alerting yet",
+                    level=LOG_INFO, source="big-brother")
+        else:
+            with _lock:
+                if _external_fail_counts.get(name, 0) > 0:
+                    log(f"[sweep] {name} recovered after {_external_fail_counts[name]} failure(s)",
+                        level=LOG_INFO, source="big-brother")
+                _external_fail_counts[name] = 0
 
     # ── Broken launchd services ──────────────────────────────────────────────
     for label, name, can_restart, silenced in LAUNCHD_MONITORED:
