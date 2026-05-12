@@ -17,7 +17,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -27,10 +27,12 @@ import nova_media_registry as registry
 # ── Config ────────────────────────────────────────────────────────────────────
 
 BASE_DIR       = Path("/Volumes/external/videos/TVShows")
+VIDEO_ROOT     = Path("/Volumes/external/videos")   # full root for non-YT scan
 YT_DLP         = "/opt/homebrew/bin/yt-dlp"
 CHANNELS_CACHE = Path.home() / ".openclaw/cache/yt_channels.json"
 LOG_FILE  = Path.home() / ".openclaw/logs/nova_yt_new_episodes.log"
 SLACK     = "#nova-notifications"
+VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".m4v", ".wmv", ".flv"}
 
 MAX_RESOLUTION      = "720"
 DELAY_BETWEEN       = 66   # seconds between downloads
@@ -692,6 +694,57 @@ def _download_one(video: dict, show_name: str, sn: int, ep: int,
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def scan_new_recordings(since_days: int = 8) -> list[dict]:
+    """Scan /Volumes/external/videos/ for non-YouTube video files added in the last N days.
+
+    Catches Plex recordings, manual downloads, or anything else dropped in
+    the video root that isn't managed by nova_yt_new_episodes itself.
+    Returns a list of dicts with path, name, size_mb, modified_at.
+    """
+    if not VIDEO_ROOT.exists():
+        log("VIDEO_ROOT not mounted — skipping non-YT scan")
+        return []
+
+    cutoff = datetime.now() - timedelta(days=since_days)
+    new_files = []
+
+    for f in VIDEO_ROOT.rglob("*"):
+        if f.suffix.lower() not in VIDEO_EXTS:
+            continue
+        try:
+            mtime = datetime.fromtimestamp(f.stat().st_mtime)
+        except OSError:
+            continue
+        if mtime < cutoff:
+            continue
+
+        # Skip files that live in the YT-managed TVShows tree — those are
+        # reported by the YT download loop above.
+        if BASE_DIR in f.parents:
+            continue
+
+        # Skip system/temp files
+        if f.name.startswith(".") or "~" in f.name:
+            continue
+
+        size_mb = f.stat().st_size / (1024 * 1024)
+        # Skip tiny files (<5 MB) — likely partial downloads or thumbnails
+        if size_mb < 5:
+            continue
+
+        new_files.append({
+            "path": str(f),
+            "name": f.name,
+            "relative": str(f.relative_to(VIDEO_ROOT)),
+            "size_mb": round(size_mb, 1),
+            "modified_at": mtime.strftime("%Y-%m-%d %H:%M"),
+            "parent": f.parent.name,
+        })
+
+    new_files.sort(key=lambda x: x["modified_at"], reverse=True)
+    return new_files
+
+
 def sync_subscriptions() -> dict:
     """Pull current YouTube subscriptions and merge with hardcoded CHANNELS.
 
@@ -819,17 +872,38 @@ def main():
     downloaded = [r for r in results if r["status"] == "ok"]
     errors     = [r for r in results if r["status"] == "error"]
 
+    # ── Scan for non-YouTube recordings (Plex, manual drops, etc.) ──────────
+    log("Scanning for non-YouTube new recordings in /Volumes/external/videos/...")
+    new_recordings = scan_new_recordings(since_days=8)
+    if new_recordings:
+        log(f"Found {len(new_recordings)} new non-YT recording(s)")
+        rec_lines = [f":video_camera: *New Recordings in /external/videos* — {len(new_recordings)} file(s) added this week:"]
+        for r in new_recordings[:20]:
+            rec_lines.append(f"  • `{r['relative']}` ({r['size_mb']} MB, {r['modified_at']})")
+        if len(new_recordings) > 20:
+            rec_lines.append(f"  _...and {len(new_recordings) - 20} more_")
+        rec_lines.append(f"\n  :information_source: `nova_tv_ingest.py` will transcribe these tonight at 11pm")
+        notify("\n".join(rec_lines))
+    else:
+        log("No new non-YT recordings found")
+
+    # ── Final summary ─────────────────────────────────────────────────────────
     if downloaded:
         summary_lines = [f":white_check_mark: *Weekly Episode Check Complete* — {len(downloaded)} new episode(s) downloaded ({len(active_channels)} channels checked)"]
         for r in downloaded:
             summary_lines.append(f"  • *{r['show']}* — {r['title'][:70]}")
         if errors:
             summary_lines.append(f"\n  :warning: {len(errors)} error(s) — check log")
+        if new_recordings:
+            summary_lines.append(f"\n  :video_camera: {len(new_recordings)} new non-YT recording(s) found")
         notify("\n".join(summary_lines))
     else:
-        notify(f":white_check_mark: *Weekly Episode Check Complete* — all {len(active_channels)} channels up to date")
+        notify(
+            f":white_check_mark: *Weekly Episode Check Complete* — all {len(active_channels)} channels up to date"
+            + (f"\n  :video_camera: {len(new_recordings)} new Plex/manual recording(s) found" if new_recordings else "")
+        )
 
-    log(f"=== Done. {len(downloaded)} downloaded, {len(errors)} errors, {len(active_channels)} channels checked ===")
+    log(f"=== Done. {len(downloaded)} downloaded, {len(errors)} errors, {len(active_channels)} channels checked, {len(new_recordings)} non-YT recordings ===")
 
 
 if __name__ == "__main__":
