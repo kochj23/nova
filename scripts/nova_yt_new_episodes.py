@@ -26,8 +26,9 @@ import nova_media_registry as registry
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-BASE_DIR  = Path("/Volumes/external/videos/TVShows")
-YT_DLP    = "/opt/homebrew/bin/yt-dlp"
+BASE_DIR       = Path("/Volumes/external/videos/TVShows")
+YT_DLP         = "/opt/homebrew/bin/yt-dlp"
+CHANNELS_CACHE = Path.home() / ".openclaw/cache/yt_channels.json"
 LOG_FILE  = Path.home() / ".openclaw/logs/nova_yt_new_episodes.log"
 SLACK     = "#nova-notifications"
 
@@ -691,16 +692,124 @@ def _download_one(video: dict, show_name: str, sn: int, ep: int,
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def sync_subscriptions() -> dict:
+    """Pull current YouTube subscriptions and merge with hardcoded CHANNELS.
+
+    Returns a merged channel dict:
+    - Hardcoded channels keep their mode/url config
+    - Subscribed channels not in CHANNELS are added with mode='single'
+    - Channels in CHANNELS but no longer subscribed are kept but flagged inactive
+      (we keep downloading until you explicitly remove them, since unsub ≠ done)
+
+    Cache written to CHANNELS_CACHE so the run logs show what changed.
+    """
+    log("Syncing YouTube subscriptions from Safari cookies...")
+    try:
+        r = subprocess.run(
+            [YT_DLP, "--cookies-from-browser", "safari",
+             "--flat-playlist", "--print", "%(id)s\t%(uploader_id)s\t%(uploader)s",
+             "https://www.youtube.com/feed/channels"],
+            capture_output=True, text=True, timeout=120,
+        )
+        if r.returncode != 0 or not r.stdout.strip():
+            log(f"  Subscription fetch failed (exit {r.returncode}) — using hardcoded CHANNELS")
+            return CHANNELS
+
+        # Parse subscriptions: channel_id → {uploader_id, name}
+        subscribed: dict[str, dict] = {}
+        for line in r.stdout.strip().splitlines():
+            parts = line.split("\t", 2)
+            if len(parts) < 3:
+                continue
+            ch_id, uploader_id, name = parts
+            if ch_id == "NA" or not ch_id:
+                continue
+            subscribed[ch_id] = {"uploader_id": uploader_id.lstrip("@"), "name": name}
+
+        log(f"  Found {len(subscribed)} subscribed channels")
+
+        # Build a lookup of existing channel URLs → key for dedup
+        url_to_key: dict[str, str] = {}
+        for k, v in CHANNELS.items():
+            url_to_key[v["url"].rstrip("/").lower()] = k
+
+        merged = dict(CHANNELS)  # start from hardcoded config
+        added, already_present = [], []
+
+        for ch_id, info in subscribed.items():
+            uid  = info["uploader_id"].lower()
+            name = info["name"]
+
+            # Check if this channel is already in CHANNELS by uploader_id or channel_id
+            found_key = None
+            for k, v in CHANNELS.items():
+                existing_url = v["url"].rstrip("/").lower()
+                if uid and (f"@{uid}" in existing_url or ch_id in existing_url):
+                    found_key = k
+                    break
+
+            if found_key:
+                already_present.append(found_key)
+            else:
+                # New subscription — add with sensible defaults
+                # Use the @handle URL if uploader_id looks like a handle
+                if uid and re.match(r'^[a-zA-Z0-9_\-\.]+$', uid):
+                    channel_url = f"https://www.youtube.com/@{info['uploader_id'].lstrip('@')}"
+                else:
+                    channel_url = f"https://www.youtube.com/channel/{ch_id}"
+
+                safe_key = re.sub(r'[^a-z0-9]', '', uid.lower()) or ch_id[:12]
+                if safe_key not in merged:
+                    merged[safe_key] = {
+                        "name": name,
+                        "url":  channel_url,
+                        "mode": "single",   # default — change manually for year/playlists
+                        "_auto_added": True,
+                    }
+                    added.append(name)
+
+        # Persist cache so changes are visible in logs
+        CHANNELS_CACHE.parent.mkdir(parents=True, exist_ok=True)
+        cache_data = {
+            "updated_at": datetime.now().isoformat(),
+            "subscribed_count": len(subscribed),
+            "total_channels": len(merged),
+            "added_this_run": added,
+            "channels": {k: {"name": v["name"], "url": v["url"], "mode": v.get("mode","single"),
+                              "auto": v.get("_auto_added", False)}
+                         for k, v in merged.items()},
+        }
+        CHANNELS_CACHE.write_text(json.dumps(cache_data, indent=2))
+
+        if added:
+            log(f"  Added {len(added)} new subscriptions: {', '.join(added[:10])}")
+            notify(
+                f":new: *YouTube Subscription Sync* — {len(added)} new channel(s) added:\n"
+                + "\n".join(f"  • {n}" for n in added[:15])
+            )
+        else:
+            log(f"  No new subscriptions (all {len(subscribed)} already tracked)")
+
+        return merged
+
+    except Exception as e:
+        log(f"  Subscription sync error: {e} — using hardcoded CHANNELS")
+        return CHANNELS
+
+
 def main():
     log(f"=== YouTube new-episode check started — {datetime.now().strftime('%Y-%m-%d %H:%M')} ===")
 
+    # Sync subscriptions first so newly subscribed channels are included this run
+    active_channels = sync_subscriptions()
+
     notify(
         f":mag: *YouTube Weekly Episode Check* starting\n"
-        f"  Checking {len(CHANNELS)} channels for new episodes…"
+        f"  Checking {len(active_channels)} channels for new episodes…"
     )
 
     results = []
-    for key, cfg in CHANNELS.items():
+    for key, cfg in active_channels.items():
         try:
             process_channel(key, cfg, results)
         except Exception as e:
@@ -711,16 +820,16 @@ def main():
     errors     = [r for r in results if r["status"] == "error"]
 
     if downloaded:
-        summary_lines = [f":white_check_mark: *Weekly Episode Check Complete* — {len(downloaded)} new episode(s) downloaded"]
+        summary_lines = [f":white_check_mark: *Weekly Episode Check Complete* — {len(downloaded)} new episode(s) downloaded ({len(active_channels)} channels checked)"]
         for r in downloaded:
             summary_lines.append(f"  • *{r['show']}* — {r['title'][:70]}")
         if errors:
             summary_lines.append(f"\n  :warning: {len(errors)} error(s) — check log")
         notify("\n".join(summary_lines))
     else:
-        notify(f":white_check_mark: *Weekly Episode Check Complete* — all channels up to date")
+        notify(f":white_check_mark: *Weekly Episode Check Complete* — all {len(active_channels)} channels up to date")
 
-    log(f"=== Done. {len(downloaded)} downloaded, {len(errors)} errors ===")
+    log(f"=== Done. {len(downloaded)} downloaded, {len(errors)} errors, {len(active_channels)} channels checked ===")
 
 
 if __name__ == "__main__":
