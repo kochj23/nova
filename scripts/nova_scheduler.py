@@ -494,7 +494,7 @@ class NovaScheduler:
                 # Serve run history from nova_ops.scheduler_runs
                 try:
                     import asyncpg
-                    conn = await asyncpg.connect("postgresql://kochj@localhost:5432/nova_ops")
+                    conn = await asyncpg.connect("postgresql://kochj@192.168.1.6:5432/nova_ops")
                     try:
                         if path == "/runs":
                             # Last 50 runs across all tasks
@@ -523,7 +523,7 @@ class NovaScheduler:
                 # Aggregate stats per task from nova_ops view
                 try:
                     import asyncpg
-                    conn = await asyncpg.connect("postgresql://kochj@localhost:5432/nova_ops")
+                    conn = await asyncpg.connect("postgresql://kochj@192.168.1.6:5432/nova_ops")
                     try:
                         rows = await conn.fetch(
                             "SELECT * FROM scheduler_task_stats ORDER BY total_runs DESC"
@@ -562,7 +562,7 @@ class NovaScheduler:
         # Start HTTP status server
         port = self.sched_cfg.get("status_port", 37460)
         try:
-            server = await asyncio.start_server(self._handle_http, "127.0.0.1", port)
+            server = await asyncio.start_server(self._handle_http, "192.168.1.6", port)
             log(f"Status API on port {port}", level=LOG_INFO, source="scheduler")
         except Exception as e:
             log(f"Status API failed to start: {e}", level=LOG_WARN, source="scheduler")

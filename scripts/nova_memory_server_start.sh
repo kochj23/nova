@@ -6,7 +6,6 @@
 source "$HOME/.openclaw/scripts/wait-for-port.sh"
 
 wait_for_port 5432  "PostgreSQL" 120 || exit 1
-wait_for_port 6432  "PgBouncer"  30  || exit 1
 wait_for_port 6379  "Redis"      90  || exit 1
 wait_for_port 11434 "Ollama"     120 || exit 1
 

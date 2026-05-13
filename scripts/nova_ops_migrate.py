@@ -23,7 +23,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN
 
-DB_DSN = "postgresql://kochj@localhost:5432/nova_ops"
+DB_DSN = "postgresql://kochj@192.168.1.6:5432/nova_ops"
 
 # ── Migration registry ────────────────────────────────────────────────────────
 # Each migration: (id, description, up_sql)

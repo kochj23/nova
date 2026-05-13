@@ -79,14 +79,18 @@ JORDAN_EMAIL  = "kochj23" + "@gmail.com"     # noqa: avoid scanner false-positiv
 NOVA_EMAIL    = "nova@digitalnoise.net"
 NOVA_SIGNAL   = "+1" + "3233645436"         # noqa: Nova's Signal (Google Voice)
 JORDAN_SIGNAL = "+1" + "8187310893"         # noqa: Jordan's Signal
-VECTOR_URL    = "http://127.0.0.1:18790/remember"
+LAN_IP        = "192.168.1.6"
+NOVA_HOST     = LAN_IP   # canonical host for all Nova services
+
+VECTOR_URL    = f"http://{NOVA_HOST}:18790/remember"
+MEMORY_URL    = f"http://{NOVA_HOST}:18790"
 SCRIPTS_DIR   = str(__import__('pathlib').Path.home() / ".openclaw/scripts")
 
 # ── NovaControl unified API (port 37400) ─────────────────────────────────────
 # Single app serves data for all of Jordan's apps so Nova never needs multiple
 # processes running. Use these constants instead of hardcoding port numbers.
 
-NOVACONTROL   = "http://127.0.0.1:37400"
+NOVACONTROL   = f"http://{NOVA_HOST}:37400"
 
 # App data endpoints
 NC_ONEONONE   = f"{NOVACONTROL}/api/oneonone"      # meetings, people, action items, goals

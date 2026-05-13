@@ -32,10 +32,10 @@ Notification paths (no dependency on gateway being alive):
   Fallback (gateway dead): raw Slack HTTP + signal-cli direct
 
 Diagnostics API (consumed by NovaControl Diagnostics tab):
-  GET  http://127.0.0.1:37461/bb/status        — daemon health + summary
-  GET  http://127.0.0.1:37461/bb/events?n=100  — recent heal events
-  GET  http://127.0.0.1:37461/bb/services      — per-service status
-  POST http://127.0.0.1:37461/bb/force-check   — manual full check now
+  GET  http://192.168.1.6:37461/bb/status        — daemon health + summary
+  GET  http://192.168.1.6:37461/bb/events?n=100  — recent heal events
+  GET  http://192.168.1.6:37461/bb/services      — per-service status
+  POST http://192.168.1.6:37461/bb/force-check   — manual full check now
 
 Written by Jordan Koch.
 """
@@ -95,9 +95,9 @@ SERVICES = [
     ("PgBouncer",     "127.0.0.1", 6432,  "net.digitalnoise.pgbouncer",           True,  None),
     ("Redis",         "127.0.0.1", 6379,  "net.digitalnoise.redis",               True,  None),
     ("Ollama",        "127.0.0.1", 11434, None,                                   True,  "/api/version"),
-    ("Memory Server", "127.0.0.1", 18790, "net.digitalnoise.nova-memory-server",  True,  "/health"),
+    ("Memory Server", LAN_IP,      18790, "net.digitalnoise.nova-memory-server",  True,  "/health"),
     ("Gateway",       "127.0.0.1", 18789, "ai.openclaw.gateway",                  True,  "/health"),
-    ("Scheduler",     "127.0.0.1", 37460, "com.nova.scheduler",                   True,  "/status"),
+    ("Scheduler",     LAN_IP,      37460, "com.nova.scheduler",                   True,  "/status"),
     # ── AI inference (non-critical — can recover from) ───────────────────────
     ("MLX Server",    LAN_IP,      5050,  "net.digitalnoise.mlx-server",          False, "/v1/models"),
     ("SwarmUI",       "127.0.0.1", 7801,  None,                                   False, None),
@@ -109,8 +109,8 @@ SERVICES = [
     ("Signal-cli",    "127.0.0.1", 8080,  None,                                   False, None),
     # ── Nova apps ────────────────────────────────────────────────────────────
     ("NovaControl",   "127.0.0.1", 37400, "net.digitalnoise.NovaControl",         False, "/api/status"),
-    ("NovaControl Web","127.0.0.1",37450, "net.digitalnoise.nova-control-web",    False, None),
-    ("Big Brother",   "127.0.0.1", 37461, None,                                   False, "/bb/status"),
+    ("NovaControl Web",LAN_IP,      37450, "net.digitalnoise.nova-control-web",    False, None),
+    ("Big Brother",   LAN_IP,      37461, None,                                   False, "/bb/status"),
     # ── External / LAN (monitored but not auto-restarted) ────────────────────
     ("Plex",          PLEX_IP,     32400, None,                                   False, "/web"),
     ("HDHomeRun",     HDHR_IP,     80,    None,                                   False, None),
@@ -325,13 +325,13 @@ def _maybe_notify(issue_key: str, message: str, is_critical: bool = False):
 def _is_protected_task_running() -> bool:
     """Check Scheduler API for a currently-running protected task."""
     try:
-        resp = urllib.request.urlopen("http://127.0.0.1:37460/status", timeout=5)
+        resp = urllib.request.urlopen(f"http://{LAN_IP}:37460/status", timeout=5)
         data = json.loads(resp.read())
         if data.get("tasks_running", 0) == 0:
             return False
         # Get running task names if possible
         try:
-            tresp = urllib.request.urlopen("http://127.0.0.1:37460/tasks", timeout=5)
+            tresp = urllib.request.urlopen(f"http://{LAN_IP}:37460/tasks", timeout=5)
             tasks = json.loads(tresp.read())
             task_list = tasks if isinstance(tasks, list) else tasks.get("tasks", [])
             for t in task_list:
@@ -704,7 +704,7 @@ def _check_subagent_heartbeats() -> list:
     """Returns list of stale agent names."""
     try:
         import redis
-        r = redis.from_url("redis://localhost:6379", decode_responses=True)
+        r = redis.from_url(f"redis://{LAN_IP}:6379", decode_responses=True)
         stale = []
         for name in SUBAGENTS:
             status = r.get(f"nova:agent:{name}:status")
@@ -854,7 +854,7 @@ def _check_memory_server_recall() -> bool:
 
     for attempt in range(3):
         try:
-            url = "http://127.0.0.1:18790/recall?q=test&n=1"
+            url = f"http://{LAN_IP}:18790/recall?q=test&n=1"
             resp = urllib.request.urlopen(url, timeout=30)
             data = json.loads(resp.read())
             if isinstance(data, list):
@@ -869,7 +869,7 @@ def _check_redis_memory_cache() -> bool:
     """Ensure Redis is actually storing/retrieving keys (not just pinging)."""
     try:
         import redis
-        r = redis.from_url("redis://localhost:6379")
+        r = redis.from_url(f"redis://{LAN_IP}:6379")
         test_key = "big-brother:health-check"
         r.set(test_key, "ok", ex=10)
         val = r.get(test_key)
@@ -1043,7 +1043,7 @@ def _check_journal_staleness(issues: list, fixes: list):
     Called from every _full_sweep().
     """
     now = time.time()
-    scheduler_up = _port_open("127.0.0.1", 37460)
+    scheduler_up = _port_open(LAN_IP,      37460)
 
     for section, (task_id, threshold_h) in JOURNAL_SECTIONS.items():
         age_h = _latest_journal_entry_age(section)
@@ -1071,7 +1071,7 @@ def _check_journal_staleness(issues: list, fixes: list):
         if scheduler_up:
             try:
                 req = urllib.request.Request(
-                    f"http://127.0.0.1:37460/run/{task_id}",
+                    f"http://{LAN_IP}:37460/run/{task_id}",
                     method="POST", data=b""
                 )
                 urllib.request.urlopen(req, timeout=5)
@@ -1091,7 +1091,7 @@ def _is_maintenance_mode() -> bool:
     """Check Redis global maintenance flag set by pg_maintain / manual ops."""
     try:
         import redis
-        r = redis.from_url("redis://localhost:6379", decode_responses=True)
+        r = redis.from_url(f"redis://{LAN_IP}:6379", decode_responses=True)
         return bool(r.get("nova:maintenance:active"))
     except Exception:
         return False
@@ -1106,7 +1106,7 @@ def _is_service_in_maintenance(service_name: str) -> bool:
     """
     try:
         import redis
-        r = redis.from_url("redis://localhost:6379", decode_responses=True)
+        r = redis.from_url(f"redis://{LAN_IP}:6379", decode_responses=True)
         safe_name = service_name.replace(" ", "_").lower()
         return bool(r.get(f"nova:maintenance:service:{safe_name}"))
     except Exception:
@@ -1309,7 +1309,7 @@ def _record_metrics(issues: list, fixes: list, sweep_start: float):
 
     # Memory server stats
     try:
-        r = urllib.request.urlopen("http://127.0.0.1:18790/stats", timeout=3)
+        r = urllib.request.urlopen(f"http://{LAN_IP}:18790/stats", timeout=3)
         ms = json.loads(r.read())
         bucket["memory_count"] = ms.get("count", 0)
         bucket["mem_queue"]    = ms.get("queue_length", 0)
@@ -1320,7 +1320,7 @@ def _record_metrics(issues: list, fixes: list, sweep_start: float):
     # Redis memory %
     try:
         import redis as _rds
-        rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+        rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
         ri = rc.info("memory")
         if ri.get("maxmemory"):
             bucket["redis_pct"] = round(ri["used_memory"] / ri["maxmemory"] * 100, 1)
@@ -1340,7 +1340,7 @@ def _record_metrics(issues: list, fixes: list, sweep_start: float):
 
     # Scheduler failures
     try:
-        r4 = urllib.request.urlopen("http://127.0.0.1:37460/status", timeout=3)
+        r4 = urllib.request.urlopen(f"http://{LAN_IP}:37460/status", timeout=3)
         sc = json.loads(r4.read())
         bucket["sched_failures"] = sc.get("total_failures", 0)
     except Exception:
@@ -1587,7 +1587,7 @@ def _full_sweep():
                       "Injected token into plist + reloaded", "Slack")
 
     # ── Memory server functional check ───────────────────────────────────────
-    mem_up = _port_open("127.0.0.1", 18790)
+    mem_up = _port_open(LAN_IP, 18790)
     if mem_up and not _check_memory_server_recall():
         issues.append("Memory server port up but recall failing (PG/Redis likely unhealthy)")
         _record_event("warning", "Memory recall failing despite server up",
@@ -1733,7 +1733,7 @@ def _full_sweep():
     # ── Redis memory utilization ─────────────────────────────────────────────
     try:
         import redis as _redis
-        r = _redis.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+        r = _redis.Redis(host=LAN_IP, port=6379, decode_responses=True)
         info = r.info("memory")
         used = info.get("used_memory", 0)
         max_mem = info.get("maxmemory", 0)
@@ -1762,7 +1762,7 @@ def _full_sweep():
 
     # ── Scheduler per-task failure visibility ────────────────────────────────
     try:
-        resp = urllib.request.urlopen("http://127.0.0.1:37460/tasks", timeout=5)
+        resp = urllib.request.urlopen(f"http://{LAN_IP}:37460/tasks", timeout=5)
         tasks = json.loads(resp.read())
         if isinstance(tasks, list):
             for t in tasks:
@@ -1798,7 +1798,7 @@ def _full_sweep():
 
     # ── Memory dead-letter queue ──────────────────────────────────────────────
     try:
-        resp = urllib.request.urlopen("http://127.0.0.1:18790/stats", timeout=5)
+        resp = urllib.request.urlopen(f"http://{LAN_IP}:18790/stats", timeout=5)
         stats = json.loads(resp.read())
         dead = stats.get("dead_letter_count", 0)
         if dead > 10:
@@ -1810,7 +1810,7 @@ def _full_sweep():
 
     # ── Scheduler failure rate ────────────────────────────────────────────────
     try:
-        resp = urllib.request.urlopen("http://127.0.0.1:37460/status", timeout=5)
+        resp = urllib.request.urlopen(f"http://{LAN_IP}:37460/status", timeout=5)
         sched = json.loads(resp.read())
         total_runs = sched.get("total_runs", 0)
         total_fail = sched.get("total_failures", 0)
@@ -1896,7 +1896,7 @@ def _full_sweep():
     # ── Scheduler script existence check ─────────────────────────────────────
     # Catches the case where a script was deleted but its scheduler task remains.
     try:
-        resp = urllib.request.urlopen("http://127.0.0.1:37460/tasks", timeout=5)
+        resp = urllib.request.urlopen(f"http://{LAN_IP}:37460/tasks", timeout=5)
         tasks = json.loads(resp.read())
         if isinstance(tasks, list):
             for t in tasks:
@@ -2022,7 +2022,7 @@ class BBHandler(BaseHTTPRequestHandler):
             maint_info = {"global": False, "global_ttl_s": -1, "services": {}}
             try:
                 import redis as _rds
-                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+                rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
                 maint_info["global"] = bool(rc.get("nova:maintenance:active"))
                 maint_info["global_ttl_s"] = rc.ttl("nova:maintenance:active")
                 for key in rc.scan_iter("nova:maintenance:service:*"):
@@ -2064,7 +2064,7 @@ class BBHandler(BaseHTTPRequestHandler):
             # Scheduler stats
             sched_stats = {}
             try:
-                r = urllib.request.urlopen("http://127.0.0.1:37460/status", timeout=5)
+                r = urllib.request.urlopen(f"http://{LAN_IP}:37460/status", timeout=5)
                 sched_stats = json.loads(r.read())
             except Exception:
                 pass
@@ -2072,7 +2072,7 @@ class BBHandler(BaseHTTPRequestHandler):
             # Memory stats
             mem_stats = {}
             try:
-                r = urllib.request.urlopen("http://127.0.0.1:18790/stats", timeout=5)
+                r = urllib.request.urlopen(f"http://{LAN_IP}:18790/stats", timeout=5)
                 mem_stats = json.loads(r.read())
             except Exception:
                 pass
@@ -2095,7 +2095,7 @@ class BBHandler(BaseHTTPRequestHandler):
             redis_mem = {}
             try:
                 import redis as _rds
-                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+                rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
                 ri = rc.info("memory")
                 redis_mem = {
                     "used_mb": round(ri.get("used_memory", 0) / 1e6, 1),
@@ -2123,7 +2123,7 @@ class BBHandler(BaseHTTPRequestHandler):
             # Scheduler per-task detail
             sched_tasks = []
             try:
-                r = urllib.request.urlopen("http://127.0.0.1:37460/tasks", timeout=5)
+                r = urllib.request.urlopen(f"http://{LAN_IP}:37460/tasks", timeout=5)
                 raw = json.loads(r.read())
                 if isinstance(raw, list):
                     sched_tasks = raw
@@ -2202,7 +2202,7 @@ class BBHandler(BaseHTTPRequestHandler):
             # List all active maintenance flags (global + per-service)
             try:
                 import redis as _rds
-                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+                rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
                 global_flag = bool(rc.get("nova:maintenance:active"))
                 global_ttl  = rc.ttl("nova:maintenance:active")
                 svc_flags = {}
@@ -2242,7 +2242,7 @@ class BBHandler(BaseHTTPRequestHandler):
                 ttl  = int(body.get("ttl", 3600))
                 svc  = body.get("service")
                 import redis as _rds
-                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+                rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
                 if svc:
                     safe = svc.replace(" ", "_").lower()
                     rc.setex(f"nova:maintenance:service:{safe}", ttl, "1")
@@ -2262,7 +2262,7 @@ class BBHandler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(length) or b"{}") if length else {}
                 svc  = body.get("service")
                 import redis as _rds
-                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+                rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
                 if svc:
                     safe = svc.replace(" ", "_").lower()
                     rc.delete(f"nova:maintenance:service:{safe}")
@@ -2290,7 +2290,7 @@ class BBHandler(BaseHTTPRequestHandler):
 
 def _api_server_thread():
     try:
-        server = HTTPServer(("127.0.0.1", API_PORT), BBHandler)
+        server = HTTPServer((LAN_IP, API_PORT), BBHandler)
         server.timeout = 1
         log(f"Diagnostics API on 127.0.0.1:{API_PORT}", level=LOG_INFO, source="big-brother")
         while not _shutdown.is_set():

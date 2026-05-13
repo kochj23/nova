@@ -8,7 +8,7 @@ source "$HOME/.openclaw/scripts/wait-for-port.sh"
 wait_for_port 11434 "Ollama" 120 || exit 1
 
 export DATA_DIR=/Volumes/Data/openwebui/data
-export OLLAMA_BASE_URL=http://127.0.0.1:11434
+export OLLAMA_BASE_URL=http://192.168.1.6:11434
 export WEBUI_AUTH=false
 export HOME="${HOME:-/Users/$(whoami)}"
 export FRONTEND_BUILD_DIR=/Volumes/Data/openwebui/venv/lib/python3.12/site-packages/open_webui/frontend

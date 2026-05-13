@@ -24,7 +24,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN, LOG_DEBUG
 
-DB_DSN = "postgresql://kochj@localhost:5432/nova_ops"
+DB_DSN = "postgresql://kochj@192.168.1.6:5432/nova_ops"
 _POOL: Optional[object] = None
 _POOL_LOCK: Optional[asyncio.Lock] = None  # created lazily inside a running loop
 _QUEUE: Optional[asyncio.Queue] = None
