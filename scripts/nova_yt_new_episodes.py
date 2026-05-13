@@ -561,11 +561,59 @@ def next_episode_playlist(show_dir: Path, playlist_title: str) -> tuple[int, int
 
 # ── Download ──────────────────────────────────────────────────────────────────
 
+def _refresh_cookies_from_browser() -> bool:
+    """Re-export Safari cookies to YT_COOKIES_FILE via osascript (GUI session — TCC-safe).
+
+    osascript runs in the user's GUI session so it can access Safari's Keychain/cookies
+    even when called from a launchd daemon.
+    Returns True if the file was written successfully.
+    """
+    script = (
+        f'do shell script "{YT_DLP} --cookies-from-browser chrome'
+        f' --cookies {YT_COOKIES_FILE}'
+        f' --skip-download --print \\\"%(id)s\\\"'
+        f' \\"https://www.youtube.com/watch?v=dQw4w9WgXcQ\\""'
+    )
+    try:
+        result = subprocess.run(
+            ["/usr/bin/osascript", "-e", script],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0 and YT_COOKIES_FILE.exists():
+            import os
+            os.chmod(YT_COOKIES_FILE, 0o600)
+            log(f"[cookies] Refreshed {YT_COOKIES_FILE} via osascript")
+            return True
+        log(f"[cookies] osascript refresh failed (rc={result.returncode}): {result.stderr[:200]}")
+    except Exception as e:
+        log(f"[cookies] osascript refresh error: {e}")
+    return False
+
+
 def _cookies_args() -> list:
-    """Return yt-dlp cookie arguments. Use file if available (launchd-safe), else browser."""
+    """Return yt-dlp cookie arguments.
+
+    Preference order:
+    1. Cookie file (launchd-safe) — if it exists and is <6 hours old
+    2. Refresh cookie file via osascript (GUI session, TCC-safe) — if file is stale/missing
+    3. Fall back to --cookies-from-browser (only works from terminal, not launchd)
+    """
+    import time
     if YT_COOKIES_FILE.exists():
+        age_hours = (time.time() - YT_COOKIES_FILE.stat().st_mtime) / 3600
+        if age_hours < 6:
+            return ["--cookies", str(YT_COOKIES_FILE)]
+        # File is stale — try refreshing via osascript
+        log(f"[cookies] Cookie file is {age_hours:.1f}h old — refreshing via osascript")
+    else:
+        log("[cookies] Cookie file missing — creating via osascript")
+
+    if _refresh_cookies_from_browser():
         return ["--cookies", str(YT_COOKIES_FILE)]
-    return ["--cookies-from-browser", "safari"]
+
+    # osascript failed — fall back to direct browser access (terminal only)
+    log("[cookies] WARNING: falling back to --cookies-from-browser (may fail in launchd context)")
+    return ["--cookies-from-browser", "chrome"]
 
 
 def download_video(vid_id: str, output_path: Path) -> str:
@@ -578,6 +626,7 @@ def download_video(vid_id: str, output_path: Path) -> str:
         "-o", str(output_path),
         "--no-overwrites",
         "--no-playlist",
+        "--windows-filenames",   # strip [ ] and other chars invalid on CIFS/SMB (NAS mount)
         f"https://www.youtube.com/watch?v={vid_id}",
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
