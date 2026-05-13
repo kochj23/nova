@@ -37,9 +37,9 @@ import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-RECALL_URL       = "http://127.0.0.1:18790/recall"
-RECALL_BATCH_URL = "http://127.0.0.1:18790/recall_batch"
-SEARCH_URL       = "http://127.0.0.1:18790/search"
+RECALL_URL       = "http://192.168.1.6:18790/recall"
+RECALL_BATCH_URL = "http://192.168.1.6:18790/recall_batch"
+SEARCH_URL       = "http://192.168.1.6:18790/search"
 RECALL_COUNT = 8
 SEARCH_COUNT = 5
 

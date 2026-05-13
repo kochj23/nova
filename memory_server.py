@@ -192,11 +192,21 @@ async def lifespan(app: FastAPI):
     async def _pg_init(conn):
         await conn.execute("SET hnsw.ef_search = 100")
 
-    _pg_pool = await asyncpg.create_pool(
-        PG_DSN, min_size=2, max_size=8, init=_pg_init,
-        max_inactive_connection_lifetime=600.0,
-        command_timeout=120.0,
-    )
+    # Retry pool creation — PG may be in recovery or briefly unavailable after restart
+    import time as _time
+    for _attempt in range(15):
+        try:
+            _pg_pool = await asyncpg.create_pool(
+                PG_DSN, min_size=2, max_size=8, init=_pg_init,
+                max_inactive_connection_lifetime=600.0,
+                command_timeout=120.0,
+            )
+            break
+        except Exception as _e:
+            if _attempt == 14:
+                raise
+            logger.warning(f"PG pool creation attempt {_attempt+1}/15 failed: {_e} — retrying in 5s")
+            await asyncio.sleep(5)
     _redis   = aioredis.from_url(REDIS_URL, decode_responses=True)
 
     # Ensure pgvector extension and table exist — skip index creation if table already has rows

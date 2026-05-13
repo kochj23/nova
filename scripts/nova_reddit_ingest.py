@@ -24,7 +24,7 @@ from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-VECTOR_URL = "http://127.0.0.1:18790/remember"
+VECTOR_URL = "http://192.168.1.6:18790/remember"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/reddit_ingest_state.json"
 USER_AGENT = "Nova/1.0 nova_reddit_ingest.py (AI familiar, local use only)"
 TODAY      = date.today().isoformat()

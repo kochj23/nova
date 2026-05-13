@@ -24,7 +24,7 @@ from pathlib import Path
 import nova_config
 
 
-VECTOR_MEM_URL = "http://127.0.0.1:18790/remember"
+VECTOR_MEM_URL = "http://192.168.1.6:18790/remember"
 
 
 def vector_remember(text: str, source: str = "nightly", metadata: dict = None):

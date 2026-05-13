@@ -48,7 +48,7 @@ VIDEO_EXTS      = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".m4v", ".wmv", ".flv"
 STATE_FILE      = Path.home() / ".openclaw/workspace/state/tv_ingest_state.json"
 WORK_DIR        = Path("/Volumes/Data/nova-livetv/tv-ingest")
 LOG_FILE        = Path.home() / ".openclaw/logs/nova_tv_ingest.log"
-MEMORY_URL      = "http://127.0.0.1:18790/remember"
+MEMORY_URL      = "http://192.168.1.6:18790/remember"
 SLACK_CHANNEL   = nova_config.SLACK_NOTIFY
 
 WHISPER_BIN     = "/opt/homebrew/bin/mlx_whisper"

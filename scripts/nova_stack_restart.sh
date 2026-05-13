@@ -37,14 +37,14 @@ fi
 # Step 2: Ensure Postgres and Redis are up
 echo ""
 echo "[2/5] Checking Postgres + Redis..."
-if /usr/bin/nc -z 127.0.0.1 5432 2>/dev/null; then
+if /usr/bin/nc -z 192.168.1.6 5432 2>/dev/null; then
     echo "  ✓ Postgres on 5432"
 else
     echo "  Starting Postgres..."
     launchctl kickstart gui/$(id -u)/homebrew.mxcl.postgresql@17
     sleep 3
 fi
-if /usr/bin/nc -z 127.0.0.1 6379 2>/dev/null; then
+if /usr/bin/nc -z 192.168.1.6 6379 2>/dev/null; then
     echo "  ✓ Redis on 6379"
 else
     echo "  Starting Redis..."
@@ -57,7 +57,7 @@ echo ""
 echo "[3/5] Restarting Memory Server..."
 launchctl kickstart -k gui/$(id -u)/net.digitalnoise.nova-memory-server 2>/dev/null || true
 sleep 3
-if /usr/bin/nc -z 127.0.0.1 18790 2>/dev/null; then
+if /usr/bin/nc -z 192.168.1.6 18790 2>/dev/null; then
     echo "  ✓ Memory Server on 18790"
 else
     echo "  ⚠ Memory Server not ready yet (may need more time)"

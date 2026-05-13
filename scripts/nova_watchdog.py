@@ -80,7 +80,7 @@ def slack_post(text):
 def check_scheduler():
     """Verify scheduler is running and healthy."""
     try:
-        resp = urllib.request.urlopen("http://127.0.0.1:37460/status", timeout=5)
+        resp = urllib.request.urlopen("http://192.168.1.6:37460/status", timeout=5)
         data = json.loads(resp.read())
         if data.get("status") == "running":
             return True, data
@@ -209,8 +209,8 @@ def main():
     # Check critical services (infra only — app ports handled by nova_app_watchdog.py)
     # Canonical launchd labels — verified 2026-04-22
     services = [
-        ("Scheduler", "127.0.0.1", 37460, "com.nova.scheduler"),
-        ("Memory Server", "127.0.0.1", 18790, "net.digitalnoise.nova-memory-server"),
+        ("Scheduler", "192.168.1.6", 37460, "com.nova.scheduler"),
+        ("Memory Server", "192.168.1.6", 18790, "net.digitalnoise.nova-memory-server"),
         ("Ollama", "127.0.0.1", 11434, None),  # Managed by Ollama.app
     ]
 

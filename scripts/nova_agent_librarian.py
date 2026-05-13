@@ -85,7 +85,7 @@ class LibrarianAgent(SubAgent):
         if query:
             memories = await self.recall(query, n=batch_size, source=source or None)
         elif source:
-            url = f"http://127.0.0.1:18790/recall?q=*&n={batch_size}&source={source}"
+            url = f"http://192.168.1.6:18790/recall?q=*&n={batch_size}&source={source}"
             try:
                 resp = urllib.request.urlopen(url, timeout=10)
                 data = json.loads(resp.read())

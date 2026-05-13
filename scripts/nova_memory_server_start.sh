@@ -12,7 +12,7 @@ wait_for_port 11434 "Ollama"     120 || exit 1
 # Wait for PostgreSQL to actually accept queries (port open ≠ ready after restart/recovery)
 echo "[memory_server_start] Waiting for PostgreSQL to accept queries..."
 for i in $(seq 1 30); do
-    if /opt/homebrew/bin/psql -U kochj -d nova_memories -c "SELECT 1" > /dev/null 2>&1; then
+    if /opt/homebrew/bin/psql -h 192.168.1.6 -U kochj -d nova_memories -c "SELECT 1" > /dev/null 2>&1; then
         echo "[memory_server_start] PostgreSQL ready after ${i}x2s"
         break
     fi
