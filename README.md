@@ -11,7 +11,7 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 | Metric | Value |
 |--------|-------|
 | Scripts | 292+ Python and Shell |
-| Scheduler tasks | 86 defined (77 enabled, 9 disabled) |
+| Scheduler tasks | 86 defined (78 enabled, 8 disabled) |
 | Vector memories | 1,434,818 unique (deduplicated, HNSW-indexed) |
 | Memory sources | 217 domains |
 | Agents | 4 (Chat, Research, Home, Main) |
@@ -27,6 +27,8 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 | Unified API | NovaControl on port 37400 |
 | Ops DB | `nova_ops` — scheduler run history, gateway sessions, dashboard metrics |
 | Maintenance mode | `bb-maintenance on/off/status` — suppress Big Brother restarts during maintenance |
+| Model warmup | `ollama_preload` runs hourly — keeps qwen3:30b-a3b warm for instant responses |
+| Ollama timeout | `models.providers.ollama.timeoutSeconds=300` — survives 7.5 min cold load |
 | Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) |
 | Test suite | 4,537+ tests (unit + security + integration + functional + frame + retry + performance) |
 
@@ -282,20 +284,27 @@ All of Jordan's apps expose data through a **single unified API** on port 37400.
 | Task | Timeout | Reason |
 |------|---------|--------|
 | `livetv_ambiance` | 7,800s | Records up to 2h episode + MLX Whisper transcription |
-| `ollama_preload` | 900s | qwen3-coder:30b takes ~7.5 min cold load from 81GB weights |
+| `ollama_preload` | 900s | qwen3:30b-a3b takes ~7.5 min cold; runs **hourly** to keep model warm |
 | `self_audit` | 300s | Checks all ports/processes then posts full report to Slack |
-| `yt_new_episodes` | varies | yt-dlp uses `~/.openclaw/cache/yt_cookies.txt` (Safari session export — launchd TCC safe) |
+| `yt_new_episodes` | varies | Runs **daily at 10:15 AM**. Chrome cookies, auto-refresh via osascript |
 
 ### YouTube Downloads
 
-yt-dlp uses a pre-exported Safari cookie file instead of `--cookies-from-browser` to work around macOS Tahoe TCC restrictions on launchd processes:
+yt-dlp uses Chrome cookies exported to a file to work around macOS Tahoe TCC restrictions on launchd processes. The cookie file auto-refreshes via `osascript` (GUI session) when missing or >6 hours old.
 
 ```bash
-# Refresh cookies when YouTube session expires (run from Terminal, not scheduler):
+# Manual refresh if auto-refresh fails (run from Terminal):
 ~/.openclaw/scripts/nova_yt_refresh_cookies.sh
 ```
 
+**Download flags applied to all channels:**
+- `--cookies ~/.openclaw/cache/yt_cookies.txt` — Chrome session cookies (Safari exports rejected by YouTube)
+- `--extractor-args youtube:player_client=web,default` — bypasses Deno JS challenge that strips video formats on some channels
+- `--windows-filenames` — strips `[ ]` and other chars invalid on CIFS/SMB (NAS mount at `/Volumes/external`)
+
 Cookie file: `~/.openclaw/cache/yt_cookies.txt` (permissions 600, not committed to git).
+
+**Subscriptions:** `sync_subscriptions()` pulls your current YouTube subscriptions from Chrome at the start of every daily run. New subscriptions appear automatically the next morning. Hardcoded `CHANNELS` dict (includes WallyVHS and others) is a fallback only.
 
 ### Image Generation
 
