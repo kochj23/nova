@@ -10,7 +10,7 @@ YT_DLP="/opt/homebrew/bin/yt-dlp"
 echo "[yt-cookies] Refreshing YouTube cookies from Safari..."
 
 # Try cookie file export
-if "$YT_DLP" --cookies-from-browser safari \
+if "$YT_DLP" --cookies-from-browser chrome \
     --cookies "$COOKIES_FILE" \
     --skip-download --print "%(id)s" \
     "https://www.youtube.com/watch?v=dQw4w9WgXcQ" >/dev/null 2>&1; then
