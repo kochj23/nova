@@ -36,8 +36,8 @@ except ImportError:
     handle_package_detection = None
 
 PROTECT_HOST = "192.168.1.9"
-PROTECT_USER = "api"
-VECTOR_URL = "http://127.0.0.1:18790/remember"
+PROTECT_USER = "nova"
+VECTOR_URL = "http://192.168.1.6:18790/remember"
 SLACK_NOTIFY = nova_config.SLACK_PHOTOS
 SLACK_CHAT = nova_config.SLACK_PHOTOS
 STATE_FILE = Path.home() / ".openclaw/workspace/state/protect_monitor_state.json"
