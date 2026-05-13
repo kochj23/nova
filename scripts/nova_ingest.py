@@ -1,353 +1,1336 @@
 #!/usr/bin/env python3
-"""
-nova_ingest.py — Digest files into Nova's vector memory.
+"""nova_ingest.py -- Universal ingest engine for Nova vector memory.
 
-Supports: PDF, DOCX, XLSX, PPTX, TXT, MD, CSV, RTF, and plain text.
-Can read from a local file path OR download from a Slack file URL.
+Handles Wikipedia BFS crawl, web search (SearXNG), video download
+(yt-dlp + MLX Whisper), URL and file ingestion.
 
 Usage:
-  nova_ingest.py /path/to/file.pdf [--topic "car manual"] [--source "jordan"]
-  nova_ingest.py --slack-url <url> --filename "manual.pdf" [--topic "..."]
-  nova_ingest.py --slack-file-id <file_id> [--topic "..."]
+  nova_ingest.py wikipedia "Physics"
+  nova_ingest.py wikipedia "World War II" --target 5000
+  nova_ingest.py search "demonology facts history"
+  nova_ingest.py video "https://www.youtube.com/@ForgottenWeapons" --channel "Forgotten Weapons"
+  nova_ingest.py video "https://youtu.be/xxx" --download-dir ~/Downloads
+  nova_ingest.py discover "medieval warfare" --sites 3 --per-site 5
+  nova_ingest.py discover "medieval warfare" --sites 3 --per-site 5 --yes
+  nova_ingest.py discover "adult content" --sites 2 --per-site 3 --download-dir /Volumes/Data/private --yes
+  nova_ingest.py url "https://example.com/article"
+  nova_ingest.py file /path/to/doc.txt --source my_source
+  nova_ingest.py --resume       # continue last interrupted job
+  nova_ingest.py --restart      # restart last job, retry failures
+  nova_ingest.py --status       # show current job state
+  nova_ingest.py --list-vectors # show all memory source names
+
+Video output: /Volumes/external/videos/TVShows/<Channel>/Season 01/S01E{N} - <Title>.mp4
 
 Written by Jordan Koch.
 """
 
-import argparse
-import json
-import os
-import subprocess
-import sys
-import tempfile
-import time
-import urllib.request
+import argparse, hashlib, json, os, random, re, signal, subprocess, sys
+import threading, time, urllib.error, urllib.parse, urllib.request
+from collections import deque
+from datetime import datetime
+from html.parser import HTMLParser
 from pathlib import Path
 
-SCRIPTS    = Path.home() / ".openclaw/scripts"
-VECTOR_URL = "http://127.0.0.1:18790/remember"
-CHUNK_SIZE = 800   # characters per memory chunk (fits in embedding context)
-CHUNK_OVERLAP = 100
-
-sys.path.insert(0, str(SCRIPTS))
+sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
+# ---------------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------------
 
-# ── Text Extractors ───────────────────────────────────────────────────────────
+VERSION       = "1.1.0"
+MEMORY_URL    = "http://192.168.1.6:18790/remember"
+SEARXNG_URL   = "http://127.0.0.1:8888/search"
+SLACK_CHANNEL = nova_config.SLACK_NOTIFY
+STATE_DIR     = Path.home() / ".openclaw/workspace/state/ingest"
+LOG_FILE      = Path.home() / ".openclaw/logs/nova_ingest.log"
+WORK_DIR      = Path("/Volumes/Data/nova-ingest-work")
+VIDEO_BASE    = Path("/Volumes/external/videos/TVShows")
+COOKIES_FILE  = Path.home() / ".openclaw/cache/yt_cookies.txt"
+YT_DLP        = "/opt/homebrew/bin/yt-dlp"
+FFMPEG        = "/opt/homebrew/bin/ffmpeg"
+WHISPER_BIN   = "/opt/homebrew/bin/mlx_whisper"
+WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
+CHUNK_CHARS   = 1500
+CHUNK_WORDS   = 400
+MIN_WORDS     = 30
+RATE_LIMITS   = {"wikipedia": 3.0, "searxng": 1.0, "web": 4.0, "video": 2.0}
 
-def extract_pdf(path: str) -> str:
-    """Extract text from PDF using pdfplumber (best quality) with pdftotext fallback."""
+DISCOVERY_SITES = [
+    ("YouTube",         "https://www.youtube.com/results?search_query={q}"),
+    ("Vimeo",           "https://vimeo.com/search?q={q}"),
+    ("DailyMotion",     "https://www.dailymotion.com/search/{q}"),
+    ("Rumble",          "https://rumble.com/search/video?q={q}"),
+    ("Odysee",          "https://odysee.com/$/search?q={q}"),
+    ("BitChute",        "https://www.bitchute.com/search/?query={q}"),
+    ("Peertube",        "https://sepiasearch.org/search?search={q}"),
+    ("TED",             "https://www.ted.com/search?q={q}"),
+    ("Internet Archive","https://archive.org/search?query={q}&mediatype=movies"),
+]
+
+# ---------------------------------------------------------------------------
+# yt-dlp self-upgrade (runs once at startup)
+# ---------------------------------------------------------------------------
+
+def _upgrade_ytdlp():
+    """Check for and install yt-dlp updates via brew before any downloads."""
+    log("Checking yt-dlp for updates...")
     try:
-        import pdfplumber
-        text_parts = []
-        with pdfplumber.open(path) as pdf:
-            for page in pdf.pages:
-                t = page.extract_text()
-                if t:
-                    text_parts.append(t)
-        return "\n\n".join(text_parts)
-    except Exception:
-        pass
-    # Fallback: pdftotext
-    try:
-        result = subprocess.run(
-            ["pdftotext", path, "-"],
-            capture_output=True, text=True, timeout=30
-        )
-        if result.returncode == 0:
-            return result.stdout
-    except Exception:
-        pass
-    return ""
-
-
-def extract_docx(path: str) -> str:
-    """Extract text from Word documents."""
-    try:
-        import docx
-        doc = docx.Document(path)
-        parts = []
-        for para in doc.paragraphs:
-            if para.text.strip():
-                parts.append(para.text)
-        # Also extract tables
-        for table in doc.tables:
-            for row in table.rows:
-                row_text = " | ".join(c.text.strip() for c in row.cells if c.text.strip())
-                if row_text:
-                    parts.append(row_text)
-        return "\n".join(parts)
+        r = subprocess.run(
+            ["/opt/homebrew/bin/brew", "upgrade", "yt-dlp"],
+            capture_output=True, text=True, timeout=120)
+        if "already installed" in r.stdout or "already installed" in r.stderr:
+            # Get current version for the log
+            v = subprocess.run([YT_DLP, "--version"],
+                               capture_output=True, text=True, timeout=10)
+            log(f"yt-dlp up-to-date: {v.stdout.strip()}")
+        elif r.returncode == 0:
+            v = subprocess.run([YT_DLP, "--version"],
+                               capture_output=True, text=True, timeout=10)
+            log(f"yt-dlp upgraded to: {v.stdout.strip()}")
+            notify(f":arrow_up: *yt-dlp upgraded* to {v.stdout.strip()}")
+        else:
+            log(f"brew upgrade yt-dlp returned {r.returncode}: {r.stderr[:200]}", "WARN")
     except Exception as e:
-        return f"[DOCX extract error: {e}]"
+        log(f"yt-dlp upgrade check failed: {e}", "WARN")
 
+# ---------------------------------------------------------------------------
+# State
+# ---------------------------------------------------------------------------
 
-def extract_xlsx(path: str) -> str:
-    """Extract text from Excel spreadsheets."""
-    try:
-        import openpyxl
-        wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
-        parts = []
-        for sheet_name in wb.sheetnames:
-            ws = wb[sheet_name]
-            parts.append(f"=== Sheet: {sheet_name} ===")
-            for row in ws.iter_rows(values_only=True):
-                row_text = " | ".join(str(c) for c in row if c is not None)
-                if row_text.strip():
-                    parts.append(row_text)
-        return "\n".join(parts)
-    except Exception as e:
-        return f"[XLSX extract error: {e}]"
+_shutdown   = False
+_log_lock   = threading.Lock()
+_last_fetch: dict = {}
 
+def _sig(s, f):
+    global _shutdown
+    _shutdown = True
+    log("Shutdown -- stopping after current item")
 
-def extract_pptx(path: str) -> str:
-    """Extract text from PowerPoint presentations."""
-    try:
-        from pptx import Presentation
-        prs = Presentation(path)
-        parts = []
-        for i, slide in enumerate(prs.slides, 1):
-            slide_parts = []
-            for shape in slide.shapes:
-                if hasattr(shape, "text") and shape.text.strip():
-                    slide_parts.append(shape.text.strip())
-            if slide_parts:
-                parts.append(f"--- Slide {i} ---\n" + "\n".join(slide_parts))
-        return "\n\n".join(parts)
-    except Exception as e:
-        return f"[PPTX extract error: {e}]"
+signal.signal(signal.SIGINT,  _sig)
+signal.signal(signal.SIGTERM, _sig)
 
+# ---------------------------------------------------------------------------
+# Logging + Notifications
+# ---------------------------------------------------------------------------
 
-def extract_rtf(path: str) -> str:
-    """Extract text from RTF using macOS textutil."""
-    try:
-        result = subprocess.run(
-            ["textutil", "-convert", "txt", "-stdout", path],
-            capture_output=True, text=True, timeout=15
-        )
-        return result.stdout if result.returncode == 0 else ""
-    except Exception:
-        return ""
-
-
-def extract_text(path: str, suffix: str) -> str:
-    """Route to the right extractor based on file extension."""
-    suffix = suffix.lower().lstrip(".")
-    if suffix == "pdf":
-        return extract_pdf(path)
-    elif suffix in ("docx", "doc"):
-        if suffix == "doc":
-            # Convert .doc to .docx via textutil first
-            with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as tmp:
-                tmp_path = tmp.name
-            subprocess.run(["textutil", "-convert", "docx", "-output", tmp_path, path],
-                           capture_output=True, timeout=15)
-            text = extract_docx(tmp_path)
-            os.unlink(tmp_path)
-            return text
-        return extract_docx(path)
-    elif suffix in ("xlsx", "xls"):
-        return extract_xlsx(path)
-    elif suffix in ("pptx", "ppt"):
-        return extract_pptx(path)
-    elif suffix == "rtf":
-        return extract_rtf(path)
-    elif suffix in ("txt", "md", "csv", "json", "yaml", "yml", "log", "py",
-                    "js", "ts", "swift", "sh", "html", "xml"):
-        return Path(path).read_text(encoding="utf-8", errors="ignore")
-    else:
-        # Try plain text as fallback
+def log(msg, level="INFO"):
+    ts   = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[nova_ingest {ts}] [{level}] {msg}"
+    with _log_lock:
+        print(line, flush=True)
         try:
-            return Path(path).read_text(encoding="utf-8", errors="ignore")
+            LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+            with open(LOG_FILE, "a") as f:
+                f.write(line + "\n")
         except Exception:
-            return ""
+            pass
 
+def notify(text):
+    try:
+        nova_config.post_both(text, slack_channel=SLACK_CHANNEL)
+    except Exception as e:
+        log(f"Slack failed: {e}", "WARN")
 
-# ── Chunking ──────────────────────────────────────────────────────────────────
+def notify_item(title, vector, chunks, errors, done, total, nxt, mem):
+    pct    = (done / max(total, 1)) * 100
+    filled = int(pct / 10)
+    bar    = "█" * filled + "░" * (10 - filled)
+    lines  = [
+        f":white_check_mark: *{title[:80]}*",
+        f"  :label: `{vector}` \xb7 :jigsaw: {chunks} chunks \xb7 :x: {errors} errors",
+        f"  :bar_chart: `[{bar}]` {pct:.1f}% -- {done}/{total}",
+    ]
+    if mem:
+        lines.append(f"  :thought_balloon: _{mem[:180].replace(chr(10), ' ')}..._")
+    if nxt:
+        lines.append(f"  :arrow_forward: Next: {nxt[:60]}")
+    notify("\n".join(lines))
 
-def chunk_text(text: str, filename: str) -> list[str]:
-    """Split text into overlapping chunks suitable for embedding."""
-    text = text.strip()
-    if not text:
-        return []
+# ---------------------------------------------------------------------------
+# State persistence
+# ---------------------------------------------------------------------------
 
-    # Split on paragraph boundaries first
-    paragraphs = [p.strip() for p in text.split("\n\n") if p.strip()]
+def _sp(jid):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    return STATE_DIR / f"{jid}.json"
 
-    chunks = []
-    current = []
-    current_len = 0
-
-    for para in paragraphs:
-        para_len = len(para)
-        if current_len + para_len > CHUNK_SIZE and current:
-            chunk_text = "\n\n".join(current)
-            chunks.append(f"[From: {filename}]\n{chunk_text}")
-            # Keep last paragraph for overlap
-            overlap = current[-1] if current else ""
-            current = [overlap] if overlap else []
-            current_len = len(overlap)
-        current.append(para)
-        current_len += para_len
-
-    if current:
-        chunk_text = "\n\n".join(current)
-        chunks.append(f"[From: {filename}]\n{chunk_text}")
-
-    return chunks
-
-
-# ── Vector Memory ─────────────────────────────────────────────────────────────
-
-def store_chunks(chunks: list[str], source: str, topic: str = "") -> int:
-    """Store text chunks in vector memory. Returns number stored."""
-    metadata = {"source_type": source}
-    if topic:
-        metadata["topic"] = topic
-
-    stored = 0
-    for i, chunk in enumerate(chunks):
-        # Small delay every 10 chunks to avoid overwhelming the memory server
-        if i > 0 and i % 10 == 0:
-            time.sleep(0.3)
+def load_state(jid):
+    p = _sp(jid)
+    if p.exists():
         try:
-            payload = json.dumps({
-                "text": chunk,
-                "source": source,
-                "metadata": metadata
-            }).encode()
-            req = urllib.request.Request(
-                VECTOR_URL, data=payload,
-                headers={"Content-Type": "application/json"}, method="POST"
-            )
-            with urllib.request.urlopen(req, timeout=15):
-                stored += 1
-        except Exception as e:
-            print(f"[nova_ingest] store error: {e}", file=sys.stderr)
-            time.sleep(0.5)  # Back off on error
-
-    return stored
-
-
-# ── Slack Download ────────────────────────────────────────────────────────────
-
-def download_slack_file(file_id: str = None, url: str = None,
-                         filename: str = "slack_file") -> tuple[str, str]:
-    """Download a file from Slack. Returns (local_path, filename)."""
-    token = nova_config.slack_bot_token()
-    if not token:
-        raise ValueError("Slack token unavailable (Keychain locked?)")
-
-    if file_id and not url:
-        # Get file info to find download URL
-        # Requires files:read scope on the bot token.
-        # If missing, add it at api.slack.com → OAuth & Permissions → Bot Token Scopes
-        req = urllib.request.Request(
-            f"https://slack.com/api/files.info?file={file_id}",
-            headers={"Authorization": f"Bearer {token}"}
-        )
-        with urllib.request.urlopen(req, timeout=15) as r:
-            info = json.loads(r.read())
-        if not info.get("ok"):
-            error = info.get("error", "unknown")
-            if error == "missing_scope":
-                raise ValueError(
-                    "Bot token missing 'files:read' scope.\n"
-                    "Fix: go to api.slack.com → Your Apps → Nova → "
-                    "OAuth & Permissions → Bot Token Scopes → add files:read → Reinstall App"
-                )
-            raise ValueError(f"files.info failed: {error}")
-        file_info = info["file"]
-        url = file_info.get("url_private_download") or file_info.get("url_private")
-        filename = file_info.get("name", filename)
-
-    # Download the file
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
-    suffix = Path(filename).suffix or ".tmp"
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-        tmp_path = tmp.name
-        with urllib.request.urlopen(req, timeout=60) as r:
-            content = r.read()
-        tmp.write(content)
-
-    # Sanity check — Slack redirects to HTML auth page if scope missing
-    if content[:15].lower().startswith(b"<!doctype html>") or content[:6] == b"<html>":
-        os.unlink(tmp_path)
-        raise ValueError(
-            "Downloaded an HTML page instead of the file — token missing 'files:read' scope.\n"
-            "Fix: api.slack.com → Your Apps → Nova → OAuth & Permissions → add files:read → Reinstall"
-        )
-
-    return tmp_path, filename
-
-
-# ── Main ──────────────────────────────────────────────────────────────────────
-
-def ingest(file_path: str, filename: str, topic: str = "", source: str = "document") -> dict:
-    """Ingest a file and return summary dict."""
-    suffix = Path(filename).suffix
-
-    print(f"[nova_ingest] Extracting text from {filename}...", flush=True)
-    text = extract_text(file_path, suffix)
-
-    if not text.strip():
-        return {"ok": False, "error": "No text extracted", "filename": filename}
-
-    word_count = len(text.split())
-    chunks = chunk_text(text, filename)
-
-    print(f"[nova_ingest] {word_count} words → {len(chunks)} chunks. Storing...", flush=True)
-    stored = store_chunks(chunks, source=source, topic=topic or Path(filename).stem)
-
+            return json.loads(p.read_text())
+        except Exception:
+            pass
     return {
-        "ok": True,
-        "filename": filename,
-        "words": word_count,
-        "chunks": len(chunks),
-        "stored": stored,
-        "topic": topic or Path(filename).stem,
-        "preview": text[:300]
+        "job_id": jid, "mode": "", "query": "", "vector": "",
+        "done_urls": [], "done_hashes": [], "failed_urls": [],
+        "chunks_total": 0, "items_done": 0, "items_total": 0,
+        "started_at": datetime.now().isoformat(),
     }
 
+def save_state(jid, state):
+    state["last_updated"] = datetime.now().isoformat()
+    _sp(jid).write_text(json.dumps(state, indent=2))
+
+def latest_job_id():
+    if not STATE_DIR.exists():
+        return None
+    files = sorted(STATE_DIR.glob("*.json"),
+                   key=lambda p: p.stat().st_mtime, reverse=True)
+    return files[0].stem if files else None
+
+# ---------------------------------------------------------------------------
+# Vector selection
+# ---------------------------------------------------------------------------
+
+def get_existing_vectors():
+    try:
+        r = subprocess.run(
+            ["psql", "-U", "kochj", "-d", "nova_memories", "-tA", "-c",
+             "SELECT source FROM memories GROUP BY source ORDER BY COUNT(*) DESC;"],
+            capture_output=True, text=True, timeout=15)
+        if r.returncode == 0:
+            return [s.strip() for s in r.stdout.strip().split("\n") if s.strip()]
+    except Exception as e:
+        log(f"Could not fetch vectors: {e}", "WARN")
+    return []
+
+def auto_select_vector(topic, sample, existing):
+    if not existing:
+        return _derive(topic)
+    combined = (topic + " " + sample[:500]).lower()
+    scores   = {}
+    for vec in existing:
+        words = re.split(r"[_\s]+", vec.lower())
+        score = sum(1.5 for w in words if len(w) > 3 and w in combined)
+        if vec.replace("_", " ").lower() in combined:
+            score += 10
+        if score > 0:
+            scores[vec] = score
+    if scores:
+        best = max(scores, key=scores.get)
+        if scores[best] >= 2.0:
+            log(f"Auto-selected vector: '{best}' (score={scores[best]:.1f})")
+            return best
+    try:
+        url = "http://192.168.1.6:18790/recall?q=" + urllib.parse.quote(topic) + "&n=5"
+        with urllib.request.urlopen(url, timeout=8) as r:
+            results = json.loads(r.read())
+            sources = [m.get("source", "") for m in results if m.get("source")]
+            if sources:
+                from collections import Counter
+                best = Counter(sources).most_common(1)[0][0]
+                log(f"Semantic vector: '{best}'")
+                return best
+    except Exception:
+        pass
+    d = _derive(topic)
+    log(f"New vector: '{d}'")
+    return d
+
+def _derive(topic):
+    clean = re.sub(r"[^a-zA-Z0-9\s]", "", topic.lower().strip())
+    words = clean.split()[:3]
+    return "_".join(words) if words else "general_knowledge"
+
+# ---------------------------------------------------------------------------
+# Garbage detection
+# ---------------------------------------------------------------------------
+
+_TRASH = [
+    re.compile(r"[♪♫♬♭]"),
+    re.compile(r"\b(\w+)(\s+\1){4,}", re.IGNORECASE),
+    re.compile(r"^[A-Z\s\W]{20,}$"),
+    re.compile(r"^[^aeiouAEIOU\s]{8,}$"),
+    re.compile(r"^[\W\d\s]+$"),
+    re.compile(r"subtitles?\s+by|closed\s+caption", re.I),
+    re.compile(r"^\[?\s*(silence|music|applause|laughter)\s*\]?$", re.I),
+    re.compile(r"(.{5,}?)(\s+\1){3,}"),
+]
+_MUSIC = ["♪", "♫", "la la la", "da da da", "na na na",
+          "woo woo", "oh oh oh", "yeah yeah yeah"]
+
+def is_garbage(text):
+    s = text.strip()
+    if len(s.split()) < MIN_WORDS:
+        return True
+    for pat in _TRASH:
+        if pat.search(s):
+            return True
+    lower = s.lower()
+    for ph in _MUSIC:
+        if lower.count(ph) >= 3:
+            return True
+    alpha = sum(c.isalpha() for c in s)
+    return len(s) > 0 and alpha / len(s) < 0.45
+
+def clean_text(text):
+    paras = re.split(r"\n{2,}", text)
+    clean = []
+    for para in paras:
+        para = para.strip()
+        if not para:
+            continue
+        sents = re.split(r"(?<=[.!?])\s+", para)
+        good  = [s for s in sents if not is_garbage(s) and len(s.split()) >= 5]
+        if len(good) >= max(1, len(sents) * 0.4):
+            clean.append(" ".join(good))
+    return "\n\n".join(clean)
+
+def purge_garbage(vector, dry_run=False):
+    log(f"Garbage purge on '{vector}'...")
+    try:
+        r = subprocess.run(
+            ["psql", "-U", "kochj", "-d", "nova_memories", "-tA", "-F", "\x1f", "-c",
+             "SELECT id, text FROM memories WHERE source='" + vector + "' "
+             "ORDER BY created_at DESC LIMIT 5000;"],
+            capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            return 0
+        ids = []
+        for line in r.stdout.strip().split("\n"):
+            if "\x1f" not in line:
+                continue
+            mid, txt = line.split("\x1f", 1)
+            if is_garbage(txt):
+                ids.append(mid.strip())
+        if not ids:
+            log(f"Purge: nothing to remove from '{vector}'")
+            return 0
+        log(f"Purge: {len(ids)} fragments from '{vector}'")
+        if dry_run:
+            return len(ids)
+        deleted = 0
+        for i in range(0, len(ids), 100):
+            batch   = ids[i:i+100]
+            id_list = "','".join(batch)
+            subprocess.run(
+                ["psql", "-U", "kochj", "-d", "nova_memories", "-c",
+                 "DELETE FROM memories WHERE id IN ('" + id_list + "');"],
+                capture_output=True, timeout=15)
+            deleted += len(batch)
+        notify(f":broom: *Garbage purge* `{vector}`: removed {deleted} fragments")
+        return deleted
+    except Exception as e:
+        log(f"Purge error: {e}", "WARN")
+        return 0
+
+# ---------------------------------------------------------------------------
+# Memory helpers
+# ---------------------------------------------------------------------------
+
+def text_hash(t):
+    return hashlib.md5(t.strip().encode()).hexdigest()
+
+def remember(text, source, meta, done_hashes, dry_run=False):
+    h = text_hash(text)
+    if h in done_hashes:
+        return False
+    if dry_run:
+        done_hashes.add(h)
+        return True
+    payload = json.dumps({
+        "text": text[:2000], "source": source, "tier": "long_term",
+        "metadata": {**meta, "ingested_by": "nova_ingest.py", "privacy": "public"},
+    }).encode()
+    for attempt in range(3):
+        try:
+            req = urllib.request.Request(
+                MEMORY_URL + "?async=1", data=payload,
+                headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=15):
+                done_hashes.add(h)
+                return True
+        except Exception as e:
+            if attempt == 2:
+                log(f"Memory store failed: {e}", "WARN")
+                return False
+            time.sleep(2 ** attempt)
+    return False
+
+def chunk_prose(text, size=CHUNK_CHARS):
+    paras   = re.split(r"\n{2,}", text)
+    chunks  = []
+    current = ""
+    for p in paras:
+        p = p.strip()
+        if not p or len(p) < 30:
+            continue
+        if len(current) + len(p) > size:
+            if current:
+                chunks.append(current.strip())
+            current = p
+        else:
+            current += ("\n\n" + p) if current else p
+    if current.strip():
+        chunks.append(current.strip())
+    return chunks
+
+def chunk_words(text, n=CHUNK_WORDS):
+    words = text.split()
+    return [" ".join(words[i:i+n]) for i in range(0, len(words), n)]
+
+def random_mem(vector):
+    try:
+        url = ("http://192.168.1.6:18790/random?source="
+               + urllib.parse.quote(vector) + "&n=1")
+        with urllib.request.urlopen(url, timeout=5) as r:
+            data  = json.loads(r.read())
+            items = data if isinstance(data, list) else data.get("results", [])
+            if items:
+                return items[0].get("text", "")
+    except Exception:
+        pass
+    return None
+
+# ---------------------------------------------------------------------------
+# HTTP fetch
+# ---------------------------------------------------------------------------
+
+def rate_sleep(stype):
+    delay   = RATE_LIMITS.get(stype, 2.0)
+    last    = _last_fetch.get(stype, 0)
+    elapsed = time.time() - last
+    if elapsed < delay:
+        time.sleep(delay - elapsed)
+    _last_fetch[stype] = time.time()
+
+def fetch(url, timeout=15, retries=4):
+    hdr = {"User-Agent": "Nova/2.0 (local research bot; kochj23@github.com)"}
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(url, headers=hdr)
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                raw = r.read()
+                ct  = r.headers.get("Content-Type", "")
+                enc = "utf-8"
+                if "charset=" in ct:
+                    enc = ct.split("charset=")[-1].split(";")[0].strip()
+                return raw.decode(enc, errors="replace")
+        except urllib.error.HTTPError as e:
+            if e.code == 429:
+                wait = 15 * (attempt + 1)
+                log(f"  429 rate-limited, waiting {wait}s", "WARN")
+                time.sleep(wait)
+            elif e.code in (403, 404):
+                return None
+            else:
+                log(f"  HTTP {e.code}: {url[:60]}", "WARN")
+                time.sleep(2 ** attempt)
+        except Exception as e:
+            log(f"  Fetch error: {e} ({url[:60]})", "WARN")
+            time.sleep(2 ** attempt)
+    return None
+
+class _HX(HTMLParser):
+    _SKIP = {"script", "style", "nav", "footer", "header", "aside", "form"}
+    _BR   = {"p", "div", "li", "h1", "h2", "h3", "h4", "br", "tr"}
+
+    def __init__(self):
+        super().__init__()
+        self.parts = []
+        self._s    = False
+
+    def handle_starttag(self, t, a):
+        if t in self._SKIP:
+            self._s = True
+
+    def handle_endtag(self, t):
+        if t in self._SKIP:
+            self._s = False
+        if t in self._BR:
+            self.parts.append("\n")
+
+    def handle_data(self, d):
+        if not self._s:
+            self.parts.append(d)
+
+    def get_text(self):
+        return re.sub(r"\n{3,}", "\n\n", "".join(self.parts)).strip()
+
+def html_text(html):
+    p = _HX()
+    try:
+        p.feed(html)
+        return p.get_text()
+    except Exception:
+        return re.sub(r"<[^>]+>", " ", html)
+
+# ---------------------------------------------------------------------------
+# Wikipedia mode
+# ---------------------------------------------------------------------------
+
+def wiki_fetch(url):
+    tp  = url.split("/wiki/")[-1]
+    api = ("https://en.wikipedia.org/w/api.php?action=query"
+           "&titles=" + urllib.parse.quote(tp) +
+           "&prop=extracts|links&explaintext=1&pllimit=max&format=json")
+    raw = fetch(api, timeout=20)
+    if not raw:
+        return None, None, [], "fetch failed"
+    try:
+        data = json.loads(raw)
+    except Exception:
+        return None, None, [], "json parse"
+    pages = data.get("query", {}).get("pages", {})
+    if not pages:
+        return None, None, [], "no pages"
+    page  = list(pages.values())[0]
+    if "missing" in page:
+        return None, None, [], "missing"
+    text  = page.get("extract", "")
+    title = page.get("title", tp.replace("_", " "))
+    links = []
+    for lk in page.get("links", []):
+        lt = lk.get("title", "")
+        if lk.get("ns", 0) == 0 and ":" not in lt:
+            links.append("https://en.wikipedia.org/wiki/" +
+                         urllib.parse.quote(lt.replace(" ", "_")))
+    return title, text, links, None
+
+def run_wikipedia(query, vector, target, state, dry_run):
+    jid         = state["job_id"]
+    done_urls   = set(state.get("done_urls", []))
+    done_hashes = set(state.get("done_hashes", []))
+    failed      = list(state.get("failed_urls", []))
+    ct          = state.get("chunks_total", 0)
+    items_done  = state.get("items_done", 0)
+
+    q_safe = query.replace(" ", "_")
+    start  = "https://en.wikipedia.org/wiki/" + urllib.parse.quote(q_safe)
+    queue  = deque([start] + failed)
+
+    log(f"Wikipedia BFS: '{query}' -> '{vector}' target={target:,}")
+    notify(f":books: *Wikipedia Ingest Started*\n"
+           f"  Topic: *{query}* \xb7 Vector: `{vector}`\n"
+           f"  Target: {target:,} chunks" +
+           ("  (DRY RUN)" if dry_run else ""))
+
+    while queue and ct < target and not _shutdown:
+        url = queue.popleft()
+        if url in done_urls:
+            continue
+        rate_sleep("wikipedia")
+        title, text, links, err = wiki_fetch(url)
+        if err or not text or len(text) < 100:
+            failed.append(url)
+            state["failed_urls"] = failed[-500:]
+            save_state(jid, state)
+            continue
+        done_urls.add(url)
+        text     = clean_text(text)
+        ingested = 0
+        for chunk in chunk_prose(text):
+            if ct >= target or is_garbage(chunk):
+                continue
+            if remember(chunk, vector,
+                        {"title": title, "url": url, "type": "wikipedia"},
+                        done_hashes, dry_run):
+                ct      += 1
+                ingested += 1
+        items_done += 1
+        state.update({
+            "done_urls":    list(done_urls)[-5000:],
+            "done_hashes":  list(done_hashes)[-20000:],
+            "chunks_total": ct,
+            "items_done":   items_done,
+            "items_total":  max(items_done + len(queue), state.get("items_total", 0)),
+        })
+        save_state(jid, state)
+        log(f"  [{ct}/{target}] {title} -> {ingested} chunks (q:{len(queue)})")
+        nxt = queue[0].split("/wiki/")[-1].replace("_", " ") if queue else None
+        notify_item(title, vector, ingested, 0,
+                    items_done, max(items_done, target // 10),
+                    nxt, random_mem(vector) if not dry_run else None)
+        for lnk in links:
+            if lnk not in done_urls:
+                queue.append(lnk)
+    _finish(jid, query, vector, ct, target, items_done, len(failed), dry_run)
+
+# ---------------------------------------------------------------------------
+# Search mode
+# ---------------------------------------------------------------------------
+
+def run_search(query, vector, target, state, dry_run):
+    jid         = state["job_id"]
+    done_urls   = set(state.get("done_urls", []))
+    done_hashes = set(state.get("done_hashes", []))
+    ct          = state.get("chunks_total", 0)
+    items_done  = state.get("items_done", 0)
+    failed      = 0
+
+    log(f"Search ingest: '{query}' -> '{vector}'")
+    notify(f":mag: *Search Ingest Started*\n"
+           f"  Query: *{query}* \xb7 Vector: `{vector}`\n"
+           f"  Target: {target:,} chunks")
+
+    page = 1
+    while ct < target and not _shutdown:
+        rate_sleep("searxng")
+        params = urllib.parse.urlencode({
+            "q": query, "format": "json",
+            "categories": "general", "language": "en", "pageno": page,
+        })
+        raw = fetch(f"{SEARXNG_URL}?{params}", timeout=10)
+        if not raw:
+            break
+        try:
+            results = json.loads(raw).get("results", [])
+        except Exception:
+            break
+        if not results:
+            break
+        for i, r in enumerate(results):
+            if ct >= target or _shutdown:
+                break
+            url = r.get("url", "")
+            if not url or url in done_urls:
+                continue
+            rate_sleep("web")
+            html = fetch(url, timeout=20)
+            if not html:
+                failed += 1
+                continue
+            done_urls.add(url)
+            text = clean_text(html_text(html))
+            if len(text.split()) < 100:
+                continue
+            title    = r.get("title", url[:60])
+            ingested = 0
+            for chunk in chunk_prose(text):
+                if ct >= target or is_garbage(chunk):
+                    continue
+                if remember(chunk, vector,
+                            {"title": title, "url": url,
+                             "type": "web_search", "query": query},
+                            done_hashes, dry_run):
+                    ct      += 1
+                    ingested += 1
+            items_done += 1
+            state.update({
+                "done_urls":    list(done_urls)[-2000:],
+                "done_hashes":  list(done_hashes)[-20000:],
+                "chunks_total": ct,
+                "items_done":   items_done,
+            })
+            save_state(jid, state)
+            nxt = results[i+1].get("title", "")[:60] if i+1 < len(results) else None
+            notify_item(title[:80], vector, ingested, failed,
+                        items_done, max(items_done, target // 5),
+                        nxt, random_mem(vector) if not dry_run else None)
+        page += 1
+    _finish(jid, query, vector, ct, target, items_done, failed, dry_run)
+
+# ---------------------------------------------------------------------------
+# Video helpers
+# ---------------------------------------------------------------------------
+
+def _refresh_cookies():
+    if COOKIES_FILE.exists() and time.time() - COOKIES_FILE.stat().st_mtime < 6 * 3600:
+        return
+    log("Refreshing Chrome cookies...")
+    script = (
+        "do shell script \"" + YT_DLP +
+        " --cookies-from-browser chrome --cookies " + str(COOKIES_FILE) +
+        " --skip-download --print \\\"%(id)s\\\""
+        " \\\"https://www.youtube.com/watch?v=dQw4w9WgXcQ\\\"\"")
+    try:
+        subprocess.run(["/usr/bin/osascript", "-e", script],
+                       capture_output=True, timeout=30)
+        if COOKIES_FILE.exists():
+            os.chmod(COOKIES_FILE, 0o600)
+    except Exception as e:
+        log(f"Cookie refresh failed: {e}", "WARN")
+
+def _ytbase():
+    args = [YT_DLP,
+            "--extractor-args", "youtube:player_client=web,default",
+            "--windows-filenames", "--no-playlist"]
+    if COOKIES_FILE.exists():
+        args += ["--cookies", str(COOKIES_FILE)]
+    else:
+        args += ["--cookies-from-browser", "chrome"]
+    return args
+
+def _get_vids(url):
+    _refresh_cookies()
+    cmd = _ytbase() + [
+        "--flat-playlist",
+        "--print", "%(id)s\t%(title)s\t%(upload_date)s\t%(uploader)s",
+        url,
+    ]
+    try:
+        r    = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        vids = []
+        for line in r.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            vids.append({
+                "id":       parts[0],
+                "title":    parts[1] if len(parts) > 1 else parts[0],
+                "date":     parts[2] if len(parts) > 2 else "19700101",
+                "uploader": parts[3] if len(parts) > 3 else "",
+            })
+        return vids
+    except Exception as e:
+        log(f"yt-dlp list failed: {e}", "ERROR")
+        return []
+
+def _get_vids_search(url, limit):
+    cmd = _ytbase() + [
+        "--flat-playlist",
+        "--playlist-end", str(limit),
+        "--print", "%(id)s\t%(title)s\t%(webpage_url)s",
+        url,
+    ]
+    try:
+        r    = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        vids = []
+        for line in r.stdout.strip().split("\n"):
+            if not line.strip():
+                continue
+            parts = line.split("\t")
+            vids.append({
+                "id":    parts[0],
+                "title": parts[1] if len(parts) > 1 else parts[0],
+                "url":   parts[2] if len(parts) > 2 else "",
+            })
+        return vids[:limit]
+    except Exception as e:
+        log(f"  Search fetch failed: {e}", "WARN")
+        return []
+
+def _ep_path(channel, title, ep):
+    sc = re.sub(r"[^\w\s-]", "", channel).strip().replace(" ", "_")
+    st = re.sub(r"[^\w\s\-]", "", title).strip()
+    st = re.sub(r"\s+", " ", st)[:80]
+    d  = VIDEO_BASE / sc / "Season 01"
+    d.mkdir(parents=True, exist_ok=True)
+    return d / f"S01E{ep:04d} - {st}.mp4"
+
+def _dl_path(download_dir, title, vid_id):
+    d    = Path(download_dir).expanduser().resolve()
+    d.mkdir(parents=True, exist_ok=True)
+    safe = re.sub(r"[^\w\s\-]", "", title).strip()
+    safe = re.sub(r"\s+", " ", safe)[:100]
+    return d / f"{safe} [{vid_id}].mp4"
+
+def _download_url(vid_url, out):
+    cmd = _ytbase() + [
+        "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]",
+        "--merge-output-format", "mp4",
+        "-o", str(out),
+        "--no-overwrites",
+        vid_url,
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=1800)
+        if r.returncode != 0:
+            log(f"  yt-dlp error: {r.stderr[-200:]}", "WARN")
+            return False
+        return out.exists()
+    except Exception as e:
+        log(f"  Download exception: {e}", "WARN")
+        return False
+
+def _audio(video, wav):
+    cmd = [FFMPEG, "-y", "-i", str(video),
+           "-vn", "-ac", "1", "-ar", "16000",
+           "-acodec", "pcm_s16le", "-t", "7200",
+           str(wav)]
+    try:
+        subprocess.run(cmd, capture_output=True, timeout=7260)
+        return wav.exists() and wav.stat().st_size > 1000
+    except Exception as e:
+        log(f"  ffmpeg: {e}", "WARN")
+        return False
+
+def _transcribe(wav, stem, work):
+    cmd = [WHISPER_BIN, str(wav),
+           "--model",         WHISPER_MODEL,
+           "--output-format", "txt",
+           "--output-dir",    str(work),
+           "--output-name",   stem,
+           "--language",      "en"]
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, timeout=14400)
+        txt = work / f"{stem}.txt"
+        if txt.exists():
+            t = txt.read_text(encoding="utf-8", errors="ignore").strip()
+            txt.unlink(missing_ok=True)
+            return t if len(t) > 50 else None
+    except subprocess.TimeoutExpired:
+        log("  Whisper timeout", "WARN")
+    except Exception as e:
+        log(f"  Whisper: {e}", "WARN")
+    return None
+
+def _warm():
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/generate",
+            data=json.dumps({
+                "model": "nomic-embed-text",
+                "prompt": " ", "stream": False,
+                "options": {"num_predict": 1},
+            }).encode(),
+            headers={"Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=5)
+    except Exception:
+        pass
+
+# ---------------------------------------------------------------------------
+# Video mode
+# ---------------------------------------------------------------------------
+
+def run_video(url, channel, vector, target, state, dry_run, download_dir=None):
+    jid         = state["job_id"]
+    done_urls   = set(state.get("done_urls", []))
+    done_hashes = set(state.get("done_hashes", []))
+    ct          = state.get("chunks_total", 0)
+    items_done  = state.get("items_done", 0)
+    failed      = 0
+    dl_only     = bool(download_dir)
+
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
+    vids = _get_vids(url)
+    if not vids:
+        log("No videos found", "ERROR")
+        return
+
+    pending              = [v for v in vids if v["id"] not in done_urls]
+    state["items_total"] = len(vids)
+    save_state(jid, state)
+
+    log(f"Video: '{channel}' -> " +
+        (f"download-only: {download_dir}" if dl_only else f"vector: '{vector}'") +
+        f" -- {len(pending)}/{len(vids)} pending")
+    notify(f":movie_camera: *Video {'Download' if dl_only else 'Ingest'} Started*\n"
+           f"  Channel: *{channel}*\n"
+           + (f"  Output: `{download_dir}`\n" if dl_only else f"  Vector: `{vector}`\n") +
+           f"  {len(pending)} pending / {len(vids)} total")
+
+    all_sorted = sorted(vids, key=lambda v: v.get("date", "19700101"))
+    ep_map     = {v["id"]: i + 1 for i, v in enumerate(all_sorted)}
+    if not dl_only:
+        _warm()
+
+    for vid in pending:
+        if (not dl_only and ct >= target) or _shutdown:
+            break
+        vid_id  = vid["id"]
+        title   = vid["title"]
+        ep      = ep_map.get(vid_id, items_done + 1)
+        out     = (_dl_path(download_dir, title, vid_id) if dl_only
+                   else _ep_path(channel, title, ep))
+        wav     = WORK_DIR / f"{vid_id}.wav"
+
+        log(f"  {'DL' if dl_only else 'E%04d' % ep}: {title[:60]}")
+
+        if not out.exists() and not dry_run:
+            if not _download_url("https://www.youtube.com/watch?v=" + vid_id, out):
+                failed += 1
+                notify(f":x: *Download failed*: {title[:60]}\n  Will retry on next run.")
+                state["failed_urls"] = state.get("failed_urls", []) + [vid_id]
+                save_state(jid, state)
+                continue
+
+        transcript = None
+        if not dl_only and not dry_run and out.exists():
+            if _audio(out, wav):
+                transcript = _transcribe(wav, vid_id, WORK_DIR)
+                wav.unlink(missing_ok=True)
+
+        ingested = 0
+        if not dl_only and transcript:
+            transcript = clean_text(transcript)
+            for chunk in chunk_words(transcript):
+                if is_garbage(chunk):
+                    continue
+                if remember(chunk, vector,
+                            {"title": title, "channel": channel,
+                             "video_id": vid_id, "episode": ep,
+                             "type": "video_transcript"},
+                            done_hashes, dry_run):
+                    ct      += 1
+                    ingested += 1
+
+        done_urls.add(vid_id)
+        items_done += 1
+        state.update({
+            "done_urls":    list(done_urls)[-5000:],
+            "done_hashes":  list(done_hashes)[-20000:],
+            "chunks_total": ct,
+            "items_done":   items_done,
+        })
+        save_state(jid, state)
+
+        remaining = [v for v in pending if v["id"] not in done_urls]
+        nxt       = remaining[0]["title"][:60] if remaining else None
+
+        if dl_only:
+            log(f"  Saved: {out}")
+            notify(f":white_check_mark: *Downloaded*: {title[:60]}\n"
+                   f"  :open_file_folder: `{out}`\n"
+                   f"  {items_done}/{len(vids)} done")
+        else:
+            notify_item(
+                f"{channel} -- {title[:60]}", vector, ingested, failed,
+                items_done, len(vids), nxt,
+                random_mem(vector) if not dry_run and ingested > 0 else None,
+            )
+            rate_sleep("video")
+            _warm()
+
+    if dl_only:
+        notify(f":checkered_flag: *Download Complete*: {channel}\n"
+               f"  :open_file_folder: `{download_dir}`\n"
+               f"  {items_done} files, {failed} errors")
+        log(f"Download done: {items_done} files, {failed} errors -> {download_dir}")
+    else:
+        _finish(jid, url, vector, ct, target, items_done, failed, dry_run)
+
+# ---------------------------------------------------------------------------
+# Discover mode
+# ---------------------------------------------------------------------------
+
+def run_discover(subject, vector, num_sites, per_site, state, dry_run,
+                 yes=False, download_dir=None):
+    jid         = state["job_id"]
+    done_hashes = set(state.get("done_hashes", []))
+    dl_only     = bool(download_dir)
+
+    log(f"Discover: '{subject}' across {num_sites} sites, {per_site} videos each")
+
+    chosen_sites = random.sample(DISCOVERY_SITES, min(num_sites, len(DISCOVERY_SITES)))
+
+    all_candidates = []
+    for site_name, url_tpl in chosen_sites:
+        search_url = url_tpl.replace("{q}", urllib.parse.quote(subject))
+        log(f"  Searching {site_name}: {search_url[:60]}")
+        vids = _get_vids_search(search_url, per_site)
+        for v in vids:
+            v["site"] = site_name
+        all_candidates.extend(vids)
+        if not vids:
+            log(f"  No results from {site_name}", "WARN")
+
+    if not all_candidates:
+        log("No videos found across any site", "ERROR")
+        notify(f":x: *Discover failed*: no results for '{subject}' across {num_sites} sites")
+        return
+
+    print()
+    print(f"Found {len(all_candidates)} candidate videos for '{subject}':")
+    print()
+    for i, v in enumerate(all_candidates, 1):
+        print(f"  {i:2d}. [{v.get('site','?')}] {v.get('title','?')[:70]}")
+    print()
+    if dl_only:
+        print(f"Output directory: '{download_dir}'")
+    else:
+        print(f"Vector will be: '{vector}'")
+    print()
+
+    if dry_run:
+        print("DRY RUN -- would download" + ("" if dl_only else " and ingest") + " the above.")
+        return
+
+    if not yes:
+        try:
+            ans = input("Proceed with download" +
+                        ("" if dl_only else " and ingest") +
+                        "? [y/N] ").strip().lower()
+        except EOFError:
+            ans = "y"
+        if ans not in ("y", "yes"):
+            print("Cancelled.")
+            return
+
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
+    if dl_only and download_dir:
+        Path(download_dir).expanduser().resolve().mkdir(parents=True, exist_ok=True)
+
+    ct         = state.get("chunks_total", 0)
+    items_done = 0
+    failed     = 0
+
+    notify(f":satellite: *Discover {'Download' if dl_only else 'Ingest'} Started*\n"
+           f"  Subject: *{subject}*\n"
+           f"  Sites: {', '.join(s for s, _ in chosen_sites)}\n"
+           f"  Videos: {len(all_candidates)} \xb7 " +
+           (f"Output: `{download_dir}`" if dl_only else f"Vector: `{vector}`"))
+
+    for vid in all_candidates:
+        if _shutdown:
+            break
+        vid_id  = vid.get("id", "")
+        title   = vid.get("title", vid_id)
+        site    = vid.get("site", "unknown")
+        ep      = items_done + 1
+        vid_url = vid.get("url") or ("https://www.youtube.com/watch?v=" + vid_id)
+        wav     = WORK_DIR / f"{vid_id}.wav"
+        channel = f"{subject} ({site})"
+        out     = (_dl_path(download_dir, title, vid_id) if dl_only
+                   else _ep_path(channel, title, ep))
+
+        log(f"  {'DL' if dl_only else 'E%04d' % ep}: {title[:60]} [{site}]")
+
+        if not out.exists():
+            if not _download_url(vid_url, out):
+                log(f"  Download failed: {title[:60]}", "WARN")
+                failed += 1
+                continue
+
+        transcript = None
+        if not dl_only and out.exists() and _audio(out, wav):
+            transcript = _transcribe(wav, vid_id, WORK_DIR)
+            wav.unlink(missing_ok=True)
+
+        ingested = 0
+        if not dl_only and transcript:
+            transcript = clean_text(transcript)
+            for chunk in chunk_words(transcript):
+                if is_garbage(chunk):
+                    continue
+                if remember(chunk, vector,
+                            {"title": title, "site": site, "subject": subject,
+                             "episode": ep, "type": "video_transcript"},
+                            done_hashes):
+                    ct      += 1
+                    ingested += 1
+
+        items_done += 1
+        state.update({
+            "done_hashes":  list(done_hashes)[-20000:],
+            "chunks_total": ct,
+            "items_done":   items_done,
+        })
+        save_state(jid, state)
+
+        remaining = all_candidates[items_done:]
+        nxt       = remaining[0].get("title", "")[:60] if remaining else None
+
+        if dl_only:
+            notify(f":white_check_mark: *Downloaded*: [{site}] {title[:60]}\n"
+                   f"  :open_file_folder: `{out}`\n"
+                   f"  {items_done}/{len(all_candidates)} done")
+        else:
+            notify_item(
+                f"[{site}] {title[:60]}", vector, ingested, failed,
+                items_done, len(all_candidates), nxt,
+                random_mem(vector) if ingested > 0 else None,
+            )
+            _warm()
+
+    if dl_only:
+        notify(f":checkered_flag: *Discover Download Complete*: {subject}\n"
+               f"  :open_file_folder: `{download_dir}`\n"
+               f"  {items_done} files, {failed} errors")
+        log(f"Discover download done: {items_done} files -> {download_dir}")
+    else:
+        _finish(jid, subject, vector, ct, len(all_candidates) * CHUNK_WORDS // 10,
+                items_done, failed, False)
+
+# ---------------------------------------------------------------------------
+# URL / File modes
+# ---------------------------------------------------------------------------
+
+def run_url(url, vector, state, dry_run):
+    dh   = set(state.get("done_hashes", []))
+    html = fetch(url)
+    if not html:
+        log(f"Could not fetch: {url}", "ERROR")
+        return
+    text     = clean_text(html_text(html))
+    ingested = sum(
+        1 for c in chunk_prose(text)
+        if not is_garbage(c) and
+           remember(c, vector, {"url": url, "type": "web_page"}, dh, dry_run)
+    )
+    log(f"URL: {ingested} chunks")
+    notify(f":link: *URL Ingested*: {url[:80]}\n  Vector: `{vector}` \xb7 {ingested} chunks")
+
+def run_file(path, vector, state, dry_run):
+    dh = set(state.get("done_hashes", []))
+    p  = Path(path)
+    if not p.exists():
+        log(f"File not found: {path}", "ERROR")
+        return
+    text     = clean_text(p.read_text(encoding="utf-8", errors="replace"))
+    ingested = sum(
+        1 for c in chunk_prose(text)
+        if not is_garbage(c) and
+           remember(c, vector, {"path": str(p), "type": "local_file"}, dh, dry_run)
+    )
+    log(f"File: {ingested} chunks")
+    notify(f":page_facing_up: *File Ingested*: `{p.name}`\n  Vector: `{vector}` \xb7 {ingested} chunks")
+
+# ---------------------------------------------------------------------------
+# Finish
+# ---------------------------------------------------------------------------
+
+def _finish(jid, label, vector, chunks, target, items, errors, dry_run):
+    pct    = min(chunks / max(target, 1) * 100, 100)
+    status = "DRY RUN complete" if dry_run else ":checkered_flag: *Ingest Complete*"
+    notify(
+        f"{status}: *{label[:60]}*\n"
+        f"  Vector: `{vector}`\n"
+        f"  :jigsaw: {chunks:,} / {target:,} chunks ({pct:.1f}%)\n"
+        f"  :page_facing_up: {items:,} items \xb7 :x: {errors} errors" +
+        ("\n  Running garbage purge..." if not dry_run else "")
+    )
+    if not dry_run:
+        d = purge_garbage(vector)
+        if d:
+            log(f"Purged {d} garbage fragments from '{vector}'")
+    log(f"Done: {chunks} chunks, {items} items, {errors} errors")
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+HELP = """
+Nova Universal Ingest Engine v{version}
+======================================
+
+MODES
+-----
+  wikipedia  TOPIC         BFS Wikipedia crawl from TOPIC article, follows
+                           all links recursively until TARGET chunks reached.
+
+  search     QUERY         Search SearXNG with QUERY, scrape top results,
+                           ingest content. Good for specific fact sets.
+
+  video      URL           Download video(s) from URL (any yt-dlp supported
+                           site), extract audio, transcribe with MLX Whisper,
+                           ingest transcript. URL can be a channel, playlist,
+                           or single video.
+                           Add --download-dir to skip ingest and save files only.
+
+  discover   SUBJECT       Pick NUM_SITES random supported sites, search for
+                           SUBJECT, find PER_SITE videos each, show a list,
+                           then download and ingest.
+                           Use --yes/-y to skip the confirmation prompt.
+                           Use --download-dir to save files without ingesting.
+
+  url        URL           Fetch and ingest a single web page.
+
+  file       PATH          Ingest a local text/markdown file.
+
+OPTIONS
+-------
+  --channel NAME       Channel name for video mode (used in file paths)
+  --source  VECTOR     Force a specific memory source/vector name
+                       (default: auto-selected from existing vectors)
+  --target  N          Target number of memory chunks (default: 10000)
+  --sites   N          Number of random sites for discover mode (default: 3)
+  --per-site N         Videos per site in discover mode (default: 5)
+  --download-dir PATH  Download video files to PATH; skip transcription/ingest.
+                       Perfect for personal, private, or large batch downloads.
+  --yes / -y           Skip confirmation prompt (non-interactive / cron mode).
+                       Also auto-confirmed when stdin is not a tty.
+  --dry-run            Preview without writing anything
+  --resume             Continue the last interrupted job
+  --restart            Restart the last job, retrying any failures
+  --status             Show current job state
+  --list-vectors       List all existing memory source names
+
+VECTOR AUTO-SELECTION
+---------------------
+  Automatically picks the best existing memory source. Never creates generic
+  vectors like "wikipedia_general". Uses keyword + semantic similarity.
+  Override with --source if needed.
+
+VIDEO OUTPUT PATHS
+------------------
+  Default (ingest mode):
+    /Volumes/external/videos/TVShows/<Channel>/Season 01/S01E0001 - <Title>.mp4
+    Episodes numbered by upload date (oldest = E0001).
+
+  With --download-dir /path:
+    /path/<Title> [VideoID].mp4
+    No transcription or memory ingest -- just the file.
+
+SUPPORTED DISCOVER SITES
+------------------------
+  YouTube, Vimeo, DailyMotion, Rumble, Odysee, BitChute, PeerTube,
+  TED Talks, Internet Archive
+
+EXAMPLES
+--------
+  # Ingest 10,000 Wikipedia chunks about physics
+  nova_ingest.py wikipedia "Physics"
+
+  # Search and ingest facts about demonology
+  nova_ingest.py search "demonology facts history occult"
+
+  # Download and ingest a YouTube channel
+  nova_ingest.py video "https://www.youtube.com/@ForgottenWeapons" \\
+                 --channel "Forgotten Weapons"
+
+  # Just download a single video to ~/Downloads (no ingest)
+  nova_ingest.py video "https://youtu.be/dQw4w9WgXcQ" --download-dir ~/Downloads
+
+  # Discover videos about medieval warfare (interactive confirm)
+  nova_ingest.py discover "medieval warfare siege weapons" --sites 3 --per-site 5
+
+  # Same, non-interactive (cron / command line)
+  nova_ingest.py discover "medieval warfare" --sites 3 --per-site 5 --yes
+
+  # Download-only discover to a private directory
+  nova_ingest.py discover "vintage photography" --sites 2 --per-site 3 \\
+                 --download-dir /Volumes/Data/private --yes
+
+  # Ingest a single web page
+  nova_ingest.py url "https://en.wikipedia.org/wiki/Siege_of_Constantinople"
+
+  # Ingest a local file
+  nova_ingest.py file ~/Documents/research.txt --source research_notes
+
+  # Dry run
+  nova_ingest.py wikipedia "Quantum mechanics" --dry-run
+
+  # Resume / restart
+  nova_ingest.py --resume
+  nova_ingest.py --restart
+
+  # List all vectors
+  nova_ingest.py --list-vectors
+"""
 
 def main():
-    parser = argparse.ArgumentParser(description="Ingest a file into Nova's vector memory")
-    parser.add_argument("file", nargs="?", help="Local file path")
-    parser.add_argument("--slack-file-id", help="Slack file ID to download")
-    parser.add_argument("--slack-url", help="Slack private download URL")
-    parser.add_argument("--filename", help="Filename hint (for Slack downloads)")
-    parser.add_argument("--topic", default="", help="Topic label for memory")
-    parser.add_argument("--source", default="document", help="Source label")
-    args = parser.parse_args()
+    p = argparse.ArgumentParser(
+        description="Nova Universal Ingest Engine v" + VERSION,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        add_help=False,
+    )
+    p.add_argument("mode", nargs="?",
+                   choices=["wikipedia", "search", "video", "discover", "url", "file"])
+    p.add_argument("query",           nargs="?")
+    p.add_argument("--channel",       help="Channel name for video mode")
+    p.add_argument("--source",        help="Force vector/source name")
+    p.add_argument("--target",        type=int, default=10000)
+    p.add_argument("--sites",         type=int, default=3)
+    p.add_argument("--per-site",      type=int, default=5)
+    p.add_argument("--download-dir",  metavar="PATH",
+                   help="Save files here only -- skip transcription and ingest")
+    p.add_argument("--yes", "-y",     action="store_true",
+                   help="Skip confirmation prompt")
+    p.add_argument("--dry-run",       action="store_true")
+    p.add_argument("--resume",        action="store_true")
+    p.add_argument("--restart",       action="store_true")
+    p.add_argument("--status",        action="store_true")
+    p.add_argument("--list-vectors",  action="store_true")
+    p.add_argument("-h", "--help",    action="store_true")
+    args = p.parse_args()
 
-    tmp_to_delete = None
+    if args.help or (not args.mode and not args.resume and not args.restart
+                     and not args.status and not args.list_vectors):
+        print(HELP.format(version=VERSION))
+        return
 
-    if args.slack_file_id or args.slack_url:
-        print(f"[nova_ingest] Downloading from Slack...", flush=True)
-        file_path, filename = download_slack_file(
-            file_id=args.slack_file_id,
-            url=args.slack_url,
-            filename=args.filename or "slack_file"
-        )
-        tmp_to_delete = file_path
-    elif args.file:
-        file_path = args.file
-        filename = args.filename or Path(file_path).name
-    else:
-        parser.print_help()
-        sys.exit(1)
+    if args.list_vectors:
+        for v in get_existing_vectors():
+            print(f"  {v}")
+        return
 
-    try:
-        result = ingest(file_path, filename, topic=args.topic, source=args.source)
-        print(json.dumps(result, indent=2))
-        if result["ok"]:
-            print(f"\n✅ Stored {result['stored']} chunks from \"{result['filename']}\" "
-                  f"({result['words']} words) under topic \"{result['topic']}\"")
+    if args.status:
+        jid = latest_job_id()
+        if jid:
+            print(json.dumps(load_state(jid), indent=2))
         else:
-            print(f"\n❌ Failed: {result.get('error')}")
-            sys.exit(1)
-    finally:
-        if tmp_to_delete and os.path.exists(tmp_to_delete):
-            os.unlink(tmp_to_delete)
+            print("No active jobs.")
+        return
 
+    # Upgrade yt-dlp before doing any video work
+    if args.mode in ("video", "discover") or args.resume or args.restart:
+        _upgrade_ytdlp()
+
+    if args.resume:
+        jid = latest_job_id()
+        if not jid:
+            print("No job to resume.")
+            return
+        state        = load_state(jid)
+        args.mode    = state.get("mode")
+        args.query   = state.get("query")
+        args.channel = state.get("channel", "")
+        args.source  = state.get("vector")
+        args.target  = state.get("target", 10000)
+
+    elif args.restart:
+        jid = latest_job_id()
+        if not jid:
+            print("No job to restart.")
+            return
+        state        = load_state(jid)
+        failed       = state.get("failed_urls", [])
+        args.mode    = state.get("mode")
+        args.query   = state.get("query")
+        args.channel = state.get("channel", "")
+        args.source  = state.get("vector")
+        args.target  = state.get("target", 10000)
+        state.update({
+            "done_urls": [], "done_hashes": [],
+            "chunks_total": 0, "items_done": 0, "failed_urls": failed,
+        })
+
+    else:
+        if not args.mode:
+            print(HELP.format(version=VERSION))
+            return
+        if not args.query and args.mode not in ("url", "file"):
+            print(f"Error: query required for mode '{args.mode}'")
+            return
+        jid   = hashlib.md5(f"{args.mode}:{args.query}:{time.time()}".encode()).hexdigest()[:12]
+        state = load_state(jid)
+        state.update({
+            "mode":    args.mode,
+            "query":   args.query or "",
+            "channel": args.channel or "",
+            "target":  args.target,
+        })
+
+    existing = get_existing_vectors()
+    vector   = args.source or state.get("vector", "")
+    if not vector and not args.download_dir:
+        vector = auto_select_vector(
+            args.query or args.channel or "", args.query or "", existing)
+    elif not vector:
+        vector = "download_only"
+    state["vector"] = vector
+    save_state(jid, state)
+
+    log(f"Job {jid}: mode={args.mode} query='{args.query}' "
+        f"vector='{vector}' target={args.target}" +
+        (f" [download-dir={args.download_dir}]" if args.download_dir else "") +
+        (" [DRY RUN]" if args.dry_run else ""))
+
+    if args.mode == "wikipedia":
+        run_wikipedia(args.query, vector, args.target, state, args.dry_run)
+    elif args.mode == "search":
+        run_search(args.query, vector, args.target, state, args.dry_run)
+    elif args.mode == "video":
+        ch = (args.channel or
+              (args.query.split("/")[-1].lstrip("@") if args.query else "Unknown"))
+        run_video(args.query, ch, vector, args.target, state, args.dry_run,
+                  download_dir=args.download_dir)
+    elif args.mode == "discover":
+        run_discover(
+            args.query, vector,
+            args.sites, getattr(args, "per_site", 5),
+            state, args.dry_run,
+            yes=args.yes,
+            download_dir=args.download_dir,
+        )
+    elif args.mode == "url":
+        run_url(args.query, vector, state, args.dry_run)
+    elif args.mode == "file":
+        run_file(args.query, vector, state, args.dry_run)
 
 if __name__ == "__main__":
     main()
