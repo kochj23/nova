@@ -479,7 +479,13 @@ def cmd_sync(args):
             if f:
                 plex_files.add(f)
 
-    missing_files = [f for f in plex_files if not Path(f).exists()]
+    # Plex runs in Docker on nuk. Library paths use the container-internal mount
+    # (/external3/videos/...) which maps to the host's /external, which is the
+    # NAS share at 192.168.1.11. From this Mac the same share is /Volumes/external.
+    # We cannot meaningfully check /external3 paths from the Mac — skip this check
+    # to avoid 2500+ false positives that drown out real issues.
+    mac_checkable = [f for f in plex_files if not f.startswith("/external3")]
+    missing_files = [f for f in mac_checkable if not Path(f).exists()]
     if missing_files:
         findings.append(f"*Plex items with missing files ({len(missing_files)}):*\n" + "\n".join(f"  - {Path(f).name}" for f in missing_files[:10]))
 
