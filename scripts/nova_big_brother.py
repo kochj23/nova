@@ -1834,6 +1834,30 @@ def _full_sweep():
         issues.append(f"Low disk: {dw}")
         _record_event("warning", f"Low disk space: {dw}", "No auto-fix — manual cleanup needed", "System")
 
+    # ── Critical disk: auto-engage maintenance mode to stop restart cascade ──
+    # When main SSD drops below 5GB, service crashes are caused by disk pressure,
+    # not actual service bugs. Engaging global maintenance mode stops Big Brother
+    # from spamming Slack with restart loops while the underlying cause is fixed.
+    try:
+        stat = os.statvfs(str(Path.home()))
+        home_free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+        if home_free_gb < 5.0:
+            import redis as _rds
+            rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
+            if not rc.get("nova:maintenance:active"):
+                rc.setex("nova:maintenance:active", 3600, "1")  # 1h TTL
+                log(f"CRITICAL: main SSD only {home_free_gb:.1f}GB free — auto-engaged maintenance mode (1h)",
+                    level=LOG_ERROR, source="big-brother")
+                _notify(
+                    f":no_entry: *Disk critical: {home_free_gb:.1f}GB free on main SSD*\n"
+                    f"Auto-engaged maintenance mode for 1h to prevent restart cascade.\n"
+                    f"Service crashes are likely caused by disk pressure, not software bugs.\n"
+                    f"Free up space, then run: `bb-maintenance off`",
+                    is_critical=True,
+                )
+    except Exception:
+        pass
+
     # ── Ollama auto-restart if port is down ──────────────────────────────────
     if not _port_open("127.0.0.1", 11434):
         try:
