@@ -96,7 +96,8 @@ SERVICES = [
     ("Redis",         "127.0.0.1", 6379,  "net.digitalnoise.redis",               True,  None),
     ("Ollama",        "127.0.0.1", 11434, None,                                   True,  "/api/version"),
     ("Memory Server", LAN_IP,      18790, "net.digitalnoise.nova-memory-server",  True,  "/health"),
-    ("Gateway",       "127.0.0.1", 18789, "ai.openclaw.gateway",                  True,  "/health"),
+    ("Gateway v2",    "127.0.0.1", 18792, "net.digitalnoise.nova-gateway-v2",     True,  "/health"),
+    ("Gateway (OC)",  "127.0.0.1", 18789, "ai.openclaw.gateway",                  False, "/health"),  # OpenClaw — backup
     ("Scheduler",     LAN_IP,      37460, "com.nova.scheduler",                   True,  "/status"),
     # ── AI inference (non-critical — can recover from) ───────────────────────
     ("MLX Server",    LAN_IP,      5050,  "net.digitalnoise.mlx-server",          False, "/v1/models"),
@@ -386,7 +387,18 @@ def _do_restart(service_name: str) -> bool:
     name, host, port, label, critical, health_path = entry
 
     # Gateway needs special handling due to macOS Tahoe launchd bug
-    if name == "Gateway":
+    if name in ("Gateway v2", "Gateway"):
+        # Restart gateway v2 (primary); fall back to OpenClaw restart if v2 label not found
+        if name == "Gateway v2":
+            uid = os.getuid()
+            try:
+                result = subprocess.run(
+                    ["launchctl", "kickstart", "-k", f"gui/{uid}/net.digitalnoise.nova-gateway-v2"],
+                    capture_output=True, timeout=15,
+                )
+                return result.returncode == 0
+            except Exception:
+                pass
         return _restart_gateway()
 
     # Signal-cli is managed by the gateway

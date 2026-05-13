@@ -57,7 +57,9 @@ VERSION      = "2.0.0"
 PG_DSN       = "postgresql://kochj@192.168.1.6:5432/nova_ops"
 OLLAMA_URL   = "http://127.0.0.1:11434"
 OPENROUTER   = "https://openrouter.ai/api/v1"
-SIGNAL_URL   = "http://127.0.0.1:8080"
+SIGNAL_URL      = "http://127.0.0.1:8080"   # HTTP for send
+SIGNAL_TCP_HOST = "127.0.0.1"
+SIGNAL_TCP_PORT = 7583                      # TCP for streaming receive
 SCRIPTS_DIR  = Path.home() / ".openclaw/scripts"
 LOG_DIR      = Path.home() / ".openclaw/logs"
 STATE_DIR    = Path.home() / ".openclaw/workspace/state"
@@ -690,92 +692,103 @@ async def _send_signal(recipient: str, text: str):
 
 
 async def run_signal(tokens: dict):
-    """Signal listener via JSON-RPC.
+    """Signal listener via TCP JSON-RPC streaming.
 
-    During the 48h parallel period with OpenClaw, signal-cli's receive loop
-    is owned by OpenClaw. We can't run a second receive loop.
+    signal-cli daemon runs with --tcp 127.0.0.1:7583 for streaming receive
+    and --http 127.0.0.1:8080 for outbound sends.
 
-    Strategy:
-    - If OpenClaw is running: signal-cli receive returns "already being received"
-      → log that we're in parallel mode, send-only until cutover
-    - After OpenClaw stops: receive loop is ours, poll normally
-
-    Signal send always works regardless of who owns receive.
+    TCP streaming: open connection → subscribeReceive → listen for pushed messages.
+    Much more efficient than HTTP polling, no "already being received" conflict.
     """
-    log.info("Signal adapter starting...")
+    log.info("Signal adapter starting (TCP streaming mode)...")
 
-    # Allowed senders (allowlist)
     ALLOWED = {JORDAN_SIGNAL}
-
     last_timestamp: dict[str, int] = {}
-    parallel_mode = False
-    parallel_logged = False
 
     while not _shutdown.is_set():
+        reader = writer = None
         try:
-            result = await _signal_rpc("receive", {"timeout": 3, "maxMessages": 20})
+            reader, writer = await asyncio.open_connection(SIGNAL_TCP_HOST, SIGNAL_TCP_PORT)
+            log.info("Signal: TCP connection established")
 
-            if "error" in result:
-                err = result["error"].get("message", "")
-                if "already being received" in err:
-                    if not parallel_logged:
-                        log.info("Signal: OpenClaw owns receive loop — running in parallel/send-only mode")
-                        parallel_logged = True
-                    parallel_mode = True
-                    await asyncio.sleep(5)
-                    continue
-                else:
-                    log.debug(f"Signal RPC error: {err}")
-                    await asyncio.sleep(2)
-                    continue
+            # Subscribe to receive messages
+            sub_req = json.dumps({"jsonrpc": "2.0", "method": "subscribeReceive", "id": 1}) + "\n"
+            writer.write(sub_req.encode())
+            await writer.drain()
 
-            # If we get here, we own the receive loop
-            if parallel_mode:
-                log.info("Signal: receive loop now ours — full inbound enabled")
-                parallel_mode = False
-                parallel_logged = False
-
-            messages = result.get("result", [])
-            if not isinstance(messages, list):
-                await asyncio.sleep(2)
+            # Read first response (subscription confirmation)
+            line = await asyncio.wait_for(reader.readline(), timeout=10)
+            resp = json.loads(line)
+            if "error" in resp:
+                log.error(f"Signal subscribeReceive error: {resp['error']}")
+                await asyncio.sleep(5)
                 continue
 
-            for msg in messages:
-                envelope = msg.get("envelope", {})
-                data_msg = envelope.get("dataMessage", {})
-                sender   = envelope.get("sourceNumber", "")
-                text     = data_msg.get("message", "").strip()
-                ts       = envelope.get("timestamp", 0)
+            sub_id = resp.get("result", 0)
+            log.info(f"Signal: subscribed (id={sub_id}) — listening for messages")
 
-                if not text or not sender:
+            # Stream incoming messages
+            while not _shutdown.is_set():
+                try:
+                    line = await asyncio.wait_for(reader.readline(), timeout=30)
+                    if not line:
+                        break
+
+                    msg = json.loads(line)
+                    # Incoming messages arrive as JSON-RPC notifications (no id)
+                    params = msg.get("params", {})
+                    envelope = params.get("envelope", {})
+                    data_msg = envelope.get("dataMessage", {})
+                    sender   = envelope.get("sourceNumber", "")
+                    text     = data_msg.get("message", "").strip()
+                    ts       = envelope.get("timestamp", 0)
+
+                    if not text or not sender:
+                        continue
+                    if sender not in ALLOWED:
+                        continue
+                    if last_timestamp.get(sender, 0) >= ts:
+                        continue
+                    last_timestamp[sender] = ts
+
+                    log.info(f"Signal: message from {sender}: {text[:50]}")
+                    session_id  = _session_id("signal", sender)
+                    channel_key = f"signal:{sender}"
+
+                    async def handle_signal(t=text, s=session_id, sndr=sender, ck=channel_key):
+                        async with _channel_locks[ck]:
+                            try:
+                                response = await _run_agent(t, s, "chat", tokens)
+                                await _send_signal(sndr, response)
+                            except Exception as e:
+                                log.error(f"Signal agent error: {e}", exc_info=True)
+                                await _send_signal(sndr, "Something went wrong on my end.")
+
+                    asyncio.create_task(handle_signal())
+
+                except asyncio.TimeoutError:
+                    # Send keepalive ping
+                    ping = json.dumps({"jsonrpc": "2.0", "method": "version", "id": 99}) + "\n"
+                    writer.write(ping.encode())
+                    await writer.drain()
+                except json.JSONDecodeError:
                     continue
-                if sender not in ALLOWED:
-                    continue
-                if last_timestamp.get(sender, 0) >= ts:
-                    continue
-                last_timestamp[sender] = ts
-
-                session_id  = _session_id("signal", sender)
-                agent_id    = "chat"
-                channel_key = f"signal:{sender}"
-
-                async def handle_signal(t=text, s=session_id, a=agent_id, sndr=sender, ck=channel_key):
-                    async with _channel_locks[ck]:
-                        try:
-                            response = await _run_agent(t, s, a, tokens)
-                            await _send_signal(sndr, response)
-                        except Exception as e:
-                            log.error(f"Signal agent error: {e}", exc_info=True)
-                            await _send_signal(sndr, "Something went wrong on my end.")
-
-                asyncio.create_task(handle_signal())
 
         except asyncio.CancelledError:
             break
+        except ConnectionRefusedError:
+            log.warning("Signal: TCP connection refused — signal-cli not ready, retrying in 10s")
+            await asyncio.sleep(10)
         except Exception as e:
-            log.debug(f"Signal poll error: {e}")
-
-        await asyncio.sleep(2 if not parallel_mode else 10)
+            log.error(f"Signal TCP error: {e}")
+            await asyncio.sleep(5)
+        finally:
+            if writer:
+                try:
+                    writer.close()
+                    await writer.wait_closed()
+                except Exception:
+                    pass
 
 
 # ── Startup / boot ────────────────────────────────────────────────────────────
