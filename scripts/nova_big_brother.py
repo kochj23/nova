@@ -165,6 +165,15 @@ _shutdown = threading.Event()
 GATEWAY_RESTART_COOLDOWN = 300  # seconds
 _last_gateway_restart: float = 0.0
 
+# Per-service crash-loop detection — track restart timestamps in a sliding window
+# If a service is restarted 3+ times in 5 minutes WITH healthy dependencies,
+# it's a real bug. Set a 10-minute cooldown to stop the spam loop.
+_CRASH_LOOP_WINDOW   = 300   # 5 min sliding window
+_CRASH_LOOP_MAX      = 3     # max restarts before declaring crash-loop
+_CRASH_LOOP_COOLDOWN = 600   # 10 min cooldown after crash-loop detected
+_service_restart_times: dict = {}    # service_name -> deque of restart timestamps
+_service_crash_loop_until: dict = {} # service_name -> timestamp when cooldown expires
+
 # Discord 3-strike before restart — timeouts ≠ disconnect
 _discord_timeout_count: int = 0
 
@@ -459,6 +468,50 @@ def _handle_internet_state(issues: list, fixes: list):
                       f"Internet restored after {down_secs // 60}m {down_secs % 60}s",
                       "Network")
         log(f"Internet restored after {down_secs}s", level=LOG_INFO, source="big-brother")
+
+
+def _check_crash_loop(service_name: str) -> bool:
+    """Return True if this service is in a crash-loop cooldown (should NOT restart).
+
+    Tracks restart timestamps in a 5-minute sliding window. If a service has been
+    restarted 3+ times in that window (with healthy dependencies), it's declared a
+    crash-loop and given a 10-minute cooldown to prevent Slack spam.
+    """
+    now = time.time()
+
+    # Check if still in cooldown
+    cooldown_until = _service_crash_loop_until.get(service_name, 0)
+    if now < cooldown_until:
+        remaining = int(cooldown_until - now)
+        log(f"[crash-loop] {service_name} in cooldown for {remaining}s more — skipping restart",
+            level=LOG_INFO, source="big-brother")
+        return True  # in cooldown — do not restart
+
+    # Track this restart attempt in the sliding window
+    if service_name not in _service_restart_times:
+        _service_restart_times[service_name] = deque()
+    window = _service_restart_times[service_name]
+    window.append(now)
+    # Prune events older than the window
+    while window and window[0] < now - _CRASH_LOOP_WINDOW:
+        window.popleft()
+
+    if len(window) >= _CRASH_LOOP_MAX:
+        # Crash-loop detected
+        _service_crash_loop_until[service_name] = now + _CRASH_LOOP_COOLDOWN
+        window.clear()
+        log(f"[crash-loop] {service_name} restarted {_CRASH_LOOP_MAX}x in {_CRASH_LOOP_WINDOW}s — "
+            f"crash-loop detected, cooling down for {_CRASH_LOOP_COOLDOWN}s",
+            level=LOG_ERROR, source="big-brother")
+        _notify(
+            f":rotating_light: *Crash-loop detected: {service_name}*\n"
+            f"Restarted {_CRASH_LOOP_MAX}+ times in {_CRASH_LOOP_WINDOW//60} min despite healthy dependencies.\n"
+            f"Auto-restart paused for {_CRASH_LOOP_COOLDOWN//60} min. Check logs for root cause.",
+            is_critical=True,
+        )
+        return True  # in cooldown — do not restart this time
+
+    return False  # not in crash-loop — proceed with restart
 
 
 def _restart_gateway() -> bool:
@@ -1472,14 +1525,20 @@ def _full_sweep():
                     return False
 
             if name == "PostgreSQL":
+                # Use pg_ctl which handles stale postmaster.pid from crashes
+                pg_ctl = "/opt/homebrew/opt/postgresql@17/bin/pg_ctl"
+                pg_data = "/Volumes/MoreData/postgresql@17"
+                pg_log  = f"{pg_data}/homebrew-log/postgresql@17.log"
                 try:
-                    subprocess.run(["pg_isready"], capture_output=True, timeout=5)
+                    subprocess.run(
+                        [pg_ctl, "start", "-D", pg_data, "-l", pg_log, "-w"],
+                        capture_output=True, timeout=30,
+                    )
                 except Exception:
-                    pass
-                if label:
-                    _kickstart(label)
+                    if label:
+                        _kickstart(label)
                 fixes.append("Restarted PostgreSQL")
-                _record_event("critical", "PostgreSQL DOWN", "Restarted via launchctl", "PostgreSQL")
+                _record_event("critical", "PostgreSQL DOWN", "Restarted via pg_ctl", "PostgreSQL")
 
             elif name == "Redis":
                 if label:
@@ -1488,9 +1547,29 @@ def _full_sweep():
                 _record_event("critical", "Redis DOWN", "Restarted via launchctl", "Redis")
 
             elif name == "Memory Server" and label:
-                _kickstart(label)
-                fixes.append("Restarted Memory Server")
-                _record_event("critical", "Memory Server DOWN", "Restarted via launchctl", "Memory Server")
+                # Dependency check: Memory Server needs PG and Redis healthy.
+                # If either dependency is down, restarting Memory Server just causes
+                # another crash-loop — suppress the restart and let the dependency
+                # fix cascade naturally on the next sweep.
+                pg_up    = _port_open("192.168.1.6", 5432)
+                redis_up = _port_open(LAN_IP, 6379)
+                if not pg_up:
+                    log("Memory Server DOWN but PostgreSQL also down — skipping restart, waiting for PG",
+                        level=LOG_WARN, source="big-brother")
+                    _record_event("warning", "Memory Server DOWN (PG dependency also down)",
+                                  "Skipped restart — will retry after PG recovers", "Memory Server")
+                elif not redis_up:
+                    log("Memory Server DOWN but Redis also down — skipping restart, waiting for Redis",
+                        level=LOG_WARN, source="big-brother")
+                    _record_event("warning", "Memory Server DOWN (Redis dependency also down)",
+                                  "Skipped restart — will retry after Redis recovers", "Memory Server")
+                elif _check_crash_loop("Memory Server"):
+                    # Crash-loop cooldown active — already logged and alerted inside _check_crash_loop
+                    pass
+                else:
+                    _kickstart(label)
+                    fixes.append("Restarted Memory Server")
+                    _record_event("critical", "Memory Server DOWN", "Restarted via launchctl", "Memory Server")
 
             elif name == "Scheduler":
                 if not _check_scheduler_heartbeat():
@@ -1499,11 +1578,12 @@ def _full_sweep():
                     _record_event("critical", "Scheduler stale heartbeat", "Kickstarted via launchctl", "Scheduler")
 
             elif name == "Gateway" or name == "Signal-cli":
-                success = _restart_gateway()
-                fix_msg = "Restarted Gateway" if success else "FAILED to restart Gateway"
-                fixes.append(fix_msg)
-                _record_event("critical", f"{name} DOWN",
-                              fix_msg, "Gateway")
+                if not _check_crash_loop("Gateway"):
+                    success = _restart_gateway()
+                    fix_msg = "Restarted Gateway" if success else "FAILED to restart Gateway"
+                    fixes.append(fix_msg)
+                    _record_event("critical", f"{name} DOWN",
+                                  fix_msg, "Gateway")
 
             elif label:
                 _kickstart(label)
@@ -1563,7 +1643,7 @@ def _full_sweep():
                               f"Channels disconnected: {', '.join(restartable_disconnects)}",
                               "Restarting gateway",
                               "Gateway")
-                if not protected_running:
+                if not protected_running and not _check_crash_loop("Gateway"):
                     success = _restart_gateway()
                     if success:
                         fixes.append(f"Restarted gateway (channels: {', '.join(restartable_disconnects)})")
