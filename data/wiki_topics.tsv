@@ -1,0 +1,8 @@
+# Nova Wikipedia batch topics — used by: nova_ingest wikipedia --topics-file this_file
+# Format: Topic[TAB]source_vector[TAB]target_chunks
+# Lines starting with # are skipped.
+#
+# ── Replaced scripts ────────────────────────────────────────────────────────
+Robotech	robotech	5000
+Chess	chess	5000
+The Walt Disney Company	disney_history	8000

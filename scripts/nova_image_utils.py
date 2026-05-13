@@ -1,3 +1,4 @@
+from __future__ import annotations
 """
 nova_image_utils.py — Shared image generation with retry logic, backend health checks, and model rotation.
 

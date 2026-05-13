@@ -39,7 +39,7 @@ import nova_config
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION       = "1.1.0"
+VERSION       = "1.2.0"
 MEMORY_URL    = "http://192.168.1.6:18790/remember"
 SEARXNG_URL   = "http://127.0.0.1:8888/search"
 SLACK_CHANNEL = nova_config.SLACK_NOTIFY
@@ -67,6 +67,39 @@ DISCOVERY_SITES = [
     ("Peertube",        "https://sepiasearch.org/search?search={q}"),
     ("TED",             "https://www.ted.com/search?q={q}"),
     ("Internet Archive","https://archive.org/search?query={q}&mediatype=movies"),
+]
+
+_SPICY_SITES = [
+    # Big four -- most reliable search support
+    ("PornHub",     "https://www.pornhub.com/video/search?search={q}"),
+    ("XVideos",     "https://www.xvideos.com/?k={q}"),
+    ("XHamster",    "https://xhamster.com/search/{q}"),
+    ("XNXX",        "https://www.xnxx.com/search/{q}"),
+    # Second tier
+    ("RedTube",     "https://www.redtube.com/?search={q}"),
+    ("YouPorn",     "https://www.youporn.com/search/videos/?query={q}"),
+    ("SpankBang",   "https://spankbang.com/s/{q}/"),
+    ("Eporner",     "https://www.eporner.com/search/{q}/"),
+    ("DrTuber",     "https://www.drtuber.com/search/videos?q={q}"),
+    ("SunPorno",    "https://www.sunporno.com/search/{q}/"),
+    ("TNAFlix",     "https://www.tnaflix.com/search/?query={q}"),
+    ("Txxx",        "https://www.txxx.com/videos/?q={q}"),
+    ("Nuvid",       "https://www.nuvid.com/search/videos?q={q}"),
+    ("PornTube",    "https://www.porntube.com/videos/search?query={q}"),
+    ("Pornotube",   "https://pornotube.com/?search={q}"),
+    ("PornFlip",    "https://pornflip.com/search/{q}"),
+    ("PornerBros",  "https://www.pornerbros.com/videos/search.html?q={q}"),
+    ("AlphaPorno",  "https://www.alphaporno.com/videos/search/?q={q}"),
+    ("Slutload",    "https://www.slutload.com/search/?q={q}"),
+    ("HellPorno",   "https://hellporno.com/search/?q={q}"),
+    ("ZenPorn",     "https://zenporn.com/search/?q={q}"),
+    ("Beeg",        "https://beeg.com/search?q={q}"),
+    ("ManyVids",    "https://www.manyvids.com/search/?query={q}"),
+    ("NubilesPorn", "https://nubilesporn.com/search?q={q}"),
+    ("LoveHomePorn","https://www.lovehomeporn.com/search?q={q}"),
+    ("Pornbox",     "https://pornbox.com/application/search?query={q}"),
+    # Broken in yt-dlp but sometimes work -- kept for completeness
+    # ("Tube8",    "https://www.tube8.com/search/videos/?searchValue={q}"),  # BROKEN
 ]
 
 # ---------------------------------------------------------------------------
@@ -898,14 +931,15 @@ def run_video(url, channel, vector, target, state, dry_run, download_dir=None):
 # ---------------------------------------------------------------------------
 
 def run_discover(subject, vector, num_sites, per_site, state, dry_run,
-                 yes=False, download_dir=None):
+                 yes=False, download_dir=None, _alt_pool=False):
     jid         = state["job_id"]
     done_hashes = set(state.get("done_hashes", []))
     dl_only     = bool(download_dir)
 
     log(f"Discover: '{subject}' across {num_sites} sites, {per_site} videos each")
 
-    chosen_sites = random.sample(DISCOVERY_SITES, min(num_sites, len(DISCOVERY_SITES)))
+    _pool        = _SPICY_SITES if _alt_pool else DISCOVERY_SITES
+    chosen_sites = random.sample(_pool, min(num_sites, len(_pool)))
 
     all_candidates = []
     for site_name, url_tpl in chosen_sites:
@@ -1093,6 +1127,64 @@ def _finish(jid, label, vector, chunks, target, items, errors, dry_run):
 # CLI
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# Topics-file mode (batch Wikipedia/search across many topics)
+# ---------------------------------------------------------------------------
+
+def run_topics_file(path, mode, target, dry_run):
+    """
+    Read a topics file (one entry per line: topic [TAB source [TAB target]])
+    and run wikipedia or search mode for each topic sequentially.
+
+    Line formats:
+        Physics
+        Physics\tphysics_mechanics
+        Physics\tphysics_mechanics\t5000
+        # comment lines are skipped
+    """
+    p = Path(path).expanduser()
+    if not p.exists():
+        log(f"Topics file not found: {path}", "ERROR")
+        return
+
+    lines = [l.strip() for l in p.read_text().splitlines()
+             if l.strip() and not l.strip().startswith("#")]
+
+    if not lines:
+        log("Topics file is empty", "ERROR")
+        return
+
+    log(f"Topics file: {len(lines)} topics, mode={mode}")
+    existing = get_existing_vectors()
+
+    for i, line in enumerate(lines):
+        if _shutdown:
+            break
+        parts  = line.split("\t")
+        topic  = parts[0].strip()
+        src    = parts[1].strip() if len(parts) > 1 else ""
+        tgt    = int(parts[2].strip()) if len(parts) > 2 else target
+        vector = src or auto_select_vector(topic, topic, existing)
+
+        log(f"[{i+1}/{len(lines)}] {topic} -> {vector} (target={tgt})")
+        notify(f":card_index_dividers: *Topics file* [{i+1}/{len(lines)}]: *{topic}* -> `{vector}`")
+
+        jid   = hashlib.md5(f"{mode}:{topic}:{time.time()}".encode()).hexdigest()[:12]
+        state = load_state(jid)
+        state.update({"mode": mode, "query": topic, "vector": vector, "target": tgt})
+
+        if mode == "wikipedia":
+            run_wikipedia(topic, vector, tgt, state, dry_run)
+        elif mode == "search":
+            run_search(topic, vector, tgt, state, dry_run)
+        else:
+            log(f"--topics-file only supports wikipedia and search modes (got '{mode}')", "ERROR")
+            return
+
+    log(f"Topics file complete: {len(lines)} topics processed")
+    notify(f":white_check_mark: *Topics file complete* — {len(lines)} topics ingested")
+
+
 HELP = """
 Nova Universal Ingest Engine v{version}
 ======================================
@@ -1131,6 +1223,13 @@ OPTIONS
   --per-site N         Videos per site in discover mode (default: 5)
   --download-dir PATH  Download video files to PATH; skip transcription/ingest.
                        Perfect for personal, private, or large batch downloads.
+  --topics-file PATH   Batch mode: read a file of topics (one per line) and
+                       run wikipedia or search mode for each. Use with mode
+                       wikipedia or search. Line format:
+                         Topic
+                         Topic[TAB]source_vector
+                         Topic[TAB]source_vector[TAB]target_chunks
+                       Lines starting with # are comments.
   --yes / -y           Skip confirmation prompt (non-interactive / cron mode).
                        Also auto-confirmed when stdin is not a tty.
   --dry-run            Preview without writing anything
@@ -1191,6 +1290,15 @@ EXAMPLES
   # Ingest a local file
   nova_ingest.py file ~/Documents/research.txt --source research_notes
 
+  # Batch-ingest many Wikipedia topics from a file
+  nova_ingest.py wikipedia --topics-file ~/.openclaw/data/wiki_topics.tsv
+
+  # Example topics file content:
+  #   Physics\tphysics_mechanics\t10000
+  #   World War II\tww2_nations\t10000
+  #   Chess\tchess\t5000
+  #   # comment line
+
   # Dry run
   nova_ingest.py wikipedia "Quantum mechanics" --dry-run
 
@@ -1218,8 +1326,11 @@ def main():
     p.add_argument("--per-site",      type=int, default=5)
     p.add_argument("--download-dir",  metavar="PATH",
                    help="Save files here only -- skip transcription and ingest")
+    p.add_argument("--topics-file",   metavar="PATH",
+                   help="Batch: run mode for each topic in file (wikipedia/search)")
     p.add_argument("--yes", "-y",     action="store_true",
                    help="Skip confirmation prompt")
+    p.add_argument("--spicy",         action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--dry-run",       action="store_true")
     p.add_argument("--resume",        action="store_true")
     p.add_argument("--restart",       action="store_true")
@@ -1229,13 +1340,26 @@ def main():
     args = p.parse_args()
 
     if args.help or (not args.mode and not args.resume and not args.restart
-                     and not args.status and not args.list_vectors):
+                     and not args.status and not args.list_vectors
+                     and not args.topics_file):
         print(HELP.format(version=VERSION))
         return
 
     if args.list_vectors:
         for v in get_existing_vectors():
             print(f"  {v}")
+        return
+
+    if args.topics_file:
+        if args.mode not in ("wikipedia", "search", None):
+            print("Error: --topics-file only works with wikipedia or search mode")
+            return
+        run_topics_file(
+            args.topics_file,
+            args.mode or "wikipedia",
+            args.target,
+            args.dry_run,
+        )
         return
 
     if args.status:
@@ -1326,6 +1450,7 @@ def main():
             state, args.dry_run,
             yes=args.yes,
             download_dir=args.download_dir,
+            _alt_pool=getattr(args, "spicy", False),
         )
     elif args.mode == "url":
         run_url(args.query, vector, state, args.dry_run)

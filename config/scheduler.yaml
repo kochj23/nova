@@ -139,11 +139,12 @@ tasks:
     overlap: skip
 
   reddit_ingest:
-    script: nova_reddit_ingest.py
+    script: nova_ingest.py
+    args: ["search", "reddit discussion community", "--source", "reddit", "--target", "500"]
     schedule: every 4h
     timeout: 3600
     overlap: skip
-    enabled: false  # Script no longer exists — disabled until re-implemented
+    enabled: false  # Archived nova_reddit_ingest.py — re-enable with proper subreddit queries
 
   # ── Daily: overnight (heavy compute, staggered) ────────────────────────
 
@@ -226,7 +227,16 @@ tasks:
     schedule: cron 15 10 * * 1
     timeout: 14400
     overlap: skip
-    enabled: false
+    enabled: false  # Multi-channel loop — not replaced by nova_ingest.py yet
+
+  # Batch Wikipedia ingest — runs through wiki_topics.tsv sequentially
+  wiki_batch_ingest:
+    script: nova_ingest.py
+    args: ["wikipedia", "--topics-file", "~/.openclaw/data/wiki_topics.tsv", "--target", "10000"]
+    schedule: cron 0 1 * * 0
+    timeout: 86400
+    overlap: skip
+    enabled: true
 
   # ── Daily: daytime (enrichment, reflection) ────────────────────────────
 

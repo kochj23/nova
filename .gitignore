@@ -136,3 +136,5 @@ __pycache__/
 workspace
 openclaw.json.last-good
 openclaw.json.clobbered*
+scripts/The Compact Truck*
+scripts/*.mp4
