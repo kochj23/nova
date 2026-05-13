@@ -97,7 +97,8 @@ SERVICES = [
     ("Ollama",        "127.0.0.1", 11434, None,                                   True,  "/api/version"),
     ("Memory Server", LAN_IP,      18790, "net.digitalnoise.nova-memory-server",  True,  "/health"),
     ("Gateway v2",    "127.0.0.1", 18792, "net.digitalnoise.nova-gateway-v2",     True,  "/health"),
-    ("Gateway (OC)",  "127.0.0.1", 18789, "ai.openclaw.gateway",                  False, "/health"),  # OpenClaw — backup
+    # OpenClaw intentionally stopped — silenced, kept for fallback reference only
+    # ("Gateway (OC)",  "127.0.0.1", 18789, "ai.openclaw.gateway",                  False, "/health"),
     ("Scheduler",     LAN_IP,      37460, "com.nova.scheduler",                   True,  "/status"),
     # ── AI inference (non-critical — can recover from) ───────────────────────
     ("MLX Server",    LAN_IP,      5050,  "net.digitalnoise.mlx-server",          False, "/v1/models"),
@@ -1579,9 +1580,15 @@ def _full_sweep():
                     # Crash-loop cooldown active — already logged and alerted inside _check_crash_loop
                     pass
                 else:
-                    _kickstart(label)
-                    fixes.append("Restarted Memory Server")
-                    _record_event("critical", "Memory Server DOWN", "Restarted via launchctl", "Memory Server")
+                    # Double-check port is truly free before kickstarting —
+                    # avoids EADDRINUSE (exit 256) when the process is mid-startup
+                    if _port_open(LAN_IP, 18790):
+                        log("Memory Server port is up — skipping kickstart (false alarm)",
+                            level=LOG_INFO, source="big-brother")
+                    else:
+                        _kickstart(label)
+                        fixes.append("Restarted Memory Server")
+                        _record_event("critical", "Memory Server DOWN", "Restarted via launchctl", "Memory Server")
 
             elif name == "Scheduler":
                 if not _check_scheduler_heartbeat():
