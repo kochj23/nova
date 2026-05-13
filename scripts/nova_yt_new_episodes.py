@@ -29,7 +29,8 @@ import nova_media_registry as registry
 BASE_DIR       = Path("/Volumes/external/videos/TVShows")
 VIDEO_ROOT     = Path("/Volumes/external/videos")   # full root for non-YT scan
 YT_DLP         = "/opt/homebrew/bin/yt-dlp"
-CHANNELS_CACHE = Path.home() / ".openclaw/cache/yt_channels.json"
+CHANNELS_CACHE  = Path.home() / ".openclaw/cache/yt_channels.json"
+YT_COOKIES_FILE = Path.home() / ".openclaw/cache/yt_cookies.txt"
 LOG_FILE  = Path.home() / ".openclaw/logs/nova_yt_new_episodes.log"
 SLACK     = "#nova-notifications"
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".m4v", ".wmv", ".flv"}
@@ -560,10 +561,17 @@ def next_episode_playlist(show_dir: Path, playlist_title: str) -> tuple[int, int
 
 # ── Download ──────────────────────────────────────────────────────────────────
 
+def _cookies_args() -> list:
+    """Return yt-dlp cookie arguments. Use file if available (launchd-safe), else browser."""
+    if YT_COOKIES_FILE.exists():
+        return ["--cookies", str(YT_COOKIES_FILE)]
+    return ["--cookies-from-browser", "safari"]
+
+
 def download_video(vid_id: str, output_path: Path) -> str:
     cmd = [
         YT_DLP,
-        "--cookies-from-browser", "safari",
+        *_cookies_args(),
         # 720p preferred; fall back to 540p, then best available ≤720p
         "-f", "bestvideo[height=720]+bestaudio/bestvideo[height=540]+bestaudio/bestvideo[height<=720]+bestaudio/best[height<=720]",
         "--merge-output-format", "mp4",
@@ -759,7 +767,7 @@ def sync_subscriptions() -> dict:
     log("Syncing YouTube subscriptions from Safari cookies...")
     try:
         r = subprocess.run(
-            [YT_DLP, "--cookies-from-browser", "safari",
+            [YT_DLP, *_cookies_args(),
              "--flat-playlist", "--print", "%(id)s\t%(uploader_id)s\t%(uploader)s",
              "https://www.youtube.com/feed/channels"],
             capture_output=True, text=True, timeout=120,
