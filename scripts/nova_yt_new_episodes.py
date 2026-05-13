@@ -319,6 +319,13 @@ CHANNELS = {
         "mode": "single",
     },
 
+    # ── Entertainment / Nostalgia ─────────────────────────────────────────────
+    "wallyvhs": {
+        "name": "WallyVHS",
+        "url": "https://www.youtube.com/@WallyVHS",
+        "mode": "single",
+    },
+
     # ── Style / Lifestyle ─────────────────────────────────────────────────────
     "realmensrealstyle": {
         "name": "Real Men Real Style",
@@ -620,6 +627,8 @@ def download_video(vid_id: str, output_path: Path) -> str:
     cmd = [
         YT_DLP,
         *_cookies_args(),
+        # Use web player client to bypass Deno JS challenge that strips video formats
+        "--extractor-args", "youtube:player_client=web,default",
         # 720p preferred; fall back to 540p, then best available ≤720p
         "-f", "bestvideo[height=720]+bestaudio/bestvideo[height=540]+bestaudio/bestvideo[height<=720]+bestaudio/best[height<=720]",
         "--merge-output-format", "mp4",
