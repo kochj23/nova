@@ -1541,6 +1541,9 @@ def _full_sweep():
             _discord_timeout_count = 0  # Reset on confirmed connection
 
         disconnected = [ch for ch, st in channels.items() if st == "disconnected"]
+        # Discord has a known persistent @buape/carbon WebSocket bug — restarts don't fix it
+        # and cause Signal gaps + cascade failures. Only restart for Slack or Signal outages.
+        restartable_disconnects = [ch for ch in disconnected if ch != "discord"]
         if disconnected:
             # Suppress per-restart channel alerts when internet is down —
             # the disconnect is caused by WAN loss, not a Nova config problem.
@@ -1550,16 +1553,20 @@ def _full_sweep():
             elif maintenance_active:
                 log(f"Channel disconnects suppressed — maintenance mode active",
                     level=LOG_INFO, source="big-brother")
+            elif not restartable_disconnects:
+                # Discord-only — log quietly, don't restart
+                log(f"Discord disconnected (known @buape/carbon bug) — not restarting gateway",
+                    level=LOG_INFO, source="big-brother")
             else:
-                issues.append(f"Channels disconnected: {', '.join(disconnected)}")
+                issues.append(f"Channels disconnected: {', '.join(restartable_disconnects)}")
                 _record_event("critical",
-                              f"Channels disconnected: {', '.join(disconnected)}",
+                              f"Channels disconnected: {', '.join(restartable_disconnects)}",
                               "Restarting gateway",
                               "Gateway")
                 if not protected_running:
                     success = _restart_gateway()
                     if success:
-                        fixes.append(f"Restarted gateway (channels: {', '.join(disconnected)})")
+                        fixes.append(f"Restarted gateway (channels: {', '.join(restartable_disconnects)})")
                     else:
                         fixes.append("FAILED to restart gateway for channel reconnect")
 
