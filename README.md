@@ -27,6 +27,10 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 | Unified API | NovaControl on port 37400 |
 | Ops DB | `nova_ops` — scheduler run history, gateway sessions, dashboard metrics |
 | Maintenance mode | `bb-maintenance on/off/status` — suppress Big Brother restarts during maintenance |
+| Crash-loop detection | BB detects 3+ restarts in 5 min → 10-min auto-pause + single alert |
+| Dependency-aware restarts | Memory Server waits for PG+Redis before restart; PG uses pg_ctl |
+| PG maintenance_work_mem | 256MB (reduced from 2GB — was causing OOM crashes when SSD was low) |
+| PG log location | `/Volumes/MoreData/postgresql@17/homebrew-log/postgresql@17.log` (symlinked) |
 | Model warmup | `ollama_preload` runs hourly — keeps qwen3:30b-a3b warm for instant responses |
 | Ollama timeout | `models.providers.ollama.timeoutSeconds=300` — survives 7.5 min cold load |
 | Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) |
@@ -138,10 +142,12 @@ graph TD
     end
 
     subgraph "Actions"
+        DepCheck["Dependency check\nbefore restart\nPG+Redis→MemServer"]
+        CrashLoop["Crash-loop detection\n3x in 5min → 10min pause\nper-service"]
         Restart["launchd restart logic\nSlack + Signal outages only"]
         PostAlert["Post to #nova-notifications"]
         BBAPI["Diagnostics API\n:37461/bb/*"]
-        MaintBrake["Maintenance brake\nper-service + global\nRedis TTL-based"]
+        MaintBrake["Maintenance brake\nper-service + global\nRedis TTL-based\nauto-engage at <5GB disk"]
     end
 
     BB --> KQ
@@ -158,8 +164,10 @@ graph TD
     Sweep --> Privacy
     Sweep --> Journal
     Sweep --> Discord
-    Procs --> Restart
-    Launchd --> Restart
+    Procs --> DepCheck
+    Launchd --> DepCheck
+    DepCheck --> CrashLoop
+    CrashLoop --> Restart
     Restart --> PostAlert
     BB --> BBAPI
     BBAPI --> MaintBrake
