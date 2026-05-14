@@ -1073,7 +1073,8 @@ def run_discover(subject, vector, num_sites, per_site, state, dry_run,
 # URL / File modes
 # ---------------------------------------------------------------------------
 
-def run_url(url, vector, state, dry_run):
+def run_url(url, vector, state, dry_run, silent=False):
+    """Ingest a single URL. silent=True skips Slack notification (for batch callers)."""
     dh   = set(state.get("done_hashes", []))
     html = fetch(url)
     if not html:
@@ -1085,8 +1086,9 @@ def run_url(url, vector, state, dry_run):
         if not is_garbage(c) and
            remember(c, vector, {"url": url, "type": "web_page"}, dh, dry_run)
     )
-    log(f"URL: {ingested} chunks")
-    notify(f":link: *URL Ingested*: {url[:80]}\n  Vector: `{vector}` \xb7 {ingested} chunks")
+    log(f"URL: {ingested} chunks  [{url[:60]}]")
+    if not silent:
+        notify(f":link: *URL Ingested*: {url[:80]}\n  Vector: `{vector}` \xb7 {ingested} chunks")
 
 def run_file(path, vector, state, dry_run):
     dh = set(state.get("done_hashes", []))
@@ -1422,8 +1424,15 @@ def main():
     existing = get_existing_vectors()
     vector   = args.source or state.get("vector", "")
     if not vector and not args.download_dir:
-        vector = auto_select_vector(
-            args.query or args.channel or "", args.query or "", existing)
+        # For url mode, extract a readable topic from the URL path rather than
+        # passing the full URL (which produces vectors like "httpsenwikipediaorg...")
+        topic = args.query or args.channel or ""
+        if args.mode == "url" and topic.startswith("http"):
+            # Use the last path segment, decoded and humanised
+            import urllib.parse as _up
+            path_slug = _up.unquote(topic.rstrip("/").split("/")[-1])
+            topic = path_slug.replace("_", " ").replace("-", " ")
+        vector = auto_select_vector(topic, topic, existing)
     elif not vector:
         vector = "download_only"
     state["vector"] = vector
