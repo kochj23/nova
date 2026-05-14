@@ -163,6 +163,22 @@ _start_time = time.time()
 _lock = threading.Lock()
 _shutdown = threading.Event()
 
+# Per-issue alert rate limiting — prevents the same root cause from
+# hammering Slack every 60s. Maps stable issue key -> last alert timestamp.
+_issue_last_alerted: dict = {}
+ISSUE_ALERT_COOLDOWN = 600   # 10 min between identical alerts
+
+# Per-service kickstart grace period — after a kickstart, skip port checks
+# for this many seconds to prevent EADDRINUSE false-crash cascade.
+_service_kickstart_at: dict = {}   # service_name -> timestamp of last kickstart
+SERVICE_STARTUP_GRACE = 30         # seconds to skip port checks after kickstart
+
+# Dead-letter tracking — only alert if count is NEW or GROWING
+_dead_letter_last_count: int = 0
+_dead_letter_last_alerted: float = 0.0
+DEAD_LETTER_ALERT_COOLDOWN = 1800   # 30 min between dead-letter alerts
+DEAD_LETTER_THRESHOLD = 10          # alert threshold
+
 # Gateway restart cooldown — don't restart more than once per 5 minutes
 GATEWAY_RESTART_COOLDOWN = 300  # seconds
 _last_gateway_restart: float = 0.0
@@ -912,6 +928,9 @@ def _check_memory_server_recall() -> bool:
     Uses a 30s timeout and 2 retries to avoid false alarms during HNSW
     reindex or heavy PG load. Skips entirely if a REINDEX is running.
     Only returns False if all attempts fail AND no reindex is active.
+
+    Response shape: {"memories": [...], "query": "...", "count": N}
+    A valid response may have zero results — count=0 still means PG is reachable.
     """
     # Skip recall test when HNSW reindex is running — queries are slow by design
     if _hnsw_reindex_running():
@@ -920,12 +939,27 @@ def _check_memory_server_recall() -> bool:
 
     for attempt in range(3):
         try:
-            url = f"http://{LAN_IP}:18790/recall?q=test&n=1"
+            url = f"http://{LAN_IP}:18790/recall?q=health_check_probe&n=1"
             resp = urllib.request.urlopen(url, timeout=30)
+            if resp.status != 200:
+                raise ValueError(f"HTTP {resp.status}")
             data = json.loads(resp.read())
+            # Accept both old list format and current dict format
             if isinstance(data, list):
                 return True
-        except Exception:
+            if isinstance(data, dict) and "memories" in data:
+                return True
+            # Unexpected format but server responded — treat as healthy
+            log(f"Recall check: unexpected response shape {type(data).__name__} — "
+                f"treating as healthy to avoid false alarm", level=LOG_WARN, source="big-brother")
+            return True
+        except urllib.error.HTTPError as e:
+            # 500 = PG/query error; 503 = memory server overloaded
+            log(f"Recall check HTTP {e.code} (attempt {attempt+1}/3)", level=LOG_WARN, source="big-brother")
+            if attempt < 2:
+                time.sleep(5)
+        except Exception as e:
+            log(f"Recall check failed (attempt {attempt+1}/3): {e}", level=LOG_WARN, source="big-brother")
             if attempt < 2:
                 time.sleep(5)
     return False
@@ -1455,8 +1489,16 @@ def _full_sweep():
         _flush_pending_restarts()
 
     # ── Log file scan (proactive — catches errors before service checks) ─────
+    # Deduplicate per (svc, desc) within a single sweep — prevents a burst of
+    # identical log lines (e.g. 50 "dead-lettered item" entries) from producing
+    # 50 identical issue entries in one Slack message.
+    _log_issues_this_sweep: set = set()
     for lf in LOG_FILES_TO_WATCH:
         for sev, svc, desc, line_excerpt in _scan_log_file(lf):
+            dedup_key = f"{svc}:{desc}"
+            if dedup_key in _log_issues_this_sweep:
+                continue   # same pattern already appended this sweep
+            _log_issues_this_sweep.add(dedup_key)
             issues.append(f"{svc}: {desc}")
             log(f"Log error detected [{svc}] {desc}: {line_excerpt}", level=LOG_WARN,
                 source="big-brother")
@@ -1489,6 +1531,12 @@ def _full_sweep():
 
     # ── Service port checks ──────────────────────────────────────────────────
     for name, host, port, label, critical, health_path in SERVICES:
+        # Skip port check if we just kicked this service — it may not be bound yet
+        if time.time() - _service_kickstart_at.get(name, 0) < SERVICE_STARTUP_GRACE:
+            log(f"[sweep] {name} in startup grace period — skipping port check",
+                level=LOG_INFO, source="big-brother")
+            continue
+
         up = _service_is_up(name, host, port, health_path)
         with _lock:
             prev = _service_status.get(name, {}).get("up", True)
@@ -1586,6 +1634,7 @@ def _full_sweep():
                         log("Memory Server port is up — skipping kickstart (false alarm)",
                             level=LOG_INFO, source="big-brother")
                     else:
+                        _service_kickstart_at["Memory Server"] = time.time()
                         _kickstart(label)
                         fixes.append("Restarted Memory Server")
                         _record_event("critical", "Memory Server DOWN", "Restarted via launchctl", "Memory Server")
@@ -1776,6 +1825,39 @@ def _full_sweep():
                 issues.append(f"Volume mounted but unreadable: {mount_path}")
                 _record_event("warning", f"Volume unreadable: {mount_path}",
                               "Check TCC/permissions", "System")
+                continue
+
+            # Check for noowners — APFS volumes remounted after crash/reboot
+            # often lose owner tracking. PostgreSQL requires ownership and will
+            # silently fail with "Operation not permitted" on every file open.
+            # diskutil info parses mount options; 'noowners' flag is the tell.
+            if "MoreData" in mount_path or "Data" in mount_path:
+                try:
+                    r = subprocess.run(
+                        ["diskutil", "info", mount_path],
+                        capture_output=True, text=True, timeout=5
+                    )
+                    if "Owners:                    Disabled" in r.stdout:
+                        issues.append(
+                            f"Volume {mount_path} mounted with noowners — "
+                            f"PostgreSQL will fail with 'Operation not permitted'"
+                        )
+                        _record_event(
+                            "critical",
+                            f"Volume {mount_path} noowners flag active",
+                            "Run: sudo diskutil enableOwnership " + mount_path,
+                            "System",
+                        )
+                        _maybe_notify(
+                            f"noowners_{mount_path}",
+                            f":no_entry: *Volume ownership disabled: `{mount_path}`*\n"
+                            f"PostgreSQL cannot read its data files (Operation not permitted).\n"
+                            f"Fix: `sudo diskutil enableOwnership {mount_path}`\n"
+                            f"This happens after kernel panics or forced reboots.",
+                            is_critical=True,
+                        )
+                except Exception:
+                    pass
 
     # ── External LAN service checks ──────────────────────────────────────────
     for name, host, port in EXTERNAL_CHECKS:
@@ -1903,14 +1985,22 @@ def _full_sweep():
     _check_privacy_routing(issues)
 
     # ── Memory dead-letter queue ──────────────────────────────────────────────
+    # Only alert if count is above threshold AND either new or growing since last alert.
+    # A static stale queue (same N items for weeks) is not actionable noise.
+    global _dead_letter_last_count, _dead_letter_last_alerted
     try:
         resp = urllib.request.urlopen(f"http://{LAN_IP}:18790/stats", timeout=5)
         stats = json.loads(resp.read())
         dead = stats.get("dead_letter_count", 0)
-        if dead > 10:
-            issues.append(f"Memory dead-letter queue has {dead} items — embedding failures")
+        now = time.time()
+        is_growing = dead > _dead_letter_last_count
+        cooldown_expired = now - _dead_letter_last_alerted > DEAD_LETTER_ALERT_COOLDOWN
+        if dead > DEAD_LETTER_THRESHOLD and (is_growing or cooldown_expired):
+            issues.append(f"Memory dead-letter queue: {dead} items (embedding failures)")
             _record_event("warning", f"Memory dead-letter queue: {dead} items",
-                          "Check /queue/dead-letter endpoint and Ollama embed model", "Memory Server")
+                          "Run: nova_dead_letter_replay.py  Check Ollama embed model", "Memory Server")
+            _dead_letter_last_alerted = now
+        _dead_letter_last_count = dead
     except Exception:
         pass
 
@@ -2048,7 +2138,21 @@ def _full_sweep():
         pass
 
     # ── Notify ───────────────────────────────────────────────────────────────
-    if issues:
+    # Separate: fixes-only (healed, no remaining issues) vs real issues.
+    # Real issues use PER-ISSUE rate limiting so a single stuck condition
+    # doesn't fire every 60s forever.
+    now = time.time()
+
+    if fixes and not issues:
+        # All-clear with heals — post once
+        heal_msg = ":white_check_mark: *Big Brother healed*\n"
+        heal_msg += "\n".join(f"  :wrench: {f}" for f in fixes)
+        _notify(heal_msg)
+        with _lock:
+            _alerted_issues.clear()
+        log(f"Sweep: all clear. {len(fixes)} heals applied.", level=LOG_INFO, source="big-brother")
+
+    elif issues:
         is_critical = any(
             sev == "critical"
             for ev in list(_heal_events)[:10]
@@ -2057,22 +2161,50 @@ def _full_sweep():
         )
 
         if maintenance_active:
-            # During maintenance: log to file only, skip Slack/Discord/Signal
-            log(f"Sweep (maintenance): {len(issues)} issues suppressed — {', '.join(issues[:3])}{'...' if len(issues) > 3 else ''}",
+            log(f"Sweep (maintenance): {len(issues)} issues suppressed — "
+                f"{', '.join(issues[:3])}{'...' if len(issues) > 3 else ''}",
                 level=LOG_WARN, source="big-brother")
         else:
-            msg = ":robot_face: *Big Brother Report*\n"
-            msg += "\n".join(f"  :red_circle: {i}" for i in issues)
-            if fixes:
-                msg += "\n*Healed:*\n"
-                msg += "\n".join(f"  :white_check_mark: {f}" for f in fixes)
+            # Per-issue rate limiting: only include issues that are NEW or whose
+            # cooldown has expired. This prevents the same stuck condition from
+            # firing every 60s.
+            alertable = []
+            for issue in issues:
+                # Use a stable key derived from the issue text (strip volatile counts)
+                stable_key = re.sub(r'\d+', 'N', issue)
+                last = _issue_last_alerted.get(stable_key, 0)
+                if now - last > ISSUE_ALERT_COOLDOWN:
+                    alertable.append(issue)
+                    _issue_last_alerted[stable_key] = now
+                else:
+                    log(f"Suppressed repeat issue (cooldown): {issue}", level=LOG_INFO,
+                        source="big-brother")
 
-            issue_key = "::".join(sorted(issues))
-            _maybe_notify(issue_key, msg, is_critical=any("DOWN" in i for i in issues))
-            log(f"Sweep: {len(issues)} issues, {len(fixes)} fixes", level=LOG_WARN, source="big-brother")
+            if alertable or fixes:
+                msg = ":robot_face: *Big Brother Report*\n"
+                msg += "\n".join(f"  :red_circle: {i}" for i in alertable)
+                if not alertable and fixes:
+                    # Only fixes, no new issues to report — skip this message
+                    pass
+                else:
+                    if fixes:
+                        msg += "\n*Healed:*\n"
+                        msg += "\n".join(f"  :white_check_mark: {f}" for f in fixes)
+                    _notify(msg, is_critical=any("DOWN" in i for i in alertable))
+
+            log(f"Sweep: {len(issues)} issues ({len(alertable)} new/cooldown-expired), "
+                f"{len(fixes)} fixes", level=LOG_WARN, source="big-brother")
+
+        # Clear stale issue keys for issues that have resolved
+        active_keys = {re.sub(r'\d+', 'N', i) for i in issues}
+        stale = [k for k in list(_issue_last_alerted) if k not in active_keys]
+        for k in stale:
+            del _issue_last_alerted[k]
+
     else:
         with _lock:
             _alerted_issues.clear()
+        _issue_last_alerted.clear()
         log("All systems healthy", level=LOG_INFO, source="big-brother")
 
     _record_metrics(issues, fixes, _sweep_start)
