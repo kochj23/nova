@@ -411,7 +411,7 @@ def random_mem(vector):
                + urllib.parse.quote(vector) + "&n=1")
         with urllib.request.urlopen(url, timeout=5) as r:
             data  = json.loads(r.read())
-            items = data if isinstance(data, list) else data.get("results", [])
+            items = data.get("memories", data.get("results", []))
             if items:
                 return items[0].get("text", "")
     except Exception:
@@ -530,6 +530,7 @@ def run_wikipedia(query, vector, target, state, dry_run):
     failed      = list(state.get("failed_urls", []))
     ct          = state.get("chunks_total", 0)
     items_done  = state.get("items_done", 0)
+    _last_notify = [0.0]  # mutable for closure; throttle to every 5 min
 
     q_safe = query.replace(" ", "_")
     start  = "https://en.wikipedia.org/wiki/" + urllib.parse.quote(q_safe)
@@ -574,9 +575,11 @@ def run_wikipedia(query, vector, target, state, dry_run):
         save_state(jid, state)
         log(f"  [{ct}/{target}] {title} -> {ingested} chunks (q:{len(queue)})")
         nxt = queue[0].split("/wiki/")[-1].replace("_", " ") if queue else None
-        notify_item(title, vector, ingested, 0,
-                    items_done, max(items_done, target // 10),
-                    nxt, random_mem(vector) if not dry_run else None)
+        if time.time() - _last_notify[0] >= 300:
+            notify_item(title, vector, ingested, 0,
+                        ct, target,
+                        nxt, random_mem(vector) if not dry_run else None)
+            _last_notify[0] = time.time()
         for lnk in links:
             if lnk not in done_urls:
                 queue.append(lnk)
@@ -593,6 +596,7 @@ def run_search(query, vector, target, state, dry_run):
     ct          = state.get("chunks_total", 0)
     items_done  = state.get("items_done", 0)
     failed      = 0
+    _last_notify = [0.0]
 
     log(f"Search ingest: '{query}' -> '{vector}'")
     notify(f":mag: *Search Ingest Started*\n"
@@ -650,9 +654,11 @@ def run_search(query, vector, target, state, dry_run):
             })
             save_state(jid, state)
             nxt = results[i+1].get("title", "")[:60] if i+1 < len(results) else None
-            notify_item(title[:80], vector, ingested, failed,
-                        items_done, max(items_done, target // 5),
-                        nxt, random_mem(vector) if not dry_run else None)
+            if time.time() - _last_notify[0] >= 300:
+                notify_item(title[:80], vector, ingested, failed,
+                            items_done, max(items_done, target // 5),
+                            nxt, random_mem(vector) if not dry_run else None)
+                _last_notify[0] = time.time()
         page += 1
     _finish(jid, query, vector, ct, target, items_done, failed, dry_run)
 
@@ -1088,7 +1094,11 @@ def run_url(url, vector, state, dry_run, silent=False):
     )
     log(f"URL: {ingested} chunks  [{url[:60]}]")
     if not silent:
-        notify(f":link: *URL Ingested*: {url[:80]}\n  Vector: `{vector}` \xb7 {ingested} chunks")
+        mem = random_mem(vector) if ingested > 0 else None
+        msg = f":link: *URL Ingested*: {url[:80]}\n  Vector: `{vector}` \xb7 {ingested} chunks"
+        if mem:
+            msg += f"\n  :thought_balloon: _{mem[:180].replace(chr(10), ' ')}..._"
+        notify(msg)
 
 def run_file(path, vector, state, dry_run):
     dh = set(state.get("done_hashes", []))
@@ -1103,7 +1113,11 @@ def run_file(path, vector, state, dry_run):
            remember(c, vector, {"path": str(p), "type": "local_file"}, dh, dry_run)
     )
     log(f"File: {ingested} chunks")
-    notify(f":page_facing_up: *File Ingested*: `{p.name}`\n  Vector: `{vector}` \xb7 {ingested} chunks")
+    mem = random_mem(vector) if ingested > 0 else None
+    msg = f":page_facing_up: *File Ingested*: `{p.name}`\n  Vector: `{vector}` \xb7 {ingested} chunks"
+    if mem:
+        msg += f"\n  :thought_balloon: _{mem[:180].replace(chr(10), ' ')}..._"
+    notify(msg)
 
 # ---------------------------------------------------------------------------
 # Finish
