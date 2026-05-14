@@ -44,11 +44,13 @@ MONITORED_APPS = [
     (37446, "DotSync",          "Dot Sync",          False),
 ]
 
-# Infrastructure services (not macOS apps — different restart method)
+# Infrastructure services monitored by App Watchdog.
+# NOTE: Memory Server (18790), Gateway (18789/18792), PostgreSQL, Redis are
+# handled exclusively by Big Brother which has proper dependency-aware restart
+# logic. Duplicating them here causes double-alerts. Only monitor services
+# that BB does NOT restart (Ollama is managed by the app, not launchd).
 INFRA_SERVICES = [
-    (18790, "Memory Server",    "brew services restart postgresql@17"),
-    (18789, "OpenClaw Gateway", "launchctl kickstart -k gui/$(id -u)/ai.openclaw.gateway"),
-    (11434, "Ollama",           "open -a Ollama"),
+    (11434, "Ollama", "open -a Ollama"),
 ]
 
 # Require consecutive down checks before alerting (prevents flapping on brief blips)
@@ -122,14 +124,17 @@ def check_port(port, timeout=3):
 
 def check_infra_port(port, timeout=3):
     """Check infrastructure service ports (may not have /api/status)."""
-    endpoints = {
-        18790: "/health",
-        18789: "/health",
-        11434: "/",
+    # Service-to-host mapping: some services bind to LAN IP, not loopback
+    hosts = {
+        11434: "127.0.0.1",
     }
+    endpoints = {
+        11434: "/api/version",
+    }
+    host     = hosts.get(port, "127.0.0.1")
     endpoint = endpoints.get(port, "/")
     try:
-        url = f"http://127.0.0.1:{port}{endpoint}"
+        url = f"http://{host}:{port}{endpoint}"
         with urllib.request.urlopen(url, timeout=timeout) as r:
             return True, "ok"
     except urllib.error.HTTPError:

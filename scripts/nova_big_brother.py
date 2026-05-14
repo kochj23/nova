@@ -71,8 +71,10 @@ SCRIPTS = Path.home() / ".openclaw/scripts"
 WORKSPACE = Path.home() / ".openclaw/workspace"
 API_PORT = 37461
 
-# How often to run a full health sweep (seconds)
-SWEEP_INTERVAL = 60
+# How often to run a full health sweep (seconds).
+# 90s gives enough breathing room to detect transitions within 2 sweeps
+# while not hammering Slack when the per-issue cooldown has edge cases.
+SWEEP_INTERVAL = 90
 
 # Quiet hours — only alert on NEW issues (not repeats) between 10pm and 8am
 QUIET_START = 22
@@ -336,15 +338,23 @@ def _notify(message: str, is_critical: bool = False):
             log(f"Signal fallback failed: {e}", level=LOG_ERROR, source="big-brother")
 
 
-def _maybe_notify(issue_key: str, message: str, is_critical: bool = False):
-    """Suppress duplicate alerts during quiet hours. Always alert on first occurrence."""
-    with _lock:
-        is_new = issue_key not in _alerted_issues
-        if is_new:
-            _alerted_issues.add(issue_key)
+def _maybe_notify(issue_key: str, message: str, is_critical: bool = False,
+                  cooldown: int = 1800):
+    """Rate-limited notification. Fires on first occurrence; suppresses repeats
+    for `cooldown` seconds (default 30 min) regardless of time of day.
 
-    if is_new or not _is_quiet_hours():
-        _notify(message, is_critical=is_critical)
+    This replaces the old quiet-hours-only suppression which let alerts fire
+    every sweep during waking hours.
+    """
+    now = time.time()
+    with _lock:
+        last = _issue_last_alerted.get(issue_key, 0)
+        if now - last < cooldown:
+            return   # still in cooldown — suppress
+        _issue_last_alerted[issue_key] = now
+        _alerted_issues.add(issue_key)
+
+    _notify(message, is_critical=is_critical)
 
 
 # ── Protected Task Check ──────────────────────────────────────────────────────
@@ -532,11 +542,13 @@ def _check_crash_loop(service_name: str) -> bool:
         log(f"[crash-loop] {service_name} restarted {_CRASH_LOOP_MAX}x in {_CRASH_LOOP_WINDOW}s — "
             f"crash-loop detected, cooling down for {_CRASH_LOOP_COOLDOWN}s",
             level=LOG_ERROR, source="big-brother")
-        _notify(
+        _maybe_notify(
+            f"crash_loop_{service_name}",
             f":rotating_light: *Crash-loop detected: {service_name}*\n"
             f"Restarted {_CRASH_LOOP_MAX}+ times in {_CRASH_LOOP_WINDOW//60} min despite healthy dependencies.\n"
             f"Auto-restart paused for {_CRASH_LOOP_COOLDOWN//60} min. Check logs for root cause.",
             is_critical=True,
+            cooldown=_CRASH_LOOP_COOLDOWN,
         )
         return True  # in cooldown — do not restart this time
 
@@ -1839,8 +1851,8 @@ def _full_sweep():
                     )
                     if "Owners:                    Disabled" in r.stdout:
                         issues.append(
-                            f"Volume {mount_path} mounted with noowners — "
-                            f"PostgreSQL will fail with 'Operation not permitted'"
+                            f":no_entry: Volume {mount_path} ownership DISABLED — "
+                            f"run: sudo diskutil enableOwnership {mount_path}"
                         )
                         _record_event(
                             "critical",
@@ -1848,14 +1860,8 @@ def _full_sweep():
                             "Run: sudo diskutil enableOwnership " + mount_path,
                             "System",
                         )
-                        _maybe_notify(
-                            f"noowners_{mount_path}",
-                            f":no_entry: *Volume ownership disabled: `{mount_path}`*\n"
-                            f"PostgreSQL cannot read its data files (Operation not permitted).\n"
-                            f"Fix: `sudo diskutil enableOwnership {mount_path}`\n"
-                            f"This happens after kernel panics or forced reboots.",
-                            is_critical=True,
-                        )
+                        # Rate limit via the sweep's issue key system — no separate _maybe_notify
+                        # (the old inline call was firing every sweep, bypassing cooldowns)
                 except Exception:
                     pass
 
