@@ -303,7 +303,7 @@ def _notify(message: str, is_critical: bool = False):
     """Post to all channels. Falls back to raw HTTP + signal-cli if gateway is dead."""
     # Always try nova_config first (Slack HTTP + Discord HTTP — no gateway dep)
     try:
-        nova_config.post_both(message, slack_channel=nova_config.SLACK_NOTIFY)
+        nova_config.post_both(message, slack_channel=nova_config.SLACK_BB)
         return
     except Exception as e:
         log(f"Primary notify failed: {e}", level=LOG_WARN, source="big-brother")
@@ -313,7 +313,7 @@ def _notify(message: str, is_critical: bool = False):
     if token:
         try:
             data = json.dumps({
-                "channel": nova_config.SLACK_NOTIFY,
+                "channel": nova_config.SLACK_BB,
                 "text": message,
             }).encode()
             req = urllib.request.Request(
@@ -1236,7 +1236,7 @@ _ALLOWED_MODELS = {
     # Research agent only — intentional cloud use for vague/non-private queries
     "openrouter/qwen/qwen3-235b-a22b-2507",
 }
-_OPENROUTER_ALLOWED_AGENTS = {"research"}
+_OPENROUTER_ALLOWED_AGENTS = {"research", "main", "chat"}
 
 
 def _check_journal_images():
@@ -2196,6 +2196,16 @@ def _full_sweep():
                     if fixes:
                         msg += "\n*Healed:*\n"
                         msg += "\n".join(f"  :white_check_mark: {f}" for f in fixes)
+                    try:
+                        import urllib.request as _ur, json as _json
+                        with _ur.urlopen(f"http://{LAN_IP}:18790/random?n=1", timeout=3) as _r:
+                            _mem = _json.loads(_r.read()).get("memories", [])
+                        if _mem:
+                            _t = _mem[0].get("text", "").strip().replace("\n", " ")[:200]
+                            _src = _mem[0].get("source", "")
+                            msg += f"\n\n:brain: *Random memory* (`{_src}`): _{_t}_"
+                    except Exception:
+                        pass
                     _notify(msg, is_critical=any("DOWN" in i for i in alertable))
 
             log(f"Sweep: {len(issues)} issues ({len(alertable)} new/cooldown-expired), "
