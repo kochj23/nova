@@ -430,23 +430,20 @@ async def _run_agent(message: str, session_id: str, agent_id: str,
     # Log user turn
     await _log_turn(session_id, agent_id, "user", message, turn_index=turn_index)
 
-    # Call LLM
-    model = "qwen3:30b-a3b"
+    # Call LLM — use OpenRouter for all agents (Ollama GPU hung since ~May 8)
+    model = "openrouter/qwen/qwen3-235b-a22b-2507"
     raw_response = ""
 
     try:
-        if agent_id == "research":
-            or_key = tokens.get("openrouter", "")
-            if or_key:
-                model = "openrouter/qwen/qwen3-235b-a22b-2507"
-                raw_response = await _call_openrouter(
-                    "qwen/qwen3-235b-a22b-2507", history, or_key,
-                    max_tokens=4096, system=sys_prompt,
-                )
-            else:
-                raw_response = await _call_ollama(model, history, max_tokens=2048, system=sys_prompt)
+        or_key = tokens.get("openrouter", "")
+        if or_key:
+            max_tok = 4096 if agent_id == "research" else 1024
+            raw_response = await _call_openrouter(
+                "qwen/qwen3-235b-a22b-2507", history, or_key,
+                max_tokens=max_tok, system=sys_prompt,
+            )
         else:
-            raw_response = await _call_ollama(model, history, max_tokens=1024, system=sys_prompt)
+            raw_response = await _call_ollama("qwen3:30b-a3b", history, max_tokens=1024, system=sys_prompt)
     except Exception as e:
         log.error(f"LLM call failed: {e}")
         raw_response = "Something went wrong on my end, Little Mister. Give me a moment."
@@ -461,11 +458,18 @@ async def _run_agent(message: str, session_id: str, agent_id: str,
             {"role": "tool",      "content": tool_output},
         ]
         try:
-            clean_response = await _call_ollama(
-                model, followup_msgs, max_tokens=1024, system=sys_prompt
-            )
+            or_key = tokens.get("openrouter", "")
+            if or_key:
+                clean_response = await _call_openrouter(
+                    "qwen/qwen3-235b-a22b-2507", followup_msgs, or_key,
+                    max_tokens=1024, system=sys_prompt,
+                )
+            else:
+                clean_response = await _call_ollama(
+                    "qwen3:30b-a3b", followup_msgs, max_tokens=1024, system=sys_prompt
+                )
         except Exception:
-            clean_response = raw_response  # fallback to raw if followup fails
+            clean_response = raw_response
 
     # Store assistant turn
     history.append({"role": "assistant", "content": clean_response})
