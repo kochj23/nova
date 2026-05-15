@@ -119,25 +119,74 @@ def log(msg: str):
             pass
 
 
-# ── State management ──────────────────────────────────────────────────────────
+# ── State management (PostgreSQL-backed) ─────────────────────────────────────
+
+_DB_CONN = None
+
+def _db():
+    global _DB_CONN
+    if _DB_CONN is None or _DB_CONN.closed:
+        import psycopg2
+        _DB_CONN = psycopg2.connect(host="localhost", dbname="nova_ops", user="kochj")
+        _DB_CONN.autocommit = True
+    return _DB_CONN
+
 
 def load_state() -> dict:
+    """Load all processed file paths from PG into an in-memory set for fast lookup."""
     try:
-        if STATE_FILE.exists():
-            return json.loads(STATE_FILE.read_text())
-    except Exception:
-        pass
-    return {"done": {}, "last_run": None}
+        cur = _db().cursor()
+        cur.execute("SELECT file_path FROM media_ingest_state")
+        done = {row[0]: True for row in cur.fetchall()}
+        cur.close()
+        return {"done": done, "last_run": None}
+    except Exception as e:
+        log(f"DB load_state failed, falling back to JSON: {e}")
+        try:
+            if STATE_FILE.exists():
+                return json.loads(STATE_FILE.read_text())
+        except Exception:
+            pass
+        return {"done": {}, "last_run": None}
 
 
 def save_state(state: dict):
-    STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    """No-op for periodic saves — PG writes happen in mark_done(). Keep JSON as backup."""
+    try:
+        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        # Only write last_run to JSON as a lightweight heartbeat
+        STATE_FILE.write_text(json.dumps({"last_run": state.get("last_run", datetime.now().isoformat())}, indent=2))
+    except Exception:
+        pass
 
 
 def mark_done(state: dict, path: str, metadata: dict):
+    """Write to PG and update in-memory cache."""
     with _STATE_LOCK:
-        state["done"][path] = {**metadata, "marked_at": datetime.now().isoformat()}
+        state["done"][path] = True
+    try:
+        cur = _db().cursor()
+        cur.execute("""
+            INSERT INTO media_ingest_state (file_path, show, title, status, chunks, words, source_vector, processed_at)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, now())
+            ON CONFLICT (file_path) DO UPDATE SET
+                status = EXCLUDED.status,
+                chunks = EXCLUDED.chunks,
+                words = EXCLUDED.words,
+                source_vector = EXCLUDED.source_vector,
+                processed_at = now()
+        """, (
+            path,
+            metadata.get("show"),
+            metadata.get("title"),
+            metadata.get("status", "unknown"),
+            metadata.get("chunks", 0),
+            metadata.get("words", 0),
+            metadata.get("source"),
+        ))
+        cur.close()
+    except Exception as e:
+        log(f"DB mark_done failed for {path}: {e}")
 
 
 # ── Source classification ─────────────────────────────────────────────────────
@@ -348,8 +397,7 @@ def process_video(video: Path, state: dict, work_dir: Path,
 
     # Second-layer dedup: check the nova_media DB (survives state file resets)
     if registry.is_done(path_key):
-        with _STATE_LOCK:
-            state["done"][path_key] = {"status": "registry_done", "marked_at": datetime.now().isoformat()}
+        mark_done(state, path_key, {"show": show_name, "title": title, "status": "registry_done", "chunks": 0})
         return None
 
     show_name = show_name_from_path(video)
@@ -482,14 +530,13 @@ def main():
         if path_key not in state["done"]:
             mtime = datetime.fromtimestamp(v.stat().st_mtime)
             if mtime < cutoff:
-                state["done"][path_key] = {
+                mark_done(state, path_key, {
                     "show": show_name_from_path(v), "title": v.stem,
-                    "status": "backfilled", "marked_at": NOW.isoformat(),
-                }
+                    "status": "backfilled", "chunks": 0,
+                })
                 backfill_count += 1
     if backfill_count:
         log(f"Backfilled {backfill_count:,} older files as done")
-        save_state(state)
 
     # Post start notification
     post_slack(
@@ -528,7 +575,7 @@ def main():
                 failed += 1
                 mark_done(state, str(video), {
                     "show": show_name_from_path(video), "title": video.stem,
-                    "status": "error", "error": str(exc),
+                    "status": "error", "chunks": 0,
                 })
 
             # Save state every 10 completions to avoid constant I/O
