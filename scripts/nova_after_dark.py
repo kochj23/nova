@@ -51,7 +51,7 @@ OLLAMA_MODEL = "qwen3-coder:30b"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "anthropic/claude-haiku-4.5"
 SEARXNG_URL = "http://127.0.0.1:8888/search"
-MEMORY_SERVER = "http://127.0.0.1:18790"
+MEMORY_SERVER = "http://192.168.1.6:18790"
 WIKI_API = "https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/all"
 
 LOG_FILE = Path.home() / ".openclaw/logs/nova_after_dark.log"
@@ -276,18 +276,10 @@ Write tonight's Nova After Dark monologue. Remember: 500-750 words, humor at 0.9
 # ── Image Generation ────────────────────────────────────────────────────────────
 
 def generate_image(event: dict) -> str | None:
-    # Ensure SwarmUI backend is healthy before attempting
-    try:
-        from nova_image_utils import ensure_backend
-        if not ensure_backend():
-            log("SwarmUI not available — skipping image")
-            return None
-    except ImportError:
-        pass
+    from nova_image_utils import generate_image as _gen_image
 
     year = event.get("year", "")
     fact = event.get("text", "")[:80]
-    # Derive a brief guest description from the event for the couch subject
     guest = fact[:60] if fact else "a historical figure"
 
     prompt = (
@@ -303,43 +295,11 @@ def generate_image(event: dict) -> str | None:
         f"Fully clothed, family friendly, no nudity. Cinematic wide establishing shot."
     )
 
-    # Pick a random model for variety in after-dark images
-    try:
-        # After Dark always uses Juggernaut — FLUX models time out on the complex
-        # two-character talk show scene prompt, and random model selection was
-        # picking broken/slow models that produced black images.
-        _img_model_file = "Juggernaut_X_RunDiffusion_Hyper.safetensors"
-        _img_steps = "18"
-    except Exception:
-        _img_model_file = "Juggernaut_X_RunDiffusion_Hyper.safetensors"
-        _img_steps = "18"
-
-    for attempt in range(3):
-        try:
-            result = subprocess.run(
-                [str(GENERATE_IMAGE_SH), prompt, "1024", "768", _img_steps, _img_model_file],
-                capture_output=True, text=True, timeout=240
-            )
-            if result.returncode == 0:
-                image_path = ""
-                for line in result.stdout.splitlines():
-                    if line.startswith("Workspace copy:"):
-                        image_path = line.split(":", 1)[1].strip()
-                        break
-                if not image_path:
-                    image_path = result.stdout.strip().split("\n")[-1]
-                if Path(image_path).exists():
-                    log(f"Image generated: {image_path}")
-                    return image_path
-            log(f"Image attempt {attempt + 1}/3 failed: {result.stderr[:100]}")
-        except subprocess.TimeoutExpired:
-            log(f"Image attempt {attempt + 1}/3 timed out (240s)")
-        except Exception as e:
-            log(f"Image attempt {attempt + 1}/3 error: {e}")
-        if attempt < 2:
-            import time as _time
-            _time.sleep(5)
-    log("All image generation attempts failed")
+    image_path = _gen_image(prompt, 1024, 768, section="after-dark")
+    if image_path:
+        log(f"Image generated: {image_path}")
+        return image_path
+    log("Image generation failed")
     return None
 
 

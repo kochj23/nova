@@ -199,9 +199,26 @@ This is the piece that shows what Nova THINKS, not just what Nova KNOWS."""
         return None
 
 
+def _generate_cover_image(synthesis: str, week_str: str) -> str | None:
+    """Generate a cover image for the weekly synthesis."""
+    try:
+        from nova_image_utils import generate_image as _gen_image
+        prompt = (
+            f"Abstract artistic composition representing a week of interconnected thoughts and ideas. "
+            f"Flowing streams of light connecting glowing nodes of different colors — blue for technology, "
+            f"gold for philosophy, green for nature, purple for dreams. Ethereal, contemplative mood. "
+            f"Soft bokeh background, digital art style, 4K quality."
+        )
+        return _gen_image(prompt, 1024, 768, section="default")
+    except Exception as e:
+        log(f"Image generation failed: {e}")
+        return None
+
+
 def _publish_to_hugo(synthesis: str, posts: list[dict], week_str: str) -> str | None:
     """Write Hugo post and commit."""
     CONTENT_OUT.mkdir(parents=True, exist_ok=True)
+    IMAGES_OUT.mkdir(parents=True, exist_ok=True)
     slug_date = date.today().strftime("%Y-%m-%d")
     slug = f"{slug_date}-weekly-synthesis"
     out_path = CONTENT_OUT / f"{slug}.md"
@@ -210,6 +227,17 @@ def _publish_to_hugo(synthesis: str, posts: list[dict], week_str: str) -> str | 
     tags = extract_tags(f"Weekly synthesis {week_str}", synthesis, "synthesis", n=5)
     tags_yaml = json.dumps(tags)
 
+    # Generate cover image
+    image_path = _generate_cover_image(synthesis, week_str)
+    cover_ref = ""
+    if image_path and Path(image_path).exists():
+        import shutil
+        img_filename = f"{slug_date}-synthesis.png"
+        dest = IMAGES_OUT / img_filename
+        shutil.copy2(image_path, dest)
+        cover_ref = f"/images/synthesis/{img_filename}"
+        log(f"Cover image: {cover_ref}")
+
     # Build post links section
     links_section = "\n\n---\n\n### This week's posts\n\n"
     for p in posts:
@@ -217,13 +245,14 @@ def _publish_to_hugo(synthesis: str, posts: list[dict], week_str: str) -> str | 
                  "after-dark": "🌃", "art": "🎨", "research": "📄"}.get(p["category"], "→")
         links_section += f"- {emoji} [{p['title']}]({p['url']})\n"
 
+    image_line = f'\nimage: "{cover_ref}"' if cover_ref else ""
     front_matter = f"""---
 title: "✨ Week of {week_str}"
 date: {timestamp}
 draft: false
 categories: ["synthesis"]
 tags: {tags_yaml}
-description: "Nova's weekly synthesis — what I was actually thinking about this week"
+description: "Nova's weekly synthesis — what I was actually thinking about this week"{image_line}
 ---
 
 """
