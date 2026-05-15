@@ -55,7 +55,7 @@ WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
 CHUNK_CHARS   = 1500
 CHUNK_WORDS   = 400
 MIN_WORDS     = 30
-RATE_LIMITS   = {"wikipedia": 3.0, "searxng": 1.0, "web": 4.0, "video": 2.0}
+RATE_LIMITS   = {"wikipedia": 3.0, "searxng": 1.0, "web": 4.0, "video": 30.0}
 
 DISCOVERY_SITES = [
     ("YouTube",         "https://www.youtube.com/results?search_query={q}"),
@@ -693,15 +693,23 @@ def _ytbase():
         args += ["--cookies-from-browser", "chrome"]
     return args
 
-def _get_vids(url):
+def _get_vids(url, dateafter=None):
     _refresh_cookies()
-    cmd = _ytbase() + [
-        "--flat-playlist",
-        "--print", "%(id)s\t%(title)s\t%(upload_date)s\t%(uploader)s",
-        url,
-    ]
+    if dateafter:
+        cmd = _ytbase() + [
+            "--dateafter", dateafter,
+            "--print", "%(id)s\t%(title)s\t%(upload_date)s\t%(uploader)s",
+            url,
+        ]
+    else:
+        cmd = _ytbase() + [
+            "--flat-playlist",
+            "--print", "%(id)s\t%(title)s\t%(upload_date)s\t%(uploader)s",
+            url,
+        ]
     try:
-        r    = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
+        timeout = 600 if dateafter else 120
+        r    = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
         vids = []
         for line in r.stdout.strip().split("\n"):
             if not line.strip():
@@ -825,7 +833,7 @@ def _warm():
 # Video mode
 # ---------------------------------------------------------------------------
 
-def run_video(url, channel, vector, target, state, dry_run, download_dir=None):
+def run_video(url, channel, vector, target, state, dry_run, download_dir=None, dateafter=None):
     jid         = state["job_id"]
     done_urls   = set(state.get("done_urls", []))
     done_hashes = set(state.get("done_hashes", []))
@@ -835,10 +843,12 @@ def run_video(url, channel, vector, target, state, dry_run, download_dir=None):
     dl_only     = bool(download_dir)
 
     WORK_DIR.mkdir(parents=True, exist_ok=True)
-    vids = _get_vids(url)
+    vids = _get_vids(url, dateafter=dateafter)
     if not vids:
         log("No videos found", "ERROR")
         return
+    if dateafter:
+        log(f"Date filter (>={dateafter}): {len(vids)} videos matched")
 
     pending              = [v for v in vids if v["id"] not in done_urls]
     state["items_total"] = len(vids)
@@ -1342,6 +1352,8 @@ def main():
     p.add_argument("--per-site",      type=int, default=5)
     p.add_argument("--download-dir",  metavar="PATH",
                    help="Save files here only -- skip transcription and ingest")
+    p.add_argument("--dateafter",     metavar="YYYYMMDD",
+                   help="Video mode: only include videos uploaded on or after this date")
     p.add_argument("--topics-file",   metavar="PATH",
                    help="Batch: run mode for each topic in file (wikipedia/search)")
     p.add_argument("--yes", "-y",     action="store_true",
@@ -1465,7 +1477,7 @@ def main():
         ch = (args.channel or
               (args.query.split("/")[-1].lstrip("@") if args.query else "Unknown"))
         run_video(args.query, ch, vector, args.target, state, args.dry_run,
-                  download_dir=args.download_dir)
+                  download_dir=args.download_dir, dateafter=args.dateafter)
     elif args.mode == "discover":
         run_discover(
             args.query, vector,
