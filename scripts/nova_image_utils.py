@@ -17,9 +17,80 @@ from pathlib import Path
 
 GENERATE_IMAGE_SH = Path.home() / ".openclaw/scripts/generate_image.sh"
 SWARMUI_URL = "http://127.0.0.1:7801"
-MAX_RETRIES = 3
-RETRY_DELAY = 15
-TIMEOUT = 360
+MAX_RETRIES = 2
+RETRY_DELAY = 10
+TIMEOUT = 300
+
+# ── OpenRouter Image Models (primary — no PII in prompts) ─────────────────────
+# Matched by mood/quality tier. All support text→image generation.
+OPENROUTER_MODELS = {
+    "fast": {
+        "id": "google/gemini-2.5-flash-image",
+        "name": "Gemini 2.5 Flash Image",
+        "best_for": "thumbnails, covers, quick generation",
+        "modalities": ["image", "text"],
+    },
+    "balanced": {
+        "id": "google/gemini-3.1-flash-image-preview",
+        "name": "Gemini 3.1 Flash Image",
+        "best_for": "daily content, good quality at low cost",
+        "modalities": ["image", "text"],
+    },
+    "quality": {
+        "id": "openai/gpt-5-image-mini",
+        "name": "GPT-5 Image Mini",
+        "best_for": "essays, detailed compositions, prompt adherence",
+        "modalities": ["image", "text"],
+    },
+    "premium": {
+        "id": "black-forest-labs/flux.2-pro",
+        "name": "FLUX.2 Pro",
+        "best_for": "art corner hero pieces, maximum photorealism",
+        "modalities": ["image"],
+    },
+    "cinematic": {
+        "id": "google/gemini-3-pro-image-preview",
+        "name": "Gemini 3 Pro Image",
+        "best_for": "after dark, dreams, dramatic moody scenes",
+        "modalities": ["image", "text"],
+    },
+    "artistic": {
+        "id": "recraft/recraft-v4.1-pro",
+        "name": "Recraft V4.1 Pro",
+        "best_for": "stylized art, illustrations, oil painting, watercolor",
+        "modalities": ["image"],
+    },
+    "flux_fast": {
+        "id": "black-forest-labs/flux.2-klein-4b",
+        "name": "FLUX.2 Klein 4B",
+        "best_for": "fast high-quality generation, versatile",
+        "modalities": ["image"],
+    },
+}
+
+# Map journal sections to preferred OpenRouter model tier
+SECTION_MODEL_MAP = {
+    "art": "premium",
+    "dreams": "cinematic",
+    "after-dark": "cinematic",
+    "essays": "quality",
+    "research": "quality",
+    "tech-today": "quality",
+    "opinions": "quality",
+    "synthesis": "premium",
+    "digests": "balanced",
+    "default": "quality",
+}
+
+# Quality suffix appended to all image prompts for maximum fidelity
+IMAGE_QUALITY_SUFFIX = (
+    " Ultra-high resolution, 8K UHD, extraordinary detail and depth. "
+    "Rich textures, volumetric lighting, ray-traced global illumination. "
+    "Professional photography quality, masterful composition, tack-sharp focus. "
+    "Cinematic color grading with deep blacks and luminous highlights."
+)
+
+OPENROUTER_IMAGE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Available models with their optimal settings
 # NOTE: FP8 models (flux1-dev-fp8, flux1-schnell-fp8, ZImage FP8Mix) are BROKEN on
@@ -159,24 +230,128 @@ def _model_available_via_api(model_file: str) -> bool:
         return True
 
 
-def generate_image(prompt: str, width: int = 1024, height: int = 768, steps: int = 12, model: str = None) -> str | None:
-    """Generate an image with retry logic. Returns file path or None.
-
-    When model is None, picks a random working model for variety across all
-    journal sections (dreams, essays, opinions, research, tech, after dark).
-    Art Corner uses get_model_for_today() for its own day-of-week rotation.
+def generate_image(prompt: str, width: int = 1024, height: int = 768, steps: int = 12,
+                    model: str = None, section: str = "default") -> str | None:
+    """Generate an image. OpenRouter primary, local ComfyUI fallback.
 
     Args:
-        prompt: Image generation prompt
+        prompt: Image generation prompt (no PII — creative/descriptive only)
         width: Image width (default 1024)
         height: Image height (default 768)
-        steps: Generation steps (default 12, override for quality)
-        model: Model key from MODELS dict, or None to pick randomly
+        steps: Generation steps (only used for local fallback)
+        model: Local model key from MODELS dict (only for local fallback)
+        section: Journal section name for mood-matching ("art", "dreams", "after-dark", etc.)
     """
-    if not ensure_backend():
+    # ── Primary: OpenRouter (fast, reliable, no GPU contention) ────────────────
+    result = _openrouter_generate(prompt, section)
+    if result:
+        return result
+
+    # ── Fallback: Local ComfyUI ───────────────────────────────────────────────
+    _log("OpenRouter failed — falling back to local ComfyUI...")
+    return _local_comfyui_generate(prompt, width, height, steps, model)
+
+
+def _openrouter_generate(prompt: str, section: str = "default") -> str | None:
+    """Generate image via OpenRouter API with mood-matched model selection."""
+    import nova_config
+    import base64
+
+    try:
+        api_key = nova_config.openrouter_api_key()
+        if not api_key:
+            _log("OpenRouter: no API key available")
+            return None
+
+        tier = SECTION_MODEL_MAP.get(section, "balanced")
+        model_info = OPENROUTER_MODELS[tier]
+        model_id = model_info["id"]
+        modalities = model_info.get("modalities", ["image", "text"])
+        _log(f"OpenRouter: using {model_info['name']} ({tier} tier) for section={section}")
+
+        enhanced_prompt = prompt.strip() + IMAGE_QUALITY_SUFFIX
+
+        payload = json.dumps({
+            "model": model_id,
+            "modalities": modalities,
+            "messages": [
+                {
+                    "role": "user",
+                    "content": f"Generate an image: {enhanced_prompt}"
+                }
+            ],
+        }).encode()
+
+        req = urllib.request.Request(
+            OPENROUTER_IMAGE_URL,
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json",
+                "HTTP-Referer": "https://nova.digitalnoise.net",
+                "X-Title": "Nova Journal Art",
+            },
+        )
+
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            data = json.loads(resp.read())
+
+        choices = data.get("choices", [])
+        if not choices:
+            _log("OpenRouter: no choices in response")
+            return None
+
+        message = choices[0].get("message", {})
+
+        # OpenRouter returns images in message.images[] array
+        images = message.get("images", [])
+        for img in images:
+            img_url = ""
+            if isinstance(img, dict):
+                img_url = img.get("image_url", {}).get("url", "") or img.get("url", "")
+            elif isinstance(img, str):
+                img_url = img
+
+            if img_url.startswith("data:image"):
+                b64 = img_url.split(",", 1)[1]
+                output_path = Path.home() / ".openclaw/workspace" / f"or_{int(time.time())}.png"
+                output_path.write_bytes(base64.b64decode(b64))
+                _log(f"OpenRouter: saved base64 image → {output_path.name}")
+                return str(output_path)
+            elif img_url.startswith("http"):
+                output_path = Path.home() / ".openclaw/workspace" / f"or_{int(time.time())}.png"
+                urllib.request.urlretrieve(img_url, str(output_path))
+                _log(f"OpenRouter: downloaded image → {output_path.name}")
+                return str(output_path)
+
+        # Fallback: check content array (some models use this format)
+        content = message.get("content", "")
+        if isinstance(content, list):
+            for part in content:
+                if isinstance(part, dict) and part.get("type") == "image_url":
+                    img_url = part.get("image_url", {}).get("url", "")
+                    if img_url.startswith("data:image"):
+                        b64 = img_url.split(",", 1)[1]
+                        output_path = Path.home() / ".openclaw/workspace" / f"or_{int(time.time())}.png"
+                        output_path.write_bytes(base64.b64decode(b64))
+                        _log(f"OpenRouter: saved content image → {output_path.name}")
+                        return str(output_path)
+
+        _log(f"OpenRouter: no image found in response (keys: {list(message.keys())})")
         return None
 
-    # Resolve model — random when not specified (all sections get variety)
+    except Exception as e:
+        _log(f"OpenRouter image generation failed: {e}")
+        return None
+
+
+def _local_comfyui_generate(prompt: str, width: int = 1024, height: int = 768,
+                             steps: int = 12, model: str = None) -> str | None:
+    """Fallback: generate image locally via ComfyUI/SwarmUI."""
+    if not ensure_backend():
+        _log("Local fallback: SwarmUI not available")
+        return None
+
     if model:
         model_key = model
     else:
@@ -185,23 +360,12 @@ def generate_image(prompt: str, width: int = 1024, height: int = 768, steps: int
     model_info = MODELS.get(model_key, MODELS[DEFAULT_MODEL])
     model_file = model_info["file"]
 
-    # Check if model file exists via SwarmUI API (avoids /Volumes/Data TCC issues)
     if not _model_available_via_api(model_file):
-        _log(f"Model {model_file} not found in SwarmUI, trying another random model")
-        # Try once more with a different random model, then fall back to default
-        alt_key = get_random_model()
-        alt_info = MODELS.get(alt_key, MODELS[DEFAULT_MODEL])
-        if _model_available_via_api(alt_info["file"]):
-            model_info = alt_info
-            model_file = alt_info["file"]
-        else:
-            model_info = MODELS[DEFAULT_MODEL]
-            model_file = MODELS[DEFAULT_MODEL]["file"]
+        model_info = MODELS[DEFAULT_MODEL]
+        model_file = MODELS[DEFAULT_MODEL]["file"]
 
-    # Use steps from model's optimal setting when caller doesn't override
     actual_steps = steps if steps != 12 else model_info.get("optimal_steps", steps)
-
-    _log(f"Using model: {model_info['name']} ({model_file}), {actual_steps} steps")
+    _log(f"Local fallback: {model_info['name']} ({model_file}), {actual_steps} steps")
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -210,29 +374,27 @@ def generate_image(prompt: str, width: int = 1024, height: int = 768, steps: int
                 capture_output=True, text=True, timeout=TIMEOUT,
             )
             if result.returncode == 0 and result.stdout.strip():
-                # Parse "Workspace copy: /path/to/file.png" line from output
                 image_path = None
                 for line in result.stdout.strip().split("\n"):
                     if line.startswith("Workspace copy: "):
                         image_path = line.replace("Workspace copy: ", "").strip()
                         break
-                # Fallback: try last non-"Open with" line
                 if not image_path:
                     for line in reversed(result.stdout.strip().split("\n")):
                         if not line.startswith("Open with:") and "/" in line:
                             image_path = line.strip()
                             break
                 if image_path and Path(image_path).exists():
-                    _log(f"Generated (attempt {attempt + 1}): {Path(image_path).name}")
+                    _log(f"Local generated (attempt {attempt + 1}): {Path(image_path).name}")
                     return image_path
-            _log(f"Attempt {attempt + 1} failed (exit {result.returncode})")
+            _log(f"Local attempt {attempt + 1} failed (exit {result.returncode})")
         except subprocess.TimeoutExpired:
-            _log(f"Attempt {attempt + 1} timed out ({TIMEOUT}s)")
+            _log(f"Local attempt {attempt + 1} timed out ({TIMEOUT}s)")
         except Exception as e:
-            _log(f"Attempt {attempt + 1} error: {e}")
+            _log(f"Local attempt {attempt + 1} error: {e}")
 
         if attempt < MAX_RETRIES - 1:
             time.sleep(RETRY_DELAY)
 
-    _log("Image generation failed after all retries")
+    _log("Local ComfyUI fallback also failed")
     return None
