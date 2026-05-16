@@ -137,6 +137,7 @@ tasks:
     schedule: every 4h
     timeout: 300
     overlap: skip
+    gpu_heavy: true
 
   reddit_ingest:
     script: nova_ingest.py
@@ -157,9 +158,10 @@ tasks:
   art_corner:
     script: nova_art_corner.py
     schedule: cron 0 4 * * *
-    timeout: 600
+    timeout: 1800
     overlap: skip
     group: llm
+    gpu_heavy: true
 
   dream_pipeline:
     script: dream_generate.py
@@ -167,6 +169,7 @@ tasks:
     timeout: 900
     overlap: skip
     group: llm
+    gpu_heavy: true
 
   agent_gardener:
     script: nova_agent_gardener.py
@@ -221,6 +224,7 @@ tasks:
     schedule: cron 0 2 * * *
     timeout: 86400
     overlap: skip
+    gpu_heavy: true
 
   yt_new_episodes:
     script: nova_yt_new_episodes.py
@@ -276,7 +280,7 @@ tasks:
   daily_essay:
     script: nova_daily_essay.py
     schedule: cron 0 9 * * *
-    timeout: 600
+    timeout: 1350
     overlap: skip
     group: llm
 
@@ -342,8 +346,9 @@ tasks:
   nightly_media:
     script: nova_nightly_media.py
     schedule: cron 0 22 * * *
-    timeout: 28800
+    timeout: 43200
     overlap: skip
+    gpu_heavy: true
 
   tv_ingest:
     script: nova_tv_ingest.py
@@ -574,6 +579,7 @@ tasks:
     schedule: cron 5 7 * * *
     timeout: 1200
     overlap: skip
+    gpu_heavy: true
 
   livetv_dream_surf:
     script: nova_livetv.py
@@ -581,6 +587,7 @@ tasks:
     schedule: cron 0 4 * * *
     timeout: 600
     overlap: skip
+    gpu_heavy: true
 
   livetv_gameshow:
     script: nova_livetv.py
@@ -594,8 +601,9 @@ tasks:
     script: nova_livetv.py
     args: ["ambiance"]
     schedule: cron 0 8,12,16,20 * * *
-    timeout: 600
+    timeout: 3600
     overlap: skip
+    gpu_heavy: true
 
   livetv_novas_time:
     script: nova_livetv.py
@@ -621,6 +629,7 @@ tasks:
     timeout: 7200
     overlap: skip
     group: ingest
+    gpu_heavy: true
 
   fix_missing_images:
     script: nova_fix_missing_images.py
@@ -635,3 +644,9 @@ tasks:
     timeout: 120
     overlap: skip
     enabled: false  # Replaced by Big Brother (net.digitalnoise.big-brother launchd)
+
+  maintenance_advisor:
+    script: nova_maintenance_advisor.py
+    schedule: cron 0 8 * * 0
+    timeout: 120
+    overlap: skip

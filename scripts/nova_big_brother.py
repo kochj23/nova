@@ -22,6 +22,7 @@ Scope of responsibility:
   ─ Disk space warnings on /Volumes/Data + /Volumes/MoreData
   ─ Image generation (SwarmUI port 7801)
   ─ Slack preprocessor TCC token injection
+  ─ Metal GPU contention detection (Ollama vs mlx_whisper deadlock prevention)
 
 Safe-restart policy:
   If a PROTECTED long-running task is detected via Scheduler API, Big Brother
@@ -35,6 +36,7 @@ Diagnostics API (consumed by NovaControl Diagnostics tab):
   GET  http://192.168.1.6:37461/bb/status        — daemon health + summary
   GET  http://192.168.1.6:37461/bb/events?n=100  — recent heal events
   GET  http://192.168.1.6:37461/bb/services      — per-service status
+  GET  http://192.168.1.6:37461/bb/gpu           — Metal GPU contention status
   POST http://192.168.1.6:37461/bb/force-check   — manual full check now
 
 Written by Jordan Koch.
@@ -197,6 +199,19 @@ _service_crash_loop_until: dict = {} # service_name -> timestamp when cooldown e
 # Discord 3-strike before restart — timeouts ≠ disconnect
 _discord_timeout_count: int = 0
 
+# ── Claude Queue Escalation Tracking ────────────────────────────────────────
+# Track persistent service downtime for escalation to claude_queue.
+# Maps service_name -> timestamp of first continuous downtime detection.
+_service_down_since: dict = {}            # service_name -> first_down_ts
+SERVICE_ESCALATION_THRESHOLD = 900        # 15 minutes of continuous downtime
+
+# PostgreSQL-specific downtime tracking (separate from service checks)
+_pg_down_since: float = 0.0              # 0 = currently up
+PG_ESCALATION_THRESHOLD = 300            # 5 minutes
+
+# GPU escalation — track if whisper kill already failed to resolve
+_gpu_escalated_this_cycle: bool = False
+
 # Internet outage tracking — suppress channel-disconnect storm when WAN is down
 _internet_down: bool = False
 _internet_down_since: float = 0.0
@@ -227,6 +242,51 @@ _journal_image_status: dict = {
     "skipped_swarmui_down": False,
     "last_error": None,
 }
+
+# ── GPU Contention Monitoring ────────────────────────────────────────────────
+# Metal GPU deadlocks occur when multiple GPU-heavy processes compete.
+# ollama runner + mlx_whisper + mlx_lm.server = Metal contention storm.
+# mlx_lm.server is always-on (the librarian) and excluded from kill targets.
+GPU_CONTENTION_THRESHOLD = 2         # N+ GPU procs in U/UN state = contention
+GPU_CONTENTION_DURATION = 60         # seconds in contention before acting
+GPU_KILL_COOLDOWN = 300              # 5 min between kills
+OLLAMA_LATENCY_TIMEOUT = 30          # seconds — if generate takes longer, GPU is hung
+
+_gpu_contention_first_seen: float = 0.0   # timestamp when contention first detected (0 = not in contention)
+_gpu_last_kill: float = 0.0               # timestamp of last whisper kill action
+_gpu_contention_status: dict = {
+    "contention_active": False,
+    "contention_since": None,
+    "procs_stuck": 0,
+    "last_kill_ts": None,
+    "kills_total": 0,
+    "ollama_latency_ms": None,
+    "ollama_hung": False,
+}
+
+# ── Scheduler Task Auto-Remediation ──────────────────────────────────────────
+# Tracks which tasks have already been auto-fixed this daemon lifetime to avoid loops.
+SCHEDULER_YAML = Path.home() / ".openclaw/config/scheduler.yaml"
+TIMEOUT_AUTOTUNE_MULTIPLIER = 1.5   # Multiply observed max duration by this
+TIMEOUT_AUTOTUNE_MIN_FAILURES = 3   # Require N consecutive timeout failures before tuning
+TIMEOUT_AUTOTUNE_COOLDOWN = 86400   # Don't re-tune same task within 24h
+IMAGE_BACKEND_RESTART_COOLDOWN = 600  # 10 min between image backend restarts
+CODE_BUG_ESCALATION_COOLDOWN = 3600   # Don't re-escalate same script within 1h
+
+_timeout_autotune_last: dict = {}       # task_id -> last_autotune_timestamp
+_image_backend_last_restart: float = 0.0
+_code_bug_escalation_last: dict = {}    # script_path -> last_escalation_timestamp
+
+# Error patterns that indicate code-level bugs (not infra issues)
+_CODE_BUG_PATTERNS = [
+    "NameError:",
+    "ImportError:",
+    "ModuleNotFoundError:",
+    "SyntaxError:",
+    "AttributeError:",
+    "TypeError: ",  # trailing space to avoid matching "TimeoutError"
+    "IndentationError:",
+]
 
 # ── Metrics ring buffer (MRTG-style, 7 days × 1-min buckets) ─────────────────
 METRICS_MAXLEN = 10080          # 7 × 24 × 60
@@ -357,6 +417,97 @@ def _maybe_notify(issue_key: str, message: str, is_critical: bool = False,
     _notify(message, is_critical=is_critical)
 
 
+# ── Redis notification to Claude Code ────────────────────────────────────────
+
+def _redis_notify_claude(event_type: str, content: str, priority: int = 3):
+    """Publish a notification to Redis nova:to_claude channel.
+
+    Fire-and-forget — never crashes Big Brother if Redis is unavailable.
+    Used for real-time notification when Claude Code has an active subscriber.
+    """
+    try:
+        import redis
+        r = redis.from_url(f"redis://{LAN_IP}:6379", decode_responses=True)
+        r.publish("nova:to_claude", json.dumps({
+            "type": event_type,
+            "source": "big-brother",
+            "content": content[:500],
+            "priority": priority,
+            "ts": time.time(),
+        }))
+    except Exception:
+        pass  # Fire-and-forget — Redis down is not a BB problem
+
+
+# ── Claude Queue Escalation ──────────────────────────────────────────────────
+
+def _escalate_to_claude(issue_description: str, priority: int = 3, service_name: str = ""):
+    """Triage and escalate an incident to claude_queue for Claude Code attention.
+
+    Called when Big Brother encounters issues it cannot auto-fix, or issues
+    that persist after repeated heal attempts. The next Claude Code session
+    will pick up the queued item and investigate.
+
+    Uses nova_incident_triage to gather context (log tails, scheduler history,
+    related service status, heal attempts) before writing to the queue.
+    Falls back to direct queue insert if triage module fails.
+
+    Also publishes to Redis nova:to_claude for real-time notification if
+    Claude Code happens to be active with a subscriber.
+    """
+    # Try the triage module first — provides rich context for Claude
+    try:
+        from nova_incident_triage import triage_incident
+        # Infer service name from description if not provided
+        svc = service_name
+        if not svc:
+            # Best-effort extraction from common BB description patterns
+            for known_svc in ("PostgreSQL", "Ollama", "Gateway v2", "Memory Server",
+                              "Scheduler", "Redis", "Signal-cli", "MLX Server",
+                              "SwarmUI", "ComfyUI", "TinyChat", "OpenWebUI",
+                              "NovaControl", "PgBouncer", "SearXNG", "Slack"):
+                if known_svc.lower() in issue_description.lower():
+                    svc = known_svc
+                    break
+            if not svc:
+                svc = "Unknown"
+        triage_incident(svc, issue_description, priority=priority)
+        log(f"[escalate] Triaged and queued for Claude Code: {issue_description[:100]}",
+            level=LOG_WARN, source="big-brother")
+    except Exception as e:
+        # Fallback: direct insert if triage module fails
+        log(f"[escalate] Triage failed ({e}), falling back to direct queue insert",
+            level=LOG_WARN, source="big-brother")
+        try:
+            import psycopg2
+            conn = psycopg2.connect("postgresql://kochj@127.0.0.1:5432/nova_ops")
+            cur = conn.cursor()
+            # Deduplication check
+            cur.execute(
+                "SELECT 1 FROM claude_queue WHERE description = %s AND status IN ('queued', 'in_progress')",
+                (issue_description,)
+            )
+            if cur.fetchone():
+                conn.close()
+                return  # already escalated
+            cur.execute(
+                "INSERT INTO claude_queue (session_id, status, description, priority, created_at) "
+                "VALUES ('claude-bridge-persistent', 'queued', %s, %s, now())",
+                (f"INCIDENT: Unknown — {issue_description}", priority)
+            )
+            conn.commit()
+            conn.close()
+            log(f"[escalate] Queued for Claude Code (fallback): {issue_description[:100]}",
+                level=LOG_WARN, source="big-brother")
+        except Exception as e2:
+            # Don't crash BB if PG is down — this is best-effort
+            log(f"[escalate] Failed to insert into claude_queue: {e2}",
+                level=LOG_WARN, source="big-brother")
+
+    # Publish to Redis for real-time notification (fire-and-forget)
+    _redis_notify_claude("escalation", issue_description, priority)
+
+
 # ── Protected Task Check ──────────────────────────────────────────────────────
 
 def _is_protected_task_running() -> bool:
@@ -403,10 +554,97 @@ def _flush_pending_restarts():
         _do_restart(svc)
 
 
+# ── Claude Code conflict avoidance ───────────────────────────────────────────
+
+# Map service names to their primary script files so we can check edit locks.
+SERVICE_SCRIPT_MAP = {
+    "Gateway v2":    str(SCRIPTS / "nova_gateway_v2.py"),
+    "Scheduler":     str(SCRIPTS / "nova_scheduler.py"),
+    "Memory Server": str(SCRIPTS / "nova_memory_server.py"),
+    "Big Brother":   str(SCRIPTS / "nova_big_brother.py"),
+    "MLX Server":    str(SCRIPTS / "nova_mlx_server.py"),
+}
+
+
+def _is_file_being_edited(script_path: str) -> bool:
+    """Check if Claude Code is currently editing this file via Redis lock."""
+    try:
+        import redis
+        r = redis.from_url("redis://localhost:6379", decode_responses=True)
+        return bool(r.exists(f"nova:editing:{script_path}"))
+    except Exception:
+        return False
+
+
+def _is_service_being_edited(service_name: str) -> bool:
+    """Check if the script associated with a service is being edited by Claude.
+
+    Also checks all nova:editing:* keys against the service's script path
+    as a fallback in case the exact mapping isn't defined.
+    """
+    # Direct mapping check
+    script_path = SERVICE_SCRIPT_MAP.get(service_name)
+    if script_path and _is_file_being_edited(script_path):
+        return True
+
+    # Broad check: see if ANY editing lock mentions this service's scripts
+    try:
+        import redis
+        r = redis.from_url("redis://localhost:6379", decode_responses=True)
+        editing_keys = r.keys("nova:editing:*")
+        if not editing_keys:
+            return False
+
+        # Check if any locked file is in the scripts directory and relates to this service
+        service_lower = service_name.lower().replace(" ", "_").replace("-", "_")
+        for key in editing_keys:
+            filepath = key.replace("nova:editing:", "", 1)
+            if service_lower in filepath.lower().replace("-", "_"):
+                return True
+    except Exception:
+        pass
+
+    return False
+
+
+def _notify_claude_editing_conflict(service_name: str):
+    """Notify Claude via Redis that Big Brother needs to restart a service
+    but is deferring because Claude is editing it."""
+    try:
+        import redis
+        r = redis.from_url("redis://localhost:6379", decode_responses=True)
+        r.publish("nova:to_claude", json.dumps({
+            "type": "restart_deferred",
+            "source": "big-brother",
+            "content": (
+                f"I need to restart {service_name} but you're editing the script. "
+                f"Let me know when you're done."
+            ),
+            "service": service_name,
+            "ts": time.time(),
+        }))
+    except Exception:
+        pass
+
+
 # ── Service Restart Logic ─────────────────────────────────────────────────────
 
 def _do_restart(service_name: str) -> bool:
-    """Restart a service. Returns True on success."""
+    """Restart a service. Returns True on success.
+
+    Checks for Claude Code edit locks before restarting — if the associated
+    script is being edited, defers the restart and notifies Claude.
+    """
+    # ── Conflict avoidance: check if Claude is editing this service's script
+    if _is_service_being_edited(service_name):
+        log(f"Deferring restart of {service_name} — Claude is editing the script",
+            level=LOG_WARN, source="big-brother")
+        _record_event("info", f"Restart deferred: {service_name}",
+                      "Claude Code is editing the script", service_name)
+        _notify_claude_editing_conflict(service_name)
+        _queue_restart(service_name)
+        return True  # Report as handled (deferred, not failed)
+
     entry = next((s for s in SERVICES if s[0] == service_name), None)
     if not entry:
         return False
@@ -550,6 +788,14 @@ def _check_crash_loop(service_name: str) -> bool:
             is_critical=True,
             cooldown=_CRASH_LOOP_COOLDOWN,
         )
+        # Escalate to Claude Code — BB cannot fix crash-loops
+        _escalate_to_claude(
+            f"{service_name} in crash-loop: restarted {_CRASH_LOOP_MAX}+ times in "
+            f"{_CRASH_LOOP_WINDOW//60} min with healthy dependencies. "
+            f"Check ~/.openclaw/logs/ for {service_name.lower().replace(' ', '-')} error logs. "
+            f"Likely a code bug or config issue, not an infra problem.",
+            priority=2
+        )
         return True  # in cooldown — do not restart this time
 
     return False  # not in crash-loop — proceed with restart
@@ -574,6 +820,16 @@ def _restart_gateway() -> bool:
     subprocess.run(["pkill", "-9", "-f", "^openclaw$"], capture_output=True)
     subprocess.run(["pkill", "-f", "signal-cli"], capture_output=True)
     time.sleep(3)
+
+    # Notify #nova-notifications about degraded mode BEFORE restarting
+    # This uses raw Slack HTTP (no gateway dependency)
+    _maybe_notify(
+        "gateway-degraded-mode",
+        "⚠️ Gateway restarting — Nova is in degraded mode for ~30 seconds. "
+        "Channels remain connected, messages will be answered without memory context.",
+        is_critical=False,
+        cooldown=300,  # Don't spam — 5 min cooldown matches gateway restart cooldown
+    )
 
     start_script = SCRIPTS / "nova_gateway_start.sh"
     gw_log = LOG_DIR / "gateway.log"
@@ -603,8 +859,221 @@ def _restart_gateway() -> bool:
             log("Gateway port up — waiting 30s for channels to settle",
                 level=LOG_INFO, source="big-brother")
             time.sleep(30)  # Let Slack/Discord/Signal connect before next channel check
+            # Notify Claude that gateway was restarted (may affect active work)
+            _redis_notify_claude(
+                "service_restart",
+                "Big Brother restarted Nova Gateway v2. "
+                "Slack/Discord/Signal/Claude channels reconnecting. "
+                "Session state in memory was reset.",
+                priority=2,
+            )
             return True
     return False
+
+
+# ── Scheduler Task Auto-Remediation Functions ────────────────────────────────
+
+def _autotune_task_timeout(task_id: str, current_timeout: int, issues: list, fixes: list,
+                           error_tail: str = "") -> bool:
+    """Bump a task's timeout in scheduler.yaml if it consistently times out.
+
+    Reads recent runs from the scheduler API, checks if the task is timing out
+    repeatedly, and increases the timeout to 1.5× the current value.
+    Returns True if a fix was applied.
+    """
+    global _timeout_autotune_last
+    now = time.time()
+
+    # Cooldown check
+    if task_id in _timeout_autotune_last:
+        if now - _timeout_autotune_last[task_id] < TIMEOUT_AUTOTUNE_COOLDOWN:
+            return False
+
+    try:
+        import yaml
+        cfg_text = SCHEDULER_YAML.read_text()
+        cfg = yaml.safe_load(cfg_text)
+        tasks_cfg = cfg.get("tasks", cfg)
+        task_cfg = tasks_cfg.get(task_id)
+        if not task_cfg:
+            return False
+
+        old_timeout = task_cfg.get("timeout", 600)
+
+        # Guard: if the error says "Timed out after Xs" but X < current config,
+        # the config was already bumped (perhaps manually). Don't bump again.
+        if error_tail:
+            import re as _re_local
+            m = _re_local.search(r"Timed out after (\d+)s", error_tail)
+            if m:
+                errored_timeout = int(m.group(1))
+                if errored_timeout < old_timeout:
+                    return False
+
+        new_timeout = int(old_timeout * TIMEOUT_AUTOTUNE_MULTIPLIER)
+        # Cap at 12 hours to prevent runaway growth
+        new_timeout = min(new_timeout, 43200)
+
+        if new_timeout <= old_timeout:
+            return False
+
+        # Rewrite the YAML line (preserve formatting by doing string replacement)
+        old_line = f"    timeout: {old_timeout}"
+        new_line = f"    timeout: {new_timeout}"
+        if old_line not in cfg_text:
+            return False
+
+        # Find the right occurrence (after the task_id line)
+        task_header = f"  {task_id}:"
+        header_pos = cfg_text.find(task_header)
+        if header_pos == -1:
+            return False
+        timeout_pos = cfg_text.find(old_line, header_pos)
+        if timeout_pos == -1:
+            return False
+        # Make sure we're still within this task block (next task starts with "  <word>:")
+        next_task_pos = cfg_text.find("\n  ", timeout_pos + len(old_line))
+        if next_task_pos == -1:
+            next_task_pos = len(cfg_text)
+
+        cfg_text = cfg_text[:timeout_pos] + new_line + cfg_text[timeout_pos + len(old_line):]
+        SCHEDULER_YAML.write_text(cfg_text)
+
+        _timeout_autotune_last[task_id] = now
+        fix_msg = f"Auto-tuned timeout for '{task_id}': {old_timeout}s → {new_timeout}s"
+        fixes.append(fix_msg)
+        _record_event("info", f"Task '{task_id}' timing out ({TIMEOUT_AUTOTUNE_MIN_FAILURES}+ consecutive)",
+                      fix_msg, "Scheduler")
+        log(f"[autotune] {fix_msg}", level=LOG_INFO, source="big-brother")
+        nova_config.post_both(f":wrench: *Big Brother auto-fix:* {fix_msg}\nScheduler restart needed to apply.")
+
+        # Trigger scheduler reload
+        _reload_scheduler()
+        return True
+
+    except Exception as e:
+        log(f"[autotune] Failed for {task_id}: {e}", level=LOG_WARN, source="big-brother")
+        return False
+
+
+def _restart_image_backend(task_id: str, issues: list, fixes: list) -> bool:
+    """Restart SwarmUI/ComfyUI when a gpu_heavy task fails and the backend is unresponsive.
+
+    Checks if the image generation backends are actually healthy before restarting.
+    Returns True if a restart was triggered.
+    """
+    global _image_backend_last_restart
+    now = time.time()
+
+    if now - _image_backend_last_restart < IMAGE_BACKEND_RESTART_COOLDOWN:
+        return False
+
+    # Check if ComfyUI (primary image gen) is responsive
+    comfyui_up = _port_open("127.0.0.1", 8188)
+    swarmui_up = _port_open("127.0.0.1", 7801)
+
+    if comfyui_up and swarmui_up:
+        # Both backends are up — the failure is likely a model issue, not infra
+        return False
+
+    restarted = []
+    uid = os.getuid()
+
+    if not comfyui_up:
+        try:
+            subprocess.run(
+                ["launchctl", "kickstart", "-k", f"gui/{uid}/com.jordankoch.comfyui"],
+                capture_output=True, timeout=15,
+            )
+            restarted.append("ComfyUI")
+        except Exception:
+            pass
+
+    if not swarmui_up:
+        try:
+            subprocess.run(
+                ["launchctl", "kickstart", "-k", f"gui/{uid}/com.jordankoch.swarmui"],
+                capture_output=True, timeout=15,
+            )
+            restarted.append("SwarmUI")
+        except Exception:
+            pass
+
+    if restarted:
+        _image_backend_last_restart = now
+        fix_msg = f"Restarted image backend ({', '.join(restarted)}) after '{task_id}' failure"
+        fixes.append(fix_msg)
+        _record_event("info", f"Image backend down when gpu_heavy task '{task_id}' failed",
+                      fix_msg, "SwarmUI")
+        log(f"[image-heal] {fix_msg}", level=LOG_INFO, source="big-brother")
+        nova_config.post_both(f":art: *Big Brother auto-fix:* {fix_msg}")
+        return True
+
+    return False
+
+
+def _escalate_code_bug(task_id: str, script: str, error_tail: str, issues: list) -> bool:
+    """Escalate code-level bugs (NameError, ImportError, etc.) to Claude Code queue.
+
+    Parses the traceback to extract the file path and error, then queues a
+    targeted fix request for Claude Code.
+    Returns True if escalation was sent.
+    """
+    global _code_bug_escalation_last
+    now = time.time()
+
+    script_key = script or task_id
+    if script_key in _code_bug_escalation_last:
+        if now - _code_bug_escalation_last[script_key] < CODE_BUG_ESCALATION_COOLDOWN:
+            return False
+
+    # Extract the actual error type and message from the tail
+    error_type = None
+    for pattern in _CODE_BUG_PATTERNS:
+        if pattern in error_tail:
+            error_type = pattern.rstrip(": ")
+            break
+
+    if not error_type:
+        return False
+
+    # Build a targeted fix request
+    script_path = str(Path.home() / f".openclaw/scripts/{script}") if script else "unknown"
+
+    description = (
+        f"CODE BUG in scheduler task '{task_id}' ({script}):\n"
+        f"Error: {error_type}\n"
+        f"Traceback tail:\n{error_tail[-500:]}\n\n"
+        f"Script path: {script_path}\n"
+        f"Fix the {error_type} in the script. Check imports, variable names, and function signatures."
+    )
+
+    _code_bug_escalation_last[script_key] = now
+    _escalate_to_claude(description, priority=2, service_name="Scheduler")
+    _record_event("warning", f"Code bug in '{task_id}': {error_type}",
+                  "Escalated to Claude Code queue for auto-fix", "Scheduler")
+    log(f"[code-bug] Escalated {error_type} in {script} to Claude Code",
+        level=LOG_WARN, source="big-brother")
+    nova_config.post_both(
+        f":bug: *Big Brother detected code bug:* `{error_type}` in `{script}`\n"
+        f"Escalated to Claude Code queue for auto-fix."
+    )
+    return True
+
+
+def _reload_scheduler():
+    """Restart the scheduler daemon to pick up config changes."""
+    try:
+        uid = os.getuid()
+        subprocess.run(
+            ["launchctl", "kickstart", "-k", f"gui/{uid}/com.nova.scheduler"],
+            capture_output=True, timeout=15,
+        )
+        log("[autotune] Scheduler restarted to apply config changes",
+            level=LOG_INFO, source="big-brother")
+    except Exception as e:
+        log(f"[autotune] Failed to restart scheduler: {e}",
+            level=LOG_WARN, source="big-brother")
 
 
 # ── Port / Health Checks ──────────────────────────────────────────────────────
@@ -1197,6 +1666,219 @@ def _check_journal_staleness(issues: list, fixes: list):
             fixes.append(f"Could not trigger {task_id} — scheduler unreachable")
 
 
+# ── GPU Contention Detection ─────────────────────────────────────────────────
+
+def _get_gpu_stuck_processes() -> list:
+    """Find GPU-heavy processes in uninterruptible sleep (state U/UN).
+
+    Returns list of dicts: {pid, user, state, command, age_s}
+    Excludes mlx_lm.server which is always-on and allowed.
+    """
+    GPU_PATTERNS = ['mlx_whisper', 'ollama runner']
+    stuck = []
+    try:
+        result = subprocess.run(['ps', 'aux'], capture_output=True, text=True, timeout=5)
+        for line in result.stdout.splitlines():
+            # Skip mlx_lm.server — it's the always-on librarian, not a contention source
+            if 'mlx_lm.server' in line or 'mlx_lm/server' in line:
+                continue
+            if not any(p in line for p in GPU_PATTERNS):
+                continue
+            parts = line.split()
+            if len(parts) < 8:
+                continue
+            state = parts[7]  # STAT column in ps aux
+            if 'U' in state:
+                stuck.append({
+                    'pid': int(parts[1]),
+                    'user': parts[0],
+                    'state': state,
+                    'command': ' '.join(parts[10:])[:120],
+                })
+    except Exception as e:
+        log(f"[gpu] ps aux failed: {e}", level=LOG_WARN, source="big-brother")
+    return stuck
+
+
+def _check_ollama_latency() -> float | None:
+    """Ping Ollama with a 1-token generate to measure GPU responsiveness.
+
+    Returns latency in milliseconds, or None if Ollama is unreachable.
+    If latency exceeds OLLAMA_LATENCY_TIMEOUT, the GPU is likely hung.
+    """
+    if not _port_open("127.0.0.1", 11434):
+        return None
+
+    payload = json.dumps({
+        "model": "qwen3:30b-a3b",
+        "prompt": "hi",
+        "stream": False,
+        "options": {"num_predict": 1},
+    }).encode()
+
+    try:
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        start = time.time()
+        resp = urllib.request.urlopen(req, timeout=OLLAMA_LATENCY_TIMEOUT + 5)
+        elapsed_ms = (time.time() - start) * 1000
+        resp.read()  # consume body
+        return elapsed_ms
+    except Exception as e:
+        # Timeout or connection error = GPU is hung or Ollama crashed
+        elapsed_ms = (time.time() - start) * 1000 if 'start' in dir() else None
+        log(f"[gpu] Ollama latency probe failed after {elapsed_ms:.0f}ms: {e}" if elapsed_ms
+            else f"[gpu] Ollama latency probe failed: {e}",
+            level=LOG_WARN, source="big-brother")
+        return float('inf')  # Treat timeout as infinite latency
+
+
+def _check_gpu_contention(issues: list, fixes: list):
+    """Detect Metal GPU contention and kill competing whisper processes.
+
+    Called every sweep from _full_sweep(). Logic:
+      1. Find GPU-heavy procs (not mlx_lm.server) in U/UN state
+      2. If 2+ stuck procs for >60s, that's contention
+      3. Kill newest mlx_whisper PIDs to free Metal for Ollama
+      4. Also check Ollama latency — >30s = hung GPU even without visible U procs
+    """
+    global _gpu_contention_first_seen, _gpu_last_kill, _gpu_contention_status
+
+    now = time.time()
+
+    # ── Check for stuck GPU processes ──
+    stuck_procs = _get_gpu_stuck_processes()
+    num_stuck = len(stuck_procs)
+
+    # ── Check Ollama inference latency (only if Ollama port is up) ──
+    ollama_latency = None
+    ollama_hung = False
+    if _port_open("127.0.0.1", 11434):
+        ollama_latency = _check_ollama_latency()
+        if ollama_latency is not None and ollama_latency > (OLLAMA_LATENCY_TIMEOUT * 1000):
+            ollama_hung = True
+            log(f"[gpu] Ollama latency {ollama_latency:.0f}ms (>{OLLAMA_LATENCY_TIMEOUT}s) — GPU likely hung",
+                level=LOG_WARN, source="big-brother")
+
+    # Update status for diagnostics API
+    _gpu_contention_status.update({
+        "contention_active": num_stuck >= GPU_CONTENTION_THRESHOLD or ollama_hung,
+        "procs_stuck": num_stuck,
+        "ollama_latency_ms": round(ollama_latency) if ollama_latency and ollama_latency != float('inf') else None,
+        "ollama_hung": ollama_hung,
+    })
+
+    # ── Determine if we're in a contention state ──
+    contention_detected = num_stuck >= GPU_CONTENTION_THRESHOLD or ollama_hung
+
+    if not contention_detected:
+        # Clear contention timer
+        if _gpu_contention_first_seen > 0:
+            log("[gpu] Contention cleared", level=LOG_INFO, source="big-brother")
+        _gpu_contention_first_seen = 0.0
+        _gpu_contention_status["contention_since"] = None
+        return
+
+    # Contention detected — start or continue timing
+    if _gpu_contention_first_seen == 0.0:
+        _gpu_contention_first_seen = now
+        _gpu_contention_status["contention_since"] = _now_iso()
+        log(f"[gpu] Contention detected: {num_stuck} stuck GPU procs, ollama_hung={ollama_hung}",
+            level=LOG_WARN, source="big-brother")
+        # Don't act yet — wait for duration threshold
+        return
+
+    contention_duration = now - _gpu_contention_first_seen
+    if contention_duration < GPU_CONTENTION_DURATION:
+        log(f"[gpu] Contention ongoing ({contention_duration:.0f}s / {GPU_CONTENTION_DURATION}s threshold)",
+            level=LOG_INFO, source="big-brother")
+        return
+
+    # ── Contention has exceeded duration threshold — take action ──
+
+    # Check kill cooldown
+    if now - _gpu_last_kill < GPU_KILL_COOLDOWN:
+        remaining = int(GPU_KILL_COOLDOWN - (now - _gpu_last_kill))
+        log(f"[gpu] Contention active but kill on cooldown ({remaining}s remaining)",
+            level=LOG_INFO, source="big-brother")
+        issues.append(f"GPU contention active ({num_stuck} stuck procs) — kill cooldown {remaining}s")
+        return
+
+    # Find whisper processes to kill (they should yield to Ollama)
+    whisper_pids = []
+    try:
+        result = subprocess.run(['pgrep', '-f', 'mlx_whisper'], capture_output=True, text=True, timeout=5)
+        whisper_pids = [int(p) for p in result.stdout.strip().split() if p]
+    except Exception:
+        pass
+
+    if not whisper_pids and ollama_hung:
+        # No whisper to kill but Ollama is hung — something else is wrong
+        issues.append("GPU hung (Ollama latency timeout) but no whisper processes to kill")
+        _record_event("warning", "GPU hung — Ollama latency timeout",
+                      "No mlx_whisper found to kill — may need manual investigation",
+                      "GPU")
+        _maybe_notify(
+            "gpu_hung_no_whisper",
+            ":warning: *GPU hung* — Ollama inference timed out but no whisper processes found.\n"
+            "Metal may be deadlocked. Check `ps aux | grep -i metal` and consider restarting Ollama.",
+            is_critical=True,
+            cooldown=GPU_KILL_COOLDOWN,
+        )
+        # Escalate to Claude Code — BB's only remedy (kill whisper) is not applicable
+        _escalate_to_claude(
+            "Ollama GPU hung for 15+ min, whisper kill didn't help (no whisper processes found). "
+            "Needs manual Metal reset or llama.cpp failover investigation. "
+            "Check `ps aux | grep -i metal` and Ollama logs at ~/.openclaw/logs/.",
+            priority=2
+        )
+        _gpu_last_kill = now  # Use kill cooldown to prevent spam
+        return
+
+    if whisper_pids:
+        # Kill whisper processes (newest first — sort by PID descending as proxy for newest)
+        whisper_pids.sort(reverse=True)
+        killed = 0
+        for pid in whisper_pids:
+            try:
+                os.kill(pid, signal.SIGKILL)
+                killed += 1
+                log(f"[gpu] Killed mlx_whisper PID {pid}", level=LOG_WARN, source="big-brother")
+            except ProcessLookupError:
+                pass  # Already gone
+            except Exception as e:
+                log(f"[gpu] Failed to kill PID {pid}: {e}", level=LOG_ERROR, source="big-brother")
+
+        if killed > 0:
+            _gpu_last_kill = now
+            _gpu_contention_first_seen = 0.0  # Reset contention timer
+            _gpu_contention_status["last_kill_ts"] = _now_iso()
+            _gpu_contention_status["kills_total"] = _gpu_contention_status.get("kills_total", 0) + killed
+
+            fix_msg = f"Killed {killed} mlx_whisper process{'es' if killed > 1 else ''} to free Metal GPU"
+            fixes.append(fix_msg)
+            _record_event("warning",
+                          f"GPU contention: {num_stuck} stuck procs, ollama_hung={ollama_hung}",
+                          fix_msg, "GPU")
+            _maybe_notify(
+                "gpu_contention_kill",
+                f":warning: *GPU contention detected* — killed {killed} whisper "
+                f"process{'es' if killed > 1 else ''} to free Metal for Ollama.\n"
+                f"Stuck procs: {num_stuck} | Ollama hung: {ollama_hung} | "
+                f"Contention lasted {contention_duration:.0f}s",
+                is_critical=False,
+                cooldown=GPU_KILL_COOLDOWN,
+            )
+    else:
+        # Stuck procs but no whisper — unusual
+        issues.append(f"GPU contention ({num_stuck} stuck procs) but no whisper to kill")
+        log(f"[gpu] Contention with {num_stuck} stuck procs but no mlx_whisper PIDs found",
+            level=LOG_WARN, source="big-brother")
+
+
 # ── Full Health Sweep ─────────────────────────────────────────────────────────
 
 def _is_maintenance_mode() -> bool:
@@ -1410,6 +2092,9 @@ def _record_metrics(issues: list, fixes: list, sweep_start: float):
         "disk_data_gb":       0.0,
         "disk_more_gb":       0.0,
         "ollama_warm":        0,
+        "gpu_stuck_procs":    _gpu_contention_status.get("procs_stuck", 0),
+        "gpu_contention":     1 if _gpu_contention_status.get("contention_active") else 0,
+        "ollama_latency_ms":  _gpu_contention_status.get("ollama_latency_ms"),
         "journal_fixed":      _journal_image_status.get("fixed", 0),
     }
 
@@ -1583,6 +2268,17 @@ def _full_sweep():
                 _record_event("warning", f"{name} DOWN", "Queued restart", name)
                 continue
 
+            # Claude Code conflict avoidance — defer if script is being edited
+            if _is_service_being_edited(name):
+                log(f"[sweep] {name} DOWN but Claude is editing — deferring restart",
+                    level=LOG_WARN, source="big-brother")
+                _notify_claude_editing_conflict(name)
+                _queue_restart(name)
+                fixes.append(f"Deferred restart of {name} (Claude editing script)")
+                _record_event("info", f"Restart deferred: {name}",
+                              "Claude Code is editing the script", name)
+                continue
+
             def _kickstart(lbl: str, timeout: int = 15) -> bool:
                 try:
                     r = subprocess.run(
@@ -1675,6 +2371,58 @@ def _full_sweep():
                 issue_key = f"{name}_down"
                 if issue_key in _alerted_issues:
                     _alerted_issues.discard(issue_key)
+
+    # ── Notify Claude about critical service restarts ────────────────────────
+    # If we restarted any services that Claude might be depending on, publish
+    # a Redis notification so an active Claude session knows immediately.
+    if fixes:
+        _redis_notify_claude(
+            "service_restart",
+            f"Big Brother performed service actions: {'; '.join(fixes)}. "
+            f"Some services may have been temporarily unavailable.",
+            priority=2,
+        )
+
+    # ── Persistent service downtime escalation to Claude Queue ───────────────
+    # Track services that remain down across sweeps. If a service stays down
+    # for >15 minutes despite BB's heal attempts, escalate to claude_queue.
+    global _pg_down_since
+    now_ts = time.time()
+    for name, host, port, label, critical, health_path in SERVICES:
+        svc_up = _service_status.get(name, {}).get("up", True)
+        if not svc_up:
+            if name not in _service_down_since:
+                _service_down_since[name] = now_ts
+            elif now_ts - _service_down_since[name] > SERVICE_ESCALATION_THRESHOLD:
+                down_min = int((now_ts - _service_down_since[name]) / 60)
+                _escalate_to_claude(
+                    f"{name} has been down for {down_min}+ minutes after Big Brother's "
+                    f"auto-heal attempts. Port {port} on {host} not responding. "
+                    f"Check launchd label '{label or 'N/A'}' and service logs.",
+                    priority=1 if critical else 3
+                )
+                # Reset timer so we don't re-escalate every sweep (dedup handles it anyway)
+                _service_down_since[name] = now_ts
+        else:
+            # Service recovered — clear downtime tracking
+            _service_down_since.pop(name, None)
+
+    # ── PostgreSQL-specific escalation (>5 min unreachable) ──────────────────
+    pg_up = _port_open("127.0.0.1", 5432)
+    if not pg_up:
+        if _pg_down_since == 0.0:
+            _pg_down_since = now_ts
+        elif now_ts - _pg_down_since > PG_ESCALATION_THRESHOLD:
+            down_min = int((now_ts - _pg_down_since) / 60)
+            _escalate_to_claude(
+                f"PostgreSQL unreachable for {down_min}+ minutes. Port 5432 not responding. "
+                f"Nova memory system, session logging, and all DB-dependent services are impacted. "
+                f"Check pg_ctl status, postmaster.pid, and /Volumes/MoreData/postgresql@17 volume mount.",
+                priority=1
+            )
+            _pg_down_since = now_ts  # Reset so dedup handles repeat prevention
+    else:
+        _pg_down_since = 0.0
 
     # ── Internet outage detection (runs before channel checks) ──────────────
     _handle_internet_state(issues, fixes)
@@ -1905,18 +2653,27 @@ def _full_sweep():
                     level=LOG_INFO, source="big-brother")
                 continue
             if can_restart:
-                try:
-                    subprocess.run(
-                        ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"],
-                        capture_output=True, timeout=15,
-                    )
-                    fixes.append(f"Kickstarted {name} ({label})")
-                    _record_event("warning", f"{name} crashed (exit {exit_code})",
-                                  f"Auto-kickstarted via launchctl", name)
-                except subprocess.TimeoutExpired:
-                    issues.append(f"{name} crashed (exit {exit_code}) — kickstart timed out")
-                    _record_event("critical", f"{name} crashed, kickstart timed out",
-                                  "Restart manually", name)
+                # Claude Code conflict avoidance
+                if _is_service_being_edited(name):
+                    log(f"[sweep] {name} crashed but Claude is editing — deferring restart",
+                        level=LOG_WARN, source="big-brother")
+                    _notify_claude_editing_conflict(name)
+                    fixes.append(f"Deferred restart of {name} (Claude editing script)")
+                    _record_event("info", f"Restart deferred: {name}",
+                                  "Claude Code is editing the script", name)
+                else:
+                    try:
+                        subprocess.run(
+                            ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"],
+                            capture_output=True, timeout=15,
+                        )
+                        fixes.append(f"Kickstarted {name} ({label})")
+                        _record_event("warning", f"{name} crashed (exit {exit_code})",
+                                      f"Auto-kickstarted via launchctl", name)
+                    except subprocess.TimeoutExpired:
+                        issues.append(f"{name} crashed (exit {exit_code}) — kickstart timed out")
+                        _record_event("critical", f"{name} crashed, kickstart timed out",
+                                      "Restart manually", name)
             else:
                 issues.append(f"{name} not running (exit {exit_code}) — needs manual fix")
                 _record_event("warning", f"{name} crashed (exit {exit_code})",
@@ -1954,18 +2711,60 @@ def _full_sweep():
     except Exception:
         pass
 
-    # ── Scheduler per-task failure visibility ────────────────────────────────
+    # ── GPU contention detection (Metal deadlock prevention) ─────────────────
+    _check_gpu_contention(issues, fixes)
+
+    # ── Scheduler per-task failure detection + auto-remediation ──────────────
     try:
         resp = urllib.request.urlopen(f"http://{LAN_IP}:37460/tasks", timeout=5)
         tasks = json.loads(resp.read())
-        if isinstance(tasks, list):
-            for t in tasks:
-                name = t.get("name", "?")
-                fails = t.get("consecutive_failures", 0)
-                if fails >= 3:
-                    issues.append(f"Scheduler task '{name}' failing: {fails} consecutive failures")
-                    _record_event("warning", f"Scheduler task '{name}' {fails} consecutive failures",
-                                  "Check scheduler.log for error details", "Scheduler")
+        task_items = tasks.items() if isinstance(tasks, dict) else [(t.get("name", "?"), t) for t in tasks]
+        for task_id, t in task_items:
+            fails = t.get("consecutive_failures", 0)
+            if fails < TIMEOUT_AUTOTUNE_MIN_FAILURES:
+                continue
+
+            script = t.get("script", "")
+            is_gpu_heavy = t.get("gpu_heavy", False)
+            issues.append(f"Scheduler task '{task_id}' failing: {fails} consecutive failures")
+
+            # Fetch the most recent failed run's error_tail for diagnosis
+            error_tail = ""
+            try:
+                rresp = urllib.request.urlopen(
+                    f"http://{LAN_IP}:37460/runs/{task_id}", timeout=5)
+                runs = json.loads(rresp.read())
+                for run in (runs if isinstance(runs, list) else []):
+                    if run.get("exit_code") != 0 and run.get("error_tail"):
+                        error_tail = run["error_tail"]
+                        break
+            except Exception:
+                pass
+
+            # ── Remediation 1: Timeout auto-tuning ─────────────────────────
+            if "Timed out after" in error_tail:
+                if _autotune_task_timeout(task_id, 0, issues, fixes, error_tail):
+                    continue  # Fixed — skip further remediation for this task
+
+            # ── Remediation 2: Image backend restart for gpu_heavy tasks ───
+            if is_gpu_heavy and error_tail:
+                if _restart_image_backend(task_id, issues, fixes):
+                    continue
+
+            # ── Remediation 3: Code bug escalation to Claude Code ──────────
+            if error_tail and any(p in error_tail for p in _CODE_BUG_PATTERNS):
+                if _escalate_code_bug(task_id, script, error_tail, issues):
+                    continue
+
+            # ── Fallback: alert only (no auto-fix available) ───────────────
+            _record_event("warning", f"Scheduler task '{task_id}' {fails} consecutive failures",
+                          "Check scheduler.log for error details", "Scheduler")
+            _redis_notify_claude(
+                "scheduler_failure",
+                f"Scheduler task '{task_id}' has {fails} consecutive failures. "
+                f"Error: {error_tail[:200] if error_tail else 'no error tail'}",
+                priority=2,
+            )
     except Exception:
         pass
 
@@ -2006,6 +2805,14 @@ def _full_sweep():
             _record_event("warning", f"Memory dead-letter queue: {dead} items",
                           "Run: nova_dead_letter_replay.py  Check Ollama embed model", "Memory Server")
             _dead_letter_last_alerted = now
+            # Escalate to Claude Code if dead-lettering is heavy (>10 items in this sweep)
+            _escalate_to_claude(
+                f"Memory server dead-lettering heavily ({dead} items this sweep). "
+                f"Check PG connection and memory_server.log. May need embedding model "
+                f"reload or nova_dead_letter_replay.py run. "
+                f"Logs: ~/.openclaw/logs/memory-server-error.log",
+                priority=3
+            )
         _dead_letter_last_count = dead
     except Exception:
         pass
@@ -2028,6 +2835,24 @@ def _full_sweep():
     for dw in disk_warnings:
         issues.append(f"Low disk: {dw}")
         _record_event("warning", f"Low disk space: {dw}", "No auto-fix — manual cleanup needed", "System")
+
+    # Escalate disk space <5GB to Claude Queue (BB can't auto-clean)
+    _DISK_ESCALATE_GB = 5.0
+    for path, label in [("/Volumes/Data", "Data volume"), ("/Volumes/MoreData", "MoreData volume"),
+                        (str(Path.home()), "Main SSD")]:
+        try:
+            stat = os.statvfs(path)
+            free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+            if free_gb < _DISK_ESCALATE_GB:
+                _escalate_to_claude(
+                    f"Disk space critical: {label} ({path}) has only {free_gb:.1f}GB free. "
+                    f"Services will start crashing from disk pressure. "
+                    f"Need manual cleanup — check Docker images, Xcode DerivedData, "
+                    f"old model files, log rotation.",
+                    priority=1
+                )
+        except Exception:
+            pass
 
     # ── Critical disk: auto-engage maintenance mode to stop restart cascade ──
     # When main SSD drops below 5GB, service crashes are caused by disk pressure,
@@ -2456,6 +3281,7 @@ class BBHandler(BaseHTTPRequestHandler):
                 },
                 "ollama_models": ollama_models,
                 "ollama_warm": ollama_warm,
+                "gpu": _gpu_contention_status,
                 "redis_mem": redis_mem,
                 "volumes": volume_status,
                 "external": external_status,
@@ -2475,6 +3301,14 @@ class BBHandler(BaseHTTPRequestHandler):
                 "check_interval_s": JOURNAL_IMAGE_CHECK_INTERVAL,
                 "next_run_in_s": next_run_in,
                 "swarmui_up": _port_open("127.0.0.1", 7801),
+            })
+        elif self.path == "/bb/gpu":
+            # GPU contention status — quick check for Metal deadlock state
+            stuck_procs = _get_gpu_stuck_processes()
+            self._json({
+                **_gpu_contention_status,
+                "stuck_procs": stuck_procs,
+                "kill_cooldown_remaining_s": max(0, int(GPU_KILL_COOLDOWN - (time.time() - _gpu_last_kill))),
             })
         elif self.path == "/bb/maintenance":
             # List all active maintenance flags (global + per-service)

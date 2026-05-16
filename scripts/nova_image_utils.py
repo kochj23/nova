@@ -115,13 +115,14 @@ MODELS = {
         "optimal_steps": 6,
         "max_steps": 12,
     },
-    # FP8 — broken on MPS. Pending: flux1-schnell.safetensors (BF16)
+    # FLUX models need T5 encoder workflow — generate_image.sh doesn't support them yet
     "flux_schnell": {
         "file": "flux1-schnell.safetensors",
         "name": "FLUX.1 schnell (BF16 — MPS compatible)",
         "best_for": "quality, prompt adherence, fast",
         "optimal_steps": 4,
         "max_steps": 8,
+        "requires_t5": True,
     },
     "flux_dev": {
         "file": "flux1-dev.safetensors",
@@ -129,6 +130,7 @@ MODELS = {
         "best_for": "top quality, best prompt adherence",
         "optimal_steps": 20,
         "max_steps": 50,
+        "requires_t5": True,
     },
     "longcat": {
         "file": "LongCat-Image.safetensors",

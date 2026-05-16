@@ -28,11 +28,11 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
-from nova_image_utils import ensure_backend
+from nova_image_utils import generate_image
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-MEMORY_SERVER = "http://127.0.0.1:18790"
+MEMORY_SERVER = "http://192.168.1.6:18790"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-haiku-4.5"
 GENERATE_IMAGE_SH = Path.home() / ".openclaw/scripts/generate_image.sh"
@@ -277,53 +277,26 @@ def generate_title(concept: str, style: dict) -> str:
 # ── Image Generation ──────────────────────────────────────────────────────────
 
 def generate_candidates(prompt: str) -> list[Path]:
-    """Generate NUM_CANDIDATES images and return their paths."""
-    from nova_image_utils import get_model_for_today, MODELS, _model_available_via_api
-    model_key = get_model_for_today()
-    model_info = MODELS.get(model_key, MODELS["flux_dev"])
-    model_file = model_info["file"]
-    # Fall back to juggernaut if the scheduled model isn't installed
-    if not _model_available_via_api(model_file):
-        log(f"Model {model_file} not found in SwarmUI, falling back to juggernaut")
-        model_info = MODELS["juggernaut"]
-        model_file = model_info["file"]
-    # Use the model's optimal steps or our configured steps, whichever is higher
-    actual_steps = max(IMAGE_STEPS, model_info.get("optimal_steps", 20))
-    log(f"Model: {model_info['name']} ({model_file}), {actual_steps} steps")
-
+    """Generate NUM_CANDIDATES images via OpenRouter (primary) with local fallback."""
     candidates = []
 
     for i in range(NUM_CANDIDATES):
         log(f"Generating candidate {i + 1}/{NUM_CANDIDATES}...")
         try:
-            result = subprocess.run(
-                [str(GENERATE_IMAGE_SH), prompt, str(IMAGE_WIDTH), str(IMAGE_HEIGHT), str(actual_steps), model_file],
-                capture_output=True, text=True, timeout=360,
+            result_path = generate_image(
+                prompt, width=IMAGE_WIDTH, height=IMAGE_HEIGHT,
+                steps=IMAGE_STEPS, section="art",
             )
-            if result.returncode == 0 and result.stdout.strip():
-                # Parse workspace copy path
-                image_path = None
-                for line in result.stdout.strip().split("\n"):
-                    if line.startswith("Workspace copy: "):
-                        image_path = line.replace("Workspace copy: ", "").strip()
-                        break
-                if image_path and Path(image_path).exists():
-                    candidates.append(Path(image_path))
-                    log(f"  Candidate {i + 1}: {Path(image_path).name} ({Path(image_path).stat().st_size} bytes)")
-                else:
-                    log(f"  Candidate {i + 1}: file not found")
+            if result_path and Path(result_path).exists():
+                candidates.append(Path(result_path))
+                log(f"  Candidate {i + 1}: {Path(result_path).name} ({Path(result_path).stat().st_size} bytes)")
             else:
-                log(f"  Candidate {i + 1}: generation failed (exit {result.returncode})")
-                if result.stderr:
-                    log(f"    stderr: {result.stderr[:200]}")
-        except subprocess.TimeoutExpired:
-            log(f"  Candidate {i + 1}: timed out")
+                log(f"  Candidate {i + 1}: generation returned no file")
         except Exception as e:
             log(f"  Candidate {i + 1}: error — {e}")
 
-        # Small pause between generations
         if i < NUM_CANDIDATES - 1:
-            time.sleep(5)
+            time.sleep(3)
 
     return candidates
 
@@ -467,15 +440,6 @@ def run_pipeline(retry_simplified: bool = False):
 
     log(f"Starting Art Corner — {style['name']} ({today.strftime('%A')})")
 
-    # Check SwarmUI backend
-    if not ensure_backend():
-        log("ERROR: SwarmUI not available — aborting")
-        nova_config.post_both(
-            ":warning: *Art Corner failed* — SwarmUI not reachable. Backend may need restart.",
-            slack_channel=nova_config.SLACK_NOTIFY
-        )
-        return False
-
     # Fetch memories
     log("Fetching memories...")
     random_memories = fetch_random_memories(10)
@@ -527,7 +491,7 @@ def run_pipeline(retry_simplified: bool = False):
         else:
             log("ERROR: All candidates failed even with simplified prompt — aborting")
             nova_config.post_both(
-                ":warning: *Art Corner failed* — image generation failed after retry. SwarmUI may need attention.",
+                ":warning: *Art Corner failed* — image generation failed after retry.",
                 slack_channel=nova_config.SLACK_NOTIFY
             )
             return False

@@ -56,7 +56,7 @@ def log(msg):
 
 
 def slack_post(text: str):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_BB)
 
 
 def fetch_recent_slack_messages(hours: int = 20) -> list[dict]:
@@ -94,7 +94,7 @@ def audit_slack_deliveries() -> list[dict]:
     # Map deliveries to scheduler task IDs
     DELIVERY_TASK_MAP = {
         "Morning Brief": "morning_brief",
-        "Mail Summary": "mail_deliver_am",
+        "Mail Summary": "mail_deliver_midday",
         "Nightly Report": "nightly_report",
     }
 

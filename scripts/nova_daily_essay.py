@@ -498,7 +498,7 @@ _SCRUB_PATTERNS = _build_scrub_patterns()
 def _scrub_personal(text: str) -> str:
     """Remove personal identifiers from memory snippets before publishing."""
     for pat in _SCRUB_PATTERNS:
-        text = re.sub(pat, "[redacted]", text, flags=re.IGNORECASE)
+        text = _re.sub(pat, "[redacted]", text, flags=_re.IGNORECASE)
     return text
 
 

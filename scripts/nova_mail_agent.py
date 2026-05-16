@@ -45,7 +45,7 @@ WORKSPACE    = Path.home() / ".openclaw/workspace"
 OLLAMA_URL   = "http://127.0.0.1:11434/api/generate"
 MODEL        = "deepseek-r1:8b"  # 5GB, fast — doesn't starve Whisper like qwen3-coder:30b did
 USE_TINYCHAT = False
-VECTOR_URL   = "http://127.0.0.1:18790/remember"
+VECTOR_URL   = "http://192.168.1.6:18790/remember"
 TODAY        = date.today().isoformat()
 
 NOVA_EMAIL   = "nova@digitalnoise.net"
@@ -139,7 +139,8 @@ def imap_fetch_message(conn: imaplib.IMAP4_SSL, uid: bytes) -> dict:
     # Decode encoded subject
     decoded_parts = email.header.decode_header(subject)
     subject = "".join(
-        part.decode(enc or "utf-8") if isinstance(part, bytes) else part
+        part.decode(enc if enc and enc != "unknown-8bit" else "utf-8", errors="replace")
+        if isinstance(part, bytes) else part
         for part, enc in decoded_parts
     )
 
