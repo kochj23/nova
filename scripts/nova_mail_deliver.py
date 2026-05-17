@@ -18,7 +18,7 @@ from pathlib import Path
 import nova_config
 
 
-VECTOR_MEM_URL = "http://127.0.0.1:18790/remember"
+VECTOR_MEM_URL = "http://192.168.1.6:18790/remember"
 
 
 def vector_remember(text: str, metadata: dict = None):
@@ -47,7 +47,8 @@ NOISE_PATTERNS = [
     "wayfair", "hulu", "ihg", "turbotax", "magazines.com", "usps informed delivery",
     "boy smells", "printables", "hims", "sendafriend", "happy gardening",
     "overlord caps", "morimoto", "bob's watches", "wells fargo advisors",
-    "skillshare", "capital grille", "teepublic", "amazon", "citibank"
+    "skillshare", "capital grille", "teepublic", "amazon", "citibank",
+    "nova@digitalnoise.net", "nova morning mail summary", "nova mail summary",
 ]
 
 # Senders that are always important (herd names loaded from config)
@@ -76,10 +77,10 @@ def slack_post(text):
 
 
 def send_email(subject, body):
-    """DISABLED — sending mail summaries to Jordan's own addresses caused duplicates
-    in the next mail scan (Nova Morning Mail Summary appearing as new mail).
-    Mail summaries are now Slack-only. Kept as no-op for call-site compatibility."""
-    log("Email delivery disabled (Slack-only). Skipping.")
+    """Send mail summary to Jordan via nova_send_mail."""
+    from nova_send_mail import send_mail
+    log(f"Sending email: {subject}")
+    send_mail(nova_config.JORDAN_WORK_EMAIL, subject, body)
 
 
 def is_noise(sender, subject):

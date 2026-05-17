@@ -155,16 +155,18 @@ tasks:
     timeout: 10800
     overlap: queue
 
-  art_corner:
-    script: nova_art_corner.py
+  journal_art:
+    script: nova_journal.py
+    args: ["art"]
     schedule: cron 0 4 * * *
     timeout: 1800
     overlap: skip
     group: llm
     gpu_heavy: true
 
-  dream_pipeline:
-    script: dream_generate.py
+  journal_dream:
+    script: nova_journal.py
+    args: ["dream"]
     schedule: cron 0 6 * * *
     timeout: 900
     overlap: skip
@@ -244,8 +246,9 @@ tasks:
 
   # ── Daily: daytime (enrichment, reflection) ────────────────────────────
 
-  daily_opinion:
-    script: nova_daily_opinion.py
+  journal_opinion:
+    script: nova_journal.py
+    args: ["opinion"]
     schedule: cron 0 12 * * *
     timeout: 600
     overlap: skip
@@ -277,10 +280,11 @@ tasks:
 
   # ── Daily: evening (wrap-up) ───────────────────────────────────────────
 
-  daily_essay:
-    script: nova_daily_essay.py
+  journal_essay:
+    script: nova_journal.py
+    args: ["essay"]
     schedule: cron 0 9 * * *
-    timeout: 1350
+    timeout: 900
     overlap: skip
     group: llm
 
@@ -297,24 +301,35 @@ tasks:
     overlap: skip
     group: llm
 
-  after_dark:
-    script: nova_after_dark.py
+  journal_after_dark:
+    script: nova_journal.py
+    args: ["after-dark"]
     schedule: cron 0 20 * * *
     timeout: 900
     overlap: skip
     group: llm
 
-  daily_journal:
-    script: nova_daily_journal.py
+  journal_digest:
+    script: nova_journal.py
+    args: ["digest"]
     schedule: cron 15 21 * * *
     timeout: 600
     overlap: skip
     group: llm
 
+  journal_pilot:
+    script: nova_journal.py
+    args: ["pilot"]
+    schedule: cron 30 20 * * *
+    timeout: 900
+    overlap: skip
+    group: llm
+
   # ── Weekly: Sunday evening ─────────────────────────────────────────────
 
-  research_paper:
-    script: nova_research_paper.py
+  journal_research:
+    script: nova_journal.py
+    args: ["research"]
     schedule: cron 50 23 * * *
     timeout: 1800
     overlap: skip
@@ -359,8 +374,9 @@ tasks:
 
   # ── Daily: night (tech today, digests, reports) ─────────────────────────
 
-  tech_today:
-    script: nova_tech_today.py
+  journal_tech_today:
+    script: nova_journal.py
+    args: ["tech-today"]
     schedule: cron 30 23 * * *
     timeout: 900
     overlap: skip
@@ -470,6 +486,7 @@ tasks:
     timeout: 600
     overlap: skip
     group: llm
+    enabled: false  # Replaced by journal_digest (nova_journal.py digest)
 
   journal_stats_poller:
     script: nova_journal_stats_poller.py
@@ -502,8 +519,9 @@ tasks:
     timeout: 120
     overlap: skip
 
-  weekly_synthesis:
-    script: nova_weekly_synthesis.py
+  journal_synthesis:
+    script: nova_journal.py
+    args: ["synthesis"]
     schedule: cron 0 19 * * 0
     timeout: 600
     overlap: skip

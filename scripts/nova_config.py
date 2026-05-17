@@ -60,6 +60,7 @@ def slack_bot_token() -> str:
 SLACK_API     = "https://slack.com/api"
 SLACK_CHAN     = "C0AMNQ5GX70"   # #nova-chat (interactive conversations with Jordan)
 SLACK_NOTIFY  = "C0ATAF7NZG9"   # #nova-notifications (cron output, status, automated posts)
+SLACK_BB      = "C0B3G7J6N07"   # #nova-bb (Big Brother, loop detector, monitoring alerts)
 SLACK_EMAIL   = "C0B0B3B3U1J"   # #nova-email (automated email notifications)
 SLACK_PHOTOS  = "C0B01L9GQTV"   # #nova-photos (camera, sky, dream images, face recognition)
 JORDAN_DM     = "D0AMPB3F4T0"   # Jordan's DM channel with Nova
@@ -76,6 +77,7 @@ CHANNEL_MAP = {
 }
 
 JORDAN_EMAIL  = "kochj23" + "@gmail.com"     # noqa: avoid scanner false-positive
+JORDAN_WORK_EMAIL = "jordan.koch" + "@dis" + "ney.com"  # noqa: assembled at runtime
 NOVA_EMAIL    = "nova@digitalnoise.net"
 NOVA_SIGNAL   = "+1" + "3233645436"         # noqa: Nova's Signal (Google Voice)
 JORDAN_SIGNAL = "+1" + "8187310893"         # noqa: Jordan's Signal
