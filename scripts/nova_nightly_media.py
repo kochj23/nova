@@ -92,7 +92,7 @@ WORK_DIR        = Path("/Volumes/Data/nova-nightly-media")
 LOG_FILE        = Path.home() / ".openclaw/logs/nova_nightly_media.log"
 SLACK_NOTIFY    = nova_config.SLACK_NOTIFY
 SLACK_CHAT      = nova_config.SLACK_CHAN
-RECALL_URL      = "http://127.0.0.1:18790/recall"
+RECALL_URL      = "http://192.168.1.6:18790/recall"
 
 CHUNK_WORDS         = 400
 MIN_CHUNK_WORDS     = 10
@@ -518,7 +518,8 @@ def classify_source(show_name: str, title: str, snippet: str) -> str:
                                 "best of the worst", "re:view"]):
         return "film_criticism"
     if any(w in show for w in ["vin_tra", "vin tra", "rob dahm", "jason cammisa",
-                                "jay leno", "jasoncommisa"]):
+                                "jay leno", "jasoncommisa", "wheeler dealer",
+                                "thesmokingtire", "smoking tire", "smokingtire"]):
         return "automotive"
     if any(w in show for w in ["forgotten weapon", "forbidden weapon"]):
         return "military_history"
