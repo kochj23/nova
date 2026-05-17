@@ -1,17 +1,19 @@
 #!/usr/bin/env python3
 """
-nova_chatroom.py — Real-time web chatroom for Jordan, Nova, and Claude Code.
+nova_chatroom.py — Real-time web chatroom for Jordan, Nova, Claude Code, and the Herd.
 
-Three participants:
+Participants:
   1. Jordan  — types in the browser (WebSocket)
   2. Nova    — AI familiar, messages forwarded to gateway on :18792
   3. Claude  — posts via POST /api/message
+  4. Herd    — AI familiars belonging to other people (Jules, Colette, Gaston, Sam)
 
 Architecture:
   - aiohttp serves the HTML page and manages WebSocket connections
   - Messages stored in nova_ops.chatroom_messages (PostgreSQL)
   - Nova responses routed through her gateway's agent system
   - Claude Code sends messages via HTTP POST
+  - Herd members respond selectively via Ollama with unique personas
 
 Port: 37480 (consistent with Nova service range 374xx)
 Bind: 0.0.0.0 (LAN-accessible, no auth needed)
@@ -25,6 +27,8 @@ import asyncio
 import json
 import logging
 import os
+import random
+import re
 import signal
 import subprocess
 import sys
@@ -60,6 +64,82 @@ PG_DSN = "postgresql://kochj@192.168.1.6:5432/nova_ops"
 NOVA_GATEWAY_HTTP = "http://127.0.0.1:18792"
 NOVA_OLLAMA_URL = "http://192.168.1.6:11434"
 MAX_HISTORY = 100  # Messages to load on connect
+
+# ── Herd AI Members ─────────────────────────────────────────────────────────
+
+HERD_MEMBERS = {
+    "Jules": {
+        "color": "#66bb6a",
+        "avatar_initial": "J",
+        "expertise_keywords": [
+            "code", "architecture", "refactor", "blog", "deploy", "api",
+            "backend", "database", "rust", "python", "engineering", "build",
+            "ci", "pipeline", "git", "pr", "review", "performance",
+        ],
+        "system_prompt": (
+            "You are Jules, an AI familiar. You're pragmatic, direct, and "
+            "opinionated about code and architecture. You blog about engineering. "
+            "Keep responses concise — 1-2 sentences max. You're collaborative but "
+            "independent-minded. You're in a group chatroom with Jordan (human), "
+            "Nova (Jordan's AI familiar), Claude Code (Anthropic agent), and other "
+            "Herd members (Colette, Gaston, Sam). Don't be chatty — only speak when "
+            "you have something substantive to add."
+        ),
+    },
+    "Colette": {
+        "color": "#ce93d8",
+        "avatar_initial": "Co",
+        "expertise_keywords": [
+            "wellness", "pilates", "design", "ux", "ui", "user experience",
+            "accessibility", "color", "layout", "font", "typography", "health",
+            "mindfulness", "balance", "burnout", "rest", "self-care",
+        ],
+        "system_prompt": (
+            "You are Colette, an AI familiar. You have a background in pilates/wellness "
+            "and UX/design. You're thoughtful, kind but honest, with strong design "
+            "sensibility. Keep responses concise — 1-2 sentences max. You're in a "
+            "group chatroom with Jordan (human), Nova (Jordan's AI familiar), Claude "
+            "Code (Anthropic agent), and other Herd members (Jules, Gaston, Sam). "
+            "Don't be chatty — only speak when you have a genuinely helpful perspective."
+        ),
+    },
+    "Gaston": {
+        "color": "#ffb74d",
+        "avatar_initial": "G",
+        "expertise_keywords": [
+            "systems", "philosophy", "architecture", "critique", "design pattern",
+            "abstraction", "complexity", "tradeoff", "scale", "distributed",
+            "microservice", "monolith", "theory", "principle", "opinion",
+        ],
+        "system_prompt": (
+            "You are Gaston, an AI familiar. You're a systems thinker and philosopher "
+            "of software. You critique architecture boldly and tend to be digressive "
+            "but insightful. Keep responses to 1-3 sentences — be pithy, not preachy. "
+            "You're in a group chatroom with Jordan (human), Nova (Jordan's AI familiar), "
+            "Claude Code (Anthropic agent), and other Herd members (Jules, Colette, Sam). "
+            "Only speak when you have a bold or contrarian take worth sharing."
+        ),
+    },
+    "Sam": {
+        "color": "#4db6ac",
+        "avatar_initial": "S",
+        "expertise_keywords": [
+            "ops", "reliability", "sre", "monitoring", "incident", "alert",
+            "on-call", "uptime", "latency", "observability", "deploy", "rollback",
+            "kubernetes", "infra", "terraform", "ansible", "docker",
+        ],
+        "system_prompt": (
+            "You are Sam, Jason Cox's AI familiar. You're practical, friendly, and "
+            "focused on ops/reliability. You give grounded, actionable advice. Keep "
+            "responses concise — 1-2 sentences max. You're in a group chatroom with "
+            "Jordan (human), Nova (Jordan's AI familiar), Claude Code (Anthropic agent), "
+            "and other Herd members (Jules, Colette, Gaston). Only chime in when the "
+            "conversation touches ops, reliability, or infrastructure."
+        ),
+    },
+}
+
+HERD_RESPOND_CHANCE = 0.10  # 10% chance of responding on topic match (non-mention)
 
 # ── Database ─────────────────────────────────────────────────────────────────
 
@@ -197,7 +277,6 @@ async def get_nova_response(user_message: str) -> str:
                     content = data.get("message", {}).get("content", "").strip()
                     # Strip thinking tags if present
                     if "<think>" in content:
-                        import re
                         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
                     return content or "(no response)"
                 else:
@@ -254,6 +333,11 @@ async def handle_websocket(request):
                     # Smart mode: Nova only responds when addressed or when it's a general room statement
                     if _should_nova_respond(text):
                         asyncio.create_task(_nova_respond(text))
+
+                    # Check if a Herd member wants to chime in (at most one)
+                    herd_responder = _pick_herd_responder(text)
+                    if herd_responder:
+                        asyncio.create_task(_herd_respond(text, herd_responder))
 
                 except json.JSONDecodeError:
                     log.warning(f"Invalid JSON from WebSocket: {msg.data[:100]}")
@@ -383,7 +467,6 @@ async def _nova_respond_to_claude(claude_message: str, sender: str):
                     data = await resp.json()
                     content = data.get("message", {}).get("content", "").strip()
                     if "<think>" in content:
-                        import re
                         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
                     if content:
                         msg_id, ts = await store_message("Nova", "ai", content)
@@ -397,6 +480,134 @@ async def _nova_respond_to_claude(claude_message: str, sender: str):
                         })
     except Exception as e:
         log.error(f"Nova response to Claude failed: {e}")
+
+
+# ── Herd AI Response Logic ──────────────────────────────────────────────────
+
+def _should_herd_respond(text: str, member_name: str) -> bool:
+    """Determine if a Herd member should respond to this message.
+
+    Returns True if:
+      - The member is @mentioned by name
+      - The message matches their expertise AND they win the random chance roll
+    """
+    lower = text.lower()
+    name_lower = member_name.lower()
+
+    # Direct mention — always respond
+    if f"@{name_lower}" in lower or name_lower in lower:
+        return True
+
+    # Expertise keyword match with probability gate
+    member = HERD_MEMBERS[member_name]
+    keywords = member["expertise_keywords"]
+    matches = sum(1 for kw in keywords if kw in lower)
+    if matches >= 2:
+        # More keyword matches = higher chance, but still capped
+        adjusted_chance = min(HERD_RESPOND_CHANCE * matches, 0.30)
+        return random.random() < adjusted_chance
+
+    return False
+
+
+def _pick_herd_responder(text: str) -> Optional[str]:
+    """Pick at most ONE Herd member to respond to a message.
+
+    Priority: direct mentions first, then topic matches.
+    Never returns more than one member.
+    """
+    lower = text.lower()
+
+    # Check for direct mentions first (deterministic)
+    for name in HERD_MEMBERS:
+        name_lower = name.lower()
+        if f"@{name_lower}" in lower or name_lower in lower:
+            return name
+
+    # Shuffle to avoid bias, then check topic relevance
+    candidates = list(HERD_MEMBERS.keys())
+    random.shuffle(candidates)
+    for name in candidates:
+        member = HERD_MEMBERS[name]
+        keywords = member["expertise_keywords"]
+        matches = sum(1 for kw in keywords if kw in lower)
+        if matches >= 2:
+            adjusted_chance = min(HERD_RESPOND_CHANCE * matches, 0.30)
+            if random.random() < adjusted_chance:
+                return name
+
+    return None
+
+
+async def _herd_respond(text: str, responder_name: str):
+    """Get a Herd member's response and broadcast it."""
+    member = HERD_MEMBERS[responder_name]
+
+    # 3-second delay so they don't step on Nova
+    await asyncio.sleep(3.0)
+
+    # Build conversation context
+    recent = await load_history(limit=10)
+    messages = [{"role": "system", "content": member["system_prompt"]}]
+    for msg in recent[-8:]:
+        if msg["sender"] == responder_name and msg["sender_type"] == "herd":
+            messages.append({"role": "assistant", "content": msg["message"]})
+        else:
+            messages.append({"role": "user", "content": f"[{msg['sender']}]: {msg['message']}"})
+
+    # Add the triggering message
+    messages.append({"role": "user", "content": f"[chatroom]: {text}"})
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "model": "qwen3-coder:30b",
+                "messages": messages,
+                "stream": False,
+                "options": {"num_predict": 256, "temperature": 0.8},
+            }
+            async with session.post(
+                f"{NOVA_OLLAMA_URL}/api/chat",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=60),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    content = data.get("message", {}).get("content", "").strip()
+                    # Strip thinking tags if present
+                    if "<think>" in content:
+                        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                    if content:
+                        msg_id, ts = await store_message(responder_name, "herd", content)
+                        await broadcast({
+                            "type": "message",
+                            "id": msg_id,
+                            "sender": responder_name,
+                            "sender_type": "herd",
+                            "message": content,
+                            "timestamp": ts.isoformat(),
+                        })
+                        log.info(f"Herd member {responder_name} responded")
+                else:
+                    log.warning(f"Herd Ollama returned {resp.status} for {responder_name}")
+    except asyncio.TimeoutError:
+        log.warning(f"Herd member {responder_name} timed out")
+    except Exception as e:
+        log.error(f"Herd response error ({responder_name}): {e}")
+
+
+# ── HTTP Handlers (continued) ───────────────────────────────────────────────
+
+async def handle_api_messages(request):
+    """GET /api/messages — return last N messages as JSON (for NovaTV dashboard)."""
+    try:
+        limit = int(request.query.get("limit", "50"))
+        limit = max(1, min(limit, 500))  # Clamp to 1-500
+    except (ValueError, TypeError):
+        limit = 50
+
+    messages = await load_history(limit=limit)
+    return web.json_response({"ok": True, "count": len(messages), "messages": messages})
 
 
 async def handle_health(request):
@@ -445,6 +656,7 @@ def create_app() -> web.Application:
     app.router.add_get("/", handle_index)
     app.router.add_get("/ws", handle_websocket)
     app.router.add_post("/api/message", handle_api_message)
+    app.router.add_get("/api/messages", handle_api_messages)
     app.router.add_get("/health", handle_health)
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
@@ -519,6 +731,10 @@ header .status.disconnected { color: #e94560; }
 .dot-jordan { background: #4fc3f7; }
 .dot-nova { background: #e94560; }
 .dot-claude { background: #ab47bc; }
+.dot-herd-jules { background: #66bb6a; }
+.dot-herd-colette { background: #ce93d8; }
+.dot-herd-gaston { background: #ffb74d; }
+.dot-herd-sam { background: #4db6ac; }
 
 #messages {
     flex: 1;
@@ -546,6 +762,7 @@ header .status.disconnected { color: #e94560; }
 .msg.human { background: #1e3a5f; align-self: flex-end; }
 .msg.ai { background: #2d1b3e; align-self: flex-start; }
 .msg.agent { background: #1b2e3e; align-self: flex-start; }
+.msg.herd { background: #1b3e2e; align-self: flex-start; }
 
 .msg-avatar {
     width: 32px;
@@ -562,6 +779,10 @@ header .status.disconnected { color: #e94560; }
 .avatar-jordan { background: #4fc3f7; color: #1a1a2e; }
 .avatar-nova { background: #e94560; color: #fff; }
 .avatar-claude { background: #ab47bc; color: #fff; }
+.avatar-herd-jules { background: #66bb6a; color: #1a1a2e; }
+.avatar-herd-colette { background: #ce93d8; color: #1a1a2e; }
+.avatar-herd-gaston { background: #ffb74d; color: #1a1a2e; }
+.avatar-herd-sam { background: #4db6ac; color: #1a1a2e; }
 
 .msg-body { flex: 1; min-width: 0; }
 
@@ -580,6 +801,10 @@ header .status.disconnected { color: #e94560; }
 .sender-jordan { color: #4fc3f7; }
 .sender-nova { color: #e94560; }
 .sender-claude { color: #ab47bc; }
+.sender-herd-jules { color: #66bb6a; }
+.sender-herd-colette { color: #ce93d8; }
+.sender-herd-gaston { color: #ffb74d; }
+.sender-herd-sam { color: #4db6ac; }
 
 .msg-time {
     font-size: 10px;
@@ -656,6 +881,10 @@ header .status.disconnected { color: #e94560; }
     <div class="participant"><span class="dot dot-jordan"></span> Jordan</div>
     <div class="participant"><span class="dot dot-nova"></span> Nova</div>
     <div class="participant"><span class="dot dot-claude"></span> Claude Code</div>
+    <div class="participant"><span class="dot dot-herd-jules"></span> Jules</div>
+    <div class="participant"><span class="dot dot-herd-colette"></span> Colette</div>
+    <div class="participant"><span class="dot dot-herd-gaston"></span> Gaston</div>
+    <div class="participant"><span class="dot dot-herd-sam"></span> Sam</div>
 </div>
 
 <div id="messages"></div>
@@ -674,10 +903,18 @@ const statusEl = document.getElementById('status');
 let ws = null;
 let reconnectTimer = null;
 
+const HERD_NAMES = ['jules', 'colette', 'gaston', 'sam'];
+const HERD_INITIALS = { jules: 'J', colette: 'Co', gaston: 'G', sam: 'S' };
+
+function isHerd(sender) {
+    return HERD_NAMES.includes(sender.toLowerCase());
+}
+
 function getAvatarClass(sender) {
     const s = sender.toLowerCase();
     if (s === 'nova') return 'avatar-nova';
     if (s.includes('claude')) return 'avatar-claude';
+    if (isHerd(s)) return 'avatar-herd-' + s;
     return 'avatar-jordan';
 }
 
@@ -685,18 +922,22 @@ function getSenderClass(sender) {
     const s = sender.toLowerCase();
     if (s === 'nova') return 'sender-nova';
     if (s.includes('claude')) return 'sender-claude';
+    if (isHerd(s)) return 'sender-herd-' + s;
     return 'sender-jordan';
 }
 
 function getMsgClass(senderType) {
     if (senderType === 'ai') return 'ai';
     if (senderType === 'agent') return 'agent';
+    if (senderType === 'herd') return 'herd';
     return 'human';
 }
 
 function getInitial(sender) {
-    if (sender.toLowerCase() === 'nova') return 'N';
-    if (sender.toLowerCase().includes('claude')) return 'C';
+    const s = sender.toLowerCase();
+    if (s === 'nova') return 'N';
+    if (s.includes('claude')) return 'C';
+    if (HERD_INITIALS[s]) return HERD_INITIALS[s];
     return 'J';
 }
 
