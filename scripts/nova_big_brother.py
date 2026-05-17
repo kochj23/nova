@@ -170,7 +170,8 @@ _shutdown = threading.Event()
 # Per-issue alert rate limiting — prevents the same root cause from
 # hammering Slack every 60s. Maps stable issue key -> last alert timestamp.
 _issue_last_alerted: dict = {}
-ISSUE_ALERT_COOLDOWN = 600   # 10 min between identical alerts
+ISSUE_ALERT_COOLDOWN = 600           # 10 min between identical alerts (services)
+SCHEDULER_ALERT_COOLDOWN = 14400     # 4h between scheduler task failure alerts (they run daily/weekly)
 
 # Per-service kickstart grace period — after a kickstart, skip port checks
 # for this many seconds to prevent EADDRINUSE false-crash cascade.
@@ -3004,7 +3005,14 @@ def _full_sweep():
                 # Use a stable key derived from the issue text (strip volatile counts)
                 stable_key = re.sub(r'\d+', 'N', issue)
                 last = _issue_last_alerted.get(stable_key, 0)
-                if now - last > ISSUE_ALERT_COOLDOWN:
+                # Use longer cooldowns for persistent/expected issues
+                if "Scheduler task" in issue or "Scheduler:" in issue:
+                    cooldown = SCHEDULER_ALERT_COOLDOWN
+                elif "GPU" in issue or "contention" in issue:
+                    cooldown = 1800  # 30 min for GPU issues
+                else:
+                    cooldown = ISSUE_ALERT_COOLDOWN
+                if now - last > cooldown:
                     alertable.append(issue)
                     _issue_last_alerted[stable_key] = now
                 else:
@@ -3021,16 +3029,6 @@ def _full_sweep():
                     if fixes:
                         msg += "\n*Healed:*\n"
                         msg += "\n".join(f"  :white_check_mark: {f}" for f in fixes)
-                    try:
-                        import urllib.request as _ur, json as _json
-                        with _ur.urlopen(f"http://{LAN_IP}:18790/random?n=1", timeout=3) as _r:
-                            _mem = _json.loads(_r.read()).get("memories", [])
-                        if _mem:
-                            _t = _mem[0].get("text", "").strip().replace("\n", " ")[:200]
-                            _src = _mem[0].get("source", "")
-                            msg += f"\n\n:brain: *Random memory* (`{_src}`): _{_t}_"
-                    except Exception:
-                        pass
                     _notify(msg, is_critical=any("DOWN" in i for i in alertable))
 
             log(f"Sweep: {len(issues)} issues ({len(alertable)} new/cooldown-expired), "
