@@ -573,6 +573,30 @@ curl -X POST http://192.168.1.6:37480/api/message \
 
 **launchd:** `net.digitalnoise.nova-chatroom`
 
+### Slash Commands
+
+| Command | Description |
+|---------|-------------|
+| `/search <term>` | Full-text search across all messages |
+| `/history <duration>` | Recent messages (e.g., `24h`, `7d`, `30d`) |
+| `/from <name>` | Filter by sender |
+| `/recall <topic>` | Semantic memory search via vector DB |
+| `/stats` | Per-sender counts, busiest hours, top words |
+| `/digest <duration>` | AI-generated summary of conversations |
+| `/help` | List all commands |
+
+Results are private to the requester (not broadcast). Nova also answers natural language queries like "what did Gaston say about architecture?" by querying the DB automatically.
+
+### NovaTV HUD Integration
+
+The chatroom live feed displays on the NovaTV orbital HUD (`http://192.168.1.6:37450/static/hud.html`):
+
+- WebSocket connection to chatroom, auto-reconnect
+- Last 15 messages visible, new ones animate in
+- Old messages fade after 60s
+- Color-coded: cyan (Jordan), red (Nova), purple (Claude), green (Herd)
+- Sci-fi aesthetic matching the orbital display
+
 ---
 
 ## Scheduler & Ops Observability
