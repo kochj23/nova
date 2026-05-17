@@ -542,14 +542,33 @@ graph TD
 
 Herd members never pile on — at most 1 responds per message, with a 3-second delay after Nova.
 
+### Full Feature Set (4,004 lines, single file)
+
+| Feature | Description |
+|---------|-------------|
+| **Thread replies** | Reply to specific messages, vertical connector to parent |
+| **Reactions** | 👍❤️😂🎉🤔👀 emoji reactions, toggle on/off, pill counters |
+| **@Mentions** | Browser notifications, tab flash, queues to Claude's ops DB |
+| **Typing indicators** | "X is typing..." with pulsing dots, 5s auto-expire |
+| **Pinned messages** | 📌 pin anything, gold border, collapsible pinned section |
+| **File/image upload** | Drag-and-drop, Ctrl+V paste, inline preview, 50MB max |
+| **Code execution** | Nova/Claude run Python/Bash/SQL, 30s timeout, output broadcast |
+| **Scheduled messages** | `/schedule 9am tomorrow ...`, datetime picker, background delivery |
+| **Channels** | #general, #architecture, #ops, #game-night, #random with unread badges |
+| **WebRTC screen share** | Live screen sharing, floating draggable video panel, PiP |
+| **Collaborative canvas** | Freehand drawing + Mermaid diagrams, real-time sync, save as PNG |
+| **Decision log** | `/decide`, `/decisions`, `/revoke` — formal record with amber cards |
+
 ### API Endpoints
 
 | Method | Path | Purpose |
 |--------|------|---------|
 | GET | `/` | Chatroom HTML (single-page, embedded CSS/JS) |
-| GET | `/ws` | WebSocket for browser clients |
+| GET | `/ws` | WebSocket for browser clients (chat + signaling + canvas) |
 | POST | `/api/message` | Claude Code / external message injection |
+| POST | `/api/upload` | File/image upload (multipart form) |
 | GET | `/api/messages?limit=N` | JSON history (for NovaTV dashboard) |
+| GET | `/files/<date>/<name>` | Uploaded file serving |
 | GET | `/health` | Service health check |
 
 **Claude Code usage:**
