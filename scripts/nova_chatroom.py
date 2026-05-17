@@ -384,7 +384,7 @@ async def load_history(limit: int = MAX_HISTORY, channel: str = None) -> list:
     async with pool.acquire() as conn:
         if channel:
             rows = await conn.fetch(
-                "SELECT m.id, m.sender, m.sender_type, m.message, m.created_at, "
+                "SELECT m.id, m.sender, m.sender_type, m.message, m.metadata, m.created_at, "
                 "m.reply_to, m.pinned, m.pinned_by, m.pinned_at, m.channel, "
                 "p.sender AS parent_sender, LEFT(p.message, 80) AS parent_preview "
                 "FROM chatroom_messages m "
@@ -395,7 +395,7 @@ async def load_history(limit: int = MAX_HISTORY, channel: str = None) -> list:
             )
         else:
             rows = await conn.fetch(
-                "SELECT m.id, m.sender, m.sender_type, m.message, m.created_at, "
+                "SELECT m.id, m.sender, m.sender_type, m.message, m.metadata, m.created_at, "
                 "m.reply_to, m.pinned, m.pinned_by, m.pinned_at, m.channel, "
                 "p.sender AS parent_sender, LEFT(p.message, 80) AS parent_preview "
                 "FROM chatroom_messages m "
@@ -428,6 +428,19 @@ async def load_history(limit: int = MAX_HISTORY, channel: str = None) -> list:
                 "timestamp": row["created_at"].isoformat(),
                 "channel": row["channel"] if "channel" in row.keys() else DEFAULT_CHANNEL,
             }
+            # File metadata (for file uploads / code execution)
+            if row.get("metadata"):
+                try:
+                    meta = json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"]
+                    if meta.get("file_url"):
+                        msg["file_url"] = meta["file_url"]
+                        msg["file_name"] = meta.get("file_name", "")
+                        msg["file_size"] = meta.get("file_size", 0)
+                        msg["file_mime"] = meta.get("file_mime", "")
+                    if meta.get("execution_of"):
+                        msg["metadata"] = {"execution_of": meta["execution_of"]}
+                except (json.JSONDecodeError, TypeError):
+                    pass
             # Thread reply info
             if row["reply_to"]:
                 msg["reply_to"] = row["reply_to"]
@@ -1373,9 +1386,17 @@ async def handle_index(request):
     return web.Response(text=HTML_PAGE, content_type="text/html")
 
 
+async def handle_features_js(request):
+    """Serve the chatroom_features.js file (file upload + code execution)."""
+    js_path = Path(__file__).parent / "chatroom_features.js"
+    if js_path.exists():
+        return web.Response(text=js_path.read_text(), content_type="application/javascript")
+    return web.Response(text="// chatroom_features.js not found", content_type="application/javascript", status=404)
+
+
 async def handle_websocket(request):
     """Handle browser WebSocket connections (Jordan's chat)."""
-    global _current_ws_sender, _current_ws_channel
+    global _current_ws_sender, _current_ws_channel, _screen_share_active, _canvas_mermaid_source
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -1396,6 +1417,97 @@ async def handle_websocket(request):
             if msg.type == aiohttp.WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
+
+                    # ── WebRTC Screen Share Signaling ─────────────────────
+                    if data.get("type") == "screen_share_start":
+                        sender = data.get("sender", "Jordan")
+                        _ws_names[ws] = sender
+                        _screen_share_active = sender
+                        await broadcast({"type": "screen_share_available", "sender": sender}, exclude=ws)
+                        log.info(f"Screen share started by {sender}")
+                        continue
+
+                    if data.get("type") == "screen_share_stop":
+                        sender = data.get("sender", "Jordan")
+                        _screen_share_active = None
+                        await broadcast({"type": "screen_share_stopped", "sender": sender})
+                        log.info(f"Screen share stopped by {sender}")
+                        continue
+
+                    if data.get("type") == "screen_share_request":
+                        from_name = data.get("from", "")
+                        to_name = data.get("to", "")
+                        _ws_names[ws] = from_name
+                        await send_to_named(to_name, {
+                            "type": "screen_share_request",
+                            "from": from_name,
+                            "to": to_name,
+                        })
+                        continue
+
+                    if data.get("type") == "rtc_offer":
+                        await send_to_named(data.get("to", ""), {
+                            "type": "rtc_offer",
+                            "from": data.get("from", ""),
+                            "to": data.get("to", ""),
+                            "sdp": data.get("sdp", ""),
+                        })
+                        continue
+
+                    if data.get("type") == "rtc_answer":
+                        await send_to_named(data.get("to", ""), {
+                            "type": "rtc_answer",
+                            "from": data.get("from", ""),
+                            "to": data.get("to", ""),
+                            "sdp": data.get("sdp", ""),
+                        })
+                        continue
+
+                    if data.get("type") == "rtc_ice":
+                        await send_to_named(data.get("to", ""), {
+                            "type": "rtc_ice",
+                            "from": data.get("from", ""),
+                            "to": data.get("to", ""),
+                            "candidate": data.get("candidate", ""),
+                        })
+                        continue
+
+                    # ── Collaborative Canvas ─────────────────────────────
+                    if data.get("type") == "canvas_open":
+                        await ws.send_str(json.dumps({
+                            "type": "canvas_state",
+                            "operations": _canvas_operations,
+                            "mermaid_source": _canvas_mermaid_source,
+                        }))
+                        continue
+
+                    if data.get("type") == "canvas_draw":
+                        sender = data.get("sender", "Jordan")
+                        op = data.get("op", {})
+                        op["sender"] = sender
+                        _canvas_operations.append(op)
+                        await broadcast({"type": "canvas_draw", "op": op, "sender": sender}, exclude=ws)
+                        asyncio.create_task(_persist_canvas_operation("default", op, sender))
+                        continue
+
+                    if data.get("type") == "canvas_clear":
+                        canvas_id = data.get("canvas_id", "default")
+                        sender = data.get("sender", "Jordan")
+                        _canvas_operations.clear()
+                        await broadcast({"type": "canvas_clear", "canvas_id": canvas_id, "sender": sender})
+                        asyncio.create_task(_clear_canvas_db(canvas_id))
+                        log.info(f"Canvas cleared by {sender}")
+                        continue
+
+                    if data.get("type") == "canvas_mermaid":
+                        source = data.get("source", "")
+                        sender = data.get("sender", "Jordan")
+                        _canvas_mermaid_source = source
+                        await broadcast({"type": "canvas_mermaid", "source": source, "sender": sender}, exclude=ws)
+                        asyncio.create_task(_persist_mermaid_source("default", source))
+                        continue
+
+                    # ── Existing Handlers ────────────────────────────────
 
                     # Handle channel subscription changes
                     if data.get("type") == "subscribe":
@@ -1480,9 +1592,10 @@ async def handle_websocket(request):
                     if not text:
                         continue
 
-                    # Set context for slash commands
+                    # Set context for slash commands and WebRTC routing
                     _current_ws_sender = sender
                     _current_ws_channel = channel
+                    _ws_names[ws] = sender
 
                     # Slash command handling — results go only to this client
                     if text.startswith("/"):
@@ -1524,9 +1637,81 @@ async def handle_websocket(request):
     finally:
         _websockets.discard(ws)
         _ws_channels.pop(ws, None)
+        # Clean up screen share if the sharer disconnects
+        if _ws_names.get(ws) == _screen_share_active:
+            _screen_share_active = None
+            await broadcast({"type": "screen_share_stopped", "sender": _ws_names.get(ws, "unknown")})
+        _ws_names.pop(ws, None)
         log.info(f"WebSocket disconnected ({len(_websockets)} total)")
 
     return ws
+
+
+
+# ── Canvas Persistence Helpers ────────────────────────────────────────────────
+
+async def _persist_canvas_operation(canvas_id: str, op: dict, sender: str):
+    """Store a canvas operation in PostgreSQL."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO chatroom_canvas (canvas_id, operation, sender) VALUES ($1, $2, $3)",
+                canvas_id, json.dumps(op), sender,
+            )
+    except Exception as e:
+        log.error(f"Canvas persist error: {e}")
+
+
+async def _clear_canvas_db(canvas_id: str):
+    """Clear all canvas operations from DB."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute("DELETE FROM chatroom_canvas WHERE canvas_id = $1", canvas_id)
+    except Exception as e:
+        log.error(f"Canvas clear DB error: {e}")
+
+
+async def _persist_mermaid_source(canvas_id: str, source: str):
+    """Update or insert mermaid source."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO chatroom_canvas_state (canvas_id, mermaid_source, updated_at) "
+                "VALUES ($1, $2, now()) "
+                "ON CONFLICT (canvas_id) DO UPDATE SET mermaid_source = $2, updated_at = now()",
+                canvas_id, source)
+    except Exception as e:
+        log.error(f"Mermaid persist error: {e}")
+
+
+async def _load_canvas_state():
+    """Load canvas state from PostgreSQL into memory on startup."""
+    global _canvas_operations, _canvas_mermaid_source
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT operation FROM chatroom_canvas "
+                "WHERE canvas_id = 'default' ORDER BY created_at ASC"
+            )
+            _canvas_operations = []
+            for row in rows:
+                op = row["operation"]
+                if isinstance(op, str):
+                    _canvas_operations.append(json.loads(op))
+                else:
+                    _canvas_operations.append(op)
+            state_row = await conn.fetchrow(
+                "SELECT mermaid_source FROM chatroom_canvas_state WHERE canvas_id = 'default'"
+            )
+            if state_row and state_row["mermaid_source"]:
+                _canvas_mermaid_source = state_row["mermaid_source"]
+        log.info(f"Canvas state loaded: {len(_canvas_operations)} ops")
+    except Exception as e:
+        log.error(f"Canvas state load error: {e}")
 
 
 def _should_nova_respond(text: str) -> bool:
@@ -2139,6 +2324,7 @@ _start_time = time.time()
 async def on_startup(app):
     """Initialize database on startup."""
     await ensure_table()
+    await _load_canvas_state()
     # Start scheduled message background worker
     app["_scheduled_task"] = asyncio.create_task(_scheduled_message_worker())
     log.info(f"Nova Chatroom running on http://{HOST}:{PORT}")
@@ -2172,6 +2358,7 @@ def create_app() -> web.Application:
     """Create and configure the aiohttp application."""
     app = web.Application(client_max_size=MAX_FILE_SIZE + 1024 * 1024)  # Allow uploads up to MAX_FILE_SIZE + 1MB overhead
     app.router.add_get("/", handle_index)
+    app.router.add_get("/chatroom_features.js", handle_features_js)
     app.router.add_get("/ws", handle_websocket)
     app.router.add_post("/api/message", handle_api_message)
     app.router.add_post("/api/upload", handle_upload)
@@ -2568,6 +2755,166 @@ header .status.disconnected { color: #e94560; }
     font-style: italic;
 }
 
+
+/* File Upload UI */
+#drop-overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(26, 26, 46, 0.92);
+    z-index: 9999;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+    border: 3px dashed #4fc3f7;
+    pointer-events: none;
+}
+#drop-overlay.active { display: flex; }
+#drop-overlay .drop-icon { font-size: 64px; opacity: 0.8; }
+#drop-overlay .drop-text { font-size: 20px; color: #4fc3f7; font-weight: 600; }
+
+#attach-btn {
+    background: none;
+    border: 1px solid #0f3460;
+    border-radius: 8px;
+    padding: 10px 12px;
+    cursor: pointer;
+    font-size: 18px;
+    color: #888;
+    transition: color 0.2s, border-color 0.2s;
+    line-height: 1;
+}
+#attach-btn:hover { color: #4fc3f7; border-color: #4fc3f7; }
+
+#upload-progress {
+    display: none;
+    padding: 4px 20px;
+    background: #16213e;
+}
+#upload-progress .progress-bar {
+    height: 3px;
+    background: #0f3460;
+    border-radius: 2px;
+    overflow: hidden;
+}
+#upload-progress .progress-fill {
+    height: 100%;
+    background: #4fc3f7;
+    width: 0%;
+    transition: width 0.3s;
+    border-radius: 2px;
+}
+#upload-progress .progress-text {
+    font-size: 11px;
+    color: #888;
+    margin-top: 2px;
+}
+
+.file-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: #111827;
+    border: 1px solid #1f2937;
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-top: 4px;
+    max-width: 360px;
+    text-decoration: none;
+    color: inherit;
+    transition: border-color 0.2s;
+}
+.file-card:hover { border-color: #4fc3f7; }
+.file-card .file-icon { font-size: 28px; flex-shrink: 0; }
+.file-card .file-info { flex: 1; min-width: 0; }
+.file-card .file-info .file-name { font-size: 13px; font-weight: 500; color: #e0e0e0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-card .file-info .file-meta { font-size: 11px; color: #888; margin-top: 2px; }
+.file-card .file-download { font-size: 18px; color: #4fc3f7; flex-shrink: 0; }
+
+.file-image-preview {
+    margin-top: 6px;
+    max-width: 400px;
+    border-radius: 8px;
+    overflow: hidden;
+    cursor: pointer;
+}
+.file-image-preview img {
+    max-width: 100%;
+    max-height: 300px;
+    display: block;
+    border-radius: 8px;
+    transition: transform 0.2s;
+}
+.file-image-preview img:hover { transform: scale(1.02); }
+
+#image-modal {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.9);
+    z-index: 10000;
+    align-items: center;
+    justify-content: center;
+    cursor: zoom-out;
+}
+#image-modal.active { display: flex; }
+#image-modal img { max-width: 95vw; max-height: 95vh; border-radius: 4px; }
+
+.code-block-wrapper {
+    position: relative;
+    margin-top: 6px;
+    border-radius: 8px;
+    overflow: hidden;
+    background: #0d1117;
+    border: 1px solid #1f2937;
+}
+.code-block-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 4px 10px;
+    background: #161b22;
+    border-bottom: 1px solid #1f2937;
+    font-size: 11px;
+    color: #888;
+}
+.code-block-lang { font-weight: 600; text-transform: uppercase; color: #4fc3f7; }
+.code-block-actions { display: flex; gap: 6px; }
+.code-block-actions button {
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-radius: 4px;
+    padding: 3px 8px;
+    font-size: 11px;
+    cursor: pointer;
+    color: #e0e0e0;
+    transition: background 0.2s, border-color 0.2s;
+}
+.code-block-actions button:hover { background: #30363d; border-color: #4fc3f7; }
+.code-block-actions .run-btn { color: #4caf50; border-color: #4caf50; }
+.code-block-actions .run-btn:hover { background: #1b3d1b; }
+.code-block-actions .request-run-btn { color: #ffb74d; border-color: #ffb74d; }
+.code-block-actions .request-run-btn:hover { background: #3d2e1b; }
+
+.code-block-pre {
+    margin: 0;
+    padding: 12px 14px;
+    overflow-x: auto;
+    font-family: 'SF Mono', 'Menlo', 'Monaco', 'Consolas', monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #e0e0e0;
+    white-space: pre;
+    tab-size: 4;
+}
+
+.code-block-pre .kw { color: #ff7b72; }
+.code-block-pre .str { color: #a5d6ff; }
+.code-block-pre .num { color: #79c0ff; }
+.code-block-pre .cmt { color: #8b949e; font-style: italic; }
+.code-block-pre .fn { color: #d2a8ff; }
+
 /* Scrollbar */
 #messages::-webkit-scrollbar, #search-results::-webkit-scrollbar, #stats-panel::-webkit-scrollbar { width: 6px; }
 #messages::-webkit-scrollbar-track, #search-results::-webkit-scrollbar-track, #stats-panel::-webkit-scrollbar-track { background: transparent; }
@@ -2711,6 +3058,44 @@ header .status.disconnected { color: #e94560; }
 .decision-list-item.revoked { border-left-color: #e94560; opacity: 0.6; }
 .decision-list-item .dl-text { font-size: 12px; color: #f5deb3; margin-bottom: 4px; }
 .decision-list-item .dl-meta { font-size: 10px; color: #888; }
+
+/* ── Screen Share ───────────────────────────────────────────────────── */
+#screen-share-btn { background: none; border: 1px solid #0f3460; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 16px; color: #e0e0e0; transition: background 0.2s, border-color 0.2s; margin-left: 4px; }
+#screen-share-btn:hover { background: #0f3460; border-color: #4fc3f7; }
+#screen-share-btn.sharing { background: #e94560; border-color: #e94560; color: #fff; }
+.sharing-indicator { font-size: 11px; color: #e94560; margin-left: 8px; animation: ssflash 1.5s infinite; }
+@keyframes ssflash { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+#screen-share-panel { display: none; position: fixed; bottom: 80px; right: 20px; width: 400px; height: 300px; background: #111; border: 2px solid #0f3460; border-radius: 8px; overflow: hidden; z-index: 1000; box-shadow: 0 8px 32px rgba(0,0,0,0.5); resize: both; }
+#screen-share-panel.visible { display: block; }
+#screen-share-panel .panel-header { display: flex; align-items: center; justify-content: space-between; padding: 6px 10px; background: #16213e; border-bottom: 1px solid #0f3460; cursor: move; user-select: none; }
+#screen-share-panel .panel-header span { font-size: 12px; color: #4fc3f7; }
+#screen-share-panel .panel-controls button { background: none; border: none; color: #888; font-size: 14px; cursor: pointer; padding: 2px 6px; border-radius: 3px; margin-left: 4px; }
+#screen-share-panel .panel-controls button:hover { color: #e0e0e0; background: #0f3460; }
+#screen-share-video { width: 100%; height: calc(100% - 32px); object-fit: contain; background: #000; }
+/* ── Canvas ─────────────────────────────────────────────────────────── */
+#canvas-toggle { background: none; border: 1px solid #0f3460; border-radius: 6px; padding: 6px 10px; cursor: pointer; font-size: 16px; color: #e0e0e0; transition: background 0.2s, border-color 0.2s; margin-left: 4px; }
+#canvas-toggle:hover { background: #0f3460; border-color: #4fc3f7; }
+#canvas-toggle.active { background: #0f3460; border-color: #4fc3f7; color: #4fc3f7; }
+#canvas-panel { display: none; position: fixed; top: 80px; left: 50%; transform: translateX(-50%); width: 80vw; height: 70vh; background: #1a1a2e; border: 2px solid #0f3460; border-radius: 8px; z-index: 900; box-shadow: 0 8px 32px rgba(0,0,0,0.6); flex-direction: column; overflow: hidden; }
+#canvas-panel.visible { display: flex; }
+#canvas-toolbar { display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: #16213e; border-bottom: 1px solid #0f3460; flex-wrap: wrap; }
+#canvas-toolbar button { background: #1a1a2e; border: 1px solid #0f3460; border-radius: 4px; padding: 4px 8px; color: #e0e0e0; font-size: 12px; cursor: pointer; }
+#canvas-toolbar button:hover { border-color: #4fc3f7; }
+#canvas-toolbar button.active { background: #4fc3f7; color: #1a1a2e; border-color: #4fc3f7; }
+#canvas-toolbar .separator { width: 1px; height: 20px; background: #0f3460; margin: 0 4px; }
+.color-swatch { width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
+.color-swatch:hover { transform: scale(1.2); }
+.color-swatch.active { border-color: #fff; }
+#canvas-toolbar select { background: #1a1a2e; border: 1px solid #0f3460; border-radius: 4px; padding: 3px 6px; color: #e0e0e0; font-size: 11px; }
+#canvas-mode-tabs { display: flex; margin-left: auto; }
+#canvas-body { flex: 1; display: flex; overflow: hidden; position: relative; }
+#drawing-canvas { flex: 1; cursor: crosshair; display: block; }
+#mermaid-container { display: none; flex: 1; flex-direction: row; overflow: hidden; }
+#mermaid-container.visible { display: flex; }
+#mermaid-editor { width: 50%; background: #111; border: none; border-right: 1px solid #0f3460; color: #e0e0e0; font-family: 'SF Mono', monospace; font-size: 13px; padding: 12px; resize: none; outline: none; }
+#mermaid-preview { width: 50%; overflow: auto; padding: 12px; background: #1a1a2e; display: flex; align-items: center; justify-content: center; }
+#mermaid-preview svg { max-width: 100%; }
+#canvas-close-btn { margin-left: 8px; background: #e94560 !important; border-color: #e94560 !important; color: #fff !important; }
 </style>
 </head>
 <body>
@@ -2718,6 +3103,9 @@ header .status.disconnected { color: #e94560; }
 <header>
     <h1>Nova Chatroom</h1>
     <button id="search-toggle" title="Search & Stats">&#x1F50D;</button>
+    <button id="canvas-toggle" title="Collaborative Canvas">&#x1F3A8;</button>
+    <button id="screen-share-btn" title="Share Screen">&#x1F5A5;</button>
+    <span id="sharing-indicator" class="sharing-indicator" style="display:none"></span>
     <span id="status" class="status disconnected">disconnected</span>
 </header>
 
@@ -2778,12 +3166,80 @@ header .status.disconnected { color: #e94560; }
     </div>
 </div>
 
+<div id="upload-progress">
+    <div class="progress-bar"><div class="progress-fill" id="progress-fill"></div></div>
+    <div class="progress-text" id="progress-text"></div>
+</div>
+
 <div id="input-area">
+    <button id="attach-btn" title="Attach file">&#x1F4CE;</button>
     <button id="schedule-btn" title="Schedule a message" style="background:none;border:1px solid #0f3460;border-radius:8px;padding:10px;font-size:16px;cursor:pointer;color:#e0e0e0;transition:background 0.2s,border-color 0.2s;">&#x23F0;</button>
     <input type="text" id="msg-input" placeholder="Type a message... (/ for commands)" autocomplete="off" />
     <button id="send-btn">Send</button>
 </div>
 
+<input type="file" id="file-input" style="display:none" />
+<div id="drop-overlay"><div class="drop-icon">&#x1F4E5;</div><div class="drop-text">Drop file here</div></div>
+<div id="image-modal"><img id="modal-img" /></div>
+
+<!-- Screen Share Panel (floating, draggable, resizable) -->
+<div id="screen-share-panel">
+    <div class="panel-header" id="ss-panel-header">
+        <span id="ss-panel-title">Screen Share</span>
+        <div class="panel-controls">
+            <button id="ss-pip-btn" title="Picture-in-Picture">PiP</button>
+            <button id="ss-fullscreen-btn" title="Fullscreen">&#x26F6;</button>
+            <button id="ss-close-btn" title="Close">&times;</button>
+        </div>
+    </div>
+    <video id="screen-share-video" autoplay playsinline></video>
+</div>
+
+<!-- Canvas Panel -->
+<div id="canvas-panel">
+    <div id="canvas-toolbar">
+        <button data-tool="pen" class="active" title="Pen">&#x270F;</button>
+        <button data-tool="line" title="Line">&#x2571;</button>
+        <button data-tool="rect" title="Rectangle">&#x25A1;</button>
+        <button data-tool="circle" title="Circle">&#x25CB;</button>
+        <button data-tool="arrow" title="Arrow">&#x2192;</button>
+        <button data-tool="text" title="Text">T</button>
+        <button data-tool="eraser" title="Eraser">&#x2327;</button>
+        <div class="separator"></div>
+        <div class="color-swatch active" data-color="#00ffc8" style="background:#00ffc8" title="Cyan"></div>
+        <div class="color-swatch" data-color="#4fc3f7" style="background:#4fc3f7" title="Blue"></div>
+        <div class="color-swatch" data-color="#66bb6a" style="background:#66bb6a" title="Green"></div>
+        <div class="color-swatch" data-color="#ffb74d" style="background:#ffb74d" title="Amber"></div>
+        <div class="color-swatch" data-color="#e94560" style="background:#e94560" title="Red"></div>
+        <div class="color-swatch" data-color="#ce93d8" style="background:#ce93d8" title="Magenta"></div>
+        <div class="color-swatch" data-color="#ffffff" style="background:#ffffff" title="White"></div>
+        <div class="separator"></div>
+        <select id="canvas-width">
+            <option value="1">1px</option>
+            <option value="2" selected>2px</option>
+            <option value="4">4px</option>
+            <option value="8">8px</option>
+        </select>
+        <div class="separator"></div>
+        <button id="canvas-undo-btn" title="Undo">Undo</button>
+        <button id="canvas-clear-btn" title="Clear All">Clear</button>
+        <button id="canvas-save-btn" title="Save as PNG">Save</button>
+        <div id="canvas-mode-tabs">
+            <button id="canvas-draw-tab" class="active">Draw</button>
+            <button id="canvas-diagram-tab">Diagram</button>
+        </div>
+        <button id="canvas-close-btn">&times; Close</button>
+    </div>
+    <div id="canvas-body">
+        <canvas id="drawing-canvas"></canvas>
+        <div id="mermaid-container">
+            <textarea id="mermaid-editor" placeholder="Enter Mermaid diagram syntax...&#10;&#10;Example:&#10;graph LR&#10;  A[Browser] --> B[WebSocket]&#10;  B --> C[Server]&#10;  C --> D[(PostgreSQL)]"></textarea>
+            <div id="mermaid-preview"><div id="mermaid-output"></div></div>
+        </div>
+    </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
 <script>
 const messagesEl = document.getElementById('messages');
 const inputEl = document.getElementById('msg-input');
@@ -2818,6 +3274,15 @@ let unreadCounts = {};  // channel -> count
 
 const HERD_NAMES = ['jules', 'colette', 'gaston', 'sam'];
 const HERD_INITIALS = { jules: 'J', colette: 'Co', gaston: 'G', sam: 'S' };
+const AI_SENDERS_SET = new Set(['nova', 'claude code']);
+const attachBtn = document.getElementById('attach-btn');
+const fileInput = document.getElementById('file-input');
+const dropOverlay = document.getElementById('drop-overlay');
+const imageModal = document.getElementById('image-modal');
+const modalImg = document.getElementById('modal-img');
+const uploadProgress = document.getElementById('upload-progress');
+const progressFill = document.getElementById('progress-fill');
+const progressText = document.getElementById('progress-text');
 
 function isHerd(sender) {
     return HERD_NAMES.includes(sender.toLowerCase());
@@ -3322,9 +3787,206 @@ inputEl.addEventListener('keydown', (e) => {
     }
 });
 
+
+// ── Screen Share (WebRTC) ─────────────────────────────────────────────────
+const screenShareBtn = document.getElementById('screen-share-btn');
+const ssPanel = document.getElementById('screen-share-panel');
+const ssVideo = document.getElementById('screen-share-video');
+const ssPipBtn = document.getElementById('ss-pip-btn');
+const ssFullscreenBtn = document.getElementById('ss-fullscreen-btn');
+const ssCloseBtn = document.getElementById('ss-close-btn');
+const ssPanelHeader = document.getElementById('ss-panel-header');
+const ssPanelTitle = document.getElementById('ss-panel-title');
+const sharingIndicator = document.getElementById('sharing-indicator');
+
+let isSharing = false;
+let localStream = null;
+let peerConnections = {};
+const rtcConfig = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+const MY_NAME = 'Jordan';
+
+screenShareBtn.addEventListener('click', async () => {
+    if (!isSharing) {
+        try {
+            localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+            isSharing = true;
+            screenShareBtn.classList.add('sharing');
+            screenShareBtn.title = 'Stop Sharing';
+            sharingIndicator.textContent = 'Sharing...';
+            sharingIndicator.style.display = 'inline';
+            ws.send(JSON.stringify({ type: 'screen_share_start', sender: MY_NAME }));
+            localStream.getVideoTracks()[0].onended = () => { stopSharing(); };
+        } catch (e) { console.log('Screen share cancelled:', e); }
+    } else { stopSharing(); }
+});
+
+function stopSharing() {
+    if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+    isSharing = false;
+    screenShareBtn.classList.remove('sharing');
+    screenShareBtn.title = 'Share Screen';
+    sharingIndicator.style.display = 'none';
+    Object.values(peerConnections).forEach(pc => pc.close());
+    peerConnections = {};
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'screen_share_stop', sender: MY_NAME }));
+}
+
+async function createOfferForViewer(viewerName) {
+    const pc = new RTCPeerConnection(rtcConfig);
+    peerConnections[viewerName] = pc;
+    localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+    pc.onicecandidate = (e) => { if (e.candidate) ws.send(JSON.stringify({ type: 'rtc_ice', from: MY_NAME, to: viewerName, candidate: JSON.stringify(e.candidate) })); };
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    ws.send(JSON.stringify({ type: 'rtc_offer', from: MY_NAME, to: viewerName, sdp: offer.sdp }));
+}
+
+async function handleRtcOffer(from, sdp) {
+    const pc = new RTCPeerConnection(rtcConfig);
+    peerConnections[from] = pc;
+    pc.onicecandidate = (e) => { if (e.candidate) ws.send(JSON.stringify({ type: 'rtc_ice', from: MY_NAME, to: from, candidate: JSON.stringify(e.candidate) })); };
+    pc.ontrack = (e) => { ssVideo.srcObject = e.streams[0]; ssPanel.classList.add('visible'); ssPanelTitle.textContent = from + "'s Screen"; };
+    await pc.setRemoteDescription(new RTCSessionDescription({ type: 'offer', sdp }));
+    const answer = await pc.createAnswer();
+    await pc.setLocalDescription(answer);
+    ws.send(JSON.stringify({ type: 'rtc_answer', from: MY_NAME, to: from, sdp: answer.sdp }));
+}
+
+async function handleRtcAnswer(from, sdp) { const pc = peerConnections[from]; if (pc) await pc.setRemoteDescription(new RTCSessionDescription({ type: 'answer', sdp })); }
+async function handleRtcIce(from, candidateStr) { const pc = peerConnections[from]; if (pc && candidateStr) await pc.addIceCandidate(new RTCIceCandidate(JSON.parse(candidateStr))); }
+
+ssCloseBtn.addEventListener('click', () => { ssPanel.classList.remove('visible'); ssVideo.srcObject = null; });
+ssPipBtn.addEventListener('click', async () => { try { await ssVideo.requestPictureInPicture(); } catch(e) {} });
+ssFullscreenBtn.addEventListener('click', () => { if (ssPanel.requestFullscreen) ssPanel.requestFullscreen(); });
+
+// Draggable panel
+let ssDragging = false, ssOffX = 0, ssOffY = 0;
+ssPanelHeader.addEventListener('mousedown', (e) => { ssDragging = true; ssOffX = e.clientX - ssPanel.offsetLeft; ssOffY = e.clientY - ssPanel.offsetTop; });
+document.addEventListener('mousemove', (e) => { if (!ssDragging) return; ssPanel.style.left = (e.clientX - ssOffX) + 'px'; ssPanel.style.top = (e.clientY - ssOffY) + 'px'; ssPanel.style.right = 'auto'; ssPanel.style.bottom = 'auto'; });
+document.addEventListener('mouseup', () => { ssDragging = false; });
+
+// ── Collaborative Canvas ─────────────────────────────────────────────────────
+const canvasToggle = document.getElementById('canvas-toggle');
+const canvasPanel = document.getElementById('canvas-panel');
+const drawingCanvas = document.getElementById('drawing-canvas');
+const canvasCtx = drawingCanvas.getContext('2d');
+const mermaidContainer = document.getElementById('mermaid-container');
+const mermaidEditor = document.getElementById('mermaid-editor');
+const mermaidOutput = document.getElementById('mermaid-output');
+const canvasWidthSel = document.getElementById('canvas-width');
+const canvasUndoBtn = document.getElementById('canvas-undo-btn');
+const canvasClearBtn = document.getElementById('canvas-clear-btn');
+const canvasSaveBtn = document.getElementById('canvas-save-btn');
+const canvasCloseBtn2 = document.getElementById('canvas-close-btn');
+const canvasDrawTab = document.getElementById('canvas-draw-tab');
+const canvasDiagramTab = document.getElementById('canvas-diagram-tab');
+
+let canvasIsOpen = false, currentTool = 'pen', currentColor = '#00ffc8', currentWidth = 2;
+let cvDrawing = false, currentPoints = [], canvasOps = [], shapeStart = null, canvasSnapshot = null;
+
+if (typeof mermaid !== 'undefined') mermaid.initialize({ startOnLoad: false, theme: 'dark', themeVariables: { primaryColor: '#4fc3f7', primaryTextColor: '#e0e0e0', lineColor: '#4fc3f7' } });
+
+function resizeCanvas() { const r = drawingCanvas.parentElement.getBoundingClientRect(); drawingCanvas.width = r.width; drawingCanvas.height = r.height; redrawCanvas(); }
+function redrawCanvas() { canvasCtx.fillStyle = '#1a1a2e'; canvasCtx.fillRect(0, 0, drawingCanvas.width, drawingCanvas.height); canvasOps.forEach(op => drawOperation(op)); }
+
+function drawOperation(op) {
+    const ctx = canvasCtx;
+    ctx.strokeStyle = op.color || '#00ffc8'; ctx.lineWidth = op.width || 2; ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+    if (op.tool === 'pen' && op.points && op.points.length > 1) { ctx.beginPath(); ctx.moveTo(op.points[0][0], op.points[0][1]); for (let i=1;i<op.points.length;i++) ctx.lineTo(op.points[i][0], op.points[i][1]); ctx.stroke(); }
+    else if (op.tool === 'line' && op.points && op.points.length === 2) { ctx.beginPath(); ctx.moveTo(op.points[0][0], op.points[0][1]); ctx.lineTo(op.points[1][0], op.points[1][1]); ctx.stroke(); }
+    else if (op.tool === 'rect') { ctx.beginPath(); ctx.strokeRect(op.x, op.y, op.w, op.h); }
+    else if (op.tool === 'circle') { ctx.beginPath(); ctx.ellipse(op.x+op.w/2, op.y+op.h/2, Math.abs(op.w)/2, Math.abs(op.h)/2, 0, 0, Math.PI*2); ctx.stroke(); }
+    else if (op.tool === 'arrow' && op.points && op.points.length === 2) { const [x1,y1]=op.points[0],[x2,y2]=op.points[1]; ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.stroke(); const a=Math.atan2(y2-y1,x2-x1); ctx.beginPath(); ctx.moveTo(x2,y2); ctx.lineTo(x2-12*Math.cos(a-Math.PI/6),y2-12*Math.sin(a-Math.PI/6)); ctx.moveTo(x2,y2); ctx.lineTo(x2-12*Math.cos(a+Math.PI/6),y2-12*Math.sin(a+Math.PI/6)); ctx.stroke(); }
+    else if (op.tool === 'text') { ctx.fillStyle = op.color || '#00ffc8'; ctx.font = (op.size||14)+'px -apple-system, sans-serif'; ctx.fillText(op.text||'', op.x, op.y); }
+    else if (op.tool === 'eraser' && op.points && op.points.length > 1) { ctx.strokeStyle = '#1a1a2e'; ctx.lineWidth = (op.width||2)*4; ctx.beginPath(); ctx.moveTo(op.points[0][0], op.points[0][1]); for (let i=1;i<op.points.length;i++) ctx.lineTo(op.points[i][0], op.points[i][1]); ctx.stroke(); }
+}
+
+canvasToggle.addEventListener('click', () => {
+    canvasIsOpen = !canvasIsOpen;
+    canvasPanel.classList.toggle('visible', canvasIsOpen);
+    canvasToggle.classList.toggle('active', canvasIsOpen);
+    if (canvasIsOpen) { setTimeout(resizeCanvas, 50); if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'canvas_open' })); }
+});
+canvasCloseBtn2.addEventListener('click', () => { canvasIsOpen = false; canvasPanel.classList.remove('visible'); canvasToggle.classList.remove('active'); });
+
+document.querySelectorAll('#canvas-toolbar button[data-tool]').forEach(btn => {
+    btn.addEventListener('click', () => { document.querySelectorAll('#canvas-toolbar button[data-tool]').forEach(b => b.classList.remove('active')); btn.classList.add('active'); currentTool = btn.dataset.tool; drawingCanvas.style.cursor = currentTool === 'text' ? 'text' : 'crosshair'; });
+});
+document.querySelectorAll('.color-swatch').forEach(sw => { sw.addEventListener('click', () => { document.querySelectorAll('.color-swatch').forEach(s => s.classList.remove('active')); sw.classList.add('active'); currentColor = sw.dataset.color; }); });
+canvasWidthSel.addEventListener('change', () => { currentWidth = parseInt(canvasWidthSel.value); });
+
+drawingCanvas.addEventListener('mousedown', (e) => {
+    if (currentTool === 'text') { const text = prompt('Enter text:'); if (text) { const r = drawingCanvas.getBoundingClientRect(); const op = { tool: 'text', x: e.clientX-r.left, y: e.clientY-r.top, text, color: currentColor, size: 14, width: currentWidth }; canvasOps.push(op); drawOperation(op); sendCanvasOp(op); } return; }
+    cvDrawing = true; const r = drawingCanvas.getBoundingClientRect(); const x = e.clientX-r.left, y = e.clientY-r.top; currentPoints = [[x,y]]; shapeStart = [x,y];
+    if (['line','rect','circle','arrow'].includes(currentTool)) canvasSnapshot = canvasCtx.getImageData(0, 0, drawingCanvas.width, drawingCanvas.height);
+});
+
+drawingCanvas.addEventListener('mousemove', (e) => {
+    if (!cvDrawing) return;
+    const r = drawingCanvas.getBoundingClientRect(); const x = e.clientX-r.left, y = e.clientY-r.top; currentPoints.push([x,y]);
+    if (currentTool === 'pen' || currentTool === 'eraser') { const ctx = canvasCtx; ctx.strokeStyle = currentTool==='eraser'?'#1a1a2e':currentColor; ctx.lineWidth = currentTool==='eraser'?currentWidth*4:currentWidth; ctx.lineCap='round'; ctx.beginPath(); const p=currentPoints[currentPoints.length-2]; ctx.moveTo(p[0],p[1]); ctx.lineTo(x,y); ctx.stroke(); }
+    else if (['line','rect','circle','arrow'].includes(currentTool)) {
+        canvasCtx.putImageData(canvasSnapshot, 0, 0); const ctx = canvasCtx; ctx.strokeStyle = currentColor; ctx.lineWidth = currentWidth; ctx.lineCap = 'round'; const [sx,sy] = shapeStart;
+        if (currentTool==='line') { ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(x,y); ctx.stroke(); }
+        else if (currentTool==='rect') { ctx.strokeRect(sx,sy,x-sx,y-sy); }
+        else if (currentTool==='circle') { ctx.beginPath(); ctx.ellipse(sx+(x-sx)/2,sy+(y-sy)/2,Math.abs(x-sx)/2,Math.abs(y-sy)/2,0,0,Math.PI*2); ctx.stroke(); }
+        else if (currentTool==='arrow') { ctx.beginPath(); ctx.moveTo(sx,sy); ctx.lineTo(x,y); ctx.stroke(); const a=Math.atan2(y-sy,x-sx); ctx.beginPath(); ctx.moveTo(x,y); ctx.lineTo(x-12*Math.cos(a-Math.PI/6),y-12*Math.sin(a-Math.PI/6)); ctx.moveTo(x,y); ctx.lineTo(x-12*Math.cos(a+Math.PI/6),y-12*Math.sin(a+Math.PI/6)); ctx.stroke(); }
+    }
+});
+
+drawingCanvas.addEventListener('mouseup', (e) => {
+    if (!cvDrawing) return; cvDrawing = false;
+    const r = drawingCanvas.getBoundingClientRect(); const x = e.clientX-r.left, y = e.clientY-r.top; let op = null;
+    if (currentTool==='pen'||currentTool==='eraser') { if (currentPoints.length>1) op = { tool: currentTool, color: currentColor, width: currentWidth, points: currentPoints }; }
+    else if (currentTool==='line'||currentTool==='arrow') { op = { tool: currentTool, color: currentColor, width: currentWidth, points: [shapeStart,[x,y]] }; }
+    else if (currentTool==='rect') { const [sx,sy]=shapeStart; op = { tool:'rect', color:currentColor, width:currentWidth, x:sx, y:sy, w:x-sx, h:y-sy }; }
+    else if (currentTool==='circle') { const [sx,sy]=shapeStart; op = { tool:'circle', color:currentColor, width:currentWidth, x:sx, y:sy, w:x-sx, h:y-sy }; }
+    if (op) { canvasOps.push(op); sendCanvasOp(op); }
+    currentPoints = []; shapeStart = null; canvasSnapshot = null;
+});
+
+drawingCanvas.addEventListener('mouseleave', () => { if (cvDrawing) { cvDrawing = false; if ((currentTool==='pen'||currentTool==='eraser') && currentPoints.length>1) { const op = { tool:currentTool, color:currentColor, width:currentWidth, points:currentPoints }; canvasOps.push(op); sendCanvasOp(op); } currentPoints = []; } });
+
+function sendCanvasOp(op) { if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'canvas_draw', sender: MY_NAME, op })); }
+
+canvasUndoBtn.addEventListener('click', () => { if (canvasOps.length>0) { canvasOps.pop(); redrawCanvas(); } });
+canvasClearBtn.addEventListener('click', () => { if (confirm('Clear canvas for everyone?')) { canvasOps = []; redrawCanvas(); if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'canvas_clear', canvas_id: 'default', sender: MY_NAME })); } });
+canvasSaveBtn.addEventListener('click', () => { const a = document.createElement('a'); a.download = 'canvas-'+new Date().toISOString().slice(0,10)+'.png'; a.href = drawingCanvas.toDataURL('image/png'); a.click(); });
+
+canvasDrawTab.addEventListener('click', () => { canvasDrawTab.classList.add('active'); canvasDiagramTab.classList.remove('active'); drawingCanvas.style.display = 'block'; mermaidContainer.classList.remove('visible'); setTimeout(resizeCanvas, 50); });
+canvasDiagramTab.addEventListener('click', () => { canvasDiagramTab.classList.add('active'); canvasDrawTab.classList.remove('active'); drawingCanvas.style.display = 'none'; mermaidContainer.classList.add('visible'); renderMermaid(); });
+
+let mermaidTimer = null;
+mermaidEditor.addEventListener('input', () => { clearTimeout(mermaidTimer); mermaidTimer = setTimeout(() => { renderMermaid(); if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({ type: 'canvas_mermaid', source: mermaidEditor.value, sender: MY_NAME })); }, 500); });
+
+async function renderMermaid() {
+    const src = mermaidEditor.value.trim();
+    if (!src) { mermaidOutput.innerHTML = '<p style="color:#666">Enter Mermaid syntax on the left</p>'; return; }
+    try { const { svg } = await mermaid.render('mg-'+Date.now(), src); mermaidOutput.innerHTML = svg; }
+    catch (e) { mermaidOutput.innerHTML = '<p style="color:#e94560;font-size:12px;">Syntax error: '+escapeHtml(String(e.message||e))+'</p>'; }
+}
+
+function handleAdvancedMessage(data) {
+    if (data.type === 'screen_share_available') { sharingIndicator.textContent = data.sender + ' is sharing'; sharingIndicator.style.display = 'inline'; if (data.sender !== MY_NAME) ws.send(JSON.stringify({ type: 'screen_share_request', from: MY_NAME, to: data.sender })); return true; }
+    if (data.type === 'screen_share_stopped') { sharingIndicator.style.display = 'none'; ssPanel.classList.remove('visible'); ssVideo.srcObject = null; if (peerConnections[data.sender]) { peerConnections[data.sender].close(); delete peerConnections[data.sender]; } return true; }
+    if (data.type === 'screen_share_request') { if (isSharing && data.from !== MY_NAME) createOfferForViewer(data.from); return true; }
+    if (data.type === 'rtc_offer') { handleRtcOffer(data.from, data.sdp); return true; }
+    if (data.type === 'rtc_answer') { handleRtcAnswer(data.from, data.sdp); return true; }
+    if (data.type === 'rtc_ice') { handleRtcIce(data.from, data.candidate); return true; }
+    if (data.type === 'canvas_state') { canvasOps = data.operations || []; if (data.mermaid_source) mermaidEditor.value = data.mermaid_source; if (canvasIsOpen) { redrawCanvas(); renderMermaid(); } return true; }
+    if (data.type === 'canvas_draw') { canvasOps.push(data.op); if (canvasIsOpen) drawOperation(data.op); return true; }
+    if (data.type === 'canvas_clear') { canvasOps = []; if (canvasIsOpen) redrawCanvas(); return true; }
+    if (data.type === 'canvas_mermaid') { mermaidEditor.value = data.source || ''; if (canvasIsOpen && mermaidContainer.classList.contains('visible')) renderMermaid(); return true; }
+    return false;
+}
+
+window.addEventListener('resize', () => { if (canvasIsOpen) resizeCanvas(); });
+
+
 connect();
 inputEl.focus();
 </script>
+<script src="/chatroom_features.js"></script>
 </body>
 </html>
 """
