@@ -251,8 +251,9 @@ async def handle_websocket(request):
                     }
                     await broadcast(outgoing)
 
-                    # Get Nova's response (async, non-blocking for other messages)
-                    asyncio.create_task(_nova_respond(text))
+                    # Smart mode: Nova only responds when addressed or when it's a general room statement
+                    if _should_nova_respond(text):
+                        asyncio.create_task(_nova_respond(text))
 
                 except json.JSONDecodeError:
                     log.warning(f"Invalid JSON from WebSocket: {msg.data[:100]}")
@@ -263,6 +264,26 @@ async def handle_websocket(request):
         log.info(f"WebSocket disconnected ({len(_websockets)} total)")
 
     return ws
+
+
+def _should_nova_respond(text: str) -> bool:
+    """Smart mode: Nova responds when addressed or when it's a general room statement.
+    She stays quiet when someone is clearly talking to Claude Code."""
+    lower = text.lower()
+    # Explicitly addressing Nova
+    if any(w in lower for w in ("nova", "hey nova", "@nova", "her")):
+        return True
+    # Explicitly addressing Claude — Nova should NOT respond
+    if any(w in lower for w in ("claude", "code", "hey claude", "@claude")):
+        return False
+    # General greetings or statements — Nova can join
+    if any(w in lower for w in ("everyone", "good morning", "hey all", "hello", "hi all")):
+        return True
+    # Questions without a specific addressee — Nova can answer
+    if "?" in text and not any(w in lower for w in ("claude", "code")):
+        return True
+    # Default: don't respond to avoid being overbearing
+    return False
 
 
 async def _nova_respond(user_message: str):
