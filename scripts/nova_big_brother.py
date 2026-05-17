@@ -2011,11 +2011,18 @@ def _check_privacy_routing(issues: list):
     and trigger an immediate alert to Jordan.
     """
     try:
-        config_path = Path.home() / ".openclaw/openclaw.json"
-        with open(config_path) as f:
-            config = json.load(f)
+        import psycopg2 as _pg2
+        _conn = _pg2.connect("postgresql://kochj@127.0.0.1:5432/nova_ops")
+        _cur = _conn.cursor()
+        _cur.execute("SELECT content FROM nova_documents WHERE category='nova_config' AND name='openclaw.json'")
+        row = _cur.fetchone()
+        _conn.close()
+        if not row:
+            log("[privacy] openclaw.json not found in nova_ops — skipping", level=LOG_WARN, source="big-brother")
+            return
+        config = json.loads(row[0])
     except Exception as e:
-        log(f"[privacy] Could not read openclaw.json: {e}", level=LOG_WARN, source="big-brother")
+        log(f"[privacy] Could not load openclaw.json from PG: {e}", level=LOG_WARN, source="big-brother")
         return
 
     violations = []
@@ -3235,17 +3242,23 @@ class BBHandler(BaseHTTPRequestHandler):
             privacy_ok = True
             privacy_violations = []
             try:
-                with open(str(Path.home() / ".openclaw/openclaw.json")) as f:
-                    cfg = json.load(f)
-                for agent in cfg.get("agents", {}).get("list", []):
-                    m = agent.get("model", "")
-                    if "openrouter" in m and agent.get("id") not in _OPENROUTER_ALLOWED_AGENTS:
-                        privacy_violations.append(f"agent[{agent['id']}] → {m}")
+                import psycopg2 as _pg2b
+                _cnn = _pg2b.connect("postgresql://kochj@127.0.0.1:5432/nova_ops")
+                _cur2 = _cnn.cursor()
+                _cur2.execute("SELECT content FROM nova_documents WHERE category='nova_config' AND name='openclaw.json'")
+                _row2 = _cur2.fetchone()
+                _cnn.close()
+                if _row2:
+                    cfg = json.loads(_row2[0])
+                    for agent in cfg.get("agents", {}).get("list", []):
+                        m = agent.get("model", "")
+                        if "openrouter" in m and agent.get("id") not in _OPENROUTER_ALLOWED_AGENTS:
+                            privacy_violations.append(f"agent[{agent['id']}] → {m}")
+                            privacy_ok = False
+                    sig = cfg.get("channels", {}).get("signal", {})
+                    if sig.get("dmPolicy") != "allowlist" or sig.get("groupPolicy") != "allowlist":
+                        privacy_violations.append(f"Signal open: dm={sig.get('dmPolicy')} group={sig.get('groupPolicy')}")
                         privacy_ok = False
-                sig = cfg.get("channels", {}).get("signal", {})
-                if sig.get("dmPolicy") != "allowlist" or sig.get("groupPolicy") != "allowlist":
-                    privacy_violations.append(f"Signal open: dm={sig.get('dmPolicy')} group={sig.get('groupPolicy')}")
-                    privacy_ok = False
             except Exception:
                 pass
 

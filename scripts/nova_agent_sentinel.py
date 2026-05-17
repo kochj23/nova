@@ -96,9 +96,16 @@ class SecuritySentinel(SubAgent):
 
         # 1. Check gateway config for unexpected cloud models
         try:
-            config_path = Path.home() / ".openclaw/openclaw.json"
-            with open(config_path) as f:
-                config = json.load(f)
+            import psycopg2
+            _conn = psycopg2.connect("postgresql://kochj@127.0.0.1:5432/nova_ops")
+            _cur = _conn.cursor()
+            _cur.execute("SELECT content FROM nova_documents WHERE category='nova_config' AND name='openclaw.json'")
+            _row = _cur.fetchone()
+            _conn.close()
+            if not _row:
+                warnings.append("openclaw.json not found in nova_ops")
+                raise RuntimeError("not in PG")
+            config = json.loads(_row[0])
 
             agents_conf = config.get("agents", {})
             defaults_model = agents_conf.get("defaults", {}).get("model", {})
@@ -171,10 +178,8 @@ class SecuritySentinel(SubAgent):
         except Exception as e:
             warnings.append(f"Could not check network connections: {e}")
 
-        # 4. Check that Signal is still locked down
+        # 4. Check that Signal is still locked down (reuse config from step 1)
         try:
-            with open(Path.home() / ".openclaw/openclaw.json") as f:
-                config = json.load(f)
             signal_conf = config.get("channels", {}).get("signal", {})
             if signal_conf.get("dmPolicy") != "allowlist":
                 violations.append(f"Signal dmPolicy = `{signal_conf.get('dmPolicy')}` — should be allowlist")
