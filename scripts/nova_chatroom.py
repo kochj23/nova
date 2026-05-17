@@ -26,9 +26,11 @@ Written by Jordan Koch.
 import asyncio
 import json
 import logging
+import mimetypes
 import os
 import random
 import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -66,6 +68,33 @@ NOVA_GATEWAY_HTTP = "http://127.0.0.1:18792"
 NOVA_OLLAMA_URL = "http://192.168.1.6:11434"
 NOVA_MEMORY_URL = "http://192.168.1.6:18790"
 MAX_HISTORY = 100  # Messages to load on connect
+
+# ── File Upload Configuration ────────────────────────────────────────────────
+
+FILE_STORAGE_DIR = Path("/Volumes/MoreData/chatroom-files")
+MAX_FILE_SIZE = 50 * 1024 * 1024  # 50MB
+ALLOWED_EXTENSIONS = {
+    # Images
+    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+    # Documents
+    ".pdf", ".md", ".txt",
+    # Code files
+    ".py", ".js", ".ts", ".swift", ".rs", ".go", ".c", ".h", ".cpp", ".hpp",
+    ".java", ".rb", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".json", ".toml",
+    ".xml", ".html", ".css", ".sql",
+    # Archives
+    ".zip", ".tar.gz", ".tgz", ".tar",
+}
+IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
+
+# ── Code Execution Configuration ─────────────────────────────────────────────
+
+EXEC_WORK_DIR = Path("/tmp/nova-chatroom-exec")
+EXEC_TIMEOUT = 30  # seconds
+EXEC_ALLOWED_SENDERS = {"Nova", "Claude Code"}
+EXEC_PYTHON = "/opt/homebrew/bin/python3"
+EXEC_BASH = "/bin/bash"
+EXEC_PSQL = "/opt/homebrew/bin/psql"
 
 # Stop words for topic analysis
 STOP_WORDS = {
@@ -164,6 +193,18 @@ HERD_MEMBERS = {
 
 HERD_RESPOND_CHANCE = 0.10  # 10% chance of responding on topic match (non-mention)
 
+# ── Channels Configuration ──────────────────────────────────────────────────
+
+CHANNELS = [
+    {"id": "general", "name": "#general", "description": "Default, everything goes here"},
+    {"id": "architecture", "name": "#architecture", "description": "Code, design, system discussions"},
+    {"id": "ops", "name": "#ops", "description": "Monitoring, incidents, reliability"},
+    {"id": "game-night", "name": "#game-night", "description": "Interactive games with the Herd"},
+    {"id": "random", "name": "#random", "description": "Off-topic, fun stuff"},
+]
+CHANNEL_IDS = {ch["id"] for ch in CHANNELS}
+DEFAULT_CHANNEL = "general"
+
 # ── Database ─────────────────────────────────────────────────────────────────
 
 _pool: Optional[object] = None
@@ -196,38 +237,238 @@ async def ensure_table():
             CREATE INDEX IF NOT EXISTS idx_chatroom_messages_time
             ON chatroom_messages(created_at DESC)
         """)
-    log.info("Table chatroom_messages ready")
+        # Feature 1: Thread Replies
+        await conn.execute("""
+            DO $$ BEGIN
+                ALTER TABLE chatroom_messages ADD COLUMN reply_to INTEGER REFERENCES chatroom_messages(id);
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_chatroom_replies
+            ON chatroom_messages(reply_to) WHERE reply_to IS NOT NULL
+        """)
+        # Feature 2: Reactions
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS chatroom_reactions (
+                id SERIAL PRIMARY KEY,
+                message_id INTEGER NOT NULL REFERENCES chatroom_messages(id),
+                sender TEXT NOT NULL,
+                emoji TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+                UNIQUE(message_id, sender, emoji)
+            )
+        """)
+        # Feature 5: Pinned Messages
+        await conn.execute("""
+            DO $$ BEGIN
+                ALTER TABLE chatroom_messages ADD COLUMN pinned BOOLEAN DEFAULT FALSE;
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$
+        """)
+        await conn.execute("""
+            DO $$ BEGIN
+                ALTER TABLE chatroom_messages ADD COLUMN pinned_by TEXT;
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$
+        """)
+        await conn.execute("""
+            DO $$ BEGIN
+                ALTER TABLE chatroom_messages ADD COLUMN pinned_at TIMESTAMPTZ;
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$
+        """)
+        # Feature: File uploads
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS chatroom_files (
+                id SERIAL PRIMARY KEY,
+                message_id INTEGER REFERENCES chatroom_messages(id),
+                sender TEXT NOT NULL,
+                filename TEXT NOT NULL,
+                original_name TEXT NOT NULL,
+                file_path TEXT NOT NULL,
+                mime_type TEXT NOT NULL,
+                size_bytes BIGINT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        # Feature: Channel column for room/channel splitting
+        await conn.execute("""
+            DO $$ BEGIN
+                ALTER TABLE chatroom_messages ADD COLUMN channel TEXT NOT NULL DEFAULT 'general';
+            EXCEPTION WHEN duplicate_column THEN NULL;
+            END $$
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_chatroom_channel
+            ON chatroom_messages(channel, created_at DESC)
+        """)
+        # Feature: Scheduled Messages
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS chatroom_scheduled (
+                id SERIAL PRIMARY KEY,
+                sender TEXT NOT NULL,
+                sender_type TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'general',
+                message TEXT NOT NULL,
+                metadata JSONB DEFAULT '{}',
+                scheduled_for TIMESTAMPTZ NOT NULL,
+                delivered BOOLEAN DEFAULT FALSE,
+                delivered_at TIMESTAMPTZ,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_chatroom_scheduled_pending
+            ON chatroom_scheduled(scheduled_for) WHERE delivered = FALSE
+        """)
+        # Feature: Decision Log
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS chatroom_decisions (
+                id SERIAL PRIMARY KEY,
+                message_id INTEGER REFERENCES chatroom_messages(id),
+                decision TEXT NOT NULL,
+                decided_by TEXT NOT NULL,
+                context TEXT,
+                participants TEXT[],
+                channel TEXT NOT NULL DEFAULT 'general',
+                status TEXT NOT NULL DEFAULT 'active',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_chatroom_decisions_status
+            ON chatroom_decisions(status, created_at DESC)
+        """)
+        # Feature: Collaborative Canvas
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS chatroom_canvas (
+                id SERIAL PRIMARY KEY,
+                canvas_id TEXT NOT NULL DEFAULT 'default',
+                operation JSONB NOT NULL,
+                sender TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+        await conn.execute("""
+            CREATE INDEX IF NOT EXISTS idx_chatroom_canvas_id
+            ON chatroom_canvas(canvas_id, created_at)
+        """)
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS chatroom_canvas_state (
+                canvas_id TEXT PRIMARY KEY,
+                mermaid_source TEXT DEFAULT '',
+                background_color TEXT DEFAULT '#1a1a2e',
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+            )
+        """)
+    log.info("Table chatroom_messages ready (with replies, reactions, pins, files, channels, scheduled, decisions, canvas)")
 
 
-async def store_message(sender: str, sender_type: str, message: str, metadata: dict = None) -> int:
+async def store_message(sender: str, sender_type: str, message: str, metadata: dict = None, reply_to: int = None, channel: str = None) -> int:
     """Store a message and return its ID."""
+    ch = channel or DEFAULT_CHANNEL
     pool = await get_pool()
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
-            "INSERT INTO chatroom_messages (sender, sender_type, message, metadata) "
-            "VALUES ($1, $2, $3, $4) RETURNING id, created_at",
-            sender, sender_type, message, json.dumps(metadata or {})
+            "INSERT INTO chatroom_messages (sender, sender_type, message, metadata, reply_to, channel) "
+            "VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, created_at",
+            sender, sender_type, message, json.dumps(metadata or {}), reply_to, ch
         )
         return row["id"], row["created_at"]
 
 
-async def load_history(limit: int = MAX_HISTORY) -> list:
-    """Load recent chat history."""
+async def load_history(limit: int = MAX_HISTORY, channel: str = None) -> list:
+    """Load recent chat history with reply previews, reactions, and pin status."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        if channel:
+            rows = await conn.fetch(
+                "SELECT m.id, m.sender, m.sender_type, m.message, m.created_at, "
+                "m.reply_to, m.pinned, m.pinned_by, m.pinned_at, m.channel, "
+                "p.sender AS parent_sender, LEFT(p.message, 80) AS parent_preview "
+                "FROM chatroom_messages m "
+                "LEFT JOIN chatroom_messages p ON m.reply_to = p.id "
+                "WHERE m.channel = $1 "
+                "ORDER BY m.created_at DESC LIMIT $2",
+                channel, limit
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT m.id, m.sender, m.sender_type, m.message, m.created_at, "
+                "m.reply_to, m.pinned, m.pinned_by, m.pinned_at, m.channel, "
+                "p.sender AS parent_sender, LEFT(p.message, 80) AS parent_preview "
+                "FROM chatroom_messages m "
+                "LEFT JOIN chatroom_messages p ON m.reply_to = p.id "
+                "ORDER BY m.created_at DESC LIMIT $1",
+                limit
+            )
+        # Gather all message IDs to batch-load reactions
+        msg_ids = [row["id"] for row in rows]
+        reactions_map = {}
+        if msg_ids:
+            reaction_rows = await conn.fetch(
+                "SELECT message_id, sender, emoji FROM chatroom_reactions "
+                "WHERE message_id = ANY($1) ORDER BY created_at",
+                msg_ids
+            )
+            for rr in reaction_rows:
+                mid = rr["message_id"]
+                if mid not in reactions_map:
+                    reactions_map[mid] = []
+                reactions_map[mid].append({"sender": rr["sender"], "emoji": rr["emoji"]})
+
+        messages = []
+        for row in reversed(rows):
+            msg = {
+                "id": row["id"],
+                "sender": row["sender"],
+                "sender_type": row["sender_type"],
+                "message": row["message"],
+                "timestamp": row["created_at"].isoformat(),
+                "channel": row["channel"] if "channel" in row.keys() else DEFAULT_CHANNEL,
+            }
+            # Thread reply info
+            if row["reply_to"]:
+                msg["reply_to"] = row["reply_to"]
+                msg["reply_preview"] = row["parent_preview"] or ""
+                msg["reply_sender"] = row["parent_sender"] or ""
+            # Reactions grouped by emoji
+            if row["id"] in reactions_map:
+                grouped = {}
+                for r in reactions_map[row["id"]]:
+                    if r["emoji"] not in grouped:
+                        grouped[r["emoji"]] = []
+                    grouped[r["emoji"]].append(r["sender"])
+                msg["reactions"] = grouped
+            # Pin status
+            if row["pinned"]:
+                msg["pinned"] = True
+                msg["pinned_by"] = row["pinned_by"]
+                msg["pinned_at"] = row["pinned_at"].isoformat() if row["pinned_at"] else None
+            messages.append(msg)
+        return messages
+
+
+async def load_pinned_messages() -> list:
+    """Load all pinned messages."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, sender, sender_type, message, created_at "
-            "FROM chatroom_messages ORDER BY created_at DESC LIMIT $1",
-            limit
+            "SELECT id, sender, sender_type, message, created_at, pinned_by, pinned_at "
+            "FROM chatroom_messages WHERE pinned = TRUE ORDER BY pinned_at DESC"
         )
         messages = []
-        for row in reversed(rows):
+        for row in rows:
             messages.append({
                 "id": row["id"],
                 "sender": row["sender"],
                 "sender_type": row["sender_type"],
                 "message": row["message"],
                 "timestamp": row["created_at"].isoformat(),
+                "pinned": True,
+                "pinned_by": row["pinned_by"],
+                "pinned_at": row["pinned_at"].isoformat() if row["pinned_at"] else None,
             })
         return messages
 
@@ -243,6 +484,11 @@ async def cmd_help() -> dict:
 /recall <topic>     — Semantic search via Nova's memory server
 /stats              — Message statistics: counts per sender, busiest hours, totals
 /digest <duration>  — AI-generated summary of conversations in the time period
+/schedule <time> <msg> — Schedule a message for future delivery (e.g. /schedule 9am tomorrow Good morning!)
+/scheduled          — List all pending scheduled messages
+/decide <text>      — Record a formal decision (e.g. /decide Migrating DNS to Cloudflare)
+/decisions [all]    — List decisions (active only, or all including revoked)
+/revoke <id> <reason> — Revoke/supersede a decision
 /help               — Show this help message"""
     return {"type": "command_result", "command": "/help", "results": help_text}
 
@@ -503,6 +749,312 @@ async def cmd_digest(duration_str: str) -> dict:
         return {"type": "command_result", "command": "/digest", "results": f"Digest error: {e}"}
 
 
+# ── Scheduled Messages Commands ──────────────────────────────────────────────
+
+async def cmd_schedule(arg: str, sender: str = "Jordan") -> dict:
+    """Schedule a message for future delivery."""
+    if not arg:
+        return {"type": "command_result", "command": "/schedule", "results": "Usage: /schedule <time> <message>\nExamples:\n  /schedule 9am tomorrow Hey everyone!\n  /schedule 2026-05-18T09:00:00-07:00 Morning standup\n  /schedule 30m Reminder: check the deploy"}
+
+    # Try to parse the time and message
+    # Supported formats:
+    #   - ISO 8601: 2026-05-18T09:00:00-07:00 message
+    #   - Relative: 30m, 1h, 2h30m, 24h — followed by message
+    #   - Natural: "9am tomorrow message", "5pm today message"
+    parts = arg.split(None, 1)
+    if len(parts) < 2:
+        # Check if it's just a time with no message
+        return {"type": "command_result", "command": "/schedule", "results": "Please provide both a time and a message.\nUsage: /schedule <time> <message>"}
+
+    time_str = parts[0]
+    remaining = parts[1] if len(parts) > 1 else ""
+
+    scheduled_for = None
+    message_text = remaining
+
+    # Try ISO 8601 first
+    try:
+        scheduled_for = datetime.fromisoformat(time_str)
+        if scheduled_for.tzinfo is None:
+            scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+    except ValueError:
+        pass
+
+    # Try relative time (30m, 1h, 2h30m, 24h)
+    if not scheduled_for:
+        rel_match = re.match(r"^(\d+)(m|h|d)$", time_str.lower())
+        if rel_match:
+            amount = int(rel_match.group(1))
+            unit = rel_match.group(2)
+            if unit == "m":
+                scheduled_for = datetime.now(timezone.utc) + timedelta(minutes=amount)
+            elif unit == "h":
+                scheduled_for = datetime.now(timezone.utc) + timedelta(hours=amount)
+            elif unit == "d":
+                scheduled_for = datetime.now(timezone.utc) + timedelta(days=amount)
+
+    # Try natural time patterns: "9am" or "9pm" with optional "tomorrow"
+    if not scheduled_for:
+        nat_match = re.match(r"^(\d{1,2})(am|pm)\s*(tomorrow|today)?(.*)$", arg.lower())
+        if nat_match:
+            hour = int(nat_match.group(1))
+            ampm = nat_match.group(2)
+            day_word = nat_match.group(3) or "today"
+            rest = nat_match.group(4).strip()
+
+            if ampm == "pm" and hour != 12:
+                hour += 12
+            elif ampm == "am" and hour == 12:
+                hour = 0
+
+            now = datetime.now(timezone.utc)
+            target = now.replace(hour=hour, minute=0, second=0, microsecond=0)
+            if day_word == "tomorrow":
+                target += timedelta(days=1)
+            elif target <= now:
+                target += timedelta(days=1)  # auto-bump to next occurrence
+
+            scheduled_for = target
+            message_text = rest if rest else remaining
+
+    if not scheduled_for:
+        return {"type": "command_result", "command": "/schedule", "results": f"Could not parse time: '{time_str}'\nSupported: ISO 8601, relative (30m, 2h, 1d), or natural (9am tomorrow)"}
+
+    if not message_text.strip():
+        return {"type": "command_result", "command": "/schedule", "results": "Message cannot be empty."}
+
+    # Ensure scheduled time is in the future
+    if scheduled_for <= datetime.now(timezone.utc):
+        return {"type": "command_result", "command": "/schedule", "results": "Scheduled time must be in the future."}
+
+    # Store in database
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "INSERT INTO chatroom_scheduled (sender, sender_type, channel, message, scheduled_for) "
+            "VALUES ($1, $2, $3, $4, $5) RETURNING id",
+            sender, "human", DEFAULT_CHANNEL, message_text.strip(), scheduled_for
+        )
+
+    # Format confirmation
+    local_str = scheduled_for.strftime("%Y-%m-%d %H:%M %Z")
+    return {
+        "type": "command_result",
+        "command": "/schedule",
+        "results": f"Scheduled message #{row['id']} for {local_str}:\n\"{message_text.strip()}\""
+    }
+
+
+async def cmd_scheduled() -> dict:
+    """List all pending scheduled messages."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, sender, channel, message, scheduled_for, created_at "
+            "FROM chatroom_scheduled WHERE delivered = FALSE "
+            "ORDER BY scheduled_for ASC LIMIT 50"
+        )
+    if not rows:
+        return {"type": "command_result", "command": "/scheduled", "results": "No pending scheduled messages."}
+
+    lines = ["Pending scheduled messages:", ""]
+    for row in rows:
+        deliver_at = row["scheduled_for"].strftime("%Y-%m-%d %H:%M UTC")
+        preview = row["message"][:80] + ("..." if len(row["message"]) > 80 else "")
+        lines.append(f"  #{row['id']} | {deliver_at} | {row['sender']} | #{row['channel']}")
+        lines.append(f"    \"{preview}\"")
+        lines.append("")
+    return {"type": "command_result", "command": "/scheduled", "results": "\n".join(lines)}
+
+
+# ── Decision Log Commands ────────────────────────────────────────────────────
+
+async def cmd_decide(arg: str, sender: str = "Jordan", channel: str = None) -> dict:
+    """Record a formal decision."""
+    if not arg:
+        return {"type": "command_result", "command": "/decide", "results": "Usage: /decide <decision text>\nExample: /decide We're migrating DNS to Cloudflare next week"}
+
+    ch = channel or DEFAULT_CHANNEL
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # Store the decision message first
+        msg_row = await conn.fetchrow(
+            "INSERT INTO chatroom_messages (sender, sender_type, message, metadata, channel) "
+            "VALUES ($1, $2, $3, $4, $5) RETURNING id, created_at",
+            sender, "human", f"[DECISION] {arg}", json.dumps({"decision": True}), ch
+        )
+        msg_id = msg_row["id"]
+        msg_ts = msg_row["created_at"]
+
+        # Store the decision record
+        dec_row = await conn.fetchrow(
+            "INSERT INTO chatroom_decisions (message_id, decision, decided_by, channel) "
+            "VALUES ($1, $2, $3, $4) RETURNING id, created_at",
+            msg_id, arg, sender, ch
+        )
+
+    # Broadcast the decision as a special message
+    decision_msg = {
+        "type": "message",
+        "id": msg_id,
+        "sender": sender,
+        "sender_type": "human",
+        "message": f"[DECISION] {arg}",
+        "channel": ch,
+        "timestamp": msg_ts.isoformat(),
+        "decision": {
+            "id": dec_row["id"],
+            "text": arg,
+            "decided_by": sender,
+            "status": "active",
+            "created_at": dec_row["created_at"].isoformat(),
+        }
+    }
+    await broadcast(decision_msg, channel=ch)
+
+    return {
+        "type": "command_result",
+        "command": "/decide",
+        "results": f"Decision #{dec_row['id']} recorded: \"{arg}\""
+    }
+
+
+async def cmd_decisions(arg: str = "") -> dict:
+    """List decisions (active only, or all including revoked)."""
+    pool = await get_pool()
+    show_all = arg.strip().lower() == "all"
+    async with pool.acquire() as conn:
+        if show_all:
+            rows = await conn.fetch(
+                "SELECT id, decision, decided_by, channel, status, created_at "
+                "FROM chatroom_decisions ORDER BY created_at DESC LIMIT 50"
+            )
+        else:
+            rows = await conn.fetch(
+                "SELECT id, decision, decided_by, channel, status, created_at "
+                "FROM chatroom_decisions WHERE status = 'active' ORDER BY created_at DESC LIMIT 50"
+            )
+
+    if not rows:
+        label = "No decisions recorded." if show_all else "No active decisions."
+        return {"type": "command_result", "command": "/decisions", "results": label}
+
+    lines = [f"{'All' if show_all else 'Active'} Decisions:", ""]
+    for row in rows:
+        status_icon = "●" if row["status"] == "active" else "✗"
+        ts = row["created_at"].strftime("%Y-%m-%d %H:%M")
+        lines.append(f"  {status_icon} #{row['id']} [{row['status']}] ({ts}) #{row['channel']}")
+        lines.append(f"    {row['decision']}")
+        lines.append(f"    — {row['decided_by']}")
+        lines.append("")
+    return {"type": "command_result", "command": "/decisions", "results": "\n".join(lines)}
+
+
+async def cmd_revoke(arg: str, sender: str = "Jordan") -> dict:
+    """Revoke a decision by ID with a reason."""
+    if not arg:
+        return {"type": "command_result", "command": "/revoke", "results": "Usage: /revoke <id> <reason>"}
+
+    parts = arg.split(None, 1)
+    try:
+        decision_id = int(parts[0].lstrip("#"))
+    except (ValueError, IndexError):
+        return {"type": "command_result", "command": "/revoke", "results": "Invalid decision ID. Usage: /revoke <id> <reason>"}
+
+    reason = parts[1].strip() if len(parts) > 1 else "No reason given"
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, decision, status FROM chatroom_decisions WHERE id = $1", decision_id
+        )
+        if not row:
+            return {"type": "command_result", "command": "/revoke", "results": f"Decision #{decision_id} not found."}
+        if row["status"] != "active":
+            return {"type": "command_result", "command": "/revoke", "results": f"Decision #{decision_id} is already {row['status']}."}
+
+        await conn.execute(
+            "UPDATE chatroom_decisions SET status = 'revoked', context = COALESCE(context, '') || $1 WHERE id = $2",
+            f"\nRevoked by {sender}: {reason}", decision_id
+        )
+
+    # Broadcast revocation notice
+    revoke_msg = f"Decision #{decision_id} REVOKED by {sender}: {reason}\n  Original: \"{row['decision']}\""
+    msg_id, ts = await store_message("System", "system", revoke_msg, metadata={"decision_revoked": decision_id})
+    await broadcast_all({
+        "type": "message",
+        "id": msg_id,
+        "sender": "System",
+        "sender_type": "system",
+        "message": revoke_msg,
+        "timestamp": ts.isoformat(),
+    })
+
+    return {
+        "type": "command_result",
+        "command": "/revoke",
+        "results": f"Decision #{decision_id} revoked. Reason: {reason}"
+    }
+
+
+# ── Scheduled Messages Background Task ──────────────────────────────────────
+
+async def _scheduled_message_worker():
+    """Background task that checks for due scheduled messages every 30 seconds."""
+    log.info("Scheduled message worker started")
+    while True:
+        try:
+            await asyncio.sleep(30)
+            pool = await get_pool()
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT id, sender, sender_type, channel, message, metadata, scheduled_for "
+                    "FROM chatroom_scheduled "
+                    "WHERE scheduled_for <= now() AND delivered = FALSE "
+                    "ORDER BY scheduled_for ASC LIMIT 20"
+                )
+                for row in rows:
+                    # Deliver the scheduled message
+                    metadata = json.loads(row["metadata"]) if row["metadata"] else {}
+                    metadata["scheduled"] = True
+                    metadata["original_sender"] = row["sender"]
+                    metadata["scheduled_id"] = row["id"]
+
+                    msg_id, ts = await store_message(
+                        row["sender"], row["sender_type"], row["message"],
+                        metadata=metadata, channel=row["channel"]
+                    )
+                    await broadcast({
+                        "type": "message",
+                        "id": msg_id,
+                        "sender": row["sender"],
+                        "sender_type": row["sender_type"],
+                        "message": row["message"],
+                        "channel": row["channel"],
+                        "timestamp": ts.isoformat(),
+                        "metadata": metadata,
+                    }, channel=row["channel"])
+
+                    # Mark as delivered
+                    await conn.execute(
+                        "UPDATE chatroom_scheduled SET delivered = TRUE, delivered_at = now() WHERE id = $1",
+                        row["id"]
+                    )
+                    log.info(f"Delivered scheduled message #{row['id']} from {row['sender']}")
+        except asyncio.CancelledError:
+            log.info("Scheduled message worker stopping")
+            break
+        except Exception as e:
+            log.error(f"Scheduled message worker error: {e}")
+            await asyncio.sleep(5)  # Brief pause on error before retrying
+
+
+# ── Slash Command Context (set per-request in WebSocket handler) ─────────────
+
+_current_ws_sender: str = "Jordan"
+_current_ws_channel: str = DEFAULT_CHANNEL
+
+
 async def handle_slash_command(text: str) -> Optional[dict]:
     """Parse and dispatch slash commands. Returns command_result dict or None if not a command."""
     if not text.startswith("/"):
@@ -525,6 +1077,16 @@ async def handle_slash_command(text: str) -> Optional[dict]:
         return await cmd_stats()
     elif cmd == "/digest":
         return await cmd_digest(arg)
+    elif cmd == "/schedule":
+        return await cmd_schedule(arg, _current_ws_sender)
+    elif cmd == "/scheduled":
+        return await cmd_scheduled()
+    elif cmd == "/decide":
+        return await cmd_decide(arg, _current_ws_sender, _current_ws_channel)
+    elif cmd == "/decisions":
+        return await cmd_decisions(arg)
+    elif cmd == "/revoke":
+        return await cmd_revoke(arg, _current_ws_sender)
     else:
         return {"type": "command_result", "command": cmd, "results": f"Unknown command: {cmd}. Type /help for available commands."}
 
@@ -681,10 +1243,40 @@ async def handle_search_request(query: str, sender_filter: str = "", from_date: 
 # ── WebSocket Management ─────────────────────────────────────────────────────
 
 _websockets: set = set()
+_ws_names: dict = {}  # ws -> sender name mapping for WebRTC relay
+_ws_channels: dict = {}  # ws -> set of subscribed channel IDs
+_screen_share_active: Optional[str] = None  # who is currently sharing
+
+# ── Canvas State (in-memory cache) ──────────────────────────────────────────
+
+_canvas_operations: list = []  # list of operation dicts (replayed on connect)
+_canvas_mermaid_source: str = ""  # current mermaid diagram source
 
 
-async def broadcast(msg: dict):
-    """Send a message to all connected WebSocket clients."""
+async def broadcast(msg: dict, exclude=None, channel: str = None):
+    """Send a message to all connected WebSocket clients subscribed to the channel."""
+    payload = json.dumps(msg)
+    target_channel = channel or msg.get("channel")
+    dead = set()
+    for ws in _websockets:
+        if ws is exclude:
+            continue
+        # If a channel is specified, only send to subscribers of that channel
+        if target_channel:
+            subscribed = _ws_channels.get(ws)
+            if subscribed is not None and target_channel not in subscribed:
+                continue
+        try:
+            await ws.send_str(payload)
+        except (ConnectionResetError, RuntimeError):
+            dead.add(ws)
+    _websockets.difference_update(dead)
+    for d in dead:
+        _ws_channels.pop(d, None)
+
+
+async def broadcast_all(msg: dict):
+    """Send a message to ALL connected clients regardless of channel subscription."""
     payload = json.dumps(msg)
     dead = set()
     for ws in _websockets:
@@ -693,6 +1285,21 @@ async def broadcast(msg: dict):
         except (ConnectionResetError, RuntimeError):
             dead.add(ws)
     _websockets.difference_update(dead)
+    for d in dead:
+        _ws_channels.pop(d, None)
+
+
+async def send_to_named(target_name: str, msg: dict):
+    """Send a message to a specific client by sender name."""
+    payload = json.dumps(msg)
+    for ws, name in list(_ws_names.items()):
+        if name == target_name:
+            try:
+                await ws.send_str(payload)
+            except (ConnectionResetError, RuntimeError):
+                pass
+            return
+    log.warning(f"WebRTC relay: target '{target_name}' not found")
 
 
 # ── Nova Agent Bridge ────────────────────────────────────────────────────────
@@ -768,20 +1375,42 @@ async def handle_index(request):
 
 async def handle_websocket(request):
     """Handle browser WebSocket connections (Jordan's chat)."""
+    global _current_ws_sender, _current_ws_channel
+
     ws = web.WebSocketResponse()
     await ws.prepare(request)
     _websockets.add(ws)
+    # Subscribe to all channels by default
+    _ws_channels[ws] = set(CHANNEL_IDS)
     log.info(f"WebSocket connected ({len(_websockets)} total)")
 
-    # Send chat history on connect
-    history = await load_history()
-    await ws.send_str(json.dumps({"type": "history", "messages": history}))
+    # Send channel list on connect
+    await ws.send_str(json.dumps({"type": "channels", "channels": CHANNELS}))
+
+    # Send chat history on connect (default channel)
+    history = await load_history(channel=DEFAULT_CHANNEL)
+    await ws.send_str(json.dumps({"type": "history", "messages": history, "channel": DEFAULT_CHANNEL}))
 
     try:
         async for msg in ws:
             if msg.type == aiohttp.WSMsgType.TEXT:
                 try:
                     data = json.loads(msg.data)
+
+                    # Handle channel subscription changes
+                    if data.get("type") == "subscribe":
+                        channels = data.get("channels", list(CHANNEL_IDS))
+                        _ws_channels[ws] = set(ch for ch in channels if ch in CHANNEL_IDS)
+                        await ws.send_str(json.dumps({"type": "subscribed", "channels": list(_ws_channels[ws])}))
+                        continue
+
+                    # Handle channel switch (load history for that channel)
+                    if data.get("type") == "switch_channel":
+                        target_ch = data.get("channel", DEFAULT_CHANNEL)
+                        if target_ch in CHANNEL_IDS:
+                            ch_history = await load_history(channel=target_ch)
+                            await ws.send_str(json.dumps({"type": "history", "messages": ch_history, "channel": target_ch}))
+                        continue
 
                     # Handle search sidebar requests
                     if data.get("type") == "search":
@@ -800,10 +1429,60 @@ async def handle_websocket(request):
                         await ws.send_str(json.dumps(result))
                         continue
 
+                    # Handle decisions list request from sidebar
+                    if data.get("type") == "decisions_request":
+                        result = await cmd_decisions(data.get("filter", ""))
+                        await ws.send_str(json.dumps(result))
+                        continue
+
+                    # Handle code execution requests
+                    if data.get("type") == "execute":
+                        asyncio.create_task(handle_execute(data, ws))
+                        continue
+
+                    # Handle schedule message via protocol (not slash command)
+                    if data.get("type") == "schedule":
+                        sender = data.get("sender", "Jordan")
+                        message_text = data.get("message", "").strip()
+                        deliver_at = data.get("deliver_at", "")
+                        ch = data.get("channel", DEFAULT_CHANNEL)
+                        if message_text and deliver_at:
+                            try:
+                                scheduled_for = datetime.fromisoformat(deliver_at)
+                                if scheduled_for.tzinfo is None:
+                                    scheduled_for = scheduled_for.replace(tzinfo=timezone.utc)
+                                if scheduled_for > datetime.now(timezone.utc):
+                                    pool = await get_pool()
+                                    async with pool.acquire() as conn:
+                                        row = await conn.fetchrow(
+                                            "INSERT INTO chatroom_scheduled (sender, sender_type, channel, message, scheduled_for) "
+                                            "VALUES ($1, $2, $3, $4, $5) RETURNING id",
+                                            sender, "human", ch, message_text, scheduled_for
+                                        )
+                                    await ws.send_str(json.dumps({
+                                        "type": "schedule_confirmed",
+                                        "id": row["id"],
+                                        "message": message_text,
+                                        "deliver_at": scheduled_for.isoformat(),
+                                        "channel": ch,
+                                    }))
+                                else:
+                                    await ws.send_str(json.dumps({"type": "error", "message": "Scheduled time must be in the future"}))
+                            except ValueError as e:
+                                await ws.send_str(json.dumps({"type": "error", "message": f"Invalid datetime: {e}"}))
+                        continue
+
                     text = data.get("message", "").strip()
                     sender = data.get("sender", "Jordan")
+                    channel = data.get("channel", DEFAULT_CHANNEL)
+                    if channel not in CHANNEL_IDS:
+                        channel = DEFAULT_CHANNEL
                     if not text:
                         continue
+
+                    # Set context for slash commands
+                    _current_ws_sender = sender
+                    _current_ws_channel = channel
 
                     # Slash command handling — results go only to this client
                     if text.startswith("/"):
@@ -812,30 +1491,31 @@ async def handle_websocket(request):
                             await ws.send_str(json.dumps(cmd_result))
                             continue
 
-                    # Store Jordan's message
-                    msg_id, ts = await store_message(sender, "human", text)
+                    # Store Jordan's message with channel
+                    msg_id, ts = await store_message(sender, "human", text, channel=channel)
                     outgoing = {
                         "type": "message",
                         "id": msg_id,
                         "sender": sender,
                         "sender_type": "human",
                         "message": text,
+                        "channel": channel,
                         "timestamp": ts.isoformat(),
                     }
-                    await broadcast(outgoing)
+                    await broadcast(outgoing, channel=channel)
 
                     # Smart mode: Nova only responds when addressed or when it's a general room statement
                     if _should_nova_respond(text):
                         # Check if this is a recall question — fetch context for Nova
                         if _is_recall_question(text):
-                            asyncio.create_task(_nova_respond_with_recall(text))
+                            asyncio.create_task(_nova_respond_with_recall(text, channel=channel))
                         else:
-                            asyncio.create_task(_nova_respond(text))
+                            asyncio.create_task(_nova_respond(text, channel=channel))
 
                     # Check if a Herd member wants to chime in (at most one)
                     herd_responder = _pick_herd_responder(text)
                     if herd_responder:
-                        asyncio.create_task(_herd_respond(text, herd_responder))
+                        asyncio.create_task(_herd_respond(text, herd_responder, channel=channel))
 
                 except json.JSONDecodeError:
                     log.warning(f"Invalid JSON from WebSocket: {msg.data[:100]}")
@@ -843,6 +1523,7 @@ async def handle_websocket(request):
                 log.error(f"WebSocket error: {ws.exception()}")
     finally:
         _websockets.discard(ws)
+        _ws_channels.pop(ws, None)
         log.info(f"WebSocket disconnected ({len(_websockets)} total)")
 
     return ws
@@ -868,36 +1549,40 @@ def _should_nova_respond(text: str) -> bool:
     return False
 
 
-async def _nova_respond(user_message: str):
+async def _nova_respond(user_message: str, channel: str = None):
     """Get Nova's response and broadcast it."""
+    ch = channel or DEFAULT_CHANNEL
     try:
         response = await get_nova_response(user_message)
         if response:
-            msg_id, ts = await store_message("Nova", "ai", response)
+            msg_id, ts = await store_message("Nova", "ai", response, channel=ch)
             await broadcast({
                 "type": "message",
                 "id": msg_id,
                 "sender": "Nova",
                 "sender_type": "ai",
                 "message": response,
+                "channel": ch,
                 "timestamp": ts.isoformat(),
-            })
+            }, channel=ch)
     except Exception as e:
         log.error(f"Nova response failed: {e}")
         # Still broadcast the error so the UI shows something
-        msg_id, ts = await store_message("Nova", "ai", f"(error: {e})")
+        msg_id, ts = await store_message("Nova", "ai", f"(error: {e})", channel=ch)
         await broadcast({
             "type": "message",
             "id": msg_id,
             "sender": "Nova",
             "sender_type": "ai",
             "message": f"(error: {e})",
+            "channel": ch,
             "timestamp": ts.isoformat(),
-        })
+        }, channel=ch)
 
 
-async def _nova_respond_with_recall(user_message: str):
+async def _nova_respond_with_recall(user_message: str, channel: str = None):
     """Get Nova's response with recall context included."""
+    ch = channel or DEFAULT_CHANNEL
     try:
         # Fetch relevant context from DB and memory
         recall_context = await _fetch_recall_context(user_message)
@@ -915,7 +1600,7 @@ async def _nova_respond_with_recall(user_message: str):
             "who said what and when. If nothing was found, say so honestly."
         )
 
-        recent = await load_history(limit=10)
+        recent = await load_history(limit=10, channel=ch)
         messages = [{"role": "system", "content": system_prompt}]
         for msg in recent[-8:]:
             if msg["sender_type"] == "human":
@@ -945,28 +1630,30 @@ async def _nova_respond_with_recall(user_message: str):
                     if "<think>" in content:
                         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
                     if content:
-                        msg_id, ts = await store_message("Nova", "ai", content)
+                        msg_id, ts = await store_message("Nova", "ai", content, channel=ch)
                         await broadcast({
                             "type": "message",
                             "id": msg_id,
                             "sender": "Nova",
                             "sender_type": "ai",
                             "message": content,
+                            "channel": ch,
                             "timestamp": ts.isoformat(),
-                        })
+                        }, channel=ch)
                 else:
                     log.warning(f"Nova recall response: Ollama returned {resp.status}")
     except Exception as e:
         log.error(f"Nova recall response failed: {e}")
-        msg_id, ts = await store_message("Nova", "ai", f"(recall error: {e})")
+        msg_id, ts = await store_message("Nova", "ai", f"(recall error: {e})", channel=ch)
         await broadcast({
             "type": "message",
             "id": msg_id,
             "sender": "Nova",
             "sender_type": "ai",
             "message": f"(recall error: {e})",
+            "channel": ch,
             "timestamp": ts.isoformat(),
-        })
+        }, channel=ch)
 
 
 async def handle_api_message(request):
@@ -979,22 +1666,26 @@ async def handle_api_message(request):
     text = data.get("message", "").strip()
     sender = data.get("sender", "Claude Code")
     sender_type = data.get("sender_type", "agent")
+    channel = data.get("channel", DEFAULT_CHANNEL)
+    if channel not in CHANNEL_IDS:
+        channel = DEFAULT_CHANNEL
 
     if not text:
         return web.json_response({"error": "Empty message"}, status=400)
 
     # Store and broadcast
-    msg_id, ts = await store_message(sender, sender_type, text)
+    msg_id, ts = await store_message(sender, sender_type, text, channel=channel)
     await broadcast({
         "type": "message",
         "id": msg_id,
         "sender": sender,
         "sender_type": sender_type,
         "message": text,
+        "channel": channel,
         "timestamp": ts.isoformat(),
-    })
+    }, channel=channel)
 
-    log.info(f"API message from {sender}: {text[:80]}")
+    log.info(f"API message from {sender} in #{channel}: {text[:80]}")
 
     # Optionally trigger Nova to respond if requested
     if data.get("ping_nova", False):
@@ -1110,15 +1801,16 @@ def _pick_herd_responder(text: str) -> Optional[str]:
     return None
 
 
-async def _herd_respond(text: str, responder_name: str):
+async def _herd_respond(text: str, responder_name: str, channel: str = None):
     """Get a Herd member's response and broadcast it."""
+    ch = channel or DEFAULT_CHANNEL
     member = HERD_MEMBERS[responder_name]
 
     # 3-second delay so they don't step on Nova
     await asyncio.sleep(3.0)
 
     # Build conversation context
-    recent = await load_history(limit=10)
+    recent = await load_history(limit=10, channel=ch)
     messages = [{"role": "system", "content": member["system_prompt"]}]
     for msg in recent[-8:]:
         if msg["sender"] == responder_name and msg["sender_type"] == "herd":
@@ -1149,22 +1841,265 @@ async def _herd_respond(text: str, responder_name: str):
                     if "<think>" in content:
                         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
                     if content:
-                        msg_id, ts = await store_message(responder_name, "herd", content)
+                        msg_id, ts = await store_message(responder_name, "herd", content, channel=ch)
                         await broadcast({
                             "type": "message",
                             "id": msg_id,
                             "sender": responder_name,
                             "sender_type": "herd",
                             "message": content,
+                            "channel": ch,
                             "timestamp": ts.isoformat(),
-                        })
-                        log.info(f"Herd member {responder_name} responded")
+                        }, channel=ch)
+                        log.info(f"Herd member {responder_name} responded in #{ch}")
                 else:
                     log.warning(f"Herd Ollama returned {resp.status} for {responder_name}")
     except asyncio.TimeoutError:
         log.warning(f"Herd member {responder_name} timed out")
     except Exception as e:
         log.error(f"Herd response error ({responder_name}): {e}")
+
+
+# ── File Upload Handler ────────────────────────────────────────────────────
+
+async def handle_upload(request):
+    """POST /api/upload — handle multipart file upload."""
+    try:
+        reader = await request.multipart()
+    except Exception as e:
+        return web.json_response({"error": f"Invalid multipart data: {e}"}, status=400)
+
+    file_field = None
+    sender = "Jordan"
+
+    # Parse multipart fields
+    while True:
+        part = await reader.next()
+        if part is None:
+            break
+        if part.name == "sender":
+            sender = (await part.text()).strip() or "Jordan"
+        elif part.name == "file":
+            file_field = part
+
+    if file_field is None:
+        return web.json_response({"error": "No file field in upload"}, status=400)
+
+    # Get original filename
+    original_name = file_field.filename or "unnamed_file"
+
+    # Check extension
+    ext = ""
+    if "." in original_name:
+        ext = "." + original_name.rsplit(".", 1)[-1].lower()
+        # Handle .tar.gz specially
+        if original_name.lower().endswith(".tar.gz"):
+            ext = ".tar.gz"
+    if ext not in ALLOWED_EXTENSIONS:
+        return web.json_response(
+            {"error": f"File type '{ext}' not allowed. Allowed: images, documents, code, archives."},
+            status=400,
+        )
+
+    # Determine MIME type
+    mime_type = file_field.headers.get("Content-Type", "").split(";")[0].strip()
+    if not mime_type or mime_type == "application/octet-stream":
+        mime_type = mimetypes.guess_type(original_name)[0] or "application/octet-stream"
+
+    # Read file data with size check
+    data = bytearray()
+    while True:
+        chunk = await file_field.read_chunk(65536)
+        if not chunk:
+            break
+        data.extend(chunk)
+        if len(data) > MAX_FILE_SIZE:
+            return web.json_response(
+                {"error": f"File too large. Max size: {MAX_FILE_SIZE // (1024*1024)}MB"},
+                status=413,
+            )
+
+    if not data:
+        return web.json_response({"error": "Empty file"}, status=400)
+
+    # Create date-organized storage directory
+    today = datetime.now().strftime("%Y-%m-%d")
+    storage_dir = FILE_STORAGE_DIR / today
+    storage_dir.mkdir(parents=True, exist_ok=True)
+
+    # Generate UUID-prefixed filename
+    short_uuid = uuid.uuid4().hex[:8]
+    safe_name = re.sub(r"[^\w.\-]", "_", original_name)
+    stored_filename = f"{short_uuid}_{safe_name}"
+    file_path = storage_dir / stored_filename
+
+    # Write file to disk
+    with open(file_path, "wb") as f:
+        f.write(data)
+
+    file_size = len(data)
+    file_url = f"/files/{today}/{stored_filename}"
+
+    # Store message in DB
+    metadata = {
+        "file_url": file_url,
+        "file_name": original_name,
+        "file_size": file_size,
+        "file_mime": mime_type,
+    }
+    msg_id, ts = await store_message(
+        sender, "human" if sender == "Jordan" else "agent",
+        f"[file: {original_name}]",
+        metadata=metadata,
+    )
+
+    # Store in chatroom_files table
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        await conn.execute(
+            "INSERT INTO chatroom_files (message_id, sender, filename, original_name, file_path, mime_type, size_bytes) "
+            "VALUES ($1, $2, $3, $4, $5, $6, $7)",
+            msg_id, sender, stored_filename, original_name, str(file_path), mime_type, file_size,
+        )
+
+    # Broadcast file message
+    await broadcast({
+        "type": "message",
+        "id": msg_id,
+        "sender": sender,
+        "sender_type": "human" if sender == "Jordan" else "agent",
+        "message": f"[file: {original_name}]",
+        "timestamp": ts.isoformat(),
+        "file_url": file_url,
+        "file_name": original_name,
+        "file_size": file_size,
+        "file_mime": mime_type,
+    })
+
+    log.info(f"File uploaded: {original_name} ({file_size} bytes) by {sender}")
+
+    return web.json_response({
+        "ok": True,
+        "id": msg_id,
+        "file_url": file_url,
+        "file_name": original_name,
+        "file_size": file_size,
+        "file_mime": mime_type,
+        "timestamp": ts.isoformat(),
+    })
+
+
+# ── Code Execution Handler ─────────────────────────────────────────────────
+
+async def handle_execute(data: dict, ws) -> None:
+    """Handle code execution requests from WebSocket."""
+    message_id = data.get("message_id")
+    code = data.get("code", "").strip()
+    language = data.get("language", "python").lower()
+
+    if not code:
+        await ws.send_str(json.dumps({
+            "type": "execute_result",
+            "error": "No code provided",
+            "message_id": message_id,
+        }))
+        return
+
+    # Validate: look up original message sender
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT sender FROM chatroom_messages WHERE id = $1", message_id
+        )
+
+    if not row:
+        await ws.send_str(json.dumps({
+            "type": "execute_result",
+            "error": "Message not found",
+            "message_id": message_id,
+        }))
+        return
+
+    original_sender = row["sender"]
+    if original_sender not in EXEC_ALLOWED_SENDERS:
+        await ws.send_str(json.dumps({
+            "type": "execute_result",
+            "error": f"Execution only allowed for messages from {', '.join(EXEC_ALLOWED_SENDERS)}. This message is from '{original_sender}'.",
+            "message_id": message_id,
+        }))
+        return
+
+    # Prepare working directory
+    EXEC_WORK_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Build command based on language
+    if language in ("python", "python3"):
+        cmd = [EXEC_PYTHON, "-c", code]
+    elif language in ("bash", "sh"):
+        cmd = [EXEC_BASH, "-c", code]
+    elif language == "sql":
+        # Read-only: wrap in transaction that rolls back
+        wrapped_sql = f"BEGIN; {code}; ROLLBACK;"
+        cmd = [EXEC_PSQL, "-d", "nova_ops", "-h", "192.168.1.6", "-c", wrapped_sql]
+    else:
+        await ws.send_str(json.dumps({
+            "type": "execute_result",
+            "error": f"Unsupported language: {language}. Supported: python, bash, sql",
+            "message_id": message_id,
+        }))
+        return
+
+    # Execute with timeout
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(EXEC_WORK_DIR),
+        )
+        try:
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=EXEC_TIMEOUT)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await proc.wait()
+            output = f"[TIMEOUT] Execution exceeded {EXEC_TIMEOUT}s limit and was killed."
+        else:
+            stdout_str = stdout.decode("utf-8", errors="replace").strip()
+            stderr_str = stderr.decode("utf-8", errors="replace").strip()
+            parts = []
+            if stdout_str:
+                parts.append(stdout_str)
+            if stderr_str:
+                parts.append(f"[stderr]\n{stderr_str}")
+            if proc.returncode != 0 and not stderr_str:
+                parts.append(f"[exit code: {proc.returncode}]")
+            output = "\n".join(parts) if parts else "(no output)"
+    except FileNotFoundError as e:
+        output = f"[ERROR] Command not found: {e}"
+    except Exception as e:
+        output = f"[ERROR] Execution failed: {e}"
+
+    # Truncate very long output
+    if len(output) > 10000:
+        output = output[:10000] + "\n... [truncated, output exceeded 10KB]"
+
+    # Store result as a system message
+    result_message = f"```\n{output}\n```"
+    metadata = {"execution_of": message_id, "language": language}
+    msg_id, ts = await store_message("System", "system", result_message, metadata=metadata)
+
+    # Broadcast execution result
+    await broadcast({
+        "type": "message",
+        "id": msg_id,
+        "sender": "System",
+        "sender_type": "system",
+        "message": result_message,
+        "timestamp": ts.isoformat(),
+        "metadata": metadata,
+    })
+
+    log.info(f"Code executed (msg {message_id}, {language}): {len(output)} chars output")
 
 
 # ── HTTP Handlers (continued) ───────────────────────────────────────────────
@@ -1204,13 +2139,24 @@ _start_time = time.time()
 async def on_startup(app):
     """Initialize database on startup."""
     await ensure_table()
+    # Start scheduled message background worker
+    app["_scheduled_task"] = asyncio.create_task(_scheduled_message_worker())
     log.info(f"Nova Chatroom running on http://{HOST}:{PORT}")
     log.info(f"Claude Code endpoint: POST http://192.168.1.6:{PORT}/api/message")
+    log.info(f"Channels: {', '.join('#' + ch['id'] for ch in CHANNELS)}")
 
 
 async def on_shutdown(app):
     """Clean up on shutdown."""
     global _pool
+    # Cancel scheduled message worker
+    task = app.get("_scheduled_task")
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     if _pool:
         await _pool.close()
         _pool = None
@@ -1218,17 +2164,22 @@ async def on_shutdown(app):
     for ws in list(_websockets):
         await ws.close()
     _websockets.clear()
+    _ws_channels.clear()
     log.info("Chatroom shut down")
 
 
 def create_app() -> web.Application:
     """Create and configure the aiohttp application."""
-    app = web.Application()
+    app = web.Application(client_max_size=MAX_FILE_SIZE + 1024 * 1024)  # Allow uploads up to MAX_FILE_SIZE + 1MB overhead
     app.router.add_get("/", handle_index)
     app.router.add_get("/ws", handle_websocket)
     app.router.add_post("/api/message", handle_api_message)
+    app.router.add_post("/api/upload", handle_upload)
     app.router.add_get("/api/messages", handle_api_messages)
     app.router.add_get("/health", handle_health)
+    # Static file serving for uploads
+    FILE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    app.router.add_static("/files", str(FILE_STORAGE_DIR))
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
     return app
@@ -1621,6 +2572,145 @@ header .status.disconnected { color: #e94560; }
 #messages::-webkit-scrollbar, #search-results::-webkit-scrollbar, #stats-panel::-webkit-scrollbar { width: 6px; }
 #messages::-webkit-scrollbar-track, #search-results::-webkit-scrollbar-track, #stats-panel::-webkit-scrollbar-track { background: transparent; }
 #messages::-webkit-scrollbar-thumb, #search-results::-webkit-scrollbar-thumb, #stats-panel::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+
+/* Channel Sidebar */
+#channel-sidebar {
+    width: 200px;
+    background: #16213e;
+    border-right: 1px solid #0f3460;
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 0;
+    overflow-y: auto;
+}
+#channel-sidebar h3 {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    color: #888;
+    padding: 12px 14px 6px;
+    margin: 0;
+}
+.channel-item {
+    padding: 6px 14px;
+    font-size: 13px;
+    color: #aaa;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-radius: 4px;
+    margin: 1px 6px;
+    transition: background 0.15s, color 0.15s;
+}
+.channel-item:hover { background: #1a1a2e; color: #e0e0e0; }
+.channel-item.active { background: #0f3460; color: #4fc3f7; font-weight: 600; }
+.channel-item .unread-badge {
+    background: #e94560;
+    color: #fff;
+    font-size: 10px;
+    font-weight: 700;
+    border-radius: 8px;
+    padding: 1px 5px;
+    min-width: 16px;
+    text-align: center;
+    display: none;
+}
+.channel-item .unread-badge.visible { display: inline-block; }
+@media (max-width: 768px) {
+    #channel-sidebar { width: 50px; }
+    #channel-sidebar h3 { display: none; }
+    .channel-item { font-size: 11px; padding: 6px 8px; }
+    .channel-item span.ch-name { display: none; }
+    .channel-item::before { content: '#'; font-size: 14px; }
+}
+
+/* Decision cards */
+.msg.decision {
+    background: #2e2a0e;
+    border: 1px solid #b8860b;
+    align-self: stretch;
+    max-width: 100%;
+}
+.decision-card {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+}
+.decision-icon { font-size: 18px; flex-shrink: 0; }
+.decision-body { flex: 1; }
+.decision-text { font-size: 14px; font-weight: 500; color: #f5deb3; margin-bottom: 4px; }
+.decision-meta { font-size: 11px; color: #999; }
+.decision-status-active { color: #4caf50; }
+.decision-status-revoked { color: #e94560; text-decoration: line-through; }
+
+/* Scheduled message indicator */
+.msg.scheduled-pending {
+    background: #1a2e3e;
+    border: 1px dashed #4fc3f7;
+    opacity: 0.7;
+}
+.schedule-icon { margin-right: 4px; }
+
+/* Schedule picker overlay */
+#schedule-overlay {
+    display: none;
+    position: fixed;
+    bottom: 70px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #16213e;
+    border: 1px solid #0f3460;
+    border-radius: 10px;
+    padding: 16px;
+    z-index: 100;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+    width: 320px;
+}
+#schedule-overlay.visible { display: block; }
+#schedule-overlay h4 { font-size: 13px; color: #4fc3f7; margin-bottom: 10px; }
+#schedule-overlay input, #schedule-overlay textarea {
+    width: 100%;
+    background: #1a1a2e;
+    border: 1px solid #0f3460;
+    border-radius: 6px;
+    padding: 8px 10px;
+    color: #e0e0e0;
+    font-size: 13px;
+    margin-bottom: 8px;
+    outline: none;
+}
+#schedule-overlay input:focus, #schedule-overlay textarea:focus { border-color: #4fc3f7; }
+#schedule-overlay .schedule-actions { display: flex; gap: 8px; justify-content: flex-end; }
+#schedule-overlay button {
+    padding: 6px 14px;
+    border-radius: 6px;
+    border: none;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+}
+#schedule-overlay .btn-cancel { background: #333; color: #ccc; }
+#schedule-overlay .btn-schedule { background: #4fc3f7; color: #1a1a2e; }
+
+/* Decisions panel in sidebar */
+#decisions-panel {
+    flex: 1;
+    overflow-y: auto;
+    padding: 12px 16px;
+    display: none;
+}
+.decision-list-item {
+    background: #1a1a2e;
+    border: 1px solid #0f3460;
+    border-left: 3px solid #b8860b;
+    border-radius: 6px;
+    padding: 8px 10px;
+    margin-bottom: 6px;
+}
+.decision-list-item.revoked { border-left-color: #e94560; opacity: 0.6; }
+.decision-list-item .dl-text { font-size: 12px; color: #f5deb3; margin-bottom: 4px; }
+.decision-list-item .dl-meta { font-size: 10px; color: #888; }
 </style>
 </head>
 <body>
@@ -1642,6 +2732,10 @@ header .status.disconnected { color: #e94560; }
 </div>
 
 <div id="main-container">
+    <div id="channel-sidebar">
+        <h3>Channels</h3>
+        <div id="channel-list"></div>
+    </div>
     <div id="messages"></div>
 
     <div id="search-sidebar">
@@ -1652,6 +2746,7 @@ header .status.disconnected { color: #e94560; }
         <div id="sidebar-tabs">
             <button class="active" data-tab="search">Search</button>
             <button data-tab="stats">Stats</button>
+            <button data-tab="decisions">Decisions</button>
         </div>
         <div id="search-form">
             <label>Message text</label>
@@ -1669,10 +2764,22 @@ header .status.disconnected { color: #e94560; }
         </div>
         <div id="search-results"></div>
         <div id="stats-panel"></div>
+        <div id="decisions-panel"></div>
+    </div>
+</div>
+
+<div id="schedule-overlay">
+    <h4>Schedule Message</h4>
+    <input type="datetime-local" id="sched-datetime" />
+    <textarea id="sched-message" rows="3" placeholder="Message to schedule..."></textarea>
+    <div class="schedule-actions">
+        <button class="btn-cancel" id="sched-cancel">Cancel</button>
+        <button class="btn-schedule" id="sched-confirm">Schedule</button>
     </div>
 </div>
 
 <div id="input-area">
+    <button id="schedule-btn" title="Schedule a message" style="background:none;border:1px solid #0f3460;border-radius:8px;padding:10px;font-size:16px;cursor:pointer;color:#e0e0e0;transition:background 0.2s,border-color 0.2s;">&#x23F0;</button>
     <input type="text" id="msg-input" placeholder="Type a message... (/ for commands)" autocomplete="off" />
     <button id="send-btn">Send</button>
 </div>
@@ -1692,11 +2799,22 @@ const sbToDate = document.getElementById('sb-to-date');
 const sbSearchBtn = document.getElementById('sb-search-btn');
 const searchResults = document.getElementById('search-results');
 const statsPanel = document.getElementById('stats-panel');
+const decisionsPanel = document.getElementById('decisions-panel');
 const sidebarTabs = document.querySelectorAll('#sidebar-tabs button');
+const channelList = document.getElementById('channel-list');
+const scheduleBtn = document.getElementById('schedule-btn');
+const schedOverlay = document.getElementById('schedule-overlay');
+const schedDatetime = document.getElementById('sched-datetime');
+const schedMessage = document.getElementById('sched-message');
+const schedCancel = document.getElementById('sched-cancel');
+const schedConfirm = document.getElementById('sched-confirm');
 
 let ws = null;
 let reconnectTimer = null;
 let knownSenders = new Set();
+let currentChannel = 'general';
+let channels = [];
+let unreadCounts = {};  // channel -> count
 
 const HERD_NAMES = ['jules', 'colette', 'gaston', 'sam'];
 const HERD_INITIALS = { jules: 'J', colette: 'Co', gaston: 'G', sam: 'S' };
@@ -1762,13 +2880,42 @@ function trackSender(sender) {
 function appendMessage(msg) {
     trackSender(msg.sender);
     const div = document.createElement('div');
+
+    // Decision card rendering
+    if (msg.decision) {
+        div.className = 'msg decision';
+        div.dataset.msgId = msg.id || '';
+        const status = msg.decision.status || 'active';
+        const statusClass = status === 'active' ? 'decision-status-active' : 'decision-status-revoked';
+        div.innerHTML = `
+            <div class="decision-card">
+                <span class="decision-icon">&#x2696;</span>
+                <div class="decision-body">
+                    <div class="decision-text">${escapeHtml(msg.decision.text)}</div>
+                    <div class="decision-meta">
+                        <span class="${statusClass}">${status}</span> &mdash;
+                        ${escapeHtml(msg.decision.decided_by)} &bull;
+                        ${formatTime(msg.decision.created_at || msg.timestamp)}
+                    </div>
+                </div>
+            </div>
+        `;
+        messagesEl.appendChild(div);
+        messagesEl.scrollTop = messagesEl.scrollHeight;
+        return;
+    }
+
+    // Scheduled message metadata indicator
+    const isScheduled = msg.metadata && msg.metadata.scheduled;
+    const schedBadge = isScheduled ? '<span class="schedule-icon" title="Scheduled message">&#x23F0;</span> ' : '';
+
     div.className = 'msg ' + getMsgClass(msg.sender_type);
     div.dataset.msgId = msg.id || '';
     div.innerHTML = `
         <div class="msg-avatar ${getAvatarClass(msg.sender)}">${getInitial(msg.sender)}</div>
         <div class="msg-body">
             <div class="msg-header">
-                <span class="msg-sender ${getSenderClass(msg.sender)}">${msg.sender}</span>
+                <span class="msg-sender ${getSenderClass(msg.sender)}">${schedBadge}${msg.sender}</span>
                 <span class="msg-time">${formatTime(msg.timestamp)}</span>
             </div>
             <div class="msg-text">${escapeHtml(msg.message)}</div>
@@ -1880,16 +3027,12 @@ sidebarTabs.forEach(tab => {
         sidebarTabs.forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
         const which = tab.dataset.tab;
-        if (which === 'search') {
-            document.getElementById('search-form').style.display = 'flex';
-            searchResults.style.display = 'block';
-            statsPanel.style.display = 'none';
-        } else {
-            document.getElementById('search-form').style.display = 'none';
-            searchResults.style.display = 'none';
-            statsPanel.style.display = 'block';
-            loadStats();
-        }
+        document.getElementById('search-form').style.display = which === 'search' ? 'flex' : 'none';
+        searchResults.style.display = which === 'search' ? 'block' : 'none';
+        statsPanel.style.display = which === 'stats' ? 'block' : 'none';
+        decisionsPanel.style.display = which === 'decisions' ? 'block' : 'none';
+        if (which === 'stats') loadStats();
+        if (which === 'decisions') loadDecisions();
     });
 });
 
@@ -2034,22 +3177,47 @@ function connect() {
 
     ws.onmessage = (event) => {
         const data = JSON.parse(event.data);
-        if (data.type === 'history') {
+        // Handle Screen Share + Canvas messages first
+        if (typeof handleAdvancedMessage === 'function' && handleAdvancedMessage(data)) return;
+        if (data.type === 'channels') {
+            renderChannels(data.channels);
+        } else if (data.type === 'history') {
             messagesEl.innerHTML = '';
             data.messages.forEach(appendMessage);
         } else if (data.type === 'message') {
-            appendMessage(data);
+            // Track unread for non-active channels
+            const msgChannel = data.channel || 'general';
+            if (msgChannel !== currentChannel) {
+                handleUnread(msgChannel);
+            } else {
+                appendMessage(data);
+            }
         } else if (data.type === 'command_result') {
             appendCommandResult(data);
+            // Also render in sidebar panels if applicable
+            if (data.command === '/stats') renderStats(data);
+            if (data.command === '/decisions') renderDecisions(data);
         } else if (data.type === 'search_results') {
             renderSearchResults(data);
-        } else if (data.type === 'command_result' && data.command === '/stats') {
-            // Stats from slash command rendered inline
-            appendCommandResult(data);
-        }
-        // Stats response for sidebar
-        if (data.command === '/stats' && data.type === 'command_result') {
-            renderStats(data);
+        } else if (data.type === 'schedule_confirmed') {
+            // Show confirmation as inline pending indicator
+            const pendingDiv = document.createElement('div');
+            pendingDiv.className = 'msg scheduled-pending';
+            const deliverAt = new Date(data.deliver_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+            pendingDiv.innerHTML = `
+                <div class="msg-avatar avatar-jordan">J</div>
+                <div class="msg-body">
+                    <div class="msg-header">
+                        <span class="msg-sender sender-jordan">Jordan</span>
+                        <span class="msg-time"><span class="schedule-icon">&#x23F0;</span> Scheduled for ${deliverAt}</span>
+                    </div>
+                    <div class="msg-text">${escapeHtml(data.message)}</div>
+                </div>
+            `;
+            messagesEl.appendChild(pendingDiv);
+            messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else if (data.type === 'error') {
+            appendCommandResult({ command: 'error', results: data.message });
         }
     };
 }
@@ -2057,8 +3225,93 @@ function connect() {
 function sendMessage() {
     const text = inputEl.value.trim();
     if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ sender: 'Jordan', message: text }));
+    ws.send(JSON.stringify({ sender: 'Jordan', message: text, channel: currentChannel }));
     inputEl.value = '';
+}
+
+// --- Channel Sidebar ---
+function renderChannels(chs) {
+    channels = chs;
+    channelList.innerHTML = '';
+    for (const ch of channels) {
+        const div = document.createElement('div');
+        div.className = 'channel-item' + (ch.id === currentChannel ? ' active' : '');
+        div.dataset.channelId = ch.id;
+        div.innerHTML = `<span class="ch-name"># ${ch.id}</span><span class="unread-badge" id="unread-${ch.id}"></span>`;
+        div.title = ch.description || '';
+        div.addEventListener('click', () => switchChannel(ch.id));
+        channelList.appendChild(div);
+    }
+}
+
+function switchChannel(channelId) {
+    if (channelId === currentChannel) return;
+    currentChannel = channelId;
+    // Update active state
+    document.querySelectorAll('.channel-item').forEach(el => {
+        el.classList.toggle('active', el.dataset.channelId === channelId);
+    });
+    // Clear unread for this channel
+    unreadCounts[channelId] = 0;
+    const badge = document.getElementById('unread-' + channelId);
+    if (badge) { badge.textContent = ''; badge.classList.remove('visible'); }
+    // Request history for new channel
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'switch_channel', channel: channelId }));
+    }
+}
+
+function handleUnread(channel) {
+    if (channel === currentChannel) return;
+    unreadCounts[channel] = (unreadCounts[channel] || 0) + 1;
+    const badge = document.getElementById('unread-' + channel);
+    if (badge) {
+        badge.textContent = unreadCounts[channel] > 99 ? '99+' : unreadCounts[channel];
+        badge.classList.add('visible');
+    }
+}
+
+// --- Schedule Overlay ---
+scheduleBtn.addEventListener('click', () => {
+    schedOverlay.classList.toggle('visible');
+    if (schedOverlay.classList.contains('visible')) {
+        // Default to 1 hour from now
+        const now = new Date(Date.now() + 3600000);
+        schedDatetime.value = now.toISOString().slice(0, 16);
+        schedMessage.focus();
+    }
+});
+schedCancel.addEventListener('click', () => { schedOverlay.classList.remove('visible'); });
+schedConfirm.addEventListener('click', () => {
+    const dt = schedDatetime.value;
+    const msg = schedMessage.value.trim();
+    if (!dt || !msg) return;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+            type: 'schedule',
+            sender: 'Jordan',
+            message: msg,
+            deliver_at: new Date(dt).toISOString(),
+            channel: currentChannel,
+        }));
+    }
+    schedOverlay.classList.remove('visible');
+    schedMessage.value = '';
+});
+
+// --- Decisions panel ---
+function loadDecisions() {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    ws.send(JSON.stringify({ type: 'decisions_request', filter: '' }));
+}
+
+function renderDecisions(data) {
+    const results = data.results;
+    if (typeof results === 'string') {
+        decisionsPanel.innerHTML = `<div style="padding:12px;color:#888;font-size:12px;">${escapeHtml(results)}</div>`;
+        return;
+    }
+    decisionsPanel.innerHTML = `<div style="padding:12px;color:#888;font-size:12px;">${escapeHtml(results)}</div>`;
 }
 
 sendBtn.addEventListener('click', sendMessage);

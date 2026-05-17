@@ -506,42 +506,70 @@ def remember(text: str, source: str, metadata: dict) -> bool:
 
 
 def classify_source(show_name: str, title: str, snippet: str) -> str:
-    """Lightweight source classifier (ported from nova_tv_ingest.py)."""
-    text = (show_name + " " + title + " " + snippet[:400]).lower()
+    """Lightweight source classifier. Show-name matches are authoritative (no content override)."""
     show = show_name.lower()
+
+    # ── Authoritative show-name matches (never overridden by content keywords) ──
+
+    if any(w in show for w in ["thesmokingtire", "smoking tire", "smokingtire",
+                                "brian scotto", "vinwiki", "vin wiki",
+                                "vin_tra", "vin tra", "rob dahm", "jason cammisa",
+                                "jay leno", "jasoncommisa", "wheeler dealer",
+                                "fourwheeler", "four wheeler", "mighty car mod",
+                                "rev explained"]):
+        return "automotive"
 
     if any(w in show for w in ["meat church", "arnitex", "arnie tex",
                                 "good eats", "binging with babish", "babish",
                                 "ethan chlebowski", "food wishes"]):
         return "cooking"
+
+    if any(w in show for w in ["forgotten weapon", "forbidden weapon"]):
+        return "military_history"
+
+    if any(w in show for w in ["wipeout", "jeopardy", "wheel of fortune",
+                                "game show", "price is right", "joeschmo",
+                                "joe schmo"]):
+        return "game_show"
+
+    if any(w in show for w in ["history of christianity", "history of religion",
+                                "bible", "gospel", "theology"]):
+        return "religion"
+
     if any(w in show for w in ["red letter media", "redlettermedia", "half in the bag",
                                 "best of the worst", "re:view"]):
         return "film_criticism"
-    if any(w in show for w in ["vin_tra", "vin tra", "rob dahm", "jason cammisa",
-                                "jay leno", "jasoncommisa", "wheeler dealer",
-                                "thesmokingtire", "smoking tire", "smokingtire"]):
-        return "automotive"
-    if any(w in show for w in ["forgotten weapon", "forbidden weapon"]):
-        return "military_history"
-    if any(w in show for w in ["jeopardy", "wheel of fortune", "game show", "price is right"]):
-        return "game_show"
+
     if any(w in show for w in ["crash course", "crashcourse"]):
         return "education"
+
+    if any(w in show for w in ["wristwatch revival", "wristwatch"]):
+        return "horology"
+
     if any(w in show for w in ["documentary", "biography", "civilizations", "connections",
-                                "nova ", "frontline", "american experience"]):
+                                "frontline", "american experience"]):
         return "documentary"
+
     if any(w in show for w in ["car", "auto", "garage", "engine", "motor", "mustang",
                                 "corvette", "racing", "drift", "truck", "wheels", "horsepower",
                                 "finnegan", "car wizard", "chasing classic", "dream car",
                                 "build or bust", "car craft"]):
         return "automotive"
+
     if any(w in show for w in ["combat", "war", "battle", "military", "bonanza", "western",
                                 "cannon", "batman", "21 jump"]):
         return "crime_drama"
+
     if any(w in show for w in ["cooking", "pepin", "kitchen", "chef", "recipe", "food"]):
-        return "education"
+        return "cooking"
+
     if any(w in show for w in ["louis ck", "comedy", "standup", "stand-up", "chug"]):
         return "comedy"
+
+    # ── Content-based fallback (only if no show-name match above) ──
+
+    text = (title + " " + snippet[:400]).lower()
+
     if any(w in text for w in ["firearm", "rifle", "pistol", "shotgun", "cartridge",
                                 "caliber", "ammunition", "magazine", "barrel", "trigger"]):
         return "military_history"
