@@ -656,12 +656,6 @@ tasks:
     overlap: skip
     enabled: false  # Replaced by Big Brother — _check_journal_images() in nova_big_brother.py
 
-  gateway_health:
-    script: nova_gateway_health.py
-    schedule: every 1h
-    timeout: 120
-    overlap: skip
-    enabled: false  # Replaced by Big Brother (net.digitalnoise.big-brother launchd)
 
   maintenance_advisor:
     script: nova_maintenance_advisor.py
