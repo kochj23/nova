@@ -537,7 +537,7 @@ tasks:
   canary:
     script: nova_canary.py
     schedule: every 5m
-    timeout: 15
+    timeout: 45
     overlap: skip
 
   dead_letter_replay:

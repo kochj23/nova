@@ -70,7 +70,7 @@ def _quick_status() -> dict:
             data=data,
             headers={"Content-Type": "application/json"},
         )
-        resp = urllib.request.urlopen(req, timeout=30)
+        resp = urllib.request.urlopen(req, timeout=12)
         result = json.loads(resp.read())
         status["ollama_inference"] = "up" if result.get("done") else "down"
     except Exception:

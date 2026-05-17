@@ -66,10 +66,10 @@ log = logging.getLogger("nova_gateway_v2")
 
 # ── Config ────────────────────────────────────────────────────────────────────
 VERSION      = "2.4.0"
-PG_DSN       = "postgresql://kochj@127.0.0.1:5432/nova_ops"
-OLLAMA_URL   = "http://127.0.0.1:11434"
-MLX_URL      = "http://127.0.0.1:5050"
-LLAMACPP_URL = "http://127.0.0.1:11435"
+PG_DSN       = "postgresql://kochj@192.168.1.6:5432/nova_ops"
+OLLAMA_URL   = "http://192.168.1.6:11434"
+MLX_URL      = "http://192.168.1.6:5050"
+LLAMACPP_URL = "http://192.168.1.6:11435"
 OPENROUTER   = "https://openrouter.ai/api/v1"
 SIGNAL_URL      = "http://127.0.0.1:8080"   # HTTP for send
 SIGNAL_TCP_HOST = "127.0.0.1"
@@ -2675,10 +2675,121 @@ async def _post_startup_slack(tokens: dict):
         pass
 
 
+# ── Hot Reload ────────────────────────────────────────────────────────────────
+
+_last_reload = 0.0
+
+async def _reload_config() -> dict:
+    """Reload config from nova_ops.service_config. Updates globals + router backends."""
+    global OLLAMA_URL, MLX_URL, LLAMACPP_URL, OPENROUTER, SIGNAL_URL, SIGNAL_TCP_HOST
+    global SIGNAL_TCP_PORT, CONTEXT_LIMITS, RESPONSE_RESERVE, COMPACTION_THRESHOLD
+    global CHANNEL_AGENT, _STARTUP_GRACE, _last_reload
+
+    changes = []
+    try:
+        pool = _pg_pool
+        if pool is None:
+            return {"ok": False, "error": "PG pool not initialized"}
+
+        async with pool.acquire() as conn:
+            rows = await conn.fetch(
+                "SELECT key, value FROM service_config WHERE service = 'gateway'"
+            )
+
+        config = {}
+        for row in rows:
+            v = row["value"]
+            config[row["key"]] = json.loads(v) if isinstance(v, str) else v
+
+        if "backends" in config:
+            b = config["backends"]
+            old = (OLLAMA_URL, MLX_URL, LLAMACPP_URL, OPENROUTER)
+            new_ollama = b.get("ollama_url", OLLAMA_URL)
+            new_mlx = b.get("mlx_url", MLX_URL)
+            new_llamacpp = b.get("llamacpp_url", LLAMACPP_URL)
+            new_openrouter = b.get("openrouter_url", OPENROUTER)
+
+            if new_ollama != OLLAMA_URL:
+                changes.append(f"ollama_url: {OLLAMA_URL} → {new_ollama}")
+                OLLAMA_URL = new_ollama
+            if new_mlx != MLX_URL:
+                changes.append(f"mlx_url: {MLX_URL} → {new_mlx}")
+                MLX_URL = new_mlx
+            if new_llamacpp != LLAMACPP_URL:
+                changes.append(f"llamacpp_url: {LLAMACPP_URL} → {new_llamacpp}")
+                LLAMACPP_URL = new_llamacpp
+            if new_openrouter != OPENROUTER:
+                changes.append(f"openrouter_url: {OPENROUTER} → {new_openrouter}")
+                OPENROUTER = new_openrouter
+
+            _router.BACKENDS = [
+                ("ollama",     OLLAMA_URL,   "/api/tags",   True),
+                ("mlx",        MLX_URL,      "/v1/models",  True),
+                ("llamacpp",   LLAMACPP_URL, "/v1/models",  True),
+                ("openrouter", OPENROUTER,   "/models",     False),
+            ]
+            _router._health_cache.clear()
+
+            new_ttl = b.get("health_ttl")
+            if new_ttl and new_ttl != _router.HEALTH_TTL:
+                changes.append(f"health_ttl: {_router.HEALTH_TTL} → {new_ttl}")
+                _router.HEALTH_TTL = float(new_ttl)
+
+        if "context_limits" in config:
+            c = config["context_limits"]
+            new_limits = {
+                k: v for k, v in c.items()
+                if k not in ("response_reserve", "compaction_threshold")
+            }
+            if new_limits != CONTEXT_LIMITS:
+                changes.append(f"context_limits updated")
+                CONTEXT_LIMITS.update(new_limits)
+            if "response_reserve" in c and c["response_reserve"] != RESPONSE_RESERVE:
+                changes.append(f"response_reserve: {RESPONSE_RESERVE} → {c['response_reserve']}")
+                RESPONSE_RESERVE = c["response_reserve"]
+            if "compaction_threshold" in c and c["compaction_threshold"] != COMPACTION_THRESHOLD:
+                changes.append(f"compaction_threshold: {COMPACTION_THRESHOLD} → {c['compaction_threshold']}")
+                COMPACTION_THRESHOLD = c["compaction_threshold"]
+
+        if "channel_routing" in config:
+            new_routing = config["channel_routing"]
+            if new_routing != CHANNEL_AGENT:
+                changes.append(f"channel_routing updated")
+                CHANNEL_AGENT.update(new_routing)
+
+        if "signal" in config:
+            s = config["signal"]
+            if s.get("url") and s["url"] != SIGNAL_URL:
+                changes.append(f"signal_url: {SIGNAL_URL} → {s['url']}")
+                SIGNAL_URL = s["url"]
+            if s.get("tcp_host") and s["tcp_host"] != SIGNAL_TCP_HOST:
+                SIGNAL_TCP_HOST = s["tcp_host"]
+            if s.get("tcp_port") and s["tcp_port"] != SIGNAL_TCP_PORT:
+                SIGNAL_TCP_PORT = s["tcp_port"]
+
+        if "startup" in config:
+            gp = config["startup"].get("grace_period")
+            if gp and gp != _STARTUP_GRACE:
+                changes.append(f"startup_grace: {_STARTUP_GRACE} → {gp}")
+                _STARTUP_GRACE = gp
+
+        _last_reload = time.time()
+        if changes:
+            log.info(f"Config reloaded: {', '.join(changes)}")
+        else:
+            log.info("Config reloaded (no changes)")
+
+        return {"ok": True, "changes": changes}
+
+    except Exception as e:
+        log.error(f"Config reload failed: {e}")
+        return {"ok": False, "error": str(e)}
+
+
 # ── Health API ────────────────────────────────────────────────────────────────
 
 async def _health_server():
-    """Simple HTTP health endpoint on port 18792 (doesn't conflict with OpenClaw's 18789)."""
+    """HTTP management API on port 18792. Provides health checks and hot-reload."""
     from aiohttp import web
 
     async def health(_):
@@ -2689,6 +2800,7 @@ async def _health_server():
             "degraded": degraded,
             "sessions": len(_sessions),
             "uptime_s": int(time.time() - _start_time),
+            "last_reload": _last_reload,
             "backends": router_status,
             "claude_active_task": _claude_active_task,
             "claude_editing": _claude_editing_files,
@@ -2699,13 +2811,19 @@ async def _health_server():
             },
         })
 
+    async def reload(_):
+        result = await _reload_config()
+        status = 200 if result.get("ok") else 500
+        return web.json_response(result, status=status)
+
     app = web.Application()
     app.router.add_get("/health", health)
+    app.router.add_post("/reload", reload)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", 18792)
+    site = web.TCPSite(runner, "0.0.0.0", 18792)
     await site.start()
-    log.info("Health API on 127.0.0.1:18792")
+    log.info("Management API on 0.0.0.0:18792 (/health, POST /reload)")
 
 
 _start_time = time.time()
@@ -2737,6 +2855,10 @@ async def main():
     loop = asyncio.get_event_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, lambda: _shutdown.set())
+    loop.add_signal_handler(
+        signal.SIGHUP,
+        lambda: asyncio.ensure_future(_reload_config())
+    )
 
     # Start health API
     await _health_server()

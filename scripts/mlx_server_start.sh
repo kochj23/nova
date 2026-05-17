@@ -10,5 +10,5 @@ exec /opt/homebrew/bin/mlx_lm.server \
     --model /Volumes/Data/mlx-models/qwen2.5-32b-4bit \
     --draft-model /Volumes/Data/mlx-models/qwen2.5-0.5b-4bit \
     --num-draft-tokens 6 \
-    --host 192.168.1.6 \
+    --host 0.0.0.0 \
     --port 5050

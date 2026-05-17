@@ -561,6 +561,7 @@ class NovaScheduler:
         loop = asyncio.get_event_loop()
         for sig in (signal.SIGTERM, signal.SIGINT):
             loop.add_signal_handler(sig, self._shutdown)
+        loop.add_signal_handler(signal.SIGHUP, self._reload)
 
         # Start HTTP status server
         port = self.sched_cfg.get("status_port", 37460)
@@ -670,6 +671,47 @@ class NovaScheduler:
     def _shutdown(self):
         log("Received shutdown signal", level=LOG_INFO, source="scheduler")
         self._running = False
+
+    def _reload(self):
+        """Hot-reload config from YAML. Preserves runtime state of existing tasks."""
+        log("SIGHUP received — reloading config", level=LOG_INFO, source="scheduler")
+        try:
+            _, new_slack, new_tasks = load_config()
+            self.slack_cfg = new_slack
+
+            added, removed, updated = [], [], []
+            for tid, new_task in new_tasks.items():
+                if tid not in self.tasks:
+                    added.append(tid)
+                    self.tasks[tid] = new_task
+                    new_task.state.next_run = time.time()
+                else:
+                    old = self.tasks[tid]
+                    if (old.timeout != new_task.timeout or old.schedule != new_task.schedule
+                            or old.enabled != new_task.enabled or old.script != new_task.script):
+                        updated.append(tid)
+                    new_task.state = old.state
+                    self.tasks[tid] = new_task
+
+            for tid in list(self.tasks.keys()):
+                if tid not in new_tasks:
+                    if not self.tasks[tid].state.running:
+                        removed.append(tid)
+                        del self.tasks[tid]
+
+            self._recalculate_next_runs()
+            parts = []
+            if added:
+                parts.append(f"+{len(added)} new")
+            if removed:
+                parts.append(f"-{len(removed)} removed")
+            if updated:
+                parts.append(f"~{len(updated)} updated")
+            summary = ", ".join(parts) if parts else "no changes"
+            log(f"Config reloaded: {len(self.tasks)} tasks ({summary})",
+                level=LOG_INFO, source="scheduler")
+        except Exception as e:
+            log(f"Config reload failed: {e}", level=LOG_ERROR, source="scheduler")
 
 
 # ── Entry point ──────────────────────────────────────────────────────────────
