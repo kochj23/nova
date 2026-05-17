@@ -385,19 +385,21 @@ All services bind to `192.168.1.6` (LAN-accessible). Exceptions bind to `127.0.0
 
 | Service | Port | Bound To | Notes |
 |---------|------|----------|-------|
-| Gateway v2 | 18792 | 127.0.0.1 | Health + session API |
+| Gateway v2 Management | 18792 | 0.0.0.0 | /health, POST /reload (hot-reload config) |
 | Memory Server | 18790 | 192.168.1.6 | FastAPI + pgvector |
-| Scheduler API | 37460 | 192.168.1.6 | /runs /stats /tasks |
-| Big Brother API | 37461 | 192.168.1.6 | /bb/status /bb/events |
+| Scheduler API | 37460 | 0.0.0.0 | /runs /stats /tasks |
+| Big Brother API | 37461 | 192.168.1.6 | /bb/status /bb/events /bb/gpu |
+| **Chatroom** | **37480** | **0.0.0.0** | **3-way real-time chat (Jordan/Nova/Claude Code)** |
 | PostgreSQL | 5432 | 192.168.1.6 | nova_memories + nova_ops |
 | PgBouncer | 6432 | 192.168.1.6 | Connection pool |
 | Redis | 6379 | 192.168.1.6 | Queue + cache + maintenance flags |
-| Ollama | 11434 | 127.0.0.1 | Ollama.app only binds loopback |
+| Ollama | 11434 | 0.0.0.0 | qwen3:30b-a3b, deepseek-r1:8b, qwen3-vl:4b |
+| llama.cpp | 11435 | 0.0.0.0 | Standby: qwen3-coder 30B (failover from Ollama) |
+| MLX Server | 5050 | 0.0.0.0 | Qwen2.5-32B (speculative decoding) |
 | signal-cli HTTP | 8080 | 127.0.0.1 | Outbound send |
 | signal-cli TCP | 7583 | 127.0.0.1 | Streaming receive |
 | NovaControl | 37400 | 127.0.0.1 | macOS app |
 | OpenWebUI | 3000 | 192.168.1.6 | |
-| MLX Server | 5050 | 192.168.1.6 | Qwen2.5-32B |
 | TinyChat | 8000 | 192.168.1.6 | |
 
 ### PostgreSQL Configuration
@@ -429,6 +431,76 @@ bb-maintenance on [--ttl 3600] [--service "Memory Server"]
 bb-maintenance off [--service "PostgreSQL"]
 bb-maintenance status
 ```
+
+---
+
+## Hot-Reload & Model Failover
+
+### Hot-Reload (no restart needed)
+
+Config changes take effect immediately without stopping services:
+
+```bash
+# Gateway: reload from nova_ops.service_config table
+curl -X POST http://192.168.1.6:18792/reload
+# or: kill -HUP $(pgrep -f nova_gateway_v2)
+
+# Scheduler: reload from scheduler.yaml (preserves task runtime state)
+kill -HUP $(pgrep -f nova_scheduler)
+```
+
+Config source of truth: `nova_ops.service_config` table (not flat files).
+
+```sql
+-- View current config
+SELECT service, key, value FROM service_config WHERE service = 'gateway';
+
+-- Change a backend URL (takes effect on next /reload)
+UPDATE service_config
+SET value = jsonb_set(value, '{mlx_url}', '"http://192.168.1.6:5050"')
+WHERE service = 'gateway' AND key = 'backends';
+```
+
+### Model Failover Chain
+
+```mermaid
+graph LR
+    Request["Inference Request"] --> Ollama["1. Ollama :11434\nqwen3:30b-a3b\nGPU-accelerated"]
+    Ollama -->|"unhealthy"| MLX["2. MLX :5050\nQwen2.5-32B\nApple Silicon native"]
+    MLX -->|"unhealthy"| LlamaCpp["3. llama.cpp :11435\nqwen3-coder 30B\nSecondary standby"]
+    LlamaCpp -->|"unhealthy"| OR["4. OpenRouter\nqwen3-235b (cloud)\nnon-private only"]
+
+    style Ollama fill:#4CAF50,color:#fff
+    style MLX fill:#2196F3,color:#fff
+    style LlamaCpp fill:#FF9800,color:#fff
+    style OR fill:#9C27B0,color:#fff
+```
+
+Health checked every 30s. Failed mid-request calls automatically retry on the next backend. Privacy filter blocks OpenRouter for personal content.
+
+---
+
+## Chatroom
+
+Real-time 3-way web chat between Jordan, Nova, and Claude Code.
+
+```mermaid
+graph LR
+    Jordan["Jordan\n(browser WebSocket)"] --> Server["nova_chatroom.py\nport 37480\naiohttp"]
+    Claude["Claude Code\nPOST /api/message"] --> Server
+    Server --> Nova["Nova\n(Ollama qwen3-coder:30b)"]
+    Server --> PG["nova_ops.chatroom_messages\npersistent history"]
+    Server -->|"broadcast"| Jordan
+    Server -->|"broadcast"| Claude
+
+    style Server fill:#1a3a5c,color:#fff
+    style Nova fill:#e94560,color:#fff
+    style Claude fill:#ab47bc,color:#fff
+```
+
+**Access:** `http://192.168.1.6:37480`
+**Claude Code API:** `POST http://192.168.1.6:37480/api/message` with `{"message": "...", "sender": "Claude Code", "ping_nova": true}`
+**launchd:** `net.digitalnoise.nova-chatroom`
 
 ---
 
