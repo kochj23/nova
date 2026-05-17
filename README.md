@@ -17,12 +17,15 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 | Scheduler runs logged | 2,058 (98.4% success rate) |
 | Vector memories | 1,434,822 unique (deduplicated, HNSW-indexed) |
 | Memory sources | 217 domains |
-| Gateway | Nova Gateway v2.0.0 (pure Python asyncio) |
-| Channels | Slack + Discord + Signal |
+| Gateway | Nova Gateway v2.4.0 (pure Python asyncio, hot-reloadable config) |
+| Channels | Slack + Discord + Signal + Web Chatroom |
 | Agents | 4 (Chat, Research, Home, Main) |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Databases | PostgreSQL 17 + pgvector (`nova_memories` + `nova_ops`) + Redis |
-| Ops DB tables | 23 tables — scheduler runs, gateway sessions, agent docs, claude audit trail |
+| Ops DB tables | 35 tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, chatroom |
+| Hot-reload | Gateway: `POST :18792/reload` or `SIGHUP`. Scheduler: `SIGHUP` reloads tasks. |
+| Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
+| Chatroom | Real-time 3-way chat (Jordan/Nova/Claude Code) on port 37480 |
 | Bootstrap source | `nova_ops.agent_docs` (PostgreSQL — not files) |
 | Session storage | `nova_ops.gateway_sessions` + `gateway_query_log` |
 | Model warmup | `ollama_preload` hourly — qwen3:30b-a3b stays warm |
