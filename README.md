@@ -275,6 +275,46 @@ graph TD
 
 ---
 
+## Claude-Nova Collaboration Bridge
+
+Real-time bidirectional communication between Claude Code and Nova, so both AIs stay coordinated when working on shared infrastructure.
+
+```mermaid
+graph LR
+    subgraph "Claude Code (this tool)"
+        CC["Claude Code session"]
+        Hook1["PostToolUse: notify-nova-on-push.sh"]
+        Hook2["PostToolUse: session-context-broadcast.sh"]
+        Consult["consult-nova.sh\n(ask + wait for reply)"]
+    end
+
+    subgraph "Shared State"
+        PG["nova_ops.claude_messages\ndirection: to_nova / from_nova"]
+        Redis["Redis: nova:scratchpad:claude_active_task"]
+    end
+
+    subgraph "Nova (Gateway v2)"
+        Poll["run_claude_channel()\npolls every 5s"]
+        Agent["Nova's chat agent\n(processes message, generates reply)"]
+    end
+
+    CC -->|"git push"| Hook1 -->|"INSERT to_nova"| PG
+    CC -->|"Edit/Write/commit"| Hook2 -->|"SET + TTL 5min"| Redis
+    CC -->|"question"| Consult -->|"INSERT to_nova + poll"| PG
+    PG -->|"new to_nova rows"| Poll --> Agent
+    Agent -->|"INSERT from_nova"| PG
+    PG -->|"poll response"| Consult -->|"reply text"| CC
+```
+
+**How it works:**
+1. **Push notifications** — whenever Claude Code pushes to this repo, Nova gets the commit summary and can flag concerns
+2. **Real-time consultation** — Claude asks Nova a question, waits up to 60s for her response (she processes it through her full agent with memory recall)
+3. **Session awareness** — Redis key shows Nova what Claude is actively working on (editing, committing, launching tasks)
+
+**16 integration tests** in `scripts/tests/test_claude_nova_bridge.py`.
+
+---
+
 ## Nova Gateway v2 — Technical Detail
 
 **File:** `~/.openclaw/scripts/nova_gateway_v2.py`
