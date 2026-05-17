@@ -9,7 +9,7 @@ Author: Jordan Koch / kochj23
 import json, urllib.request, urllib.parse, time
 
 ONEONONE = "http://127.0.0.1:37400/api"
-MEMORY   = "http://127.0.0.1:18790/remember"
+MEMORY   = "http://192.168.1.6:18790/remember"
 SOURCE   = "oneonone"
 
 
@@ -29,7 +29,7 @@ def store(text, metadata={}):
 print("Clearing existing oneonone chunks...")
 try:
     req = urllib.request.Request(
-        f"http://127.0.0.1:18790/forget_all?source={SOURCE}", method="DELETE")
+        f"http://192.168.1.6:18790/forget_all?source={SOURCE}", method="DELETE")
     with urllib.request.urlopen(req, timeout=10) as r:
         result = json.loads(r.read())
         print(f"  Deleted {result.get('deleted', 0)} existing chunks")
@@ -137,7 +137,7 @@ for m in meetings:
 print()
 
 # ── Stats ──────────────────────────────────────────────────────────────────────
-stats = json.loads(urllib.request.urlopen("http://127.0.0.1:18790/stats", timeout=5).read())
+stats = json.loads(urllib.request.urlopen("http://192.168.1.6:18790/stats", timeout=5).read())
 oneonone_count = stats.get("by_source", {}).get(SOURCE, 0)
 print(f"Done. '{SOURCE}' source now has {oneonone_count} chunks in Nova's memory.")
 print(f"Total memories: {stats.get('count', '?')}")

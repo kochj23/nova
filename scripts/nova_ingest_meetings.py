@@ -24,7 +24,7 @@ import urllib.error
 from datetime import datetime, timedelta, timezone
 
 ONEONONE_API = "http://127.0.0.1:37400"
-MEMORY_API = "http://127.0.0.1:18790"
+MEMORY_API = "http://192.168.1.6:18790"
 SOURCE = "oneonone_meetings"
 
 

@@ -786,7 +786,7 @@ async def stats():
         idx_info = await conn.fetch(
             """SELECT indexrelname, pg_size_pretty(pg_relation_size(indexrelid)) as size,
                       idx_scan
-               FROM pg_stat_user_indexes WHERE tablename = 'memories'
+               FROM pg_stat_user_indexes WHERE relname = 'memories'
                ORDER BY pg_relation_size(indexrelid) DESC"""
         )
         hnsw_params = await conn.fetchrow(

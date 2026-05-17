@@ -40,7 +40,7 @@ HOST_KEY_PATH = Path.home() / ".openclaw/ssh/nova_host_key"
 AUTHORIZED_KEYS = Path.home() / ".ssh/authorized_keys"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 MODEL = "nova:latest"
-VECTOR_URL = "http://127.0.0.1:18790"
+VECTOR_URL = "http://192.168.1.6:18790"
 
 SYSTEM_PROMPT = """You are Nova, Jordan Koch's AI familiar. He's connected via SSH.
 Be concise and direct — this is a terminal, not a chat window.

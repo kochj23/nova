@@ -35,7 +35,7 @@ def load_acknowledged():
 
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_BB)
 
 
 def wake_nas(host="192.168.1.11", retries=2):

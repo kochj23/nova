@@ -16,7 +16,7 @@ import json, os, sys, time, subprocess, urllib.request
 from pathlib import Path
 from datetime import datetime
 
-MEMORY_URL = "http://127.0.0.1:18790/remember"
+MEMORY_URL = "http://192.168.1.6:18790/remember"
 DOCS_DIR = Path("/Volumes/nas/GoogleDriveBackups/Docs")
 LOG_FILE = Path.home() / ".openclaw/logs/ingest-private-docs.log"
 CHUNK_SIZE = 400  # words per chunk (smaller for denser recall)

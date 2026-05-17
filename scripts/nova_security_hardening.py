@@ -10,7 +10,7 @@ from datetime import datetime
 from pathlib import Path
 import urllib.request
 
-MEMORY_URL = "http://127.0.0.1:18790"
+MEMORY_URL = "http://192.168.1.6:18790"
 
 def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)

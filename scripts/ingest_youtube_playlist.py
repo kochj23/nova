@@ -12,7 +12,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-MEMORY_URL = "http://127.0.0.1:18790/remember"
+MEMORY_URL = "http://192.168.1.6:18790/remember"
 WORK_DIR = Path("/Volumes/Data/youtube-ingest")
 CHUNK_WORDS = 400
 

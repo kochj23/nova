@@ -26,7 +26,7 @@ import nova_config
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-MEMORY_URL = "http://127.0.0.1:18790/remember?async=1"
+MEMORY_URL = "http://192.168.1.6:18790/remember?async=1"
 TARGET_CHUNKS = 10000
 STATUS_INTERVAL = 300
 CHUNK_SIZE = 1500

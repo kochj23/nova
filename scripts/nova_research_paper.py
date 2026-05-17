@@ -58,7 +58,7 @@ else:
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-haiku-4.5"
 SEARXNG_URL = "http://127.0.0.1:8888/search"
-MEMORY_SERVER = "http://127.0.0.1:18790"
+MEMORY_SERVER = "http://192.168.1.6:18790"
 
 LOG_FILE = Path.home() / ".openclaw/logs/nova_research_paper.log"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/research_paper_state.json"

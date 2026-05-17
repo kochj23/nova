@@ -430,7 +430,7 @@ def cmd_turn(player_email, command):
             "metadata": {"date": TODAY, "game": "blompie_herd", "turn": state["turn"]-1}
         }).encode()
         req = urllib.request.Request(
-            "http://127.0.0.1:18790/remember", data=payload,
+            "http://192.168.1.6:18790/remember", data=payload,
             headers={"Content-Type": "application/json"}, method="POST"
         )
         with urllib.request.urlopen(req, timeout=10):

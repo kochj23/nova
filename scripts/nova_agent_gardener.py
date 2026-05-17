@@ -28,7 +28,7 @@ import nova_config
 from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN
 from nova_subagent import SubAgent
 
-MEMORY_URL = "http://127.0.0.1:18790"
+MEMORY_URL = "http://192.168.1.6:18790"
 SOURCES_TO_SCAN = [
     "email_archive", "imessage", "music", "document",
     "email", "music_history", "meeting", "demonology",

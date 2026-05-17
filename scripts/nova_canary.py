@@ -56,6 +56,26 @@ def _quick_status() -> dict:
     except Exception:
         status["redis"] = "down"
 
+    # Ollama inference test — actually generate 1 token to verify Metal compute works
+    try:
+        import json
+        data = json.dumps({
+            "model": "deepseek-r1:8b",
+            "prompt": "1+1=",
+            "stream": False,
+            "options": {"num_predict": 1, "num_ctx": 128}
+        }).encode()
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/generate",
+            data=data,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = urllib.request.urlopen(req, timeout=30)
+        result = json.loads(resp.read())
+        status["ollama_inference"] = "up" if result.get("done") else "down"
+    except Exception:
+        status["ollama_inference"] = "down"
+
     return status
 
 

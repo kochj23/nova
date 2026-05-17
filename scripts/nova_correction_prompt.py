@@ -27,7 +27,7 @@ try:
 except ImportError:
     requests = None
 
-VECTOR_API_BASE = "http://127.0.0.1:18790"
+VECTOR_API_BASE = "http://192.168.1.6:18790"
 CORRECTIONS_FILE = Path.home() / ".openclaw" / "workspace" / "state" / "corrections.json"
 
 

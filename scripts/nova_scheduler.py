@@ -72,6 +72,7 @@ class Task:
     env: dict = field(default_factory=dict)
     enabled: bool = True
     group: str = ""
+    gpu_heavy: bool = False
     state: TaskState = field(default_factory=TaskState)
 
     # Parsed schedule
@@ -165,6 +166,7 @@ def load_config():
             env=tcfg.get("env", {}),
             enabled=tcfg.get("enabled", True),
             group=tcfg.get("group", ""),
+            gpu_heavy=tcfg.get("gpu_heavy", False),
         )
         # Parse schedule
         if t.schedule.startswith("every"):
@@ -474,6 +476,7 @@ class NovaScheduler:
                         "schedule": t.schedule,
                         "enabled": t.enabled,
                         "group": t.group,
+                        "gpu_heavy": t.gpu_heavy,
                         "running": t.state.running,
                         "last_run": t.state.last_run,
                         "next_run": t.state.next_run,
@@ -494,7 +497,7 @@ class NovaScheduler:
                 # Serve run history from nova_ops.scheduler_runs
                 try:
                     import asyncpg
-                    conn = await asyncpg.connect("postgresql://kochj@192.168.1.6:5432/nova_ops")
+                    conn = await asyncpg.connect("postgresql://kochj@127.0.0.1:5432/nova_ops")
                     try:
                         if path == "/runs":
                             # Last 50 runs across all tasks
@@ -523,7 +526,7 @@ class NovaScheduler:
                 # Aggregate stats per task from nova_ops view
                 try:
                     import asyncpg
-                    conn = await asyncpg.connect("postgresql://kochj@192.168.1.6:5432/nova_ops")
+                    conn = await asyncpg.connect("postgresql://kochj@127.0.0.1:5432/nova_ops")
                     try:
                         rows = await conn.fetch(
                             "SELECT * FROM scheduler_task_stats ORDER BY total_runs DESC"
@@ -562,7 +565,7 @@ class NovaScheduler:
         # Start HTTP status server
         port = self.sched_cfg.get("status_port", 37460)
         try:
-            server = await asyncio.start_server(self._handle_http, "192.168.1.6", port)
+            server = await asyncio.start_server(self._handle_http, "0.0.0.0", port)
             log(f"Status API on port {port}", level=LOG_INFO, source="scheduler")
         except Exception as e:
             log(f"Status API failed to start: {e}", level=LOG_WARN, source="scheduler")
@@ -624,6 +627,16 @@ class NovaScheduler:
                     )
                     if group_busy:
                         continue  # will retry on next tick
+
+                # GPU exclusion: only one gpu_heavy task at a time
+                if task.gpu_heavy:
+                    gpu_busy = any(
+                        t.state.running and t.gpu_heavy
+                        for t in self.tasks.values()
+                        if t.id != task.id
+                    )
+                    if gpu_busy:
+                        continue
 
                 # Post-wake stagger: delay each overdue task by 5s * slot
                 if now < _post_wake_stagger_until:

@@ -42,8 +42,8 @@ WHISPER_BIN   = "/opt/homebrew/bin/mlx_whisper"
 WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
 FFMPEG_BIN    = "/opt/homebrew/bin/ffmpeg"
 
-MEMORY_URL    = "http://127.0.0.1:18790/remember"
-RECALL_URL    = "http://127.0.0.1:18790/recall"
+MEMORY_URL    = "http://192.168.1.6:18790/remember"
+RECALL_URL    = "http://192.168.1.6:18790/recall"
 SLACK         = "#nova-notifications"
 
 DELAY_BETWEEN = math.pi * 60          # π minutes = 188.495... seconds

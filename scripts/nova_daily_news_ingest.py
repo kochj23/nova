@@ -34,7 +34,7 @@ RECORD_DURATION = 1800  # 30 minutes
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 MLX_WHISPER = "/opt/homebrew/bin/mlx_whisper"
 WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
-MEMORY_URL = "http://127.0.0.1:18790/remember?async=1"
+MEMORY_URL = "http://192.168.1.6:18790/remember?async=1"
 CHUNK_SIZE = 2000
 
 WORK_DIR = Path("/Volumes/Data/nova-livetv/daily-news")

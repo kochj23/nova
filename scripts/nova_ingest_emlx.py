@@ -26,7 +26,7 @@ from pathlib import Path
 
 import re as _re
 
-VECTOR_URL  = "http://127.0.0.1:18790/remember?async=1"
+VECTOR_URL  = "http://192.168.1.6:18790/remember?async=1"
 
 # Skip emails matching these patterns entirely
 _SKIP = [_re.compile(p, _re.IGNORECASE) for p in [

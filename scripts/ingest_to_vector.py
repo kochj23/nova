@@ -8,7 +8,7 @@ import sys
 import requests
 import os
 
-VECTOR_API = "http://127.0.0.1:18790/ingest"
+VECTOR_API = "http://192.168.1.6:18790/ingest"
 
 if len(sys.argv) != 3:
     print("Usage: ingest_to_vector.py <file.md> <source>")

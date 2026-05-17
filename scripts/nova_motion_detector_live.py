@@ -17,7 +17,7 @@ import sys
 WORKSPACE = Path.home() / ".openclaw/workspace"
 CLIPS_DIR = Path("/Volumes/Data/motion_clips")
 FRAMES_DIR = Path("/Volumes/Data/camera_frames")
-MEMORY_URL = "http://127.0.0.1:18790"
+MEMORY_URL = "http://192.168.1.6:18790"
 RTSP_URL = "rtsp://192.168.1.9:554/Streaming/channels/101"  # Front door camera
 
 def log(msg):

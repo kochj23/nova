@@ -29,7 +29,7 @@ import nova_config
 
 BLOG_URL   = "https://jasonacox-sam.github.io"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/sam_blog_state.json"
-VECTOR_URL = "http://127.0.0.1:18790/remember"
+VECTOR_URL = "http://192.168.1.6:18790/remember"
 TODAY      = date.today()
 
 # ── Logging ───────────────────────────────────────────────────────────────────

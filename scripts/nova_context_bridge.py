@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-VECTOR_URL = "http://127.0.0.1:18790"
+VECTOR_URL = "http://192.168.1.6:18790"
 NOW = datetime.now()
 TODAY = date.today().isoformat()
 MEMORY_DIR = Path.home() / ".openclaw" / "workspace" / "memory"

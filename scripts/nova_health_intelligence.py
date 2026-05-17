@@ -289,7 +289,7 @@ def get_calendar_days():
         # For now, use vector memory to recall meeting-heavy days
         import urllib.parse
         params = urllib.parse.urlencode({"q": "meeting calendar", "n": 20, "source": "calendar"})
-        url = f"http://127.0.0.1:18790/recall?{params}"
+        url = f"http://192.168.1.6:18790/recall?{params}"
         with urllib.request.urlopen(url, timeout=5) as r:
             results = json.loads(r.read())
             items = results if isinstance(results, list) else results.get("results", [])

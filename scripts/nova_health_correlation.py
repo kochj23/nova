@@ -45,8 +45,8 @@ import nova_config
 # ── Configuration ────────────────────────────────────────────────────────────
 
 HEALTH_DIR = Path.home() / ".openclaw/private/health"
-VECTOR_RECALL = "http://127.0.0.1:18790/recall"
-VECTOR_REMEMBER = "http://127.0.0.1:18790/remember"
+VECTOR_RECALL = "http://192.168.1.6:18790/recall"
+VECTOR_REMEMBER = "http://192.168.1.6:18790/remember"
 SLACK_API = nova_config.SLACK_API
 SLACK_CHANNEL = nova_config.SLACK_NOTIFY  # #nova-notifications (C0ATAF7NZG9)
 NOW = datetime.now()

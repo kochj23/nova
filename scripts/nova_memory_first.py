@@ -29,19 +29,107 @@ Usage (by Nova via exec):
 Written by Jordan Koch.
 """
 
+import hashlib
 import json
+import logging
+import os
 import re
 import sys
+import time
 import urllib.request
 import urllib.parse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+
+# ── Timing / logging setup ───────────────────────────────────────────────────
+# Timing instrumentation: prints to stderr so stdout stays clean for the gateway
+_TIMING_LOG = os.environ.get("NOVA_MEMORY_TIMING", "0") == "1"
+_t_start = time.time()
+
+_log = logging.getLogger("nova_memory_first")
+logging.basicConfig(
+    level=logging.DEBUG if _TIMING_LOG else logging.WARNING,
+    format="%(asctime)s [memory] %(message)s",
+    stream=sys.stderr,
+)
+
+
+def _timing(label: str, t0: float):
+    """Log timing if NOVA_MEMORY_TIMING=1 is set."""
+    elapsed = time.time() - t0
+    _log.debug(f"Memory: {label} took {elapsed:.2f}s")
+
 
 RECALL_URL       = "http://192.168.1.6:18790/recall"
 RECALL_BATCH_URL = "http://192.168.1.6:18790/recall_batch"
 SEARCH_URL       = "http://192.168.1.6:18790/search"
 RECALL_COUNT = 8
 SEARCH_COUNT = 5
+
+# Reduced HTTP timeouts to fit within 5s gateway budget
+_HTTP_TIMEOUT = 3.0       # individual recall/search calls
+_BATCH_TIMEOUT = 4.0      # batch recall (heavier)
+_SEARCH_TIMEOUT = 3.0     # text search
+
+# ── Redis embedding cache (5-minute TTL) ─────────────────────────────────────
+_REDIS_AVAILABLE = False
+_redis_conn = None
+_CACHE_TTL = 300  # 5 minutes
+
+try:
+    import redis as _redis_lib
+    _REDIS_AVAILABLE = True
+except ImportError:
+    pass
+
+
+def _get_redis():
+    """Get or create a Redis connection. Returns None if unavailable."""
+    global _redis_conn
+    if not _REDIS_AVAILABLE:
+        return None
+    try:
+        if _redis_conn is None:
+            _redis_conn = _redis_lib.from_url("redis://localhost:6379", decode_responses=True)
+            _redis_conn.ping()
+        return _redis_conn
+    except Exception:
+        _redis_conn = None
+        return None
+
+
+def _cache_key(query: str, source: str = "") -> str:
+    """Generate a cache key for a recall query."""
+    h = hashlib.md5(f"{query}:{source}".encode()).hexdigest()[:16]
+    return f"nova:memory:recall:{h}"
+
+
+def _cache_get(query: str, source: str = ""):
+    """Check Redis for cached recall results. Returns list or None."""
+    r = _get_redis()
+    if not r:
+        return None
+    try:
+        key = _cache_key(query, source)
+        data = r.get(key)
+        if data:
+            _log.debug(f"Memory: cache HIT for '{query[:30]}' (source={source})")
+            return json.loads(data)
+    except Exception:
+        pass
+    return None
+
+
+def _cache_set(query: str, source: str, results: list):
+    """Store recall results in Redis with 5-minute TTL."""
+    r = _get_redis()
+    if not r:
+        return
+    try:
+        key = _cache_key(query, source)
+        r.setex(key, _CACHE_TTL, json.dumps(results))
+    except Exception:
+        pass
 
 # ── Source classification ────────────────────────────────────────────────────
 # Maps query keywords/patterns to the most likely memory sources.
@@ -438,44 +526,80 @@ def classify_query(query):
 
 
 def recall(query, source=None, n=RECALL_COUNT):
-    """Vector semantic search."""
-    params = {"q": query, "n": n}
+    """Vector semantic search with Redis caching and timing instrumentation.
+
+    Performance: checks Redis cache first (5-min TTL). On miss, queries the
+    memory server with a tight 3s timeout. Caches results for future hits.
+    Uses HNSW index via ef_search=40 parameter for faster vector search.
+    """
+    t0 = time.time()
+
+    # Check Redis cache first
+    cached = _cache_get(query, source or "")
+    if cached is not None:
+        _timing(f"recall (cache hit, source={source})", t0)
+        return cached
+
+    params = {"q": query, "n": n, "ef_search": 40}  # HNSW ef_search for speed
     if source:
         params["source"] = source
     url = f"{RECALL_URL}?{urllib.parse.urlencode(params)}"
     try:
-        with urllib.request.urlopen(url, timeout=10) as r:
+        with urllib.request.urlopen(url, timeout=_HTTP_TIMEOUT) as r:
             data = json.loads(r.read())
             items = data.get("memories", data) if isinstance(data, dict) else data
-            return items if isinstance(items, list) else []
-    except Exception:
+            results = items if isinstance(items, list) else []
+            # Cache the results
+            if results:
+                _cache_set(query, source or "", results)
+            _timing(f"recall (source={source}, n={len(results)})", t0)
+            return results
+    except Exception as e:
+        _timing(f"recall FAILED (source={source}): {e}", t0)
         return []
 
 
 def search(query, source=None, n=SEARCH_COUNT):
-    """Text keyword search."""
+    """Text keyword search with timing instrumentation."""
+    t0 = time.time()
     params = {"q": query, "n": n}
     if source:
         params["source"] = source
     url = f"{SEARCH_URL}?{urllib.parse.urlencode(params)}"
     try:
-        with urllib.request.urlopen(url, timeout=10) as r:
+        with urllib.request.urlopen(url, timeout=_SEARCH_TIMEOUT) as r:
             data = json.loads(r.read())
             items = data.get("memories", data.get("results", data)) if isinstance(data, dict) else data
-            return items if isinstance(items, list) else []
-    except Exception:
+            results = items if isinstance(items, list) else []
+            _timing(f"search (source={source}, n={len(results)})", t0)
+            return results
+    except Exception as e:
+        _timing(f"search FAILED (source={source}): {e}", t0)
         return []
 
 
 def batch_recall(queries):
     """Send multiple recall queries in one HTTP request to /recall_batch.
 
+    Performance: uses the batch endpoint to avoid N round trips. Includes
+    ef_search=40 for HNSW optimization. Falls back to individual cached
+    recalls if batch endpoint fails. Timeout reduced to 4s.
+
     Args:
         queries: list of dicts, each with keys q, n (optional), source (optional).
     Returns:
         list of result dicts, each with keys query and memories.
     """
-    payload = json.dumps({"queries": queries}).encode()
+    t0 = time.time()
+
+    # Add ef_search to each query for HNSW optimization
+    enriched_queries = []
+    for q in queries:
+        eq = dict(q)
+        eq.setdefault("ef_search", 40)
+        enriched_queries.append(eq)
+
+    payload = json.dumps({"queries": enriched_queries}).encode()
     req = urllib.request.Request(
         RECALL_BATCH_URL,
         data=payload,
@@ -483,15 +607,23 @@ def batch_recall(queries):
         method="POST",
     )
     try:
-        with urllib.request.urlopen(req, timeout=15) as r:
+        with urllib.request.urlopen(req, timeout=_BATCH_TIMEOUT) as r:
             data = json.loads(r.read())
-            return data.get("results", [])
-    except Exception:
-        # Fallback: run individual recalls
+            results = data.get("results", [])
+            _timing(f"batch_recall ({len(queries)} queries, {sum(len(r.get('memories',[])) for r in results)} results)", t0)
+            # Cache individual results for future single recalls
+            for i, br in enumerate(results):
+                if i < len(queries) and br.get("memories"):
+                    _cache_set(queries[i].get("q", ""), queries[i].get("source", ""), br["memories"])
+            return results
+    except Exception as e:
+        _timing(f"batch_recall FAILED: {e}", t0)
+        # Fallback: run individual recalls (these check cache first)
         results = []
         for q in queries:
             items = recall(q.get("q", ""), source=q.get("source"), n=q.get("n", RECALL_COUNT))
             results.append({"query": q.get("q", ""), "memories": items})
+        _timing(f"batch_recall fallback ({len(queries)} individual calls)", t0)
         return results
 
 
@@ -509,13 +641,21 @@ def memory_lookup(query):
 
     Uses /recall_batch to send all source-filtered queries in one request,
     and runs text search in parallel via ThreadPoolExecutor.
+
+    Performance budget: must complete within 5s (gateway timeout).
+    - Batch recall: ~2-3s (with HNSW ef_search=40)
+    - Parallel search + broad recall: ~2-3s
+    - Total with caching: often <1s on cache hits
     """
+    t_pipeline = time.time()
     sources, labels, prefer_search = classify_query(query)
+    _timing("classify_query", t_pipeline)
 
     results = []
     sources_searched = []
 
     # Step 1: BATCH RECALL — all source-filtered queries in one HTTP request
+    t1 = time.time()
     batch_queries = [{"q": query, "n": 3, "source": s} for s in sources[:4]]
     batch_results = batch_recall(batch_queries)
     for br in batch_results:
@@ -529,8 +669,11 @@ def memory_lookup(query):
                     sources_searched.append(src)
         if len(results) >= 8:
             break
+    _timing("step1_batch_recall", t1)
 
     # Step 2: SEARCH + ALWAYS run broad recall (no source filter) to catch all 1.4M+ memories
+    # Timeout reduced from 10s to 3.5s to fit within gateway's 5s budget
+    t2 = time.time()
     need_search = prefer_search or len(results) < 3
 
     with ThreadPoolExecutor(max_workers=3) as executor:
@@ -542,7 +685,7 @@ def memory_lookup(query):
 
         for key, future in futures.items():
             try:
-                items = future.result(timeout=10)
+                items = future.result(timeout=3.5)
             except Exception:
                 items = []
             if key == "search":
@@ -558,6 +701,7 @@ def memory_lookup(query):
                         results.append(item)
                 if items:
                     sources_searched.append("(all sources)")
+    _timing("step2_parallel_search_broad", t2)
 
     # Deduplicate by text prefix
     seen = set()
@@ -627,16 +771,19 @@ def main():
 
     results, sources_searched, labels = memory_lookup(query)
 
+    total_elapsed = time.time() - _t_start
+    _timing(f"TOTAL pipeline", _t_start)
+
     if results:
         print("MEMORY FOUND — " + str(len(results)) + " result(s) from " + ', '.join(labels) + " "
-              f"(searched: {', '.join(sources_searched)})")
+              f"(searched: {', '.join(sources_searched)}) [{total_elapsed:.1f}s]")
         print("---")
         for i, r in enumerate(results):
             print(format_result(r, i + 1))
             print("---")
     else:
         print(f"NO MEMORIES FOUND for: {query}")
-        print(f"Searched: {', '.join(sources_searched)} ({', '.join(labels)})")
+        print(f"Searched: {', '.join(sources_searched)} ({', '.join(labels)}) [{total_elapsed:.1f}s]")
         print("Nova should try: LOCAL LLM reasoning → WEB search → never cloud for private data")
 
     # Append active behavioral rules (corrections + preferences Nova must follow)

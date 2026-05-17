@@ -38,8 +38,8 @@ STATE_FILE    = Path.home() / ".openclaw/workspace/state/fw_ingest_state.json"
 WORK_DIR      = Path("/Volumes/Data/nova-livetv/fw-ingest")
 LOG_FILE      = Path.home() / ".openclaw/logs/nova_fw_ingest.log"
 
-MEMORY_URL    = "http://127.0.0.1:18790/remember"
-RECALL_URL    = "http://127.0.0.1:18790/recall"
+MEMORY_URL    = "http://192.168.1.6:18790/remember"
+RECALL_URL    = "http://192.168.1.6:18790/recall"
 SLACK_CHANNEL = "#nova-notifications"
 
 WHISPER_BIN   = "/opt/homebrew/bin/mlx_whisper"

@@ -53,7 +53,7 @@ else:
     def _today_str() -> str: return time.strftime("%Y-%m-%d")
 from nova_image_utils import ensure_backend, generate_image as generate_image_util
 
-MEMORY_SERVER = "http://127.0.0.1:18790"
+MEMORY_SERVER = "http://192.168.1.6:18790"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 MODEL = "anthropic/claude-haiku-4.5"

@@ -17,7 +17,7 @@ import urllib.error
 from pathlib import Path
 
 HERD_MAIL = str(Path.home() / ".openclaw/scripts/nova_herd_mail.sh")
-MEMORY_URL = "http://127.0.0.1:18790"
+MEMORY_URL = "http://192.168.1.6:18790"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 OLLAMA_MODEL = "qwen3-coder:30b"
 

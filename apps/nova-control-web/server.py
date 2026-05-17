@@ -19,11 +19,11 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-SCHEDULER_BASE = "http://127.0.0.1:37460"
+SCHEDULER_BASE = "http://192.168.1.6:37460"
 GATEWAY_HEALTH = "http://127.0.0.1:18789/health"
-OLLAMA_PS = "http://127.0.0.1:11434/api/ps"
-REDIS_URL = "redis://127.0.0.1:6379"
-OPS_PG_DSN = "postgresql://localhost/nova_ops"
+OLLAMA_PS = "http://192.168.1.6:11434/api/ps"
+REDIS_URL = "redis://192.168.1.6:6379"
+OPS_PG_DSN = "postgresql://192.168.1.6/nova_ops"
 SESSIONS_JSON = Path.home() / ".openclaw" / "agents" / "main" / "sessions" / "sessions.json"
 PG_DB = "nova_memories"
 BACKUP_LOG = Path.home() / ".openclaw" / "logs" / "nova_pg_backup.log"
@@ -41,14 +41,14 @@ HDHR_BASE = "http://192.168.1.89"
 PLEX_PLAYING_STATE = Path.home() / ".openclaw" / "workspace" / "plex_playing.json"
 
 SERVICE_PORTS = {
-    "ollama": {"port": 11434, "url": "http://127.0.0.1:11434"},
+    "ollama": {"port": 11434, "url": "http://192.168.1.6:11434"},
     "tinychat": {"port": 8000, "url": "http://192.168.1.6:8000"},
     "mlx_chat": {"port": 5050, "url": "http://192.168.1.6:5050"},
     "openwebui": {"port": 3000, "url": "http://192.168.1.6:3000"},
     "searxng": {"port": 8888, "url": "http://127.0.0.1:8888"},
     "swarmui": {"port": 7801, "url": "http://127.0.0.1:7801"},
     "comfyui": {"port": 8188, "url": "http://127.0.0.1:8188"},
-    "memory_server": {"port": 18790, "url": "http://127.0.0.1:18790"},
+    "memory_server": {"port": 18790, "url": "http://192.168.1.6:18790"},
     "plex": {"port": 32400, "url": PLEX_BASE, "host": "192.168.1.10"},
     "hdhr": {"port": 80, "url": HDHR_BASE, "host": "192.168.1.89"},
 }
@@ -390,9 +390,9 @@ async def _detail_redis():
 
 async def _detail_ollama():
     session = app.state.http_session
-    async with session.get("http://127.0.0.1:11434/api/tags", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+    async with session.get("http://192.168.1.6:11434/api/tags", timeout=aiohttp.ClientTimeout(total=3)) as resp:
         tags = await resp.json()
-    async with session.get("http://127.0.0.1:11434/api/ps", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+    async with session.get("http://192.168.1.6:11434/api/ps", timeout=aiohttp.ClientTimeout(total=3)) as resp:
         ps = await resp.json()
 
     all_models = []
@@ -759,12 +759,12 @@ async def _detail_memory_server():
     health = {}
     stats = {}
     try:
-        async with session.get("http://127.0.0.1:18790/health", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+        async with session.get("http://192.168.1.6:18790/health", timeout=aiohttp.ClientTimeout(total=3)) as resp:
             health = await resp.json()
     except Exception:
         pass
     try:
-        async with session.get("http://127.0.0.1:18790/stats", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+        async with session.get("http://192.168.1.6:18790/stats", timeout=aiohttp.ClientTimeout(total=3)) as resp:
             stats = await resp.json()
     except Exception:
         pass
@@ -996,6 +996,9 @@ async def collect_services(session: aiohttp.ClientSession) -> dict:
     results = {}
 
     async def check_service(name, info):
+        from urllib.parse import urlparse
+        parsed = urlparse(info["url"])
+        host = info.get("host", parsed.hostname or "127.0.0.1")
         start = time.monotonic()
         try:
             async with session.get(info["url"], timeout=aiohttp.ClientTimeout(total=1.5)) as resp:
@@ -1005,7 +1008,7 @@ async def collect_services(session: aiohttp.ClientSession) -> dict:
             try:
                 t0 = time.monotonic()
                 reader, writer = await asyncio.wait_for(
-                    asyncio.open_connection("127.0.0.1", info["port"]), timeout=1.0
+                    asyncio.open_connection(host, info["port"]), timeout=1.0
                 )
                 writer.close()
                 await writer.wait_closed()
@@ -1825,7 +1828,7 @@ async def collect_hdhr(session: aiohttp.ClientSession) -> dict:
 
 # --- Big Brother Dashboard + API Proxy ---
 
-BB_API = "http://127.0.0.1:37461"
+BB_API = "http://192.168.1.6:37461"
 
 
 @app.get("/journal")
@@ -2993,7 +2996,7 @@ async def poll_loop():
         # Inject Big Brother summary (read from BB API — quick loopback call)
         try:
             import urllib.request as _ur2
-            with _ur2.urlopen("http://127.0.0.1:37461/bb/status", timeout=1) as _r:
+            with _ur2.urlopen("http://192.168.1.6:37461/bb/status", timeout=1) as _r:
                 _bb = _json.loads(_r.read())
             state["big_brother"] = {
                 "uptime_s":       _bb.get("uptime_s"),

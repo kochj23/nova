@@ -37,14 +37,14 @@ def main():
     now = datetime.now()
 
     # Memory server
-    mem = check("http://127.0.0.1:18790/health")
+    mem = check("http://192.168.1.6:18790/health")
     mem_status = f"✅ ONLINE — {mem.get('count', '?')} memories, model: {mem.get('model', '?')}" \
         if mem.get("status") == "ok" else "❌ DOWN"
 
     # Vector DB breakdown
     mem_detail = ""
     if mem.get("status") == "ok":
-        stats = check("http://127.0.0.1:18790/stats")
+        stats = check("http://192.168.1.6:18790/stats")
         by_source = stats.get("by_source", {})
         if by_source:
             lines = [f"  - {src}: {cnt}" for src, cnt in sorted(by_source.items(), key=lambda x: -x[1])[:8]]

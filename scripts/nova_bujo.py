@@ -41,9 +41,9 @@ SCRIPTS_DIR    = Path.home() / ".openclaw" / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 try:
     import nova_config
-    VECTOR_URL    = nova_config.VECTOR_URL          # http://127.0.0.1:18790/remember
+    VECTOR_URL    = nova_config.VECTOR_URL          # http://192.168.1.6:18790/remember
 except ImportError:
-    VECTOR_URL    = "http://127.0.0.1:18790/remember"
+    VECTOR_URL    = "http://192.168.1.6:18790/remember"
 TODAY     = date.today().isoformat()
 STALE_DAYS    = 5
 STUCK_MIGRATES = 3

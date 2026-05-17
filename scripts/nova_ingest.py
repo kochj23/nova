@@ -2,7 +2,13 @@
 """nova_ingest.py -- Universal ingest engine for Nova vector memory.
 
 Handles Wikipedia BFS crawl, web search (SearXNG), video download
-(yt-dlp + MLX Whisper), URL and file ingestion.
+(yt-dlp + Deepgram Nova-2 / MLX Whisper), URL and file ingestion.
+
+Transcription strategy:
+  - Non-PII content (YouTube, podcasts, public media): Deepgram Nova-2 cloud API
+  - PII content or --local-only flag: local MLX Whisper (Metal GPU)
+  - Automatic fallback: if cloud fails, falls back to local whisper
+  - Deepgram API key stored in macOS Keychain (service: nova-deepgram-api-key)
 
 Usage:
   nova_ingest.py wikipedia "Physics"
@@ -39,7 +45,7 @@ import nova_config
 # Constants
 # ---------------------------------------------------------------------------
 
-VERSION       = "1.2.0"
+VERSION       = "1.3.0"
 MEMORY_URL    = "http://192.168.1.6:18790/remember"
 SEARXNG_URL   = "http://127.0.0.1:8888/search"
 SLACK_CHANNEL = nova_config.SLACK_NOTIFY
@@ -52,6 +58,7 @@ YT_DLP        = "/opt/homebrew/bin/yt-dlp"
 FFMPEG        = "/opt/homebrew/bin/ffmpeg"
 WHISPER_BIN   = "/opt/homebrew/bin/mlx_whisper"
 WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
+WHISPER_COST_PER_MIN = 0.006  # OpenAI Whisper: $0.006/minute ($0.36/hr)
 CHUNK_CHARS   = 1500
 CHUNK_WORDS   = 400
 MIN_WORDS     = 30
@@ -767,7 +774,7 @@ def _dl_path(download_dir, title, vid_id):
 
 def _download_url(vid_url, out):
     cmd = _ytbase() + [
-        "-f", "bestvideo[height<=720]+bestaudio/best[height<=720]",
+        "-f", "bestvideo[height<=540]+bestaudio/best[height<=540]",
         "--merge-output-format", "mp4",
         "-o", str(out),
         "--no-overwrites",
@@ -830,10 +837,158 @@ def _warm():
         pass
 
 # ---------------------------------------------------------------------------
+# Cloud transcription (OpenAI Whisper API)
+# ---------------------------------------------------------------------------
+
+def _get_openai_key():
+    """Retrieve OpenAI-compatible API key from macOS Keychain.
+    Uses OpenRouter key (already available) routed to OpenAI Whisper."""
+    for svc in ("nova-openrouter-api-key",):
+        try:
+            r = subprocess.run(
+                ["security", "find-generic-password", "-s", svc, "-w"],
+                capture_output=True, text=True, timeout=10)
+            key = r.stdout.strip()
+            if r.returncode == 0 and key:
+                return key
+        except Exception:
+            continue
+    return None
+
+
+def _get_audio_duration(wav_path):
+    """Get audio duration in seconds using ffprobe."""
+    try:
+        r = subprocess.run(
+            [FFMPEG.replace("ffmpeg", "ffprobe"),
+             "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=noprint_wrappers=1:nokey=1",
+             str(wav_path)],
+            capture_output=True, text=True, timeout=30)
+        if r.returncode == 0 and r.stdout.strip():
+            return float(r.stdout.strip())
+    except Exception:
+        pass
+    # Fallback: estimate from PCM file size (16kHz, 16-bit mono = 32000 bytes/sec)
+    try:
+        return Path(wav_path).stat().st_size / 32000.0
+    except Exception:
+        return 0.0
+
+
+def _is_pii_content(vid_url=None, source_type=None):
+    """Determine if content might contain PII.
+
+    YouTube, podcasts, and public web content are always non-PII.
+    Local files or unknown sources are treated as potentially PII.
+    """
+    if source_type in ("youtube", "video", "podcast", "web_page", "web_search",
+                       "wikipedia", "discover"):
+        return False
+    if vid_url:
+        non_pii_domains = [
+            "youtube.com", "youtu.be", "vimeo.com", "dailymotion.com",
+            "rumble.com", "odysee.com", "bitchute.com", "ted.com",
+            "archive.org", "twitch.tv", "spotify.com", "apple.com/podcast",
+        ]
+        lower = vid_url.lower()
+        if any(d in lower for d in non_pii_domains):
+            return False
+    # Default: treat as PII (local files, unknown sources)
+    return True
+
+
+def _transcribe_cloud(wav_path, api_key):
+    """Transcribe audio via OpenAI Whisper API. Returns transcript text or None."""
+    duration = _get_audio_duration(wav_path)
+    duration_min = duration / 60.0
+    COST_PER_MIN = 0.006  # OpenAI Whisper: $0.006/min
+
+    log(f"  Cloud transcription: {duration_min:.1f} min via OpenAI Whisper")
+
+    file_path = Path(wav_path)
+    # OpenAI Whisper has 25MB limit — check size
+    file_size = file_path.stat().st_size
+    if file_size > 25 * 1024 * 1024:
+        log(f"  Audio file too large for Whisper API ({file_size//1024//1024}MB > 25MB), using local", "WARN")
+        return None
+
+    try:
+        import http.client
+        import mimetypes
+
+        boundary = f"----NovaIngest{int(time.time())}"
+        body_parts = []
+        body_parts.append(f"--{boundary}\r\n".encode())
+        body_parts.append(b'Content-Disposition: form-data; name="model"\r\n\r\n')
+        body_parts.append(b"whisper-1\r\n")
+        body_parts.append(f"--{boundary}\r\n".encode())
+        body_parts.append(f'Content-Disposition: form-data; name="file"; filename="{file_path.name}"\r\n'.encode())
+        body_parts.append(b"Content-Type: audio/wav\r\n\r\n")
+        body_parts.append(file_path.read_bytes())
+        body_parts.append(f"\r\n--{boundary}--\r\n".encode())
+        body = b"".join(body_parts)
+
+        conn = http.client.HTTPSConnection("api.openai.com", timeout=max(120, int(duration / 5 * 60)))
+        conn.request("POST", "/v1/audio/transcriptions", body=body, headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+        })
+        resp = conn.getresponse()
+        resp_data = resp.read().decode()
+        conn.close()
+
+        if resp.status != 200:
+            log(f"  OpenAI Whisper API error {resp.status}: {resp_data[:200]}", "ERROR")
+            return None
+
+        result = json.loads(resp_data)
+        transcript = result.get("text", "")
+
+        if not transcript or len(transcript.strip()) < 50:
+            log("  Whisper returned empty/short transcript", "WARN")
+            return None
+
+        cost = duration_min * COST_PER_MIN
+        log(f"  Whisper transcription complete: {duration_min:.1f} min, "
+            f"cost=${cost:.4f}, {len(transcript)} chars")
+
+        return transcript.strip()
+
+    except Exception as e:
+        log(f"  OpenAI Whisper transcription failed: {e}", "ERROR")
+        return None
+
+
+def _transcribe_dispatch(wav_path, stem, work, vid_url=None, local_only=False):
+    """Smart transcription dispatch: cloud for non-PII, local MLX for PII or fallback.
+
+    Returns transcript text or None.
+    """
+    # Determine if we can use cloud
+    use_cloud = False
+    openai_key = None
+    if not local_only and not _is_pii_content(vid_url=vid_url, source_type="video"):
+        openai_key = _get_openai_key()
+        if openai_key:
+            use_cloud = True
+        else:
+            log("  No OpenAI key in Keychain -- falling back to local whisper", "WARN")
+
+    if use_cloud:
+        transcript = _transcribe_cloud(str(wav_path), openai_key)
+        if transcript:
+            return transcript
+        log("  Cloud transcription failed -- falling back to local whisper", "WARN")
+
+    # Local MLX whisper path (original behavior)
+    return _transcribe(wav_path, stem, work)
+
+# ---------------------------------------------------------------------------
 # Video mode
 # ---------------------------------------------------------------------------
 
-def run_video(url, channel, vector, target, state, dry_run, download_dir=None, dateafter=None):
+def run_video(url, channel, vector, target, state, dry_run, download_dir=None, dateafter=None, local_only=False):
     jid         = state["job_id"]
     done_urls   = set(state.get("done_urls", []))
     done_hashes = set(state.get("done_hashes", []))
@@ -864,6 +1019,7 @@ def run_video(url, channel, vector, target, state, dry_run, download_dir=None, d
 
     all_sorted = sorted(vids, key=lambda v: v.get("date", "19700101"))
     ep_map     = {v["id"]: i + 1 for i, v in enumerate(all_sorted)}
+    pending    = sorted(pending, key=lambda v: v.get("date", "19700101"))
     if not dl_only:
         _warm()
 
@@ -886,11 +1042,16 @@ def run_video(url, channel, vector, target, state, dry_run, download_dir=None, d
                 state["failed_urls"] = state.get("failed_urls", []) + [vid_id]
                 save_state(jid, state)
                 continue
+            import random
+            time.sleep(random.uniform(25, 45))
 
         transcript = None
         if not dl_only and not dry_run and out.exists():
             if _audio(out, wav):
-                transcript = _transcribe(wav, vid_id, WORK_DIR)
+                vid_url = "https://www.youtube.com/watch?v=" + vid_id
+                transcript = _transcribe_dispatch(
+                    wav, vid_id, WORK_DIR,
+                    vid_url=vid_url, local_only=local_only)
                 wav.unlink(missing_ok=True)
 
         ingested = 0
@@ -922,9 +1083,13 @@ def run_video(url, channel, vector, target, state, dry_run, download_dir=None, d
 
         if dl_only:
             log(f"  Saved: {out}")
-            notify(f":white_check_mark: *Downloaded*: {title[:60]}\n"
-                   f"  :open_file_folder: `{out}`\n"
-                   f"  {items_done}/{len(vids)} done")
+            if not hasattr(run_video, '_last_dl_notify'):
+                run_video._last_dl_notify = 0
+            if time.time() - run_video._last_dl_notify >= 300:
+                notify(f":arrow_down: *Download Progress*: {channel}\n"
+                       f"  Latest: {title[:60]}\n"
+                       f"  {items_done}/{len(vids)} done ({len(vids)-items_done} remaining)")
+                run_video._last_dl_notify = time.time()
         else:
             notify_item(
                 f"{channel} -- {title[:60]}", vector, ingested, failed,
@@ -947,7 +1112,7 @@ def run_video(url, channel, vector, target, state, dry_run, download_dir=None, d
 # ---------------------------------------------------------------------------
 
 def run_discover(subject, vector, num_sites, per_site, state, dry_run,
-                 yes=False, download_dir=None, _alt_pool=False):
+                 yes=False, download_dir=None, _alt_pool=False, local_only=False):
     jid         = state["job_id"]
     done_hashes = set(state.get("done_hashes", []))
     dl_only     = bool(download_dir)
@@ -1037,7 +1202,9 @@ def run_discover(subject, vector, num_sites, per_site, state, dry_run,
 
         transcript = None
         if not dl_only and out.exists() and _audio(out, wav):
-            transcript = _transcribe(wav, vid_id, WORK_DIR)
+            transcript = _transcribe_dispatch(
+                wav, vid_id, WORK_DIR,
+                vid_url=vid_url, local_only=local_only)
             wav.unlink(missing_ok=True)
 
         ingested = 0
@@ -1258,6 +1425,9 @@ OPTIONS
                        Lines starting with # are comments.
   --yes / -y           Skip confirmation prompt (non-interactive / cron mode).
                        Also auto-confirmed when stdin is not a tty.
+  --local-only         Force local MLX whisper for transcription (skip cloud).
+                       By default, non-PII content uses Deepgram Nova-2 cloud
+                       transcription to avoid GPU contention with Ollama.
   --dry-run            Preview without writing anything
   --resume             Continue the last interrupted job
   --restart            Restart the last job, retrying any failures
@@ -1358,6 +1528,8 @@ def main():
                    help="Batch: run mode for each topic in file (wikipedia/search)")
     p.add_argument("--yes", "-y",     action="store_true",
                    help="Skip confirmation prompt")
+    p.add_argument("--local-only",    action="store_true",
+                   help="Force local MLX whisper transcription (skip cloud)")
     p.add_argument("--spicy",         action="store_true", help=argparse.SUPPRESS)
     p.add_argument("--dry-run",       action="store_true")
     p.add_argument("--resume",        action="store_true")
@@ -1477,7 +1649,8 @@ def main():
         ch = (args.channel or
               (args.query.split("/")[-1].lstrip("@") if args.query else "Unknown"))
         run_video(args.query, ch, vector, args.target, state, args.dry_run,
-                  download_dir=args.download_dir, dateafter=args.dateafter)
+                  download_dir=args.download_dir, dateafter=args.dateafter,
+                  local_only=args.local_only)
     elif args.mode == "discover":
         run_discover(
             args.query, vector,
@@ -1486,6 +1659,7 @@ def main():
             yes=args.yes,
             download_dir=args.download_dir,
             _alt_pool=getattr(args, "spicy", False),
+            local_only=args.local_only,
         )
     elif args.mode == "url":
         run_url(args.query, vector, state, args.dry_run)

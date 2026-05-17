@@ -28,7 +28,7 @@ import nova_config
 SLACK_TOKEN  = nova_config.slack_bot_token()
 SLACK_CHAN   = "C0ATAF7NZG9"
 SLACK_API    = "https://slack.com/api"
-VECTOR_URL   = "http://127.0.0.1:18790"
+VECTOR_URL   = "http://192.168.1.6:18790"
 WORKSPACE    = Path.home() / ".openclaw" / "workspace"
 MEMORY_DIR   = WORKSPACE / "memory"
 TODAY        = date.today().isoformat()

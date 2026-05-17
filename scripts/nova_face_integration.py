@@ -25,7 +25,7 @@ WORKSPACE = Path.home() / ".openclaw/workspace"
 FACES_DIR = WORKSPACE / "faces"
 UNKNOWN_DIR = FACES_DIR / "unknown"
 CAMERA_FRAMES = WORKSPACE / "camera_frames"
-MEMORY_URL = "http://127.0.0.1:18790"
+MEMORY_URL = "http://192.168.1.6:18790"
 SLACK_API = "https://slack.com/api"
 
 def log(msg):

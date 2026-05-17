@@ -30,7 +30,7 @@ from urllib.parse import quote
 
 import requests
 
-BASE_URL = "http://127.0.0.1:18790"
+BASE_URL = "http://192.168.1.6:18790"
 
 # Sources that must never be touched
 PROTECTED_SOURCES = {"work_knowledge", "local_knowledge"}

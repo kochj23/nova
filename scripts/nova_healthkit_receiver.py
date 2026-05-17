@@ -21,7 +21,7 @@ from pathlib import Path
 
 PORT = 37450
 HEALTH_DIR = Path.home() / ".openclaw/private/health"
-MEMORY_URL = "http://127.0.0.1:18790/remember"
+MEMORY_URL = "http://192.168.1.6:18790/remember"
 
 HEALTH_DIR.mkdir(parents=True, exist_ok=True)
 HEALTH_DIR.chmod(0o700)

@@ -7,7 +7,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 import nova_config
 
-MEMORY_URL = "http://127.0.0.1:18790/remember"
+MEMORY_URL = "http://192.168.1.6:18790/remember"
 WORK_DIR = Path("/Volumes/Data/youtube-ingest/playlist3")
 CHUNK_WORDS = 400
 DELAY_BETWEEN_VIDEOS = 120  # 2 minutes

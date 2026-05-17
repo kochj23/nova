@@ -48,7 +48,7 @@ def get_scheduler_status():
 
 def get_memory_count():
     try:
-        resp = urllib.request.urlopen("http://127.0.0.1:18790/stats", timeout=5)
+        resp = urllib.request.urlopen("http://192.168.1.6:18790/stats", timeout=5)
         data = json.loads(resp.read())
         return data.get("count", 0), len(data.get("by_source", {}))
     except Exception:

@@ -292,7 +292,7 @@ class SubAgent(ABC):
 
     async def recall(self, query: str, n: int = 5, source: str = None) -> list[dict]:
         """Search Nova's vector memory."""
-        url = f"http://127.0.0.1:18790/recall?q={urllib.parse.quote(query)}&n={n}"
+        url = f"http://192.168.1.6:18790/recall?q={urllib.parse.quote(query)}&n={n}"
         if source:
             url += f"&source={source}"
         try:
@@ -310,7 +310,7 @@ class SubAgent(ABC):
             "metadata": metadata or {},
         }).encode()
         req = urllib.request.Request(
-            "http://127.0.0.1:18790/remember",
+            "http://192.168.1.6:18790/remember",
             data=payload,
             headers={"Content-Type": "application/json"},
         )

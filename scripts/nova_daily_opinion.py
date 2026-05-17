@@ -43,7 +43,7 @@ else:
         from datetime import datetime as _dt_cls2
         return _dt_cls2.now()
 
-MEMORY_SERVER = "http://127.0.0.1:18790"
+MEMORY_SERVER = "http://192.168.1.6:18790"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 MODEL = "anthropic/claude-haiku-4.5"

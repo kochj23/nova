@@ -32,7 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-VECTOR_URL = "http://127.0.0.1:18790"
+VECTOR_URL = "http://192.168.1.6:18790"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 CONSOLIDATION_MODEL = "nova:latest"
 PG_CONN = "host=127.0.0.1 dbname=nova_memories"

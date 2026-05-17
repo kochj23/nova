@@ -28,7 +28,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-MEMORY_SERVER  = "http://127.0.0.1:18790"
+MEMORY_SERVER  = "http://192.168.1.6:18790"
 SOURCE         = "software_architecture"
 BATCH_DELAY    = 0.3   # seconds between individual memory pushes
 NOTIFY_EVERY   = 300   # post to Slack every 5 minutes

@@ -33,7 +33,7 @@ import nova_config
 from nova_logger import log, LOG_INFO, LOG_ERROR
 
 
-VECTOR_URL = "http://127.0.0.1:18790"
+VECTOR_URL = "http://192.168.1.6:18790"
 VECTOR_MEM_URL = f"{VECTOR_URL}/remember"
 MEMORY_DIR = Path.home() / ".openclaw" / "workspace" / "memory"
 

@@ -9,7 +9,7 @@ import json, os, sys, time, subprocess, urllib.request
 from pathlib import Path
 from datetime import datetime
 
-MEMORY_URL = "http://127.0.0.1:18790/remember"
+MEMORY_URL = "http://192.168.1.6:18790/remember"
 MANUALS_DIR = Path("/Volumes/nas/GoogleDriveBackups/Manuals")
 LOG_FILE = Path.home() / ".openclaw/logs/ingest-manuals.log"
 CHUNK_SIZE = 500  # words per chunk

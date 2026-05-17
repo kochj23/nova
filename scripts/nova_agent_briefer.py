@@ -22,7 +22,7 @@ from nova_subagent import SubAgent
 from nova_logger import log, LOG_INFO, LOG_ERROR
 
 NOVACONTROL_API = "http://127.0.0.1:37400"
-MEMORY_URL = "http://127.0.0.1:18790"
+MEMORY_URL = "http://192.168.1.6:18790"
 
 SYSTEM_PROMPT = """You are Briefer, Nova's daily intelligence analyst for Jordan Koch.
 

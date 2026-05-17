@@ -24,7 +24,7 @@ INTERVAL = 600  # 10 minutes
 
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_BB)
 
 
 def get_progress():

@@ -11,7 +11,7 @@ import sys
 import time
 import urllib.request
 
-MEMORY_URL = "http://127.0.0.1:18790/remember"
+MEMORY_URL = "http://192.168.1.6:18790/remember"
 
 def remember(text):
     payload = json.dumps({

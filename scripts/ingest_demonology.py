@@ -3,7 +3,7 @@
 ingest_demonology.py — Ingest demonology facts into Nova's vector memory.
 
 Reads JSONL from data/demonology_facts.jsonl and POSTs each fact to
-the vector memory server at http://127.0.0.1:18790/remember.
+the vector memory server at http://192.168.1.6:18790/remember.
 
 Usage:  python3 ingest_demonology.py [--dry-run]
 
@@ -16,7 +16,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-VECTOR_URL = "http://127.0.0.1:18790/remember"
+VECTOR_URL = "http://192.168.1.6:18790/remember"
 DATA_FILE = Path(__file__).parent / "data" / "demonology_facts.jsonl"
 BATCH_DELAY = 0.05  # 50ms between requests to avoid hammering
 
@@ -94,7 +94,7 @@ def ingest(dry_run=False):
     # Verify count
     if not dry_run:
         try:
-            stats = json.loads(urllib.request.urlopen("http://127.0.0.1:18790/stats", timeout=5).read())
+            stats = json.loads(urllib.request.urlopen("http://192.168.1.6:18790/stats", timeout=5).read())
             demon_count = stats.get("by_source", {}).get("demonology", 0)
             total_count = stats.get("count", "?")
             print(f"Vector DB: {demon_count} demonology entries, {total_count} total memories.")

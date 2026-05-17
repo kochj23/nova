@@ -190,8 +190,7 @@ def detect_burnout_signals():
                 if r.stdout.strip():
                     recent_commits = True
                     break
-            if recent_commits:
-                signals.append("weekend_commits")
+            pass  # weekend_commits disabled — Jordan doesn't want this nudge
         except Exception:
             pass
 

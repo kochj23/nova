@@ -10,7 +10,7 @@ import json, sys, time, urllib.request, random
 from datetime import datetime
 from pathlib import Path
 
-MEMORY_URL = "http://127.0.0.1:18790/remember"
+MEMORY_URL = "http://192.168.1.6:18790/remember"
 TARGET = 1400000
 LOG_FILE = Path.home() / ".openclaw/logs/bulk-ingest.log"
 
@@ -27,7 +27,7 @@ def log(msg):
 
 def get_count():
     try:
-        resp = urllib.request.urlopen("http://127.0.0.1:18790/health", timeout=5)
+        resp = urllib.request.urlopen("http://192.168.1.6:18790/health", timeout=5)
         return json.loads(resp.read()).get("count", 0)
     except:
         return 0

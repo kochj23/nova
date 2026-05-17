@@ -39,7 +39,7 @@ DB = "nova_memories"
 STATE_DIR = Path.home() / ".openclaw/workspace/state"
 WORKSPACE = Path.home() / ".openclaw/workspace"
 MEMORY_DIR = WORKSPACE / "memory"
-VECTOR_URL = "http://127.0.0.1:18790"
+VECTOR_URL = "http://192.168.1.6:18790"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 MODEL = "qwen3-coder:30b"
 
