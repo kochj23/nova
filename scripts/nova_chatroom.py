@@ -2365,8 +2365,12 @@ def create_app() -> web.Application:
     app.router.add_get("/api/messages", handle_api_messages)
     app.router.add_get("/health", handle_health)
     # Static file serving for uploads
-    FILE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
-    app.router.add_static("/files", str(FILE_STORAGE_DIR))
+    try:
+        FILE_STORAGE_DIR.mkdir(parents=True, exist_ok=True)
+    except PermissionError:
+        log.warning(f"Cannot create {FILE_STORAGE_DIR} — file uploads will fail until directory exists")
+    if FILE_STORAGE_DIR.exists():
+        app.router.add_static("/files", str(FILE_STORAGE_DIR))
     app.on_startup.append(on_startup)
     app.on_shutdown.append(on_shutdown)
     return app
