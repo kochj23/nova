@@ -41,26 +41,28 @@
 
   // ---- Orbital node definitions ----
   // angle in degrees (0 = right, 90 = bottom), orbit: 'inner' | 'outer'
+  // Outer orbit: 10 nodes at 36-degree intervals for even spacing.
+  // Inner orbit: 5 nodes at 72-degree intervals, offset to stagger with outer.
   const ORBITAL_DEFS = {
-    // Channels — outer orbit
+    // Channels — outer orbit, left arc (200-344)
     slack:    { label: 'SLACK',    angle: 200, orbit: 'outer', icon: 'S',  group: 'channel', intents: 'chat · commands' },
-    discord:  { label: 'DISCORD',  angle: 220, orbit: 'outer', icon: 'D',  group: 'channel', intents: 'chat · notify' },
-    signal:   { label: 'SIGNAL',   angle: 240, orbit: 'outer', icon: 'G',  group: 'channel', intents: 'private msgs' },
-    imessage: { label: 'iMESSAGE', angle: 260, orbit: 'outer', icon: 'i',  group: 'channel', intents: 'relay · watch' },
-    email:    { label: 'EMAIL',    angle: 280, orbit: 'outer', icon: 'E',  group: 'channel', intents: 'herd · reply' },
-    // Backends — outer orbit (right side)
+    discord:  { label: 'DISCORD',  angle: 236, orbit: 'outer', icon: 'D',  group: 'channel', intents: 'chat · notify' },
+    signal:   { label: 'SIGNAL',   angle: 272, orbit: 'outer', icon: 'G',  group: 'channel', intents: 'private msgs' },
+    imessage: { label: 'iMESSAGE', angle: 308, orbit: 'outer', icon: 'i',  group: 'channel', intents: 'relay · watch' },
+    email:    { label: 'EMAIL',    angle: 344, orbit: 'outer', icon: 'E',  group: 'channel', intents: 'herd · reply' },
+    // Backends — outer orbit, right arc (20-92)
     ollama:     { label: 'OLLAMA',     angle: 20,  orbit: 'outer', icon: 'O', group: 'backend', intents: 'coder · vision · dreams · garden · journal' },
-    openrouter: { label: 'OPENROUTER', angle: 45,  orbit: 'outer', icon: 'R', group: 'backend', intents: 'conversation · slack · discord · signal · herd' },
-    mlx_chat:   { label: 'MLX',        angle: 70,  orbit: 'outer', icon: 'M', group: 'backend', intents: 'memory · email · health · reasoner · rag · quick' },
-    // Support — inner orbit
-    redis:         { label: 'REDIS',     angle: 120, orbit: 'inner', icon: 'R', group: 'support', intents: 'cache · queue' },
-    postgresql:    { label: 'POSTGRES',  angle: 140, orbit: 'inner', icon: 'P', group: 'support', intents: '1.5M vectors · pgvector' },
-    memory_server: { label: 'MEMORY',    angle: 160, orbit: 'inner', icon: 'M', group: 'support', intents: 'recall · remember · search' },
-    scheduler:     { label: 'SCHEDULER', angle: 310, orbit: 'inner', icon: 'C', group: 'support', intents: '59 tasks · cron · interval' },
-    searxng:       { label: 'SEARXNG',   angle: 340, orbit: 'inner', icon: 'X', group: 'support', intents: 'web search · private' },
-    // Media — outer orbit (bottom)
-    plex:          { label: 'PLEX',      angle: 140, orbit: 'outer', icon: 'P', group: 'media', intents: 'watch history · mood · rewatch · shame' },
-    hdhr:          { label: 'HDHR',      angle: 160, orbit: 'outer', icon: 'T', group: 'media', intents: '224 ch · news · dream surf · gameshow' },
+    openrouter: { label: 'OPENROUTER', angle: 56,  orbit: 'outer', icon: 'R', group: 'backend', intents: 'conversation · slack · discord · signal · herd' },
+    mlx_chat:   { label: 'MLX',        angle: 92,  orbit: 'outer', icon: 'M', group: 'backend', intents: 'memory · email · health · reasoner · rag · quick' },
+    // Media — outer orbit, bottom-right arc (128-164)
+    plex:          { label: 'PLEX',      angle: 128, orbit: 'outer', icon: 'P', group: 'media', intents: 'watch history · mood · rewatch · shame' },
+    hdhr:          { label: 'HDHR',      angle: 164, orbit: 'outer', icon: 'T', group: 'media', intents: '224 ch · news · dream surf · gameshow' },
+    // Support — inner orbit, staggered from outer (254, 326, 38, 110, 182)
+    redis:         { label: 'REDIS',     angle: 254, orbit: 'inner', icon: 'R', group: 'support', intents: 'cache · queue' },
+    postgresql:    { label: 'POSTGRES',  angle: 326, orbit: 'inner', icon: 'P', group: 'support', intents: '1.5M vectors · pgvector' },
+    memory_server: { label: 'MEMORY',    angle: 38,  orbit: 'inner', icon: 'M', group: 'support', intents: 'recall · remember · search' },
+    scheduler:     { label: 'SCHEDULER', angle: 110, orbit: 'inner', icon: 'C', group: 'support', intents: '59 tasks · cron · interval' },
+    searxng:       { label: 'SEARXNG',   angle: 182, orbit: 'inner', icon: 'X', group: 'support', intents: 'web search · private' },
   };
 
   // ---- State ----
@@ -107,6 +109,7 @@
         label: def.label,
         group: def.group,
         icon: def.icon,
+        intents: def.intents || '',
         angleDeg: def.angle,
         angleRad: def.angle * DEG,
         orbit: def.orbit,
@@ -125,9 +128,9 @@
     UNIT = Math.min(W, H);
     CX = W / 2;
     CY = H * 0.47;  // slightly above center for better balance with bottom bar
-    gatewayR = UNIT * 0.28;          // MUCH larger (was 0.15) — fills ~60% of screen
-    innerOrbitR = UNIT * 0.34;       // Tight inner orbit (was 0.30) — just outside the gateway rings
-    outerOrbitR = UNIT * 0.44;       // Tight outer orbit (was 0.42) — close to inner
+    gatewayR = UNIT * 0.22;          // Central radar circle
+    innerOrbitR = UNIT * 0.32;       // Inner orbit — clear gap from gateway outer ring
+    outerOrbitR = UNIT * 0.44;       // Outer orbit — clear gap from inner nodes
 
     for (const node of Object.values(nodes)) {
       const orbitR = node.orbit === 'inner' ? innerOrbitR : outerOrbitR;
@@ -314,16 +317,26 @@
 
     // Sweep trail (fading arc behind the line)
     var trailLen = 0.6; // radians
-    var trailGrad = ctx.createConicGradient(sweepAngle - trailLen, CX, CY);
-    trailGrad.addColorStop(0, rgba(baseCol, 0));
-    trailGrad.addColorStop(0.8, rgba(baseCol, 0.04 * trafficPulse));
-    trailGrad.addColorStop(1, rgba(baseCol, 0.12 * trafficPulse));
-    ctx.beginPath();
-    ctx.moveTo(CX, CY);
-    ctx.arc(CX, CY, sweepR, sweepAngle - trailLen, sweepAngle);
-    ctx.closePath();
-    ctx.fillStyle = trailGrad;
-    ctx.fill();
+    if (ctx.createConicGradient) {
+      var trailGrad = ctx.createConicGradient(sweepAngle - trailLen, CX, CY);
+      trailGrad.addColorStop(0, rgba(baseCol, 0));
+      trailGrad.addColorStop(0.8, rgba(baseCol, 0.04 * trafficPulse));
+      trailGrad.addColorStop(1, rgba(baseCol, 0.12 * trafficPulse));
+      ctx.beginPath();
+      ctx.moveTo(CX, CY);
+      ctx.arc(CX, CY, sweepR, sweepAngle - trailLen, sweepAngle);
+      ctx.closePath();
+      ctx.fillStyle = trailGrad;
+      ctx.fill();
+    } else {
+      // Fallback: simple semi-transparent arc for browsers without conic gradients
+      ctx.beginPath();
+      ctx.moveTo(CX, CY);
+      ctx.arc(CX, CY, sweepR, sweepAngle - trailLen, sweepAngle);
+      ctx.closePath();
+      ctx.fillStyle = rgba(baseCol, 0.06 * trafficPulse);
+      ctx.fill();
+    }
 
     // Sweep line itself
     ctx.beginPath();
@@ -1427,14 +1440,28 @@
     return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  // ---- WebSocket ----
+  // ---- WebSocket + HTTP fallback ----
+  var wsFails = 0;
+  var httpFallbackActive = false;
+  var httpPollTimer = null;
+
   function connectWS() {
     var proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
     var url = proto + '//' + location.host + '/ws';
-    ws = new WebSocket(url);
+    try {
+      ws = new WebSocket(url);
+    } catch (e) {
+      activateHttpFallback();
+      return;
+    }
 
     ws.onopen = function () {
       wsRetryDelay = 1000;
+      wsFails = 0;
+      if (httpFallbackActive) {
+        httpFallbackActive = false;
+        if (httpPollTimer) { clearInterval(httpPollTimer); httpPollTimer = null; }
+      }
     };
 
     ws.onmessage = function (evt) {
@@ -1447,7 +1474,10 @@
     };
 
     ws.onclose = function () {
-      state = null;
+      wsFails++;
+      if (wsFails >= 3 && !httpFallbackActive) {
+        activateHttpFallback();
+      }
       setTimeout(connectWS, wsRetryDelay);
       wsRetryDelay = Math.min(wsRetryDelay * 1.5, 15000);
     };
@@ -1455,6 +1485,45 @@
     ws.onerror = function () {
       ws.close();
     };
+  }
+
+  function activateHttpFallback() {
+    if (httpFallbackActive) return;
+    httpFallbackActive = true;
+    pollHTTP();
+    httpPollTimer = setInterval(pollHTTP, 5000);
+  }
+
+  function pollHTTP() {
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', '/api/detail/scheduler', true);
+    xhr.timeout = 5000;
+    xhr.onload = function () {
+      if (xhr.status === 200) {
+        try {
+          var sched = JSON.parse(xhr.responseText);
+          if (!state) state = {};
+          state.scheduler = sched.scheduler || sched;
+        } catch (e) {}
+      }
+    };
+    xhr.send();
+
+    // Also fetch system info
+    var xhr2 = new XMLHttpRequest();
+    xhr2.open('GET', '/api/detail/system', true);
+    xhr2.timeout = 5000;
+    xhr2.onload = function () {
+      if (xhr2.status === 200) {
+        try {
+          var sys = JSON.parse(xhr2.responseText);
+          if (!state) state = {};
+          state.system = sys.current || sys;
+          updateFromState();
+        } catch (e) {}
+      }
+    };
+    xhr2.send();
   }
 
   // ================================================================
@@ -1527,6 +1596,21 @@
 
     connectWS();
     requestAnimationFrame(animate);
+
+    // Bootstrap initial state via HTTP in case WS is slow to connect
+    var bootXhr = new XMLHttpRequest();
+    bootXhr.open('GET', '/api/detail/scheduler', true);
+    bootXhr.timeout = 3000;
+    bootXhr.onload = function () {
+      if (bootXhr.status === 200 && !state) {
+        try {
+          var d = JSON.parse(bootXhr.responseText);
+          state = state || {};
+          state.scheduler = d.scheduler || d;
+        } catch (e) {}
+      }
+    };
+    bootXhr.send();
   }
 
   init();

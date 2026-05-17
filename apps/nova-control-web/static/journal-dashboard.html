@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Journal Dashboard — Nova</title>
   <link rel="stylesheet" href="/static/css/dashboard.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="/static/js/chart.umd.min.js"></script>
   <style>
     .jd-grid {
       display: grid;
@@ -226,7 +226,7 @@
 
 <script>
 const API = '/api/journal/stats';
-const POLL_MS = 120_000;  // 2 min — poller runs every 6h, but we refresh display live
+const POLL_MS = 120000;  // 2 min — poller runs every 6h, but we refresh display live
 const STALENESS = { dreams: 26, essays: 26, opinions: 26, 'after-dark': 26, 'tech-today': 26, research: 50, digests: 26 };
 const SECTION_ICONS = { dreams: '🌙', essays: '📝', opinions: '💬', 'after-dark': '🌃', 'tech-today': '💻', research: '📄', digests: '📋' };
 let chartTraffic = null, chartSections = null;
@@ -319,7 +319,7 @@ function renderSchedule() {
       ${r.statusHtml}
     </div>`).join('');
 }
-setInterval(renderSchedule, 60_000);
+setInterval(renderSchedule, 60000);
 
 // ── Traffic chart ────────────────────────────────────────────────────────────
 function renderTrafficChart(history) {

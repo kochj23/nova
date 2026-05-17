@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Big Brother — Metrics Graphs</title>
   <link rel="stylesheet" href="/static/css/dashboard.css">
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+  <script src="/static/js/chart.umd.min.js"></script>
   <style>
     /* ── Layout ──────────────────────────────────────────────────────────── */
     .graphs-grid {
@@ -100,9 +100,10 @@
       position: absolute; inset: 0;
       display: flex; align-items: center; justify-content: center;
       font-size: 11px; color: var(--text-dim);
-      background: rgba(10,10,20,0.7);
+      background: rgba(10,10,20,0.5);
       border-radius: 4px;
       pointer-events: none;
+      z-index: 2;
     }
 
     /* ── Nav link back ───────────────────────────────────────────────────── */
@@ -124,6 +125,7 @@
   </div>
   <div class="header-right">
     <a href="/bb" class="nav-back">← Oversight</a>
+    <a href="/hud" class="nav-back">HUD</a>
     <button id="theme-toggle" class="theme-toggle" title="Toggle theme">&#9789;</button>
     <span id="poll-latency" class="meta-text"></span>
     <div id="connection-status" class="status-dot"></div>
@@ -235,12 +237,21 @@
 // ── Config ────────────────────────────────────────────────────────────────────
 
 const API_METRICS = '/api/bb/metrics';
-const POLL_MS = 60_000;       // refresh every 60s (matches BB sweep interval)
+const POLL_MS = 90000;        // refresh every 90s (matches BB sweep interval)
 let selectedMinutes = 360;    // default: 6h
 let allBuckets = [];
 let chartInstances = {};
+let initialLoadDone = false;
 
 const $ = id => document.getElementById(id);
+
+// ── Guard: verify Chart.js loaded ────────────────────────────────────────────
+if (typeof Chart === 'undefined') {
+  document.querySelector('.graphs-grid').innerHTML =
+    '<div style="grid-column:1/-1;text-align:center;padding:60px 20px;color:var(--accent-red);font-size:13px;">' +
+    'Chart.js failed to load. Verify network connectivity or refresh the page.</div>';
+  throw new Error('Chart.js not loaded');
+}
 
 // ── Theme-aware Chart.js defaults ─────────────────────────────────────────────
 
@@ -569,30 +580,80 @@ function updateBanner(raw, filtered) {
 async function poll() {
   const t0 = performance.now();
   try {
-    const res = await fetch(API_METRICS + '?_=' + Date.now());
-    if (!res.ok) throw new Error(res.status);
+    // Show loading state on first load
+    if (!initialLoadDone) {
+      $('last-update').textContent = 'Loading metrics...';
+    }
+    const fetchOpts = {};
+    let timeout;
+    if (typeof AbortController !== 'undefined') {
+      const controller = new AbortController();
+      timeout = setTimeout(function() { controller.abort(); }, 15000);
+      fetchOpts.signal = controller.signal;
+    }
+    const res = await fetch(API_METRICS + '?_=' + Date.now(), fetchOpts);
+    if (timeout) clearTimeout(timeout);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
     const raw = await res.json();
     if (raw.error) throw new Error(raw.error);
     const ms = Math.round(performance.now() - t0);
     $('poll-latency').textContent = ms + 'ms';
     $('connection-status').className = 'status-dot connected';
     allBuckets = Array.isArray(raw) ? raw : [];
+    initialLoadDone = true;
     renderSlice();
   } catch(e) {
     $('connection-status').className = 'status-dot error';
     $('poll-latency').textContent = 'err';
+    if (!initialLoadDone) {
+      $('last-update').textContent = 'Failed to load: ' + (e.message || 'network error') + '. Retrying...';
+    }
   }
-  setTimeout(poll, POLL_MS);
+  setTimeout(poll, initialLoadDone ? POLL_MS : 5000);
 }
 
 function renderSlice() {
-  if (!allBuckets.length) return;
+  if (!allBuckets.length) {
+    $('last-update').textContent = 'No data available';
+    return;
+  }
   const cutoff = (Date.now() / 1000) - selectedMinutes * 60;
   const filtered = allBuckets.filter(b => b.ts >= cutoff);
+  if (!filtered.length) {
+    $('last-update').textContent = 'No data in selected range';
+    return;
+  }
   const TARGET_PTS = selectedMinutes <= 60 ? 60 : selectedMinutes <= 360 ? 180 : selectedMinutes <= 1440 ? 360 : 500;
   const pts = downsample(filtered, TARGET_PTS);
   render(pts);
   updateBanner(allBuckets, pts);
+
+  // Show/hide no-data overlays for panels with all-zero values
+  showNoDataOverlays(pts);
+}
+
+function showNoDataOverlays(pts) {
+  const checks = [
+    { panel: 'panel-redis',   field: 'redis_pct' },
+    { panel: 'panel-gateway', field: 'gateway_rss_mb' },
+    { panel: 'panel-queue',   field: 'mem_queue',     alt: 'dead_letter' },
+  ];
+  for (const { panel, field, alt } of checks) {
+    const el = $(panel);
+    if (!el) continue;
+    const allZero = pts.every(b => (b[field] || 0) === 0 && (!alt || (b[alt] || 0) === 0));
+    let overlay = el.querySelector('.no-data-overlay');
+    if (allZero) {
+      if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.className = 'no-data-overlay';
+        overlay.textContent = 'No data in window (all zeros)';
+        el.querySelector('.chart-wrap').appendChild(overlay);
+      }
+    } else if (overlay) {
+      overlay.remove();
+    }
+  }
 }
 
 // ── Range button handling ─────────────────────────────────────────────────────
