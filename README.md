@@ -1,6 +1,6 @@
 # Nova
 
-Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unified memory) in Burbank.
+Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unified memory) in Burbank.
 
 > *"Like a star being born."* — Nova, on choosing her name
 
@@ -12,22 +12,24 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unifie
 
 | Metric | Value |
 |--------|-------|
-| Scripts | 272+ Python and Shell |
-| Scheduler tasks | 86 defined (78 enabled) |
-| Scheduler runs logged | 2,058 (98.4% success rate) |
-| Vector memories | 1,434,822 unique (deduplicated, HNSW-indexed) |
-| Memory sources | 217 domains |
+| Scripts | 359 Python, Shell, and AppleScript |
+| Scheduler tasks | 54 unique |
+| Scheduler runs logged | 13,856 (98.9% success rate) |
+| Vector memories | 1,224,900 unique (deduplicated, HNSW-indexed) |
+| Memory sources | 409 domains |
 | Gateway | Nova Gateway v2.4.0 (pure Python asyncio, hot-reloadable config) |
 | Channels | Slack + Discord + Signal + Web Chatroom |
 | Agents | 4 (Chat, Research, Home, Main) |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Databases | PostgreSQL 17 + pgvector (`nova_memories` + `nova_ops`) + Redis |
-| Ops DB tables | 35 tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, chatroom |
+| Ops DB tables | 46 tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, chatroom |
 | Hot-reload | Gateway: `POST :18792/reload` or `SIGHUP`. Scheduler: `SIGHUP` reloads tasks. |
 | Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
 | Chatroom | Real-time 3-way chat (Jordan/Nova/Claude Code) on port 37480 |
 | Bootstrap source | `nova_ops.agent_docs` (PostgreSQL — not files) |
 | Session storage | `nova_ops.gateway_sessions` + `gateway_query_log` |
+| Primary model | `openrouter/qwen/qwen3-235b-a22b-2507` (chat/research) |
+| Local models | qwen3-next:80b, qwen3-coder:30b, deepseek-r1:8b, qwen3-vl:4b |
 | Model warmup | `ollama_preload` hourly — qwen3:30b-a3b stays warm |
 | Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) |
 
@@ -118,17 +120,17 @@ graph TD
     subgraph "nova_ops PostgreSQL — 192.168.1.6:5432"
         AgentDocs["agent_docs\nIDENTITY · SOUL · USER\nMEMORY · AGENTS\n(bootstrap source)"]
         GWSessions["gateway_sessions\n+ gateway_query_log\nevery turn persisted"]
-        SchedRuns["scheduler_runs\n2,058 runs logged\n98.4% success"]
+        SchedRuns["scheduler_runs\n13,856 runs logged\n98.9% success"]
         ClaudeAudit["claude_sessions\n+ claude_actions\nmy work audit trail"]
         Dashboard["dashboard_*\nmetrics history"]
     end
 
     subgraph "nova_memories PostgreSQL — 192.168.1.6:5432"
-        Memories["memories table\n1,434,822 vectors\nHNSW index\npgvector 0.8.2"]
+        Memories["memories table\n1,224,900 vectors\nHNSW index\npgvector 0.8.2"]
     end
 
     subgraph "Infrastructure"
-        Scheduler["Scheduler\nnova_scheduler.py\n86 tasks · port 37460"]
+        Scheduler["Scheduler\nnova_scheduler.py\n54 tasks · port 37460"]
         BB["Big Brother\nnova_big_brother.py\nport 37461\ndependency-aware"]
         Redis["Redis\nport 6379\nqueue + cache"]
         MemServer["Memory Server\nnova_memory_server.py\nport 18790"]
@@ -250,7 +252,7 @@ graph TD
 ```mermaid
 graph TD
     subgraph "Scheduler Observability"
-        Sched["nova_scheduler.py\n86 tasks"] -->|"run_id, status\nduration, exit_code\nerror_tail"| SR["scheduler_runs\n2,058 runs\n98.4% success"]
+        Sched["nova_scheduler.py\n54 tasks"] -->|"run_id, status\nduration, exit_code\nerror_tail"| SR["scheduler_runs\n13,856 runs\n98.9% success"]
         SR --> TSV["scheduler_task_stats\nview — per-task success rate\navg/max duration"]
         SR --> DSV["scheduler_daily_summary\nview — daily rollup\ntotal CPU seconds"]
         TSV --> API["GET /stats\nGET /runs\nGET /runs/:task_id\nport 37460"]
@@ -339,7 +341,7 @@ graph LR
 Every message follows this path:
 
 1. **Bootstrap** — query `nova_ops.agent_docs` for current IDENTITY, SOUL, USER, MEMORY, AGENTS content
-2. **Memory injection** — `nova_memory_first.py "question"` (15s timeout, 1.43M vectors searched)
+2. **Memory injection** — `nova_memory_first.py "question"` (15s timeout, 1.22M vectors searched)
 3. **Context assembly** — system prompt + bootstrap docs + conversation history
 4. **Token check** — tiktoken counts tokens; if >85% of context limit, compact oldest turns via summarization
 5. **LLM call** — qwen3:30b-a3b (Ollama, local) for chat/home; qwen3-235b (OpenRouter) for research
@@ -691,7 +693,7 @@ graph LR
     end
 
     subgraph "Shared Pipeline"
-        Mem["Memory Server\n/recall + /random\n1.27M vectors, 305 domains"]
+        Mem["Memory Server\n/recall + /random\n1.22M vectors, 409 domains"]
         LLM["OpenRouter\nClaude Haiku 4.5 (most)\nClaude Sonnet 4-6 (pilot)"]
         Img["OpenRouter Images\nFLUX.2 Pro (art)\nGPT-5 Image Mini (others)"]
     end
@@ -729,9 +731,9 @@ graph LR
     end
 
     subgraph "PostgreSQL nova_memories"
-        Table["memories table\n1,434,822 rows\ntext, embedding, source\ntiered, LZ4 compressed"]
+        Table["memories table\n1,224,900 rows\ntext, embedding, source\ntiered, LZ4 compressed"]
         HNSW["HNSW index\ncosine similarity\n<5ms recall"]
-        PIndex["Partial indexes\nemail_archive\ncloud_governance\nimessage\ndisney_internal"]
+        PIndex["Partial indexes\nemail_archive\nimessage\nautomotive\ntelevision"]
     end
 
     subgraph "Redis :6379"
@@ -760,7 +762,7 @@ graph LR
 
 | Component | Spec | Role |
 |-----------|------|------|
-| Mac Studio M3 Ultra | 512GB unified memory, 24-core CPU, 76-core GPU | Primary compute |
+| Mac Studio M4 Ultra | 512GB unified memory, 32-core CPU, 80-core GPU | Primary compute |
 | Main SSD | 926GB APFS | OS, binaries, cache |
 | `/Volumes/Data` | 3.6TB | AI models, Xcode, Nova workspace, binaries |
 | `/Volumes/MoreData` | 3.6TB | PostgreSQL data (27GB), MLX models |
@@ -796,7 +798,7 @@ graph LR
 | Session JSONL storage | ✅ Replaced | `nova_ops.gateway_sessions` + `gateway_query_log` |
 | MD file bootstrap | ✅ Replaced | `nova_ops.agent_docs` (versioned in PG) |
 | MEMORY.md writes | ✅ Replaced | PG-managed, written by Nova's own scripts |
-| OpenClaw cron jobs | ✅ Replaced (2026-04-29) | `nova_scheduler.py` — 86 tasks |
+| OpenClaw cron jobs | ✅ Replaced (2026-04-29) | `nova_scheduler.py` — 54 tasks |
 | OpenClaw memory/vector search | ✅ Replaced | `nova_memory_server.py` + PostgreSQL + pgvector |
 | Built-in heartbeat | ✅ Replaced | `nova_big_brother.py` — dependency-aware, crash-loop detection |
 | Agent execution (context, compaction) | ✅ Replaced | `nova_gateway_v2.py` with tiktoken compaction |
