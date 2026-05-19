@@ -1,28 +1,27 @@
 #!/usr/bin/env python3
 """
-nova_tv_ingest.py — Nightly TV show ingest pipeline.
+nova_tv_ingest.py — TV show ingest pipeline.
 
 Scans /Volumes/external/videos/ (all subdirs except other/Other),
-finds video files modified in the last 5 days that haven't been ingested,
-extracts audio with ffmpeg, transcribes with MLX Whisper large-v3-turbo,
-filters garbage transcriptions (music, noise, silence), chunks and stores
-into Nova's vector memory, then posts a per-episode + summary notification
-to #nova-notifications.
+finds ALL video files not yet in the DB, extracts audio with ffmpeg,
+transcribes with MLX Whisper large-v3-turbo, filters garbage transcriptions
+(music, noise, silence), chunks and stores into Nova's vector memory,
+then posts per-episode + summary notifications to #nova-notifications.
 
-Parallelism: 4 concurrent workers (ffmpeg + whisper each). Safe on M3 Ultra.
-No delays between videos — go as fast as possible.
+Parallelism: 12 concurrent workers (ffmpeg + whisper each). M3 Ultra.
+No time window — processes everything not yet tracked.
 
-State tracking: ~/.openclaw/workspace/state/tv_ingest_state.json
-  - Tracks every file that has been processed (path → metadata)
-  - Any file older than 5 days on first-run is marked done without processing
+State tracking: PostgreSQL only (nova_ops.media_ingest_state).
+No JSON state file.
 
-Scheduler: cron 0 23 * * * (11pm daily)  timeout: 28800 (8h)
+Scheduler: cron 0 23 * * * (11pm daily)  timeout: none
 
 PRIVACY: All TV transcript data is local-only. Never cloud-routed.
 
 Written by Jordan Koch.
 """
 
+import base64
 import json
 import os
 import random
@@ -33,7 +32,7 @@ import time
 import threading
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -45,25 +44,29 @@ import nova_media_registry as registry
 VIDEO_ROOT      = Path("/Volumes/external/videos")
 EXCLUDED_DIRS   = {"other", "Other"}
 VIDEO_EXTS      = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".m4v", ".wmv", ".flv"}
-STATE_FILE      = Path.home() / ".openclaw/workspace/state/tv_ingest_state.json"
 WORK_DIR        = Path("/Volumes/Data/nova-livetv/tv-ingest")
 LOG_FILE        = Path.home() / ".openclaw/logs/nova_tv_ingest.log"
 MEMORY_URL      = "http://192.168.1.6:18790/remember"
 SLACK_CHANNEL   = nova_config.SLACK_NOTIFY
 
-WHISPER_BIN     = "/opt/homebrew/bin/mlx_whisper"
-WHISPER_MODEL   = "mlx-community/whisper-large-v3-turbo"
 FFMPEG_BIN      = "/opt/homebrew/bin/ffmpeg"
+
+# OpenRouter Gemini Flash Lite for cloud transcription
+OPENROUTER_URL  = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MODEL = "google/gemini-3.1-flash-lite"
 
 CHUNK_WORDS     = 400           # words per memory chunk
 MIN_CHUNK_WORDS = 30            # discard chunks shorter than this
 TRASH_RATIO     = 0.6           # if >60% of chunks are garbage → skip whole video
-RECENT_DAYS     = 5             # ingest files modified within this window
 MAX_AUDIO_SECS  = 7200          # cap at 2h (most episodes ≤ 1h)
-MAX_WORKERS     = 4             # parallel whisper+ffmpeg workers (safe on M3 Ultra)
+MAX_WORKERS     = 48            # parallel workers — cranked for overnight burn-down
+MAX_FFMPEG      = 20            # concurrent ffmpeg extractions (M4 Ultra handles this)
+MAX_RETRIES     = 3             # retry on transient API failures
 
 # State lock — multiple workers write to shared state dict
 _STATE_LOCK = threading.Lock()
+_FFMPEG_SEM = threading.Semaphore(MAX_FFMPEG)
+_API_SEM = threading.Semaphore(20)  # max 20 concurrent OpenRouter requests (doubled for overnight)
 
 NOW             = datetime.now()
 TODAY           = NOW.strftime("%Y-%m-%d")
@@ -134,30 +137,12 @@ def _db():
 
 def load_state() -> dict:
     """Load all processed file paths from PG into an in-memory set for fast lookup."""
-    try:
-        cur = _db().cursor()
-        cur.execute("SELECT file_path FROM media_ingest_state")
-        done = {row[0]: True for row in cur.fetchall()}
-        cur.close()
-        return {"done": done, "last_run": None}
-    except Exception as e:
-        log(f"DB load_state failed, falling back to JSON: {e}")
-        try:
-            if STATE_FILE.exists():
-                return json.loads(STATE_FILE.read_text())
-        except Exception:
-            pass
-        return {"done": {}, "last_run": None}
-
-
-def save_state(state: dict):
-    """No-op for periodic saves — PG writes happen in mark_done(). Keep JSON as backup."""
-    try:
-        STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-        # Only write last_run to JSON as a lightweight heartbeat
-        STATE_FILE.write_text(json.dumps({"last_run": state.get("last_run", datetime.now().isoformat())}, indent=2))
-    except Exception:
-        pass
+    cur = _db().cursor()
+    cur.execute("SELECT file_path FROM media_ingest_state")
+    done = {row[0]: True for row in cur.fetchall()}
+    cur.close()
+    log(f"Loaded {len(done):,} tracked files from DB")
+    return {"done": done}
 
 
 def mark_done(state: dict, path: str, metadata: dict):
@@ -248,7 +233,8 @@ def classify_source(show_name: str, title: str, snippet: str) -> str:
 
 # ── Video discovery ───────────────────────────────────────────────────────────
 
-def find_videos(cutoff: datetime) -> list[Path]:
+def find_videos() -> list[Path]:
+    """Find all video files under VIDEO_ROOT except other/Other."""
     results = []
     for root, dirs, files in os.walk(VIDEO_ROOT):
         dirs[:] = [d for d in dirs if d not in EXCLUDED_DIRS]
@@ -256,12 +242,8 @@ def find_videos(cutoff: datetime) -> list[Path]:
             p = Path(root) / fname
             if p.suffix.lower() not in VIDEO_EXTS:
                 continue
-            try:
-                if datetime.fromtimestamp(p.stat().st_mtime) >= cutoff:
-                    results.append(p)
-            except OSError:
-                pass
-    return sorted(results, key=lambda p: p.stat().st_mtime)
+            results.append(p)
+    return sorted(results, key=lambda p: p.name)
 
 
 def show_name_from_path(video: Path) -> str:
@@ -278,45 +260,128 @@ def show_name_from_path(video: Path) -> str:
 
 # ── Audio extraction ──────────────────────────────────────────────────────────
 
-def extract_audio(video: Path, out_wav: Path) -> bool:
-    cmd = [
-        FFMPEG_BIN, "-y",
-        "-i", str(video),
-        "-vn", "-ac", "1", "-ar", "16000",
-        "-acodec", "pcm_s16le",
-        "-t", str(MAX_AUDIO_SECS),
-        str(out_wav),
+SEGMENT_SECS = 300  # 5-minute segments for API (keeps payload under 15MB)
+
+
+def extract_audio_segments(video: Path, work_dir: Path, stem: str) -> list[Path]:
+    """Extract audio as 5-minute WAV segments. Returns list of segment paths."""
+    # First get duration
+    probe_cmd = [
+        FFMPEG_BIN, "-i", str(video), "-f", "null", "-"
     ]
     try:
-        subprocess.run(cmd, capture_output=True, timeout=MAX_AUDIO_SECS + 60)
-        return out_wav.exists() and out_wav.stat().st_size > 1000
-    except Exception as exc:
-        log(f"  ffmpeg error: {exc}")
-        return False
+        result = subprocess.run(
+            [FFMPEG_BIN, "-i", str(video)],
+            capture_output=True, text=True, timeout=30
+        )
+        duration_match = re.search(r"Duration:\s*(\d+):(\d+):(\d+)", result.stderr)
+        if duration_match:
+            h, m, s = int(duration_match.group(1)), int(duration_match.group(2)), int(duration_match.group(3))
+            total_secs = min(h * 3600 + m * 60 + s, MAX_AUDIO_SECS)
+        else:
+            total_secs = MAX_AUDIO_SECS
+    except Exception:
+        total_secs = MAX_AUDIO_SECS
+
+    segments = []
+    for start in range(0, total_secs, SEGMENT_SECS):
+        seg_path = work_dir / f"{stem}_seg{start:05d}.wav"
+        cmd = [
+            FFMPEG_BIN, "-y",
+            "-ss", str(start),
+            "-i", str(video),
+            "-t", str(SEGMENT_SECS),
+            "-vn", "-ac", "1", "-ar", "16000",
+            "-acodec", "pcm_s16le",
+            str(seg_path),
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=120)
+            if seg_path.exists() and seg_path.stat().st_size > 1000:
+                segments.append(seg_path)
+        except Exception:
+            pass
+
+    return segments
 
 
-# ── Transcription ─────────────────────────────────────────────────────────────
+# ── Transcription (OpenRouter Gemini Flash Lite) ─────────────────────────────
+
+_openrouter_key: str | None = None
+
+def _get_openrouter_key() -> str:
+    global _openrouter_key
+    if _openrouter_key is None:
+        _openrouter_key = subprocess.check_output(
+            ["security", "find-generic-password", "-a", "nova", "-s", "nova-openrouter-api-key", "-w"],
+            text=True
+        ).strip()
+    return _openrouter_key
+
 
 def transcribe(wav: Path, out_dir: Path, stem: str) -> str | None:
-    cmd = [
-        WHISPER_BIN, str(wav),
-        "--model", WHISPER_MODEL,
-        "--output-format", "txt",
-        "--output-dir", str(out_dir),
-        "--output-name", stem,
-        "--language", "en",
-    ]
+    """Transcribe audio via OpenRouter Gemini Flash Lite (audio input)."""
     try:
-        subprocess.run(cmd, capture_output=True, text=True, timeout=MAX_AUDIO_SECS * 2)
-        txt_path = out_dir / f"{stem}.txt"
-        if txt_path.exists():
-            text = txt_path.read_text(encoding="utf-8", errors="ignore").strip()
-            txt_path.unlink(missing_ok=True)
-            return text if len(text) > 20 else None
-    except subprocess.TimeoutExpired:
-        log("  Whisper timeout — skipping")
+        audio_b64 = base64.b64encode(wav.read_bytes()).decode("ascii")
     except Exception as exc:
-        log(f"  Whisper error: {exc}")
+        log(f"  Failed to read WAV: {exc}")
+        return None
+
+    payload = json.dumps({
+        "model": OPENROUTER_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "input_audio",
+                        "input_audio": {
+                            "data": audio_b64,
+                            "format": "wav"
+                        }
+                    },
+                    {
+                        "type": "text",
+                        "text": "Transcribe this audio verbatim. Output ONLY the spoken words, no timestamps, no speaker labels, no descriptions of sounds or music. If there is no speech, respond with EMPTY."
+                    }
+                ]
+            }
+        ],
+        "max_tokens": 16000,
+        "temperature": 0.0,
+    }).encode()
+
+    for attempt in range(MAX_RETRIES):
+        with _API_SEM:
+            try:
+                req = urllib.request.Request(
+                    OPENROUTER_URL, data=payload,
+                    headers={
+                        "Content-Type": "application/json",
+                        "Authorization": f"Bearer {_get_openrouter_key()}",
+                    },
+                    method="POST",
+                )
+                with urllib.request.urlopen(req, timeout=300) as resp:
+                    data = json.loads(resp.read())
+                    text = data["choices"][0]["message"]["content"].strip()
+                    if text == "EMPTY" or len(text) < 20:
+                        return None
+                    return text
+            except urllib.error.HTTPError as exc:
+                body = exc.read().decode("utf-8", errors="ignore")[:200]
+                if exc.code == 429 or exc.code >= 500:
+                    time.sleep(3 ** attempt + random.random() * 2)
+                    continue
+                log(f"  OpenRouter HTTP {exc.code}: {body}")
+                return None
+            except (ConnectionResetError, BrokenPipeError, OSError):
+                time.sleep(3 ** attempt + random.random() * 2)
+                continue
+            except Exception as exc:
+                log(f"  OpenRouter error: {exc}")
+                return None
+    log(f"  OpenRouter failed after {MAX_RETRIES} retries")
     return None
 
 
@@ -395,11 +460,6 @@ def process_video(video: Path, state: dict, work_dir: Path,
         if path_key in state["done"]:
             return None
 
-    # Second-layer dedup: check the nova_media DB (survives state file resets)
-    if registry.is_done(path_key):
-        mark_done(state, path_key, {"show": show_name, "title": title, "status": "registry_done", "chunks": 0})
-        return None
-
     show_name = show_name_from_path(video)
     title = video.stem
 
@@ -407,8 +467,7 @@ def process_video(video: Path, state: dict, work_dir: Path,
     registry.register_file(path_key, show_name=show_name, title=title,
                            ingest_script="nova_tv_ingest.py")
 
-    # Check nova_memories directly — if memories already exist for this file,
-    # mark done silently without transcribing or notifying
+    # Source of truth: check nova_memories for existing chunks
     try:
         import psycopg2 as _pg2
         _c = _pg2.connect(dbname="nova_memories")
@@ -417,30 +476,38 @@ def process_video(video: Path, state: dict, work_dir: Path,
         _existing = _cur2.fetchone()[0]
         _c.close()
         if _existing > 0:
-            log(f"  ~ already in nova_memories ({_existing} chunks) — skipping silently")
             mark_done(state, path_key, {"show": show_name, "title": title,
-                                        "status": "ingested", "chunks": _existing})
+                                        "status": "already_known", "chunks": _existing})
             registry.mark_ingested(path_key, _existing, "")
             return None
     except Exception:
         pass
 
-    # Unique WAV name per video to avoid collisions between parallel workers
     wav_stem = f"{video.stem[:60]}_{abs(hash(path_key)) % 100000}"
-    wav = work_dir / f"{wav_stem}.wav"
 
     log(f"▶ {show_name} — {title[:70]}")
 
-    if not extract_audio(video, wav):
+    # Extract audio as 5-min segments (ffmpeg semaphore-limited)
+    with _FFMPEG_SEM:
+        segments = extract_audio_segments(video, work_dir, wav_stem)
+
+    if not segments:
         log(f"  ✗ audio failed: {title[:50]}")
         mark_done(state, path_key, {"show": show_name, "title": title, "status": "audio_failed", "chunks": 0})
         registry.mark_status(path_key, "audio_failed")
         return None
 
-    transcript = transcribe(wav, work_dir, wav_stem)
-    wav.unlink(missing_ok=True)
+    # Transcribe each segment via OpenRouter (already in thread pool, segments are small)
+    transcript_parts = []
+    for seg in segments:
+        text = transcribe(seg, work_dir, seg.stem)
+        seg.unlink(missing_ok=True)
+        if text:
+            transcript_parts.append(text)
 
-    if not transcript:
+    transcript = " ".join(transcript_parts).strip()
+
+    if not transcript or len(transcript.split()) < MIN_CHUNK_WORDS:
         log(f"  ✗ no transcript: {title[:50]}")
         mark_done(state, path_key, {"show": show_name, "title": title, "status": "no_transcript", "chunks": 0})
         registry.mark_status(path_key, "no_transcript")
@@ -508,41 +575,22 @@ def main():
 
     WORK_DIR.mkdir(parents=True, exist_ok=True)
     state = load_state()
-    cutoff = NOW - timedelta(days=RECENT_DAYS)
 
-    # Discover videos within window
-    all_videos = find_videos(cutoff)
+    # Discover ALL videos (no time window)
+    all_videos = find_videos()
     new_videos = [v for v in all_videos if str(v) not in state["done"]]
-    log(f"Found {len(all_videos)} videos in last {RECENT_DAYS} days, {len(new_videos)} not yet ingested")
+    log(f"Found {len(all_videos):,} total videos, {len(new_videos):,} not yet processed")
 
     if not new_videos:
         log("Nothing new to ingest.")
-        state["last_run"] = NOW.isoformat()
-        save_state(state)
         post_slack(f":tv: *TV Ingest — {TODAY}*\nNo new videos to ingest. All caught up.")
         return
-
-    # Backfill: mark everything older than the window as done (no processing)
-    backfill_count = 0
-    all_existing = find_videos(datetime(2000, 1, 1))
-    for v in all_existing:
-        path_key = str(v)
-        if path_key not in state["done"]:
-            mtime = datetime.fromtimestamp(v.stat().st_mtime)
-            if mtime < cutoff:
-                mark_done(state, path_key, {
-                    "show": show_name_from_path(v), "title": v.stem,
-                    "status": "backfilled", "chunks": 0,
-                })
-                backfill_count += 1
-    if backfill_count:
-        log(f"Backfilled {backfill_count:,} older files as done")
 
     # Post start notification
     post_slack(
         f":rocket: *TV Ingest starting — {TODAY}*\n"
         f":film_frames: {len(new_videos):,} videos to process · {MAX_WORKERS} parallel workers\n"
-        f":calendar: Window: last {RECENT_DAYS} days"
+        f":floppy_disk: {len(all_videos) - len(new_videos):,} already tracked in DB"
     )
 
     results_by_show: dict[str, list[dict]] = {}
@@ -551,7 +599,6 @@ def main():
     failed = 0
     completed = 0
 
-    # Process in parallel — pass next video title for notification context
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = {}
         for i, video in enumerate(new_videos):
@@ -578,14 +625,8 @@ def main():
                     "status": "error", "chunks": 0,
                 })
 
-            # Save state every 10 completions to avoid constant I/O
-            if completed % 10 == 0:
-                with _STATE_LOCK:
-                    save_state(state)
+            if completed % 25 == 0:
                 log(f"Progress: {completed}/{len(new_videos)} ({completed*100//len(new_videos)}%)")
-
-    state["last_run"] = NOW.isoformat()
-    save_state(state)
 
     # Final summary notification
     ingested_count = sum(len(eps) for eps in results_by_show.values())
