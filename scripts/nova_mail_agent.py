@@ -53,6 +53,7 @@ IMAP_HOST    = "imap.gmail.com"
 IMAP_PORT    = 993
 SMTP_HOST    = "smtp.gmail.com"
 SMTP_PORT    = 587
+MAX_REPLIES_PER_DAY = 12  # hard cap — Nova sends no more than 12 replies per day
 
 # Gmail folder names
 SENT_FOLDER  = "[Gmail]/Sent Mail"
@@ -475,6 +476,7 @@ def main():
 
         log(f"Found {len(uids)} unread message(s)")
         processed = 0
+        replies_sent = 0  # daily reply counter (capped at MAX_REPLIES_PER_DAY)
         replied_threads = set()  # track threads we've already replied to (by normalized subject)
 
         for uid in uids:
@@ -517,11 +519,22 @@ def main():
                 processed += 1
                 continue
 
-            # Herd emails: only reply if Nova is directly in the To: field
-            # Skip if Nova is just CC'd or part of a group thread she wasn't addressed in
+            # Herd emails: only reply if Nova is DIRECTLY in the To: field
+            # AND her name or email is explicitly called out (not just group CC)
+            # AND we haven't exceeded the daily reply cap
             if is_from_herd(from_addr):
-                if not is_addressed_to_nova(msg.get("to_raw", "")):
+                to_raw = msg.get("to_raw", "").lower()
+                # Must be directly addressed to Nova — To: field must contain her email
+                if not is_addressed_to_nova(to_raw):
                     log(f"  Herd email but Nova not in To: — storing only, no reply")
+                    vector_remember(f"Email from {msg['from_raw']} re: {subject}. Body: {body[:300]}")
+                    imap_move_to_trash(conn, uid)
+                    processed += 1
+                    continue
+
+                # Daily reply cap
+                if replies_sent >= MAX_REPLIES_PER_DAY:
+                    log(f"  Daily reply cap ({MAX_REPLIES_PER_DAY}) reached — storing only")
                     vector_remember(f"Email from {msg['from_raw']} re: {subject}. Body: {body[:300]}")
                     imap_move_to_trash(conn, uid)
                     processed += 1
@@ -572,7 +585,8 @@ def main():
                 )
 
                 if sent:
-                    log(f"  Reply sent to {len(HERD_REPLY_TO)} herd members + CC Jordan")
+                    replies_sent += 1
+                    log(f"  Reply sent to {len(HERD_REPLY_TO)} herd members + CC Jordan ({replies_sent}/{MAX_REPLIES_PER_DAY} today)")
                     # Save to Sent Items
                     imap_save_to_sent(conn, msg_bytes)
                 else:

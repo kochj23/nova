@@ -235,12 +235,12 @@ tasks:
     overlap: skip
     enabled: false  # Multi-channel loop — not replaced by nova_ingest.py yet
 
-  # Batch Wikipedia ingest — runs through wiki_topics.tsv sequentially
-  wiki_batch_ingest:
+  # Weekly random Wikipedia crawl — picks a random substantial article, follows links
+  wiki_random_ingest:
     script: nova_ingest.py
-    args: ["wikipedia", "--topics-file", "~/.openclaw/data/wiki_topics.tsv", "--target", "10000"]
+    args: ["wikipedia", "--random", "--target", "1000", "--timeout-hours", "8"]
     schedule: cron 0 1 * * 0
-    timeout: 86400
+    timeout: 28800
     overlap: skip
     enabled: true
 
@@ -656,6 +656,12 @@ tasks:
     overlap: skip
     enabled: false  # Replaced by Big Brother — _check_journal_images() in nova_big_brother.py
 
+
+  journal_digest_email:
+    script: nova_journal_digest_email.py
+    schedule: cron 59 23 * * *
+    timeout: 120
+    overlap: skip
 
   maintenance_advisor:
     script: nova_maintenance_advisor.py
