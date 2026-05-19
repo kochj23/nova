@@ -758,6 +758,84 @@ graph LR
 
 ---
 
+## Complete Technology Stack
+
+### AI / LLM
+
+| Technology | Role | Location |
+|-----------|------|----------|
+| Ollama | Local model serving | :11434 |
+| MLX | Apple Silicon native inference | :5050 |
+| llama.cpp | Standby failover | :11435 |
+| OpenRouter | Cloud model routing (non-private) | API |
+| SwarmUI + Juggernaut X SDXL | Local image generation | GPU |
+| FLUX.2 Pro / GPT-5 Image Mini | Cloud image generation | OpenRouter |
+| MLX Whisper large-v3-turbo | Local audio transcription | GPU |
+| Gemini 3.1 Flash Lite | Cloud transcription (TV ingest) | OpenRouter |
+
+### Databases & Caching
+
+| Technology | Role | Port |
+|-----------|------|------|
+| PostgreSQL 17 | Primary data store (nova_memories + nova_ops) | :5432 |
+| pgvector 0.8.2 | Vector similarity search, HNSW indexing | (PG extension) |
+| Redis 7 | Queue, cache, maintenance flags | :6379 |
+| PgBouncer | Connection pooling | :6432 |
+
+### Core Frameworks
+
+| Technology | Role |
+|-----------|------|
+| Python 3.14 + asyncio | Gateway, scheduler, all 359 scripts |
+| aiohttp | Chatroom server, WebSocket handling |
+| FastAPI | Memory server |
+| Swift 5.9 + SwiftUI | NovaControl, NovaTV, NovaHealth, HomekitControl |
+| Hugo + PaperMod | nova-journal static site |
+| tiktoken | Token counting for session compaction |
+
+### Networking & Security
+
+| Technology | Role |
+|-----------|------|
+| Cloudflare Tunnel | Zero-port external access |
+| Cloudflare Access | Email OTP authentication |
+| signal-cli 0.14.3 | Signal TCP JSON-RPC streaming |
+| slack_sdk 3.41 | Slack WebSocket socket mode |
+| discord.py 2.7 | Discord WebSocket |
+| SearXNG | Local private web search |
+| macOS Keychain | All credential storage |
+| NMAP | Weekly network security scans |
+
+### Media & Ingest
+
+| Technology | Role |
+|-----------|------|
+| yt-dlp | YouTube download (630+ channels) |
+| ffmpeg | Audio extraction from video |
+| Plex | Media library + watch history ingest |
+| HDHomeRun | OTA TV recording (224 channels) |
+
+### Infrastructure
+
+| Technology | Role |
+|-----------|------|
+| launchd | macOS service management |
+| GitHub Actions | CI/CD, journal deploy (~40s) |
+| GitHub Pages | nova.digitalnoise.net hosting |
+| Prometheus metrics | NovaControl exports |
+| Giscus | Comment system (GitHub Discussions) |
+| Fuse.js | Client-side full-text search |
+
+### Apple Ecosystem
+
+| Technology | Role |
+|-----------|------|
+| HomeKit.framework | Smart home (60+ accessories) |
+| HealthKit | 17 health metrics bridge |
+| Shortcuts CLI | Scene execution proxy (:37432) |
+
+---
+
 ## Hardware
 
 | Component | Spec | Role |
