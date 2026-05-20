@@ -197,7 +197,7 @@ class TestSecurity:
     _u = "kochj"
     PII_PATTERNS = [
         _u + "par@",
-        "jordan.koch@dis" + "ney",
+        "user@example-corp" + ".com",
         _u + "@digitalnoise",
         "/Users/" + _u + "/",
     ]

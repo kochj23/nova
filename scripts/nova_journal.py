@@ -189,10 +189,10 @@ def get_available_sources(min_count: int = 50) -> list[str]:
 
 
 def fetch_memories_by_source(source: str, n: int = 25) -> list[dict]:
-    """Fetch random memories from a specific source via DB."""
+    """Fetch random memories from a specific source via DB with metadata."""
     result = subprocess.run(
         ["psql", "-U", "kochj", "-d", "nova_memories", "-tA", "-F", "\x1f", "-c",
-         f"SELECT text, source FROM memories WHERE source = '{source}' "
+         f"SELECT text, source, metadata::text FROM memories WHERE source = '{source}' "
          f"AND tier != 'scratchpad' ORDER BY random() LIMIT {n};"],
         capture_output=True, text=True, timeout=30
     )
@@ -204,7 +204,13 @@ def fetch_memories_by_source(source: str, n: int = 25) -> list[dict]:
             continue
         parts = line.split("\x1f")
         if parts[0]:
-            memories.append({"text": parts[0], "source": parts[1] if len(parts) > 1 else source})
+            meta = {}
+            if len(parts) > 2 and parts[2]:
+                try:
+                    meta = json.loads(parts[2])
+                except (json.JSONDecodeError, ValueError):
+                    pass
+            memories.append({"text": parts[0], "source": parts[1] if len(parts) > 1 else source, "metadata": meta})
     return nova_config.filter_private_memories(memories)
 
 
@@ -289,13 +295,23 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
     filename = f"{dt}-{slug}.md"
 
-    # Handle cover image
+    # Handle cover image — save as .webp since deploy pipeline converts PNG→WebP
     hugo_image = ""
     if image_path and Path(image_path).exists():
         images_dir.mkdir(parents=True, exist_ok=True)
-        img_dest = images_dir / f"{dt}-{slug}.png"
-        shutil.copy2(image_path, img_dest)
-        hugo_image = f"/images/{section}/{dt}-{slug}.png"
+        img_dest = images_dir / f"{dt}-{slug}.webp"
+        # Convert to webp locally if source is PNG
+        if image_path.lower().endswith(".png"):
+            try:
+                subprocess.run(
+                    ["cwebp", "-q", "82", "-resize", "1200", "0", image_path, "-o", str(img_dest)],
+                    capture_output=True, timeout=30
+                )
+            except (FileNotFoundError, subprocess.TimeoutExpired):
+                shutil.copy2(image_path, img_dest)
+        else:
+            shutil.copy2(image_path, img_dest)
+        hugo_image = f"/images/{section}/{dt}-{slug}.webp"
         log(f"Image copied: {img_dest.name}")
 
     timestamp = now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00")
@@ -627,7 +643,11 @@ def topic_tech_today(state: dict) -> tuple[str, list[dict]]:
 
     topic = random.choice(candidates[:5])
     memories = recall_memories(topic, n=15)
-    return topic, memories
+    web_context = [{"text": f"[Web] {r.get('title', '')}: {r.get('content', '')[:200]}",
+                    "source": "web",
+                    "metadata": {"url": r.get("url", ""), "title": r.get("title", ""), "engine": r.get("engine", "")}}
+                   for r in results[:5]]
+    return topic, memories + web_context
 
 
 def _searxng_search(query: str, n: int = 10) -> list[dict]:
@@ -701,7 +721,9 @@ def topic_research(state: dict) -> tuple[str, list[dict]]:
     # Multi-source: memories + SearXNG
     memories = recall_memories(topic, n=30)
     web_results = _searxng_search(topic, n=5)
-    web_context = [{"text": f"[Web] {r.get('title', '')}: {r.get('content', '')[:200]}", "source": "web"}
+    web_context = [{"text": f"[Web] {r.get('title', '')}: {r.get('content', '')[:200]}",
+                    "source": "web",
+                    "metadata": {"url": r.get("url", ""), "title": r.get("title", ""), "engine": r.get("engine", "")}}
                    for r in web_results]
     all_context = memories + web_context
     return topic, all_context
@@ -1095,6 +1117,81 @@ PROFILES = {
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# SOURCE ATTRIBUTION
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _append_attribution(body: str, memories: list[dict], topic: str, profile_name: str) -> str:
+    """Append a full attribution section with memory sources and web references."""
+    lines = [
+        "",
+        "---",
+        "",
+        "## Sources & Attribution",
+        "",
+        f"**Content type:** {profile_name}  ",
+        f"**Topic:** {topic}  ",
+        f"**Generated:** {today_str()}  ",
+        f"**Model:** OpenRouter (via Nova Journal pipeline)  ",
+        "",
+        "### Memory Sources",
+        "",
+        f"This piece drew from **{len(memories)}** memories in Nova's knowledge base:",
+        "",
+    ]
+
+    # Group memories by source/show
+    by_source: dict[str, list[dict]] = {}
+    web_sources: list[dict] = []
+
+    for m in memories:
+        text = m.get("text", "")
+        source = m.get("source", "unknown")
+        metadata = m.get("metadata", {})
+
+        if text.startswith("[Web]") or source == "web":
+            web_sources.append(m)
+        else:
+            key = metadata.get("show", source) if metadata else source
+            by_source.setdefault(key, []).append(m)
+
+    for source_name, mems in sorted(by_source.items(), key=lambda x: -len(x[1])):
+        lines.append(f"**{source_name}** ({len(mems)} memories)")
+        for mem in mems[:5]:
+            text = mem.get("text", "")[:150].replace("\n", " ").strip()
+            meta = mem.get("metadata", {})
+            title = meta.get("title", "")
+            if title:
+                lines.append(f"- *{title[:80]}*: \"{text}...\"")
+            else:
+                lines.append(f"- \"{text}...\"")
+        if len(mems) > 5:
+            lines.append(f"- *(+{len(mems) - 5} more)*")
+        lines.append("")
+
+    if web_sources:
+        lines.append("### Web Sources")
+        lines.append("")
+        for ws in web_sources:
+            meta = ws.get("metadata", {})
+            url = meta.get("url", "")
+            title_text = meta.get("title", "")
+            text = ws.get("text", "").replace("[Web] ", "")
+            if url and title_text:
+                lines.append(f"- [{title_text}]({url})")
+            elif ": " in text:
+                title_part, content_part = text.split(": ", 1)
+                lines.append(f"- **{title_part}**: {content_part[:200]}")
+            else:
+                lines.append(f"- {text[:250]}")
+        lines.append("")
+
+    lines.append("---")
+    lines.append(f"*Generated by Nova · nova.digitalnoise.net · All source material from Nova's local memory system*")
+
+    return body + "\n".join(lines)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1143,6 +1240,9 @@ def run_profile(profile_name: str) -> int:
 
     # ── Step 4: Clean body (remove image prompt metadata if present) ──────────
     body = re.sub(r'<!--IMGPROMPT:.+?-->\n*', '', body, flags=re.DOTALL)
+
+    # ── Step 4b: Append full source attribution ──────────────────────────────
+    body = _append_attribution(body, memories, topic, profile_name)
 
     # ── Step 5: Publish to Hugo ───────────────────────────────────────────────
     tags = profile["tags_base"] + _topic_to_tags(topic)

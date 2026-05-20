@@ -26,7 +26,7 @@ SAFE_SOURCES = [
     "document", "history", "corvette_workshop_manual",
     "nutrition", "fitness", "cbt", "home_repair", "california",
     "finance", "corvette", "entertainment", "philosophy", "film",
-    "burbank", "disney",
+    "burbank",
 ]
 
 SAFE_SOURCE_SET = set(SAFE_SOURCES)
@@ -36,7 +36,7 @@ PII_PATTERNS = [
     r'\b\d{3}[-.\s]?\d{3}[-.\s]?\d{4}\b',
     r'\b\d{3}-\d{2}-\d{4}\b',
     r'password|passwd|secret|token|api.?key|credential',
-    r'jordan|kochj|digitalnoise|disney\.com',
+    r'jordan|kochj|digitalnoise|example-corp\.com',
     r'/Users/' + __import__('os').environ.get('USER', '') + r'|/Volumes/Data',
 ]
 

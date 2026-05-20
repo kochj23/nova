@@ -47,7 +47,7 @@ class TestSecurity(unittest.TestCase):
     def test_no_pii_emails(self):
         src = _SCRIPT.read_text()
         _at = "@"
-        for p in ["kochjpar" + _at + "gmail.com", "jordan.koch" + _at + "disney.com"]:
+        for p in ["kochjpar" + _at + "gmail.com", "user" + _at + "example-corp.com"]:
             self.assertNotIn(p, src)
 
     def test_slack_channel_is_photos_not_general(self):

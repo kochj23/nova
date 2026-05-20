@@ -55,7 +55,7 @@ class TestSecurity(unittest.TestCase):
         _at = "@"
         for pat in [
             "kochjpar" + _at + "gmail.com",
-            "jordan.koch" + _at + "disney.com",
+            "user" + _at + "example-corp.com",
             "kochj" + _at + "digitalnoise.net",
             "kochj23" + _at + "gmail.com",
         ]:

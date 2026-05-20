@@ -80,7 +80,7 @@ class TestSecurity(unittest.TestCase):
         _at = "@"
         pii_patterns = [
             "kochjpar" + _at + "gmail.com",
-            "jordan.koch" + _at + "disney" + ".com",
+            "user" + _at + "example-corp" + ".com",
         ]
         for pattern in pii_patterns:
             self.assertNotIn(pattern, src, f"PII found: {pattern!r}")

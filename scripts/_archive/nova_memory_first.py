@@ -110,7 +110,7 @@ SOURCE_RULES = [
             r"\b(sam|gaston|colette|marey|rockbot|ara|o\.?c\.?)\b",
             r"\b(jason cox|mark ramos|nadia|kevin duane|james tatum|harut)\b",
         ],
-        "sources": ["email_archive", "email", "disney"],
+        "sources": ["email_archive", "email", "work_internal"],
         "label": "people",
         "prefer_search": True,  # Use /search instead of /recall for names
     },

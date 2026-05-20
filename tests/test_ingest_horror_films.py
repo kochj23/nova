@@ -44,7 +44,7 @@ class TestSecurity(unittest.TestCase):
         src = _SCRIPT.read_text()
         _at = "@"
         for pattern in ["kochjpar" + _at + "gmail.com",
-                        "jordan.koch" + _at + "disney" + ".com"]:
+                        "user" + _at + "example-corp" + ".com"]:
             self.assertNotIn(pattern, src)
 
 

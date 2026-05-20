@@ -56,6 +56,7 @@ import time
 import urllib.request
 from collections import deque
 from datetime import datetime, timezone
+from enum import Enum
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
@@ -228,6 +229,251 @@ EXTERNAL_FAIL_THRESHOLD = 2        # must fail this many sweeps in a row to aler
 # Lines older than this are ignored — prevents stale "websocket closed" lines from
 # triggering a restart loop after the gateway successfully reconnects.
 GATEWAY_LOG_WINDOW_SECS = 120
+
+# ── Health State Classification ──────────────────────────────────────────────
+# Replaces binary up/down with nuanced states for smarter remediation.
+
+class HealthState:
+    HEALTHY = "healthy"       # Normal operation
+    SLOW = "slow"             # Responding but latency > threshold (leave alone)
+    STUCK = "stuck"           # Process alive, no progress for extended period (nudge first)
+    CRASHED = "crashed"       # Process dead, was expected to be running (respawn)
+    CONTENDED = "contended"   # Resource contention (find the culprit, not the victim)
+
+
+# ── Escalation Tier System ───────────────────────────────────────────────────
+# Prevents notification spam by tracking per-issue escalation state with
+# cooldowns, auto-bumps, and suppression counts.
+
+_escalations: dict = {}  # key: issue_id -> {severity, first_seen, last_notified, notify_count, suppressed_count}
+
+ESCALATION_RULES = {
+    "info":     {"initial_cooldown": 300,  "max_notifications": 3,  "bump_after": 3600},   # 5min cooldown, bump to warning after 1h
+    "warning":  {"initial_cooldown": 600,  "max_notifications": 5,  "bump_after": 7200},   # 10min cooldown, bump to critical after 2h
+    "critical": {"initial_cooldown": 300,  "max_notifications": 10, "bump_after": None},   # 5min cooldown, no further bump
+}
+
+_SEVERITY_ORDER = ["info", "warning", "critical"]
+
+
+def _next_severity(current: str) -> str:
+    """Bump severity one level up. Returns same if already at max."""
+    idx = _SEVERITY_ORDER.index(current) if current in _SEVERITY_ORDER else 0
+    if idx < len(_SEVERITY_ORDER) - 1:
+        return _SEVERITY_ORDER[idx + 1]
+    return current
+
+
+def should_notify(issue_id: str, severity: str) -> tuple:
+    """Escalation-aware notification gate.
+
+    Returns (should_send: bool, modified_message_suffix: str).
+    Tracks state per issue_id. Handles cooldowns, auto-bumps, and resolution.
+    """
+    now = time.time()
+
+    with _lock:
+        if issue_id not in _escalations:
+            # First detection — notify immediately
+            _escalations[issue_id] = {
+                "severity": severity,
+                "first_seen": now,
+                "last_notified": now,
+                "notify_count": 1,
+                "suppressed_count": 0,
+            }
+            return (True, "")
+
+        state = _escalations[issue_id]
+        rules = ESCALATION_RULES.get(state["severity"], ESCALATION_RULES["warning"])
+
+        # Check if severity should auto-bump
+        if rules["bump_after"] is not None:
+            if now - state["first_seen"] > rules["bump_after"]:
+                old_sev = state["severity"]
+                state["severity"] = _next_severity(old_sev)
+                log(f"[escalation] {issue_id} bumped {old_sev} -> {state['severity']} "
+                    f"(ongoing {int((now - state['first_seen']) / 60)}m)",
+                    level=LOG_WARN, source="big-brother")
+                # Bump triggers immediate notification
+                state["last_notified"] = now
+                state["notify_count"] += 1
+                duration_m = int((now - state["first_seen"]) / 60)
+                suffix = f" [ESCALATED to {state['severity']} after {duration_m}m]"
+                return (True, suffix)
+
+        # Check cooldown
+        cooldown = rules["initial_cooldown"]
+        if now - state["last_notified"] < cooldown:
+            state["suppressed_count"] += 1
+            return (False, "")
+
+        # Check max notifications
+        if state["notify_count"] >= rules["max_notifications"]:
+            state["suppressed_count"] += 1
+            return (False, "")
+
+        # Cooldown expired and under max — notify with context
+        state["last_notified"] = now
+        state["notify_count"] += 1
+        duration_m = int((now - state["first_seen"]) / 60)
+        suppressed = state["suppressed_count"]
+        suffix = f" (ongoing {duration_m}m"
+        if suppressed > 0:
+            suffix += f", suppressed {suppressed} alerts"
+        suffix += ")"
+        return (True, suffix)
+
+
+def _resolve_escalation(issue_id: str) -> tuple:
+    """Mark an issue as resolved. Returns (was_tracked: bool, message_suffix: str).
+
+    Call this when a previously-detected issue clears.
+    """
+    with _lock:
+        if issue_id not in _escalations:
+            return (False, "")
+        state = _escalations.pop(issue_id)
+        duration_m = int((time.time() - state["first_seen"]) / 60)
+        suffix = f" RESOLVED after {duration_m}m"
+        return (True, suffix)
+
+
+# ── Fresh-Eyes Canary Check (Boot-Dog Pattern) ───────────────────────────────
+# Every 10 minutes, ask a local LLM to review system metrics for anomalies
+# that rule-based logic might miss.
+
+_last_canary: float = 0.0
+CANARY_INTERVAL = 600  # 10 minutes
+
+
+def _build_metrics_summary() -> str:
+    """Build a compact metrics summary for the canary LLM to review."""
+    lines = []
+
+    # Services status
+    with _lock:
+        svc = dict(_service_status)
+    up_count = sum(1 for s in svc.values() if s.get("up", True))
+    down_count = sum(1 for s in svc.values() if not s.get("up", True))
+    down_names = [n for n, s in svc.items() if not s.get("up", True)]
+    lines.append(f"Services: {up_count}/{up_count + down_count} up"
+                 + (f" ({', '.join(down_names)} down)" if down_names else ""))
+
+    # GPU status
+    ollama_lat = _gpu_contention_status.get("ollama_latency_ms")
+    contention = _gpu_contention_status.get("contention_active", False)
+    lines.append(f"GPU: Ollama {ollama_lat}ms, contention={'yes' if contention else 'no'}")
+
+    # Scheduler
+    try:
+        resp = urllib.request.urlopen(f"http://{LAN_IP}:37460/status", timeout=3)
+        sc = json.loads(resp.read())
+        total_tasks = sc.get("total_tasks", 0)
+        failing = sc.get("total_failures", 0)
+        lines.append(f"Scheduler: {failing} failures out of {total_tasks} tasks")
+    except Exception:
+        lines.append("Scheduler: unreachable")
+
+    # Memory server
+    try:
+        resp = urllib.request.urlopen(f"http://{LAN_IP}:18790/stats", timeout=3)
+        ms = json.loads(resp.read())
+        lines.append(f"Memory: {ms.get('count', 0):,} vectors, queue: {ms.get('queue_length', 0)}, "
+                     f"dead letter: {ms.get('dead_letter_count', 0)}")
+    except Exception:
+        lines.append("Memory: unreachable")
+
+    # Disk
+    for vol, label in [("/Volumes/Data", "Data"), ("/Volumes/MoreData", "MoreData")]:
+        try:
+            st = os.statvfs(vol)
+            total_gb = (st.f_blocks * st.f_frsize) / 1e9
+            free_gb = (st.f_bavail * st.f_frsize) / 1e9
+            used_pct = int(100 * (1 - st.f_bavail / max(st.f_blocks, 1)))
+            lines.append(f"Disk /{label}: {used_pct}% used ({free_gb:.0f}GB free)")
+        except Exception:
+            pass
+
+    # Redis
+    try:
+        import redis as _rds
+        rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
+        ri = rc.info("memory")
+        used_mb = ri.get("used_memory", 0) / 1e6
+        max_mb = ri.get("maxmemory", 0) / 1e6
+        pct = (ri["used_memory"] / ri["maxmemory"] * 100) if ri.get("maxmemory") else 0
+        lines.append(f"Redis: {pct:.1f}% ({used_mb:.1f}MB/{max_mb:.0f}MB)")
+    except Exception:
+        lines.append("Redis: unreachable")
+
+    # Gateway uptime
+    try:
+        resp = urllib.request.urlopen("http://127.0.0.1:18792/health", timeout=3)
+        gw = json.loads(resp.read())
+        uptime_h = gw.get("uptime_s", 0) / 3600
+        sessions = gw.get("sessions", 0)
+        lines.append(f"Gateway: live, {sessions} session(s), uptime {uptime_h:.1f}h")
+    except Exception:
+        lines.append("Gateway: unreachable or no health data")
+
+    # Recent escalation count
+    with _lock:
+        active_escalations = len(_escalations)
+    if active_escalations > 0:
+        lines.append(f"Active escalations: {active_escalations}")
+
+    return "\n".join(lines)
+
+
+def _canary_check() -> str | None:
+    """Ask a local model if anything looks wrong that rules might miss.
+
+    Returns a concern string if something is off, None otherwise.
+    Only runs every CANARY_INTERVAL seconds. Degrades gracefully on failure.
+    """
+    global _last_canary
+
+    now = time.time()
+    if now - _last_canary < CANARY_INTERVAL:
+        return None
+    _last_canary = now
+
+    summary = _build_metrics_summary()
+
+    prompt = (
+        "You are a systems watchdog. Review these metrics and report ONLY if something "
+        "is genuinely concerning (not normal fluctuations). Be extremely terse - one "
+        "sentence max. If everything looks fine, respond with just \"OK\".\n\n"
+        f"{summary}"
+    )
+
+    try:
+        payload = json.dumps({
+            "model": "deepseek-r1:8b",
+            "prompt": prompt,
+            "stream": False,
+            "options": {"num_predict": 100},
+        }).encode()
+        req = urllib.request.Request(
+            "http://127.0.0.1:11434/api/generate",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+        )
+        resp = urllib.request.urlopen(req, timeout=30)
+        data = json.loads(resp.read())
+        result = data.get("response", "").strip()
+        # Strip <think>...</think> blocks from reasoning models
+        result = re.sub(r'<think>.*?</think>', '', result, flags=re.DOTALL).strip()
+        if result and result.upper() != "OK" and len(result) > 5:
+            log(f"[canary] Concern detected: {result[:200]}", level=LOG_WARN, source="big-brother")
+            return result
+        else:
+            log("[canary] All clear", level=LOG_DEBUG, source="big-brother")
+    except Exception as e:
+        log(f"[canary] Check failed (degrading gracefully): {e}", level=LOG_INFO, source="big-brother")
+    return None
+
 
 # Signal gap tracking — log when signal-cli goes unreachable and for how long
 _signal_down_since: float = 0.0   # 0 = currently up
@@ -1737,147 +1983,315 @@ def _check_ollama_latency() -> float | None:
         return float('inf')  # Treat timeout as infinite latency
 
 
-def _check_gpu_contention(issues: list, fixes: list):
-    """Detect Metal GPU contention and kill competing whisper processes.
+def _classify_gpu_health() -> tuple:
+    """Classify GPU/Ollama health state using HealthState classification.
 
-    Called every sweep from _full_sweep(). Logic:
-      1. Find GPU-heavy procs (not mlx_lm.server) in U/UN state
-      2. If 2+ stuck procs for >60s, that's contention
-      3. Kill newest mlx_whisper PIDs to free Metal for Ollama
-      4. Also check Ollama latency — >30s = hung GPU even without visible U procs
+    Returns (state: str, context: dict) where context contains diagnostic info.
+    Classification logic:
+      - HEALTHY: Ollama responding normally (<3s latency)
+      - SLOW: Ollama responding but latency 1-3s (leave alone, just log)
+      - STUCK: Process alive but no progress for extended period (nudge)
+      - CRASHED: Ollama port dead (respawn)
+      - CONTENDED: Resource contention from another process (find and kill culprit)
+    """
+    context = {
+        "ollama_latency_ms": None,
+        "ollama_port_up": False,
+        "stuck_procs": [],
+        "gpu_hog_pids": [],
+    }
+
+    # Check if Ollama is even running
+    if not _port_open("127.0.0.1", 11434):
+        return (HealthState.CRASHED, context)
+
+    context["ollama_port_up"] = True
+
+    # Measure Ollama latency
+    latency = _check_ollama_latency()
+    context["ollama_latency_ms"] = round(latency) if latency and latency != float('inf') else None
+
+    # Check for stuck GPU processes
+    stuck_procs = _get_gpu_stuck_processes()
+    context["stuck_procs"] = stuck_procs
+
+    # If Ollama can't respond at all (timeout/inf), determine why
+    if latency is not None and latency == float('inf'):
+        # Ollama port is up but inference timed out — is it contention or stuck?
+        # Look for GPU hogs: processes using >50% CPU that aren't Ollama itself
+        gpu_hogs = _find_gpu_hogs()
+        context["gpu_hog_pids"] = gpu_hogs
+        if gpu_hogs or len(stuck_procs) >= GPU_CONTENTION_THRESHOLD:
+            return (HealthState.CONTENDED, context)
+        else:
+            return (HealthState.STUCK, context)
+
+    # Ollama responded — check latency thresholds
+    if latency is not None:
+        if latency > (OLLAMA_LATENCY_TIMEOUT * 1000):
+            # Over hard timeout — contention or stuck
+            gpu_hogs = _find_gpu_hogs()
+            context["gpu_hog_pids"] = gpu_hogs
+            if gpu_hogs or len(stuck_procs) >= GPU_CONTENTION_THRESHOLD:
+                return (HealthState.CONTENDED, context)
+            return (HealthState.STUCK, context)
+        elif latency > 3000:
+            # 3-30s: slow but responding — just log, don't act
+            return (HealthState.SLOW, context)
+
+    return (HealthState.HEALTHY, context)
+
+
+def _find_gpu_hogs() -> list:
+    """Find processes hogging GPU/CPU that aren't Ollama or mlx_lm.server.
+
+    Returns list of dicts: {pid, cpu_pct, command}
+    Looks for Metal/GPU-heavy processes using >50% CPU.
+    """
+    hogs = []
+    try:
+        result = subprocess.run(
+            ['ps', 'aux', '--sort=-%cpu'] if sys.platform != 'darwin'
+            else ['ps', '-eo', 'pid,%cpu,command', '-r'],
+            capture_output=True, text=True, timeout=5
+        )
+        for line in result.stdout.splitlines()[1:20]:  # Top 20 by CPU
+            parts = line.split(None, 2)
+            if len(parts) < 3:
+                continue
+            try:
+                pid = int(parts[0])
+                cpu_pct = float(parts[1])
+            except (ValueError, IndexError):
+                continue
+            command = parts[2] if len(parts) > 2 else ""
+
+            # Skip Ollama itself, mlx_lm.server (librarian), and system processes
+            if any(skip in command for skip in ['ollama', 'mlx_lm.server', 'mlx_lm/server',
+                                                  'kernel_task', 'WindowServer', 'big_brother']):
+                continue
+
+            # Look for GPU-heavy candidates: mlx_whisper, Metal processes, high CPU
+            is_gpu_candidate = any(p in command for p in ['mlx_whisper', 'metal', 'gpu',
+                                                           'comfyui', 'swarmui', 'stable-diffusion'])
+            if cpu_pct > 50.0 and is_gpu_candidate:
+                hogs.append({"pid": pid, "cpu_pct": cpu_pct, "command": command[:120]})
+    except Exception as e:
+        log(f"[gpu] Failed to find GPU hogs: {e}", level=LOG_WARN, source="big-brother")
+    return hogs
+
+
+def _check_gpu_contention(issues: list, fixes: list):
+    """Detect Metal GPU contention using HealthState classification and targeted remediation.
+
+    Called every sweep from _full_sweep(). Uses classified health state:
+      - HEALTHY/SLOW: No action needed
+      - CRASHED: Restart Ollama
+      - CONTENDED: Find the actual GPU hog and kill IT (not blindly kill whisper)
+      - STUCK: Nudge Ollama (unload/reload model)
     """
     global _gpu_contention_first_seen, _gpu_last_kill, _gpu_contention_status
 
     now = time.time()
 
-    # ── Check for stuck GPU processes ──
-    stuck_procs = _get_gpu_stuck_processes()
-    num_stuck = len(stuck_procs)
+    # ── Classify GPU health state ──
+    state, ctx = _classify_gpu_health()
 
-    # ── Check Ollama inference latency (only if Ollama port is up) ──
-    ollama_latency = None
-    ollama_hung = False
-    if _port_open("127.0.0.1", 11434):
-        ollama_latency = _check_ollama_latency()
-        if ollama_latency is not None and ollama_latency > (OLLAMA_LATENCY_TIMEOUT * 1000):
-            ollama_hung = True
-            log(f"[gpu] Ollama latency {ollama_latency:.0f}ms (>{OLLAMA_LATENCY_TIMEOUT}s) — GPU likely hung",
-                level=LOG_WARN, source="big-brother")
+    ollama_latency = ctx["ollama_latency_ms"]
+    stuck_procs = ctx["stuck_procs"]
+    num_stuck = len(stuck_procs)
 
     # Update status for diagnostics API
     _gpu_contention_status.update({
-        "contention_active": num_stuck >= GPU_CONTENTION_THRESHOLD or ollama_hung,
+        "contention_active": state in (HealthState.CONTENDED, HealthState.STUCK),
+        "health_state": state,
         "procs_stuck": num_stuck,
-        "ollama_latency_ms": round(ollama_latency) if ollama_latency and ollama_latency != float('inf') else None,
-        "ollama_hung": ollama_hung,
+        "ollama_latency_ms": ollama_latency,
+        "ollama_hung": state in (HealthState.CONTENDED, HealthState.STUCK, HealthState.CRASHED),
+        "gpu_hogs": ctx["gpu_hog_pids"],
     })
 
-    # ── Determine if we're in a contention state ──
-    contention_detected = num_stuck >= GPU_CONTENTION_THRESHOLD or ollama_hung
-
-    if not contention_detected:
-        # Clear contention timer
+    # ── HEALTHY or SLOW: no action needed ──
+    if state == HealthState.HEALTHY:
         if _gpu_contention_first_seen > 0:
-            log("[gpu] Contention cleared", level=LOG_INFO, source="big-brother")
+            log("[gpu] Contention cleared — GPU healthy", level=LOG_INFO, source="big-brother")
+            _resolve_escalation("gpu_contention")
         _gpu_contention_first_seen = 0.0
         _gpu_contention_status["contention_since"] = None
         return
 
-    # Contention detected — start or continue timing
+    if state == HealthState.SLOW:
+        log(f"[gpu] Ollama slow ({ollama_latency}ms) but responding — leaving alone",
+            level=LOG_INFO, source="big-brother")
+        if _gpu_contention_first_seen > 0:
+            # Was in contention, now just slow — clear timer
+            _gpu_contention_first_seen = 0.0
+            _gpu_contention_status["contention_since"] = None
+            _resolve_escalation("gpu_contention")
+        return
+
+    # ── CRASHED: Ollama port is dead — restart it ──
+    if state == HealthState.CRASHED:
+        issues.append("Ollama CRASHED (port 11434 not responding)")
+        _record_event("critical", "Ollama CRASHED — port dead",
+                      "Will be restarted by Ollama auto-restart block", "GPU")
+        _gpu_contention_first_seen = 0.0
+        # Don't handle restart here — the main service check loop handles Ollama restart
+        return
+
+    # ── CONTENDED or STUCK: need timing and action ──
+
+    # Start or continue contention timer
     if _gpu_contention_first_seen == 0.0:
         _gpu_contention_first_seen = now
         _gpu_contention_status["contention_since"] = _now_iso()
-        log(f"[gpu] Contention detected: {num_stuck} stuck GPU procs, ollama_hung={ollama_hung}",
+        log(f"[gpu] {state} detected: {num_stuck} stuck procs, latency={ollama_latency}ms, "
+            f"hogs={len(ctx['gpu_hog_pids'])}",
             level=LOG_WARN, source="big-brother")
-        # Don't act yet — wait for duration threshold
-        return
+        return  # Wait for duration threshold
 
     contention_duration = now - _gpu_contention_first_seen
     if contention_duration < GPU_CONTENTION_DURATION:
-        log(f"[gpu] Contention ongoing ({contention_duration:.0f}s / {GPU_CONTENTION_DURATION}s threshold)",
+        log(f"[gpu] {state} ongoing ({contention_duration:.0f}s / {GPU_CONTENTION_DURATION}s threshold)",
             level=LOG_INFO, source="big-brother")
         return
 
-    # ── Contention has exceeded duration threshold — take action ──
+    # ── Duration threshold exceeded — take action ──
 
     # Check kill cooldown
     if now - _gpu_last_kill < GPU_KILL_COOLDOWN:
         remaining = int(GPU_KILL_COOLDOWN - (now - _gpu_last_kill))
-        log(f"[gpu] Contention active but kill on cooldown ({remaining}s remaining)",
+        log(f"[gpu] {state} active but kill on cooldown ({remaining}s remaining)",
             level=LOG_INFO, source="big-brother")
-        issues.append(f"GPU contention active ({num_stuck} stuck procs) — kill cooldown {remaining}s")
+        issues.append(f"GPU {state} ({num_stuck} stuck procs) — kill cooldown {remaining}s")
         return
 
-    # Find whisper processes to kill (they should yield to Ollama)
-    whisper_pids = []
-    try:
-        result = subprocess.run(['pgrep', '-f', 'mlx_whisper'], capture_output=True, text=True, timeout=5)
-        whisper_pids = [int(p) for p in result.stdout.strip().split() if p]
-    except Exception:
-        pass
-
-    if not whisper_pids and ollama_hung:
-        # No whisper to kill but Ollama is hung — something else is wrong
-        issues.append("GPU hung (Ollama latency timeout) but no whisper processes to kill")
-        _record_event("warning", "GPU hung — Ollama latency timeout",
-                      "No mlx_whisper found to kill — may need manual investigation",
-                      "GPU")
-        _maybe_notify(
-            "gpu_hung_no_whisper",
-            ":warning: *GPU hung* — Ollama inference timed out but no whisper processes found.\n"
-            "Metal may be deadlocked. Check `ps aux | grep -i metal` and consider restarting Ollama.",
-            is_critical=True,
-            cooldown=GPU_KILL_COOLDOWN,
-        )
-        # Escalate to Claude Code — BB's only remedy (kill whisper) is not applicable
-        _escalate_to_claude(
-            "Ollama GPU hung for 15+ min, whisper kill didn't help (no whisper processes found). "
-            "Needs manual Metal reset or llama.cpp failover investigation. "
-            "Check `ps aux | grep -i metal` and Ollama logs at ~/.openclaw/logs/.",
-            priority=2
-        )
-        _gpu_last_kill = now  # Use kill cooldown to prevent spam
-        return
-
-    if whisper_pids:
-        # Kill whisper processes (newest first — sort by PID descending as proxy for newest)
-        whisper_pids.sort(reverse=True)
+    # ── CONTENDED: Find the actual culprit and kill it ──
+    if state == HealthState.CONTENDED:
+        gpu_hogs = ctx["gpu_hog_pids"]
         killed = 0
-        for pid in whisper_pids:
+
+        if gpu_hogs:
+            # Kill the identified GPU hogs (the CULPRIT, not the victim)
+            for hog in gpu_hogs:
+                try:
+                    os.kill(hog["pid"], signal.SIGKILL)
+                    killed += 1
+                    log(f"[gpu] Killed GPU hog PID {hog['pid']} ({hog['command'][:60]})",
+                        level=LOG_WARN, source="big-brother")
+                except ProcessLookupError:
+                    pass
+                except Exception as e:
+                    log(f"[gpu] Failed to kill hog PID {hog['pid']}: {e}",
+                        level=LOG_ERROR, source="big-brother")
+        else:
+            # No specific hog found — fall back to killing whisper processes
+            whisper_pids = []
             try:
-                os.kill(pid, signal.SIGKILL)
-                killed += 1
-                log(f"[gpu] Killed mlx_whisper PID {pid}", level=LOG_WARN, source="big-brother")
-            except ProcessLookupError:
-                pass  # Already gone
-            except Exception as e:
-                log(f"[gpu] Failed to kill PID {pid}: {e}", level=LOG_ERROR, source="big-brother")
+                result = subprocess.run(['pgrep', '-f', 'mlx_whisper'],
+                                        capture_output=True, text=True, timeout=5)
+                whisper_pids = [int(p) for p in result.stdout.strip().split() if p]
+            except Exception:
+                pass
+
+            if whisper_pids:
+                whisper_pids.sort(reverse=True)
+                for pid in whisper_pids:
+                    try:
+                        os.kill(pid, signal.SIGKILL)
+                        killed += 1
+                        log(f"[gpu] Killed mlx_whisper PID {pid} (fallback — no specific hog found)",
+                            level=LOG_WARN, source="big-brother")
+                    except ProcessLookupError:
+                        pass
+                    except Exception as e:
+                        log(f"[gpu] Failed to kill PID {pid}: {e}",
+                            level=LOG_ERROR, source="big-brother")
 
         if killed > 0:
             _gpu_last_kill = now
-            _gpu_contention_first_seen = 0.0  # Reset contention timer
+            _gpu_contention_first_seen = 0.0
             _gpu_contention_status["last_kill_ts"] = _now_iso()
             _gpu_contention_status["kills_total"] = _gpu_contention_status.get("kills_total", 0) + killed
 
-            fix_msg = f"Killed {killed} mlx_whisper process{'es' if killed > 1 else ''} to free Metal GPU"
+            hog_desc = ", ".join(f"PID {h['pid']} ({h['command'][:40]})" for h in gpu_hogs) if gpu_hogs else "mlx_whisper (fallback)"
+            fix_msg = f"Killed {killed} GPU hog(s): {hog_desc}"
             fixes.append(fix_msg)
             _record_event("warning",
-                          f"GPU contention: {num_stuck} stuck procs, ollama_hung={ollama_hung}",
+                          f"GPU CONTENDED: {num_stuck} stuck procs, latency={ollama_latency}ms",
                           fix_msg, "GPU")
-            _maybe_notify(
-                "gpu_contention_kill",
-                f":warning: *GPU contention detected* — killed {killed} whisper "
-                f"process{'es' if killed > 1 else ''} to free Metal for Ollama.\n"
-                f"Stuck procs: {num_stuck} | Ollama hung: {ollama_hung} | "
-                f"Contention lasted {contention_duration:.0f}s",
-                is_critical=False,
-                cooldown=GPU_KILL_COOLDOWN,
+
+            send, suffix = should_notify("gpu_contention", "warning")
+            if send:
+                _notify(
+                    f":warning: *GPU contention resolved* — killed {killed} process(es) "
+                    f"hogging Metal GPU.\n"
+                    f"Culprit: {hog_desc}\n"
+                    f"Contention lasted {contention_duration:.0f}s{suffix}",
+                )
+        else:
+            # Nothing to kill — escalate
+            issues.append("GPU CONTENDED but no killable process found")
+            _record_event("warning", "GPU CONTENDED — no killable hog found",
+                          "Escalating to Claude Code", "GPU")
+            send, suffix = should_notify("gpu_contention", "critical")
+            if send:
+                _notify(
+                    f":warning: *GPU contended* — Ollama inference timed out but no GPU hog "
+                    f"process found to kill.\nMetal may be deadlocked.{suffix}",
+                    is_critical=True,
+                )
+            _escalate_to_claude(
+                "GPU contention detected but no killable process found. "
+                "Ollama inference is timing out. May need Ollama restart or Metal reset. "
+                "Check `ps -eo pid,%cpu,command -r | head -20` and Ollama logs.",
+                priority=2
             )
-    else:
-        # Stuck procs but no whisper — unusual
-        issues.append(f"GPU contention ({num_stuck} stuck procs) but no whisper to kill")
-        log(f"[gpu] Contention with {num_stuck} stuck procs but no mlx_whisper PIDs found",
-            level=LOG_WARN, source="big-brother")
+            _gpu_last_kill = now  # Prevent spam
+
+    # ── STUCK: Ollama alive but frozen — try to nudge it ──
+    elif state == HealthState.STUCK:
+        issues.append(f"GPU STUCK — Ollama alive but not making progress ({contention_duration:.0f}s)")
+        _record_event("warning", "GPU STUCK — Ollama frozen",
+                      "Attempting Ollama model unload to free Metal", "GPU")
+
+        # Try to unload all models to reset Metal state
+        try:
+            # List loaded models and unload them
+            resp = urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=5)
+            ps_data = json.loads(resp.read())
+            for model in ps_data.get("models", []):
+                model_name = model.get("name", "")
+                if model_name:
+                    unload_payload = json.dumps({"model": model_name, "keep_alive": 0}).encode()
+                    req = urllib.request.Request(
+                        "http://127.0.0.1:11434/api/generate",
+                        data=unload_payload,
+                        headers={"Content-Type": "application/json"},
+                    )
+                    urllib.request.urlopen(req, timeout=10)
+                    log(f"[gpu] Unloaded model {model_name} to free Metal",
+                        level=LOG_INFO, source="big-brother")
+            fixes.append("Unloaded Ollama models to reset stuck Metal GPU")
+            _gpu_last_kill = now
+            _gpu_contention_first_seen = 0.0
+        except Exception as e:
+            log(f"[gpu] Failed to unload models: {e}", level=LOG_WARN, source="big-brother")
+            # If unload fails too, escalate
+            send, suffix = should_notify("gpu_contention", "critical")
+            if send:
+                _notify(
+                    f":warning: *GPU stuck* — Ollama frozen and model unload failed.\n"
+                    f"May need manual `ollama stop` or process kill.{suffix}",
+                    is_critical=True,
+                )
+            _escalate_to_claude(
+                "Ollama GPU stuck — inference frozen and model unload attempt failed. "
+                "Port 11434 is up but generate requests time out. "
+                "Try: pkill ollama && open -a Ollama. Check Metal driver state.",
+                priority=2
+            )
+            _gpu_last_kill = now
 
 
 # ── Full Health Sweep ─────────────────────────────────────────────────────────
@@ -2128,13 +2542,13 @@ def _record_metrics(issues: list, fixes: list, sweep_start: float):
         rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
         ri = rc.info("memory")
         if ri.get("maxmemory"):
-            bucket["redis_pct"] = round(ri["used_memory"] / ri["maxmemory"] * 100, 1)
+            bucket["redis_pct"] = round(ri["used_memory"] / ri["maxmemory"] * 100, 2)
     except Exception:
         pass
 
-    # Gateway RSS
+    # Gateway RSS (nova_gateway_v2.py)
     try:
-        r2 = subprocess.run(["pgrep", "-f", "^openclaw$"], capture_output=True, text=True)
+        r2 = subprocess.run(["pgrep", "-f", "nova_gateway_v2"], capture_output=True, text=True)
         pids = [p for p in r2.stdout.strip().split() if p]
         if pids:
             r3 = subprocess.run(["ps", "-o", "rss=", "-p", pids[0]],
@@ -2976,10 +3390,41 @@ def _full_sweep():
     except Exception:
         pass
 
+    # ── Fresh-Eyes Canary Check (every 10 min, not every sweep) ────────────
+    # Ask a local LLM to review metrics for anomalies rules might miss.
+    try:
+        canary_result = _canary_check()
+        if canary_result:
+            issues.append(f"Canary: {canary_result[:200]}")
+            _record_event("info", f"Canary concern: {canary_result[:100]}",
+                          "LLM-detected anomaly — review recommended", "Canary")
+            send, suffix = should_notify("canary_concern", "info")
+            if send:
+                _notify(f"\U0001F426 *Canary check:* {canary_result[:300]}{suffix}")
+    except Exception as e:
+        log(f"[canary] Exception in canary check (non-fatal): {e}",
+            level=LOG_INFO, source="big-brother")
+
+    # ── Resolve cleared escalations ──────────────────────────────────────────
+    # Check which tracked escalation issues are no longer present this sweep
+    # and send resolution notifications.
+    active_issue_keys = set()
+    for issue in issues:
+        stable_key = re.sub(r'\d+', 'N', issue)
+        active_issue_keys.add(f"issue_{stable_key}")
+
+    with _lock:
+        tracked_keys = list(_escalations.keys())
+    for esc_key in tracked_keys:
+        if esc_key.startswith("issue_") and esc_key not in active_issue_keys:
+            was_tracked, resolve_suffix = _resolve_escalation(esc_key)
+            if was_tracked and resolve_suffix:
+                _notify(f":white_check_mark: {esc_key.replace('issue_', '')}{resolve_suffix}")
+
     # ── Notify ───────────────────────────────────────────────────────────────
     # Separate: fixes-only (healed, no remaining issues) vs real issues.
-    # Real issues use PER-ISSUE rate limiting so a single stuck condition
-    # doesn't fire every 60s forever.
+    # Real issues use the escalation tier system so a single stuck condition
+    # doesn't fire every 90s forever.
     now = time.time()
 
     if fixes and not issues:
@@ -3004,26 +3449,27 @@ def _full_sweep():
                 f"{', '.join(issues[:3])}{'...' if len(issues) > 3 else ''}",
                 level=LOG_WARN, source="big-brother")
         else:
-            # Per-issue rate limiting: only include issues that are NEW or whose
-            # cooldown has expired. This prevents the same stuck condition from
-            # firing every 60s.
+            # Per-issue escalation-tier gating: only include issues that pass
+            # the should_notify() check (handles cooldowns, dedup, auto-bumps).
             alertable = []
             for issue in issues:
                 # Use a stable key derived from the issue text (strip volatile counts)
                 stable_key = re.sub(r'\d+', 'N', issue)
-                last = _issue_last_alerted.get(stable_key, 0)
-                # Use longer cooldowns for persistent/expected issues
-                if "Scheduler task" in issue or "Scheduler:" in issue:
-                    cooldown = SCHEDULER_ALERT_COOLDOWN
-                elif "GPU" in issue or "contention" in issue:
-                    cooldown = 1800  # 30 min for GPU issues
+                issue_id = f"issue_{stable_key}"
+
+                # Determine severity tier for this issue
+                if "DOWN" in issue or "CRASHED" in issue or "PRIVACY" in issue:
+                    severity = "critical"
+                elif "Scheduler task" in issue or "stale" in issue or "GPU" in issue:
+                    severity = "warning"
                 else:
-                    cooldown = ISSUE_ALERT_COOLDOWN
-                if now - last > cooldown:
-                    alertable.append(issue)
-                    _issue_last_alerted[stable_key] = now
+                    severity = "info"
+
+                send, suffix = should_notify(issue_id, severity)
+                if send:
+                    alertable.append(f"{issue}{suffix}")
                 else:
-                    log(f"Suppressed repeat issue (cooldown): {issue}", level=LOG_INFO,
+                    log(f"Suppressed (escalation tier): {issue}", level=LOG_INFO,
                         source="big-brother")
 
             if alertable or fixes:
@@ -3038,10 +3484,10 @@ def _full_sweep():
                         msg += "\n".join(f"  :white_check_mark: {f}" for f in fixes)
                     _notify(msg, is_critical=any("DOWN" in i for i in alertable))
 
-            log(f"Sweep: {len(issues)} issues ({len(alertable)} new/cooldown-expired), "
+            log(f"Sweep: {len(issues)} issues ({len(alertable)} alerted via escalation), "
                 f"{len(fixes)} fixes", level=LOG_WARN, source="big-brother")
 
-        # Clear stale issue keys for issues that have resolved
+        # Clear stale issue keys for issues that have resolved (legacy system compat)
         active_keys = {re.sub(r'\d+', 'N', i) for i in issues}
         stale = [k for k in list(_issue_last_alerted) if k not in active_keys]
         for k in stale:

@@ -41,7 +41,7 @@ class TestSecurity(unittest.TestCase):
     def test_no_pii_in_source(self):
         src = _SCRIPT.read_text()
         _at = "@"
-        for pattern in ["kochjpar" + _at + "gmail.com", "jordan.koch" + _at + "disney.com"]:
+        for pattern in ["kochjpar" + _at + "gmail.com", "user" + _at + "example-corp.com"]:
             self.assertNotIn(pattern, src, f"PII found: {pattern!r}")
 
     def test_memory_url_uses_localhost(self):

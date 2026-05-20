@@ -52,17 +52,17 @@ class TestSecurity(unittest.TestCase):
     def test_no_pii_emails(self):
         src = _SCRIPT.read_text()
         _at = "@"
-        for p in ["kochjpar" + _at + "gmail.com", "jordan.koch" + _at + "disney.com"]:
+        for p in ["kochjpar" + _at + "gmail.com", "user" + _at + "example-corp.com"]:
             self.assertNotIn(p, src)
 
     def test_private_source_filter_applied(self):
         """vector_recall must call is_private_source to filter results."""
         fake = {"memories": [
             {"text": "public fact", "score": 0.9, "source": "wikipedia"},
-            {"text": "private data", "score": 0.9, "source": "disney_internal"},
+            {"text": "private data", "score": 0.9, "source": "work_internal"},
         ]}
         private_check = []
-        _nova_cfg.is_private_source.side_effect = lambda s: private_check.append(s) or (s == "disney_internal")
+        _nova_cfg.is_private_source.side_effect = lambda s: private_check.append(s) or (s == "work_internal")
         fake_resp = MagicMock()
         fake_resp.read.return_value = json.dumps(fake).encode()
         fake_resp.__enter__ = lambda s: s

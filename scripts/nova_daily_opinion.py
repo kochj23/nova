@@ -343,8 +343,8 @@ def generate_image(opinion: str, story_title: str) -> str | None:
 
 
 PRIVATE_SOURCES = frozenset({
-    "disney_internal", "cloud_governance", "disney_work", "work_memo",
-    "disney_employee", "internal", "disney_governance", "safari_history",
+    "work_internal", "cloud_governance", "work_general", "work_memo",
+    "work_employee", "internal", "work_governance", "safari_history",
 })
 
 def format_sources(story: dict, memories: list[dict]) -> str:

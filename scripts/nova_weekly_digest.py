@@ -101,9 +101,9 @@ def scrub_private_sources(text: str) -> str:
     """Remove any mention of private memory source names from public text."""
     import re as _re
     for term in (
-        "cloud_governance", "cloud governance", "disney_internal", "disney internal",
-        "disney_work", "disney work", "work_memo", "disney_work_general",
-        "disney internals",
+        "cloud_governance", "cloud governance", "work_internal", "work internal",
+        "work_general", "work memo", "work_memo", "work_internal_general",
+        "work internals",
     ):
         # Replace standalone mentions (case-insensitive), keep surrounding context intact
         text = _re.sub(r'(?i)\b' + _re.escape(term) + r'\b', "[memory source]", text)

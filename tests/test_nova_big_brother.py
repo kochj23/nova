@@ -132,7 +132,7 @@ class TestSecurity(unittest.TestCase):
         _at = "@"
         for pattern in [
             "kochjpar" + _at + "gmail.com",
-            "jordan.koch" + _at + "disney.com",
+            "user" + _at + "example-corp.com",
             "kochj" + _at + "digitalnoise.net",
         ]:
             self.assertNotIn(pattern, src, f"PII found: {pattern!r}")

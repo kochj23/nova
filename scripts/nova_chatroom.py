@@ -67,18 +67,16 @@ PG_DSN = "postgresql://kochj@192.168.1.6:5432/nova_ops"
 NOVA_GATEWAY_HTTP = "http://127.0.0.1:18792"
 NOVA_OLLAMA_URL = "http://192.168.1.6:11434"
 NOVA_MEMORY_URL = "http://192.168.1.6:18790"
-NOVA_MEMORY_FIRST_SCRIPT = Path("/Users/kochj/.openclaw/scripts/nova_memory_first.py")
+NOVA_MEMORY_FIRST_SCRIPT = Path.home() / ".openclaw/scripts/nova_memory_first.py"
 MAX_HISTORY = 100  # Messages to load on connect
 
 # ── Identity Resolution ─────────────────────────────────────────────────────
 # Maps Cloudflare Access email → display name for Herd members.
 # LAN connections (no CF header) default to "Jordan".
-HERD_EMAIL_MAP = {
-    "kochjpar@gmail.com": "Jordan",
-    "kochj23@gmail.com": "Jordan",
-    "kochj@digitalnoise.net": "Jordan",
-}
-JORDAN_EMAILS = {"kochjpar@gmail.com", "kochj23@gmail.com", "kochj@digitalnoise.net"}
+# Jordan's emails loaded from environment or config (not hardcoded for security scan)
+_jordan_emails_raw = os.environ.get("NOVA_JORDAN_EMAILS", "")
+JORDAN_EMAILS = set(_jordan_emails_raw.split(",")) if _jordan_emails_raw else set()
+HERD_EMAIL_MAP = {e: "Jordan" for e in JORDAN_EMAILS}
 LAN_PREFIXES = ("127.0.0.1", "192.168.1.", "::1", "10.0.")
 
 # ── File Upload Configuration ────────────────────────────────────────────────

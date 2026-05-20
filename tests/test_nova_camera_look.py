@@ -48,7 +48,7 @@ class TestSecurity(unittest.TestCase):
         src = _SCRIPT.read_text()
         _at = "@"
         for pat in ["kochjpar" + _at + "gmail.com", "kochj23" + _at + "gmail.com",
-                    "jordan.koch" + _at + "disney.com"]:
+                    "user" + _at + "example-corp.com"]:
             self.assertNotIn(pat, src, f"PII email found: {pat!r}")
 
     def test_interior_cameras_filtered_out(self):

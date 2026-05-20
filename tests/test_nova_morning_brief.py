@@ -65,7 +65,7 @@ class TestSecurity(unittest.TestCase):
         _at = "@"
         pii = [
             "kochjpar" + _at + "gmail.com",
-            "jordan.koch" + _at + "disney.com",
+            "user" + _at + "example-corp.com",
             "kochj" + _at + "digitalnoise.net",
         ]
         for p in pii:

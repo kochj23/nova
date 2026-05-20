@@ -65,15 +65,15 @@ psql "$PG_DSN" -c "
 "
 log "cloud_governance partial index done."
 
-log "Building partial HNSW index for disney_internal (~92K rows)..."
+log "Building partial HNSW index for work_internal (~92K rows)..."
 psql "$PG_DSN" -c "
   SET maintenance_work_mem = '4GB';
-  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memories_hnsw_disney
+  CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_memories_hnsw_work
     ON memories USING hnsw (embedding vector_cosine_ops)
     WITH (m = 16, ef_construction = 128)
-    WHERE source = 'disney_internal';
+    WHERE source = 'work_internal';
 "
-log "disney_internal partial index done."
+log "work_internal partial index done."
 
 log "Building partial HNSW index for imessage (~73K rows)..."
 psql "$PG_DSN" -c "

@@ -252,7 +252,7 @@ SOURCE_RULES = [
             r"\b(pci cert|pci compliance|roc|dkam|dcam)\b",
             r"\b(enrollment server|cert.?lifecycle|cert.?automat)\b",
             r"\b(sectigo|code.?sign|keystone|webvan)\b",
-            r"\b(disney.?connect|wlan|ssid|dual.?ca)\b",
+            r"\b(corp.?connect|wlan|ssid|dual.?ca)\b",
             r"\b(david burland|sean sullivan|mark randall|ian funk|laura iwasaki)\b",
             r"\b(joe von schmidt|taher|harut|ganesh mallaya|justice london)\b",
             r"\b(the project|the migration|avx project)\b",
@@ -280,7 +280,7 @@ SOURCE_RULES = [
             r"\b(sam|gaston|colette|marey|rockbot|ara|o\.?c\.?)\b",
             r"\b(jason cox|mark ramos|nadia|kevin duane|james tatum|harut)\b",
         ],
-        "sources": ["email_archive", "email", "disney"],
+        "sources": ["email_archive", "email", "work_internal"],
         "label": "people",
         "prefer_search": True,  # Use /search instead of /recall for names
     },

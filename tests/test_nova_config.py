@@ -64,7 +64,7 @@ class TestSecurity(unittest.TestCase):
         _at = "@"
         pii = [
             "kochjpar" + _at + "gmail.com",
-            "jordan.koch" + _at + "disney" + ".com",
+            "user" + _at + "example-corp" + ".com",
             "kochj" + _at + "digitalnoise.net",
         ]
         for pattern in pii:
@@ -86,10 +86,10 @@ class TestSecurity(unittest.TestCase):
             result = _keychain("nonexistent-service", required=False)
             self.assertEqual(result, "")
 
-    def test_private_sources_covers_disney(self):
-        """Disney-related sources must be in PRIVATE_SOURCES."""
-        self.assertIn("disney_internal", _mod.PRIVATE_SOURCES)
-        self.assertIn("disney_work", _mod.PRIVATE_SOURCES)
+    def test_private_sources_covers_work(self):
+        """Work-related sources must be in PRIVATE_SOURCES."""
+        self.assertIn("work_internal", _mod.PRIVATE_SOURCES)
+        self.assertIn("work_internal", _mod.PRIVATE_SOURCES)
 
     def test_private_sources_covers_health(self):
         """Health-related sources must be in PRIVATE_SOURCES."""
@@ -114,7 +114,7 @@ class TestPerformance(unittest.TestCase):
 
     def test_is_private_source_fast(self):
         """is_private_source() must check 10,000 sources in < 200ms."""
-        test_sources = ["email_archive", "music", "general", "disney_work",
+        test_sources = ["email_archive", "music", "general", "work_internal",
                         "apple_health", "video", "unknown", "sre", "gardening", "reddit"]
         start = time.perf_counter()
         for _ in range(1000):
@@ -127,7 +127,7 @@ class TestPerformance(unittest.TestCase):
     def test_filter_private_memories_fast_on_large_list(self):
         """filter_private_memories() must process 1000 items in < 100ms."""
         memories = [
-            {"text": f"Memory {i}", "source": "music" if i % 3 else "disney_work"}
+            {"text": f"Memory {i}", "source": "music" if i % 3 else "work_internal"}
             for i in range(1000)
         ]
         start = time.perf_counter()
@@ -205,12 +205,12 @@ class TestUnit(unittest.TestCase):
 
     # --- is_private_source ---
 
-    def test_private_disney_exact(self):
-        self.assertTrue(is_private_source("disney_internal"))
+    def test_private_work_exact(self):
+        self.assertTrue(is_private_source("work_internal"))
 
-    def test_private_disney_substring(self):
-        self.assertTrue(is_private_source("disney_shared_drives"))
-        self.assertTrue(is_private_source("some_disney_content"))
+    def test_private_work_substring(self):
+        self.assertTrue(is_private_source("work_shared_drives"))
+        self.assertTrue(is_private_source("some_work_content"))
 
     def test_private_health(self):
         self.assertTrue(is_private_source("apple_health"))
@@ -239,14 +239,14 @@ class TestUnit(unittest.TestCase):
         self.assertFalse(is_private_source(None))
 
     def test_private_case_insensitive(self):
-        self.assertTrue(is_private_source("Disney_Internal"))
+        self.assertTrue(is_private_source("Work_Internal"))
         self.assertTrue(is_private_source("APPLE_HEALTH"))
 
     # --- filter_private_memories ---
 
     def test_filter_removes_private(self):
         memories = [
-            {"text": "work stuff", "source": "disney_internal"},
+            {"text": "work stuff", "source": "work_internal"},
             {"text": "public stuff", "source": "music"},
         ]
         result = filter_private_memories(memories)
@@ -359,7 +359,7 @@ class TestIntegration(unittest.TestCase):
     def test_filter_then_prompt_pipeline(self):
         """Filtering private memories then checking empty output is safe."""
         memories = [
-            {"text": "Disney work memo", "source": "disney_work"},
+            {"text": "Work memo", "source": "work_internal"},
             {"text": "Jordan's blood pressure", "source": "apple_health"},
         ]
         public = filter_private_memories(memories)

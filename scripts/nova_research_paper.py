@@ -84,8 +84,8 @@ AMBITIOUS_SOURCES = [
 
 # NEVER use these sources — they contain private/work documents
 EXCLUDED_SOURCES = {
-    "cloud_governance", "infrastructure", "redlock", "disney",
-    "disney_shared_drives", "gdrive", "google_drive", "work",
+    "cloud_governance", "infrastructure", "redlock", "work_internal",
+    "work_shared_drives", "gdrive", "google_drive", "work",
     "jkoch_shared", "global_sre", "21cf",
 }
 

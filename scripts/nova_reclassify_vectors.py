@@ -70,7 +70,7 @@ print("── Straight renames ────────────────�
 total += rename("document",              "livejournal")
 total += rename("tv_transcript",         "television")
 total += rename("gdrive-ingest",         "financial_documents")
-total += rename("work_knowledge",        "disney_internal")
+total += rename("work_knowledge",        "work_internal")
 total += rename("project_docs",          "nova_project_docs")
 total += rename("security",              "camera_events")
 total += rename("health",                "wiki_health")
@@ -155,13 +155,13 @@ total += rename("KDAY Radio history", "music_history")
 
 print("\n── Orphaned single entries ───────────────────────────────────────────")
 total += rename("user_request",    "local_knowledge")
-total += rename("user",            "disney_internal")
-total += rename("meeting",         "disney_internal")
+total += rename("user",            "work_internal")
+total += rename("meeting",         "work_internal")
 total += rename("law",             "gang_culture")
 total += rename("archive",         "cooking")   # already caught above, safe to re-run
 total += rename("research_summary","local_knowledge")
 total += rename("self_update",     "nova_operational")
-total += rename("work_reports",    "disney_internal")
+total += rename("work_reports",    "work_internal")
 total += rename("public service",  "local_knowledge")
 
 # ── 14. local_knowledge split: keep local_knowledge for local info,

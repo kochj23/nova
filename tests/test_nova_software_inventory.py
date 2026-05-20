@@ -51,7 +51,7 @@ class TestSecurity(unittest.TestCase):
     def test_no_pii_in_source(self):
         src = _SCRIPT.read_text()
         _at = "@"
-        for p in ["kochjpar" + _at + "gmail.com", "jordan.koch" + _at + "disney.com"]:
+        for p in ["kochjpar" + _at + "gmail.com", "user" + _at + "example-corp.com"]:
             self.assertNotIn(p, src)
 
     def test_inventory_dir_not_on_main_ssd(self):

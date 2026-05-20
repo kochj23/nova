@@ -179,7 +179,7 @@ class TestUnit(unittest.TestCase):
             {"id": "1", "topic": "homekit", "nova_response": "use device names",
              "jordan_correction": "use scene names", "timestamp": "2026-01-01"},
             {"id": "2", "topic": "people", "nova_response": "Jason works at Apple",
-             "jordan_correction": "Jason works at Disney", "timestamp": "2026-01-01"},
+             "jordan_correction": "Jason works at Acme Corp", "timestamp": "2026-01-01"},
         ]
         with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(corrections, f)

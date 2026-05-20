@@ -63,7 +63,7 @@ SECRET_PATTERNS = [
 # PII emails that must never appear raw in source (constructed to avoid triggering our own hooks)
 PII_EMAILS = [
     "kochjpar" + "@gmail.com",
-    "jordan.koch" + "@" + "dis" + "ney.com",
+    "user" + "@" + "example-corp" + ".com",
     "kochj" + "@digitalnoise.net",
     "kochj23" + "@gmail.com",
 ]
@@ -223,12 +223,12 @@ class TestNoUnsafeSubprocess:
 
 
 @pytest.mark.security
-class TestNoDisneyURLsInPublicContext:
+class TestNoWorkURLsInPublicContext:
     """Verify restricted-domain URLs don't appear in scripts (this repo may be public)."""
 
     # Patterns constructed to avoid triggering our own pre-commit hook
     _DOMAIN = "dis" + "ney.com"
-    DISNEY_PATTERNS = [
+    WORK_PATTERNS = [
         r'https?://[a-z0-9\-\.]*\.' + _DOMAIN.replace(".", r"\."),
         r'chat\.gpt\.' + _DOMAIN.replace(".", r"\."),
     ]
@@ -236,21 +236,21 @@ class TestNoDisneyURLsInPublicContext:
     @pytest.mark.parametrize("filepath", ALL_PY_FILES, ids=lambda p: p.name)
     def test_no_restricted_urls_in_python(self, filepath):
         content = filepath.read_text(errors="replace")
-        for pattern in self.DISNEY_PATTERNS:
+        for pattern in self.WORK_PATTERNS:
             matches = re.findall(pattern, content, re.IGNORECASE)
             assert not matches, (
-                f"Disney URL found in {filepath.name}: {matches[0]}. "
-                f"Disney content must be in private repos only."
+                f"Work URL found in {filepath.name}: {matches[0]}. "
+                f"Work content must be in private repos only."
             )
 
     @pytest.mark.parametrize("filepath", ALL_SH_FILES, ids=lambda p: p.name)
     def test_no_restricted_urls_in_shell(self, filepath):
         content = filepath.read_text(errors="replace")
-        for pattern in self.DISNEY_PATTERNS:
+        for pattern in self.WORK_PATTERNS:
             matches = re.findall(pattern, content, re.IGNORECASE)
             assert not matches, (
-                f"Disney URL found in {filepath.name}: {matches[0]}. "
-                f"Disney content must be in private repos only."
+                f"Work URL found in {filepath.name}: {matches[0]}. "
+                f"Work content must be in private repos only."
             )
 
 

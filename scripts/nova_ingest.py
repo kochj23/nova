@@ -502,6 +502,33 @@ def html_text(html):
 # Wikipedia mode
 # ---------------------------------------------------------------------------
 
+def wiki_random_article(min_bytes=2000, max_attempts=25):
+    """Fetch a random Wikipedia article that's substantial enough to crawl."""
+    api = ("https://en.wikipedia.org/w/api.php?action=query&list=random"
+           "&rnnamespace=0&rnlimit=1&format=json")
+    for attempt in range(max_attempts):
+        raw = fetch(api, timeout=15)
+        if not raw:
+            continue
+        try:
+            data = json.loads(raw)
+            title = data["query"]["random"][0]["title"]
+        except (json.JSONDecodeError, KeyError, IndexError):
+            continue
+        url = ("https://en.wikipedia.org/wiki/" +
+               urllib.parse.quote(title.replace(" ", "_")))
+        _, text, links, err = wiki_fetch(url)
+        if err or not text or len(text) < min_bytes:
+            log(f"  Random article '{title}' too short ({len(text) if text else 0}B), re-rolling [{attempt+1}/{max_attempts}]")
+            continue
+        if len(links) < 5:
+            log(f"  Random article '{title}' has too few links ({len(links)}), re-rolling [{attempt+1}/{max_attempts}]")
+            continue
+        log(f"  Random article selected: '{title}' ({len(text)}B, {len(links)} links)")
+        return title
+    log("Could not find a substantial random article after max attempts", "ERROR")
+    return None
+
 def wiki_fetch(url):
     tp  = url.split("/wiki/")[-1]
     api = ("https://en.wikipedia.org/w/api.php?action=query"
@@ -530,7 +557,7 @@ def wiki_fetch(url):
                          urllib.parse.quote(lt.replace(" ", "_")))
     return title, text, links, None
 
-def run_wikipedia(query, vector, target, state, dry_run):
+def run_wikipedia(query, vector, target, state, dry_run, timeout_hours=0):
     jid         = state["job_id"]
     done_urls   = set(state.get("done_urls", []))
     done_hashes = set(state.get("done_hashes", []))
@@ -538,18 +565,27 @@ def run_wikipedia(query, vector, target, state, dry_run):
     ct          = state.get("chunks_total", 0)
     items_done  = state.get("items_done", 0)
     _last_notify = [0.0]  # mutable for closure; throttle to every 5 min
+    _start_time = time.time()
+    _deadline   = _start_time + (timeout_hours * 3600) if timeout_hours > 0 else 0
 
     q_safe = query.replace(" ", "_")
     start  = "https://en.wikipedia.org/wiki/" + urllib.parse.quote(q_safe)
     queue  = deque([start] + failed)
 
-    log(f"Wikipedia BFS: '{query}' -> '{vector}' target={target:,}")
+    log(f"Wikipedia BFS: '{query}' -> '{vector}' target={target:,}" +
+        (f" timeout={timeout_hours}h" if timeout_hours else ""))
     notify(f":books: *Wikipedia Ingest Started*\n"
            f"  Topic: *{query}* \xb7 Vector: `{vector}`\n"
            f"  Target: {target:,} chunks" +
+           (f" \xb7 Timeout: {timeout_hours}h" if timeout_hours else "") +
            ("  (DRY RUN)" if dry_run else ""))
 
     while queue and ct < target and not _shutdown:
+        if _deadline and time.time() >= _deadline:
+            log(f"Timeout reached ({timeout_hours}h) — stopping at {ct} chunks")
+            notify(f":hourglass: *Wikipedia timeout* ({timeout_hours}h)\n"
+                   f"  Topic: *{query}* \xb7 Collected: {ct:,} chunks")
+            break
         url = queue.popleft()
         if url in done_urls:
             continue
@@ -1531,6 +1567,10 @@ def main():
     p.add_argument("--local-only",    action="store_true",
                    help="Force local MLX whisper transcription (skip cloud)")
     p.add_argument("--spicy",         action="store_true", help=argparse.SUPPRESS)
+    p.add_argument("--random",        action="store_true",
+                   help="Wikipedia mode: pick a random article as the seed topic")
+    p.add_argument("--timeout-hours", type=float, default=0,
+                   help="Stop after N hours regardless of target")
     p.add_argument("--dry-run",       action="store_true")
     p.add_argument("--resume",        action="store_true")
     p.add_argument("--restart",       action="store_true")
@@ -1607,7 +1647,15 @@ def main():
         if not args.mode:
             print(HELP.format(version=VERSION))
             return
-        if not args.query and args.mode not in ("url", "file"):
+        if args.random and args.mode == "wikipedia":
+            topic = wiki_random_article()
+            if not topic:
+                print("Error: could not find a suitable random article")
+                return
+            args.query = topic
+            args.source = args.source or _derive(topic)
+            log(f"Random Wikipedia topic: '{topic}' -> vector '{args.source}'")
+        elif not args.query and args.mode not in ("url", "file"):
             print(f"Error: query required for mode '{args.mode}'")
             return
         jid   = hashlib.md5(f"{args.mode}:{args.query}:{time.time()}".encode()).hexdigest()[:12]
@@ -1642,7 +1690,8 @@ def main():
         (" [DRY RUN]" if args.dry_run else ""))
 
     if args.mode == "wikipedia":
-        run_wikipedia(args.query, vector, args.target, state, args.dry_run)
+        run_wikipedia(args.query, vector, args.target, state, args.dry_run,
+                      timeout_hours=args.timeout_hours)
     elif args.mode == "search":
         run_search(args.query, vector, args.target, state, args.dry_run)
     elif args.mode == "video":

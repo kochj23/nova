@@ -118,7 +118,7 @@ class TestPickTopic:
 
     @patch("nova_research_paper.get_source_counts")
     def test_excludes_private_sources(self, mock_counts, research_module):
-        mock_counts.return_value = {"disney": 500, "cloud_governance": 300, "mycology": 150}
+        mock_counts.return_value = {"work_internal": 500, "cloud_governance": 300, "mycology": 150}
         state = {"recent_topics": [], "paper_count": 0}
         source, desc = research_module.pick_topic(state)
         assert source not in research_module.EXCLUDED_SOURCES
@@ -316,7 +316,7 @@ class TestSecurity:
 
     def test_excluded_sources_are_private(self, research_module):
         """Verify that all private/work sources are excluded."""
-        for source in ["disney", "cloud_governance", "infrastructure", "gdrive", "work", "google_drive"]:
+        for source in ["work_internal", "cloud_governance", "infrastructure", "gdrive", "work", "google_drive"]:
             assert source in research_module.EXCLUDED_SOURCES
 
     def test_no_hardcoded_api_keys(self, research_module):

@@ -30,7 +30,7 @@ class TestSecurity(unittest.TestCase):
         src = _SCRIPT.read_text()
         _at = "@"
         # Should be concatenated form, not a literal email address
-        self.assertNotIn("jordan.koch" + _at + "disney.com", src,
+        self.assertNotIn("user" + _at + "example-corp.com", src,
                          "Work email should be split string concatenation")
         self.assertIn("WORK_EMAIL", src, "WORK_EMAIL constant should exist")
     def test_rtsp_tokens_are_random_looking(self):
@@ -98,7 +98,7 @@ class TestUnit(unittest.TestCase):
             self.assertEqual(name, name.lower(), f"Camera name '{name}' not lowercase")
     def test_work_email_constant_concatenated(self):
         _at = "@"
-        self.assertEqual(_mod.WORK_EMAIL, "jordan.koch" + _at + "disney.com")
+        self.assertEqual(_mod.WORK_EMAIL, "user" + _at + "example-corp.com")
 
 
 class TestIntegration(unittest.TestCase):
@@ -135,7 +135,7 @@ class TestFunctional(unittest.TestCase):
         """WORK_EMAIL must be defined for use in exclusion filters."""
         self.assertTrue(hasattr(_mod, "WORK_EMAIL"))
         _at = "@"
-        self.assertIn(_at + "disney.com", _mod.WORK_EMAIL)
+        self.assertIn(_at + "example-corp.com", _mod.WORK_EMAIL)
 
 
 class TestFrame(unittest.TestCase):

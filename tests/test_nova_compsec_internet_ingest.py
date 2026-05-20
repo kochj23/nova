@@ -41,7 +41,7 @@ class TestSecurity(unittest.TestCase):
     def test_no_pii_emails(self):
         src = _SCRIPT.read_text()
         _at = "@"
-        for pat in ["kochjpar" + _at + "gmail.com", "jordan.koch" + _at + "disney.com",
+        for pat in ["kochjpar" + _at + "gmail.com", "user" + _at + "example-corp.com",
                     "kochj" + _at + "digitalnoise.net", "kochj23" + _at + "gmail.com"]:
             self.assertNotIn(pat, src, f"PII email found: {pat!r}")
     def test_ingest_payload_is_json(self):

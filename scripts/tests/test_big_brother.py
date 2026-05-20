@@ -161,7 +161,7 @@ class TestPrivateSourcesFilter(unittest.TestCase):
         source = (SCRIPTS_DIR / "nova_daily_opinion.py").read_text()
         self.assertIn("PRIVATE_SOURCES", source,
                       "nova_daily_opinion.py must define PRIVATE_SOURCES")
-        self.assertIn("disney_internal", source)
+        self.assertIn("work_internal", source)
         self.assertIn("cloud_governance", source)
         self.assertIn("safari_history", source)
 
@@ -169,7 +169,7 @@ class TestPrivateSourcesFilter(unittest.TestCase):
         source = (SCRIPTS_DIR / "nova_daily_essay.py").read_text()
         self.assertIn("PRIVATE_SOURCES", source,
                       "nova_daily_essay.py must define PRIVATE_SOURCES")
-        self.assertIn("disney_internal", source)
+        self.assertIn("work_internal", source)
         self.assertIn("safari_history", source)
 
     def test_essay_excludes_private_from_pick_subject(self):

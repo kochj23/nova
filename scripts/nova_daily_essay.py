@@ -114,8 +114,8 @@ def get_source_counts_from_db() -> list[dict]:
 
 
 PRIVATE_SOURCES = frozenset({
-    "disney_internal", "cloud_governance", "disney_work", "work_memo",
-    "disney_employee", "internal", "disney_governance", "safari_history",
+    "work_internal", "cloud_governance", "work_general", "work_memo",
+    "work_employee", "internal", "work_governance", "safari_history",
 })
 
 def pick_subject(state: dict) -> str | None:
@@ -127,7 +127,7 @@ def pick_subject(state: dict) -> str | None:
         log("ERROR: No sources available")
         return None
 
-    # Never pick internal Disney/work sources for public essays
+    # Never pick internal Corporate/work sources for public essays
     sources = [s for s in sources if s["source"] not in PRIVATE_SOURCES]
 
     recent = set(state.get("recent_sources", []))

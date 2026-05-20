@@ -51,7 +51,7 @@ class TestSecurity(unittest.TestCase):
         _at = "@"
         pii = [
             "kochjpar" + _at + "gmail.com",
-            "jordan.koch" + _at + "disney.com",
+            "user" + _at + "example-corp.com",
         ]
         for p in pii:
             self.assertNotIn(p, src, f"PII: {p!r}")

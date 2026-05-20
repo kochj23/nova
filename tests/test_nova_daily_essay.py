@@ -68,7 +68,7 @@ class TestSecurity(unittest.TestCase):
         _at = "@"
         pii = [
             "kochjpar" + _at + "gmail.com",
-            "jordan.koch" + _at + "disney.com",
+            "user" + _at + "example-corp.com",
         ]
         for p in pii:
             self.assertNotIn(p, src, f"PII: {p!r}")
@@ -81,11 +81,11 @@ class TestSecurity(unittest.TestCase):
         self.assertNotIn("sk-or-", src)
 
     def test_private_sources_excluded_from_essays(self):
-        """pick_subject must never return Disney/work sources."""
+        """pick_subject must never return work sources."""
         for src in PRIVATE_SOURCES:
-            self.assertIn(src, {"disney_internal", "cloud_governance", "disney_work",
-                                "work_memo", "disney_employee", "internal",
-                                "disney_governance", "safari_history"})
+            self.assertIn(src, {"work_internal", "cloud_governance", "work_internal",
+                                "work_memo", "work_employee", "internal",
+                                "work_governance", "safari_history"})
 
     def test_scrub_personal_removes_home_path(self):
         home = str(Path.home())
@@ -104,7 +104,7 @@ class TestSecurity(unittest.TestCase):
     def test_private_sources_not_in_pick_subject(self):
         """pick_subject must filter out PRIVATE_SOURCES."""
         fake_sources = [
-            {"source": "disney_internal", "count": 200},
+            {"source": "work_internal", "count": 200},
             {"source": "wikipedia", "count": 100},
         ]
         with patch.object(_mod, "get_sources_with_counts", return_value=fake_sources):
@@ -112,7 +112,7 @@ class TestSecurity(unittest.TestCase):
                 state = {"recent_sources": []}
                 result = pick_subject(state)
         self.assertEqual(result, "wikipedia")
-        self.assertNotEqual(result, "disney_internal")
+        self.assertNotEqual(result, "work_internal")
 
 
 # ===========================================================================

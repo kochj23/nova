@@ -80,7 +80,7 @@ class TestSecurity(unittest.TestCase):
         opinions = []
         system, user = build_critique_prompt(dreams, essays, opinions)
         _at = "@"
-        for pattern in ["kochjpar" + _at + "gmail.com", "jordan.koch" + _at + "disney.com"]:
+        for pattern in ["kochjpar" + _at + "gmail.com", "user" + _at + "example-corp.com"]:
             self.assertNotIn(pattern, user + system, f"PII found in prompt: {pattern}")
 
 

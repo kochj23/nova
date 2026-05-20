@@ -67,7 +67,7 @@ PILOT_DOMAINS = [
     "chemistry_general", "chess", "climate_science", "cocktails", "comedy",
     "comic_books", "compsec_core", "compsec_crypto", "compsec_network",
     "computing_history", "crime_drama", "cryptocurrency", "cyberpunk",
-    "demonology", "disney_history", "drama", "economics", "edm_history",
+    "demonology", "entertainment_history", "drama", "economics", "edm_history",
     "espionage", "ethics", "fashion", "film_criticism", "folklore",
     "forgotten_weapons", "gambling", "geography", "geology",
     "history", "horror", "jazz_history", "korean_war",

@@ -43,7 +43,7 @@ class TestSecurity(unittest.TestCase):
     def test_no_pii_emails(self):
         src = _SCRIPT.read_text()
         _at = "@"
-        for p in ["kochjpar" + _at + "gmail.com", "jordan.koch" + _at + "disney.com"]:
+        for p in ["kochjpar" + _at + "gmail.com", "user" + _at + "example-corp.com"]:
             self.assertNotIn(p, src)
 
     def test_keychain_for_api_key(self):
@@ -52,7 +52,7 @@ class TestSecurity(unittest.TestCase):
 
     def test_private_sources_excluded(self):
         src = _SCRIPT.read_text()
-        self.assertIn("PRIVATE_SOURCES", src) or self.assertIn("disney", src.lower())
+        self.assertIn("PRIVATE_SOURCES", src) or self.assertIn("work", src.lower())
 
 
 # ===========================================================================
