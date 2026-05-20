@@ -131,7 +131,7 @@ PRIVACY_BLOCKLIST = [
     # Financial
     r"bank|credit card|amex|account number|ssn|salary",
     # Work
-    r"disney|dtoc|enterprise tech",
+    r"work_internal|dtoc|enterprise tech",
     # Health
     r"healthkit|medical|diagnosis|prescription",
     # Credentials
@@ -2816,28 +2816,59 @@ async def _health_server():
         status = 200 if result.get("ok") else 500
         return web.json_response(result, status=status)
 
+    async def chat_api(request):
+        """POST /api/chat — Run a message through the full agent pipeline.
+
+        Used by nova_chatroom.py to give chatroom Nova the same capabilities
+        as Slack/Discord Nova (tools, web browsing, memory, function calling).
+
+        Body: {"message": "...", "session_id": "chatroom:general", "agent_id": "chat"}
+        Returns: {"ok": true, "response": "..."}
+        """
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+
+        message = data.get("message", "").strip()
+        if not message:
+            return web.json_response({"ok": False, "error": "Empty message"}, status=400)
+
+        session_id = data.get("session_id", "chatroom:general")
+        agent_id = data.get("agent_id", "chat")
+
+        try:
+            response = await _run_agent(message, session_id, agent_id, _tokens)
+            return web.json_response({"ok": True, "response": response})
+        except Exception as e:
+            log.error(f"Chat API error: {e}")
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+
     app = web.Application()
     app.router.add_get("/health", health)
     app.router.add_post("/reload", reload)
+    app.router.add_post("/api/chat", chat_api)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", 18792)
     await site.start()
-    log.info("Management API on 0.0.0.0:18792 (/health, POST /reload)")
+    log.info("Management API on 0.0.0.0:18792 (/health, POST /reload, POST /api/chat)")
 
 
 _start_time = time.time()
+_tokens: dict = {}  # Set in main() after _load_tokens()
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 async def main():
-    global _http
+    global _http, _tokens
 
     log.info(f"Nova Gateway v{VERSION} starting...")
 
     # Load secrets from Keychain
     tokens = _load_tokens()
+    _tokens = tokens
     missing = [k for k, v in tokens.items() if not v and k != "openrouter"]
     if missing:
         log.warning(f"Missing tokens: {missing} — those channels will be disabled")

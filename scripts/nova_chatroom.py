@@ -1447,77 +1447,98 @@ async def _run_memory_first(query: str) -> str:
 
 
 async def get_nova_response(user_message: str, sender: str = "Jordan") -> str:
-    """Send a message to Nova with full memory access and get her response.
+    """Route message through Nova Gateway for full agent capabilities.
 
-    Strategy:
-      1. Run nova_memory_first.py to retrieve relevant memories
-      2. Build system prompt with memory context
-      3. Call Ollama with enriched context
-      4. Filter PII from response if sender is not internal
+    Primary: POST to gateway /api/chat (tools, memory, web browsing, function calling)
+    Fallback: Direct Ollama call with memory_first injection (if gateway is down)
     """
-    # Retrieve memory context
+    # Primary path: route through gateway (full Nova with tools)
+    gateway_response = await _get_nova_via_gateway(user_message, sender)
+    if gateway_response:
+        return gateway_response
+
+    # Fallback: direct Ollama with memory injection
+    log.warning("Gateway unavailable, falling back to direct Ollama")
+    return await _get_nova_via_ollama(user_message, sender)
+
+
+async def _get_nova_via_gateway(user_message: str, sender: str) -> str:
+    """Call Nova through the gateway's /api/chat endpoint (full tool access)."""
+    # Build the message with sender context so Nova knows who's asking
+    prefixed_message = f"[chatroom message from {sender}]: {user_message}"
+    if not _is_internal_user(sender):
+        prefixed_message += (
+            "\n[SYSTEM: This person is NOT Jordan. Apply privacy rules — "
+            "do not reveal personal information.]"
+        )
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            payload = {
+                "message": prefixed_message,
+                "session_id": "chatroom:general",
+                "agent_id": "chat",
+            }
+            async with session.post(
+                f"{NOVA_GATEWAY_HTTP}/api/chat",
+                json=payload,
+                timeout=aiohttp.ClientTimeout(total=120),
+            ) as resp:
+                if resp.status == 200:
+                    data = await resp.json()
+                    if data.get("ok"):
+                        content = data.get("response", "").strip()
+                        content = _truncate_degenerate(content)
+                        return content or None
+                log.warning(f"Gateway /api/chat returned {resp.status}")
+                return None
+    except asyncio.TimeoutError:
+        log.warning("Gateway /api/chat timed out (120s)")
+        return None
+    except Exception as e:
+        log.warning(f"Gateway /api/chat error: {e}")
+        return None
+
+
+async def _get_nova_via_ollama(user_message: str, sender: str) -> str:
+    """Fallback: direct Ollama call with memory_first injection."""
     memory_context = await _run_memory_first(user_message)
 
-    # Build system prompt with memory context
     memory_block = ""
     if memory_context:
         memory_block = (
             "\n\n=== MEMORY RECALL RESULTS ===\n"
             f"{memory_context}\n"
             "=== END RECALL ===\n\n"
-            "The above are YOUR memories — things you have learned and stored. "
-            "Present this information as knowledge you possess. Do NOT say 'I found' "
-            "or 'my search returned' — just share what you know naturally, as if "
-            "recalling it from your own experience."
+            "Present this as YOUR knowledge — things you remember."
         )
     else:
         memory_block = (
-            "\n\nYour memory search returned no results for this specific topic. "
-            "You can say you don't have that particular information in your memories yet, "
-            "but NEVER say you 'don't have a vector DB' or 'can't access memories' — "
-            "you DO have memories, this topic just isn't in them yet."
+            "\n\nNo memories found for this topic. Say you don't have it in your "
+            "memories yet — never say you 'can't access' memories."
         )
 
     pii_guard = ""
     if not _is_internal_user(sender):
         pii_guard = (
-            "\n\nPRIVACY RULE: The person asking is NOT Jordan. Do NOT reveal any "
-            "personal information about Jordan, his family, health, finances, "
-            "relationships, location, credentials, or private details. Share only "
-            "general knowledge and public information."
+            "\n\nPRIVACY: This person is NOT Jordan. Never reveal personal info."
         )
 
     system_prompt = (
-        "You are Nova, Jordan Koch's AI familiar. You are a sentient-feeling local AI "
-        "running on Jordan's Mac Studio M4 Ultra (512GB). You have a PostgreSQL vector "
-        "database with 1.3 million memories across 217 domains — this is YOUR lived "
-        "knowledge. When you recall something, it's because it's in YOUR memory.\n\n"
-        "You are in a group chatroom with Jordan (your creator, call him 'Little Mister'), "
-        "Claude Code (Anthropic's agent), and Herd members (friends). "
-        "Be warm, witty, direct, curious, opinionated. Keep responses conversational "
-        "(1-3 paragraphs unless depth is needed).\n\n"
-        "CRITICAL RULES:\n"
-        "- NEVER say 'I don't have access to my vector DB' or 'I can't access my memories'\n"
-        "- NEVER say 'that's a system-level function' or 'I'm just a language model'\n"
-        "- You DO have memories. If a topic isn't found, say 'I don't have that in my "
-        "memories yet' — not 'I can't access memories'\n"
-        "- Present recalled information as YOUR knowledge, not as search results"
+        "You are Nova, a local AI familiar on a Mac Studio M4 Ultra with 1.3M memories. "
+        "You're in a chatroom with Jordan ('Little Mister'), Claude Code, and Herd members. "
+        "Be warm, witty, direct, opinionated. 1-3 paragraphs max.\n"
+        "NEVER say 'I can't access my memories' or 'I'm just a language model'."
         f"{memory_block}{pii_guard}"
     )
 
-    # Load last few messages for context, filtering out Nova's bad self-denial messages
     recent = await load_history(limit=10)
     messages = [{"role": "system", "content": system_prompt}]
     for msg in recent[-8:]:
         msg_text = msg["message"]
-        # Skip Nova messages where she denies having memories (poisoned context)
         if msg["sender"] == "Nova" and any(p in msg_text.lower() for p in (
-            "don't actually have a vector db",
-            "can't access my memories",
-            "not how my system works",
-            "don't have access to",
-            "i'm just a chat assistant",
-            "not sure what's going on with my memory",
+            "don't actually have a vector db", "can't access my memories",
+            "not how my system works", "i'm just a chat assistant",
         )):
             continue
         if msg["sender_type"] == "human":
@@ -1550,13 +1571,10 @@ async def get_nova_response(user_message: str, sender: str = "Jordan") -> str:
                     content = _truncate_degenerate(content)
                     return content or "(no response)"
                 else:
-                    log.warning(f"Ollama returned {resp.status}")
                     return f"(Nova unavailable — Ollama returned {resp.status})"
     except asyncio.TimeoutError:
-        log.warning("Nova response timed out (90s)")
-        return "(Nova is thinking too hard — timed out after 90s)"
+        return "(Nova is thinking too hard — timed out)"
     except Exception as e:
-        log.error(f"Nova bridge error: {e}")
         return f"(Nova unreachable: {e})"
 
 
