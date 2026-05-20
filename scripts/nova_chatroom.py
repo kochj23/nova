@@ -1368,6 +1368,62 @@ async def send_to_named(target_name: str, msg: dict):
 
 # ── Nova Agent Bridge ────────────────────────────────────────────────────────
 
+def _truncate_degenerate(text: str) -> str:
+    """Truncate degenerate repetitive output from the model.
+
+    Qwen sometimes spirals into 'I'm not sure...' loops. Two strategies:
+    1. Cut at repeated sentence-level fingerprints
+    2. Cut if the model starts denying its own capabilities
+    """
+    # Strategy 1: Cut at capability-denial phrases
+    denial_phrases = [
+        "i'm not sure if i'm actually accessing",
+        "i'm not sure what's going on with my",
+        "i don't actually have a vector db",
+        "i can't access my memories",
+        "i'm not sure if i actually have",
+        "i'm not sure if there's a system issue",
+        "that's not how my system works",
+        "i'm just a chat assistant",
+        "i'm not sure what's going on with the",
+    ]
+
+    lines = text.split("\n")
+    result_lines = []
+    for line in lines:
+        stripped = line.strip().lower()
+        if any(phrase in stripped for phrase in denial_phrases):
+            break
+        result_lines.append(line)
+
+    text = "\n".join(result_lines).strip()
+    if not text:
+        return "\n".join(lines[:5]).strip()
+
+    # Strategy 2: Cut at repeated fingerprints
+    lines = text.split("\n")
+    seen_phrases = set()
+    result_lines = []
+    repeat_count = 0
+
+    for line in lines:
+        stripped = line.strip().lower()
+        if not stripped:
+            result_lines.append(line)
+            continue
+        fingerprint = stripped[:40]
+        if fingerprint in seen_phrases:
+            repeat_count += 1
+            if repeat_count >= 2:
+                break
+        else:
+            repeat_count = 0
+            seen_phrases.add(fingerprint)
+            result_lines.append(line)
+
+    return "\n".join(result_lines).strip()
+
+
 async def _run_memory_first(query: str) -> str:
     """Call nova_memory_first.py to retrieve relevant memories for the query."""
     if not NOVA_MEMORY_FIRST_SCRIPT.exists():
@@ -1449,16 +1505,27 @@ async def get_nova_response(user_message: str, sender: str = "Jordan") -> str:
         f"{memory_block}{pii_guard}"
     )
 
-    # Load last few messages for context
+    # Load last few messages for context, filtering out Nova's bad self-denial messages
     recent = await load_history(limit=10)
     messages = [{"role": "system", "content": system_prompt}]
     for msg in recent[-8:]:
+        msg_text = msg["message"]
+        # Skip Nova messages where she denies having memories (poisoned context)
+        if msg["sender"] == "Nova" and any(p in msg_text.lower() for p in (
+            "don't actually have a vector db",
+            "can't access my memories",
+            "not how my system works",
+            "don't have access to",
+            "i'm just a chat assistant",
+            "not sure what's going on with my memory",
+        )):
+            continue
         if msg["sender_type"] == "human":
-            messages.append({"role": "user", "content": f"[{msg['sender']}]: {msg['message']}"})
+            messages.append({"role": "user", "content": f"[{msg['sender']}]: {msg_text}"})
         elif msg["sender_type"] == "ai":
-            messages.append({"role": "assistant", "content": msg["message"]})
+            messages.append({"role": "assistant", "content": msg_text})
         else:
-            messages.append({"role": "user", "content": f"[{msg['sender']}]: {msg['message']}"})
+            messages.append({"role": "user", "content": f"[{msg['sender']}]: {msg_text}"})
 
     messages.append({"role": "user", "content": f"[{sender}]: {user_message}"})
 
@@ -1468,7 +1535,7 @@ async def get_nova_response(user_message: str, sender: str = "Jordan") -> str:
                 "model": "qwen3-coder:30b",
                 "messages": messages,
                 "stream": False,
-                "options": {"num_predict": 768, "temperature": 0.7},
+                "options": {"num_predict": 384, "temperature": 0.7, "repeat_penalty": 1.3},
             }
             async with session.post(
                 f"{NOVA_OLLAMA_URL}/api/chat",
@@ -1480,6 +1547,7 @@ async def get_nova_response(user_message: str, sender: str = "Jordan") -> str:
                     content = data.get("message", {}).get("content", "").strip()
                     if "<think>" in content:
                         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                    content = _truncate_degenerate(content)
                     return content or "(no response)"
                 else:
                     log.warning(f"Ollama returned {resp.status}")
@@ -2009,7 +2077,7 @@ async def _nova_respond_with_recall(user_message: str, channel: str = None, send
                 "model": "qwen3-coder:30b",
                 "messages": messages,
                 "stream": False,
-                "options": {"num_predict": 768, "temperature": 0.5},
+                "options": {"num_predict": 384, "temperature": 0.5, "repeat_penalty": 1.3},
             }
             async with session.post(
                 f"{NOVA_OLLAMA_URL}/api/chat",
@@ -2021,6 +2089,7 @@ async def _nova_respond_with_recall(user_message: str, channel: str = None, send
                     content = data.get("message", {}).get("content", "").strip()
                     if "<think>" in content:
                         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                    content = _truncate_degenerate(content)
                     if content:
                         msg_id, ts = await store_message("Nova", "ai", content, channel=ch)
                         await broadcast({
@@ -2123,7 +2192,7 @@ async def _nova_respond_to_claude(claude_message: str, sender: str):
                 "model": "qwen3-coder:30b",
                 "messages": messages,
                 "stream": False,
-                "options": {"num_predict": 512, "temperature": 0.7},
+                "options": {"num_predict": 384, "temperature": 0.7, "repeat_penalty": 1.3},
             }
             async with session.post(
                 f"{NOVA_OLLAMA_URL}/api/chat",
@@ -2135,6 +2204,7 @@ async def _nova_respond_to_claude(claude_message: str, sender: str):
                     content = data.get("message", {}).get("content", "").strip()
                     if "<think>" in content:
                         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
+                    content = _truncate_degenerate(content)
                     if content:
                         msg_id, ts = await store_message("Nova", "ai", content)
                         await broadcast({
