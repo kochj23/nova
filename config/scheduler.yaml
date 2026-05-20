@@ -450,6 +450,7 @@ tasks:
     schedule: cron 30 19 * * *
     timeout: 60
     overlap: skip
+    enabled: false  # Jordan asked to stop these notifications 2026-05-19
 
   plex_recommend:
     script: nova_plex.py
@@ -666,5 +667,17 @@ tasks:
   maintenance_advisor:
     script: nova_maintenance_advisor.py
     schedule: cron 0 8 * * 0
+    timeout: 120
+    overlap: skip
+
+  memory_quality:
+    script: nova_memory_quality.py
+    schedule: cron 0 3 * * 0
+    timeout: 300
+    overlap: skip
+
+  proactive_brief:
+    script: nova_proactive_brief.py
+    schedule: cron 0 9,11,13,15,17 * * 1-5
     timeout: 120
     overlap: skip

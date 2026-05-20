@@ -990,6 +990,43 @@ TOOL_REGISTRY: dict[str, dict] = {
         },
         "required": ["action"],
     },
+    "music_dna": {
+        "description": "Search all 80 music vectors for cross-genre connections. Finds surprising links between punk, jazz, metal, EDM, etc.",
+        "parameters": {
+            "query": {"type": "string", "description": "Artist, song, genre, or musical concept to search"},
+        },
+        "required": ["query"],
+    },
+    "past_self": {
+        "description": "Query Jordan's past opinions and experiences from a specific year or time period. Searches 25 years of emails, iMessages, and journals.",
+        "parameters": {
+            "query": {"type": "string", "description": "Topic or question to ask past-Jordan about"},
+            "year": {"type": "integer", "description": "Specific year to search (e.g., 2003)"},
+            "range": {"type": "string", "description": "Year range (e.g., '2000-2005'). Use instead of year for broader search."},
+        },
+        "required": ["query"],
+    },
+    "shop_assistant": {
+        "description": "Automotive technical assistant. Combines Corvette workshop manual specs with community knowledge from YouTube mechanics.",
+        "parameters": {
+            "query": {"type": "string", "description": "Technical car question (torque specs, procedures, troubleshooting)"},
+        },
+        "required": ["query"],
+    },
+    "career_narrative": {
+        "description": "Generate Jordan's career narrative from primary sources (North Star → PRG Aviation → Litton/Sun → Disney SRE).",
+        "parameters": {
+            "era": {"type": "string", "description": "Optional: focus on one era (northstar, prg, litton, disney). Omit for full narrative."},
+        },
+        "required": [],
+    },
+    "memory_quality": {
+        "description": "Audit Nova's vector memory for garbage entries (repetition, misclassification, empty chunks). Returns report.",
+        "parameters": {
+            "clean": {"type": "boolean", "description": "If true, quarantine bad memories. Default: dry-run report only."},
+        },
+        "required": [],
+    },
 }
 
 
@@ -1038,6 +1075,25 @@ async def _dispatch_tool(tool_name: str, tool_params: dict) -> str:
             return await _tool_send_message(tool_params)
         elif tool_name == "plex_control":
             return await _tool_plex_control(tool_params)
+        elif tool_name == "music_dna":
+            return await _tool_run_script({"script": "nova_music_dna.py", "args": [tool_params.get("query", "")]})
+        elif tool_name == "past_self":
+            args = [tool_params.get("query", "")]
+            if tool_params.get("year"):
+                args += ["--year", str(tool_params["year"])]
+            elif tool_params.get("range"):
+                args += ["--range", tool_params["range"]]
+            return await _tool_run_script({"script": "nova_past_self.py", "args": args})
+        elif tool_name == "shop_assistant":
+            return await _tool_run_script({"script": "nova_shop_assistant.py", "args": [tool_params.get("query", "")]})
+        elif tool_name == "career_narrative":
+            args = []
+            if tool_params.get("era"):
+                args = ["--era", tool_params["era"]]
+            return await _tool_run_script({"script": "nova_career_narrative.py", "args": args})
+        elif tool_name == "memory_quality":
+            args = ["--clean"] if tool_params.get("clean") else ["--dry-run"]
+            return await _tool_run_script({"script": "nova_memory_quality.py", "args": args})
         else:
             return f"[error: tool '{tool_name}' not implemented]"
     except asyncio.TimeoutError:
