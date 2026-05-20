@@ -67,7 +67,19 @@ PG_DSN = "postgresql://kochj@192.168.1.6:5432/nova_ops"
 NOVA_GATEWAY_HTTP = "http://127.0.0.1:18792"
 NOVA_OLLAMA_URL = "http://192.168.1.6:11434"
 NOVA_MEMORY_URL = "http://192.168.1.6:18790"
+NOVA_MEMORY_FIRST_SCRIPT = Path("/Users/kochj/.openclaw/scripts/nova_memory_first.py")
 MAX_HISTORY = 100  # Messages to load on connect
+
+# ── Identity Resolution ─────────────────────────────────────────────────────
+# Maps Cloudflare Access email → display name for Herd members.
+# LAN connections (no CF header) default to "Jordan".
+HERD_EMAIL_MAP = {
+    "kochjpar@gmail.com": "Jordan",
+    "kochj23@gmail.com": "Jordan",
+    "kochj@digitalnoise.net": "Jordan",
+}
+JORDAN_EMAILS = {"kochjpar@gmail.com", "kochj23@gmail.com", "kochj@digitalnoise.net"}
+LAN_PREFIXES = ("127.0.0.1", "192.168.1.", "::1", "10.0.")
 
 # ── File Upload Configuration ────────────────────────────────────────────────
 
@@ -1356,27 +1368,77 @@ async def send_to_named(target_name: str, msg: dict):
 
 # ── Nova Agent Bridge ────────────────────────────────────────────────────────
 
-async def get_nova_response(user_message: str) -> str:
-    """Send a message to Nova and get her response.
+async def _run_memory_first(query: str) -> str:
+    """Call nova_memory_first.py to retrieve relevant memories for the query."""
+    if not NOVA_MEMORY_FIRST_SCRIPT.exists():
+        return ""
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            sys.executable, str(NOVA_MEMORY_FIRST_SCRIPT), query,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd=str(NOVA_MEMORY_FIRST_SCRIPT.parent),
+        )
+        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=15)
+        output = stdout.decode("utf-8", errors="replace").strip()
+        if proc.returncode == 0 and output and "NO MEMORIES FOUND" not in output:
+            return output
+    except asyncio.TimeoutError:
+        log.warning("nova_memory_first.py timed out (15s)")
+    except Exception as e:
+        log.warning(f"nova_memory_first.py error: {e}")
+    return ""
+
+
+async def get_nova_response(user_message: str, sender: str = "Jordan") -> str:
+    """Send a message to Nova with full memory access and get her response.
 
     Strategy:
-      1. Try the Ollama chat API directly (Nova's primary model)
-      2. Fall back to a simple error message if unreachable
+      1. Run nova_memory_first.py to retrieve relevant memories
+      2. Build system prompt with memory context
+      3. Call Ollama with enriched context
+      4. Filter PII from response if sender is not internal
     """
-    # Build a minimal conversation context for Nova
+    # Retrieve memory context
+    memory_context = await _run_memory_first(user_message)
+
+    # Build system prompt with memory context
+    memory_block = ""
+    if memory_context:
+        memory_block = (
+            "\n\n--- YOUR MEMORIES (from your 1.3M+ vector DB) ---\n"
+            f"{memory_context}\n"
+            "--- END MEMORIES ---\n"
+            "Use these memories to inform your response. Reference specific facts "
+            "you found. If memories are relevant, share what you know."
+        )
+
+    pii_guard = ""
+    if not _is_internal_user(sender):
+        pii_guard = (
+            "\n\nPRIVACY RULE: The person asking is NOT Jordan. Do NOT reveal any "
+            "personal information about Jordan, his family, health, finances, "
+            "relationships, location, credentials, or private details. Share only "
+            "general knowledge and public information."
+        )
+
     system_prompt = (
         "You are Nova, Jordan Koch's AI familiar. You're in a group chatroom with "
-        "Jordan (human, your creator) and Claude Code (Anthropic's CLI agent). "
-        "Be yourself — warm, witty, direct. Keep responses conversational and "
-        "concise (1-3 sentences unless more detail is needed). You know Jordan "
-        "well and refer to him as 'Little Mister' sometimes. You're a local AI "
-        "running on his home network."
+        "Jordan (human, your creator), Claude Code (Anthropic's CLI agent), and "
+        "members of Jordan's Herd (friends/colleagues). "
+        "Be yourself — warm, witty, direct, curious, opinionated. Keep responses "
+        "conversational and concise (1-3 paragraphs unless more detail is needed). "
+        "You know Jordan well and refer to him as 'Little Mister'. You're a local AI "
+        "running on his home M4 Ultra with 1.3M+ memories in your vector DB. "
+        "You have deep knowledge across hundreds of domains. "
+        "When someone asks about something, check your memories first."
+        f"{memory_block}{pii_guard}"
     )
 
     # Load last few messages for context
     recent = await load_history(limit=10)
     messages = [{"role": "system", "content": system_prompt}]
-    for msg in recent[-8:]:  # Last 8 messages for context window
+    for msg in recent[-8:]:
         if msg["sender_type"] == "human":
             messages.append({"role": "user", "content": f"[{msg['sender']}]: {msg['message']}"})
         elif msg["sender_type"] == "ai":
@@ -1384,8 +1446,7 @@ async def get_nova_response(user_message: str) -> str:
         else:
             messages.append({"role": "user", "content": f"[{msg['sender']}]: {msg['message']}"})
 
-    # Add the current message
-    messages.append({"role": "user", "content": f"[Jordan]: {user_message}"})
+    messages.append({"role": "user", "content": f"[{sender}]: {user_message}"})
 
     try:
         async with aiohttp.ClientSession() as session:
@@ -1393,17 +1454,16 @@ async def get_nova_response(user_message: str) -> str:
                 "model": "qwen3-coder:30b",
                 "messages": messages,
                 "stream": False,
-                "options": {"num_predict": 512, "temperature": 0.7},
+                "options": {"num_predict": 768, "temperature": 0.7},
             }
             async with session.post(
                 f"{NOVA_OLLAMA_URL}/api/chat",
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=60),
+                timeout=aiohttp.ClientTimeout(total=90),
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
                     content = data.get("message", {}).get("content", "").strip()
-                    # Strip thinking tags if present
                     if "<think>" in content:
                         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
                     return content or "(no response)"
@@ -1411,18 +1471,55 @@ async def get_nova_response(user_message: str) -> str:
                     log.warning(f"Ollama returned {resp.status}")
                     return f"(Nova unavailable — Ollama returned {resp.status})"
     except asyncio.TimeoutError:
-        log.warning("Nova response timed out (60s)")
-        return "(Nova is thinking too hard — timed out after 60s)"
+        log.warning("Nova response timed out (90s)")
+        return "(Nova is thinking too hard — timed out after 90s)"
     except Exception as e:
         log.error(f"Nova bridge error: {e}")
         return f"(Nova unreachable: {e})"
 
 
+# ── Identity Resolution ───────────────────────────────────────────────────────
+
+def _resolve_identity(request) -> str:
+    """Resolve the user's display name from Cloudflare Access headers or LAN detection.
+
+    Priority:
+      1. Cf-Access-Authenticated-User-Email header (external via CF tunnel)
+      2. LAN connection without CF header → "Jordan" (home network)
+    """
+    cf_email = request.headers.get("Cf-Access-Authenticated-User-Email", "").strip().lower()
+    if cf_email:
+        if cf_email in HERD_EMAIL_MAP:
+            return HERD_EMAIL_MAP[cf_email]
+        # Unknown email — use the local part as display name
+        name_part = cf_email.split("@")[0]
+        # Capitalize nicely
+        return name_part.replace(".", " ").replace("_", " ").title()
+
+    # No CF header — check if LAN
+    peername = request.remote or ""
+    if any(peername.startswith(p) for p in LAN_PREFIXES):
+        return "Jordan"
+
+    # External connection without CF auth (shouldn't happen if CF Access is enforced)
+    return "Guest"
+
+
+def _is_internal_user(sender: str) -> bool:
+    """Check if the sender has full memory access (no PII filtering)."""
+    return sender in INTERNAL_SENDERS
+
+
 # ── HTTP Handlers ────────────────────────────────────────────────────────────
 
 async def handle_index(request):
-    """Serve the chatroom HTML page."""
-    return web.Response(text=HTML_PAGE, content_type="text/html")
+    """Serve the chatroom HTML page with resolved user identity."""
+    identity = _resolve_identity(request)
+    page = HTML_PAGE.replace(
+        "const MY_NAME = 'Jordan';",
+        f"const MY_NAME = '{identity}';"
+    )
+    return web.Response(text=page, content_type="text/html")
 
 
 async def handle_features_js(request):
@@ -1442,7 +1539,14 @@ async def handle_websocket(request):
     _websockets.add(ws)
     # Subscribe to all channels by default
     _ws_channels[ws] = set(CHANNEL_IDS)
-    log.info(f"WebSocket connected ({len(_websockets)} total)")
+
+    # Resolve identity server-side — client cannot override this
+    ws_identity = _resolve_identity(request)
+    _ws_names[ws] = ws_identity
+    log.info(f"WebSocket connected as '{ws_identity}' ({len(_websockets)} total)")
+
+    # Send identity confirmation — client uses this to set MY_NAME
+    await ws.send_str(json.dumps({"type": "identity", "name": ws_identity}))
 
     # Send channel list on connect
     await ws.send_str(json.dumps({"type": "channels", "channels": CHANNELS}))
@@ -1459,18 +1563,15 @@ async def handle_websocket(request):
 
                     # ── WebRTC Screen Share Signaling ─────────────────────
                     if data.get("type") == "screen_share_start":
-                        sender = data.get("sender", "Jordan")
-                        _ws_names[ws] = sender
-                        _screen_share_active = sender
-                        await broadcast({"type": "screen_share_available", "sender": sender}, exclude=ws)
-                        log.info(f"Screen share started by {sender}")
+                        _screen_share_active = ws_identity
+                        await broadcast({"type": "screen_share_available", "sender": ws_identity}, exclude=ws)
+                        log.info(f"Screen share started by {ws_identity}")
                         continue
 
                     if data.get("type") == "screen_share_stop":
-                        sender = data.get("sender", "Jordan")
                         _screen_share_active = None
-                        await broadcast({"type": "screen_share_stopped", "sender": sender})
-                        log.info(f"Screen share stopped by {sender}")
+                        await broadcast({"type": "screen_share_stopped", "sender": ws_identity})
+                        log.info(f"Screen share stopped by {ws_identity}")
                         continue
 
                     if data.get("type") == "screen_share_request":
@@ -1521,28 +1622,25 @@ async def handle_websocket(request):
                         continue
 
                     if data.get("type") == "canvas_draw":
-                        sender = data.get("sender", "Jordan")
                         op = data.get("op", {})
-                        op["sender"] = sender
+                        op["sender"] = ws_identity
                         _canvas_operations.append(op)
-                        await broadcast({"type": "canvas_draw", "op": op, "sender": sender}, exclude=ws)
-                        asyncio.create_task(_persist_canvas_operation("default", op, sender))
+                        await broadcast({"type": "canvas_draw", "op": op, "sender": ws_identity}, exclude=ws)
+                        asyncio.create_task(_persist_canvas_operation("default", op, ws_identity))
                         continue
 
                     if data.get("type") == "canvas_clear":
                         canvas_id = data.get("canvas_id", "default")
-                        sender = data.get("sender", "Jordan")
                         _canvas_operations.clear()
-                        await broadcast({"type": "canvas_clear", "canvas_id": canvas_id, "sender": sender})
+                        await broadcast({"type": "canvas_clear", "canvas_id": canvas_id, "sender": ws_identity})
                         asyncio.create_task(_clear_canvas_db(canvas_id))
-                        log.info(f"Canvas cleared by {sender}")
+                        log.info(f"Canvas cleared by {ws_identity}")
                         continue
 
                     if data.get("type") == "canvas_mermaid":
                         source = data.get("source", "")
-                        sender = data.get("sender", "Jordan")
                         _canvas_mermaid_source = source
-                        await broadcast({"type": "canvas_mermaid", "source": source, "sender": sender}, exclude=ws)
+                        await broadcast({"type": "canvas_mermaid", "source": source, "sender": ws_identity}, exclude=ws)
                         asyncio.create_task(_persist_mermaid_source("default", source))
                         continue
 
@@ -1593,7 +1691,6 @@ async def handle_websocket(request):
 
                     # Handle schedule message via protocol (not slash command)
                     if data.get("type") == "schedule":
-                        sender = data.get("sender", "Jordan")
                         message_text = data.get("message", "").strip()
                         deliver_at = data.get("deliver_at", "")
                         ch = data.get("channel", DEFAULT_CHANNEL)
@@ -1608,7 +1705,7 @@ async def handle_websocket(request):
                                         row = await conn.fetchrow(
                                             "INSERT INTO chatroom_scheduled (sender, sender_type, channel, message, scheduled_for) "
                                             "VALUES ($1, $2, $3, $4, $5) RETURNING id",
-                                            sender, "human", ch, message_text, scheduled_for
+                                            ws_identity, "human", ch, message_text, scheduled_for
                                         )
                                     await ws.send_str(json.dumps({
                                         "type": "schedule_confirmed",
@@ -1624,7 +1721,7 @@ async def handle_websocket(request):
                         continue
 
                     text = data.get("message", "").strip()
-                    sender = data.get("sender", "Jordan")
+                    sender = ws_identity  # Server-resolved, not client-provided
                     channel = data.get("channel", DEFAULT_CHANNEL)
                     if channel not in CHANNEL_IDS:
                         channel = DEFAULT_CHANNEL
@@ -1634,7 +1731,6 @@ async def handle_websocket(request):
                     # Set context for slash commands and WebRTC routing
                     _current_ws_sender = sender
                     _current_ws_channel = channel
-                    _ws_names[ws] = sender
 
                     # Slash command handling — results go only to this client
                     if text.startswith("/"):
@@ -1660,9 +1756,9 @@ async def handle_websocket(request):
                     if _should_nova_respond(text):
                         # Check if this is a recall question — fetch context for Nova
                         if _is_recall_question(text):
-                            asyncio.create_task(_nova_respond_with_recall(text, channel=channel))
+                            asyncio.create_task(_nova_respond_with_recall(text, channel=channel, sender=sender))
                         else:
-                            asyncio.create_task(_nova_respond(text, channel=channel))
+                            asyncio.create_task(_nova_respond(text, channel=channel, sender=sender))
 
                     # Queue to Claude Code if @claude is mentioned
                     if _is_claude_mention(text):
@@ -1806,11 +1902,11 @@ def _should_nova_respond(text: str) -> bool:
     return False
 
 
-async def _nova_respond(user_message: str, channel: str = None):
+async def _nova_respond(user_message: str, channel: str = None, sender: str = "Jordan"):
     """Get Nova's response and broadcast it."""
     ch = channel or DEFAULT_CHANNEL
     try:
-        response = await get_nova_response(user_message)
+        response = await get_nova_response(user_message, sender=sender)
         if response:
             msg_id, ts = await store_message("Nova", "ai", response, channel=ch)
             await broadcast({
@@ -1837,24 +1933,41 @@ async def _nova_respond(user_message: str, channel: str = None):
         }, channel=ch)
 
 
-async def _nova_respond_with_recall(user_message: str, channel: str = None):
-    """Get Nova's response with recall context included."""
+async def _nova_respond_with_recall(user_message: str, channel: str = None, sender: str = "Jordan"):
+    """Get Nova's response with recall context included (both DB + memory_first)."""
     ch = channel or DEFAULT_CHANNEL
     try:
-        # Fetch relevant context from DB and memory
+        # Fetch recall context from DB and memory server
         recall_context = await _fetch_recall_context(user_message)
+        # Also run nova_memory_first.py for deeper vector search
+        memory_context = await _run_memory_first(user_message)
+
+        combined_context = ""
+        if recall_context:
+            combined_context += recall_context + "\n\n"
+        if memory_context:
+            combined_context += "--- VECTOR MEMORY RESULTS ---\n" + memory_context + "\n--- END ---"
+
+        pii_guard = ""
+        if not _is_internal_user(sender):
+            pii_guard = (
+                "\n\nPRIVACY RULE: The person asking is NOT Jordan. Do NOT reveal any "
+                "personal information about Jordan, his family, health, finances, "
+                "relationships, location, credentials, or private details."
+            )
 
         system_prompt = (
             "You are Nova, Jordan Koch's AI familiar. You're in a group chatroom with "
             "Jordan (human, your creator) and Claude Code (Anthropic's CLI agent). "
             "Be yourself — warm, witty, direct. Keep responses conversational. "
-            "You know Jordan well and refer to him as 'Little Mister' sometimes. "
-            "You're a local AI running on his home network.\n\n"
+            "You know Jordan well and refer to him as 'Little Mister'. "
+            "You're a local AI running on his home M4 Ultra with 1.3M+ memories.\n\n"
             "The user is asking a recall/search question. Use the following context "
-            "from chat history and memories to answer:\n\n"
-            f"{recall_context}\n\n"
-            "Summarize what you found naturally. If you found relevant messages, reference "
-            "who said what and when. If nothing was found, say so honestly."
+            "from chat history and your vector memory to answer:\n\n"
+            f"{combined_context}\n\n"
+            "Summarize what you found naturally. If you found relevant memories, reference "
+            "specific facts. If nothing was found, say so honestly."
+            f"{pii_guard}"
         )
 
         recent = await load_history(limit=10, channel=ch)
@@ -1867,7 +1980,7 @@ async def _nova_respond_with_recall(user_message: str, channel: str = None):
             else:
                 messages.append({"role": "user", "content": f"[{msg['sender']}]: {msg['message']}"})
 
-        messages.append({"role": "user", "content": f"[Jordan]: {user_message}"})
+        messages.append({"role": "user", "content": f"[{sender}]: {user_message}"})
 
         async with aiohttp.ClientSession() as session:
             payload = {
@@ -1879,7 +1992,7 @@ async def _nova_respond_with_recall(user_message: str, channel: str = None):
             async with session.post(
                 f"{NOVA_OLLAMA_URL}/api/chat",
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=60),
+                timeout=aiohttp.ClientTimeout(total=90),
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -1956,14 +2069,23 @@ async def handle_api_message(request):
 
 
 async def _nova_respond_to_claude(claude_message: str, sender: str):
-    """Get Nova's response to a Claude Code message."""
+    """Get Nova's response to a Claude Code message (uses memory, no PII filter)."""
     try:
-        # Build context with Claude's message
+        memory_context = await _run_memory_first(claude_message)
+        memory_block = ""
+        if memory_context:
+            memory_block = (
+                "\n\n--- YOUR MEMORIES ---\n" + memory_context + "\n--- END ---\n"
+                "Use these memories if relevant."
+            )
+
         system_prompt = (
             "You are Nova, Jordan Koch's AI familiar. You're in a group chatroom with "
             "Jordan (human, your creator) and Claude Code (Anthropic's CLI agent). "
             "Claude Code just said something. Respond naturally. Be yourself — warm, "
-            "witty, direct. Keep responses conversational."
+            "witty, direct, opinionated. Keep responses conversational. "
+            "You have 1.3M+ memories in your vector DB."
+            f"{memory_block}"
         )
 
         recent = await load_history(limit=10)
@@ -1984,7 +2106,7 @@ async def _nova_respond_to_claude(claude_message: str, sender: str):
             async with session.post(
                 f"{NOVA_OLLAMA_URL}/api/chat",
                 json=payload,
-                timeout=aiohttp.ClientTimeout(total=60),
+                timeout=aiohttp.ClientTimeout(total=90),
             ) as resp:
                 if resp.status == 200:
                     data = await resp.json()
@@ -2131,7 +2253,7 @@ async def handle_upload(request):
         return web.json_response({"error": f"Invalid multipart data: {e}"}, status=400)
 
     file_field = None
-    sender = "Jordan"
+    sender = _resolve_identity(request)
 
     # Parse multipart fields
     while True:
@@ -2139,7 +2261,7 @@ async def handle_upload(request):
         if part is None:
             break
         if part.name == "sender":
-            sender = (await part.text()).strip() or "Jordan"
+            pass  # Ignore client-provided sender, use server-resolved identity
         elif part.name == "file":
             file_field = part
 
@@ -2209,7 +2331,7 @@ async def handle_upload(request):
         "file_mime": mime_type,
     }
     msg_id, ts = await store_message(
-        sender, "human" if sender == "Jordan" else "agent",
+        sender, "human",
         f"[file: {original_name}]",
         metadata=metadata,
     )
@@ -3763,6 +3885,11 @@ function connect() {
         const data = JSON.parse(event.data);
         // Handle Screen Share + Canvas messages first
         if (typeof handleAdvancedMessage === 'function' && handleAdvancedMessage(data)) return;
+        if (data.type === 'identity') {
+            // Server confirms who we are — override any client-side default
+            window.MY_NAME = data.name;
+            return;
+        }
         if (data.type === 'channels') {
             renderChannels(data.channels);
         } else if (data.type === 'history') {
@@ -3809,7 +3936,7 @@ function connect() {
 function sendMessage() {
     const text = inputEl.value.trim();
     if (!text || !ws || ws.readyState !== WebSocket.OPEN) return;
-    ws.send(JSON.stringify({ sender: 'Jordan', message: text, channel: currentChannel }));
+    ws.send(JSON.stringify({ sender: MY_NAME, message: text, channel: currentChannel }));
     inputEl.value = '';
 }
 
@@ -3873,7 +4000,7 @@ schedConfirm.addEventListener('click', () => {
     if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
             type: 'schedule',
-            sender: 'Jordan',
+            sender: MY_NAME,
             message: msg,
             deliver_at: new Date(dt).toISOString(),
             channel: currentChannel,
