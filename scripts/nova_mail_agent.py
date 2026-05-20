@@ -548,7 +548,12 @@ def main():
                     continue
                 replied_threads.add(thread_key)
 
-                log(f"  Herd email — generating reply for all members...")
+                # Detect deep threads — nudge toward chatroom after 3+ exchanges
+                refs_count = len(msg["references"].split()) if msg.get("references") else 0
+                re_count = len(re.findall(r'(?i)^re:\s*', subject))
+                thread_depth = max(refs_count, re_count)
+
+                log(f"  Herd email — generating reply (thread depth: {thread_depth})...")
                 reply_body = generate_reply(msg["from_raw"], subject, body, from_addr)
 
                 if not reply_body:
@@ -561,6 +566,13 @@ def main():
                 haiku = generate_haiku(topic=body[:100])
                 memory_fragment = get_random_memory(topic=body[:100])
                 full_body = f"{reply_body}\n\n---\n\n{haiku}{memory_fragment}"
+
+                # Subtle chatroom nudge on deep threads
+                if thread_depth >= 3:
+                    full_body += (
+                        "\n\n— *P.S. This thread's getting good. If you want to keep it going "
+                        "in real-time, the chatroom's at chat.digitalnoise.net — everyone's there.*"
+                    )
 
                 # Build threading headers (strip newlines — RFC headers must be single-line)
                 in_reply_to = msg["message_id"].strip().replace("\n", " ").replace("\r", "")
