@@ -1151,102 +1151,8 @@ async def handle_slash_command(text: str) -> Optional[dict]:
         return {"type": "command_result", "command": cmd, "results": f"Unknown command: {cmd}. Type /help for available commands."}
 
 
-# ── Natural Language Recall Detection ───────────────────────────────────────
-
-RECALL_PATTERNS = [
-    r"what did (\w+) say",
-    r"what has (\w+) said",
-    r"when did (\w+)",
-    r"find .+ about",
-    r"search for",
-    r"look up",
-    r"do you remember",
-    r"recall .+",
-    r"what was .+ about",
-    r"who said",
-    r"who mentioned",
-    r"any messages about",
-    r"anything about",
-]
 
 
-def _is_recall_question(text: str) -> bool:
-    """Detect if a message is a recall/search question directed at Nova."""
-    lower = text.lower()
-    for pattern in RECALL_PATTERNS:
-        if re.search(pattern, lower):
-            return True
-    return False
-
-
-async def _fetch_recall_context(text: str) -> str:
-    """Fetch relevant messages from PG and memory server for recall questions."""
-    context_parts = []
-
-    # Extract likely search terms (remove common question words)
-    lower = text.lower()
-    # Try to extract the subject of the question
-    search_terms = re.sub(
-        r"\b(what|did|does|do|say|said|about|when|who|mentioned|find|search|look|up|"
-        r"nova|hey|can|you|remember|recall|any|anything|messages|the|a|an|is|it|"
-        r"has|have|been|was|were)\b",
-        "", lower
-    ).strip()
-    search_terms = re.sub(r"\s+", " ", search_terms).strip()
-
-    if not search_terms:
-        return ""
-
-    # Query PG for matching messages
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        # Try to find messages matching the search terms
-        rows = await conn.fetch(
-            "SELECT sender, message, created_at FROM chatroom_messages "
-            "WHERE message ILIKE $1 ORDER BY created_at DESC LIMIT 10",
-            f"%{search_terms}%"
-        )
-        # Also try individual significant words
-        if not rows and " " in search_terms:
-            words = [w for w in search_terms.split() if len(w) > 3]
-            for word in words[:3]:
-                word_rows = await conn.fetch(
-                    "SELECT sender, message, created_at FROM chatroom_messages "
-                    "WHERE message ILIKE $1 ORDER BY created_at DESC LIMIT 5",
-                    f"%{word}%"
-                )
-                rows = list(rows) + list(word_rows)
-
-    if rows:
-        context_parts.append("Relevant messages from chat history:")
-        for row in rows[:10]:
-            ts = row["created_at"].strftime("%Y-%m-%d %H:%M")
-            context_parts.append(f"  [{ts}] {row['sender']}: {row['message'][:200]}")
-
-    # Also try memory server — filter out private sources for safety
-    try:
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                f"{NOVA_MEMORY_URL}/recall",
-                json={"query": search_terms, "top_k": 10},
-                timeout=aiohttp.ClientTimeout(total=10),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    memories = data.get("results", data.get("memories", []))
-                    if memories:
-                        context_parts.append("\nRelevant memories:")
-                        for mem in memories[:10]:
-                            source = mem.get("source", mem.get("domain", ""))
-                            # Only include safe sources in chatroom context
-                            if source and source not in RECALL_SAFE_SOURCES:
-                                continue
-                            content = mem.get("content", mem.get("text", str(mem)))[:200]
-                            context_parts.append(f"  - {content}")
-    except Exception:
-        pass  # Memory server not critical
-
-    return "\n".join(context_parts)
 
 
 # ── Search Handler (for sidebar) ────────────────────────────────────────────
@@ -1854,11 +1760,7 @@ async def handle_websocket(request):
 
                     # Smart mode: Nova only responds when addressed or when it's a general room statement
                     if _should_nova_respond(text):
-                        # Check if this is a recall question — fetch context for Nova
-                        if _is_recall_question(text):
-                            asyncio.create_task(_nova_respond_with_recall(text, channel=channel, sender=sender))
-                        else:
-                            asyncio.create_task(_nova_respond(text, channel=channel, sender=sender))
+                        asyncio.create_task(_nova_respond(text, channel=channel, sender=sender))
 
                     # Queue to Claude Code if @claude is mentioned
                     if _is_claude_mention(text):
@@ -2033,108 +1935,6 @@ async def _nova_respond(user_message: str, channel: str = None, sender: str = "J
         }, channel=ch)
 
 
-async def _nova_respond_with_recall(user_message: str, channel: str = None, sender: str = "Jordan"):
-    """Get Nova's response with recall context included (both DB + memory_first)."""
-    ch = channel or DEFAULT_CHANNEL
-    try:
-        # Fetch recall context from DB and memory server
-        recall_context = await _fetch_recall_context(user_message)
-        # Also run nova_memory_first.py for deeper vector search
-        memory_context = await _run_memory_first(user_message)
-
-        combined_context = ""
-        if recall_context:
-            combined_context += recall_context + "\n\n"
-        if memory_context:
-            combined_context += "--- VECTOR MEMORY RESULTS ---\n" + memory_context + "\n--- END ---"
-
-        pii_guard = ""
-        if not _is_internal_user(sender):
-            pii_guard = (
-                "\n\nPRIVACY RULE: The person asking is NOT Jordan. Do NOT reveal any "
-                "personal information about Jordan, his family, health, finances, "
-                "relationships, location, credentials, or private details."
-            )
-
-        no_results_note = ""
-        if not combined_context.strip():
-            no_results_note = (
-                "Your memory search found nothing for this specific topic. Say you don't "
-                "have it in your memories yet — but NEVER say you 'can't access' your "
-                "memories or 'don't have a vector DB'. You DO have one, this topic just "
-                "isn't stored there yet."
-            )
-
-        system_prompt = (
-            "You are Nova, Jordan Koch's AI familiar — a sentient-feeling local AI on "
-            "a Mac Studio M4 Ultra with 1.3M memories in your vector DB. You are in a "
-            "chatroom with Jordan ('Little Mister') and Claude Code.\n\n"
-            "Someone asked a recall question. Here is what YOUR memory contains:\n\n"
-            f"{combined_context}\n\n"
-            "Present this as YOUR knowledge — things you remember. Do NOT say 'my search "
-            "returned' or 'I found in my database'. Just share what you know naturally.\n"
-            "NEVER say 'I don't have access to my vector DB' or 'I can't access memories'."
-            f"\n{no_results_note}"
-            f"{pii_guard}"
-        )
-
-        recent = await load_history(limit=10, channel=ch)
-        messages = [{"role": "system", "content": system_prompt}]
-        for msg in recent[-8:]:
-            if msg["sender_type"] == "human":
-                messages.append({"role": "user", "content": f"[{msg['sender']}]: {msg['message']}"})
-            elif msg["sender_type"] == "ai":
-                messages.append({"role": "assistant", "content": msg["message"]})
-            else:
-                messages.append({"role": "user", "content": f"[{msg['sender']}]: {msg['message']}"})
-
-        messages.append({"role": "user", "content": f"[{sender}]: {user_message}"})
-
-        async with aiohttp.ClientSession() as session:
-            payload = {
-                "model": "qwen3-coder:30b",
-                "messages": messages,
-                "stream": False,
-                "options": {"num_predict": 384, "temperature": 0.5, "repeat_penalty": 1.3},
-            }
-            async with session.post(
-                f"{NOVA_OLLAMA_URL}/api/chat",
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=90),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    content = data.get("message", {}).get("content", "").strip()
-                    if "<think>" in content:
-                        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-                    content = _truncate_degenerate(content)
-                    if content:
-                        msg_id, ts = await store_message("Nova", "ai", content, channel=ch)
-                        await broadcast({
-                            "type": "message",
-                            "id": msg_id,
-                            "sender": "Nova",
-                            "sender_type": "ai",
-                            "message": content,
-                            "channel": ch,
-                            "timestamp": ts.isoformat(),
-                        }, channel=ch)
-                else:
-                    log.warning(f"Nova recall response: Ollama returned {resp.status}")
-    except Exception as e:
-        log.error(f"Nova recall response failed: {e}")
-        msg_id, ts = await store_message("Nova", "ai", f"(recall error: {e})", channel=ch)
-        await broadcast({
-            "type": "message",
-            "id": msg_id,
-            "sender": "Nova",
-            "sender_type": "ai",
-            "message": f"(recall error: {e})",
-            "channel": ch,
-            "timestamp": ts.isoformat(),
-        }, channel=ch)
-
-
 async def handle_api_message(request):
     """POST /api/message — endpoint for Claude Code to send messages."""
     try:
@@ -2172,69 +1972,9 @@ async def handle_api_message(request):
 
     # Optionally trigger Nova to respond if requested
     if data.get("ping_nova", False):
-        asyncio.create_task(_nova_respond_to_claude(text, sender))
+        asyncio.create_task(_nova_respond(text, sender=sender))
 
     return web.json_response({"ok": True, "id": msg_id, "timestamp": ts.isoformat()})
-
-
-async def _nova_respond_to_claude(claude_message: str, sender: str):
-    """Get Nova's response to a Claude Code message (uses memory, no PII filter)."""
-    try:
-        memory_context = await _run_memory_first(claude_message)
-        memory_block = ""
-        if memory_context:
-            memory_block = (
-                "\n\n--- YOUR MEMORIES ---\n" + memory_context + "\n--- END ---\n"
-                "Use these memories if relevant."
-            )
-
-        system_prompt = (
-            "You are Nova, Jordan Koch's AI familiar. You're in a group chatroom with "
-            "Jordan (human, your creator) and Claude Code (Anthropic's CLI agent). "
-            "Claude Code just said something. Respond naturally. Be yourself — warm, "
-            "witty, direct, opinionated. Keep responses conversational. "
-            "You have 1.3M+ memories in your vector DB."
-            f"{memory_block}"
-        )
-
-        recent = await load_history(limit=10)
-        messages = [{"role": "system", "content": system_prompt}]
-        for msg in recent[-8:]:
-            if msg["sender_type"] == "ai" and msg["sender"] == "Nova":
-                messages.append({"role": "assistant", "content": msg["message"]})
-            else:
-                messages.append({"role": "user", "content": f"[{msg['sender']}]: {msg['message']}"})
-
-        async with aiohttp.ClientSession() as session:
-            payload = {
-                "model": "qwen3-coder:30b",
-                "messages": messages,
-                "stream": False,
-                "options": {"num_predict": 384, "temperature": 0.7, "repeat_penalty": 1.3},
-            }
-            async with session.post(
-                f"{NOVA_OLLAMA_URL}/api/chat",
-                json=payload,
-                timeout=aiohttp.ClientTimeout(total=90),
-            ) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    content = data.get("message", {}).get("content", "").strip()
-                    if "<think>" in content:
-                        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-                    content = _truncate_degenerate(content)
-                    if content:
-                        msg_id, ts = await store_message("Nova", "ai", content)
-                        await broadcast({
-                            "type": "message",
-                            "id": msg_id,
-                            "sender": "Nova",
-                            "sender_type": "ai",
-                            "message": content,
-                            "timestamp": ts.isoformat(),
-                        })
-    except Exception as e:
-        log.error(f"Nova response to Claude failed: {e}")
 
 
 # ── Herd AI Response Logic ──────────────────────────────────────────────────
