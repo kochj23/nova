@@ -24,12 +24,15 @@ Written by Jordan Koch.
 """
 
 import asyncio
+import hashlib
+import hmac
 import json
 import logging
 import mimetypes
 import os
 import random
 import re
+import secrets
 import shutil
 import signal
 import subprocess
@@ -78,6 +81,84 @@ _jordan_emails_raw = os.environ.get("NOVA_JORDAN_EMAILS", "")
 JORDAN_EMAILS = set(_jordan_emails_raw.split(",")) if _jordan_emails_raw else set()
 HERD_EMAIL_MAP = {e: "Jordan" for e in JORDAN_EMAILS}
 LAN_PREFIXES = ("127.0.0.1", "192.168.1.", "::1", "10.0.")
+
+# ── OTP Authentication Configuration ──────────────────────────────────────────
+
+ALLOWED_EMAILS: set = set()  # Empty = anyone can log in; add emails to restrict
+SESSION_MAX_AGE = 30 * 24 * 3600  # 30 days in seconds
+OTP_EXPIRY = 300  # 5 minutes
+OTP_LENGTH = 6
+
+_otp_store: dict = {}  # {email: {"code": str, "expires": float}}
+_session_secret: str = ""
+
+
+def _load_or_create_session_secret() -> str:
+    """Load persisted session secret or generate a new one."""
+    secret_path = Path.home() / ".openclaw/workspace/state/chatroom_secret.key"
+    secret_path.parent.mkdir(parents=True, exist_ok=True)
+    if secret_path.exists():
+        return secret_path.read_text().strip()
+    new_secret = secrets.token_hex(32)
+    secret_path.write_text(new_secret)
+    secret_path.chmod(0o600)
+    log.info("Generated new chatroom session secret")
+    return new_secret
+
+
+def _sign_session(email: str, timestamp: int) -> str:
+    """Create HMAC signature for session cookie."""
+    msg = f"{email}|{timestamp}".encode()
+    return hmac.new(_session_secret.encode(), msg, hashlib.sha256).hexdigest()
+
+
+def _make_session_cookie(email: str) -> str:
+    """Create a signed session cookie value."""
+    ts = int(time.time())
+    sig = _sign_session(email, ts)
+    return f"{email}|{ts}|{sig}"
+
+
+def _validate_session_cookie(cookie_value: str) -> Optional[str]:
+    """Validate session cookie. Returns email if valid, None otherwise."""
+    if not cookie_value:
+        return None
+    parts = cookie_value.split("|")
+    if len(parts) != 3:
+        return None
+    email, ts_str, sig = parts
+    try:
+        ts = int(ts_str)
+    except ValueError:
+        return None
+    # Check expiry
+    if time.time() - ts > SESSION_MAX_AGE:
+        return None
+    # Verify signature
+    expected = _sign_session(email, ts)
+    if not hmac.compare_digest(sig, expected):
+        return None
+    return email
+
+
+def _is_lan_request(request) -> bool:
+    """Check if request comes from LAN (bypass auth)."""
+    peername = request.remote or ""
+    return peername.startswith("192.168.1.") or peername.startswith("10.0.")
+
+
+def _get_session_email(request) -> Optional[str]:
+    """Extract and validate session email from cookie. Returns None if not authed."""
+    cookie_val = request.cookies.get("nova_session", "")
+    return _validate_session_cookie(cookie_val)
+
+
+def _check_auth(request) -> bool:
+    """Check if request is authenticated (LAN bypass or valid session)."""
+    if _is_lan_request(request):
+        return True
+    return _get_session_email(request) is not None
+
 
 # ── File Upload Configuration ────────────────────────────────────────────────
 
@@ -1485,27 +1566,34 @@ async def _get_nova_via_ollama(user_message: str, sender: str) -> str:
 # ── Identity Resolution ───────────────────────────────────────────────────────
 
 def _resolve_identity(request) -> str:
-    """Resolve the user's display name from Cloudflare Access headers or LAN detection.
+    """Resolve the user's display name from Cloudflare Access headers, session cookie, or LAN.
 
     Priority:
       1. Cf-Access-Authenticated-User-Email header (external via CF tunnel)
-      2. LAN connection without CF header → "Jordan" (home network)
+      2. OTP session cookie (email-based auth)
+      3. LAN connection (192.168.1.x / 10.0.x) → "Jordan"
+      4. Unknown → "Guest"
     """
     cf_email = request.headers.get("Cf-Access-Authenticated-User-Email", "").strip().lower()
     if cf_email:
         if cf_email in HERD_EMAIL_MAP:
             return HERD_EMAIL_MAP[cf_email]
-        # Unknown email — use the local part as display name
         name_part = cf_email.split("@")[0]
-        # Capitalize nicely
         return name_part.replace(".", " ").replace("_", " ").title()
 
-    # No CF header — check if LAN
+    # Check OTP session cookie
+    session_email = _get_session_email(request)
+    if session_email:
+        if session_email in HERD_EMAIL_MAP:
+            return HERD_EMAIL_MAP[session_email]
+        name_part = session_email.split("@")[0]
+        return name_part.replace(".", " ").replace("_", " ").title()
+
+    # LAN connections are Jordan (home network)
     peername = request.remote or ""
-    if any(peername.startswith(p) for p in LAN_PREFIXES):
+    if peername.startswith("192.168.1.") or peername.startswith("10.0."):
         return "Jordan"
 
-    # External connection without CF auth (shouldn't happen if CF Access is enforced)
     return "Guest"
 
 
@@ -1514,10 +1602,154 @@ def _is_internal_user(sender: str) -> bool:
     return sender in INTERNAL_SENDERS
 
 
+# ── OTP Login Page Templates ─────────────────────────────────────────────────
+
+LOGIN_PAGE_HTML = """<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova Chatroom — Login</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'SF Mono', 'Fira Code', monospace; background: #1a1a2e; color: #e0e0e0;
+  height: 100vh; display: flex; align-items: center; justify-content: center; }
+.login-box { background: #16213e; border: 1px solid #0f3460; border-radius: 12px;
+  padding: 40px; width: 360px; text-align: center; }
+.login-box h1 { color: #e94560; font-size: 20px; margin-bottom: 8px; }
+.login-box p { color: #888; font-size: 13px; margin-bottom: 24px; }
+input { width: 100%%; padding: 12px; background: #0f3460; border: 1px solid #1a3a6a;
+  border-radius: 6px; color: #e0e0e0; font-family: inherit; font-size: 14px;
+  margin-bottom: 12px; outline: none; }
+input:focus { border-color: #4fc3f7; }
+button { width: 100%%; padding: 12px; background: #e94560; border: none; border-radius: 6px;
+  color: #fff; font-weight: 600; cursor: pointer; font-size: 14px; }
+button:hover { background: #d63851; }
+.error { color: #e94560; font-size: 12px; margin-top: 8px; }
+.info { color: #4fc3f7; font-size: 12px; margin-top: 8px; }
+</style></head><body>
+<div class="login-box">
+<h1>Nova Chatroom</h1>
+<p>Enter your email to receive a login code</p>
+<form method="POST" action="/login/request-otp">
+  <input type="email" name="email" placeholder="you@example.com" required autofocus>
+  <button type="submit">Send Login Code</button>
+</form>
+%s
+</div></body></html>"""
+
+OTP_VERIFY_HTML = """<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova Chatroom — Verify</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: 'SF Mono', 'Fira Code', monospace; background: #1a1a2e; color: #e0e0e0;
+  height: 100vh; display: flex; align-items: center; justify-content: center; }
+.login-box { background: #16213e; border: 1px solid #0f3460; border-radius: 12px;
+  padding: 40px; width: 360px; text-align: center; }
+.login-box h1 { color: #e94560; font-size: 20px; margin-bottom: 8px; }
+.login-box p { color: #888; font-size: 13px; margin-bottom: 24px; }
+input[type=text] { width: 100%%; padding: 12px; background: #0f3460; border: 1px solid #1a3a6a;
+  border-radius: 6px; color: #e0e0e0; font-family: inherit; font-size: 20px;
+  margin-bottom: 12px; outline: none; text-align: center; letter-spacing: 8px; }
+input[type=text]:focus { border-color: #4fc3f7; }
+button { width: 100%%; padding: 12px; background: #e94560; border: none; border-radius: 6px;
+  color: #fff; font-weight: 600; cursor: pointer; font-size: 14px; }
+button:hover { background: #d63851; }
+.error { color: #e94560; font-size: 12px; margin-top: 8px; }
+.info { color: #4fc3f7; font-size: 12px; margin-top: 8px; }
+</style></head><body>
+<div class="login-box">
+<h1>Enter Code</h1>
+<p>Check your email for a 6-digit login code</p>
+<form method="POST" action="/login/verify">
+  <input type="hidden" name="email" value="%s">
+  <input type="text" name="code" maxlength="6" pattern="[0-9]{6}" placeholder="000000" required autofocus autocomplete="one-time-code">
+  <button type="submit">Verify</button>
+</form>
+%s
+</div></body></html>"""
+
+
+# ── OTP Auth Handlers ────────────────────────────────────────────────────────
+
+async def handle_login_page(request):
+    """GET /login — show login form."""
+    if _check_auth(request):
+        raise web.HTTPFound("/")
+    page = LOGIN_PAGE_HTML % ""
+    return web.Response(text=page, content_type="text/html")
+
+
+async def handle_request_otp(request):
+    """POST /login/request-otp — generate and send OTP via email."""
+    data = await request.post()
+    email = data.get("email", "").strip().lower()
+    if not email or "@" not in email:
+        page = LOGIN_PAGE_HTML % '<p class="error">Please enter a valid email.</p>'
+        return web.Response(text=page, content_type="text/html")
+
+    # Check whitelist if configured
+    if ALLOWED_EMAILS and email not in ALLOWED_EMAILS:
+        page = LOGIN_PAGE_HTML % '<p class="error">This email is not authorized.</p>'
+        return web.Response(text=page, content_type="text/html")
+
+    # Generate OTP
+    code = "".join([str(random.randint(0, 9)) for _ in range(OTP_LENGTH)])
+    _otp_store[email] = {"code": code, "expires": time.time() + OTP_EXPIRY}
+
+    # Send via nova_send_mail.py
+    mail_script = Path.home() / ".openclaw/scripts/nova_send_mail.py"
+    try:
+        subprocess.run(
+            [sys.executable, str(mail_script), "--to", email,
+             "--subject", "Nova Chatroom Login Code",
+             "--body", f"Your login code is: {code}\n\nThis code expires in 5 minutes."],
+            timeout=30, capture_output=True,
+        )
+        log.info(f"OTP sent to {email}")
+    except Exception as e:
+        log.error(f"Failed to send OTP email to {email}: {e}")
+
+    page = OTP_VERIFY_HTML % (email, '<p class="info">Code sent. Check your inbox.</p>')
+    return web.Response(text=page, content_type="text/html")
+
+
+async def handle_verify_otp(request):
+    """POST /login/verify — verify OTP and set session cookie."""
+    data = await request.post()
+    email = data.get("email", "").strip().lower()
+    code = data.get("code", "").strip()
+
+    stored = _otp_store.get(email)
+    if not stored:
+        page = LOGIN_PAGE_HTML % '<p class="error">No pending code. Request a new one.</p>'
+        return web.Response(text=page, content_type="text/html")
+
+    if time.time() > stored["expires"]:
+        _otp_store.pop(email, None)
+        page = LOGIN_PAGE_HTML % '<p class="error">Code expired. Request a new one.</p>'
+        return web.Response(text=page, content_type="text/html")
+
+    if not hmac.compare_digest(code, stored["code"]):
+        page = OTP_VERIFY_HTML % (email, '<p class="error">Invalid code. Try again.</p>')
+        return web.Response(text=page, content_type="text/html")
+
+    # Success — clear OTP and set session cookie
+    _otp_store.pop(email, None)
+    cookie_value = _make_session_cookie(email)
+    response = web.HTTPFound("/")
+    response.set_cookie("nova_session", cookie_value, max_age=SESSION_MAX_AGE,
+                        httponly=True, samesite="Lax", path="/")
+    log.info(f"OTP verified, session created for {email}")
+    raise response
+
+
 # ── HTTP Handlers ────────────────────────────────────────────────────────────
 
 async def handle_index(request):
     """Serve the chatroom HTML page with resolved user identity."""
+    if not _check_auth(request):
+        raise web.HTTPFound("/login")
     identity = _resolve_identity(request)
     page = HTML_PAGE.replace(
         "const MY_NAME = 'Jordan';",
@@ -1537,6 +1769,9 @@ async def handle_features_js(request):
 async def handle_websocket(request):
     """Handle browser WebSocket connections (Jordan's chat)."""
     global _current_ws_sender, _current_ws_channel, _screen_share_active, _canvas_mermaid_source
+
+    if not _check_auth(request):
+        return web.Response(status=401, text="Unauthorized")
 
     ws = web.WebSocketResponse()
     await ws.prepare(request)
@@ -2095,6 +2330,8 @@ async def _herd_respond(text: str, responder_name: str, channel: str = None):
 
 async def handle_upload(request):
     """POST /api/upload — handle multipart file upload."""
+    if not _check_auth(request):
+        return web.json_response({"error": "Unauthorized"}, status=401)
     try:
         reader = await request.multipart()
     except Exception as e:
@@ -2440,7 +2677,15 @@ async def on_shutdown(app):
 
 def create_app() -> web.Application:
     """Create and configure the aiohttp application."""
+    global _session_secret
+    _session_secret = _load_or_create_session_secret()
+
     app = web.Application(client_max_size=MAX_FILE_SIZE + 1024 * 1024)  # Allow uploads up to MAX_FILE_SIZE + 1MB overhead
+    # Auth routes (no auth required)
+    app.router.add_get("/login", handle_login_page)
+    app.router.add_post("/login/request-otp", handle_request_otp)
+    app.router.add_post("/login/verify", handle_verify_otp)
+    # Protected routes
     app.router.add_get("/", handle_index)
     app.router.add_get("/chatroom_features.js", handle_features_js)
     app.router.add_get("/ws", handle_websocket)
