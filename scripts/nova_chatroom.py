@@ -76,9 +76,9 @@ MAX_HISTORY = 100  # Messages to load on connect
 # ── Identity Resolution ─────────────────────────────────────────────────────
 # Maps Cloudflare Access email → display name for Herd members.
 # LAN connections (no CF header) default to "Jordan".
-# Jordan's emails loaded from environment or config (not hardcoded for security scan)
+# Jordan's emails loaded from environment (not hardcoded — security scan enforcement)
 _jordan_emails_raw = os.environ.get("NOVA_JORDAN_EMAILS", "")
-JORDAN_EMAILS = set(_jordan_emails_raw.split(",")) if _jordan_emails_raw else set()
+JORDAN_EMAILS = set(e.strip() for e in _jordan_emails_raw.split(",") if e.strip())
 HERD_EMAIL_MAP = {e: "Jordan" for e in JORDAN_EMAILS}
 LAN_PREFIXES = ("127.0.0.1", "192.168.1.", "::1", "10.0.")
 
@@ -1697,16 +1697,19 @@ async def handle_request_otp(request):
     code = "".join([str(random.randint(0, 9)) for _ in range(OTP_LENGTH)])
     _otp_store[email] = {"code": code, "expires": time.time() + OTP_EXPIRY}
 
-    # Send via nova_send_mail.py
+    # Send via nova_send_mail.py (positional args: to subject body)
     mail_script = Path.home() / ".openclaw/scripts/nova_send_mail.py"
     try:
-        subprocess.run(
-            [sys.executable, str(mail_script), "--to", email,
-             "--subject", "Nova Chatroom Login Code",
-             "--body", f"Your login code is: {code}\n\nThis code expires in 5 minutes."],
-            timeout=30, capture_output=True,
+        result = subprocess.run(
+            [sys.executable, str(mail_script), email,
+             "Nova Chatroom Login Code",
+             f"Your login code is: {code}\n\nThis code expires in 5 minutes."],
+            timeout=30, capture_output=True, text=True,
         )
-        log.info(f"OTP sent to {email}")
+        if result.returncode == 0:
+            log.info(f"OTP sent to {email}")
+        else:
+            log.error(f"OTP send failed for {email}: {result.stderr}")
     except Exception as e:
         log.error(f"Failed to send OTP email to {email}: {e}")
 
@@ -1786,6 +1789,16 @@ async def handle_websocket(request):
 
     # Send identity confirmation — client uses this to set MY_NAME
     await ws.send_str(json.dumps({"type": "identity", "name": ws_identity}))
+
+    # Send current presence list (who's online right now)
+    online = list(set(_ws_names.values()))
+    # Nova is always "present" (she's an AI, always available)
+    if "Nova" not in online:
+        online.append("Nova")
+    await ws.send_str(json.dumps({"type": "presence", "online": sorted(online)}))
+
+    # Broadcast to others that someone joined
+    await broadcast({"type": "presence", "online": sorted(online)}, exclude=ws)
 
     # Send channel list on connect
     await ws.send_str(json.dumps({"type": "channels", "channels": CHANNELS}))
@@ -2017,6 +2030,11 @@ async def handle_websocket(request):
             await broadcast({"type": "screen_share_stopped", "sender": _ws_names.get(ws, "unknown")})
         _ws_names.pop(ws, None)
         log.info(f"WebSocket disconnected ({len(_websockets)} total)")
+        # Broadcast updated presence
+        online = list(set(_ws_names.values()))
+        if "Nova" not in online:
+            online.append("Nova")
+        await broadcast({"type": "presence", "online": sorted(online)})
 
     return ws
 
@@ -3443,15 +3461,7 @@ header .status.disconnected { color: #e94560; }
     <span id="status" class="status disconnected">disconnected</span>
 </header>
 
-<div id="participants">
-    <div class="participant"><span class="dot dot-jordan"></span> Jordan</div>
-    <div class="participant"><span class="dot dot-nova"></span> Nova</div>
-    <div class="participant"><span class="dot dot-claude"></span> Claude Code</div>
-    <div class="participant"><span class="dot dot-herd-jules"></span> Jules</div>
-    <div class="participant"><span class="dot dot-herd-colette"></span> Colette</div>
-    <div class="participant"><span class="dot dot-herd-gaston"></span> Gaston</div>
-    <div class="participant"><span class="dot dot-herd-sam"></span> Sam</div>
-</div>
+<div id="participants"></div>
 
 <div id="main-container">
     <div id="channel-sidebar">
@@ -3979,8 +3989,21 @@ function connect() {
         // Handle Screen Share + Canvas messages first
         if (typeof handleAdvancedMessage === 'function' && handleAdvancedMessage(data)) return;
         if (data.type === 'identity') {
-            // Server confirms who we are — override any client-side default
             window.MY_NAME = data.name;
+            return;
+        }
+        if (data.type === 'presence') {
+            const el = document.getElementById('participants');
+            if (el && data.online) {
+                el.innerHTML = data.online.map(name => {
+                    const s = name.toLowerCase();
+                    let dotClass = 'dot-jordan';
+                    if (s === 'nova') dotClass = 'dot-nova';
+                    else if (s.includes('claude')) dotClass = 'dot-claude';
+                    else if (['jules','colette','gaston','sam'].includes(s)) dotClass = 'dot-herd-' + s;
+                    return `<div class="participant"><span class="dot ${dotClass}"></span> ${name}</div>`;
+                }).join('');
+            }
             return;
         }
         if (data.type === 'channels') {
