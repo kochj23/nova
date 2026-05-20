@@ -15,8 +15,8 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 | Scripts | 359 Python, Shell, and AppleScript |
 | Scheduler tasks | 54 unique |
 | Scheduler runs logged | 13,856 (98.9% success rate) |
-| Vector memories | 1,224,900 unique (deduplicated, HNSW-indexed) |
-| Memory sources | 409 domains |
+| Vector memories | 1,300,238 unique (deduplicated, HNSW-indexed) |
+| Memory sources | 217 domains |
 | Gateway | Nova Gateway v2.4.0 (pure Python asyncio, hot-reloadable config) |
 | Channels | Slack + Discord + Signal + Web Chatroom |
 | Agents | 4 (Chat, Research, Home, Main) |
@@ -25,7 +25,7 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 | Ops DB tables | 46 tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, chatroom |
 | Hot-reload | Gateway: `POST :18792/reload` or `SIGHUP`. Scheduler: `SIGHUP` reloads tasks. |
 | Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
-| Chatroom | Real-time 3-way chat (Jordan/Nova/Claude Code) on port 37480 |
+| Chatroom | Real-time multi-party chat on port 37480, Nova has full memory access, external via CF tunnel |
 | Bootstrap source | `nova_ops.agent_docs` (PostgreSQL — not files) |
 | Session storage | `nova_ops.gateway_sessions` + `gateway_query_log` |
 | Primary model | `openrouter/qwen/qwen3-235b-a22b-2507` (chat/research) |
@@ -484,45 +484,61 @@ Health checked every 30s. Failed mid-request calls automatically retry on the ne
 
 ## Chatroom
 
-Real-time multi-participant web chat — Jordan, Nova, Claude Code, and the Herd.
+Real-time multi-participant web chat — Jordan, Nova, Claude Code, and the Herd. Accessible externally via Cloudflare Tunnel at `chat.digitalnoise.net`.
 
 ```mermaid
 graph TD
     subgraph "Participants"
-        Jordan["Jordan\n(browser WebSocket)"]
-        Claude["Claude Code\nPOST /api/message\nor WebSocket client"]
+        Jordan["Jordan\n(LAN → identity: Jordan)"]
+        Herd["Herd Members\n(CF Access → email OTP\nidentity from JWT)"]
+        Claude["Claude Code\nPOST /api/message"]
     end
 
     subgraph "nova_chatroom.py — port 37480"
+        Identity["Identity Resolution\nCf-Access-Authenticated-User-Email\nLAN detection → Jordan\nServer-enforced, not client-trusted"]
         Server["aiohttp Server\nWebSocket + REST API"]
         Smart["Smart Response Logic\n_should_nova_respond()\n_pick_herd_responder()"]
     end
 
+    subgraph "Nova's Brain"
+        MemFirst["nova_memory_first.py\nQuery classification\nSource routing\nVector recall"]
+        VectorDB["nova_memories\n1.3M+ vectors\n217 domains\npgvector HNSW"]
+        Ollama["Ollama qwen3-coder:30b\nWith memory context injected\nPII guard for non-internal users"]
+    end
+
     subgraph "AI Participants"
-        Nova["Nova\nJordan's familiar\nResponds when relevant"]
-        Jules["Jules\nArchitecture, code\nPragmatic, direct"]
-        Colette["Colette\nUX, design, wellness\nKind but honest"]
-        Gaston["Gaston\nSystems philosophy\nBold, contrarian"]
-        Sam["Sam\nOps, reliability\nGrounded, actionable"]
+        Nova["Nova\nFull memory access\nPII-aware responses"]
+        Jules["Jules\nArchitecture, code"]
+        Colette["Colette\nUX, design, wellness"]
+        Gaston["Gaston\nSystems philosophy"]
+        Sam["Sam\nOps, reliability"]
     end
 
     subgraph "Storage"
-        PG["nova_ops.chatroom_messages\nPersistent history\nFull scrollback"]
+        PG["nova_ops.chatroom_messages\nPersistent history"]
     end
 
-    subgraph "External Access (planned)"
-        CF["Cloudflare Tunnel\nchat.digitalnoise.net\nAccess: email whitelist"]
+    subgraph "External Access"
+        CF["Cloudflare Tunnel\nchat.digitalnoise.net\nAccess: email OTP whitelist\n30-day sessions"]
     end
 
-    Jordan --> Server
+    Jordan --> Identity
+    Herd --> CF --> Identity
+    Identity --> Server
     Claude --> Server
     Server --> Smart
-    Smart --> Nova & Jules & Colette & Gaston & Sam
+    Smart --> MemFirst
+    MemFirst --> VectorDB
+    VectorDB --> Ollama
+    Ollama --> Nova
+    Smart --> Jules & Colette & Gaston & Sam
     Nova & Jules & Colette & Gaston & Sam --> Server
     Server --> PG
-    CF -.->|"pending NS migration"| Server
 
     style Server fill:#1a3a5c,color:#fff
+    style Identity fill:#2e7d32,color:#fff
+    style MemFirst fill:#bf360c,color:#fff
+    style VectorDB fill:#4e342e,color:#fff
     style Nova fill:#e94560,color:#fff
     style Claude fill:#ab47bc,color:#fff
     style Jules fill:#66bb6a,color:#1a1a2e
@@ -580,17 +596,40 @@ curl -X POST http://192.168.1.6:37480/api/message \
   -d '{"message": "...", "sender": "Claude Code", "ping_nova": true}'
 ```
 
+### Memory Access
+
+Nova has full access to her 1.3M+ vector memories in the chatroom:
+
+1. Every incoming message triggers `nova_memory_first.py` (subprocess, 15s timeout)
+2. Script classifies the query → picks relevant source domains → runs vector recall
+3. Memory context is injected into Nova's system prompt before Ollama call
+4. Nova cites specific facts from her memory in responses
+
+**PII Guard:** When the sender is not in `INTERNAL_SENDERS` (Jordan, Nova, Claude Code), Nova receives a privacy instruction to never reveal personal information about Jordan — health, finances, relationships, location, credentials.
+
+### Identity Resolution
+
+Server-side, not client-trusted. The browser cannot spoof sender identity.
+
+| Source | Resolution |
+|--------|-----------|
+| `Cf-Access-Authenticated-User-Email` header | Map email → display name via `HERD_EMAIL_MAP` |
+| LAN connection (192.168.1.x, 127.0.0.1) | Always "Jordan" |
+| Unknown external (no CF header) | "Guest" |
+
+On WebSocket connect, server sends `{"type": "identity", "name": "..."}` to override the client-side `MY_NAME`. All messages use server-resolved identity — the `sender` field in WebSocket payloads is ignored.
+
+**Adding Herd members:** Add their email → display name mapping to `HERD_EMAIL_MAP` in `nova_chatroom.py`.
+
 ### External Access (Cloudflare Tunnel)
 
-**Status:** Tunnel created (`a20ae87c`), blocked on DNS migration.
+**Status:** Live. Tunnel `a20ae87c` routes `chat.digitalnoise.net` → port 37480.
 
-**Plan:**
-1. Migrate `digitalnoise.net` nameservers from Route53 → Cloudflare
-2. `chat.digitalnoise.net` routes through tunnel to port 37480
-3. Cloudflare Access policy whitelists Herd member emails
-4. Zero open ports on home network — all traffic proxied through CF edge
-
-**Access control:** Email-based verification. Only whitelisted addresses (Herd members + Jordan) can connect. Everyone else sees a "forbidden" page at Cloudflare's edge.
+**Architecture:**
+- Cloudflare Tunnel daemon (`cloudflared`) on LAN, no open ports
+- Cloudflare Access policy: email OTP whitelist, 30-day sessions
+- Identity flows through `Cf-Access-Authenticated-User-Email` header
+- Server resolves display name from email, enforces PII guard for non-Jordan users
 
 **launchd:** `net.digitalnoise.nova-chatroom`
 
