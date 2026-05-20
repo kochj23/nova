@@ -92,6 +92,27 @@ IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg"}
 EXEC_WORK_DIR = Path("/tmp/nova-chatroom-exec")
 EXEC_TIMEOUT = 30  # seconds
 EXEC_ALLOWED_SENDERS = {"Nova", "Claude Code"}
+
+# ── Memory Access Control ───────────────────────────────────────────────────
+# Internal users get full memory access (filtered by nova_config.filter_private_memories)
+# External users (Herd) only see chatroom-scoped memory via /recall
+INTERNAL_SENDERS = {"Jordan", "Nova", "Claude Code"}
+
+# Sources that are SAFE for external /recall queries (public knowledge only)
+RECALL_SAFE_SOURCES = {
+    "automotive", "television", "documentary", "comedy", "crime_drama",
+    "military_history", "world_factbook", "home_improvement", "education",
+    "game_show", "music", "sci_fi", "action", "horror", "drama", "sports",
+    "cooking", "geology", "neuroscience", "linguistics_general", "biology_cell",
+    "chemistry_physical", "computer_science", "general_knowledge", "history",
+    "wiki_automotive_engineering", "wiki_audio_engineering", "wiki_cryptography",
+    "wiki_los_angeles", "wiki_punk_hardcore", "wiki_technology", "wiki_gaming",
+    "wiki_health", "wiki_philosophy", "nova_tech_stack",
+    "corvette_workshop_manual", "local_knowledge", "hardcore_punk",
+    "blockbuster_films", "music_history", "nowave_history", "edm_history",
+    "architecture_structures", "ww2_nations", "space_history",
+    "chatroom",  # chatroom's own memory
+}
 EXEC_PYTHON = "/opt/homebrew/bin/python3"
 EXEC_BASH = "/bin/bash"
 EXEC_PSQL = "/opt/homebrew/bin/psql"
@@ -593,15 +614,18 @@ async def cmd_from(name: str) -> dict:
     return {"type": "command_result", "command": "/from", "results": results, "sender_filter": name}
 
 
-async def cmd_recall(topic: str) -> dict:
-    """Semantic search via Nova's memory server."""
+async def cmd_recall(topic: str, sender: str = "Jordan") -> dict:
+    """Semantic search via Nova's memory server. External users get filtered results."""
     if not topic:
         return {"type": "command_result", "command": "/recall", "results": "Usage: /recall <topic>"}
+
+    is_internal = sender in INTERNAL_SENDERS
+
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{NOVA_MEMORY_URL}/recall",
-                json={"query": topic, "top_k": 10},
+                json={"query": topic, "top_k": 25 if is_internal else 20},
                 timeout=aiohttp.ClientTimeout(total=15),
             ) as resp:
                 if resp.status == 200:
@@ -609,13 +633,24 @@ async def cmd_recall(topic: str) -> dict:
                     memories = data.get("results", data.get("memories", []))
                     if not memories:
                         return {"type": "command_result", "command": "/recall", "results": f"No memories found for '{topic}'."}
+
                     results = []
                     for mem in memories:
+                        source = mem.get("source", mem.get("domain", "unknown"))
+                        # External users: only show safe sources
+                        if not is_internal and source not in RECALL_SAFE_SOURCES:
+                            continue
                         results.append({
                             "content": mem.get("content", mem.get("text", str(mem)))[:300],
                             "score": mem.get("score", mem.get("similarity", None)),
-                            "source": mem.get("source", mem.get("domain", "unknown")),
+                            "source": source,
                         })
+
+                    if not results:
+                        return {"type": "command_result", "command": "/recall", "results": f"No public memories found for '{topic}'."}
+
+                    # Cap at 10 results for display
+                    results = results[:10]
                     return {"type": "command_result", "command": "/recall", "results": results, "topic": topic}
                 else:
                     return {"type": "command_result", "command": "/recall", "results": f"Memory server returned {resp.status}"}
@@ -1085,7 +1120,7 @@ async def handle_slash_command(text: str) -> Optional[dict]:
     elif cmd == "/from":
         return await cmd_from(arg)
     elif cmd == "/recall":
-        return await cmd_recall(arg)
+        return await cmd_recall(arg, sender=_current_ws_sender)
     elif cmd == "/stats":
         return await cmd_stats()
     elif cmd == "/digest":
@@ -1176,12 +1211,12 @@ async def _fetch_recall_context(text: str) -> str:
             ts = row["created_at"].strftime("%Y-%m-%d %H:%M")
             context_parts.append(f"  [{ts}] {row['sender']}: {row['message'][:200]}")
 
-    # Also try memory server
+    # Also try memory server — filter out private sources for safety
     try:
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 f"{NOVA_MEMORY_URL}/recall",
-                json={"query": search_terms, "top_k": 5},
+                json={"query": search_terms, "top_k": 10},
                 timeout=aiohttp.ClientTimeout(total=10),
             ) as resp:
                 if resp.status == 200:
@@ -1189,7 +1224,11 @@ async def _fetch_recall_context(text: str) -> str:
                     memories = data.get("results", data.get("memories", []))
                     if memories:
                         context_parts.append("\nRelevant memories:")
-                        for mem in memories[:5]:
+                        for mem in memories[:10]:
+                            source = mem.get("source", mem.get("domain", ""))
+                            # Only include safe sources in chatroom context
+                            if source and source not in RECALL_SAFE_SOURCES:
+                                continue
                             content = mem.get("content", mem.get("text", str(mem)))[:200]
                             context_parts.append(f"  - {content}")
     except Exception:
@@ -1625,6 +1664,10 @@ async def handle_websocket(request):
                         else:
                             asyncio.create_task(_nova_respond(text, channel=channel))
 
+                    # Queue to Claude Code if @claude is mentioned
+                    if _is_claude_mention(text):
+                        asyncio.create_task(_queue_for_claude(text, sender, channel))
+
                     # Check if a Herd member wants to chime in (at most one)
                     herd_responder = _pick_herd_responder(text)
                     if herd_responder:
@@ -1712,6 +1755,35 @@ async def _load_canvas_state():
         log.info(f"Canvas state loaded: {len(_canvas_operations)} ops")
     except Exception as e:
         log.error(f"Canvas state load error: {e}")
+
+
+def _is_claude_mention(text: str) -> bool:
+    """Returns True if the message is addressed to Claude Code."""
+    lower = text.lower()
+    return any(w in lower for w in ("@claude", "hey claude", "claude,", "claude:"))
+
+
+async def _queue_for_claude(text: str, sender: str, channel: str):
+    """Insert a chatroom @claude mention into claude_queue for pickup."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            existing = await conn.fetchval(
+                "SELECT 1 FROM claude_queue WHERE description = $1 AND status IN ('queued', 'in_progress')",
+                text
+            )
+            if existing:
+                return
+            await conn.execute(
+                "INSERT INTO claude_queue (session_id, status, priority, description, context) "
+                "VALUES ('chatroom', 'queued', $1, $2, $3)",
+                3, text,
+                json.dumps({"sender": sender, "channel": channel, "source": "chatroom",
+                            "timestamp": datetime.now(timezone.utc).isoformat()})
+            )
+        log.info(f"Queued @claude message from {sender}: {text[:60]}")
+    except Exception as e:
+        log.error(f"Failed to queue @claude message: {e}")
 
 
 def _should_nova_respond(text: str) -> bool:
@@ -1871,6 +1943,10 @@ async def handle_api_message(request):
     }, channel=channel)
 
     log.info(f"API message from {sender} in #{channel}: {text[:80]}")
+
+    # Queue for Claude if it's a human mentioning @claude
+    if sender_type == "human" and _is_claude_mention(text):
+        asyncio.create_task(_queue_for_claude(text, sender, channel))
 
     # Optionally trigger Nova to respond if requested
     if data.get("ping_nova", False):
@@ -2301,6 +2377,44 @@ async def handle_api_messages(request):
     return web.json_response({"ok": True, "count": len(messages), "messages": messages})
 
 
+async def handle_claude_poll(request):
+    """GET /api/claude/poll — return queued chatroom messages for Claude Code.
+    Marks returned items as in_progress so they aren't re-fetched.
+    Query params: ?ack=id1,id2 to mark items completed."""
+    pool = await get_pool()
+
+    ack_ids = request.query.get("ack", "")
+    if ack_ids:
+        for aid in ack_ids.split(","):
+            aid = aid.strip()
+            if aid.isdigit():
+                async with pool.acquire() as conn:
+                    await conn.execute(
+                        "UPDATE claude_queue SET status = 'completed', completed_at = now() WHERE id = $1",
+                        int(aid)
+                    )
+
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, description, context, created_at "
+            "FROM claude_queue WHERE session_id = 'chatroom' AND status = 'queued' "
+            "ORDER BY priority, created_at LIMIT 10"
+        )
+        if rows:
+            ids = [r["id"] for r in rows]
+            await conn.execute(
+                "UPDATE claude_queue SET status = 'in_progress' WHERE id = ANY($1::int[])", ids
+            )
+
+    messages = [
+        {"id": r["id"], "message": r["description"],
+         "context": json.loads(r["context"]) if r["context"] else {},
+         "created_at": r["created_at"].isoformat()}
+        for r in rows
+    ]
+    return web.json_response({"ok": True, "count": len(messages), "messages": messages})
+
+
 async def handle_health(request):
     """GET /health — health check endpoint."""
     pool = await get_pool()
@@ -2363,6 +2477,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/message", handle_api_message)
     app.router.add_post("/api/upload", handle_upload)
     app.router.add_get("/api/messages", handle_api_messages)
+    app.router.add_get("/api/claude/poll", handle_claude_poll)
     app.router.add_get("/health", handle_health)
     # Static file serving for uploads
     try:
