@@ -12,4 +12,5 @@ wait_for_port 8080  "signal-cli" 60  || true  # Signal optional at startup
 
 echo "[gateway_v2_start] Dependencies ready, starting Nova Gateway v2..."
 
+cd "$HOME/.openclaw/scripts"
 exec /opt/homebrew/bin/python3 "$HOME/.openclaw/scripts/nova_gateway_v2.py"
