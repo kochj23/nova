@@ -43,18 +43,18 @@ IDENTITY_MD = Path.home() / ".openclaw/workspace/IDENTITY.md"
 SCHEDULER_YAML = Path.home() / ".openclaw/config/scheduler.yaml"
 
 EXPECTED_SERVICES = {
-    18789: {"name": "OpenClaw Gateway", "path": "/health"},
-    18790: {"name": "Memory Server", "path": "/health"},
-    11434: {"name": "Ollama", "path": "/"},
-    37400: {"name": "OneOnOne", "path": "/api/status"},
-    37400: {"name": "NovaControl", "path": "/api/status"},
+    18792: {"name": "Nova Gateway v2", "path": "/health", "host": "127.0.0.1"},
+    18790: {"name": "Memory Server", "path": "/health", "host": "192.168.1.6"},
+    11434: {"name": "Ollama", "path": "/", "host": "192.168.1.6"},
+    37400: {"name": "NovaControl", "path": "/api/status", "host": "127.0.0.1"},
+    37480: {"name": "Chatroom", "path": "/health", "host": "192.168.1.6"},
 }
 
 EXPECTED_PROCESSES = [
     {"name": "Scheduler", "match": "nova_scheduler.py"},
-    {"name": "Gateway", "match": "openclaw-gateway"},
-    {"name": "Slack Preprocessor", "match": "nova_slack_preprocessor.py"},
+    {"name": "Gateway v2", "match": "nova_gateway_v2.py"},
     {"name": "Memory Server", "match": "memory_server.py"},
+    {"name": "Chatroom", "match": "nova_chatroom.py"},
 ]
 
 
@@ -98,6 +98,7 @@ def _scripts_in_scheduler():
         return {}
     text = SCHEDULER_YAML.read_text()
     refs = {}
+    disabled_tasks = set()
     current_task = None
     for line in text.split("\n"):
         stripped = line.strip()
@@ -108,14 +109,19 @@ def _scripts_in_scheduler():
         if "script:" in stripped and current_task:
             script_name = stripped.split("script:")[1].strip()
             refs[current_task] = script_name
+        if "enabled:" in stripped and "false" in stripped.lower() and current_task:
+            disabled_tasks.add(current_task)
+    # Remove disabled tasks
+    for t in disabled_tasks:
+        refs.pop(t, None)
     return refs
 
 
-def _port_listening(port):
+def _port_listening(port, host="127.0.0.1"):
     try:
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             s.settimeout(2)
-            s.connect(("127.0.0.1", port))
+            s.connect((host, port))
             return True
     except (ConnectionRefusedError, TimeoutError, OSError):
         return False
@@ -180,7 +186,8 @@ def audit_services():
 
     for port, svc in sorted(EXPECTED_SERVICES.items()):
         name = svc["name"]
-        if _port_listening(port):
+        host = svc.get("host", "127.0.0.1")
+        if _port_listening(port, host):
             ok.append(f"{name} (:{port})")
         else:
             issues.append(f"{name} (:{port}) is not listening")
