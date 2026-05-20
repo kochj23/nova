@@ -175,15 +175,96 @@ async def close_browser(pw, context):
 
 # ── Fetch (rendered content) ─────────────────────────────────────────────────
 
+def _html_to_text(html: str) -> str:
+    """Basic HTML to text conversion without external dependencies."""
+    import re
+    # Remove script and style blocks
+    text = re.sub(r"<script[^>]*>.*?</script>", "", html, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    # Remove nav, header, footer boilerplate
+    text = re.sub(r"<(nav|header|footer)[^>]*>.*?</\1>", "", text, flags=re.DOTALL | re.IGNORECASE)
+    # Convert common block elements to newlines
+    text = re.sub(r"<(br|hr|/p|/div|/h[1-6]|/li|/tr)[^>]*>", "\n", text, flags=re.IGNORECASE)
+    # Remove all remaining tags
+    text = re.sub(r"<[^>]+>", " ", text)
+    # Decode common HTML entities
+    text = text.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+    text = text.replace("&quot;", '"').replace("&#39;", "'").replace("&nbsp;", " ")
+    text = re.sub(r"&#(\d+);", lambda m: chr(int(m.group(1))), text)
+    # Collapse whitespace
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
+def _extract_title(html: str) -> str:
+    """Extract <title> from HTML."""
+    import re
+    m = re.search(r"<title[^>]*>(.*?)</title>", html, re.IGNORECASE | re.DOTALL)
+    return m.group(1).strip() if m else ""
+
+
+def _fetch_simple_sync(url: str, timeout: int = 15) -> dict:
+    """Synchronous HTTP fetch — no JS rendering, just HTML → text."""
+    import urllib.request
+    import urllib.error
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            html = resp.read().decode("utf-8", errors="replace")
+            title = _extract_title(html)
+            text = _html_to_text(html)
+            return {
+                "url": url,
+                "title": title,
+                "text": text[:10000],
+                "html_length": len(html),
+                "text_length": len(text),
+                "method": "simple_http",
+            }
+    except urllib.error.HTTPError as e:
+        return {"url": url, "error": f"HTTP {e.code}: {e.reason}"}
+    except Exception as e:
+        return {"url": url, "error": f"fetch failed: {e}"}
+
+
+async def _fetch_simple(url: str, timeout: int = 15) -> dict:
+    """Async wrapper for simple HTTP fetch (runs in thread to avoid event loop issues)."""
+    return await asyncio.to_thread(_fetch_simple_sync, url, timeout)
+
+
+def _playwright_available() -> bool:
+    """Check if Playwright Chromium binary exists without starting the async runtime."""
+    chromium_path = Path.home() / "Library/Caches/ms-playwright"
+    if not chromium_path.exists():
+        return False
+    # Check for any chromium binary
+    for p in chromium_path.rglob("chrome-headless-shell"):
+        if p.is_file():
+            return True
+    for p in chromium_path.rglob("chromium"):
+        if p.is_file():
+            return True
+    return False
+
+
 async def fetch_rendered(url, wait_for=None, timeout=DEFAULT_TIMEOUT):
-    """Fetch a URL with full JS rendering. Returns page text content."""
-    pw, ctx, page = await create_browser()
+    """Fetch a URL with full JS rendering. Falls back to simple HTTP if Playwright fails."""
+    if not _playwright_available():
+        log("Playwright browser not installed, using simple HTTP fetch")
+        return _fetch_simple_sync(url, timeout=min(timeout // 1000, 30))
+
+    try:
+        pw, ctx, page = await create_browser()
+    except Exception as e:
+        log(f"Playwright launch failed ({e}), falling back to simple HTTP fetch")
+        return _fetch_simple_sync(url, timeout=min(timeout // 1000, 30))
+
     try:
         await page.goto(url, timeout=timeout * 1000, wait_until="networkidle")
         if wait_for:
             await page.wait_for_selector(wait_for, timeout=10000)
 
-        # Get the full rendered text
         content = await page.content()
         text = await page.inner_text("body")
         title = await page.title()
@@ -194,9 +275,11 @@ async def fetch_rendered(url, wait_for=None, timeout=DEFAULT_TIMEOUT):
             "text": text[:10000],
             "html_length": len(content),
             "text_length": len(text),
+            "method": "playwright",
         }
     except Exception as e:
-        return {"url": url, "error": str(e)}
+        log(f"Playwright fetch failed ({e}), trying simple HTTP fallback")
+        return _fetch_simple_sync(url, timeout=min(timeout // 1000, 30))
     finally:
         await close_browser(pw, ctx)
 
@@ -511,7 +594,12 @@ if __name__ == "__main__":
     timeout = args.timeout
 
     if args.fetch:
-        result = run_async(fetch_rendered(args.fetch, wait_for=args.selector, timeout=timeout))
+        # Skip asyncio entirely if Playwright isn't available (avoids event loop socket issues)
+        if not _playwright_available():
+            log("Playwright browser not installed, using simple HTTP fetch")
+            result = _fetch_simple_sync(args.fetch, timeout=timeout)
+        else:
+            result = run_async(fetch_rendered(args.fetch, wait_for=args.selector, timeout=timeout))
         if not args.json:
             if "error" in result:
                 print(f"Error: {result['error']}")
