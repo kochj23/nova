@@ -1,11 +1,12 @@
 import asyncio
 import datetime as _dt
+import hashlib
 import json as _json
 import os
 import re
-import psycopg2
 import subprocess
 import time
+import uuid
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,16 +16,18 @@ import asyncpg
 import psutil
 import redis.asyncio as aioredis
 import uvicorn
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 SCHEDULER_BASE = "http://192.168.1.6:37460"
-GATEWAY_HEALTH = "http://127.0.0.1:18789/health"
+GATEWAY_HEALTH = "http://127.0.0.1:18792/health"
 OLLAMA_PS = "http://192.168.1.6:11434/api/ps"
 REDIS_URL = "redis://192.168.1.6:6379"
 OPS_PG_DSN = "postgresql://192.168.1.6/nova_ops"
-SESSIONS_JSON = Path.home() / ".openclaw" / "agents" / "main" / "sessions" / "sessions.json"
+SESSIONS_JSON_ARCHIVED = Path.home() / ".openclaw" / "agents" / "_archived_sessions" / "main_sessions" / "sessions.json"
+SESSIONS_JSON_ORIGINAL = Path.home() / ".openclaw" / "agents" / "main" / "sessions" / "sessions.json"
+SESSIONS_JSON = SESSIONS_JSON_ARCHIVED if SESSIONS_JSON_ARCHIVED.exists() else SESSIONS_JSON_ORIGINAL
 PG_DB = "nova_memories"
 BACKUP_LOG = Path.home() / ".openclaw" / "logs" / "nova_pg_backup.log"
 PROTECT_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "protect_monitor_state.json"
@@ -56,7 +59,6 @@ SERVICE_PORTS = {
 POLL_INTERVAL = 2.5
 LATENCY_HISTORY_SIZE = 120  # ~5 min at 2.5s intervals
 TASK_THROUGHPUT_HOURS = 24
-HISTORY_PG = "dbname=nova_ops"
 
 current_state: dict = {}
 connected_clients: set[WebSocket] = set()
@@ -138,20 +140,17 @@ async def lifespan(app: FastAPI):
     app.state.http_session = aiohttp.ClientSession()
     app.state.redis = aioredis.from_url(REDIS_URL, decode_responses=False)
 
-    # --- History DB init (PostgreSQL nova_ops) ---
-    db = psycopg2.connect(HISTORY_PG)
-    db.autocommit = False
-    app.state.history_db = db
+    # --- History DB init (asyncpg for async-safe startup) ---
+    history_pool = await asyncpg.create_pool(OPS_PG_DSN, min_size=2, max_size=5)
+    app.state.history_pool = history_pool
 
-    # Cleanup rows older than 30 days
-    cur = db.cursor()
+    # Cleanup rows older than 30 days (async)
     cutoff = time.time() - (30 * 86400)
-    for tbl in ("dashboard_snapshots", "dashboard_disk_history", "dashboard_latency_history", "dashboard_memory_count_history"):
-        cur.execute(f"DELETE FROM {tbl} WHERE ts < %s", (cutoff,))
-    cost_cutoff_30d = (_dt.datetime.now() - _dt.timedelta(days=30)).strftime("%Y-%m-%d")
-    cur.execute("DELETE FROM dashboard_cost_history WHERE date < %s", (cost_cutoff_30d,))
-    db.commit()
-    cur.close()
+    async with history_pool.acquire() as conn:
+        for tbl in ("dashboard_snapshots", "dashboard_disk_history", "dashboard_latency_history", "dashboard_memory_count_history"):
+            await conn.execute(f"DELETE FROM {tbl} WHERE ts < $1", cutoff)
+        cost_cutoff_30d = (_dt.datetime.now() - _dt.timedelta(days=30)).strftime("%Y-%m-%d")
+        await conn.execute("DELETE FROM dashboard_cost_history WHERE date < $1", cost_cutoff_30d)
 
     # --- Load UniFi API key from Keychain ---
     try:
@@ -163,12 +162,66 @@ async def lifespan(app: FastAPI):
     except Exception:
         _unifi_api_key = None
 
+    # --- Enterprise: Create tables for incidents, SLA, alerts, capacity, RBAC ---
+    async with history_pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS incidents (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                title TEXT NOT NULL,
+                root_cause TEXT,
+                status TEXT DEFAULT 'open',
+                severity TEXT DEFAULT 'warning',
+                started_at TIMESTAMPTZ DEFAULT now(),
+                resolved_at TIMESTAMPTZ,
+                affected_services TEXT[] DEFAULT '{}',
+                events JSONB DEFAULT '[]'
+            );
+            CREATE TABLE IF NOT EXISTS alert_rules (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                name TEXT NOT NULL,
+                metric TEXT NOT NULL,
+                condition TEXT NOT NULL DEFAULT 'gt',
+                threshold DOUBLE PRECISION NOT NULL,
+                window_minutes INTEGER DEFAULT 60,
+                severity TEXT DEFAULT 'warning',
+                enabled BOOLEAN DEFAULT true,
+                slack_notify BOOLEAN DEFAULT true,
+                created_at TIMESTAMPTZ DEFAULT now(),
+                last_triggered_at TIMESTAMPTZ
+            );
+            CREATE TABLE IF NOT EXISTS dashboard_users (
+                id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL,
+                role TEXT DEFAULT 'viewer',
+                created_at TIMESTAMPTZ DEFAULT now(),
+                last_login TIMESTAMPTZ
+            );
+            CREATE TABLE IF NOT EXISTS audit_log (
+                id BIGSERIAL PRIMARY KEY,
+                user_id UUID,
+                username TEXT,
+                action TEXT NOT NULL,
+                detail JSONB,
+                ts TIMESTAMPTZ DEFAULT now()
+            );
+            CREATE TABLE IF NOT EXISTS sla_snapshots (
+                id BIGSERIAL PRIMARY KEY,
+                service TEXT NOT NULL,
+                ts TIMESTAMPTZ DEFAULT now(),
+                up BOOLEAN NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_sla_snapshots_service_ts ON sla_snapshots(service, ts);
+            CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
+            CREATE INDEX IF NOT EXISTS idx_audit_log_ts ON audit_log(ts);
+        """)
+
     poll_task = asyncio.create_task(poll_loop())
     yield
     poll_task.cancel()
     await app.state.http_session.close()
     await app.state.redis.close()
-    app.state.history_db.close()
+    await app.state.history_pool.close()
 
 
 app = FastAPI(title="Nova Control", lifespan=lifespan)
@@ -283,7 +336,10 @@ async def service_detail(service: str):
         elif service == "nmap":
             sched = current_state.get("scheduler", {})
             nmap_task = sched.get("tasks", {}).get("weekly_nmap", {})
-            return JSONResponse(nmap_task)
+            if nmap_task:
+                return JSONResponse(nmap_task)
+            # Fallback to NovaControl-sourced nmap data
+            return JSONResponse(current_state.get("nmap", {"status": "no_data"}))
         elif service == "traffic":
             return JSONResponse(current_state.get("traffic_flow", {}))
         else:
@@ -543,6 +599,8 @@ async def _detail_memory():
 
 
 async def _detail_model_usage():
+    if not SESSIONS_JSON.exists():
+        return {"sessions": [], "summary": {"total_sessions": 0, "total_cost": 0}}
     data = _json.loads(SESSIONS_JSON.read_text())
     sessions = []
     for key, val in data.items():
@@ -638,6 +696,8 @@ async def _detail_channel(channel):
 
 
 async def _detail_openrouter():
+    if not SESSIONS_JSON.exists():
+        return {"provider": "openrouter", "total_sessions": 0, "total_input_tokens": 0, "total_output_tokens": 0, "total_cost_usd": 0, "sessions": []}
     data = _json.loads(SESSIONS_JSON.read_text())
     sessions = []
     total_in = 0
@@ -947,21 +1007,46 @@ async def collect_gateway(session: aiohttp.ClientSession) -> dict:
         ws_reachable = True
         try:
             reader, writer = await asyncio.wait_for(
-                asyncio.open_connection("127.0.0.1", 18789), timeout=1.0
+                asyncio.open_connection("127.0.0.1", 18792), timeout=1.0
             )
             writer.close()
             await writer.wait_closed()
         except Exception:
             ws_reachable = False
 
+        # Collect per-channel message counts from gateway_sessions + gateway_query_log
+        channels = {}
+        try:
+            conn = await asyncpg.connect(OPS_PG_DSN)
+            try:
+                rows = await conn.fetch(
+                    """SELECT gs.channel, COUNT(*) as cnt
+                       FROM gateway_query_log gql
+                       JOIN gateway_sessions gs ON gql.session_id = gs.session_id
+                       WHERE gql.created_at > NOW() - INTERVAL '24 hours'
+                       GROUP BY gs.channel""")
+                for r in rows:
+                    ch = r["channel"] or "unknown"
+                    channels[ch] = r["cnt"]
+            finally:
+                await conn.close()
+        except Exception:
+            pass
+
+        gw_status = "live" if data.get("ok") else ("degraded" if data.get("degraded") else "down")
         return {
             "status": "ok",
             "ok": data.get("ok", False),
-            "gateway_status": data.get("status", "unknown"),
+            "gateway_status": gw_status,
             "ws_reachable": ws_reachable,
+            "channels": channels,
+            "version": data.get("version"),
+            "backends": data.get("backends", {}),
+            "sessions": data.get("sessions", 0),
+            "uptime_s": data.get("uptime_s", 0),
         }
     except Exception as e:
-        return {"status": "error", "ok": False, "gateway_status": "down", "ws_reachable": False, "error": str(e)}
+        return {"status": "error", "ok": False, "gateway_status": "down", "ws_reachable": False, "error": str(e), "channels": {}}
 
 
 async def collect_task_history() -> dict:
@@ -1240,6 +1325,8 @@ async def collect_model_usage() -> dict:
         return _model_usage_cache
     try:
         import json as _json
+        if not SESSIONS_JSON.exists():
+            return _model_usage_cache or {"status": "no_data", "by_provider": {}, "by_model": {}, "total_sessions": 0, "total_cost_usd": 0, "total_tokens": 0}
         data = _json.loads(SESSIONS_JSON.read_text())
 
         by_provider: dict = {}
@@ -1306,9 +1393,9 @@ async def collect_gateway_query_log() -> dict:
                    FROM gateway_query_log GROUP BY backend_used, model_used""")
 
             last_hour = await conn.fetchval(
-                "SELECT COUNT(*) FROM gateway_query_log WHERE timestamp > NOW() - INTERVAL '1 hour'") or 0
+                "SELECT COUNT(*) FROM gateway_query_log WHERE created_at > NOW() - INTERVAL '1 hour'") or 0
             last_5m = await conn.fetchval(
-                "SELECT COUNT(*) FROM gateway_query_log WHERE timestamp > NOW() - INTERVAL '5 minutes'") or 0
+                "SELECT COUNT(*) FROM gateway_query_log WHERE created_at > NOW() - INTERVAL '5 minutes'") or 0
         finally:
             await conn.close()
 
@@ -1442,62 +1529,59 @@ def collect_traffic_flow(scheduler_data, redis_data, task_history_data, services
 # --- History Writer ---
 
 async def write_history_snapshot(state: dict):
-    """Write a snapshot of current state to the history DB. Non-blocking."""
+    """Write a snapshot of current state to the history DB. Non-blocking, fully async."""
     try:
-        db = app.state.history_db
-        cur = db.cursor()
+        pool = app.state.history_pool
         now = time.time()
+        async with pool.acquire() as conn:
+            # System snapshot
+            sys_data = state.get("system", {})
+            mem = sys_data.get("memory", {})
+            await conn.execute(
+                "INSERT INTO dashboard_snapshots (ts, cpu_percent, memory_percent, memory_used_gb, poll_duration_ms) VALUES ($1, $2, $3, $4, $5)",
+                now, sys_data.get("cpu_percent"), mem.get("percent"), mem.get("used_gb"), state.get("poll_duration_ms"))
 
-        # System snapshot
-        sys = state.get("system", {})
-        mem = sys.get("memory", {})
-        cur.execute(
-            "INSERT INTO dashboard_snapshots (ts, cpu_percent, memory_percent, memory_used_gb, poll_duration_ms) VALUES (%s, %s, %s, %s, %s)",
-            (now, sys.get("cpu_percent"), mem.get("percent"), mem.get("used_gb"), state.get("poll_duration_ms")))
+            # Disk history
+            disks = sys_data.get("disks", {})
+            for mount, info in disks.items():
+                await conn.execute(
+                    "INSERT INTO dashboard_disk_history (ts, mount, free_gb, percent) VALUES ($1, $2, $3, $4)",
+                    now, mount, info.get("free_gb"), info.get("percent"))
 
-        # Disk history
-        disks = sys.get("disks", {})
-        for mount, info in disks.items():
-            cur.execute(
-                "INSERT INTO dashboard_disk_history (ts, mount, free_gb, percent) VALUES (%s, %s, %s, %s)",
-                (now, mount, info.get("free_gb"), info.get("percent")))
+            # Service latencies + SLA snapshots
+            services = state.get("services", {})
+            for svc_name, svc_info in services.items():
+                await conn.execute(
+                    "INSERT INTO dashboard_latency_history (ts, service, latency_ms, status) VALUES ($1, $2, $3, $4)",
+                    now, svc_name, svc_info.get("latency_ms"), svc_info.get("status"))
+                # SLA tracking
+                await conn.execute(
+                    "INSERT INTO sla_snapshots (service, up) VALUES ($1, $2)",
+                    svc_name, svc_info.get("status") == "up")
 
-        # Service latencies
-        services = state.get("services", {})
-        for svc_name, svc_info in services.items():
-            cur.execute(
-                "INSERT INTO dashboard_latency_history (ts, service, latency_ms, status) VALUES (%s, %s, %s, %s)",
-                (now, svc_name, svc_info.get("latency_ms"), svc_info.get("status")))
+            # Memory count
+            pg = state.get("postgresql", {})
+            if pg.get("total_rows"):
+                await conn.execute(
+                    "INSERT INTO dashboard_memory_count_history (ts, total_count) VALUES ($1, $2)",
+                    now, pg["total_rows"])
 
-        # Memory count
-        pg = state.get("postgresql", {})
-        if pg.get("total_rows"):
-            cur.execute(
-                "INSERT INTO dashboard_memory_count_history (ts, total_count) VALUES (%s, %s)",
-                (now, pg["total_rows"]))
-
-        # Cost history (daily upsert per provider)
-        model_usage = state.get("model_usage", {})
-        today = time.strftime("%Y-%m-%d")
-        for prov, pdata in model_usage.get("by_provider", {}).items():
-            cur.execute(
-                """INSERT INTO dashboard_cost_history (date, provider, total_cost_usd, input_tokens, output_tokens, session_count)
-                   VALUES (%s, %s, %s, %s, %s, %s)
-                   ON CONFLICT(date, provider) DO UPDATE SET
-                       total_cost_usd = excluded.total_cost_usd,
-                       input_tokens = excluded.input_tokens,
-                       output_tokens = excluded.output_tokens,
-                       session_count = excluded.session_count""",
-                (today, prov, pdata.get("cost", 0), pdata.get("input_tokens", 0),
-                 pdata.get("output_tokens", 0), pdata.get("sessions", 0)))
-
-        db.commit()
-        cur.close()
+            # Cost history (daily upsert per provider)
+            model_usage = state.get("model_usage", {})
+            today = time.strftime("%Y-%m-%d")
+            for prov, pdata in model_usage.get("by_provider", {}).items():
+                await conn.execute(
+                    """INSERT INTO dashboard_cost_history (date, provider, total_cost_usd, input_tokens, output_tokens, session_count)
+                       VALUES ($1, $2, $3, $4, $5, $6)
+                       ON CONFLICT(date, provider) DO UPDATE SET
+                           total_cost_usd = excluded.total_cost_usd,
+                           input_tokens = excluded.input_tokens,
+                           output_tokens = excluded.output_tokens,
+                           session_count = excluded.session_count""",
+                    today, prov, pdata.get("cost", 0), pdata.get("input_tokens", 0),
+                    pdata.get("output_tokens", 0), pdata.get("sessions", 0))
     except Exception:
-        try:
-            db.rollback()
-        except Exception:
-            pass  # Non-critical — never block the poll loop
+        pass  # Non-critical — never block the poll loop
 
 
 # --- Alert Evaluator ---
@@ -1850,18 +1934,20 @@ async def journal_stats():
         return {"error": str(e)}
 
 
-@app.post("/api/journal/poll")
+@app.api_route("/api/journal/poll", methods=["POST", "GET"])
 async def journal_poll_now():
-    """Trigger an immediate journal stats poll."""
+    """Trigger an immediate journal stats poll. Accepts both POST and GET to avoid 405."""
     from pathlib import Path as _P
-    script = str(_P.home() / ".openclaw/scripts/nova_journal_stats_poller.py")
+    script = _P.home() / ".openclaw/scripts/nova_journal_stats_poller.py"
+    if not script.exists():
+        return JSONResponse({"error": "Poller script not found", "path": str(script)}, status_code=404)
     proc = await asyncio.create_subprocess_exec(
-        "python3", script,
+        "python3", str(script),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
     asyncio.create_task(proc.wait())
-    return {"queued": True}
+    return JSONResponse({"queued": True})
 
 
 @app.get("/bb")
@@ -1881,16 +1967,30 @@ async def bb_health():
         return {"error": str(e), "big_brother_up": False}
 
 
-@app.post("/api/bb/force-check")
+@app.api_route("/api/bb/force-check", methods=["POST", "GET"])
 async def bb_force_check():
-    """Trigger an immediate Big Brother sweep."""
+    """Trigger an immediate Big Brother sweep. Tries POST then falls back to GET."""
     import urllib.request as _ur
+    # Try POST first
     try:
         req = _ur.Request(f"{BB_API}/bb/force-check", method="POST", data=b"")
         with _ur.urlopen(req, timeout=5) as r:
             return _json.loads(r.read())
+    except Exception:
+        pass
+    # Fallback to GET (some BB versions only expose GET)
+    try:
+        with _ur.urlopen(f"{BB_API}/bb/force-check", timeout=5) as r:
+            return _json.loads(r.read())
+    except Exception:
+        pass
+    # Last resort: trigger via /bb/sweep
+    try:
+        req = _ur.Request(f"{BB_API}/bb/sweep", method="POST", data=b"")
+        with _ur.urlopen(req, timeout=5) as r:
+            return _json.loads(r.read())
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": str(e), "note": "BB may not support force-check. Tried POST /bb/force-check, GET /bb/force-check, POST /bb/sweep"}
 
 
 @app.get("/api/bb/events")
@@ -2062,68 +2162,60 @@ async def history_endpoint(metric: str, range: str = "24h"):
     downsample = seconds > 3600
 
     try:
-        db = app.state.history_db
-        cur = db.cursor()
-        if metric == "cpu":
-            cur.execute(
-                "SELECT ts, cpu_percent FROM dashboard_snapshots WHERE ts > %s ORDER BY ts", (cutoff,))
-            rows = cur.fetchall()
-            cur.close()
-            if downsample and rows:
-                return JSONResponse(_downsample_single(rows, "cpu_percent"))
-            return JSONResponse([{"ts": r[0], "cpu_percent": r[1]} for r in rows])
+        pool = app.state.history_pool
+        async with pool.acquire() as conn:
+            if metric == "cpu":
+                rows = await conn.fetch(
+                    "SELECT ts, cpu_percent FROM dashboard_snapshots WHERE ts > $1 ORDER BY ts", cutoff)
+                data = [(r["ts"], r["cpu_percent"]) for r in rows]
+                if downsample and data:
+                    return JSONResponse(_downsample_single(data, "cpu_percent"))
+                return JSONResponse([{"ts": r[0], "cpu_percent": r[1]} for r in data])
 
-        elif metric == "memory":
-            cur.execute(
-                "SELECT ts, memory_percent, memory_used_gb FROM dashboard_snapshots WHERE ts > %s ORDER BY ts", (cutoff,))
-            rows = cur.fetchall()
-            cur.close()
-            if downsample and rows:
-                return JSONResponse(_downsample_memory(rows))
-            return JSONResponse([{"ts": r[0], "memory_percent": r[1], "memory_used_gb": r[2]} for r in rows])
+            elif metric == "memory":
+                rows = await conn.fetch(
+                    "SELECT ts, memory_percent, memory_used_gb FROM dashboard_snapshots WHERE ts > $1 ORDER BY ts", cutoff)
+                data = [(r["ts"], r["memory_percent"], r["memory_used_gb"]) for r in rows]
+                if downsample and data:
+                    return JSONResponse(_downsample_memory(data))
+                return JSONResponse([{"ts": r[0], "memory_percent": r[1], "memory_used_gb": r[2]} for r in data])
 
-        elif metric == "disk":
-            cur.execute(
-                "SELECT ts, mount, free_gb, percent FROM dashboard_disk_history WHERE ts > %s ORDER BY ts", (cutoff,))
-            rows = cur.fetchall()
-            cur.close()
-            if downsample and rows:
-                return JSONResponse(_downsample_disk(rows))
-            return JSONResponse([{"ts": r[0], "mount": r[1], "free_gb": r[2], "percent": r[3]} for r in rows])
+            elif metric == "disk":
+                rows = await conn.fetch(
+                    "SELECT ts, mount, free_gb, percent FROM dashboard_disk_history WHERE ts > $1 ORDER BY ts", cutoff)
+                data = [(r["ts"], r["mount"], r["free_gb"], r["percent"]) for r in rows]
+                if downsample and data:
+                    return JSONResponse(_downsample_disk(data))
+                return JSONResponse([{"ts": r[0], "mount": r[1], "free_gb": r[2], "percent": r[3]} for r in data])
 
-        elif metric == "latency":
-            cur.execute(
-                "SELECT ts, service, latency_ms, status FROM dashboard_latency_history WHERE ts > %s ORDER BY ts", (cutoff,))
-            rows = cur.fetchall()
-            cur.close()
-            if downsample and rows:
-                return JSONResponse(_downsample_latency(rows))
-            return JSONResponse([{"ts": r[0], "service": r[1], "latency_ms": r[2], "status": r[3]} for r in rows])
+            elif metric == "latency":
+                rows = await conn.fetch(
+                    "SELECT ts, service, latency_ms, status FROM dashboard_latency_history WHERE ts > $1 ORDER BY ts", cutoff)
+                data = [(r["ts"], r["service"], r["latency_ms"], r["status"]) for r in rows]
+                if downsample and data:
+                    return JSONResponse(_downsample_latency(data))
+                return JSONResponse([{"ts": r[0], "service": r[1], "latency_ms": r[2], "status": r[3]} for r in data])
 
-        elif metric == "memories":
-            cur.execute(
-                "SELECT ts, total_count FROM dashboard_memory_count_history WHERE ts > %s ORDER BY ts", (cutoff,))
-            rows = cur.fetchall()
-            cur.close()
-            if downsample and rows:
-                return JSONResponse(_downsample_single(rows, "total_count"))
-            return JSONResponse([{"ts": r[0], "total_count": r[1]} for r in rows])
+            elif metric == "memories":
+                rows = await conn.fetch(
+                    "SELECT ts, total_count FROM dashboard_memory_count_history WHERE ts > $1 ORDER BY ts", cutoff)
+                data = [(r["ts"], r["total_count"]) for r in rows]
+                if downsample and data:
+                    return JSONResponse(_downsample_single(data, "total_count"))
+                return JSONResponse([{"ts": r[0], "total_count": r[1]} for r in data])
 
-        elif metric == "costs":
-            cost_cutoff = (_dt.datetime.now() - _dt.timedelta(seconds=seconds)).strftime("%Y-%m-%d")
-            cur.execute(
-                "SELECT date, provider, total_cost_usd, input_tokens, output_tokens, session_count FROM dashboard_cost_history WHERE date >= %s ORDER BY date",
-                (cost_cutoff,))
-            rows = cur.fetchall()
-            cur.close()
-            return JSONResponse([{
-                "date": r[0], "provider": r[1], "total_cost_usd": r[2],
-                "input_tokens": r[3], "output_tokens": r[4], "session_count": r[5]
-            } for r in rows])
+            elif metric == "costs":
+                cost_cutoff = (_dt.datetime.now() - _dt.timedelta(seconds=seconds)).strftime("%Y-%m-%d")
+                rows = await conn.fetch(
+                    "SELECT date, provider, total_cost_usd, input_tokens, output_tokens, session_count FROM dashboard_cost_history WHERE date >= $1 ORDER BY date",
+                    cost_cutoff)
+                return JSONResponse([{
+                    "date": r["date"], "provider": r["provider"], "total_cost_usd": r["total_cost_usd"],
+                    "input_tokens": r["input_tokens"], "output_tokens": r["output_tokens"], "session_count": r["session_count"]
+                } for r in rows])
 
-        else:
-            cur.close()
-            return JSONResponse({"error": f"Unknown metric: {metric}"}, status_code=404)
+            else:
+                return JSONResponse({"error": f"Unknown metric: {metric}"}, status_code=404)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -2244,8 +2336,10 @@ async def collect_searxng_stats(session: aiohttp.ClientSession) -> dict:
             cat_name = cat[0] if isinstance(cat, list) and cat else "other"
             categories[cat_name] = categories.get(cat_name, 0) + 1
 
+        # If we got engine data successfully, status is "ok" regardless of service port check
+        effective_status = "ok" if (isinstance(enabled, list) and len(enabled) > 0) else svc_status
         result = {
-            "status": svc_status,
+            "status": effective_status,
             "engine_count": len(enabled) if isinstance(enabled, list) else 0,
             "total_engines": len(engines) if isinstance(engines, list) else 0,
             "categories": categories,
@@ -2268,10 +2362,21 @@ async def collect_backup_status() -> dict:
     if now - _backup_ts < 30:
         return _backup_cache
     try:
-        if not BACKUP_LOG.exists():
+        # Check primary and alternate log locations
+        backup_log_path = None
+        for candidate in [
+            BACKUP_LOG,
+            Path.home() / ".openclaw" / "workspace" / "logs" / "nova_pg_backup.log",
+            Path.home() / ".openclaw" / "scripts" / "logs" / "nova_pg_backup.log",
+        ]:
+            if candidate.exists():
+                backup_log_path = candidate
+                break
+
+        if backup_log_path is None:
             return {"status": "no_log", "last_backup": None, "success": False, "size": None, "lines": []}
 
-        with open(BACKUP_LOG, "r", errors="replace") as f:
+        with open(backup_log_path, "r", errors="replace") as f:
             all_lines = f.readlines()
             lines = [l.rstrip() for l in all_lines[-30:]]
 
@@ -2444,10 +2549,37 @@ async def collect_camera_activity() -> dict:
         return _camera_cache
     try:
         if not PROTECT_STATE.exists():
-            return {"status": "no_file", "cameras": [], "total": 0, "connected": 0, "disconnected": 0}
+            return {"status": "no_data", "cameras": [], "total": 0, "connected": 0, "disconnected": 0,
+                    "note": "protect_monitor_state.json not found"}
 
         data = _json.loads(PROTECT_STATE.read_text())
         cameras = data.get("cameras", []) if isinstance(data, dict) else []
+
+        # If file exists but cameras array is empty, check staleness and report no_data
+        if not cameras:
+            # Try to get camera count from Big Brother health API
+            bb_camera_info = {}
+            try:
+                import urllib.request as _ur
+                with _ur.urlopen("http://192.168.1.6:37461/bb/status", timeout=2) as _r:
+                    bb = _json.loads(_r.read())
+                # BB might report camera service status
+                bb_camera_info = {"bb_hint": "protect service tracked by Big Brother"}
+            except Exception:
+                pass
+            result = {
+                "status": "no_data",
+                "cameras": [],
+                "total": 0,
+                "connected": 0,
+                "disconnected": 0,
+                "note": "State file has 0 cameras — protect_monitor may need refresh",
+                **bb_camera_info,
+            }
+            _camera_cache = result
+            _camera_ts = now
+            return result
+
         connected = sum(1 for c in cameras if c.get("connected", False) or c.get("state", "") == "CONNECTED")
         disconnected = len(cameras) - connected
 
@@ -2475,29 +2607,56 @@ async def collect_homekit(session: aiohttp.ClientSession) -> dict:
     try:
         scenes = []
         accessories = []
+        source = ""
+
+        # Try Shortcuts proxy on port 37432 first (direct HomeKit access)
+        homekit_proxy = "http://127.0.0.1:37432"
         try:
-            async with session.get(f"{HOMEKIT_API}/api/homekit/scenes",
+            async with session.get(f"{homekit_proxy}/api/scenes",
                                    timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 scenes_resp = await resp.json()
                 scenes = scenes_resp.get("scenes", []) if isinstance(scenes_resp, dict) else scenes_resp
+                source = "ShortcutsProxy:37432"
         except Exception:
             pass
         try:
-            async with session.get(f"{HOMEKIT_API}/api/homekit/accessories",
+            async with session.get(f"{homekit_proxy}/api/accessories",
                                    timeout=aiohttp.ClientTimeout(total=5)) as resp:
                 acc_resp = await resp.json()
                 accessories = acc_resp.get("accessories", []) if isinstance(acc_resp, dict) else acc_resp
+                if not source:
+                    source = "ShortcutsProxy:37432"
         except Exception:
             pass
+
+        # Fall back to NovaControl on 37400 if proxy returned nothing
+        if not scenes and not accessories:
+            try:
+                async with session.get(f"{HOMEKIT_API}/api/homekit/scenes",
+                                       timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    scenes_resp = await resp.json()
+                    scenes = scenes_resp.get("scenes", []) if isinstance(scenes_resp, dict) else scenes_resp
+                    source = "NovaControl:37400"
+            except Exception:
+                pass
+            try:
+                async with session.get(f"{HOMEKIT_API}/api/homekit/accessories",
+                                       timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    acc_resp = await resp.json()
+                    accessories = acc_resp.get("accessories", []) if isinstance(acc_resp, dict) else acc_resp
+                    if not source:
+                        source = "NovaControl:37400"
+            except Exception:
+                pass
 
         accessory_count = len(accessories) if isinstance(accessories, list) else 0
 
         result = {
-            "status": "ok" if scenes or accessories else "unavailable",
+            "status": "ok" if scenes or accessories else "no_data",
             "scene_count": len(scenes) if isinstance(scenes, list) else 0,
             "accessory_count": accessory_count,
             "scenes": [{"name": s.get("name", "?"), "id": s.get("id", "")} for s in scenes[:20]] if isinstance(scenes, list) else [],
-            "source": "NovaControl:37400",
+            "source": source or "none",
         }
         _homekit_cache = result
         _homekit_ts = now
@@ -2509,7 +2668,7 @@ async def collect_homekit(session: aiohttp.ClientSession) -> dict:
 # --- New card collectors (12 cards) ---
 
 async def collect_app_watchdog() -> dict:
-    """Read the app watchdog state file for port health."""
+    """Read the app watchdog state file for port health, merged with NovaControl status."""
     global _app_watchdog_cache, _app_watchdog_ts
     now = time.time()
     if now - _app_watchdog_ts < 15:
@@ -2519,6 +2678,23 @@ async def collect_app_watchdog() -> dict:
             return {"status": "unavailable", "apps": []}
         data = _json.loads(APP_WATCHDOG_STATE.read_text())
         apps_raw = data.get("apps", {})
+
+        # Get NovaControl status to override port-check results for desktop apps
+        nc_status_map = {}  # port -> {"status": str, "summary": str}
+        try:
+            import urllib.request as _ur
+            with _ur.urlopen("http://127.0.0.1:37400/api/status", timeout=2) as _r:
+                nc_data = _json.loads(_r.read())
+            for svc in nc_data.get("services", []):
+                old_port = str(svc.get("oldPort", ""))
+                if old_port:
+                    nc_status_map[old_port] = {
+                        "status": svc.get("status", "unknown"),
+                        "summary": svc.get("summary", ""),
+                    }
+        except Exception:
+            pass
+
         apps = []
         for port_key, info in apps_raw.items():
             # Skip infra ports — they're already tracked elsewhere
@@ -2528,13 +2704,22 @@ async def collect_app_watchdog() -> dict:
             alive = info.get("alive", False)
             last_seen = info.get("last_seen", 0)
             uptime_s = now - last_seen if alive and last_seen > 0 else 0
+
+            # If NovaControl says the app is online, trust that over port check
+            nc_info = nc_status_map.get(port_key, {})
+            if nc_info.get("status") == "online" and not alive:
+                alive = True
+                # These are desktop apps that don't have persistent web servers
+                # NovaControl tracks them correctly via its own mechanism
+
             apps.append({
                 "name": name,
                 "port": port_key,
                 "alive": alive,
-                "info": info.get("info", ""),
+                "info": nc_info.get("summary") or info.get("info", ""),
                 "last_seen": last_seen,
                 "uptime_s": uptime_s,
+                "nc_status": nc_info.get("status", ""),
             })
         apps.sort(key=lambda a: int(a["port"]) if a["port"].isdigit() else 99999)
         up_count = sum(1 for a in apps if a["alive"])
@@ -2757,6 +2942,8 @@ async def collect_homebridge_status() -> dict:
 
 async def _detail_cost_tracker():
     """Detail for OpenRouter cost tracker card."""
+    if not SESSIONS_JSON.exists():
+        return {"today_cost": 0, "today_sessions": 0, "today_tokens": 0, "daily_history": []}
     data = _json.loads(SESSIONS_JSON.read_text())
     today_str = time.strftime("%Y-%m-%d")
     today_cost = 0.0
@@ -2880,6 +3067,1062 @@ async def _detail_token_counter():
     }
 
 
+# =============================================================================
+# ENTERPRISE FEATURES: Incidents, SLA, Alerts, Capacity, RBAC
+# =============================================================================
+
+# --- JWT / Auth helpers ---
+_JWT_SECRET = os.environ.get("NOVA_JWT_SECRET", "nova-control-default-secret-change-me")
+_JWT_EXPIRY = 86400  # 24 hours
+
+
+def _jwt_encode(payload: dict) -> str:
+    """Minimal JWT encoder (HS256). No external dependency."""
+    import base64 as _b64
+    import hmac
+    header = _b64.urlsafe_b64encode(b'{"alg":"HS256","typ":"JWT"}').rstrip(b'=').decode()
+    payload["exp"] = int(time.time()) + _JWT_EXPIRY
+    payload_enc = _b64.urlsafe_b64encode(_json.dumps(payload).encode()).rstrip(b'=').decode()
+    sig_input = f"{header}.{payload_enc}".encode()
+    sig = _b64.urlsafe_b64encode(hmac.new(_JWT_SECRET.encode(), sig_input, "sha256").digest()).rstrip(b'=').decode()
+    return f"{header}.{payload_enc}.{sig}"
+
+
+def _jwt_decode(token: str) -> dict | None:
+    """Minimal JWT decoder. Returns payload or None if invalid/expired."""
+    import base64 as _b64
+    import hmac
+    try:
+        parts = token.split(".")
+        if len(parts) != 3:
+            return None
+        sig_input = f"{parts[0]}.{parts[1]}".encode()
+        expected_sig = _b64.urlsafe_b64encode(hmac.new(_JWT_SECRET.encode(), sig_input, "sha256").digest()).rstrip(b'=').decode()
+        if not hmac.compare_digest(expected_sig, parts[2]):
+            return None
+        # Decode payload
+        payload_bytes = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        payload = _json.loads(_b64.urlsafe_b64decode(payload_bytes))
+        if payload.get("exp", 0) < time.time():
+            return None
+        return payload
+    except Exception:
+        return None
+
+
+async def _get_current_user(request: Request) -> dict | None:
+    """Extract user from Authorization header or cookie. Returns None if unauthenticated."""
+    token = None
+    auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer "):
+        token = auth[7:]
+    if not token:
+        token = request.cookies.get("nova_token")
+    if not token:
+        return None
+    return _jwt_decode(token)
+
+
+def _require_role(minimum_role: str):
+    """Dependency that checks user has at least the minimum role. Roles: viewer < operator < admin."""
+    role_order = {"viewer": 0, "operator": 1, "admin": 2}
+
+    async def check(request: Request):
+        user = await _get_current_user(request)
+        if not user:
+            raise HTTPException(status_code=401, detail="Authentication required")
+        user_level = role_order.get(user.get("role", "viewer"), 0)
+        required_level = role_order.get(minimum_role, 0)
+        if user_level < required_level:
+            raise HTTPException(status_code=403, detail=f"Requires {minimum_role} role")
+        return user
+    return check
+
+
+# --- Auth Routes ---
+
+@app.post("/api/auth/login")
+async def auth_login(request: Request):
+    """Authenticate user and return JWT token."""
+    body = await request.json()
+    username = body.get("username", "").strip()
+    password = body.get("password", "")
+    if not username or not password:
+        return JSONResponse({"error": "Username and password required"}, status_code=400)
+
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow("SELECT id, username, password_hash, role FROM dashboard_users WHERE username = $1", username)
+        if not row:
+            return JSONResponse({"error": "Invalid credentials"}, status_code=401)
+        pw_hash = hashlib.sha256((password + username).encode()).hexdigest()
+        if not row["password_hash"] == pw_hash:
+            return JSONResponse({"error": "Invalid credentials"}, status_code=401)
+        await conn.execute("UPDATE dashboard_users SET last_login = now() WHERE id = $1", row["id"])
+
+    token = _jwt_encode({"sub": str(row["id"]), "username": row["username"], "role": row["role"]})
+    return JSONResponse({"token": token, "username": row["username"], "role": row["role"]})
+
+
+@app.get("/api/auth/me")
+async def auth_me(request: Request):
+    """Return current user info from token."""
+    user = await _get_current_user(request)
+    if not user:
+        return JSONResponse({"authenticated": False})
+    return JSONResponse({"authenticated": True, "username": user.get("username"), "role": user.get("role")})
+
+
+# --- Admin Routes ---
+
+@app.get("/admin")
+async def admin_page():
+    return FileResponse(Path(__file__).parent / "static" / "admin.html")
+
+
+@app.get("/api/admin/users")
+async def admin_list_users(request: Request):
+    """List all dashboard users (admin only)."""
+    user = await _get_current_user(request)
+    if not user or user.get("role") != "admin":
+        return JSONResponse({"error": "Admin required"}, status_code=403)
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, username, role, created_at, last_login FROM dashboard_users ORDER BY created_at")
+    return JSONResponse([{
+        "id": str(r["id"]), "username": r["username"], "role": r["role"],
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        "last_login": r["last_login"].isoformat() if r["last_login"] else None,
+    } for r in rows])
+
+
+@app.post("/api/admin/users")
+async def admin_create_user(request: Request):
+    """Create a new dashboard user (admin only)."""
+    user = await _get_current_user(request)
+    if not user or user.get("role") != "admin":
+        return JSONResponse({"error": "Admin required"}, status_code=403)
+    body = await request.json()
+    username = body.get("username", "").strip()
+    password = body.get("password", "")
+    role = body.get("role", "viewer")
+    if not username or not password:
+        return JSONResponse({"error": "Username and password required"}, status_code=400)
+    if role not in ("viewer", "operator", "admin"):
+        return JSONResponse({"error": "Invalid role"}, status_code=400)
+    pw_hash = hashlib.sha256((password + username).encode()).hexdigest()
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        try:
+            await conn.execute("INSERT INTO dashboard_users (username, password_hash, role) VALUES ($1, $2, $3)",
+                               username, pw_hash, role)
+        except Exception as e:
+            return JSONResponse({"error": f"User creation failed: {e}"}, status_code=409)
+        # Audit log
+        await conn.execute("INSERT INTO audit_log (user_id, username, action, detail) VALUES ($1, $2, $3, $4)",
+                           uuid.UUID(user["sub"]) if user.get("sub") else None, user.get("username"),
+                           "create_user", _json.dumps({"target": username, "role": role}))
+    return JSONResponse({"ok": True, "username": username, "role": role})
+
+
+@app.delete("/api/admin/users/{user_id}")
+async def admin_delete_user(user_id: str, request: Request):
+    """Delete a dashboard user (admin only)."""
+    user = await _get_current_user(request)
+    if not user or user.get("role") != "admin":
+        return JSONResponse({"error": "Admin required"}, status_code=403)
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM dashboard_users WHERE id = $1", uuid.UUID(user_id))
+        await conn.execute("INSERT INTO audit_log (user_id, username, action, detail) VALUES ($1, $2, $3, $4)",
+                           uuid.UUID(user["sub"]) if user.get("sub") else None, user.get("username"),
+                           "delete_user", _json.dumps({"target_id": user_id}))
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/admin/audit")
+async def admin_audit_log(request: Request):
+    """View audit log (admin only)."""
+    user = await _get_current_user(request)
+    if not user or user.get("role") != "admin":
+        return JSONResponse({"error": "Admin required"}, status_code=403)
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT id, username, action, detail, ts FROM audit_log ORDER BY ts DESC LIMIT 100")
+    return JSONResponse([{
+        "id": r["id"], "username": r["username"], "action": r["action"],
+        "detail": _json.loads(r["detail"]) if r["detail"] else None,
+        "ts": r["ts"].isoformat() if r["ts"] else None,
+    } for r in rows])
+
+
+# --- Incident Routes ---
+
+@app.get("/incidents")
+async def incidents_page():
+    return FileResponse(Path(__file__).parent / "static" / "incidents.html")
+
+
+@app.get("/api/incidents")
+async def list_incidents(status: str = "all"):
+    """List all incidents, optionally filtered by status."""
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        if status == "all":
+            rows = await conn.fetch("SELECT * FROM incidents ORDER BY started_at DESC LIMIT 100")
+        else:
+            rows = await conn.fetch("SELECT * FROM incidents WHERE status = $1 ORDER BY started_at DESC LIMIT 100", status)
+    return JSONResponse([{
+        "id": str(r["id"]), "title": r["title"], "root_cause": r["root_cause"],
+        "status": r["status"], "severity": r["severity"],
+        "started_at": r["started_at"].isoformat() if r["started_at"] else None,
+        "resolved_at": r["resolved_at"].isoformat() if r["resolved_at"] else None,
+        "affected_services": r["affected_services"],
+        "events": _json.loads(r["events"]) if isinstance(r["events"], str) else r["events"],
+    } for r in rows])
+
+
+@app.post("/api/incidents")
+async def create_incident(request: Request):
+    """Create a new incident manually or via automation."""
+    body = await request.json()
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO incidents (title, root_cause, severity, affected_services, events)
+               VALUES ($1, $2, $3, $4, $5) RETURNING id, started_at""",
+            body.get("title", "Untitled Incident"),
+            body.get("root_cause"),
+            body.get("severity", "warning"),
+            body.get("affected_services", []),
+            _json.dumps(body.get("events", [])),
+        )
+    return JSONResponse({"id": str(row["id"]), "started_at": row["started_at"].isoformat()})
+
+
+@app.put("/api/incidents/{incident_id}")
+async def update_incident(incident_id: str, request: Request):
+    """Update incident status, root cause, etc."""
+    body = await request.json()
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        sets = []
+        vals = []
+        idx = 1
+        for field in ("title", "root_cause", "status", "severity"):
+            if field in body:
+                sets.append(f"{field} = ${idx}")
+                vals.append(body[field])
+                idx += 1
+        if body.get("status") == "resolved":
+            sets.append(f"resolved_at = ${idx}")
+            vals.append(_dt.datetime.now(_dt.timezone.utc))
+            idx += 1
+        if not sets:
+            return JSONResponse({"error": "No fields to update"}, status_code=400)
+        vals.append(uuid.UUID(incident_id))
+        await conn.execute(f"UPDATE incidents SET {', '.join(sets)} WHERE id = ${idx}", *vals)
+    return JSONResponse({"ok": True})
+
+
+# --- SLA Routes ---
+
+@app.get("/sla")
+async def sla_page():
+    return FileResponse(Path(__file__).parent / "static" / "sla.html")
+
+
+@app.get("/api/sla")
+async def sla_dashboard(days: int = 30):
+    """Compute rolling SLA uptime per service."""
+    pool = app.state.history_pool
+    cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=days)
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT service, up, ts FROM sla_snapshots WHERE ts > $1 ORDER BY service, ts", cutoff)
+
+    # Compute per-service uptime
+    services: dict[str, dict] = {}
+    for r in rows:
+        svc = r["service"]
+        if svc not in services:
+            services[svc] = {"total": 0, "up_count": 0, "calendar": {}}
+        services[svc]["total"] += 1
+        if r["up"]:
+            services[svc]["up_count"] += 1
+        # Calendar heatmap (daily)
+        day = r["ts"].strftime("%Y-%m-%d")
+        if day not in services[svc]["calendar"]:
+            services[svc]["calendar"][day] = {"total": 0, "up": 0}
+        services[svc]["calendar"][day]["total"] += 1
+        if r["up"]:
+            services[svc]["calendar"][day]["up"] += 1
+
+    result = []
+    for svc, data in sorted(services.items()):
+        uptime_pct = (data["up_count"] / max(1, data["total"])) * 100
+        # Error budget: assume 99.9% SLA target
+        target = 99.9
+        budget_total = (100 - target) / 100 * days * 24 * 60  # minutes of allowed downtime
+        downtime_minutes = ((data["total"] - data["up_count"]) / max(1, data["total"])) * days * 24 * 60
+        budget_remaining = max(0, budget_total - downtime_minutes)
+        # Calendar data
+        calendar = []
+        for day, counts in sorted(data["calendar"].items()):
+            pct = (counts["up"] / max(1, counts["total"])) * 100
+            calendar.append({"date": day, "uptime_pct": round(pct, 2)})
+        result.append({
+            "service": svc,
+            "uptime_pct": round(uptime_pct, 4),
+            "total_checks": data["total"],
+            "error_budget_minutes": round(budget_total, 1),
+            "budget_remaining_minutes": round(budget_remaining, 1),
+            "budget_burn_pct": round((1 - budget_remaining / max(0.01, budget_total)) * 100, 1),
+            "calendar": calendar,
+        })
+    return JSONResponse(result)
+
+
+# --- Alert Rules Routes ---
+
+@app.get("/alerts")
+async def alerts_page():
+    return FileResponse(Path(__file__).parent / "static" / "alerts.html")
+
+
+@app.get("/api/alerts/rules")
+async def list_alert_rules():
+    """List all alert rules."""
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("SELECT * FROM alert_rules ORDER BY created_at")
+    return JSONResponse([{
+        "id": str(r["id"]), "name": r["name"], "metric": r["metric"],
+        "condition": r["condition"], "threshold": r["threshold"],
+        "window_minutes": r["window_minutes"], "severity": r["severity"],
+        "enabled": r["enabled"], "slack_notify": r["slack_notify"],
+        "created_at": r["created_at"].isoformat() if r["created_at"] else None,
+        "last_triggered_at": r["last_triggered_at"].isoformat() if r["last_triggered_at"] else None,
+    } for r in rows])
+
+
+@app.post("/api/alerts/rules")
+async def create_alert_rule(request: Request):
+    """Create a new alert rule."""
+    body = await request.json()
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            """INSERT INTO alert_rules (name, metric, condition, threshold, window_minutes, severity, slack_notify)
+               VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id""",
+            body.get("name", "Unnamed Rule"),
+            body.get("metric", "cpu_percent"),
+            body.get("condition", "gt"),
+            float(body.get("threshold", 90)),
+            int(body.get("window_minutes", 60)),
+            body.get("severity", "warning"),
+            body.get("slack_notify", True),
+        )
+    return JSONResponse({"id": str(row["id"]), "ok": True})
+
+
+@app.put("/api/alerts/rules/{rule_id}")
+async def update_alert_rule(rule_id: str, request: Request):
+    """Update an alert rule."""
+    body = await request.json()
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        sets = []
+        vals = []
+        idx = 1
+        for field in ("name", "metric", "condition", "severity", "enabled", "slack_notify"):
+            if field in body:
+                sets.append(f"{field} = ${idx}")
+                vals.append(body[field])
+                idx += 1
+        if "threshold" in body:
+            sets.append(f"threshold = ${idx}")
+            vals.append(float(body["threshold"]))
+            idx += 1
+        if "window_minutes" in body:
+            sets.append(f"window_minutes = ${idx}")
+            vals.append(int(body["window_minutes"]))
+            idx += 1
+        if not sets:
+            return JSONResponse({"error": "No fields to update"}, status_code=400)
+        vals.append(uuid.UUID(rule_id))
+        await conn.execute(f"UPDATE alert_rules SET {', '.join(sets)} WHERE id = ${idx}", *vals)
+    return JSONResponse({"ok": True})
+
+
+@app.delete("/api/alerts/rules/{rule_id}")
+async def delete_alert_rule(rule_id: str):
+    """Delete an alert rule."""
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        await conn.execute("DELETE FROM alert_rules WHERE id = $1", uuid.UUID(rule_id))
+    return JSONResponse({"ok": True})
+
+
+@app.get("/api/alerts/history")
+async def alert_history():
+    """Get recent triggered alerts from audit_log."""
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT id, username, action, detail, ts FROM audit_log WHERE action = 'alert_triggered' ORDER BY ts DESC LIMIT 50")
+    return JSONResponse([{
+        "id": r["id"], "action": r["action"],
+        "detail": _json.loads(r["detail"]) if r["detail"] else None,
+        "ts": r["ts"].isoformat() if r["ts"] else None,
+    } for r in rows])
+
+
+# --- Capacity / Forecasting Routes ---
+
+@app.get("/capacity")
+async def capacity_page():
+    return FileResponse(Path(__file__).parent / "static" / "capacity.html")
+
+
+@app.get("/api/capacity")
+async def capacity_forecast():
+    """Linear regression on disk/memory metrics to project 'days until full'."""
+    pool = app.state.history_pool
+    cutoff_7d = time.time() - (7 * 86400)
+    result = {"disk": {}, "memory": {}}
+
+    async with pool.acquire() as conn:
+        # Disk forecasting
+        disk_rows = await conn.fetch(
+            "SELECT ts, mount, percent FROM dashboard_disk_history WHERE ts > $1 ORDER BY ts", cutoff_7d)
+        mounts: dict[str, list] = {}
+        for r in disk_rows:
+            m = r["mount"]
+            if m not in mounts:
+                mounts[m] = []
+            if r["percent"] is not None:
+                mounts[m].append((r["ts"], r["percent"]))
+
+        for mount, points in mounts.items():
+            if len(points) < 10:
+                continue
+            # Simple linear regression
+            n = len(points)
+            x_vals = [p[0] for p in points]
+            y_vals = [p[1] for p in points]
+            x_mean = sum(x_vals) / n
+            y_mean = sum(y_vals) / n
+            numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_vals, y_vals))
+            denominator = sum((x - x_mean) ** 2 for x in x_vals)
+            if denominator == 0:
+                continue
+            slope = numerator / denominator  # percent per second
+            if slope <= 0:
+                days_until_full = None  # Usage decreasing
+            else:
+                current_pct = y_vals[-1]
+                remaining_pct = 100 - current_pct
+                seconds_until_full = remaining_pct / slope
+                days_until_full = round(seconds_until_full / 86400, 1)
+
+            result["disk"][mount] = {
+                "current_pct": round(y_vals[-1], 1),
+                "slope_pct_per_day": round(slope * 86400, 3),
+                "days_until_full": days_until_full,
+                "data_points": n,
+            }
+
+        # Memory forecasting
+        mem_rows = await conn.fetch(
+            "SELECT ts, memory_percent FROM dashboard_snapshots WHERE ts > $1 AND memory_percent IS NOT NULL ORDER BY ts", cutoff_7d)
+        if len(mem_rows) >= 10:
+            points = [(r["ts"], r["memory_percent"]) for r in mem_rows]
+            n = len(points)
+            x_vals = [p[0] for p in points]
+            y_vals = [p[1] for p in points]
+            x_mean = sum(x_vals) / n
+            y_mean = sum(y_vals) / n
+            numerator = sum((x - x_mean) * (y - y_mean) for x, y in zip(x_vals, y_vals))
+            denominator = sum((x - x_mean) ** 2 for x in x_vals)
+            slope = numerator / denominator if denominator else 0
+            result["memory"] = {
+                "current_pct": round(y_vals[-1], 1),
+                "slope_pct_per_day": round(slope * 86400, 4),
+                "trend": "increasing" if slope > 0 else "stable" if slope == 0 else "decreasing",
+                "data_points": n,
+            }
+
+    return JSONResponse(result)
+
+
+# --- Anomaly Detection: evaluated in poll loop ---
+
+async def evaluate_custom_alert_rules(state: dict):
+    """Evaluate custom alert rules using z-score against 1-hour rolling window."""
+    pool = app.state.history_pool
+    now = time.time()
+    window_start = now - 3600  # 1 hour
+
+    async with pool.acquire() as conn:
+        rules = await conn.fetch("SELECT * FROM alert_rules WHERE enabled = true")
+        for rule in rules:
+            metric = rule["metric"]
+            condition = rule["condition"]
+            threshold = rule["threshold"]
+
+            # Get metric value from current state
+            current_val = None
+            if metric == "cpu_percent":
+                current_val = state.get("system", {}).get("cpu_percent")
+            elif metric == "memory_percent":
+                current_val = state.get("system", {}).get("memory", {}).get("percent")
+            elif metric.startswith("latency:"):
+                svc = metric.split(":")[1]
+                current_val = state.get("services", {}).get(svc, {}).get("latency_ms")
+            elif metric == "ingest_queue":
+                current_val = state.get("redis", {}).get("ingest_queue_depth")
+
+            if current_val is None:
+                continue
+
+            # Z-score check against rolling window
+            triggered = False
+            if condition == "gt":
+                triggered = current_val > threshold
+            elif condition == "lt":
+                triggered = current_val < threshold
+            elif condition == "zscore":
+                # Get historical values for z-score calculation
+                if metric == "cpu_percent":
+                    rows = await conn.fetch(
+                        "SELECT cpu_percent FROM dashboard_snapshots WHERE ts > $1 AND cpu_percent IS NOT NULL", window_start)
+                    vals = [r["cpu_percent"] for r in rows]
+                elif metric == "memory_percent":
+                    rows = await conn.fetch(
+                        "SELECT memory_percent FROM dashboard_snapshots WHERE ts > $1 AND memory_percent IS NOT NULL", window_start)
+                    vals = [r["memory_percent"] for r in rows]
+                else:
+                    vals = []
+
+                if len(vals) >= 10:
+                    mean = sum(vals) / len(vals)
+                    std = (sum((v - mean) ** 2 for v in vals) / len(vals)) ** 0.5
+                    if std > 0:
+                        z = (current_val - mean) / std
+                        triggered = abs(z) > threshold
+
+            if triggered:
+                # Check cooldown (don't fire more than once per 5 min)
+                last = rule["last_triggered_at"]
+                if last and (now - last.timestamp()) < 300:
+                    continue
+
+                # Log the alert
+                await conn.execute("UPDATE alert_rules SET last_triggered_at = now() WHERE id = $1", rule["id"])
+                await conn.execute(
+                    "INSERT INTO audit_log (username, action, detail) VALUES ($1, $2, $3)",
+                    "system", "alert_triggered",
+                    _json.dumps({"rule": rule["name"], "metric": metric, "value": current_val, "threshold": threshold}))
+
+                # Slack notification (fire and forget)
+                if rule["slack_notify"]:
+                    asyncio.create_task(_send_slack_alert(rule["name"], metric, current_val, threshold, rule["severity"]))
+
+
+async def _send_slack_alert(rule_name: str, metric: str, value, threshold, severity: str):
+    """Send alert to Slack via webhook (non-blocking)."""
+    try:
+        webhook_url = os.environ.get("NOVA_SLACK_WEBHOOK")
+        if not webhook_url:
+            return
+        emoji = ":rotating_light:" if severity == "critical" else ":warning:"
+        payload = {
+            "text": f"{emoji} *Alert: {rule_name}*\nMetric `{metric}` = {value} (threshold: {threshold})\nSeverity: {severity}"
+        }
+        session = app.state.http_session
+        async with session.post(webhook_url, json=payload, timeout=aiohttp.ClientTimeout(total=5)):
+            pass
+    except Exception:
+        pass
+
+
+# --- Incident auto-correlation ---
+
+_recent_down_services: dict[str, float] = {}  # service -> first_seen timestamp
+
+
+async def auto_correlate_incidents(state: dict):
+    """Group correlated down events within 5-min window into incidents."""
+    global _recent_down_services
+    now = time.time()
+    services = state.get("services", {})
+
+    currently_down = set()
+    for svc, info in services.items():
+        if info.get("status") in ("down", "error"):
+            currently_down.add(svc)
+            if svc not in _recent_down_services:
+                _recent_down_services[svc] = now
+
+    # Remove recovered services
+    for svc in list(_recent_down_services):
+        if svc not in currently_down:
+            del _recent_down_services[svc]
+
+    # Check for correlated outages (multiple services down within 5 min of each other)
+    if len(_recent_down_services) >= 2:
+        timestamps = list(_recent_down_services.values())
+        time_spread = max(timestamps) - min(timestamps)
+        if time_spread <= 300:  # Within 5-minute window
+            # Check if we already have an open incident for these services
+            affected = sorted(_recent_down_services.keys())
+            pool = app.state.history_pool
+            async with pool.acquire() as conn:
+                existing = await conn.fetchrow(
+                    "SELECT id FROM incidents WHERE status = 'open' AND affected_services && $1::text[] LIMIT 1",
+                    affected)
+                if not existing:
+                    # Create new incident
+                    await conn.execute(
+                        """INSERT INTO incidents (title, severity, affected_services, events)
+                           VALUES ($1, $2, $3, $4)""",
+                        f"Multiple services down: {', '.join(affected)}",
+                        "critical" if len(affected) >= 3 else "warning",
+                        affected,
+                        _json.dumps([{"ts": now, "msg": f"Correlated outage detected: {', '.join(affected)}"}]),
+                    )
+
+
+# --- Additional state collectors for WebSocket push ---
+
+_sla_summary_cache: dict = {}
+_sla_summary_ts: float = 0
+
+
+async def collect_sla_summary() -> dict:
+    """Return basic SLA uptime % for last 7 days from sla_snapshots table."""
+    global _sla_summary_cache, _sla_summary_ts
+    now = time.time()
+    if now - _sla_summary_ts < 60:
+        return _sla_summary_cache
+    try:
+        pool = app.state.history_pool
+        cutoff = _dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=7)
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                "SELECT COUNT(*) as total, SUM(CASE WHEN up THEN 1 ELSE 0 END) as up_count "
+                "FROM sla_snapshots WHERE ts > $1", cutoff)
+        if row and row["total"] > 0:
+            uptime_pct = round((row["up_count"] / row["total"]) * 100, 3)
+            result = {"status": "ok", "uptime_pct_7d": uptime_pct, "checks_7d": row["total"]}
+        else:
+            result = {"status": "no_data", "uptime_pct_7d": None, "checks_7d": 0}
+        _sla_summary_cache = result
+        _sla_summary_ts = now
+        return result
+    except Exception as e:
+        return _sla_summary_cache or {"status": "error", "error": str(e)}
+
+
+_capacity_summary_cache: dict = {}
+_capacity_summary_ts: float = 0
+
+
+async def collect_capacity_summary() -> dict:
+    """Return disk usage and estimated days until full for key volumes."""
+    global _capacity_summary_cache, _capacity_summary_ts
+    now = time.time()
+    if now - _capacity_summary_ts < 60:
+        return _capacity_summary_cache
+    try:
+        disks = {}
+        for mount in ["/Volumes/Data", "/Volumes/MoreData", "/"]:
+            try:
+                st = os.statvfs(mount)
+                total = st.f_blocks * st.f_frsize
+                free = st.f_bavail * st.f_frsize
+                used_pct = round((1 - free / total) * 100, 1) if total > 0 else 0
+                free_gb = round(free / (1024**3), 1)
+                disks[mount] = {"used_pct": used_pct, "free_gb": free_gb}
+            except OSError:
+                pass
+
+        # Get vector count growth from PostgreSQL memory counts
+        vector_growth_rate = None
+        try:
+            pool = app.state.history_pool
+            async with pool.acquire() as conn:
+                rows = await conn.fetch(
+                    "SELECT ts, total_rows FROM dashboard_memory_count_history "
+                    "WHERE ts > $1 ORDER BY ts", now - 7 * 86400)
+            if len(rows) >= 2:
+                first = rows[0]
+                last = rows[-1]
+                elapsed_days = (last["ts"] - first["ts"]) / 86400
+                if elapsed_days > 0:
+                    vector_growth_rate = round((last["total_rows"] - first["total_rows"]) / elapsed_days, 0)
+        except Exception:
+            pass
+
+        result = {
+            "status": "ok",
+            "disks": disks,
+            "vector_growth_per_day": vector_growth_rate,
+        }
+        _capacity_summary_cache = result
+        _capacity_summary_ts = now
+        return result
+    except Exception as e:
+        return _capacity_summary_cache or {"status": "error", "error": str(e)}
+
+
+async def collect_nmap_summary() -> dict:
+    """Get NMAP data from NovaControl status API."""
+    try:
+        import urllib.request as _ur
+        with _ur.urlopen("http://127.0.0.1:37400/api/status", timeout=2) as _r:
+            nc_data = _json.loads(_r.read())
+        for svc in nc_data.get("services", []):
+            if svc.get("id") == "nmap":
+                return {
+                    "status": "ok",
+                    "summary": svc.get("summary", ""),
+                    "last_updated": svc.get("lastUpdated", ""),
+                }
+        return {"status": "no_data", "summary": ""}
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+# --- New page routes ---
+
+@app.get("/login")
+async def login_page():
+    return FileResponse(Path(__file__).parent / "static" / "login.html")
+
+
+# --- HUD Visualization Endpoints ---
+
+_ingest_activity_cache: list = []
+_ingest_activity_ts: float = 0
+
+
+@app.get("/api/ingest-activity")
+async def hud_ingest_activity():
+    """Recent ingest activity grouped by source (last 5 minutes)."""
+    global _ingest_activity_cache, _ingest_activity_ts
+    now = time.time()
+    if now - _ingest_activity_ts < 10:
+        return JSONResponse(_ingest_activity_cache)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "psql", PG_DB, "-t", "-A", "-c",
+            "SELECT source, count(*) FROM memories WHERE created_at > now() - interval '5 minutes' GROUP BY source ORDER BY count DESC LIMIT 10",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        results = []
+        for line in stdout.decode().strip().split("\n"):
+            if "|" in line:
+                parts = line.split("|")
+                results.append({"source": parts[0], "count": int(parts[1])})
+        _ingest_activity_cache = results
+        _ingest_activity_ts = now
+        return JSONResponse(results)
+    except Exception as e:
+        return JSONResponse(_ingest_activity_cache or [])
+
+
+_random_correlation_cache: dict = {}
+_random_correlation_ts: float = 0
+
+
+@app.get("/api/random-correlation")
+async def hud_random_correlation():
+    """Pick a random memory, find its nearest neighbor in a different vector/source."""
+    global _random_correlation_cache, _random_correlation_ts
+    now = time.time()
+    if now - _random_correlation_ts < 30:
+        return JSONResponse(_random_correlation_cache)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "psql", PG_DB, "-t", "-A", "-c",
+            """WITH random_mem AS (
+                SELECT id, source, content, embedding
+                FROM memories
+                WHERE embedding IS NOT NULL
+                ORDER BY random() LIMIT 1
+            ),
+            neighbor AS (
+                SELECT m.id, m.source, m.content,
+                       m.embedding <=> rm.embedding AS distance
+                FROM memories m, random_mem rm
+                WHERE m.source != rm.source
+                  AND m.embedding IS NOT NULL
+                  AND m.id != rm.id
+                ORDER BY m.embedding <=> rm.embedding
+                LIMIT 1
+            )
+            SELECT rm.source AS source_a, left(rm.content, 120) AS text_a,
+                   n.source AS source_b, left(n.content, 120) AS text_b,
+                   n.distance
+            FROM random_mem rm, neighbor n""",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
+        line = stdout.decode().strip()
+        if "|" in line:
+            parts = line.split("|")
+            result = {
+                "source_a": parts[0],
+                "text_a": parts[1],
+                "source_b": parts[2],
+                "text_b": parts[3],
+                "distance": float(parts[4]) if parts[4] else 0,
+            }
+        else:
+            result = {"source_a": "", "text_a": "", "source_b": "", "text_b": "", "distance": 0}
+        _random_correlation_cache = result
+        _random_correlation_ts = now
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse(_random_correlation_cache or {"source_a": "", "text_a": "", "source_b": "", "text_b": "", "distance": 0, "error": str(e)})
+
+
+_this_day_cache: list = []
+_this_day_ts: float = 0
+
+
+@app.get("/api/this-day")
+async def hud_this_day():
+    """Personal history items from this day in previous years."""
+    global _this_day_cache, _this_day_ts
+    now = time.time()
+    if now - _this_day_ts < 300:  # Cache 5 min
+        return JSONResponse(_this_day_cache)
+    try:
+        today = time.strftime("%m-%d")
+        month = int(today.split("-")[0])
+        day = int(today.split("-")[1])
+        proc = await asyncio.create_subprocess_exec(
+            "psql", PG_DB, "-t", "-A", "-c",
+            f"""SELECT EXTRACT(YEAR FROM created_at)::int AS year,
+                       source,
+                       left(content, 200) AS content
+                FROM memories
+                WHERE source IN ('email_archive','imessage','livejournal','journal','personal')
+                  AND EXTRACT(MONTH FROM created_at) = {month}
+                  AND EXTRACT(DAY FROM created_at) = {day}
+                  AND created_at < CURRENT_DATE
+                ORDER BY random()
+                LIMIT 10""",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
+        results = []
+        for line in stdout.decode().strip().split("\n"):
+            if "|" in line:
+                parts = line.split("|", 2)
+                results.append({"year": int(parts[0]) if parts[0] else 0, "source": parts[1], "content": parts[2] if len(parts) > 2 else ""})
+        _this_day_cache = results
+        _this_day_ts = now
+        return JSONResponse(results)
+    except Exception as e:
+        return JSONResponse(_this_day_cache or [])
+
+
+_vector_health_cache: dict = {}
+_vector_health_ts: float = 0
+
+
+@app.get("/api/vector-health")
+async def hud_vector_health():
+    """Vector category health scores based on recent consolidation/deep-clean metrics."""
+    global _vector_health_cache, _vector_health_ts
+    now = time.time()
+    if now - _vector_health_ts < 120:
+        return JSONResponse(_vector_health_cache)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "psql", PG_DB, "-t", "-A", "-c",
+            """SELECT source,
+                      count(*) AS total,
+                      count(*) FILTER (WHERE tier = 'core') AS core_count,
+                      count(*) FILTER (WHERE tier = 'archive') AS archive_count,
+                      avg(char_length(content)) AS avg_length
+               FROM memories
+               GROUP BY source
+               HAVING count(*) > 100
+               ORDER BY count(*) DESC
+               LIMIT 20""",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=8)
+        categories = []
+        for line in stdout.decode().strip().split("\n"):
+            if "|" in line:
+                parts = line.split("|")
+                total = int(parts[1]) if parts[1] else 0
+                core = int(parts[2]) if parts[2] else 0
+                archive = int(parts[3]) if parts[3] else 0
+                avg_len = float(parts[4]) if parts[4] else 0
+                # Health score: penalize very short content, high archive ratio
+                health = 1.0
+                if total > 0:
+                    archive_ratio = archive / total
+                    if archive_ratio > 0.5:
+                        health -= 0.3
+                    if avg_len < 50:
+                        health -= 0.2
+                    if avg_len > 500:
+                        health += 0.1
+                health = max(0.1, min(1.0, health))
+                categories.append({
+                    "source": parts[0],
+                    "total": total,
+                    "core": core,
+                    "archive": archive,
+                    "health": round(health, 2),
+                })
+        result = {"categories": categories}
+        _vector_health_cache = result
+        _vector_health_ts = now
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse(_vector_health_cache or {"categories": [], "error": str(e)})
+
+
+_active_ingests_cache: list = []
+_active_ingests_ts: float = 0
+
+
+@app.get("/api/active-ingests")
+async def hud_active_ingests():
+    """Currently running ingest jobs from nova_ops."""
+    global _active_ingests_cache, _active_ingests_ts
+    now = time.time()
+    if now - _active_ingests_ts < 10:
+        return JSONResponse(_active_ingests_cache)
+    try:
+        results = []
+        # Check ingest_jobs table if it exists
+        try:
+            conn = await asyncpg.connect(OPS_PG_DSN)
+            try:
+                exists = await conn.fetchval(
+                    "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='ingest_jobs')")
+                if exists:
+                    rows = await conn.fetch(
+                        "SELECT title, vector, progress, rate, status, started_at FROM ingest_jobs WHERE status = 'running' ORDER BY started_at DESC LIMIT 10")
+                    for r in rows:
+                        results.append({
+                            "title": r["title"],
+                            "vector": r["vector"],
+                            "progress": r["progress"],
+                            "rate": r["rate"],
+                            "status": r["status"],
+                            "started_at": r["started_at"].isoformat() if hasattr(r["started_at"], 'isoformat') else str(r["started_at"]),
+                        })
+            finally:
+                await conn.close()
+        except Exception:
+            pass
+
+        # Also check ps for nova_ingest processes
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "pgrep", "-af", "nova_ingest",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=3)
+            for line in stdout.decode().strip().split("\n"):
+                if line.strip() and "nova_ingest" in line:
+                    results.append({"title": line.strip()[:80], "vector": "unknown", "progress": None, "rate": None, "status": "running", "started_at": None})
+        except Exception:
+            pass
+
+        _active_ingests_cache = results
+        _active_ingests_ts = now
+        return JSONResponse(results)
+    except Exception as e:
+        return JSONResponse(_active_ingests_cache or [])
+
+
+_scheduler_today_cache: list = []
+_scheduler_today_ts: float = 0
+
+
+@app.get("/api/scheduler-today")
+async def hud_scheduler_today():
+    """Today's task runs with timestamps and status for the Gantt chart."""
+    global _scheduler_today_cache, _scheduler_today_ts
+    now = time.time()
+    if now - _scheduler_today_ts < 30:
+        return JSONResponse(_scheduler_today_cache)
+    try:
+        conn = await asyncpg.connect(OPS_PG_DSN)
+        try:
+            # Get today's midnight in epoch ms
+            today_epoch = int(time.mktime(time.strptime(time.strftime("%Y-%m-%d"), "%Y-%m-%d")) * 1000)
+            rows = await conn.fetch(
+                """SELECT label, status, created_at,
+                          CASE WHEN ended_at > 0 AND started_at > 0 THEN ended_at - started_at ELSE NULL END as duration_ms
+                   FROM task_runs
+                   WHERE created_at > $1
+                   ORDER BY created_at""", today_epoch)
+            results = []
+            for r in rows:
+                # created_at is epoch ms
+                ts = r["created_at"]
+                hour = ((ts - today_epoch) / 3600000.0) if ts else 0
+                results.append({
+                    "label": r["label"] or "?",
+                    "status": r["status"],
+                    "hour": round(hour, 2),
+                    "duration_ms": r["duration_ms"],
+                    "ts": ts,
+                })
+        finally:
+            await conn.close()
+        _scheduler_today_cache = results
+        _scheduler_today_ts = now
+        return JSONResponse(results)
+    except Exception as e:
+        return JSONResponse(_scheduler_today_cache or [])
+
+
+_random_memory_cache: dict = {}
+_random_memory_ts: float = 0
+
+
+@app.get("/api/random-memory")
+async def hud_random_memory():
+    """Return one random memory text + source for the spotlight feature."""
+    global _random_memory_cache, _random_memory_ts
+    now = time.time()
+    if now - _random_memory_ts < 30:
+        return JSONResponse(_random_memory_cache)
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            "psql", PG_DB, "-t", "-A", "-c",
+            """SELECT source, left(content, 300),
+                      EXTRACT(YEAR FROM created_at)::int
+               FROM memories
+               WHERE char_length(content) > 40
+                 AND char_length(content) < 500
+               ORDER BY random()
+               LIMIT 1""",
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+        line = stdout.decode().strip()
+        if "|" in line:
+            parts = line.split("|", 2)
+            result = {"source": parts[0], "text": parts[1], "year": int(parts[2]) if parts[2] else 0}
+        else:
+            result = {"source": "unknown", "text": "No memory available", "year": 0}
+        _random_memory_cache = result
+        _random_memory_ts = now
+        return JSONResponse(result)
+    except Exception as e:
+        return JSONResponse(_random_memory_cache or {"source": "error", "text": str(e), "year": 0})
+
+
 # --- Poll Loop ---
 
 async def poll_loop():
@@ -2924,6 +4167,9 @@ async def poll_loop():
             collect_plex(session),           # 28
             collect_hdhr(session),           # 29
             collect_multi_agents(),          # 30
+            collect_sla_summary(),           # 31
+            collect_capacity_summary(),      # 32
+            collect_nmap_summary(),          # 33
             return_exceptions=True,
         )
 
@@ -2939,6 +4185,19 @@ async def poll_loop():
         svc_data = safe(5)
         traffic = collect_traffic_flow(sched_data, redis_data, task_data, svc_data)
 
+        # Build openrouter summary from model_usage data
+        model_usage_data = safe(11)
+        or_provider = model_usage_data.get("by_provider", {}).get("openrouter", {}) if isinstance(model_usage_data, dict) else {}
+        openrouter_summary = {
+            "status": "ok" if or_provider else "no_data",
+            "sessions": or_provider.get("sessions", 0),
+            "tokens": or_provider.get("input_tokens", 0) + or_provider.get("output_tokens", 0),
+            "cost": or_provider.get("cost", 0),
+            "model": "qwen/qwen3-235b-a22b-2507",
+        }
+
+        dream_data = safe(24)
+
         state = {
             "ts": time.time(),
             "scheduler": sched_data,
@@ -2952,7 +4211,7 @@ async def poll_loop():
             "postgresql": safe(8),
             "flows": safe(9),
             "task_throughput": results[10] if not isinstance(results[10], BaseException) else [],
-            "model_usage": safe(11),
+            "model_usage": model_usage_data,
             "gateway_queries": safe(12),
             "conversations": safe(13),
             "unifi": safe(14),
@@ -2965,13 +4224,18 @@ async def poll_loop():
             "homekit": safe(21),
             "app_watchdog": safe(22),
             "weather": safe(23),
-            "dream": safe(24),
+            "dream": dream_data,
+            "dream_status": dream_data,
             "synology": safe(25),
             "healthkit": safe(26),
             "homebridge": safe(27),
             "plex": safe(28),
             "hdhr": safe(29),
             "multi_agents": safe(30),
+            "openrouter": openrouter_summary,
+            "sla_summary": safe(31),
+            "capacity_summary": safe(32),
+            "nmap": safe(33),
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }
@@ -3017,6 +4281,9 @@ async def poll_loop():
         if now - _last_history_write >= 30:
             _last_history_write = now
             asyncio.create_task(write_history_snapshot(state))
+            # Enterprise: evaluate custom alert rules and auto-correlate incidents
+            asyncio.create_task(evaluate_custom_alert_rules(state))
+            asyncio.create_task(auto_correlate_incidents(state))
 
         dead = set()
         for ws in list(connected_clients):

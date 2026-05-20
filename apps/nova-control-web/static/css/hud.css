@@ -364,6 +364,73 @@ html, body {
   to { opacity: 0.85; transform: translateY(0); }
 }
 
+/* ---- "This Day" Ticker (Feature 3) ---- */
+
+#hud-thisday-wrap {
+  overflow: hidden;
+  white-space: nowrap;
+  height: 20px;
+  line-height: 20px;
+  margin-bottom: 3px;
+  border-bottom: 1px solid rgba(255, 215, 0, 0.06);
+}
+
+#hud-thisday-ticker {
+  display: inline-block;
+  animation: ticker-scroll 90s linear infinite;
+  font-size: clamp(9px, 1vw, 12px);
+  letter-spacing: 0.04em;
+}
+
+#hud-thisday-ticker .thisday-item {
+  display: inline;
+  padding-right: 5vw;
+}
+
+#hud-thisday-ticker .thisday-year {
+  color: var(--hud-amber);
+  opacity: 0.6;
+  font-weight: 700;
+}
+
+#hud-thisday-ticker .thisday-source {
+  color: var(--hud-magenta);
+  opacity: 0.4;
+  font-size: 0.85em;
+}
+
+#hud-thisday-ticker .thisday-text {
+  color: var(--hud-text);
+  opacity: 0.55;
+}
+
+/* ---- Chatroom Unread Badge (Feature 7) ---- */
+
+.chatfeed-unread-badge {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  font-family: var(--hud-font-title);
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--hud-bg);
+  background: var(--hud-red);
+  border-radius: 8px;
+  vertical-align: middle;
+  box-shadow: 0 0 6px rgba(255, 51, 68, 0.5);
+  transition: transform 0.2s, box-shadow 0.3s;
+}
+
+.chatfeed-unread-badge.flash {
+  animation: badge-flash 0.5s ease-in-out 3;
+  box-shadow: 0 0 12px rgba(255, 51, 68, 0.8), 0 0 24px rgba(255, 51, 68, 0.4);
+}
+
+@keyframes badge-flash {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+}
+
 /* ---- Responsive ---- */
 
 @media (max-width: 800px) {
@@ -371,4 +438,5 @@ html, body {
   #hud-bottombar { padding: 0 1vw; }
   #hud-status-leds { gap: 6px; }
   .led-label { display: none; }
+  #hud-thisday-wrap { display: none; }
 }

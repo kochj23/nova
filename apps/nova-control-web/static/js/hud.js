@@ -1467,6 +1467,7 @@
     ws.onmessage = function (evt) {
       try {
         state = JSON.parse(evt.data);
+        window.__novaHudState = state;
         updateFromState();
       } catch (e) {
         // ignore parse errors
@@ -1495,35 +1496,56 @@
   }
 
   function pollHTTP() {
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', '/api/detail/scheduler', true);
-    xhr.timeout = 5000;
-    xhr.onload = function () {
-      if (xhr.status === 200) {
-        try {
-          var sched = JSON.parse(xhr.responseText);
-          if (!state) state = {};
-          state.scheduler = sched.scheduler || sched;
-        } catch (e) {}
-      }
-    };
-    xhr.send();
+    if (!state) state = {};
 
-    // Also fetch system info
-    var xhr2 = new XMLHttpRequest();
-    xhr2.open('GET', '/api/detail/system', true);
-    xhr2.timeout = 5000;
-    xhr2.onload = function () {
-      if (xhr2.status === 200) {
-        try {
-          var sys = JSON.parse(xhr2.responseText);
-          if (!state) state = {};
-          state.system = sys.current || sys;
-          updateFromState();
-        } catch (e) {}
-      }
-    };
-    xhr2.send();
+    // Helper to fetch and merge state
+    function fetchAndMerge(url, handler) {
+      var xhr = new XMLHttpRequest();
+      xhr.open('GET', url, true);
+      xhr.timeout = 5000;
+      xhr.onload = function () {
+        if (xhr.status === 200) {
+          try { handler(JSON.parse(xhr.responseText)); } catch (e) {}
+        }
+      };
+      xhr.send();
+    }
+
+    // Scheduler
+    fetchAndMerge('/api/detail/scheduler', function(d) {
+      state.scheduler = d.scheduler || d;
+    });
+
+    // System
+    fetchAndMerge('/api/detail/system', function(d) {
+      state.system = d.current || d;
+      updateFromState();
+    });
+
+    // Channels (gateway)
+    fetchAndMerge('/api/detail/channels', function(d) {
+      state.gateway = d;
+    });
+
+    // Memory
+    fetchAndMerge('/api/detail/memory', function(d) {
+      state.memory = d;
+    });
+
+    // Apps (app watchdog)
+    fetchAndMerge('/api/detail/app_watchdog', function(d) {
+      state.app_watchdog = d;
+    });
+
+    // NAS (synology)
+    fetchAndMerge('/api/detail/synology', function(d) {
+      state.synology = d;
+    });
+
+    // Ollama models
+    fetchAndMerge('/api/detail/ollama', function(d) {
+      state.ollama = d;
+    });
   }
 
   // ================================================================
@@ -1577,6 +1599,11 @@
 
     // Layer 8: Corner panels (drawn on top)
     drawCornerPanels(ts);
+
+    // Layer 9: External feature overlays (hud-features.js)
+    if (window.__hudFeaturesRender) {
+      window.__hudFeaturesRender(ctx, ts, W, H);
+    }
 
     requestAnimationFrame(animate);
   }
