@@ -14,7 +14,7 @@ v3.1 changes (2026-05-12):
     fast indexed privacy routing — no per-row JSONB eval
   - ef_search tiered: 'fast' (40), 'standard' (100), 'deep' (400) via ?tier=
   - Partial HNSW indexes used automatically when source filter matches an
-    indexed source (email_archive, cloud_governance, disney_internal, imessage)
+    indexed source (email_archive, cloud_governance, work_internal, imessage)
   - /recall_deep: boosts recently-accessed memories via accessed_at recency score
   - /stats includes index sizes and HNSW parameters
 
@@ -79,7 +79,7 @@ MAX_INGEST_RETRIES = 3    # items that fail this many times go to dead-letter
 PARTIAL_INDEX_SOURCES = frozenset({
     "email_archive",
     "cloud_governance",
-    "disney_internal",
+    "work_internal",
     "imessage",
 })
 
@@ -272,7 +272,7 @@ app = FastAPI(title="Nova Memory Server", version="3.1.0-pgvector", lifespan=lif
 class RememberRequest(BaseModel):
     text: str
     metadata: dict = {}
-    source: str = "slack"
+    source: str = "unknown"
 
 class MemoryResult(BaseModel):
     id: str

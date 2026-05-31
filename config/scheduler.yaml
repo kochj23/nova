@@ -78,6 +78,13 @@ tasks:
     timeout: 300
     overlap: skip
 
+  journal_lint:
+    script: nova_journal_lint.py
+    args: ["auto"]
+    schedule: every 30m
+    timeout: 120
+    overlap: skip
+
   proactive_peace:
     script: nova_proactive_peace.py
     schedule: every 15m
@@ -230,10 +237,15 @@ tasks:
 
   yt_new_episodes:
     script: nova_yt_new_episodes.py
-    schedule: cron 15 10 * * 1
-    timeout: 14400
+    schedule: cron 0 3 * * *
+    timeout: 43200
     overlap: skip
-    enabled: false  # Multi-channel loop — not replaced by nova_ingest.py yet
+
+  yt_liked_download:
+    script: nova_yt_liked_download.py
+    schedule: cron 0 1 * * 6
+    timeout: 43200
+    overlap: skip
 
   # Weekly random Wikipedia crawl — picks a random substantial article, follows links
   wiki_random_ingest:
@@ -306,6 +318,13 @@ tasks:
     args: ["after-dark"]
     schedule: cron 0 20 * * *
     timeout: 900
+    overlap: skip
+    group: llm
+
+  rando_weird_memories:
+    script: nova_rando_weird_memories.py
+    schedule: cron 30 21 * * *
+    timeout: 600
     overlap: skip
     group: llm
 
@@ -560,6 +579,7 @@ tasks:
     schedule: cron 30 18 * * 0
     timeout: 60
     overlap: skip
+    enabled: false
 
   plex_seasonal:
     script: nova_plex.py
@@ -680,4 +700,26 @@ tasks:
     script: nova_proactive_brief.py
     schedule: cron 0 9,11,13,15,17 * * 1-5
     timeout: 120
+    overlap: skip
+
+  # ── Five Stolen Features (2026-05-31) ───────────────────────────────────
+
+  watcher_engine:
+    script: nova_watcher_engine.py
+    schedule: every 2m
+    timeout: 120
+    overlap: skip
+
+  skill_detector:
+    script: nova_skill_detector.py
+    schedule: cron 0 5 * * *
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  sandbox_image_rebuild:
+    script: nova_sandbox.py
+    args: ["--rebuild-image"]
+    schedule: cron 0 4 * * 0
+    timeout: 600
     overlap: skip

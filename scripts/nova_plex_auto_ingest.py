@@ -203,9 +203,62 @@ def transcribe(wav_path: Path) -> str:
     return ""
 
 
+# ── Show-level overrides (authoritative — bypasses keyword classifier) ────────
+SHOW_VECTOR_MAP = {
+    "TheSmokingTirePodcast": "automotive", "TheSmokingTire": "automotive",
+    "Wheeler Dealers": "automotive", "Roadkill": "automotive",
+    "David Freiburger": "automotive", "Peter Piccolino": "automotive",
+    "Jay Leno's Garage": "automotive", "Jay Lenos Garage": "automotive",
+    "Hot Rod Garage": "automotive", "Engine Masters": "automotive",
+    "Rob Dahm": "automotive", "Car Wizard": "automotive",
+    "Dream Car Garage": "automotive", "Finnegans Garage": "automotive",
+    "Hot Rod TV": "automotive", "Hot Rod Tv": "automotive",
+    "Two Guys Garare": "automotive", "Two Guys Garage": "automotive",
+    "MotorWeek (1992)": "automotive", "Redline Rebuilds": "automotive",
+    "ArnieTex": "automotive", "Brian Scotto": "automotive",
+    "Law & Order (1990)": "crime_drama", "Perry Mason (1957)": "crime_drama",
+    "Cannon": "crime_drama", "21 Jump Street (1987)": "crime_drama",
+    "Magnum P.I. (1980)": "crime_drama", "Magnum, P.I.": "crime_drama",
+    "The Rockford Files (1974)": "crime_drama", "The Rockford Files": "crime_drama",
+    "Hardcastle & McCormick (1983)": "crime_drama",
+    "Miami Vice": "crime_drama", "CHiPs": "crime_drama", "Knight Rider": "crime_drama",
+    "Modern Marvels (1995)": "documentary", "Biography (1987)": "documentary",
+    "History's Mysteries (1994)": "documentary", "Connections": "documentary",
+    "Civilizations (2018)": "documentary", "Film Documentaries": "documentary",
+    "10 Things You Don't Know About (2012)": "documentary",
+    "Night Court (1984)": "comedy", "The Honeymooners (1955)": "comedy",
+    "Key & Peele (2012)": "comedy", "Space Ghost Coast to Coast": "comedy",
+    "Aqua Teen Hunger Force": "comedy", "Perfect Hair Forever": "comedy",
+    "Wipeout (2008)": "game_show", "Jeopardy!": "game_show",
+    "Jeopardy (1984)": "game_show", "Wheel of Fortune (1975)": "game_show",
+    "Wheel of Fortune": "game_show",
+    "Combat (1962)": "war_film", "LazerPig": "military_history",
+    "Military Aviation History": "military_history",
+    "Iron Chef": "cooking", "Essential Pepin (2011)": "cooking",
+    "Americas Test Kitchen": "cooking", "Sam The Cooking Guy": "cooking",
+    "America's Test Kitchen From Cook's Illustrated (2003)": "cooking",
+    "NOT ANOTHER COOKING SHOW": "cooking", "French Cooking Academy": "cooking",
+    "Good Eats": "cooking",
+    "CrashCourse": "education", "Crash Course": "education",
+    "Yale Courses": "education", "Veritasium": "education", "SciShow": "education",
+    "Red Letter Media": "film_criticism",
+    "Flip This House (2005)": "home_improvement", "Holmes On Homes": "home_improvement",
+    "Foureyes Furniture": "home_improvement", "CNC Kitchen": "home_improvement",
+    "Batman (1966)": "action", "The Fall Guy (1981)": "action",
+    "Batman Returns": "action", "The Dark Knight Rises": "action",
+    "Ukraine News NowUA": "daily_news", "NBC News Overnight": "daily_news",
+    "Good Nite LA": "daily_news", "Good Nite LA (2024)": "daily_news",
+    "BBC News": "daily_news",
+    "The Twilight Zone (1959)": "sci_fi",
+}
+
+
 # ── Classification ────────────────────────────────────────────────────────────
 
 def classify_content(title: str, show_name: str, genres: list, text: str) -> str:
+    if show_name in SHOW_VECTOR_MAP:
+        return SHOW_VECTOR_MAP[show_name]
+
     combined = f"{title} {show_name} {' '.join(genres)} {text[:1500]}".lower()
     scores = {}
     for vector, keywords in VECTOR_MAP.items():
@@ -245,6 +298,7 @@ def ingest_chunks(chunks: list[str], vector: str, metadata: dict) -> int:
     for i, chunk in enumerate(chunks):
         payload = json.dumps({
             "text": chunk,
+            "source": vector,
             "metadata": {
                 "source": vector,
                 **metadata,
