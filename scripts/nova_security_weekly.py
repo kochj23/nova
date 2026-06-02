@@ -30,8 +30,8 @@ import nova_config
 from nova_image_utils import generate_image
 
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content/securities"
-IMAGES_DIR = HUGO_ROOT / "static/images/securities"
+CONTENT_DIR = HUGO_ROOT / "content/security"
+IMAGES_DIR = HUGO_ROOT / "static/images/security"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_security_weekly.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-sonnet-4-6"
@@ -178,14 +178,14 @@ Synthesize into the weekly strategic rollup."""
         img_dest = IMAGES_DIR / f"{dt}-{slug}.webp"
         subprocess.run(["cwebp", "-q", "82", "-resize", "1200", "0", img_path, "-o", str(img_dest)],
                        capture_output=True, timeout=30)
-        hugo_image = f"/images/securities/{dt}-{slug}.webp"
+        hugo_image = f"/images/security/{dt}-{slug}.webp"
 
     timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
     front_matter = f'''---
 title: "📊 {title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["securities"]
+categories: ["security"]
 tags: ["weekly", "strategic", "rollup", "trends"]
 description: "Weekly intelligence strategic rollup — {time.strftime('%d %b %Y')}"
 '''

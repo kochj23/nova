@@ -42,8 +42,8 @@ from nova_image_utils import generate_image
 # ── Config ────────────────────────────────────────────────────────────────────
 
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content/securities"
-IMAGES_DIR = HUGO_ROOT / "static/images/securities"
+CONTENT_DIR = HUGO_ROOT / "content/security"
+IMAGES_DIR = HUGO_ROOT / "static/images/security"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_journal_security.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-sonnet-4-6"
@@ -181,7 +181,7 @@ def publish_hugo(title: str, body: str, tags: list[str], description: str,
         except (FileNotFoundError, subprocess.TimeoutExpired):
             import shutil
             shutil.copy2(image_path, img_dest)
-        hugo_image = f"/images/securities/{dt}-{slug}.webp"
+        hugo_image = f"/images/security/{dt}-{slug}.webp"
 
     timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
     tags_yaml = json.dumps(tags)
@@ -193,7 +193,7 @@ def publish_hugo(title: str, body: str, tags: list[str], description: str,
 title: "{display_title}"
 date: {timestamp}
 draft: false
-categories: ["securities"]
+categories: ["security"]
 tags: {tags_yaml}
 description: "{description.replace('"', "'")}"
 '''
@@ -225,7 +225,7 @@ description: "{description.replace('"', "'")}"
 def notify(title: str, preview: str, is_breaking: bool = False):
     emoji = ":rotating_light::rotating_light:" if is_breaking else ":shield:"
     prefix = "BREAKING" if is_breaking else "Daily Briefing"
-    msg = f"{emoji} *Nova Securities — {prefix}*\n*{title}*\n_{preview[:250]}_"
+    msg = f"{emoji} *Nova Security — {prefix}*\n*{title}*\n_{preview[:250]}_"
     # Always post to notifications
     nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
     # Breaking alerts also go to Nova's chat
