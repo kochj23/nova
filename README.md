@@ -26,6 +26,7 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 | Hot-reload | Gateway: `POST :18792/reload` or `SIGHUP`. Scheduler: `SIGHUP` reloads tasks. |
 | Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
 | Chatroom | Real-time multi-party chat on port 37480, Nova has full memory access, external via CF tunnel |
+| Gauge Dashboard | Live 3D system monitoring — [gauges.digitalnoise.net](https://gauges.digitalnoise.net/gauges) |
 | Bootstrap source | `nova_ops.agent_docs` (PostgreSQL — not files) |
 | Session storage | `nova_ops.gateway_sessions` + `gateway_query_log` |
 | Primary model | `openrouter/qwen/qwen3-235b-a22b-2507` (chat/research) |
@@ -479,6 +480,31 @@ graph LR
 ```
 
 Health checked every 30s. Failed mid-request calls automatically retry on the next backend. Privacy filter blocks OpenRouter for personal content.
+
+---
+
+## Gauge Dashboard
+
+Live 3D system monitoring panel at [gauges.digitalnoise.net/gauges](https://gauges.digitalnoise.net/gauges). Built with Three.js — photorealistic chrome-bezeled analog gauges inspired by 1960s muscle car instrument clusters and Soviet-era nuclear control rooms.
+
+**Public URL:** `https://gauges.digitalnoise.net/gauges`
+**Local:** `http://192.168.1.6:37450/gauges`
+
+| Gauge | Metric | Range |
+|-------|--------|-------|
+| CPU | System CPU load | 0-100% |
+| RAM | Memory utilization | 0-100% (of 512GB) |
+| Scheduler | Task success rate | 0-100% (runs minus failures) |
+| Gateway | Backend health | 0-100% (healthy/total backends) |
+| Vectors | Memory count toward 2M goal | 0-100% |
+| Network | Connected clients | 0-150 |
+
+**Additional readouts:**
+- Nixie tube displays: total memories, task runs, uptime hours, network clients, poll latency
+- Indicator lamps: PostgreSQL, Redis, Ollama, Gateway, Scheduler, Vectors, Plex, UniFi, NAS
+- All data streamed via WebSocket from nova-control-web (5-second refresh)
+
+**Architecture:** Three.js scene with PBR materials (chrome bezels, glass domes, emissive needles), rendered at 60fps. Exposed via Cloudflare Tunnel through the existing `nova-chatroom` tunnel with an additional ingress rule.
 
 ---
 

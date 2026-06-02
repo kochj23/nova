@@ -1,0 +1,633 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NOVA — GAUGE CLUSTER</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0e14;
+      --surface: #0f1520;
+      --border: #1a2030;
+      --cyan: #00ffc8;
+      --amber: #ffcc00;
+      --red: #ff3344;
+      --green: #00ff66;
+      --text: #c8d0e0;
+      --text-dim: #4a5568;
+      --gauge-face: #1a1a1a;
+      --gauge-ring: #3a3a3a;
+      --chrome: linear-gradient(135deg, #666 0%, #ccc 20%, #999 40%, #eee 50%, #888 60%, #aaa 80%, #555 100%);
+      --nixie-glow: #ff8800;
+      --font: 'Share Tech Mono', monospace;
+      --font-title: 'Orbitron', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: var(--font);
+      overflow-x: hidden;
+      min-height: 100vh;
+    }
+
+    /* Scanline overlay */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: repeating-linear-gradient(
+        0deg,
+        transparent,
+        transparent 2px,
+        rgba(0, 255, 200, 0.015) 2px,
+        rgba(0, 255, 200, 0.015) 4px
+      );
+      pointer-events: none;
+      z-index: 9999;
+    }
+
+    /* Header */
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 20px 40px;
+      border-bottom: 1px solid var(--border);
+    }
+    .header h1 {
+      font-family: var(--font-title);
+      font-size: 18px;
+      font-weight: 700;
+      letter-spacing: 4px;
+      color: var(--cyan);
+      text-shadow: 0 0 10px rgba(0,255,200,0.3);
+    }
+    .header .status {
+      display: flex; gap: 12px; align-items: center;
+    }
+    .header .status-led {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+    .clock {
+      font-family: var(--font-title);
+      font-size: 14px;
+      color: var(--amber);
+      letter-spacing: 2px;
+    }
+
+    /* Main gauge grid */
+    .gauge-panel {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 30px;
+      padding: 40px;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    /* Individual gauge */
+    .gauge-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 10px;
+    }
+    .gauge-label {
+      font-family: var(--font-title);
+      font-size: 10px;
+      letter-spacing: 3px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+    .gauge-value {
+      font-family: var(--font-title);
+      font-size: 12px;
+      color: var(--amber);
+      letter-spacing: 1px;
+    }
+
+    /* SVG Gauge */
+    .gauge-svg {
+      width: 220px;
+      height: 220px;
+      filter: drop-shadow(0 4px 20px rgba(0,0,0,0.5));
+    }
+    .gauge-bezel {
+      fill: none;
+      stroke: url(#chromeGradient);
+      stroke-width: 8;
+    }
+    .gauge-face {
+      fill: var(--gauge-face);
+    }
+    .gauge-ticks line {
+      stroke: #555;
+      stroke-width: 1;
+    }
+    .gauge-ticks .major {
+      stroke: var(--text);
+      stroke-width: 2;
+    }
+    .gauge-arc-bg {
+      fill: none;
+      stroke: #2a2a2a;
+      stroke-width: 12;
+      stroke-linecap: round;
+    }
+    .gauge-arc {
+      fill: none;
+      stroke-width: 12;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 1s ease, stroke 0.5s ease;
+    }
+    .gauge-needle {
+      fill: var(--red);
+      filter: drop-shadow(0 0 3px rgba(255,50,50,0.5));
+      transition: transform 1s cubic-bezier(0.4, 0, 0.2, 1);
+      transform-origin: 110px 110px;
+    }
+    .gauge-center-dot {
+      fill: #333;
+      stroke: #666;
+      stroke-width: 2;
+    }
+    .gauge-number {
+      font-family: var(--font);
+      font-size: 9px;
+      fill: var(--text-dim);
+    }
+
+    /* Nixie tube row */
+    .nixie-panel {
+      display: flex;
+      justify-content: center;
+      gap: 40px;
+      padding: 30px 40px;
+      border-top: 1px solid var(--border);
+      border-bottom: 1px solid var(--border);
+      margin: 0 40px;
+    }
+    .nixie-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 6px;
+    }
+    .nixie-label {
+      font-family: var(--font-title);
+      font-size: 9px;
+      letter-spacing: 2px;
+      color: var(--text-dim);
+    }
+    .nixie-display {
+      display: flex;
+      gap: 3px;
+      padding: 8px 14px;
+      background: #0d0d0d;
+      border: 2px solid #333;
+      border-radius: 6px;
+      box-shadow: inset 0 2px 8px rgba(0,0,0,0.8), 0 1px 0 #444;
+    }
+    .nixie-digit {
+      font-family: var(--font-title);
+      font-size: 28px;
+      font-weight: 700;
+      color: var(--nixie-glow);
+      text-shadow: 0 0 8px rgba(255,136,0,0.6), 0 0 20px rgba(255,136,0,0.3);
+      min-width: 18px;
+      text-align: center;
+    }
+    .nixie-digit.dim {
+      color: #332200;
+      text-shadow: none;
+    }
+
+    /* Toggle switch panel */
+    .switch-panel {
+      display: flex;
+      justify-content: center;
+      gap: 30px;
+      padding: 30px 40px;
+    }
+    .switch-group {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+    .switch-label {
+      font-family: var(--font);
+      font-size: 9px;
+      letter-spacing: 1px;
+      color: var(--text-dim);
+    }
+    .indicator-lamp {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      border: 2px solid #444;
+      transition: all 0.3s ease;
+    }
+    .indicator-lamp.green { background: var(--green); box-shadow: 0 0 8px var(--green); }
+    .indicator-lamp.amber { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+    .indicator-lamp.red { background: var(--red); box-shadow: 0 0 8px var(--red); }
+    .indicator-lamp.off { background: #222; box-shadow: none; }
+
+    /* Footer info strip */
+    .footer-strip {
+      display: flex;
+      justify-content: space-between;
+      padding: 12px 40px;
+      font-size: 10px;
+      color: var(--text-dim);
+      border-top: 1px solid var(--border);
+    }
+
+    /* Responsive */
+    @media (max-width: 1000px) {
+      .gauge-panel { grid-template-columns: repeat(2, 1fr); gap: 20px; padding: 20px; }
+      .gauge-svg { width: 180px; height: 180px; }
+    }
+    @media (max-width: 600px) {
+      .gauge-panel { grid-template-columns: 1fr; }
+      .nixie-panel { flex-wrap: wrap; gap: 20px; }
+    }
+  </style>
+</head>
+<body>
+  <!-- Chrome gradient for gauge bezels -->
+  <svg width="0" height="0" style="position:absolute">
+    <defs>
+      <linearGradient id="chromeGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" style="stop-color:#666"/>
+        <stop offset="20%" style="stop-color:#ccc"/>
+        <stop offset="40%" style="stop-color:#999"/>
+        <stop offset="50%" style="stop-color:#eee"/>
+        <stop offset="60%" style="stop-color:#888"/>
+        <stop offset="80%" style="stop-color:#aaa"/>
+        <stop offset="100%" style="stop-color:#555"/>
+      </linearGradient>
+    </defs>
+  </svg>
+
+  <div class="header">
+    <h1>NOVA GAUGE CLUSTER</h1>
+    <div class="status">
+      <div class="status-led" id="ws-led"></div>
+      <span class="clock" id="clock">--:--:--</span>
+    </div>
+  </div>
+
+  <!-- Main gauges -->
+  <div class="gauge-panel">
+    <div class="gauge-container">
+      <div class="gauge-label">CPU LOAD</div>
+      <svg class="gauge-svg" id="gauge-cpu" viewBox="0 0 220 220"></svg>
+      <div class="gauge-value" id="val-cpu">--</div>
+    </div>
+    <div class="gauge-container">
+      <div class="gauge-label">MEMORY</div>
+      <svg class="gauge-svg" id="gauge-memory" viewBox="0 0 220 220"></svg>
+      <div class="gauge-value" id="val-memory">--</div>
+    </div>
+    <div class="gauge-container">
+      <div class="gauge-label">SCHEDULER</div>
+      <svg class="gauge-svg" id="gauge-scheduler" viewBox="0 0 220 220"></svg>
+      <div class="gauge-value" id="val-scheduler">--</div>
+    </div>
+    <div class="gauge-container">
+      <div class="gauge-label">GATEWAY</div>
+      <svg class="gauge-svg" id="gauge-gateway" viewBox="0 0 220 220"></svg>
+      <div class="gauge-value" id="val-gateway">--</div>
+    </div>
+    <div class="gauge-container">
+      <div class="gauge-label">VECTOR MEMORY</div>
+      <svg class="gauge-svg" id="gauge-vectors" viewBox="0 0 220 220"></svg>
+      <div class="gauge-value" id="val-vectors">--</div>
+    </div>
+    <div class="gauge-container">
+      <div class="gauge-label">NETWORK</div>
+      <svg class="gauge-svg" id="gauge-network" viewBox="0 0 220 220"></svg>
+      <div class="gauge-value" id="val-network">--</div>
+    </div>
+  </div>
+
+  <!-- Nixie tube displays -->
+  <div class="nixie-panel">
+    <div class="nixie-group">
+      <div class="nixie-label">MEMORIES</div>
+      <div class="nixie-display" id="nixie-memories"></div>
+    </div>
+    <div class="nixie-group">
+      <div class="nixie-label">TASKS RUN</div>
+      <div class="nixie-display" id="nixie-tasks"></div>
+    </div>
+    <div class="nixie-group">
+      <div class="nixie-label">UPTIME HRS</div>
+      <div class="nixie-display" id="nixie-uptime"></div>
+    </div>
+    <div class="nixie-group">
+      <div class="nixie-label">CLIENTS</div>
+      <div class="nixie-display" id="nixie-clients"></div>
+    </div>
+  </div>
+
+  <!-- Indicator lamps -->
+  <div class="switch-panel">
+    <div class="switch-group">
+      <div class="indicator-lamp off" id="lamp-postgres"></div>
+      <div class="switch-label">POSTGRES</div>
+    </div>
+    <div class="switch-group">
+      <div class="indicator-lamp off" id="lamp-redis"></div>
+      <div class="switch-label">REDIS</div>
+    </div>
+    <div class="switch-group">
+      <div class="indicator-lamp off" id="lamp-ollama"></div>
+      <div class="switch-label">OLLAMA</div>
+    </div>
+    <div class="switch-group">
+      <div class="indicator-lamp off" id="lamp-gateway"></div>
+      <div class="switch-label">GATEWAY</div>
+    </div>
+    <div class="switch-group">
+      <div class="indicator-lamp off" id="lamp-scheduler"></div>
+      <div class="switch-label">SCHEDULER</div>
+    </div>
+    <div class="switch-group">
+      <div class="indicator-lamp off" id="lamp-memory"></div>
+      <div class="switch-label">VECTORS</div>
+    </div>
+    <div class="switch-group">
+      <div class="indicator-lamp off" id="lamp-plex"></div>
+      <div class="switch-label">PLEX</div>
+    </div>
+    <div class="switch-group">
+      <div class="indicator-lamp off" id="lamp-unifi"></div>
+      <div class="switch-label">UNIFI</div>
+    </div>
+    <div class="switch-group">
+      <div class="indicator-lamp off" id="lamp-synology"></div>
+      <div class="switch-label">NAS</div>
+    </div>
+  </div>
+
+  <div class="footer-strip">
+    <span>NOVA v2026.6 — DIGITALNOISE.NET</span>
+    <span id="poll-latency">--ms</span>
+    <span id="last-update">AWAITING DATA</span>
+  </div>
+
+  <script>
+    // ═══════════════════════════════════════════════════════════════
+    // GAUGE RENDERING
+    // ═══════════════════════════════════════════════════════════════
+
+    function createGauge(svgId, min, max, unit, zones) {
+      const svg = document.getElementById(svgId);
+      const cx = 110, cy = 110, r = 90;
+      const startAngle = -225, endAngle = 45;
+      const arcLength = endAngle - startAngle;
+
+      // Face
+      let html = `<circle class="gauge-face" cx="${cx}" cy="${cy}" r="${r+5}"/>`;
+      // Chrome bezel
+      html += `<circle class="gauge-bezel" cx="${cx}" cy="${cy}" r="${r+9}"/>`;
+
+      // Tick marks and numbers
+      const steps = 10;
+      for (let i = 0; i <= steps; i++) {
+        const angle = startAngle + (arcLength * i / steps);
+        const rad = angle * Math.PI / 180;
+        const isMajor = i % 2 === 0;
+        const innerR = isMajor ? r - 15 : r - 10;
+        const x1 = cx + innerR * Math.cos(rad);
+        const y1 = cy + innerR * Math.sin(rad);
+        const x2 = cx + (r - 5) * Math.cos(rad);
+        const y2 = cy + (r - 5) * Math.sin(rad);
+        html += `<line x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" class="${isMajor ? 'gauge-ticks major' : 'gauge-ticks'}"/>`;
+
+        if (isMajor) {
+          const numR = r - 25;
+          const nx = cx + numR * Math.cos(rad);
+          const ny = cy + numR * Math.sin(rad);
+          const val = Math.round(min + (max - min) * i / steps);
+          html += `<text class="gauge-number" x="${nx}" y="${ny}" text-anchor="middle" dominant-baseline="middle">${val}</text>`;
+        }
+      }
+
+      // Arc background
+      const arcR = r - 40;
+      const arcCircumference = 2 * Math.PI * arcR;
+      const arcFraction = arcLength / 360;
+      const dashLen = arcCircumference * arcFraction;
+
+      const arcStartRad = startAngle * Math.PI / 180;
+      html += `<circle class="gauge-arc-bg" cx="${cx}" cy="${cy}" r="${arcR}"
+        stroke-dasharray="${dashLen} ${arcCircumference}"
+        stroke-dashoffset="0"
+        transform="rotate(${startAngle + 90}, ${cx}, ${cy})"/>`;
+
+      // Active arc (colored)
+      html += `<circle class="gauge-arc" id="${svgId}-arc" cx="${cx}" cy="${cy}" r="${arcR}"
+        stroke="var(--cyan)" stroke-dasharray="${dashLen} ${arcCircumference}"
+        stroke-dashoffset="${dashLen}"
+        transform="rotate(${startAngle + 90}, ${cx}, ${cy})"/>`;
+
+      // Needle
+      html += `<polygon class="gauge-needle" id="${svgId}-needle" points="108,30 112,30 111,110 109,110"/>`;
+
+      // Center cap
+      html += `<circle class="gauge-center-dot" cx="${cx}" cy="${cy}" r="8"/>`;
+
+      svg.innerHTML = html;
+
+      // Store metadata
+      svg._gaugeData = { min, max, startAngle, endAngle, arcLength, dashLen, arcR, cx, cy, r };
+    }
+
+    function setGaugeValue(svgId, value) {
+      const svg = document.getElementById(svgId);
+      if (!svg || !svg._gaugeData) return;
+      const { min, max, startAngle, arcLength, dashLen } = svg._gaugeData;
+
+      const clamped = Math.max(min, Math.min(max, value));
+      const fraction = (clamped - min) / (max - min);
+
+      // Needle rotation
+      const needle = document.getElementById(`${svgId}-needle`);
+      const angle = startAngle + fraction * arcLength;
+      if (needle) needle.style.transform = `rotate(${angle + 90}deg)`;
+
+      // Arc fill
+      const arc = document.getElementById(`${svgId}-arc`);
+      if (arc) {
+        const offset = dashLen * (1 - fraction);
+        arc.style.strokeDashoffset = offset;
+        // Color zones
+        if (fraction > 0.85) arc.style.stroke = 'var(--red)';
+        else if (fraction > 0.65) arc.style.stroke = 'var(--amber)';
+        else arc.style.stroke = 'var(--cyan)';
+      }
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // NIXIE TUBES
+    // ═══════════════════════════════════════════════════════════════
+
+    function setNixie(containerId, value, digits = 7) {
+      const container = document.getElementById(containerId);
+      if (!container) return;
+      const str = String(value).padStart(digits, ' ');
+      container.innerHTML = str.split('').map(ch =>
+        `<span class="nixie-digit${ch === ' ' ? ' dim' : ''}">${ch === ' ' ? '0' : ch}</span>`
+      ).join('');
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INDICATOR LAMPS
+    // ═══════════════════════════════════════════════════════════════
+
+    function setLamp(id, status) {
+      const lamp = document.getElementById(id);
+      if (!lamp) return;
+      lamp.className = 'indicator-lamp ' + (status === 'ok' ? 'green' : status === 'warn' ? 'amber' : status === 'error' ? 'red' : 'off');
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // CLOCK
+    // ═══════════════════════════════════════════════════════════════
+
+    function updateClock() {
+      const now = new Date();
+      document.getElementById('clock').textContent =
+        now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+    setInterval(updateClock, 1000);
+    updateClock();
+
+    // ═══════════════════════════════════════════════════════════════
+    // WEBSOCKET DATA
+    // ═══════════════════════════════════════════════════════════════
+
+    let ws;
+    function connectWS() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws`);
+
+      ws.onopen = () => {
+        document.getElementById('ws-led').style.background = 'var(--green)';
+        document.getElementById('ws-led').style.boxShadow = '0 0 6px var(--green)';
+      };
+
+      ws.onclose = () => {
+        document.getElementById('ws-led').style.background = 'var(--red)';
+        document.getElementById('ws-led').style.boxShadow = '0 0 6px var(--red)';
+        setTimeout(connectWS, 3000);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const state = JSON.parse(event.data);
+          updateDashboard(state);
+        } catch (e) {}
+      };
+    }
+
+    function updateDashboard(state) {
+      // CPU
+      const cpu = state.system?.cpu_percent ?? 0;
+      setGaugeValue('gauge-cpu', cpu);
+      document.getElementById('val-cpu').textContent = `${cpu.toFixed(1)}%`;
+
+      // Memory (nested under system.memory.percent)
+      const mem = state.system?.memory?.percent ?? 0;
+      setGaugeValue('gauge-memory', mem);
+      const memUsed = state.system?.memory?.used_gb?.toFixed(0) ?? '--';
+      const memTotal = state.system?.memory?.total_gb?.toFixed(0) ?? '--';
+      document.getElementById('val-memory').textContent = `${memUsed}/${memTotal} GB`;
+
+      // Scheduler (nested under scheduler.info)
+      const schedInfo = state.scheduler?.info ?? state.scheduler ?? {};
+      const tasksTotal = schedInfo.tasks_total ?? 0;
+      const tasksFailing = schedInfo.total_failures ?? 0;
+      const schedHealth = tasksTotal > 0 ? Math.round(((tasksTotal - tasksFailing) / tasksTotal) * 100) : 0;
+      setGaugeValue('gauge-scheduler', Math.min(100, schedHealth));
+      document.getElementById('val-scheduler').textContent = `${schedInfo.tasks_running ?? 0} running / ${tasksTotal} total`;
+
+      // Gateway (use gateway.ok/backends health)
+      const gwOk = state.gateway?.ok ?? false;
+      const gwBackends = state.gateway?.backends ?? {};
+      const healthyBackends = Object.values(gwBackends).filter(b => b && b.healthy).length;
+      const totalBackends = Object.values(gwBackends).filter(b => b && typeof b === 'object' && 'healthy' in b).length;
+      const gwPercent = totalBackends > 0 ? (healthyBackends / totalBackends) * 100 : 0;
+      setGaugeValue('gauge-gateway', gwPercent);
+      document.getElementById('val-gateway').textContent = `${healthyBackends}/${totalBackends} backends`;
+
+      // Vector memory (from postgresql.total_rows)
+      const vectors = state.postgresql?.total_rows ?? 0;
+      const vecPercent = Math.min(100, (vectors / 2000000) * 100);
+      setGaugeValue('gauge-vectors', vecPercent);
+      document.getElementById('val-vectors').textContent = vectors.toLocaleString();
+
+      // Network clients (from unifi)
+      const clients = state.unifi?.client_count ?? 0;
+      const netPercent = Math.min(100, (clients / 150) * 100);
+      setGaugeValue('gauge-network', netPercent);
+      document.getElementById('val-network').textContent = `${clients} clients`;
+
+      // Nixie tubes
+      setNixie('nixie-memories', vectors, 7);
+      setNixie('nixie-tasks', schedInfo.total_runs ?? 0, 6);
+      const uptimeH = schedInfo.uptime_s ? Math.round(schedInfo.uptime_s / 3600) : 0;
+      setNixie('nixie-uptime', uptimeH, 5);
+      setNixie('nixie-clients', clients, 3);
+
+      // Indicator lamps
+      setLamp('lamp-postgres', state.postgresql?.status === 'ok' ? 'ok' : 'error');
+      setLamp('lamp-redis', state.redis?.status === 'ok' ? 'ok' : 'error');
+      setLamp('lamp-ollama', state.ollama?.status === 'ok' ? 'ok' : state.ollama?.status === 'degraded' ? 'warn' : 'error');
+      setLamp('lamp-gateway', state.gateway?.ok ? 'ok' : state.gateway?.status === 'ok' ? 'ok' : 'error');
+      setLamp('lamp-scheduler', (state.scheduler?.status === 'ok' || schedInfo.status === 'running') ? 'ok' : 'error');
+      setLamp('lamp-memory', state.postgresql?.status === 'ok' ? 'ok' : 'error');
+      setLamp('lamp-plex', state.plex?.status === 'ok' ? 'ok' : 'off');
+      setLamp('lamp-unifi', state.unifi?.status === 'ok' ? 'ok' : 'off');
+      setLamp('lamp-synology', state.synology?.status === 'ok' ? 'ok' : state.synology?.status === 'sleeping' ? 'amber' : 'off');
+
+      // Footer
+      document.getElementById('poll-latency').textContent = `${state.poll_duration_ms ?? '--'}ms`;
+      document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // INIT
+    // ═══════════════════════════════════════════════════════════════
+
+    createGauge('gauge-cpu', 0, 100, '%');
+    createGauge('gauge-memory', 0, 100, '%');
+    createGauge('gauge-scheduler', 0, 100, '%');
+    createGauge('gauge-gateway', 0, 100, '%');
+    createGauge('gauge-vectors', 0, 100, '%');
+    createGauge('gauge-network', 0, 100, '%');
+
+    setNixie('nixie-memories', 0, 7);
+    setNixie('nixie-tasks', 0, 6);
+    setNixie('nixie-uptime', 0, 5);
+    setNixie('nixie-clients', 0, 3);
+
+    connectWS();
+  </script>
+</body>
+</html>

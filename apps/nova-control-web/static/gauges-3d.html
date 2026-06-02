@@ -1,0 +1,626 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NOVA — GAUGE CLUSTER</title>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0e14;
+      --cyan: #00ffc8;
+      --amber: #ffcc00;
+      --red: #ff3344;
+      --green: #00ff66;
+      --nixie: #ff8800;
+      --font: 'Share Tech Mono', monospace;
+      --font-title: 'Orbitron', monospace;
+    }
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      background: var(--bg);
+      color: #c8d0e0;
+      font-family: var(--font);
+      overflow: hidden;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 12px 24px;
+      border-bottom: 1px solid #1a2030;
+      z-index: 10;
+    }
+    .header h1 {
+      font-family: var(--font-title);
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 4px;
+      color: var(--cyan);
+      text-shadow: 0 0 10px rgba(0,255,200,0.3);
+    }
+    .header-right { display: flex; gap: 12px; align-items: center; }
+    .status-led {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green); box-shadow: 0 0 6px var(--green);
+    }
+    .clock {
+      font-family: var(--font-title);
+      font-size: 13px;
+      color: var(--amber);
+      letter-spacing: 2px;
+    }
+    #canvas-container {
+      flex: 1;
+      position: relative;
+    }
+    canvas { display: block; }
+
+    /* HUD overlay for text values */
+    .hud-overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+      pointer-events: none;
+      z-index: 5;
+    }
+    .hud-value {
+      position: absolute;
+      font-family: var(--font-title);
+      font-size: 14px;
+      color: var(--amber);
+      text-align: center;
+      text-shadow: 0 0 6px rgba(255,204,0,0.6);
+      white-space: nowrap;
+      transform: translateX(-50%);
+    }
+    .hud-label {
+      position: absolute;
+      font-family: var(--font-title);
+      font-size: 11px;
+      letter-spacing: 3px;
+      color: rgba(0,255,200,0.8);
+      text-align: center;
+      transform: translateX(-50%);
+    }
+
+    /* Nixie panel at bottom */
+    .nixie-strip {
+      display: flex;
+      justify-content: center;
+      gap: 30px;
+      padding: 10px 20px;
+      background: #080c12;
+      border-top: 1px solid #1a2030;
+      z-index: 10;
+    }
+    .nixie-group { display: flex; flex-direction: column; align-items: center; gap: 3px; }
+    .nixie-label { font-family: var(--font-title); font-size: 8px; letter-spacing: 2px; color: #4a5568; }
+    .nixie-display { display: flex; gap: 2px; padding: 4px 8px; background: #0d0d0d; border: 1px solid #333; border-radius: 4px; }
+    .nixie-digit {
+      font-family: var(--font-title); font-size: 18px; font-weight: 700;
+      color: var(--nixie); text-shadow: 0 0 6px rgba(255,136,0,0.5); min-width: 12px; text-align: center;
+    }
+    .nixie-digit.dim { color: #331a00; text-shadow: none; }
+
+    .footer {
+      display: flex; justify-content: space-between; padding: 6px 24px;
+      font-size: 9px; color: #4a5568; border-top: 1px solid #1a2030; z-index: 10;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>NOVA GAUGE CLUSTER</h1>
+    <div class="header-right">
+      <div class="status-led" id="ws-led"></div>
+      <span class="clock" id="clock">--:--:--</span>
+    </div>
+  </div>
+
+  <div id="canvas-container">
+    <div class="hud-overlay" id="hud-overlay">
+      <!-- Gauge labels rendered below gauges in screen space -->
+      <div class="hud-label" style="left:8%;top:62%">CPU</div>
+      <div class="hud-value" id="hv-cpu" style="left:8%;top:66%">--</div>
+
+      <div class="hud-label" style="left:22%;top:62%">RAM</div>
+      <div class="hud-value" id="hv-memory" style="left:22%;top:66%">--</div>
+
+      <div class="hud-label" style="left:37%;top:62%">SCHEDULER</div>
+      <div class="hud-value" id="hv-scheduler" style="left:37%;top:66%">--</div>
+
+      <div class="hud-label" style="left:52%;top:62%">GATEWAY</div>
+      <div class="hud-value" id="hv-gateway" style="left:52%;top:66%">--</div>
+
+      <div class="hud-label" style="left:67%;top:62%">VECTORS</div>
+      <div class="hud-value" id="hv-vectors" style="left:67%;top:66%">--</div>
+
+      <div class="hud-label" style="left:82%;top:62%">NETWORK</div>
+      <div class="hud-value" id="hv-network" style="left:82%;top:66%">--</div>
+    </div>
+  </div>
+
+  <div class="nixie-strip">
+    <div class="nixie-group"><div class="nixie-label">MEMORIES</div><div class="nixie-display" id="nixie-memories"></div></div>
+    <div class="nixie-group"><div class="nixie-label">TASKS</div><div class="nixie-display" id="nixie-tasks"></div></div>
+    <div class="nixie-group"><div class="nixie-label">UPTIME</div><div class="nixie-display" id="nixie-uptime"></div></div>
+    <div class="nixie-group"><div class="nixie-label">CLIENTS</div><div class="nixie-display" id="nixie-clients"></div></div>
+    <div class="nixie-group"><div class="nixie-label">POLL</div><div class="nixie-display" id="nixie-poll"></div></div>
+  </div>
+
+  <div class="footer">
+    <span>NOVA v2026.6 — DIGITALNOISE.NET</span>
+    <span id="last-update">AWAITING DATA</span>
+  </div>
+
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://cdn.jsdelivr.net/npm/three@0.164.1/build/three.module.js",
+      "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.164.1/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // ═══════════════════════════════════════════════════════════════
+    // SCENE SETUP
+    // ═══════════════════════════════════════════════════════════════
+
+    const container = document.getElementById('canvas-container');
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0x0a0e14);
+    scene.fog = new THREE.Fog(0x0a0e14, 8, 20);
+
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 100);
+    camera.position.set(0, 0.5, 4.5);
+    camera.lookAt(0, 0, 0);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(container.clientWidth, container.clientHeight);
+    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1.6;
+    container.appendChild(renderer.domElement);
+
+    // Fixed camera — no rotation allowed
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.enabled = false;
+
+    // ═══════════════════════════════════════════════════════════════
+    // LIGHTING
+    // ═══════════════════════════════════════════════════════════════
+
+    // Warm under-glow (like concept 7)
+    const underLight = new THREE.PointLight(0xff8844, 0.6, 6);
+    underLight.position.set(0, -2, 2);
+    scene.add(underLight);
+
+    // Cool ambient from above — brighter for readability
+    const ambientLight = new THREE.AmbientLight(0x556677, 0.5);
+    scene.add(ambientLight);
+
+    // Key light (slightly warm) — brighter
+    const keyLight = new THREE.DirectionalLight(0xffeedd, 1.2);
+    keyLight.position.set(2, 3, 5);
+    scene.add(keyLight);
+
+    // Cyan accent light from left — stronger
+    const accentLight = new THREE.PointLight(0x00ffc8, 0.5, 6);
+    accentLight.position.set(-3, 0, 3);
+    scene.add(accentLight);
+
+    // Fill light — brighter
+    const fillLight = new THREE.DirectionalLight(0x4488aa, 0.5);
+    fillLight.position.set(-2, 1, 4);
+    scene.add(fillLight);
+
+    // Front face light for gauge readability
+    const faceLight = new THREE.PointLight(0xeeeeff, 0.4, 5);
+    faceLight.position.set(0, 0.5, 3);
+    scene.add(faceLight);
+
+    // ═══════════════════════════════════════════════════════════════
+    // MATERIALS
+    // ═══════════════════════════════════════════════════════════════
+
+    const chromeMaterial = new THREE.MeshStandardMaterial({
+      color: 0xcccccc,
+      metalness: 0.95,
+      roughness: 0.1,
+    });
+
+    const panelMaterial = new THREE.MeshStandardMaterial({
+      color: 0x1a1a1a,
+      metalness: 0.3,
+      roughness: 0.8,
+    });
+
+    const gaugeFaceMaterial = new THREE.MeshStandardMaterial({
+      color: 0x1a1a1a,
+      metalness: 0.05,
+      roughness: 0.95,
+      emissive: 0x0a0a0a,
+      emissiveIntensity: 0.3,
+    });
+
+    const needleMaterial = new THREE.MeshStandardMaterial({
+      color: 0xff2200,
+      emissive: 0xff2200,
+      emissiveIntensity: 0.3,
+      metalness: 0.8,
+      roughness: 0.3,
+    });
+
+    const glassMaterial = new THREE.MeshPhysicalMaterial({
+      color: 0xffffff,
+      metalness: 0,
+      roughness: 0,
+      transmission: 0.95,
+      thickness: 0.05,
+      ior: 1.5,
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // PANEL GEOMETRY
+    // ═══════════════════════════════════════════════════════════════
+
+    // Main panel body
+    const panelGeo = new THREE.BoxGeometry(7, 2.2, 0.3);
+    const panel = new THREE.Mesh(panelGeo, panelMaterial);
+    panel.position.set(0, 0, 0);
+    scene.add(panel);
+
+    // Brushed aluminum trim strips
+    const trimGeo = new THREE.BoxGeometry(7.1, 0.06, 0.32);
+    const trimMat = new THREE.MeshStandardMaterial({ color: 0x888888, metalness: 0.9, roughness: 0.3 });
+    const trimTop = new THREE.Mesh(trimGeo, trimMat);
+    trimTop.position.set(0, 0.75, 0.01);
+    scene.add(trimTop);
+    const trimMid = new THREE.Mesh(trimGeo.clone(), trimMat);
+    trimMid.position.set(0, -0.35, 0.01);
+    scene.add(trimMid);
+    const trimBot = new THREE.Mesh(trimGeo.clone(), trimMat);
+    trimBot.position.set(0, -1.05, 0.01);
+    scene.add(trimBot);
+
+    // ═══════════════════════════════════════════════════════════════
+    // GAUGE CREATION
+    // ═══════════════════════════════════════════════════════════════
+
+    const gauges = [];
+    const gaugePositions = [
+      { x: -2.7, y: 0.2, r: 0.42, id: 'cpu',       label: 'CPU' },
+      { x: -1.6, y: 0.2, r: 0.35, id: 'memory',    label: 'RAM' },
+      { x: -0.5, y: 0.2, r: 0.42, id: 'scheduler', label: 'SCHED' },
+      { x: 0.7,  y: 0.2, r: 0.42, id: 'gateway',   label: 'GWAY' },
+      { x: 1.8,  y: 0.2, r: 0.35, id: 'vectors',   label: 'VEC' },
+      { x: 2.9,  y: 0.2, r: 0.42, id: 'network',   label: 'NET' },
+    ];
+
+    function createGauge(config) {
+      const group = new THREE.Group();
+      const { x, y, r } = config;
+
+      // Bezel ring (torus)
+      const bezelGeo = new THREE.TorusGeometry(r, r * 0.12, 16, 48);
+      const bezel = new THREE.Mesh(bezelGeo, chromeMaterial);
+      bezel.position.set(x, y, 0.16);
+      group.add(bezel);
+
+      // Face (dark circle)
+      const faceGeo = new THREE.CircleGeometry(r * 0.88, 48);
+      const face = new THREE.Mesh(faceGeo, gaugeFaceMaterial);
+      face.position.set(x, y, 0.14);
+      group.add(face);
+
+      // Tick marks — use same coordinate system as needle
+      // Needle: rotation.z in Three.js, where 0° = up (+Y), positive = CCW
+      // 0% = 135° (7 o'clock), 100% = -135° (5 o'clock)
+      // For ticks/numbers we convert to cartesian: angle from +Y, CCW positive
+      // x = sin(angle) * r, y = cos(angle) * r (rotated 90° from standard math)
+      const tickGroup = new THREE.Group();
+      for (let i = 0; i <= 10; i++) {
+        const fraction = i / 10;
+        const angleDeg = 135 - (270 * fraction); // same formula as needle
+        const angleRad = angleDeg * Math.PI / 180;
+        const isMajor = i % 2 === 0;
+        const innerR = r * (isMajor ? 0.55 : 0.65);
+        const outerR = r * 0.82;
+        // Convert rotation.z angle to XY: x = -sin(angle), y = cos(angle)
+        const dx = -Math.sin(angleRad);
+        const dy = Math.cos(angleRad);
+        const tickGeo = new THREE.BufferGeometry().setFromPoints([
+          new THREE.Vector3(dx * innerR, dy * innerR, 0),
+          new THREE.Vector3(dx * outerR, dy * outerR, 0),
+        ]);
+        const tickColor = isMajor ? 0x00ffc8 : 0x44aa88;
+        const tickMat = new THREE.LineBasicMaterial({ color: tickColor });
+        const tick = new THREE.Line(tickGeo, tickMat);
+        tick.position.set(x, y, 0.155);
+        tickGroup.add(tick);
+
+        // Numbers on major ticks
+        if (isMajor) {
+          const numR = r * 0.42;
+          const numX = dx * numR;
+          const numY = dy * numR;
+          const canvas = document.createElement('canvas');
+          canvas.width = 64;
+          canvas.height = 64;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = '#c8d0e0';
+          ctx.font = 'bold 40px Orbitron, monospace';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(String(i * 10), 32, 32);
+          const texture = new THREE.CanvasTexture(canvas);
+          texture.needsUpdate = true;
+          const spriteMat = new THREE.SpriteMaterial({ map: texture, transparent: true });
+          const sprite = new THREE.Sprite(spriteMat);
+          sprite.position.set(x + numX, y + numY, 0.16);
+          sprite.scale.set(r * 0.22, r * 0.22, 1);
+          tickGroup.add(sprite);
+        }
+      }
+      group.add(tickGroup);
+
+      // Red zone arc (last 15% of sweep)
+      const redZonePoints = [];
+      for (let i = 85; i <= 100; i++) {
+        const fraction = i / 100;
+        const angleDeg = 135 - (270 * fraction);
+        const angleRad = angleDeg * Math.PI / 180;
+        redZonePoints.push(new THREE.Vector3(x + (-Math.sin(angleRad)) * r * 0.83, y + Math.cos(angleRad) * r * 0.83, 0.155));
+      }
+      const redZoneGeo = new THREE.BufferGeometry().setFromPoints(redZonePoints);
+      const redZoneMat = new THREE.LineBasicMaterial({ color: 0xff3344 });
+      const redZone = new THREE.Line(redZoneGeo, redZoneMat);
+      group.add(redZone);
+
+      // Needle — points up (+Y), rotated to 0% position (7 o'clock = 135°)
+      const needleLen = r * 0.75;
+      const needleGeo = new THREE.BufferGeometry();
+      const vertices = new Float32Array([
+        -0.008, 0, 0,
+        0.008, 0, 0,
+        0, needleLen, 0,
+      ]);
+      needleGeo.setAttribute('position', new THREE.BufferAttribute(vertices, 3));
+      const needle = new THREE.Mesh(needleGeo, needleMaterial);
+      needle.position.set(x, y, 0.17);
+      needle.rotation.z = 135 * Math.PI / 180; // Start at 0% (7 o'clock)
+      group.add(needle);
+
+      // Center cap
+      const capGeo = new THREE.SphereGeometry(r * 0.08, 16, 16);
+      const cap = new THREE.Mesh(capGeo, chromeMaterial);
+      cap.position.set(x, y, 0.18);
+      group.add(cap);
+
+      // Glass dome
+      const glassGeo = new THREE.SphereGeometry(r * 0.9, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.5);
+      const glass = new THREE.Mesh(glassGeo, glassMaterial);
+      glass.position.set(x, y, 0.14);
+      glass.rotation.x = -Math.PI / 2;
+      group.add(glass);
+
+      scene.add(group);
+      return { needle, config, group };
+    }
+
+    gaugePositions.forEach(cfg => {
+      gauges.push(createGauge(cfg));
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // INDICATOR LAMPS
+    // ═══════════════════════════════════════════════════════════════
+
+    const lamps = [];
+    const lampNames = ['PG', 'REDIS', 'OLLAMA', 'GWAY', 'SCHED', 'VEC', 'PLEX', 'UNIFI', 'NAS'];
+    const lampCount = lampNames.length;
+    const lampStartX = -2.7;
+    const lampSpacing = 5.4 / (lampCount - 1);
+
+    lampNames.forEach((name, i) => {
+      const x = lampStartX + i * lampSpacing;
+      const y = -0.7;
+
+      // Housing
+      const housingGeo = new THREE.TorusGeometry(0.07, 0.02, 8, 24);
+      const housing = new THREE.Mesh(housingGeo, chromeMaterial);
+      housing.position.set(x, y, 0.16);
+      scene.add(housing);
+
+      // Lamp sphere
+      const lampGeo = new THREE.SphereGeometry(0.055, 16, 16);
+      const lampMat = new THREE.MeshStandardMaterial({
+        color: 0x004400,
+        emissive: 0x000000,
+        emissiveIntensity: 0,
+        metalness: 0.1,
+        roughness: 0.3,
+      });
+      const lamp = new THREE.Mesh(lampGeo, lampMat);
+      lamp.position.set(x, y, 0.17);
+      scene.add(lamp);
+
+      lamps.push({ mesh: lamp, material: lampMat, name });
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // DECORATIVE ELEMENTS
+    // ═══════════════════════════════════════════════════════════════
+
+    // Rivets/screws on corners
+    const screwGeo = new THREE.CylinderGeometry(0.03, 0.03, 0.05, 8);
+    const screwMat = new THREE.MeshStandardMaterial({ color: 0x666666, metalness: 0.9, roughness: 0.4 });
+    [[-3.4, 0.95], [3.4, 0.95], [-3.4, -1.0], [3.4, -1.0]].forEach(([sx, sy]) => {
+      const screw = new THREE.Mesh(screwGeo, screwMat);
+      screw.position.set(sx, sy, 0.16);
+      screw.rotation.x = Math.PI / 2;
+      scene.add(screw);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // ANIMATION & DATA
+    // ═══════════════════════════════════════════════════════════════
+
+    // Initialize to -1 so we know when first real data arrives
+    const gaugeValues = { cpu: -1, memory: -1, scheduler: -1, gateway: -1, vectors: -1, network: -1 };
+    const gaugeTargets = { cpu: 0, memory: 0, scheduler: 0, gateway: 0, vectors: 0, network: 0 };
+
+    function setGaugeTarget(id, value) {
+      gaugeTargets[id] = Math.max(0, Math.min(100, value));
+    }
+
+    function setLampState(index, status) {
+      if (index >= lamps.length) return;
+      const { material } = lamps[index];
+      if (status === 'ok') {
+        material.color.setHex(0x00aa44);
+        material.emissive.setHex(0x00ff66);
+        material.emissiveIntensity = 0.8;
+      } else if (status === 'warn') {
+        material.color.setHex(0xaa8800);
+        material.emissive.setHex(0xffcc00);
+        material.emissiveIntensity = 0.8;
+      } else if (status === 'error') {
+        material.color.setHex(0xaa2200);
+        material.emissive.setHex(0xff3344);
+        material.emissiveIntensity = 0.8;
+      } else {
+        material.color.setHex(0x1a1a1a);
+        material.emissive.setHex(0x000000);
+        material.emissiveIntensity = 0;
+      }
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+
+      // Smooth needle movement
+      gauges.forEach((gauge, i) => {
+        const id = gauge.config.id;
+        const target = gaugeTargets[id];
+
+        // On first frame or before data, snap to target
+        if (gaugeValues[id] < 0) {
+          gaugeValues[id] = target;
+        } else {
+          gaugeValues[id] += (target - gaugeValues[id]) * 0.05;
+        }
+
+        // Map 0-100 to rotation:
+        // Needle points UP (+Y). rotation.z is counter-clockwise in Three.js.
+        // 0% → 7 o'clock = 135° CCW from 12
+        // 100% → 5 o'clock = -135° CCW from 12 (or 225° CW)
+        // Sweep: 135° down to -135° as value increases (270° total, clockwise)
+        const fraction = Math.max(0, Math.min(1, gaugeValues[id] / 100));
+        const deg = 135 - (270 * fraction);
+        gauge.needle.rotation.z = deg * Math.PI / 180;
+      });
+
+      // Subtle panel breathing (ambient light flicker)
+      underLight.intensity = 0.4 + Math.sin(Date.now() * 0.001) * 0.05;
+
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+
+    // Resize handler
+    window.addEventListener('resize', () => {
+      camera.aspect = container.clientWidth / container.clientHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(container.clientWidth, container.clientHeight);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // WEBSOCKET & DATA
+    // ═══════════════════════════════════════════════════════════════
+
+    function setNixie(id, value, digits) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const str = String(value).padStart(digits, ' ');
+      el.innerHTML = str.split('').map(ch =>
+        `<span class="nixie-digit${ch === ' ' ? ' dim' : ''}">${ch === ' ' ? '0' : ch}</span>`
+      ).join('');
+    }
+
+    function updateClock() {
+      document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-US', {hour12:false});
+    }
+    setInterval(updateClock, 1000); updateClock();
+
+    let ws;
+    function connectWS() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws`);
+      ws.onopen = () => { document.getElementById('ws-led').style.background = 'var(--green)'; };
+      ws.onclose = () => { document.getElementById('ws-led').style.background = 'var(--red)'; setTimeout(connectWS, 3000); };
+      ws.onmessage = (e) => { try { updateData(JSON.parse(e.data)); } catch(err){} };
+    }
+
+    function updateData(state) {
+      // Gauges
+      setGaugeTarget('cpu', state.system?.cpu_percent ?? 0);
+      setGaugeTarget('memory', state.system?.memory?.percent ?? 0);
+
+      const schedInfo = state.scheduler?.info ?? {};
+      const runs = schedInfo.total_runs ?? 1;
+      const fails = schedInfo.total_failures ?? 0;
+      setGaugeTarget('scheduler', ((runs - fails) / runs) * 100);
+
+      const backends = state.gateway?.backends ?? {};
+      const healthy = Object.values(backends).filter(b => b?.healthy).length;
+      const total = Object.values(backends).filter(b => b && typeof b === 'object' && 'healthy' in b).length;
+      setGaugeTarget('gateway', total ? (healthy / total) * 100 : 0);
+
+      const vectors = state.postgresql?.total_rows ?? 0;
+      setGaugeTarget('vectors', (vectors / 2000000) * 100);
+
+      const clients = state.unifi?.client_count ?? 0;
+      setGaugeTarget('network', (clients / 150) * 100);
+
+      // Nixie tubes
+      setNixie('nixie-memories', vectors, 7);
+      setNixie('nixie-tasks', schedInfo.total_runs ?? 0, 6);
+      setNixie('nixie-uptime', schedInfo.uptime_s ? Math.round(schedInfo.uptime_s / 3600) : 0, 4);
+      setNixie('nixie-clients', clients, 3);
+      setNixie('nixie-poll', state.poll_duration_ms ?? 0, 3);
+
+      // Lamps: PG, REDIS, OLLAMA, GWAY, SCHED, VEC, PLEX, UNIFI, NAS
+      setLampState(0, state.postgresql?.status === 'ok' ? 'ok' : 'error');
+      setLampState(1, state.redis?.status === 'ok' ? 'ok' : 'error');
+      setLampState(2, state.ollama?.status === 'ok' ? 'ok' : state.ollama?.status === 'degraded' ? 'warn' : 'error');
+      setLampState(3, state.gateway?.ok ? 'ok' : 'error');
+      setLampState(4, (state.scheduler?.status === 'ok' || schedInfo.status === 'running') ? 'ok' : 'error');
+      setLampState(5, state.postgresql?.status === 'ok' ? 'ok' : 'error');
+      setLampState(6, state.plex?.status === 'ok' ? 'ok' : 'off');
+      setLampState(7, state.unifi?.status === 'ok' ? 'ok' : 'off');
+      setLampState(8, state.synology?.status === 'ok' ? 'ok' : state.synology?.status === 'sleeping' ? 'warn' : 'off');
+
+      // HUD overlay values
+      document.getElementById('hv-cpu').textContent = `${(state.system?.cpu_percent ?? 0).toFixed(0)}%`;
+      document.getElementById('hv-memory').textContent = `${(state.system?.memory?.used_gb ?? 0).toFixed(0)}/${(state.system?.memory?.total_gb ?? 0).toFixed(0)}G`;
+      document.getElementById('hv-scheduler').textContent = `${schedInfo.tasks_running ?? 0} run / ${schedInfo.tasks_total ?? 0}`;
+      document.getElementById('hv-gateway').textContent = `${healthy}/${total} OK`;
+      document.getElementById('hv-vectors').textContent = `${(vectors/1000000).toFixed(2)}M`;
+      document.getElementById('hv-network').textContent = `${clients} clients`;
+
+      document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+    }
+
+    connectWS();
+  </script>
+</body>
+</html>

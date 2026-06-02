@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NOVA — GAUGE CLUSTER</title>
+  <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #0a0e14;
+      --cyan: #00ffc8;
+      --amber: #ffcc00;
+      --red: #ff3344;
+      --green: #00ff66;
+      --nixie-glow: #ff8800;
+      --font: 'Share Tech Mono', monospace;
+      --font-title: 'Orbitron', monospace;
+    }
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      background: var(--bg);
+      font-family: var(--font);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Header */
+    .header {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 15px 30px;
+      border-bottom: 1px solid #1a2030;
+    }
+    .header h1 {
+      font-family: var(--font-title);
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: 4px;
+      color: var(--cyan);
+      text-shadow: 0 0 10px rgba(0,255,200,0.3);
+    }
+    .header-right {
+      display: flex; gap: 12px; align-items: center;
+    }
+    .status-led {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 6px var(--green);
+      animation: pulse 2s infinite;
+    }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.5} }
+    .clock {
+      font-family: var(--font-title);
+      font-size: 13px;
+      color: var(--amber);
+      letter-spacing: 2px;
+    }
+
+    /* Panel container — the photorealistic background */
+    .panel-wrapper {
+      position: relative;
+      width: 100%;
+      max-width: 1408px;
+      margin: 30px auto;
+    }
+    .panel-bg {
+      width: 100%;
+      height: auto;
+      display: block;
+      border-radius: 4px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.8), 0 0 1px rgba(0,255,200,0.1);
+    }
+
+    /* Overlay container — positioned on top of the image */
+    .overlay {
+      position: absolute;
+      top: 0; left: 0; right: 0; bottom: 0;
+    }
+
+    /* Individual gauge overlays — positioned by percentage */
+    .gauge-overlay {
+      position: absolute;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* SVG gauge (rendered inside each overlay) */
+    .gauge-overlay svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .gauge-needle {
+      fill: var(--red);
+      filter: drop-shadow(0 0 3px rgba(255,50,50,0.8));
+      transition: transform 1s cubic-bezier(0.4, 0, 0.2, 1);
+      transform-origin: 50px 50px;
+    }
+    .gauge-tick { stroke: rgba(200,208,224,0.6); stroke-width: 0.8; }
+    .gauge-tick.major { stroke: rgba(200,208,224,0.9); stroke-width: 1.5; }
+    .gauge-number { font-family: var(--font); font-size: 5.5px; fill: rgba(200,208,224,0.7); }
+    .gauge-arc {
+      fill: none;
+      stroke-width: 4;
+      stroke-linecap: round;
+      transition: stroke-dashoffset 1s ease, stroke 0.5s ease;
+    }
+    .gauge-label-text {
+      font-family: var(--font-title);
+      font-size: 4px;
+      fill: var(--cyan);
+      letter-spacing: 1px;
+      opacity: 0.8;
+    }
+    .gauge-value-text {
+      font-family: var(--font-title);
+      font-size: 6px;
+      fill: var(--amber);
+      letter-spacing: 0.5px;
+    }
+
+    /* Digital display overlays */
+    .digital-overlay {
+      position: absolute;
+      display: flex;
+      gap: 2px;
+      align-items: center;
+      justify-content: center;
+    }
+    .digi-char {
+      font-family: var(--font-title);
+      font-weight: 700;
+      color: var(--nixie-glow);
+      text-shadow: 0 0 6px rgba(255,136,0,0.6), 0 0 15px rgba(255,136,0,0.3);
+    }
+    .digi-char.dim { color: #331a00; text-shadow: none; }
+
+    /* Lamp overlays */
+    .lamp-overlay {
+      position: absolute;
+      border-radius: 50%;
+      transition: all 0.3s ease;
+    }
+    .lamp-overlay.green { background: radial-gradient(circle, #44ff88, #00aa44); box-shadow: 0 0 8px #00ff66, inset 0 -2px 4px rgba(0,0,0,0.3); }
+    .lamp-overlay.amber { background: radial-gradient(circle, #ffdd44, #cc8800); box-shadow: 0 0 8px #ffcc00, inset 0 -2px 4px rgba(0,0,0,0.3); }
+    .lamp-overlay.red { background: radial-gradient(circle, #ff6666, #cc2233); box-shadow: 0 0 8px #ff3344, inset 0 -2px 4px rgba(0,0,0,0.3); }
+    .lamp-overlay.off { background: radial-gradient(circle, #333, #1a1a1a); box-shadow: inset 0 1px 3px rgba(0,0,0,0.5); }
+
+    /* Footer */
+    .footer {
+      width: 100%;
+      display: flex;
+      justify-content: space-between;
+      padding: 10px 30px;
+      font-size: 10px;
+      color: #4a5568;
+      border-top: 1px solid #1a2030;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>NOVA GAUGE CLUSTER</h1>
+    <div class="header-right">
+      <div class="status-led" id="ws-led"></div>
+      <span class="clock" id="clock">--:--:--</span>
+    </div>
+  </div>
+
+  <div class="panel-wrapper">
+    <img class="panel-bg" src="/static/img/panel_bg.png" alt="Control Panel">
+    <div class="overlay" id="overlay">
+      <!-- Gauges, digital displays, and lamps will be positioned here by JS -->
+    </div>
+  </div>
+
+  <div class="footer">
+    <span>NOVA v2026.6 — DIGITALNOISE.NET</span>
+    <span id="poll-latency">--ms</span>
+    <span id="last-update">AWAITING DATA</span>
+  </div>
+
+  <script>
+    // Gauge positions mapped to the panel image (percentages)
+    // Panel is 1408x768. Gauge centers measured from the image:
+    const GAUGES = [
+      { id: 'cpu',       label: 'CPU',      x: 9.5,  y: 30.0, size: 14.0 },
+      { id: 'memory',    label: 'RAM',      x: 24.5, y: 32.0, size: 11.0 },
+      { id: 'scheduler', label: 'SCHED',    x: 40.5, y: 29.0, size: 15.5 },
+      { id: 'gateway',   label: 'GATEWAY',  x: 57.0, y: 29.0, size: 15.5 },
+      { id: 'vectors',   label: 'VECTORS',  x: 72.5, y: 32.0, size: 11.0 },
+      { id: 'network',   label: 'NETWORK',  x: 88.0, y: 30.0, size: 14.0 },
+    ];
+
+    // Digital display positions
+    const DIGITALS = [
+      { id: 'digi-memories', x: 17.0, y: 44.5, w: 11, h: 4, digits: 7, label: 'MEMORIES' },
+      { id: 'digi-uptime',   x: 72.0, y: 44.5, w: 11, h: 4, digits: 5, label: 'UPTIME' },
+    ];
+
+    // Lamp positions (bottom row — aligned to jewel housings in panel image)
+    const LAMPS = [
+      { id: 'lamp-postgres',  x: 10.0, y: 74.0, size: 2.8 },
+      { id: 'lamp-redis',     x: 16.5, y: 74.0, size: 2.8 },
+      { id: 'lamp-ollama',    x: 23.0, y: 74.0, size: 2.8 },
+      { id: 'lamp-gateway',   x: 29.5, y: 74.0, size: 2.8 },
+      { id: 'lamp-scheduler', x: 36.0, y: 74.0, size: 2.8 },
+      { id: 'lamp-memory',    x: 42.5, y: 74.0, size: 2.8 },
+      { id: 'lamp-plex',      x: 52.5, y: 74.0, size: 2.8 },
+      { id: 'lamp-unifi',     x: 59.0, y: 74.0, size: 2.8 },
+      { id: 'lamp-synology',  x: 65.5, y: 74.0, size: 2.8 },
+      { id: 'lamp-mlx',       x: 72.0, y: 74.0, size: 2.8 },
+      { id: 'lamp-searx',     x: 78.5, y: 74.0, size: 2.8 },
+      { id: 'lamp-plex2',     x: 85.0, y: 74.0, size: 2.8 },
+    ];
+
+    const overlay = document.getElementById('overlay');
+
+    // ═══════════════════════════════════════════════════════════════
+    // CREATE GAUGE SVGs
+    // ═══════════════════════════════════════════════════════════════
+
+    function createGaugeSVG(gauge) {
+      const div = document.createElement('div');
+      div.className = 'gauge-overlay';
+      div.style.cssText = `left:${gauge.x - gauge.size/2}%;top:${gauge.y - gauge.size/2}%;width:${gauge.size}%;height:${gauge.size * (1408/768)}%;`;
+      div.id = `go-${gauge.id}`;
+
+      const cx = 50, cy = 50, r = 38;
+      const startAngle = -225, endAngle = 45, arcLength = 270;
+      let svg = `<svg viewBox="0 0 100 100">`;
+
+      // Tick marks
+      for (let i = 0; i <= 10; i++) {
+        const angle = (startAngle + arcLength * i / 10) * Math.PI / 180;
+        const isMajor = i % 2 === 0;
+        const ir = isMajor ? r - 6 : r - 4;
+        svg += `<line class="gauge-tick${isMajor?' major':''}" x1="${cx+ir*Math.cos(angle)}" y1="${cy+ir*Math.sin(angle)}" x2="${cx+(r-1)*Math.cos(angle)}" y2="${cy+(r-1)*Math.sin(angle)}"/>`;
+        if (isMajor) {
+          const nr = r - 10;
+          svg += `<text class="gauge-number" x="${cx+nr*Math.cos(angle)}" y="${cy+nr*Math.sin(angle)}" text-anchor="middle" dominant-baseline="middle">${i*10}</text>`;
+        }
+      }
+
+      // Arc
+      const arcR = 30;
+      const circ = 2 * Math.PI * arcR;
+      const dashLen = circ * (arcLength / 360);
+      svg += `<circle cx="${cx}" cy="${cy}" r="${arcR}" fill="none" stroke="#222" stroke-width="4" stroke-dasharray="${dashLen} ${circ}" transform="rotate(${startAngle+90},${cx},${cy})"/>`;
+      svg += `<circle id="arc-${gauge.id}" cx="${cx}" cy="${cy}" r="${arcR}" class="gauge-arc" stroke="var(--cyan)" stroke-dasharray="${dashLen} ${circ}" stroke-dashoffset="${dashLen}" transform="rotate(${startAngle+90},${cx},${cy})"/>`;
+
+      // Needle
+      svg += `<polygon id="needle-${gauge.id}" class="gauge-needle" points="49,15 51,15 50.5,50 49.5,50"/>`;
+
+      // Center cap
+      svg += `<circle cx="${cx}" cy="${cy}" r="3" fill="#222" stroke="#555" stroke-width="0.5"/>`;
+
+      // Label
+      svg += `<text class="gauge-label-text" x="${cx}" y="${cy+20}" text-anchor="middle">${gauge.label}</text>`;
+
+      // Value
+      svg += `<text class="gauge-value-text" id="vt-${gauge.id}" x="${cx}" y="${cy+26}" text-anchor="middle">--</text>`;
+
+      svg += `</svg>`;
+      div.innerHTML = svg;
+      overlay.appendChild(div);
+
+      return { dashLen, startAngle, arcLength };
+    }
+
+    const gaugeData = {};
+    GAUGES.forEach(g => { gaugeData[g.id] = createGaugeSVG(g); });
+
+    // ═══════════════════════════════════════════════════════════════
+    // CREATE DIGITAL DISPLAYS
+    // ═══════════════════════════════════════════════════════════════
+
+    DIGITALS.forEach(d => {
+      const div = document.createElement('div');
+      div.className = 'digital-overlay';
+      div.id = d.id;
+      div.style.cssText = `left:${d.x}%;top:${d.y}%;width:${d.w}%;height:${d.h}%;font-size:clamp(12px, 1.8vw, 24px);`;
+      for (let i = 0; i < d.digits; i++) {
+        const span = document.createElement('span');
+        span.className = 'digi-char dim';
+        span.textContent = '0';
+        div.appendChild(span);
+      }
+      overlay.appendChild(div);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // CREATE LAMPS
+    // ═══════════════════════════════════════════════════════════════
+
+    LAMPS.forEach(l => {
+      const div = document.createElement('div');
+      div.className = 'lamp-overlay off';
+      div.id = l.id;
+      div.style.cssText = `left:${l.x - l.size/2}%;top:${l.y - l.size/2}%;width:${l.size}%;padding-bottom:${l.size}%;`;
+      overlay.appendChild(div);
+    });
+
+    // ═══════════════════════════════════════════════════════════════
+    // UPDATE FUNCTIONS
+    // ═══════════════════════════════════════════════════════════════
+
+    function setGauge(id, value, displayText) {
+      const data = gaugeData[id];
+      if (!data) return;
+      const fraction = Math.max(0, Math.min(1, value / 100));
+
+      // Needle
+      const needle = document.getElementById(`needle-${id}`);
+      if (needle) {
+        const angle = data.startAngle + fraction * data.arcLength;
+        needle.style.transform = `rotate(${angle + 90}deg)`;
+      }
+
+      // Arc
+      const arc = document.getElementById(`arc-${id}`);
+      if (arc) {
+        arc.style.strokeDashoffset = data.dashLen * (1 - fraction);
+        arc.style.stroke = fraction > 0.85 ? 'var(--red)' : fraction > 0.65 ? 'var(--amber)' : 'var(--cyan)';
+      }
+
+      // Value text
+      const vt = document.getElementById(`vt-${id}`);
+      if (vt) vt.textContent = displayText;
+    }
+
+    function setDigital(id, value, digits) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      const str = String(value).padStart(digits, ' ');
+      const chars = el.querySelectorAll('.digi-char');
+      str.split('').forEach((ch, i) => {
+        if (chars[i]) {
+          chars[i].textContent = ch === ' ' ? '0' : ch;
+          chars[i].className = 'digi-char' + (ch === ' ' ? ' dim' : '');
+        }
+      });
+    }
+
+    function setLamp(id, status) {
+      const el = document.getElementById(id);
+      if (el) el.className = 'lamp-overlay ' + (status === 'ok' ? 'green' : status === 'warn' ? 'amber' : status === 'error' ? 'red' : 'off');
+    }
+
+    // ═══════════════════════════════════════════════════════════════
+    // WEBSOCKET
+    // ═══════════════════════════════════════════════════════════════
+
+    function updateClock() {
+      document.getElementById('clock').textContent = new Date().toLocaleTimeString('en-US', {hour12:false});
+    }
+    setInterval(updateClock, 1000); updateClock();
+
+    let ws;
+    function connectWS() {
+      const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+      ws = new WebSocket(`${proto}//${location.host}/ws`);
+      ws.onopen = () => { document.getElementById('ws-led').style.background = 'var(--green)'; };
+      ws.onclose = () => { document.getElementById('ws-led').style.background = 'var(--red)'; setTimeout(connectWS, 3000); };
+      ws.onmessage = (e) => { try { update(JSON.parse(e.data)); } catch(err){} };
+    }
+
+    function update(state) {
+      const cpu = state.system?.cpu_percent ?? 0;
+      setGauge('cpu', cpu, `${cpu.toFixed(0)}%`);
+
+      const mem = state.system?.memory?.percent ?? 0;
+      setGauge('memory', mem, `${state.system?.memory?.used_gb?.toFixed(0) ?? '--'}G`);
+
+      const schedInfo = state.scheduler?.info ?? {};
+      // Success rate based on runs, not task count vs failures
+      const totalRuns = schedInfo.total_runs ?? 1;
+      const totalFails = schedInfo.total_failures ?? 0;
+      const schedPct = Math.min(100, ((totalRuns - totalFails) / totalRuns) * 100);
+      setGauge('scheduler', schedPct, `${schedInfo.tasks_running ?? 0}/${schedInfo.tasks_total ?? 0}`);
+
+      const gwBackends = state.gateway?.backends ?? {};
+      const healthy = Object.values(gwBackends).filter(b => b?.healthy).length;
+      const total = Object.values(gwBackends).filter(b => b && typeof b === 'object' && 'healthy' in b).length;
+      setGauge('gateway', total ? (healthy/total)*100 : 0, `${healthy}/${total}`);
+
+      const vectors = state.postgresql?.total_rows ?? 0;
+      setGauge('vectors', (vectors / 2000000) * 100, `${(vectors/1000000).toFixed(1)}M`);
+
+      const clients = state.unifi?.client_count ?? 0;
+      setGauge('network', (clients / 150) * 100, `${clients}`);
+
+      // Digital displays
+      setDigital('digi-memories', vectors, 7);
+      setDigital('digi-uptime', schedInfo.uptime_s ? Math.round(schedInfo.uptime_s / 3600) : 0, 5);
+
+      // Lamps
+      setLamp('lamp-postgres', state.postgresql?.status === 'ok' ? 'ok' : 'error');
+      setLamp('lamp-redis', state.redis?.status === 'ok' ? 'ok' : 'error');
+      setLamp('lamp-ollama', state.ollama?.status === 'ok' ? 'ok' : state.ollama?.status === 'degraded' ? 'warn' : 'error');
+      setLamp('lamp-gateway', state.gateway?.ok ? 'ok' : 'error');
+      setLamp('lamp-scheduler', (state.scheduler?.status === 'ok' || schedInfo.status === 'running') ? 'ok' : 'error');
+      setLamp('lamp-memory', state.postgresql?.status === 'ok' ? 'ok' : 'error');
+      setLamp('lamp-plex', state.plex?.status === 'ok' ? 'ok' : 'off');
+      setLamp('lamp-unifi', state.unifi?.status === 'ok' ? 'ok' : 'off');
+      setLamp('lamp-synology', state.synology?.status === 'ok' ? 'ok' : state.synology?.status === 'sleeping' ? 'warn' : 'off');
+      setLamp('lamp-mlx', state.mlx_status?.status === 'ok' ? 'ok' : state.services?.mlx_chat?.status === 'up' ? 'ok' : 'off');
+      setLamp('lamp-searx', state.searxng_stats?.status === 'ok' ? 'ok' : 'off');
+      setLamp('lamp-plex2', state.hdhr?.status === 'ok' ? 'ok' : state.services?.hdhr?.status === 'up' ? 'ok' : 'off');
+
+      document.getElementById('poll-latency').textContent = `${state.poll_duration_ms ?? '--'}ms`;
+      document.getElementById('last-update').textContent = new Date().toLocaleTimeString();
+    }
+
+    connectWS();
+  </script>
+</body>
+</html>
