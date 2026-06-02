@@ -258,6 +258,38 @@ tasks:
 
   # ── Daily: daytime (enrichment, reflection) ────────────────────────────
 
+  journal_security:
+    script: nova_journal_security.py
+    schedule: cron 0 9 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  security_watcher:
+    script: nova_security_watcher.py
+    schedule: every 30m
+    timeout: 120
+    overlap: skip
+
+  security_weekly:
+    script: nova_security_weekly.py
+    schedule: cron 0 16 * * 5
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  security_patch_watch:
+    script: nova_security_patch_watch.py
+    schedule: cron 0 10 * * *
+    timeout: 120
+    overlap: skip
+
+  security_surface_monitor:
+    script: nova_security_surface_monitor.py
+    schedule: cron 0 6 * * 0
+    timeout: 300
+    overlap: skip
+
   journal_opinion:
     script: nova_journal.py
     args: ["opinion"]
@@ -721,5 +753,11 @@ tasks:
     script: nova_sandbox.py
     args: ["--rebuild-image"]
     schedule: cron 0 4 * * 0
+    timeout: 600
+    overlap: skip
+
+  gov_rss_ingest:
+    script: nova_gov_rss_ingest.py
+    schedule: every 6h
     timeout: 600
     overlap: skip
