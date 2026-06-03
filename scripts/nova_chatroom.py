@@ -2745,6 +2745,81 @@ async def security_headers_middleware(request, handler):
     return response
 
 
+# ── Analytics Middleware ──────────────────────────────────────────────────────
+
+_analytics_redis = None
+
+
+async def _get_analytics_redis():
+    global _analytics_redis
+    if _analytics_redis is None:
+        import redis.asyncio as aioredis
+        _analytics_redis = aioredis.from_url("redis://192.168.1.6:6379", decode_responses=True)
+    return _analytics_redis
+
+
+@web.middleware
+async def analytics_middleware(request, handler):
+    """Track page views server-side for analytics."""
+    start = time.time()
+    response = await handler(request)
+
+    # Only track GET requests to HTML pages (not WS, not API, not static)
+    if request.method != "GET" or request.path.startswith(("/api/", "/ws", "/files/", "/health")):
+        return response
+
+    try:
+        r = await _get_analytics_redis()
+        ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.remote or "")
+        country = request.headers.get("cf-ipcountry", "")
+        ua = request.headers.get("user-agent", "")
+        referrer = request.headers.get("referer", "")
+        elapsed_ms = int((time.time() - start) * 1000)
+
+        # Hash IP with daily salt
+        today = time.strftime("%Y-%m-%d")
+        salt_key = f"analytics:salt:{today}"
+        salt = await r.get(salt_key)
+        if not salt:
+            salt = secrets.token_hex(32)
+            await r.set(salt_key, salt, ex=172800)
+        visitor_hash = hashlib.sha256(f"{salt}:{ip}".encode()).hexdigest()[:16]
+
+        # Bucket UA
+        ua_lower = ua.lower()
+        if any(k in ua_lower for k in ("bot", "spider", "crawl")):
+            ua_bucket = "bot"
+        else:
+            platform = "mobile" if any(k in ua_lower for k in ("mobile", "android", "iphone")) else "desktop"
+            browser = "chrome" if ("chrome" in ua_lower and "edg" not in ua_lower) else "safari" if ("safari" in ua_lower and "chrome" not in ua_lower) else "firefox" if "firefox" in ua_lower else "other"
+            ua_bucket = f"{platform}-{browser}"
+
+        # Extract referrer domain
+        ref_domain = ""
+        if referrer:
+            try:
+                from urllib.parse import urlparse
+                ref_domain = urlparse(referrer).hostname or ""
+            except Exception:
+                pass
+
+        await r.xadd("analytics:events", {
+            "type": "pageview",
+            "site": "chat.digitalnoise.net",
+            "path": request.path[:500],
+            "referrer_domain": ref_domain,
+            "country": country,
+            "ua_bucket": ua_bucket,
+            "visitor_hash": visitor_hash,
+            "ts": str(int(time.time())),
+            "response_ms": str(elapsed_ms),
+        }, maxlen=10000, approximate=True)
+    except Exception:
+        pass
+
+    return response
+
+
 def create_app() -> web.Application:
     """Create and configure the aiohttp application."""
     global _session_secret
@@ -2752,7 +2827,7 @@ def create_app() -> web.Application:
 
     app = web.Application(
         client_max_size=MAX_FILE_SIZE + 1024 * 1024,
-        middlewares=[security_headers_middleware],
+        middlewares=[security_headers_middleware, analytics_middleware],
     )
     # Auth routes (no auth required)
     app.router.add_get("/login", handle_login_page)

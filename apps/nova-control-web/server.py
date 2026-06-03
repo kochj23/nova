@@ -246,6 +246,69 @@ async def add_security_headers(request: Request, call_next):
     return response
 
 
+@app.middleware("http")
+async def analytics_middleware(request: Request, call_next):
+    """Track page views for analytics (HTML pages only)."""
+    start_time = time.time()
+    response = await call_next(request)
+
+    if request.method != "GET" or request.url.path.startswith(("/api/", "/ws", "/static/", "/health")):
+        return response
+    if not any(request.url.path.endswith(x) or request.url.path == "/" for x in ("", "/", "/gauges", "/hud", "/analytics", "/gauges-flat", "/gauges-v2")):
+        return response
+
+    try:
+        r = app.state.redis
+        ip = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip() or (request.client.host if request.client else "")
+        country = request.headers.get("cf-ipcountry", "")
+        ua = request.headers.get("user-agent", "")
+        referrer = request.headers.get("referer", "")
+        elapsed_ms = int((time.time() - start_time) * 1000)
+
+        import hashlib, secrets as _secrets
+        today = time.strftime("%Y-%m-%d")
+        salt_key = f"analytics:salt:{today}"
+        salt = await r.get(salt_key)
+        if salt and isinstance(salt, bytes):
+            salt = salt.decode()
+        if not salt:
+            salt = _secrets.token_hex(32)
+            await r.set(salt_key, salt, ex=172800)
+        visitor_hash = hashlib.sha256(f"{salt}:{ip}".encode()).hexdigest()[:16]
+
+        ua_lower = ua.lower()
+        if any(k in ua_lower for k in ("bot", "spider", "crawl")):
+            ua_bucket = "bot"
+        else:
+            platform = "mobile" if any(k in ua_lower for k in ("mobile", "android", "iphone")) else "desktop"
+            browser = "chrome" if ("chrome" in ua_lower and "edg" not in ua_lower) else "safari" if ("safari" in ua_lower and "chrome" not in ua_lower) else "firefox" if "firefox" in ua_lower else "other"
+            ua_bucket = f"{platform}-{browser}"
+
+        ref_domain = ""
+        if referrer:
+            try:
+                from urllib.parse import urlparse
+                ref_domain = urlparse(referrer).hostname or ""
+            except Exception:
+                pass
+
+        await r.xadd("analytics:events", {
+            b"type": b"pageview",
+            b"site": b"gauges.digitalnoise.net",
+            b"path": request.url.path.encode()[:500],
+            b"referrer_domain": ref_domain.encode(),
+            b"country": country.encode(),
+            b"ua_bucket": ua_bucket.encode(),
+            b"visitor_hash": visitor_hash.encode(),
+            b"ts": str(int(time.time())).encode(),
+            b"response_ms": str(elapsed_ms).encode(),
+        }, maxlen=10000, approximate=True)
+    except Exception:
+        pass
+
+    return response
+
+
 def _is_lan(request: Request) -> bool:
     """Check if request originates from LAN."""
     client = request.client

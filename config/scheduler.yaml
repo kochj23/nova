@@ -761,3 +761,17 @@ tasks:
     schedule: every 6h
     timeout: 600
     overlap: skip
+
+  # ── Analytics ────────────────────────────────────────────────────────────
+
+  analytics_flush:
+    script: nova_analytics_flush.py
+    schedule: every 5m
+    timeout: 30
+    overlap: skip
+
+  analytics_aggregate:
+    script: nova_analytics_aggregate.py
+    schedule: cron 5 * * * *
+    timeout: 60
+    overlap: skip
