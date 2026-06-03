@@ -4419,5 +4419,149 @@ async def poll_loop():
         await asyncio.sleep(max(0, POLL_INTERVAL - elapsed))
 
 
+# ── Analytics Dashboard API ──────────────────────────────────────────────────
+
+@app.get("/analytics")
+async def analytics_page():
+    return FileResponse(Path(__file__).parent / "static" / "analytics.html")
+
+
+@app.get("/api/analytics/summary")
+async def analytics_summary(hours: int = 24):
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT site, SUM(views) as views, SUM(unique_visitors) as uniques
+            FROM analytics_hourly
+            WHERE hour >= now() - make_interval(hours => $1)
+            AND path IS NOT NULL
+            GROUP BY site ORDER BY views DESC
+        """, hours)
+        total_pv = await conn.fetchval("SELECT COUNT(*) FROM analytics_pageviews WHERE ts >= now() - make_interval(hours => $1)", hours)
+        total_uniques = await conn.fetchval("SELECT COUNT(DISTINCT visitor_hash) FROM analytics_pageviews WHERE ts >= now() - make_interval(hours => $1)", hours)
+    return JSONResponse({
+        "total_pageviews": total_pv or 0,
+        "total_unique_visitors": total_uniques or 0,
+        "by_site": [{"site": r["site"], "views": r["views"], "uniques": r["uniques"]} for r in rows],
+    })
+
+
+@app.get("/api/analytics/timeseries")
+async def analytics_timeseries(site: str = "", hours: int = 24):
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        if site:
+            rows = await conn.fetch("""
+                SELECT hour, SUM(views) as views, SUM(unique_visitors) as uniques
+                FROM analytics_hourly
+                WHERE site = $1 AND hour >= now() - make_interval(hours => $2) AND path IS NOT NULL
+                GROUP BY hour ORDER BY hour
+            """, site, hours)
+        else:
+            rows = await conn.fetch("""
+                SELECT hour, SUM(views) as views, SUM(unique_visitors) as uniques
+                FROM analytics_hourly
+                WHERE hour >= now() - make_interval(hours => $1) AND path IS NOT NULL
+                GROUP BY hour ORDER BY hour
+            """, hours)
+    return JSONResponse([{"hour": r["hour"].isoformat(), "views": r["views"], "uniques": r["uniques"]} for r in rows])
+
+
+@app.get("/api/analytics/pages")
+async def analytics_top_pages(site: str = "", hours: int = 24, limit: int = 20):
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        if site:
+            rows = await conn.fetch("""
+                SELECT path, SUM(views) as views, SUM(unique_visitors) as uniques
+                FROM analytics_hourly
+                WHERE site = $1 AND hour >= now() - make_interval(hours => $2) AND path IS NOT NULL
+                GROUP BY path ORDER BY views DESC LIMIT $3
+            """, site, hours, limit)
+        else:
+            rows = await conn.fetch("""
+                SELECT site, path, SUM(views) as views
+                FROM analytics_hourly
+                WHERE hour >= now() - make_interval(hours => $1) AND path IS NOT NULL
+                GROUP BY site, path ORDER BY views DESC LIMIT $2
+            """, hours, limit)
+    return JSONResponse([dict(r) for r in rows])
+
+
+@app.get("/api/analytics/referrers")
+async def analytics_referrers(site: str = "", hours: int = 168):
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        query = """
+            SELECT referrer_domain, COUNT(*) as views
+            FROM analytics_pageviews
+            WHERE ts >= now() - make_interval(hours => $1)
+            AND referrer_domain IS NOT NULL AND referrer_domain != ''
+        """
+        params = [hours]
+        if site:
+            query += " AND site = $2"
+            params.append(site)
+        query += " GROUP BY referrer_domain ORDER BY views DESC LIMIT 20"
+        rows = await conn.fetch(query, *params)
+    return JSONResponse([dict(r) for r in rows])
+
+
+@app.get("/api/analytics/countries")
+async def analytics_countries(site: str = "", hours: int = 168):
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        query = """
+            SELECT country, COUNT(*) as views
+            FROM analytics_pageviews
+            WHERE ts >= now() - make_interval(hours => $1)
+            AND country IS NOT NULL AND country != ''
+        """
+        params = [hours]
+        if site:
+            query += " AND site = $2"
+            params.append(site)
+        query += " GROUP BY country ORDER BY views DESC LIMIT 20"
+        rows = await conn.fetch(query, *params)
+    return JSONResponse([dict(r) for r in rows])
+
+
+@app.get("/api/analytics/devices")
+async def analytics_devices(site: str = "", hours: int = 168):
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        query = """
+            SELECT ua_bucket, COUNT(*) as views
+            FROM analytics_pageviews
+            WHERE ts >= now() - make_interval(hours => $1)
+            AND ua_bucket IS NOT NULL
+        """
+        params = [hours]
+        if site:
+            query += " AND site = $2"
+            params.append(site)
+        query += " GROUP BY ua_bucket ORDER BY views DESC"
+        rows = await conn.fetch(query, *params)
+    return JSONResponse([dict(r) for r in rows])
+
+
+@app.get("/api/analytics/events")
+async def analytics_events_api(site: str = "", hours: int = 24):
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        query = """
+            SELECT event_type, COUNT(*) as count
+            FROM analytics_events
+            WHERE ts >= now() - make_interval(hours => $1)
+        """
+        params = [hours]
+        if site:
+            query += " AND site = $2"
+            params.append(site)
+        query += " GROUP BY event_type ORDER BY count DESC"
+        rows = await conn.fetch(query, *params)
+    return JSONResponse([dict(r) for r in rows])
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=37450)

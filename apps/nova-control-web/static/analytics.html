@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nova Analytics</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <style>
+    .analytics-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 16px; padding: 16px; }
+    .analytics-card { background: var(--card-bg, #1a1f2e); border: 1px solid var(--border-glow, #2a3040); border-radius: 8px; padding: 16px; }
+    .analytics-card h3 { font-size: 12px; letter-spacing: 2px; color: var(--text-dim, #6a7a8a); margin-bottom: 12px; text-transform: uppercase; }
+    .stat-row { display: flex; justify-content: space-between; align-items: center; padding: 6px 0; border-bottom: 1px solid rgba(255,255,255,0.05); }
+    .stat-row:last-child { border-bottom: none; }
+    .stat-label { color: var(--text-main, #c8d0e0); font-size: 13px; }
+    .stat-value { color: var(--accent-cyan, #00ffc8); font-weight: 600; font-size: 14px; }
+    .big-number { font-size: 36px; font-weight: 700; color: var(--accent-cyan, #00ffc8); }
+    .big-label { font-size: 11px; color: var(--text-dim, #6a7a8a); letter-spacing: 1px; }
+    .summary-row { display: flex; gap: 24px; padding: 16px; flex-wrap: wrap; }
+    .summary-box { text-align: center; min-width: 120px; }
+    .site-filter { display: flex; gap: 8px; padding: 8px 16px; flex-wrap: wrap; }
+    .site-btn { padding: 4px 12px; border: 1px solid var(--border-glow, #2a3040); border-radius: 4px; background: none; color: var(--text-dim, #6a7a8a); cursor: pointer; font-size: 11px; font-family: inherit; }
+    .site-btn.active { border-color: var(--accent-cyan, #00ffc8); color: var(--accent-cyan, #00ffc8); }
+    .bar-chart { display: flex; flex-direction: column; gap: 6px; }
+    .bar-row { display: flex; align-items: center; gap: 8px; }
+    .bar-label { font-size: 12px; color: var(--text-main, #c8d0e0); min-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .bar-fill { height: 18px; background: linear-gradient(90deg, rgba(0,255,200,0.3), rgba(0,255,200,0.6)); border-radius: 3px; min-width: 2px; transition: width 0.3s; }
+    .bar-count { font-size: 11px; color: var(--text-dim, #6a7a8a); min-width: 40px; text-align: right; }
+    canvas { width: 100%; height: 150px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>NOVA ANALYTICS</h1>
+      <span class="header-subtitle">privacy-first web metrics</span>
+    </div>
+    <div class="header-right">
+      <a href="/" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">Dashboard</a>
+      <a href="/gauges" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">Gauges</a>
+      <span id="last-update" style="font-size:10px;color:var(--text-dim)"></span>
+    </div>
+  </header>
+
+  <div class="site-filter" id="site-filter">
+    <button class="site-btn active" data-site="">All Sites</button>
+    <button class="site-btn" data-site="nova.digitalnoise.net">Journal</button>
+    <button class="site-btn" data-site="chat.digitalnoise.net">Chat</button>
+    <button class="site-btn" data-site="gauges.digitalnoise.net">Gauges</button>
+    <button class="site-btn" data-site="digitalnoise.net">Homepage</button>
+  </div>
+
+  <div class="summary-row" id="summary">
+    <div class="summary-box"><div class="big-number" id="total-pv">-</div><div class="big-label">PAGE VIEWS (24H)</div></div>
+    <div class="summary-box"><div class="big-number" id="total-uv">-</div><div class="big-label">UNIQUE VISITORS</div></div>
+    <div class="summary-box"><div class="big-number" id="total-events">-</div><div class="big-label">EVENTS</div></div>
+  </div>
+
+  <div class="analytics-grid">
+    <div class="analytics-card" style="grid-column: span 2;">
+      <h3>Traffic Over Time</h3>
+      <canvas id="timeseries-chart"></canvas>
+    </div>
+
+    <div class="analytics-card">
+      <h3>Top Pages</h3>
+      <div class="bar-chart" id="top-pages"></div>
+    </div>
+
+    <div class="analytics-card">
+      <h3>Referrers</h3>
+      <div class="bar-chart" id="referrers"></div>
+    </div>
+
+    <div class="analytics-card">
+      <h3>Countries</h3>
+      <div class="bar-chart" id="countries"></div>
+    </div>
+
+    <div class="analytics-card">
+      <h3>Devices & Browsers</h3>
+      <div class="bar-chart" id="devices"></div>
+    </div>
+
+    <div class="analytics-card">
+      <h3>Events</h3>
+      <div class="bar-chart" id="events"></div>
+    </div>
+
+    <div class="analytics-card">
+      <h3>By Site</h3>
+      <div class="bar-chart" id="by-site"></div>
+    </div>
+  </div>
+
+  <script>
+    let currentSite = "";
+
+    document.querySelectorAll(".site-btn").forEach(btn => {
+      btn.addEventListener("click", () => {
+        document.querySelectorAll(".site-btn").forEach(b => b.classList.remove("active"));
+        btn.classList.add("active");
+        currentSite = btn.dataset.site;
+        loadAll();
+      });
+    });
+
+    function qs(s) { return `site=${encodeURIComponent(s)}`; }
+
+    async function fetchJSON(url) {
+      const r = await fetch(url);
+      return r.json();
+    }
+
+    function renderBarChart(container, items, labelKey, valueKey, maxItems) {
+      const el = document.getElementById(container);
+      if (!items || !items.length) { el.innerHTML = '<div style="color:var(--text-dim);font-size:12px">No data yet</div>'; return; }
+      const max = Math.max(...items.slice(0, maxItems || 10).map(i => i[valueKey] || 0));
+      el.innerHTML = items.slice(0, maxItems || 10).map(item => {
+        const pct = max > 0 ? ((item[valueKey] || 0) / max * 100) : 0;
+        const label = item[labelKey] || "(direct)";
+        return `<div class="bar-row"><span class="bar-label" title="${label}">${label}</span><div class="bar-fill" style="width:${pct}%"></div><span class="bar-count">${item[valueKey]}</span></div>`;
+      }).join("");
+    }
+
+    function drawTimeseries(data) {
+      const canvas = document.getElementById("timeseries-chart");
+      const ctx = canvas.getContext("2d");
+      const dpr = window.devicePixelRatio || 1;
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+      const W = rect.width, H = rect.height;
+      ctx.clearRect(0, 0, W, H);
+
+      if (!data || !data.length) { ctx.fillStyle = "#6a7a8a"; ctx.fillText("No data yet", W/2 - 30, H/2); return; }
+
+      const pad = { top: 10, right: 10, bottom: 20, left: 40 };
+      const maxV = Math.max(...data.map(d => d.views || 0), 1);
+      const points = data.map((d, i) => ({
+        x: pad.left + (i / (data.length - 1 || 1)) * (W - pad.left - pad.right),
+        y: pad.top + (1 - (d.views || 0) / maxV) * (H - pad.top - pad.bottom),
+        views: d.views,
+      }));
+
+      // Fill area
+      ctx.beginPath();
+      ctx.moveTo(points[0].x, H - pad.bottom);
+      points.forEach(p => ctx.lineTo(p.x, p.y));
+      ctx.lineTo(points[points.length-1].x, H - pad.bottom);
+      ctx.closePath();
+      ctx.fillStyle = "rgba(0,255,200,0.1)";
+      ctx.fill();
+
+      // Line
+      ctx.beginPath();
+      points.forEach((p, i) => i === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y));
+      ctx.strokeStyle = "#00ffc8";
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Y-axis labels
+      ctx.fillStyle = "#6a7a8a";
+      ctx.font = "10px monospace";
+      ctx.textAlign = "right";
+      ctx.fillText(maxV, pad.left - 4, pad.top + 4);
+      ctx.fillText("0", pad.left - 4, H - pad.bottom);
+    }
+
+    async function loadAll() {
+      const s = currentSite;
+      const base = `/api/analytics`;
+
+      const [summary, timeseries, pages, referrers, countries, devices, events] = await Promise.all([
+        fetchJSON(`${base}/summary?hours=24`),
+        fetchJSON(`${base}/timeseries?hours=24&${qs(s)}`),
+        fetchJSON(`${base}/pages?hours=24&${qs(s)}`),
+        fetchJSON(`${base}/referrers?hours=168&${qs(s)}`),
+        fetchJSON(`${base}/countries?hours=168&${qs(s)}`),
+        fetchJSON(`${base}/devices?hours=168&${qs(s)}`),
+        fetchJSON(`${base}/events?hours=24&${qs(s)}`),
+      ]);
+
+      document.getElementById("total-pv").textContent = (summary.total_pageviews || 0).toLocaleString();
+      document.getElementById("total-uv").textContent = (summary.total_unique_visitors || 0).toLocaleString();
+      document.getElementById("total-events").textContent = events.reduce((a, e) => a + (e.count || 0), 0).toLocaleString();
+
+      drawTimeseries(timeseries);
+      renderBarChart("top-pages", pages, "path", "views", 10);
+      renderBarChart("referrers", referrers, "referrer_domain", "views", 10);
+      renderBarChart("countries", countries, "country", "views", 10);
+      renderBarChart("devices", devices, "ua_bucket", "views", 8);
+      renderBarChart("events", events, "event_type", "count", 8);
+      renderBarChart("by-site", summary.by_site || [], "site", "views", 4);
+
+      document.getElementById("last-update").textContent = "Updated " + new Date().toLocaleTimeString();
+    }
+
+    loadAll();
+    setInterval(loadAll, 60000);
+  </script>
+</body>
+</html>
