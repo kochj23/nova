@@ -88,9 +88,19 @@ ALLOWED_EMAILS: set = set()  # Empty = anyone can log in; add emails to restrict
 SESSION_MAX_AGE = 30 * 24 * 3600  # 30 days in seconds
 OTP_EXPIRY = 300  # 5 minutes
 OTP_LENGTH = 6
+OTP_MAX_ATTEMPTS = 5  # Max verify attempts per email before lockout
+OTP_LOCKOUT_SECONDS = 900  # 15 min lockout after max attempts
+OTP_REQUEST_LIMIT = 3  # Max OTP requests per email per window
+OTP_REQUEST_WINDOW = 300  # 5 min window for request rate limiting
 
-_otp_store: dict = {}  # {email: {"code": str, "expires": float}}
+_otp_store: dict = {}  # {email: {"code": str, "expires": float, "attempts": int}}
+_otp_request_log: dict = {}  # {email: [timestamps]}
 _session_secret: str = ""
+
+
+def _html_escape(s: str) -> str:
+    """Escape HTML special characters to prevent XSS."""
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;").replace("'", "&#x27;")
 
 
 def _load_or_create_session_secret() -> str:
@@ -1693,9 +1703,19 @@ async def handle_request_otp(request):
         page = LOGIN_PAGE_HTML % '<p class="error">This email is not authorized.</p>'
         return web.Response(text=page, content_type="text/html")
 
-    # Generate OTP
-    code = "".join([str(random.randint(0, 9)) for _ in range(OTP_LENGTH)])
-    _otp_store[email] = {"code": code, "expires": time.time() + OTP_EXPIRY}
+    # Rate limit OTP requests per email
+    now = time.time()
+    req_times = _otp_request_log.get(email, [])
+    req_times = [t for t in req_times if now - t < OTP_REQUEST_WINDOW]
+    if len(req_times) >= OTP_REQUEST_LIMIT:
+        page = LOGIN_PAGE_HTML % '<p class="error">Too many requests. Try again in a few minutes.</p>'
+        return web.Response(text=page, content_type="text/html")
+    req_times.append(now)
+    _otp_request_log[email] = req_times
+
+    # Generate OTP using cryptographically secure random
+    code = "".join([str(secrets.randbelow(10)) for _ in range(OTP_LENGTH)])
+    _otp_store[email] = {"code": code, "expires": time.time() + OTP_EXPIRY, "attempts": 0}
 
     # Send via nova_send_mail.py (positional args: to subject body)
     mail_script = Path.home() / ".openclaw/scripts/nova_send_mail.py"
@@ -1713,7 +1733,8 @@ async def handle_request_otp(request):
     except Exception as e:
         log.error(f"Failed to send OTP email to {email}: {e}")
 
-    page = OTP_VERIFY_HTML % (email, '<p class="info">Code sent. Check your inbox.</p>')
+    safe_email = _html_escape(email)
+    page = OTP_VERIFY_HTML % (safe_email, '<p class="info">Code sent. Check your inbox.</p>')
     return web.Response(text=page, content_type="text/html")
 
 
@@ -1722,6 +1743,7 @@ async def handle_verify_otp(request):
     data = await request.post()
     email = data.get("email", "").strip().lower()
     code = data.get("code", "").strip()
+    safe_email = _html_escape(email)
 
     stored = _otp_store.get(email)
     if not stored:
@@ -1733,8 +1755,17 @@ async def handle_verify_otp(request):
         page = LOGIN_PAGE_HTML % '<p class="error">Code expired. Request a new one.</p>'
         return web.Response(text=page, content_type="text/html")
 
+    # Rate limit verification attempts
+    stored["attempts"] = stored.get("attempts", 0) + 1
+    if stored["attempts"] > OTP_MAX_ATTEMPTS:
+        _otp_store.pop(email, None)
+        log.warning(f"OTP locked out for {email} after {OTP_MAX_ATTEMPTS} attempts")
+        page = LOGIN_PAGE_HTML % '<p class="error">Too many attempts. Request a new code.</p>'
+        return web.Response(text=page, content_type="text/html")
+
     if not hmac.compare_digest(code, stored["code"]):
-        page = OTP_VERIFY_HTML % (email, '<p class="error">Invalid code. Try again.</p>')
+        remaining = OTP_MAX_ATTEMPTS - stored["attempts"]
+        page = OTP_VERIFY_HTML % (safe_email, f'<p class="error">Invalid code. {remaining} attempts remaining.</p>')
         return web.Response(text=page, content_type="text/html")
 
     # Success — clear OTP and set session cookie
@@ -1742,7 +1773,7 @@ async def handle_verify_otp(request):
     cookie_value = _make_session_cookie(email)
     response = web.HTTPFound("/")
     response.set_cookie("nova_session", cookie_value, max_age=SESSION_MAX_AGE,
-                        httponly=True, samesite="Lax", path="/")
+                        httponly=True, secure=True, samesite="Lax", path="/")
     log.info(f"OTP verified, session created for {email}")
     raise response
 
@@ -2641,18 +2672,20 @@ async def handle_claude_poll(request):
 
 
 async def handle_health(request):
-    """GET /health — health check endpoint."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        count = await conn.fetchval("SELECT COUNT(*) FROM chatroom_messages")
-    return web.json_response({
-        "ok": True,
-        "service": "nova_chatroom",
-        "port": PORT,
-        "connected_clients": len(_websockets),
-        "total_messages": count,
-        "uptime_s": int(time.time() - _start_time),
-    })
+    """GET /health — health check endpoint (LAN-only details)."""
+    if _is_lan_request(request):
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            count = await conn.fetchval("SELECT COUNT(*) FROM chatroom_messages")
+        return web.json_response({
+            "ok": True,
+            "service": "nova_chatroom",
+            "port": PORT,
+            "connected_clients": len(_websockets),
+            "total_messages": count,
+            "uptime_s": int(time.time() - _start_time),
+        })
+    return web.json_response({"ok": True})
 
 
 # ── App Setup ────────────────────────────────────────────────────────────────
@@ -2693,12 +2726,34 @@ async def on_shutdown(app):
     log.info("Chatroom shut down")
 
 
+@web.middleware
+async def security_headers_middleware(request, handler):
+    """Add security headers to all responses."""
+    response = await handler(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "connect-src 'self' wss: ws:; img-src 'self' data: blob:; "
+        "frame-ancestors 'none'"
+    )
+    return response
+
+
 def create_app() -> web.Application:
     """Create and configure the aiohttp application."""
     global _session_secret
     _session_secret = _load_or_create_session_secret()
 
-    app = web.Application(client_max_size=MAX_FILE_SIZE + 1024 * 1024)  # Allow uploads up to MAX_FILE_SIZE + 1MB overhead
+    app = web.Application(
+        client_max_size=MAX_FILE_SIZE + 1024 * 1024,
+        middlewares=[security_headers_middleware],
+    )
     # Auth routes (no auth required)
     app.router.add_get("/login", handle_login_page)
     app.router.add_post("/login/request-otp", handle_request_otp)

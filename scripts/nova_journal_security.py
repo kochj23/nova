@@ -186,7 +186,7 @@ def publish_hugo(title: str, body: str, tags: list[str], description: str,
     timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
     tags_yaml = json.dumps(tags)
     safe_title = title.replace('"', '')
-    emoji = "🚨 🚨" if is_breaking else "🛡️"
+    emoji = "🛡️"
     display_title = f"{emoji} {safe_title}"
 
     front_matter = f'''---

@@ -1,6 +1,6 @@
 window.novaState = null;
 
-const WS_URL = `ws://${location.host}/ws`;
+const WS_URL = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws`;
 let ws = null;
 let reconnectDelay = 1000;
 let taskTableSort = { col: 'name', dir: 'asc' };
@@ -80,52 +80,55 @@ function escapeHtml(str) {
 }
 
 function renderCards(state) {
-  renderAlerts(state.alerts);
-  renderSystem(state.system);
-  renderGateway(state.gateway);
-  renderScheduler(state.scheduler);
-  renderOllama(state.ollama);
-  renderPostgresql(state.postgresql);
-  renderRedis(state.redis);
-  renderMemory(state);
-  renderUnifi(state.unifi);
-  renderModelUsage(state.model_usage);
-  renderConversations(state.conversations);
-  renderGatewayQueries(state.gateway_queries);
-  renderTaskHistory(state.task_history);
-  renderThroughput(state.task_throughput);
-  renderLatency(state.services);
-  renderCostTracker(state.model_usage);
-  renderMemoryGrowth(state.postgresql);
-  renderDiskUsage(state.system);
-  renderSearxngStats(state.searxng_stats);
-  renderBackupStatus(state.backup_status);
-  renderResponseTime(state.response_time);
-  renderHerdActivity(state.herd_activity);
-  renderMlxStatus(state.mlx_status, state.services);
-  renderCronHealth(state.scheduler);
-  renderTokenCounter(state.model_usage);
-  renderCameras(state.cameras);
-  renderHomeKit(state.homekit);
-  renderDeadman(state.scheduler);
-  renderAppWatchdog(state.app_watchdog);
-  renderChannels(state);
-  renderNas(state.synology);
-  renderKnowledge(state);
-  renderBriefings(state.scheduler);
-  renderHomebridgeCard(state.homebridge);
-  renderWeather(state.weather);
-  renderDream(state.dream);
-  renderPlex(state.plex);
-  renderHdhr(state.hdhr);
-  renderNmap(state.scheduler);
-  renderHealthKit2(state.healthkit);
-  renderTraffic(state.traffic_flow);
-  renderTaskTable(state.scheduler);
-  for (const name of ['analyst', 'sentinel', 'coder', 'lookout', 'librarian']) {
-    renderAgent(name, state.agents?.[name]);
+  const renderers = [
+    () => renderAlerts(state.alerts),
+    () => renderSystem(state.system),
+    () => renderGateway(state.gateway),
+    () => renderScheduler(state.scheduler),
+    () => renderOllama(state.ollama),
+    () => renderPostgresql(state.postgresql),
+    () => renderRedis(state.redis),
+    () => renderMemory(state),
+    () => renderUnifi(state.unifi),
+    () => renderModelUsage(state.model_usage),
+    () => renderConversations(state.conversations),
+    () => renderGatewayQueries(state.gateway_queries),
+    () => renderTaskHistory(state.task_history),
+    () => renderThroughput(state.task_throughput),
+    () => renderLatency(state.services),
+    () => renderCostTracker(state.model_usage),
+    () => renderMemoryGrowth(state.postgresql),
+    () => renderDiskUsage(state.system),
+    () => renderSearxngStats(state.searxng_stats),
+    () => renderBackupStatus(state.backup_status),
+    () => renderResponseTime(state.response_time),
+    () => renderHerdActivity(state.herd_activity),
+    () => renderMlxStatus(state.mlx_status, state.services),
+    () => renderCronHealth(state.scheduler),
+    () => renderTokenCounter(state.model_usage),
+    () => renderCameras(state.cameras),
+    () => renderHomeKit(state.homekit),
+    () => renderDeadman(state.scheduler),
+    () => renderAppWatchdog(state.app_watchdog),
+    () => renderChannels(state),
+    () => renderNas(state.synology),
+    () => renderKnowledge(state),
+    () => renderBriefings(state.scheduler),
+    () => renderHomebridgeCard(state.homebridge),
+    () => renderWeather(state.weather),
+    () => renderDream(state.dream),
+    () => renderPlex(state.plex),
+    () => renderHdhr(state.hdhr),
+    () => renderNmap(state.scheduler, state.nmap),
+    () => renderHealthKit2(state.healthkit),
+    () => renderTraffic(state.traffic_flow),
+    () => renderTaskTable(state.scheduler),
+    () => { for (const name of ['analyst', 'sentinel', 'coder', 'lookout', 'librarian']) { renderAgent(name, state.agents?.[name]); } },
+    () => renderMultiAgents(state.multi_agents),
+  ];
+  for (const fn of renderers) {
+    try { fn(); } catch (e) { console.warn('[Nova Control] Render error:', e.message); }
   }
-  renderMultiAgents(state.multi_agents);
 }
 
 // --- System Resources ---
@@ -1308,30 +1311,44 @@ function renderHdhr(data) {
 }
 
 // 10. NMAP Scan
-function renderNmap(sched) {
+function renderNmap(sched, nmapData) {
   const card = document.getElementById('card-nmap');
-  if (!card || !sched) return;
-  const tasks = sched.tasks || {};
+  if (!card) return;
+  const tasks = (sched && sched.tasks) || {};
   const nmap = tasks.weekly_nmap;
-  if (!nmap) {
-    card.dataset.status = 'unknown';
-    card.querySelector('.card-body').innerHTML = '<p class="dim">No NMAP task</p>';
+
+  // If scheduler has the task, use it
+  if (nmap) {
+    const ok = (nmap.consecutive_failures || 0) === 0 && (nmap.run_count || 0) > 0;
+    card.dataset.status = ok ? 'healthy' : nmap.run_count > 0 ? 'degraded' : 'unknown';
+
+    const lr = nmap.last_run || 0;
+    const agoStr = lr > 0 ? formatUptime(Math.round(Date.now() / 1000 - lr)) + ' ago' : 'Never';
+
+    const body = card.querySelector('.card-body');
+    body.innerHTML =
+      statRow('Last Scan', agoStr, ok ? 'green' : 'yellow') +
+      statRow('Total Runs', nmap.run_count || 0, 'cyan') +
+      statRow('Schedule', nmap.schedule || '?') +
+      statRow('Duration', (nmap.last_duration || 0).toFixed(1) + 's') +
+      (nmap.consecutive_failures > 0 ? statRow('Failures', nmap.consecutive_failures + 'x', 'red') : '');
     return;
   }
 
-  const ok = (nmap.consecutive_failures || 0) === 0 && (nmap.run_count || 0) > 0;
-  card.dataset.status = ok ? 'healthy' : nmap.run_count > 0 ? 'degraded' : 'unknown';
+  // Fallback: use NovaControl nmap status (from state.nmap)
+  if (nmapData && nmapData.status === 'ok') {
+    card.dataset.status = 'healthy';
+    const body = card.querySelector('.card-body');
+    body.innerHTML =
+      statRow('Status', 'Online', 'green') +
+      statRow('Summary', nmapData.summary || '---', 'cyan') +
+      statRow('Source', 'NovaControl') +
+      (nmapData.last_updated ? statRow('Updated', nmapData.last_updated.replace('T',' ').slice(0,19)) : '');
+    return;
+  }
 
-  const lr = nmap.last_run || 0;
-  const agoStr = lr > 0 ? formatUptime(Math.round(Date.now() / 1000 - lr)) + ' ago' : 'Never';
-
-  const body = card.querySelector('.card-body');
-  body.innerHTML =
-    statRow('Last Scan', agoStr, ok ? 'green' : 'yellow') +
-    statRow('Total Runs', nmap.run_count || 0, 'cyan') +
-    statRow('Schedule', nmap.schedule || '?') +
-    statRow('Duration', (nmap.last_duration || 0).toFixed(1) + 's') +
-    (nmap.consecutive_failures > 0 ? statRow('Failures', nmap.consecutive_failures + 'x', 'red') : '');
+  card.dataset.status = 'unknown';
+  card.querySelector('.card-body').innerHTML = '<p class="dim">No NMAP data</p>';
 }
 
 // 11. HealthKit
@@ -1394,7 +1411,7 @@ window.openNodeDetail = function(nodeId, nodeLabel) {
     swarmui: 'swarmui', comfyui: 'comfyui',
     redis: 'redis', postgresql: 'postgresql',
     memory_server: 'memory_server', scheduler: 'scheduler',
-    unifi: 'unifi',
+    unifi: 'unifi', plex: 'plex', hdhr: 'hdhr',
   };
   const svc = NODE_SERVICE_MAP[nodeId];
   if (svc) fetchDetail(svc, nodeLabel);
@@ -1426,6 +1443,7 @@ const CARD_SERVICE_MAP = {
   'card-homebridge': 'homebridge', 'card-weather': 'weather',
   'card-dream': 'dream', 'card-nmap': 'nmap',
   'card-healthkit': 'healthkit_status', 'card-traffic': 'traffic',
+  'card-plex': 'plex', 'card-hdhr': 'hdhr',
 };
 
 function openModal(title, html) {
@@ -2160,6 +2178,53 @@ DETAIL_RENDERERS.homekit = function(d) {
 DETAIL_RENDERERS.searxng = DETAIL_RENDERERS.searxng_stats;
 DETAIL_RENDERERS.gateway = DETAIL_RENDERERS.gateway_queries;
 
+// --- Node Detail Renderers for graph nodes: plex, hdhr, tinychat, openwebui, unifi ---
+DETAIL_RENDERERS.plex = function(d) {
+  if (d.error) return `<div class="error-text">${escapeHtml(d.error)}</div>`;
+  let h = statRow('Status', d.status || 'unknown', d.status === 'ok' ? 'green' : 'red') +
+    statRow('Port', '32400') +
+    statRow('Host', '192.168.1.10', 'cyan');
+
+  if (d.version) h += statRow('Version', d.version);
+  if (d.sessions !== undefined) h += statRow('Active Streams', d.sessions || 0, d.sessions > 0 ? 'green' : '');
+  if (d.libraries !== undefined) h += statRow('Libraries', d.libraries);
+  if (d.uptime_s) h += statRow('Uptime', formatUptime(d.uptime_s), 'cyan');
+
+  if (d.now_playing?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Now Playing</div>';
+    for (const item of d.now_playing) {
+      h += `<div class="model-row"><div><div class="model-name">${escapeHtml(item.title || '?')}</div>` +
+        `<div class="model-detail">${escapeHtml(item.type || '')} · ${escapeHtml(item.player || '')}</div></div></div>`;
+    }
+    h += '</div>';
+  }
+  return h || '<p class="dim">Plex server data unavailable</p>';
+};
+
+DETAIL_RENDERERS.hdhr = function(d) {
+  if (d.error) return `<div class="error-text">${escapeHtml(d.error)}</div>`;
+  let h = statRow('Status', d.status || 'unknown', d.status === 'ok' ? 'green' : 'red') +
+    statRow('Port', '80') +
+    statRow('Host', '192.168.1.89', 'cyan');
+
+  if (d.model) h += statRow('Model', d.model);
+  if (d.firmware) h += statRow('Firmware', d.firmware);
+  if (d.tuners !== undefined) h += statRow('Tuners', d.tuners);
+  if (d.active_tuners !== undefined) h += statRow('Active Tuners', d.active_tuners, d.active_tuners > 0 ? 'green' : '');
+  if (d.channels !== undefined) h += statRow('Channels', d.channels);
+  if (d.uptime_s) h += statRow('Uptime', formatUptime(d.uptime_s), 'cyan');
+
+  if (d.tuner_status?.length) {
+    h += '<div class="modal-section"><div class="modal-section-title">Tuner Status</div>';
+    for (const t of d.tuner_status) {
+      const color = t.active ? 'var(--accent-green)' : 'var(--text-dim)';
+      h += `<div class="stat-row"><span class="stat-label">Tuner ${t.id || '?'}</span><span class="stat-value" style="color:${color}">${t.active ? 'Active' : 'Idle'}${t.channel ? ' - ' + escapeHtml(t.channel) : ''}</span></div>`;
+    }
+    h += '</div>';
+  }
+  return h || '<p class="dim">HDHomeRun data unavailable</p>';
+};
+
 function formatBytesDetail(bytes) {
   if (!bytes) return '?';
   if (bytes < 1024*1024) return (bytes/1024).toFixed(1) + ' KB';
@@ -2292,3 +2357,70 @@ document.addEventListener('keydown', (e) => {
 });
 
 connect();
+
+// --- Enterprise: SLA + Capacity summary cards (loaded independently via REST) ---
+(function loadEnterpriseSummaries() {
+  function fetchSLA() {
+    fetch('/api/sla?days=7')
+      .then(r => r.json())
+      .then(data => {
+        const card = document.getElementById('card-sla-summary');
+        const body = document.getElementById('sla-summary-body');
+        if (!card || !body) return;
+        if (!Array.isArray(data) || data.length === 0) {
+          body.innerHTML = '<p class="dim">No SLA data yet</p>';
+          card.dataset.status = 'unknown';
+          return;
+        }
+        const avgUp = data.reduce((a, s) => a + s.uptime_pct, 0) / data.length;
+        const worst = data.reduce((a, s) => s.uptime_pct < a.uptime_pct ? s : a);
+        const atRisk = data.filter(s => s.budget_burn_pct > 80).length;
+        card.dataset.status = atRisk > 0 ? 'degraded' : 'healthy';
+        body.innerHTML =
+          statRow('Avg Uptime (7d)', avgUp.toFixed(3) + '%', avgUp >= 99.9 ? 'green' : avgUp >= 99 ? 'yellow' : 'red') +
+          statRow('Services Tracked', data.length, 'cyan') +
+          statRow('Budget Risk', atRisk, atRisk > 0 ? 'red' : 'green') +
+          statRow('Worst Service', worst.service + ' (' + worst.uptime_pct.toFixed(2) + '%)', worst.uptime_pct < 99 ? 'red' : 'yellow') +
+          '<div style="margin-top:6px;font-size:10px;color:var(--text-dim)"><a href="/sla" style="color:var(--accent-cyan);text-decoration:none">View Full SLA Dashboard &#8594;</a></div>';
+      })
+      .catch(() => {});
+  }
+
+  function fetchCapacity() {
+    fetch('/api/capacity')
+      .then(r => r.json())
+      .then(data => {
+        const card = document.getElementById('card-capacity-summary');
+        const body = document.getElementById('capacity-summary-body');
+        if (!card || !body) return;
+        const disks = Object.entries(data.disk || {});
+        if (disks.length === 0 && !data.memory?.current_pct) {
+          body.innerHTML = '<p class="dim">Insufficient data (need 7d history)</p>';
+          card.dataset.status = 'unknown';
+          return;
+        }
+        let html = '';
+        let worstDays = Infinity;
+        for (const [mount, d] of disks) {
+          const label = mount === '/' ? 'SSD' : mount.replace('/Volumes/', '');
+          const daysText = d.days_until_full === null ? 'stable' : d.days_until_full > 365 ? '365+ days' : d.days_until_full + ' days';
+          const cls = d.days_until_full !== null && d.days_until_full < 30 ? 'red' : d.days_until_full !== null && d.days_until_full < 90 ? 'yellow' : 'green';
+          html += statRow(label, daysText + ' until full', cls);
+          if (d.days_until_full !== null && d.days_until_full < worstDays) worstDays = d.days_until_full;
+        }
+        if (data.memory?.current_pct) {
+          const mem = data.memory;
+          html += statRow('Memory', mem.current_pct + '% (' + mem.trend + ')', mem.current_pct > 85 ? 'yellow' : 'green');
+        }
+        card.dataset.status = worstDays < 30 ? 'degraded' : 'healthy';
+        html += '<div style="margin-top:6px;font-size:10px"><a href="/capacity" style="color:var(--accent-cyan);text-decoration:none">View Forecasts &#8594;</a></div>';
+        body.innerHTML = html;
+      })
+      .catch(() => {});
+  }
+
+  fetchSLA();
+  fetchCapacity();
+  setInterval(fetchSLA, 60000);
+  setInterval(fetchCapacity, 120000);
+})();

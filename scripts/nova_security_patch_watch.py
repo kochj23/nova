@@ -103,7 +103,7 @@ def check_microsoft_patch_tuesday(seen: set) -> list:
 
 
 def check_kernel_releases(seen: set) -> list:
-    """Check kernel.org for new stable/security releases."""
+    """Check kernel.org for new major version releases only (not routine point releases)."""
     alerts = []
     try:
         req = urllib.request.Request(KERNEL_URL, headers={"User-Agent": "Nova-PatchWatch/1.0"})
@@ -119,7 +119,6 @@ def check_kernel_releases(seen: set) -> list:
         if key in seen:
             continue
 
-        # Only alert on new mainline or stable releases (not rc)
         if "rc" in version or not version:
             continue
 
@@ -135,6 +134,19 @@ def check_kernel_releases(seen: set) -> list:
                 pass
 
         seen.add(key)
+
+        # Only fire breaking alerts for new major/minor versions (e.g. 7.0, 7.1)
+        # Routine point releases (e.g. 6.18.34, 7.0.11) are not emergencies
+        parts = version.split(".")
+        if len(parts) >= 3:
+            try:
+                patch = int(parts[2])
+                if patch > 0:
+                    log(f"Kernel {version} — routine point release, skipping alert")
+                    continue
+            except ValueError:
+                pass
+
         moniker = release.get("moniker", "")
         trigger = f"Linux Kernel {version} Released ({moniker})"
         details = f"Linux kernel {version} ({moniker}) has been released. Check changelog for security fixes."
