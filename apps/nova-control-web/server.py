@@ -225,6 +225,36 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Nova Control", lifespan=lifespan)
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' "
+        "https://cdn.jsdelivr.net https://unpkg.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "connect-src 'self' wss: ws:; img-src 'self' data: blob:; "
+        "frame-ancestors 'none'"
+    )
+    return response
+
+
+def _is_lan(request: Request) -> bool:
+    """Check if request originates from LAN."""
+    client = request.client
+    if not client:
+        return False
+    ip = client.host or ""
+    return ip.startswith("192.168.1.") or ip.startswith("10.0.") or ip == "127.0.0.1"
+
+
 app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
 
 
@@ -236,6 +266,21 @@ async def root():
 @app.get("/hud")
 async def hud_page():
     return FileResponse(Path(__file__).parent / "static" / "hud.html")
+
+
+@app.get("/gauges")
+async def gauges_page():
+    return FileResponse(Path(__file__).parent / "static" / "gauges-3d.html")
+
+
+@app.get("/gauges-flat")
+async def gauges_flat_page():
+    return FileResponse(Path(__file__).parent / "static" / "gauges.html")
+
+
+@app.get("/gauges-v2")
+async def gauges_v2_page():
+    return FileResponse(Path(__file__).parent / "static" / "gauges-v2.html")
 
 
 @app.get("/api/detail/{service}")
@@ -854,6 +899,13 @@ async def _detail_memory_server():
 
 @app.websocket("/ws")
 async def ws_endpoint(websocket: WebSocket):
+    # Only allow LAN connections or connections via Cloudflare Access
+    client_ip = websocket.client.host if websocket.client else ""
+    is_lan = client_ip.startswith("192.168.1.") or client_ip.startswith("10.0.") or client_ip == "127.0.0.1"
+    cf_access = websocket.headers.get("cf-access-authenticated-user-email")
+    if not is_lan and not cf_access:
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
     await websocket.accept()
     connected_clients.add(websocket)
     try:
@@ -4100,27 +4152,34 @@ async def hud_random_memory():
         return JSONResponse(_random_memory_cache)
     try:
         proc = await asyncio.create_subprocess_exec(
-            "psql", PG_DB, "-t", "-A", "-c",
-            """SELECT source, left(content, 300),
+            "psql", PG_DB, "-t", "-A", "-F", "\x1f", "-c",
+            """SELECT source, left(text, 300), category,
                       EXTRACT(YEAR FROM created_at)::int
                FROM memories
-               WHERE char_length(content) > 40
-                 AND char_length(content) < 500
+               WHERE privacy IS NULL
+                 AND source NOT IN ('apple_health', 'email_archive', 'bujo')
+                 AND category NOT LIKE 'personal%'
+                 AND length(text) BETWEEN 60 AND 350
                ORDER BY random()
                LIMIT 1""",
             stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
         line = stdout.decode().strip()
-        if "|" in line:
-            parts = line.split("|", 2)
-            result = {"source": parts[0], "text": parts[1], "year": int(parts[2]) if parts[2] else 0}
+        if "\x1f" in line:
+            parts = line.split("\x1f")
+            result = {
+                "source": parts[0] if parts[0] else "unknown",
+                "text": parts[1] if len(parts) > 1 else "",
+                "category": parts[2] if len(parts) > 2 else "",
+                "year": int(parts[3]) if len(parts) > 3 and parts[3] else 0,
+            }
         else:
-            result = {"source": "unknown", "text": "No memory available", "year": 0}
+            result = {"source": "unknown", "text": "No memory available", "category": "", "year": 0}
         _random_memory_cache = result
         _random_memory_ts = now
         return JSONResponse(result)
     except Exception as e:
-        return JSONResponse(_random_memory_cache or {"source": "error", "text": str(e), "year": 0})
+        return JSONResponse(_random_memory_cache or {"source": "error", "text": str(e), "category": "", "year": 0})
 
 
 # --- Poll Loop ---
