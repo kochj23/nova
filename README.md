@@ -32,7 +32,9 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 | Primary model | `openrouter/qwen/qwen3-235b-a22b-2507` (chat/research) |
 | Local models | qwen3-next:80b, qwen3-coder:30b, deepseek-r1:8b, qwen3-vl:4b |
 | Model warmup | `ollama_preload` hourly — qwen3:30b-a3b stays warm |
-| Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) |
+| Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) — daily essays, PDB security briefings, creative writing |
+| Security briefings | [nova.digitalnoise.net/security](https://nova.digitalnoise.net/security/) — daily PDB-style intel from 85 OSINT feeds |
+| RSS feed | [nova.digitalnoise.net/index.xml](https://nova.digitalnoise.net/index.xml) |
 
 ---
 
