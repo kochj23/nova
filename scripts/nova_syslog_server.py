@@ -98,6 +98,25 @@ AUTH_PATTERNS = [
 IP_RE = re.compile(r"SRC=(\d+\.\d+\.\d+\.\d+).*DST=(\d+\.\d+\.\d+\.\d+)")
 PORT_RE = re.compile(r"SPT=(\d+).*DPT=(\d+)")
 
+# ── Anomaly Detection Rules ───────────────────────────────────────────────────
+
+C2_PORTS = {4444, 5555, 6666, 1337, 31337, 8443, 9001, 4443, 3333, 7777, 6667, 6697}
+
+SUSPICIOUS_TLDS = {".tk", ".top", ".xyz", ".cc", ".pw", ".gq", ".ml", ".cf", ".ga", ".buzz", ".work"}
+
+SENSITIVE_PATHS_RE = re.compile(
+    r"/etc/shadow|/etc/passwd|\.ssh/|id_rsa|keychain|Keychain|"
+    r"SecKeychainItem|/var/db/dslocal|/private/etc/sudoers|"
+    r"com\.apple\.keychainaccess", re.IGNORECASE)
+
+SUDO_RE = re.compile(r"sudo.*COMMAND=(.+)", re.IGNORECASE)
+SANDBOX_DENY_RE = re.compile(r"\(Sandbox\).*deny\(1\)\s+(.+)")
+CRASH_RE = re.compile(r"crash|ReportCrash|EXC_BAD_ACCESS|SIGABRT|SIGSEGV", re.IGNORECASE)
+LATERAL_RE = re.compile(r"SRC=(192\.168\.1\.\d+).*DST=(192\.168\.1\.\d+).*DPT=(\d+)")
+
+BASELINE_WINDOW = 3600
+BASELINE_LEARNING_DAYS = 7
+
 # ── Globals ───────────────────────────────────────────────────────────────────
 
 _start_time = time.time()
@@ -107,6 +126,14 @@ _recent_alerts: dict[str, float] = {}
 _auth_failures: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
 _scan_events: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
 _shutdown = False
+
+# Anomaly tracking
+_device_event_counts: dict[str, deque] = defaultdict(lambda: deque(maxlen=168))  # hourly counts, 7 days
+_device_hour_count: dict[str, int] = defaultdict(int)
+_last_hour_reset: float = time.time()
+_crash_events: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
+_lateral_scans: dict[str, deque] = defaultdict(lambda: deque(maxlen=50))
+_sensitive_access: dict[str, deque] = defaultdict(lambda: deque(maxlen=10))
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -293,6 +320,152 @@ def detect_threat(event: dict) -> dict | None:
     return None
 
 
+def detect_anomaly(event: dict) -> dict | None:
+    """Detect behavioral anomalies beyond signature-based rules."""
+    msg = event.get("message", "")
+    hostname = event.get("hostname") or event.get("source_ip") or "unknown"
+    now = time.time()
+
+    # Track per-device volume for baseline
+    global _last_hour_reset
+    if now - _last_hour_reset >= 3600:
+        for device, count in _device_hour_count.items():
+            _device_event_counts[device].append(count)
+        _device_hour_count.clear()
+        _last_hour_reset = now
+    _device_hour_count[hostname] += 1
+
+    # 1. C2 port detection — internal device connecting to suspicious ports
+    port_m = PORT_RE.search(msg)
+    if port_m:
+        dst_port = int(port_m.group(2))
+        if dst_port in C2_PORTS:
+            ip_m = IP_RE.search(msg)
+            src = ip_m.group(1) if ip_m else None
+            if src and src.startswith("192.168.1."):
+                return {
+                    "threat_type": "c2_suspect",
+                    "signature": f"Internal host {src} connecting to C2-associated port {dst_port}",
+                    "action": "detected",
+                    "direction": "outbound",
+                    "src_addr": src,
+                    "dst_addr": ip_m.group(2) if ip_m else None,
+                    "src_port": int(port_m.group(1)),
+                    "dst_port": dst_port,
+                    "severity_level": "critical",
+                }
+
+    # 2. Lateral movement — one LAN host hitting multiple ports on another
+    lat_m = LATERAL_RE.search(msg)
+    if lat_m:
+        src, dst, port = lat_m.group(1), lat_m.group(2), lat_m.group(3)
+        if src != dst:
+            key = f"{src}->{dst}"
+            _lateral_scans[key].append((now, int(port)))
+            recent_ports = set(p for t, p in _lateral_scans[key] if now - t < 60)
+            if len(recent_ports) >= 5:
+                return {
+                    "threat_type": "lateral_movement",
+                    "signature": f"Lateral scan: {src} hit {len(recent_ports)} ports on {dst} in 60s",
+                    "action": "detected",
+                    "direction": "internal",
+                    "src_addr": src,
+                    "dst_addr": dst,
+                    "src_port": None,
+                    "dst_port": None,
+                    "severity_level": "critical",
+                }
+
+    # 3. Sensitive path access — process probing SSH keys, keychains, shadow files
+    sens_m = SENSITIVE_PATHS_RE.search(msg)
+    if sens_m:
+        _sensitive_access[hostname].append(now)
+        recent = [t for t in _sensitive_access[hostname] if now - t < 300]
+        if len(recent) >= 3:
+            return {
+                "threat_type": "sensitive_access",
+                "signature": f"Repeated sensitive path access on {hostname}: {sens_m.group(0)[:80]}",
+                "action": "detected",
+                "direction": "local",
+                "src_addr": event.get("source_ip"),
+                "dst_addr": None,
+                "src_port": None,
+                "dst_port": None,
+                "severity_level": "warning",
+            }
+
+    # 4. Process crash storm — same host crashing 5+ times in 5 minutes
+    if CRASH_RE.search(msg):
+        _crash_events[hostname].append(now)
+        recent = [t for t in _crash_events[hostname] if now - t < 300]
+        if len(recent) >= 5:
+            return {
+                "threat_type": "crash_storm",
+                "signature": f"Crash storm on {hostname}: {len(recent)} crashes in 5min",
+                "action": "detected",
+                "direction": "local",
+                "src_addr": event.get("source_ip"),
+                "dst_addr": None,
+                "src_port": None,
+                "dst_port": None,
+                "severity_level": "warning",
+            }
+
+    # 5. Suspicious DNS — queries to known-bad TLDs
+    if "query" in msg.lower() or "dns" in msg.lower():
+        for tld in SUSPICIOUS_TLDS:
+            if tld in msg.lower():
+                return {
+                    "threat_type": "suspicious_dns",
+                    "signature": f"DNS query to suspicious TLD ({tld}) from {hostname}",
+                    "action": "detected",
+                    "direction": "outbound",
+                    "src_addr": event.get("source_ip"),
+                    "dst_addr": None,
+                    "src_port": None,
+                    "dst_port": 53,
+                    "severity_level": "warning",
+                }
+
+    # 6. Time-of-day anomaly — auth events between 1am-5am local
+    local_hour = datetime.now().hour
+    if 1 <= local_hour <= 5:
+        if any(p.search(msg) for p in AUTH_PATTERNS) or SUDO_RE.search(msg):
+            return {
+                "threat_type": "off_hours_auth",
+                "signature": f"Auth activity at {local_hour}:xx from {hostname}",
+                "action": "detected",
+                "direction": "local",
+                "src_addr": event.get("source_ip"),
+                "dst_addr": None,
+                "src_port": None,
+                "dst_port": None,
+                "severity_level": "warning",
+            }
+
+    # 7. Volume spike — device sending 10x its baseline hourly rate
+    if len(_device_event_counts[hostname]) >= 24:
+        baseline = sum(_device_event_counts[hostname]) / len(_device_event_counts[hostname])
+        current = _device_hour_count[hostname]
+        if baseline > 10 and current > baseline * 10:
+            spike_key = f"volume_spike:{hostname}"
+            if spike_key not in _recent_alerts or now - _recent_alerts.get(spike_key, 0) > 3600:
+                _recent_alerts[spike_key] = now
+                return {
+                    "threat_type": "volume_spike",
+                    "signature": f"Volume spike on {hostname}: {current}/hr vs baseline {baseline:.0f}/hr (10x)",
+                    "action": "detected",
+                    "direction": "local",
+                    "src_addr": event.get("source_ip"),
+                    "dst_addr": None,
+                    "src_port": None,
+                    "dst_port": None,
+                    "severity_level": "warning",
+                }
+
+    return None
+
+
 def should_alert(threat: dict, event: dict) -> bool:
     """Check dedup window — only alert once per (signature_prefix, src) per DEDUP_WINDOW."""
     sig_key = (threat["signature"][:60], threat.get("src_addr") or event.get("source_ip"))
@@ -430,7 +603,7 @@ async def threat_detector(queue: asyncio.Queue, db_queue: asyncio.Queue):
         except asyncio.TimeoutError:
             continue
 
-        threat = detect_threat(event)
+        threat = detect_threat(event) or detect_anomaly(event)
         if threat:
             _threat_count += 1
             event["_threat"] = threat
@@ -505,7 +678,7 @@ async def retention_purge(pool: asyncpg.Pool):
 # ── HTTP Health/Stats API ─────────────────────────────────────────────────────
 
 async def handle_health(request):
-    queue_size = request.app.get("_queue_size", 0)
+    queue_size = request.app.get("_queue_stats", {}).get("size", 0)
     status = 200 if queue_size < 5000 else 503
     return web.json_response({
         "status": "ok" if status == 200 else "degraded",
@@ -606,20 +779,31 @@ async def main():
     ]
 
     # Queue size reporter for health endpoint
+    _queue_stats = {"size": 0}
+    app["_queue_stats"] = _queue_stats
+
     async def _update_queue_size():
         while not _shutdown:
-            app["_queue_size"] = ingest_queue.qsize() + db_queue.qsize()
+            _queue_stats["size"] = ingest_queue.qsize() + db_queue.qsize()
             await asyncio.sleep(1)
 
     tasks.append(asyncio.create_task(_update_queue_size()))
 
     log("All systems go. Waiting for syslog messages...")
-    nova_config.post_both(
-        ":satellite: *Nova Syslog Server* online\n"
-        f"  UDP :{SYSLOG_PORT} | HTTP :{HTTP_PORT}\n"
-        f"  Threat detection active",
-        slack_channel=nova_config.SLACK_NOTIFY,
-    )
+
+    async def _notify_startup():
+        try:
+            await asyncio.to_thread(
+                nova_config.post_both,
+                ":satellite: *Nova Syslog Server* online\n"
+                f"  UDP :{SYSLOG_PORT} | HTTP :{HTTP_PORT}\n"
+                f"  Threat detection active",
+                nova_config.SLACK_NOTIFY,
+            )
+        except Exception as exc:
+            log(f"Startup notification failed (non-fatal): {exc}", "WARN")
+
+    tasks.append(asyncio.create_task(_notify_startup()))
 
     # Run until shutdown
     while not _shutdown:
