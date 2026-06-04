@@ -627,7 +627,18 @@ async def threat_detector(queue: asyncio.Queue, db_queue: asyncio.Queue):
             severity = threat.get("severity_level", "info")
 
             fire_alert = False
-            if severity == "critical":
+
+            # Suppress alerts for inbound blocks from external IPs — internet noise
+            is_inbound_external = (
+                threat.get("direction") == "inbound"
+                and threat.get("action") in ("blocked", "block", "drop", "dropped")
+                and threat.get("src_addr")
+                and not threat["src_addr"].startswith("192.168.")
+            )
+
+            if is_inbound_external:
+                pass  # store in DB silently, no alert
+            elif severity == "critical":
                 fire_alert = should_alert(threat, event)
             elif severity == "warning" and threat["threat_type"] == "scan":
                 fire_alert = should_alert_scan(threat, event)

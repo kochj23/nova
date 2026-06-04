@@ -789,3 +789,9 @@ tasks:
     schedule: cron 30 4 * * *
     timeout: 120
     overlap: skip
+
+  syslog_daily_digest:
+    script: nova_syslog_daily_digest.py
+    schedule: cron 0 5 * * *
+    timeout: 120
+    overlap: skip
