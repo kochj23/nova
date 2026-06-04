@@ -192,7 +192,7 @@ def chunk_text(text: str) -> list[str]:
 
 def store_memory(text: str, title: str) -> bool:
     payload = json.dumps({
-        "text": text[:2000],
+        "text": nova_config.truncate_at_boundary(text),
         "source": "chess",
         "tier": "long_term",
         "privacy": "local-only",

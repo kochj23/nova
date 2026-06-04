@@ -389,7 +389,7 @@ def transcribe(wav: Path, out_dir: Path, stem: str) -> str | None:
 
 def remember(text: str, source: str, metadata: dict) -> bool:
     payload = json.dumps({
-        "text": text[:2000], "source": source,
+        "text": nova_config.truncate_at_boundary(text), "source": source,
         "tier": "long_term", "privacy": "local-only",
         "metadata": metadata,
     }).encode()

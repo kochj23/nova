@@ -42,7 +42,7 @@ def classify_source(title, transcript_snippet):
 
 def remember(text, source, metadata):
     global count, failed
-    payload = json.dumps({"text": text[:2000], "source": source, "metadata": metadata}).encode()
+    payload = json.dumps({"text": nova_config.truncate_at_boundary(text), "source": source, "metadata": metadata}).encode()
     req = urllib.request.Request(MEMORY_URL, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=15):

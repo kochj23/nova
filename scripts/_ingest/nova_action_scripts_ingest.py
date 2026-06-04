@@ -218,7 +218,7 @@ def chunk_text(text):
 
 
 def remember(text, source, metadata):
-    payload = json.dumps({"text": text[:2000], "source": source,
+    payload = json.dumps({"text": nova_config.truncate_at_boundary(text), "source": source,
                           "tier": "long_term", "metadata": metadata}).encode()
     req = urllib.request.Request(MEMORY_URL, data=payload,
                                   headers={"Content-Type": "application/json"}, method="POST")

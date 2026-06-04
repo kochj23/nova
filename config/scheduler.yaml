@@ -775,3 +775,11 @@ tasks:
     schedule: cron 5 * * * *
     timeout: 60
     overlap: skip
+
+  # ── Syslog ──────────────────────────────────────────────────────────────
+
+  syslog_purge:
+    script: nova_syslog_purge.sh
+    schedule: cron 0 3 * * *
+    timeout: 120
+    overlap: skip

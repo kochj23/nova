@@ -206,6 +206,16 @@ def save_seen(seen: set):
     STATE_FILE.write_text(json.dumps(list(seen)[-10000:]))
 
 
+def truncate_at_boundary(text, max_chars=2000):
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    last_space = cut.rfind(' ')
+    if last_space > max_chars * 0.8:
+        return cut[:last_space]
+    return cut
+
+
 def fetch_feed(url: str) -> list:
     try:
         req = urllib.request.Request(url)
@@ -232,7 +242,7 @@ def fetch_feed(url: str) -> list:
         items.append({
             "title": (title.group(1).strip() if title else "")[:300],
             "link": item_link,
-            "description": (desc.group(1).strip() if desc else "")[:2000],
+            "description": truncate_at_boundary((desc.group(1).strip() if desc else ""), 2000),
             "pubDate": (pub.group(1).strip() if pub else ""),
         })
 
@@ -255,7 +265,7 @@ def fetch_feed(url: str) -> list:
             items.append({
                 "title": (title.group(1).strip() if title else "")[:300],
                 "link": item_link,
-                "description": desc_text[:2000],
+                "description": truncate_at_boundary(desc_text, 2000),
                 "pubDate": pub_date,
             })
 

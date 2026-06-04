@@ -172,7 +172,7 @@ def chunk_text(text):
             if len(words[i:i+CHUNK_WORDS]) >= MIN_CHUNK]
 
 def remember(text, source, meta):
-    payload = json.dumps({"text":text[:2000],"source":source,"tier":"long_term","metadata":meta}).encode()
+    payload = json.dumps({"text":nova_config.truncate_at_boundary(text),"source":source,"tier":"long_term","metadata":meta}).encode()
     req = urllib.request.Request(MEMORY_URL, data=payload, headers={"Content-Type":"application/json"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=15): return True

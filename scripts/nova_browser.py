@@ -535,7 +535,7 @@ async def scrape_links(url, link_selector="a", max_depth=1, max_pages=20):
         await page.goto(url, timeout=DEFAULT_TIMEOUT, wait_until="networkidle")
         title = await page.title()
         text = await page.inner_text("body")
-        pages_scraped.append({"url": url, "title": title, "text": text[:2000]})
+        pages_scraped.append({"url": url, "title": title, "text": nova_config.truncate_at_boundary(text)})
 
         if max_depth > 0:
             links = await page.query_selector_all(link_selector)
@@ -550,7 +550,7 @@ async def scrape_links(url, link_selector="a", max_depth=1, max_pages=20):
                     await page.goto(link_url, timeout=15000, wait_until="domcontentloaded")
                     t = await page.title()
                     txt = await page.inner_text("body")
-                    pages_scraped.append({"url": link_url, "title": t, "text": txt[:2000]})
+                    pages_scraped.append({"url": link_url, "title": t, "text": nova_config.truncate_at_boundary(txt)})
                 except Exception:
                     continue
 

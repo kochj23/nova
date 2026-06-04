@@ -179,9 +179,19 @@ def transcribe(wav: Path, stem: str) -> str | None:
 
 # ── Memory ────────────────────────────────────────────────────────────────────
 
+def truncate_at_boundary(text, max_chars=2000):
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    last_space = cut.rfind(' ')
+    if last_space > max_chars * 0.8:
+        return cut[:last_space]
+    return cut
+
+
 def remember(text: str, metadata: dict) -> bool:
     payload = json.dumps({
-        "text": text[:2000],
+        "text": truncate_at_boundary(text),
         "source": SOURCE,
         "tier": "long_term",
         "privacy": "local-only",

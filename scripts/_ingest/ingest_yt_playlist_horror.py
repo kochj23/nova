@@ -27,7 +27,7 @@ def slack_post(text):
 
 def remember(text, metadata):
     global count, failed
-    payload = json.dumps({"text": text[:2000], "source": "youtube_transcript", "metadata": metadata}).encode()
+    payload = json.dumps({"text": nova_config.truncate_at_boundary(text), "source": "youtube_transcript", "metadata": metadata}).encode()
     req = urllib.request.Request(MEMORY_URL, data=payload, headers={"Content-Type": "application/json"}, method="POST")
     try:
         with urllib.request.urlopen(req, timeout=15):

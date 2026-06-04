@@ -33,12 +33,22 @@ def log(msg):
     with open(LOG_FILE, "a") as f:
         f.write(line + "\n")
 
+def truncate_at_boundary(text, max_chars=2000):
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    last_space = cut.rfind(' ')
+    if last_space > max_chars * 0.8:
+        return cut[:last_space]
+    return cut
+
+
 def remember(text, filename, filepath_rel):
     global count, failed
     if not text.strip() or len(text.strip()) < 30:
         return False
     payload = json.dumps({
-        "text": text[:2000],
+        "text": truncate_at_boundary(text),
         "source": "private_document",
         "metadata": {
             "type": "work_document",

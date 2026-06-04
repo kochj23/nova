@@ -114,7 +114,9 @@ def _sanitize_text(text: str) -> str:
     text = text.replace('\x00', '')                    # null bytes → Postgres UTF8 error
     text = ''.join(c for c in text if c >= ' ' or c in '\n\r\t')  # strip other control chars
     if len(text) > MAX_EMBED_CHARS:
-        text = text[:MAX_EMBED_CHARS]                  # truncate — Ollama embed token limit
+        cut = text[:MAX_EMBED_CHARS]
+        last_space = cut.rfind(' ')
+        text = cut[:last_space] if last_space > MAX_EMBED_CHARS * 0.8 else cut
     return text.strip()
 
 # ── Redis ingest worker ──────────────────────────────────────────────────────────

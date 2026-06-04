@@ -53,6 +53,7 @@ STATE_DIR     = Path.home() / ".openclaw/workspace/state/ingest"
 LOG_FILE      = Path.home() / ".openclaw/logs/nova_ingest.log"
 WORK_DIR      = Path("/Volumes/Data/nova-ingest-work")
 VIDEO_BASE    = Path("/Volumes/external/videos/TVShows")
+MUSIC_DIR     = Path("/Volumes/external/music/YouTube")
 COOKIES_FILE  = Path.home() / ".openclaw/cache/yt_cookies.txt"
 YT_DLP        = "/opt/homebrew/bin/yt-dlp"
 FFMPEG        = "/opt/homebrew/bin/ffmpeg"
@@ -361,6 +362,16 @@ def purge_garbage(vector, dry_run=False):
 # Memory helpers
 # ---------------------------------------------------------------------------
 
+def truncate_at_boundary(text, max_chars=2000):
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    last_space = cut.rfind(' ')
+    if last_space > max_chars * 0.8:
+        return cut[:last_space]
+    return cut
+
+
 def text_hash(t):
     return hashlib.md5(t.strip().encode()).hexdigest()
 
@@ -372,7 +383,7 @@ def remember(text, source, meta, done_hashes, dry_run=False):
         done_hashes.add(h)
         return True
     payload = json.dumps({
-        "text": text[:2000], "source": source, "tier": "long_term",
+        "text": truncate_at_boundary(text), "source": source, "tier": "long_term",
         "metadata": {**meta, "ingested_by": "nova_ingest.py", "privacy": "public"},
     }).encode()
     for attempt in range(3):
@@ -826,6 +837,97 @@ def _download_url(vid_url, out):
         log(f"  Download exception: {e}", "WARN")
         return False
 
+_MUSIC_UPLOADERS = {"vevo", "- topic", "official", "records", "music"}
+
+
+def _fetch_video_meta(vid_id):
+    """Fetch full metadata JSON for a single video."""
+    cmd = _ytbase() + ["--dump-json", "--no-download", "--no-playlist",
+                       f"https://www.youtube.com/watch?v={vid_id}"]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            return json.loads(r.stdout)
+    except Exception:
+        pass
+    return {}
+
+
+def _is_music(meta):
+    """Detect music by YouTube category or uploader pattern."""
+    categories = [c.lower() for c in (meta.get("categories") or [])]
+    if "music" in categories:
+        return True
+    uploader = (meta.get("uploader") or "").lower()
+    channel = (meta.get("channel") or "").lower()
+    for pat in _MUSIC_UPLOADERS:
+        if pat in uploader or pat in channel:
+            return True
+    return False
+
+
+def _download_as_mp3(vid_id, meta):
+    """Download audio only as 256kbps MP3 with ID3 tags. Returns output path or None."""
+    artist = meta.get("artist") or meta.get("uploader") or "Unknown Artist"
+    track = meta.get("track") or meta.get("title") or "Unknown Track"
+    album = meta.get("album") or ""
+    year = str(meta.get("release_year") or meta.get("upload_date", "")[:4] or "")
+
+    safe_artist = re.sub(r"[^\w\s\-]", "", artist).strip()[:60]
+    safe_track = re.sub(r"[^\w\s\-]", "", track).strip()[:80]
+    out_path = MUSIC_DIR / f"{safe_artist} - {safe_track}.mp3"
+
+    if out_path.exists():
+        return out_path
+
+    MUSIC_DIR.mkdir(parents=True, exist_ok=True)
+
+    cmd = _ytbase() + [
+        "-x",
+        "--audio-format", "mp3",
+        "--audio-quality", "256K",
+        "--embed-thumbnail",
+        "--embed-metadata",
+        "--no-overwrites",
+        "--no-playlist",
+        "-o", str(out_path),
+        f"https://www.youtube.com/watch?v={vid_id}",
+    ]
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+        if r.returncode != 0:
+            log(f"  MP3 download failed: {r.stderr[-200:]}", "WARN")
+            return None
+    except Exception as e:
+        log(f"  MP3 download exception: {e}", "WARN")
+        return None
+
+    _apply_id3(out_path, artist, track, album, year)
+    log(f"  ♪ {safe_artist} - {safe_track} (MP3 256kbps)")
+    return out_path
+
+
+def _apply_id3(path, artist, track, album, year):
+    """Ensure ID3 tags via mutagen (fills gaps --embed-metadata missed)."""
+    try:
+        from mutagen.id3 import ID3, TPE1, TIT2, TALB, TDRC, ID3NoHeaderError
+        try:
+            tags = ID3(str(path))
+        except ID3NoHeaderError:
+            tags = ID3()
+        if artist and not tags.get("TPE1"):
+            tags.add(TPE1(encoding=3, text=[artist]))
+        if track and not tags.get("TIT2"):
+            tags.add(TIT2(encoding=3, text=[track]))
+        if album and not tags.get("TALB"):
+            tags.add(TALB(encoding=3, text=[album]))
+        if year and not tags.get("TDRC"):
+            tags.add(TDRC(encoding=3, text=[year]))
+        tags.save(str(path))
+    except Exception:
+        pass
+
+
 def _audio(video, wav):
     cmd = [FFMPEG, "-y", "-i", str(video),
            "-vn", "-ac", "1", "-ar", "16000",
@@ -1065,44 +1167,85 @@ def run_video(url, channel, vector, target, state, dry_run, download_dir=None, d
         vid_id  = vid["id"]
         title   = vid["title"]
         ep      = ep_map.get(vid_id, items_done + 1)
-        out     = (_dl_path(download_dir, title, vid_id) if dl_only
-                   else _ep_path(channel, title, ep))
         wav     = WORK_DIR / f"{vid_id}.wav"
 
         log(f"  {'DL' if dl_only else 'E%04d' % ep}: {title[:60]}")
 
-        if not out.exists() and not dry_run:
-            if not _download_url("https://www.youtube.com/watch?v=" + vid_id, out):
+        # Check if this is a music video — download as MP3 instead
+        meta = _fetch_video_meta(vid_id) if not dry_run else {}
+        is_music_vid = _is_music(meta) if meta else False
+
+        if is_music_vid and not dry_run:
+            out = None
+            mp3_path = _download_as_mp3(vid_id, meta)
+            if not mp3_path:
                 failed += 1
-                notify(f":x: *Download failed*: {title[:60]}\n  Will retry on next run.")
                 state["failed_urls"] = state.get("failed_urls", []) + [vid_id]
                 save_state(jid, state)
                 continue
+            # Still transcribe and ingest lyrics/content into memory
+            transcript = None
+            if not dl_only and mp3_path.exists():
+                mp3_wav = WORK_DIR / f"{vid_id}.wav"
+                if _audio(mp3_path, mp3_wav):
+                    vid_url = "https://www.youtube.com/watch?v=" + vid_id
+                    transcript = _transcribe_dispatch(
+                        mp3_wav, vid_id, WORK_DIR,
+                        vid_url=vid_url, local_only=local_only)
+                    mp3_wav.unlink(missing_ok=True)
+
+            ingested = 0
+            if not dl_only and transcript:
+                transcript = clean_text(transcript)
+                for chunk in chunk_words(transcript):
+                    if is_garbage(chunk):
+                        continue
+                    if remember(chunk, vector,
+                                {"title": title, "channel": channel,
+                                 "video_id": vid_id, "episode": ep,
+                                 "type": "music_transcript"},
+                                done_hashes, dry_run):
+                        ct      += 1
+                        ingested += 1
             import random
             time.sleep(random.uniform(25, 45))
+        else:
+            # Normal video download path
+            out = (_dl_path(download_dir, title, vid_id) if dl_only
+                   else _ep_path(channel, title, ep))
 
-        transcript = None
-        if not dl_only and not dry_run and out.exists():
-            if _audio(out, wav):
-                vid_url = "https://www.youtube.com/watch?v=" + vid_id
-                transcript = _transcribe_dispatch(
-                    wav, vid_id, WORK_DIR,
-                    vid_url=vid_url, local_only=local_only)
-                wav.unlink(missing_ok=True)
-
-        ingested = 0
-        if not dl_only and transcript:
-            transcript = clean_text(transcript)
-            for chunk in chunk_words(transcript):
-                if is_garbage(chunk):
+            if not out.exists() and not dry_run:
+                if not _download_url("https://www.youtube.com/watch?v=" + vid_id, out):
+                    failed += 1
+                    notify(f":x: *Download failed*: {title[:60]}\n  Will retry on next run.")
+                    state["failed_urls"] = state.get("failed_urls", []) + [vid_id]
+                    save_state(jid, state)
                     continue
-                if remember(chunk, vector,
-                            {"title": title, "channel": channel,
-                             "video_id": vid_id, "episode": ep,
-                             "type": "video_transcript"},
-                            done_hashes, dry_run):
-                    ct      += 1
-                    ingested += 1
+                import random
+                time.sleep(random.uniform(25, 45))
+
+            transcript = None
+            if not dl_only and not dry_run and out.exists():
+                if _audio(out, wav):
+                    vid_url = "https://www.youtube.com/watch?v=" + vid_id
+                    transcript = _transcribe_dispatch(
+                        wav, vid_id, WORK_DIR,
+                        vid_url=vid_url, local_only=local_only)
+                    wav.unlink(missing_ok=True)
+
+            ingested = 0
+            if not dl_only and transcript:
+                transcript = clean_text(transcript)
+                for chunk in chunk_words(transcript):
+                    if is_garbage(chunk):
+                        continue
+                    if remember(chunk, vector,
+                                {"title": title, "channel": channel,
+                                 "video_id": vid_id, "episode": ep,
+                                 "type": "video_transcript"},
+                                done_hashes, dry_run):
+                        ct      += 1
+                        ingested += 1
 
         done_urls.add(vid_id)
         items_done += 1
@@ -1117,7 +1260,9 @@ def run_video(url, channel, vector, target, state, dry_run, download_dir=None, d
         remaining = [v for v in pending if v["id"] not in done_urls]
         nxt       = remaining[0]["title"][:60] if remaining else None
 
-        if dl_only:
+        if is_music_vid:
+            log(f"  ♪ Saved as MP3")
+        elif dl_only:
             log(f"  Saved: {out}")
             if not hasattr(run_video, '_last_dl_notify'):
                 run_video._last_dl_notify = 0

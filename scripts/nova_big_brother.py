@@ -118,6 +118,7 @@ SERVICES = [
     ("NovaControl",   "127.0.0.1", 37400, "net.digitalnoise.NovaControl",         False, "/api/status"),
     ("NovaControl Web",LAN_IP,      37450, "net.digitalnoise.nova-control-web",    False, None),
     ("Big Brother",   LAN_IP,      37461, None,                                   False, "/bb/status"),
+    ("Nova Syslog",   LAN_IP,      37462, "net.digitalnoise.nova-syslog",         False, "/health"),
     # ── External / LAN (monitored but not auto-restarted) ────────────────────
     ("Plex",          PLEX_IP,     32400, None,                                   False, "/web"),
     ("HDHomeRun",     HDHR_IP,     80,    None,                                   False, None),

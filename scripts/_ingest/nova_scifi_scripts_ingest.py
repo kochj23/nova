@@ -301,7 +301,7 @@ def chunk_text(text: str) -> list[str]:
 
 def remember(text: str, source: str, metadata: dict) -> bool:
     payload = json.dumps({
-        "text": text[:2000],
+        "text": nova_config.truncate_at_boundary(text),
         "source": source,
         "tier": "long_term",
         "metadata": metadata,

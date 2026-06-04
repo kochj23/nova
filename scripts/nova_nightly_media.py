@@ -486,7 +486,7 @@ def chunk_text(text: str) -> list[str]:
 def remember(text: str, source: str, metadata: dict) -> bool:
     """POST a memory chunk to the Nova vector memory endpoint."""
     payload = json.dumps({
-        "text": text[:2000],
+        "text": nova_config.truncate_at_boundary(text),
         "source": source,
         "tier": "long_term",
         "privacy": "local-only",

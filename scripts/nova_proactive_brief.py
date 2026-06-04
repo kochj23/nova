@@ -88,12 +88,22 @@ def record_briefed(state: dict, fingerprint: str, topic: str):
     })
 
 
+def truncate_at_boundary(text, max_chars=2000):
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    last_space = cut.rfind(' ')
+    if last_space > max_chars * 0.8:
+        return cut[:last_space]
+    return cut
+
+
 # ── Embedding via Memory Server ──────────────────────────────────────────────
 
 def get_embedding(text: str) -> Optional[list[float]]:
     """Get embedding vector from Nova's memory server."""
     try:
-        payload = json.dumps({"text": text[:2000]}).encode()
+        payload = json.dumps({"text": truncate_at_boundary(text)}).encode()
         req = urllib.request.Request(
             f"{MEMORY_SERVER}/embed",
             data=payload,

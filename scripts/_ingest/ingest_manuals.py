@@ -30,7 +30,7 @@ def remember(text, source="document", metadata=None):
     if not text.strip() or len(text.strip()) < 20:
         return False
     payload = json.dumps({
-        "text": text[:2000],  # Max 2000 chars per memory
+        "text": nova_config.truncate_at_boundary(text),
         "source": source,
         "metadata": metadata or {}
     }).encode()

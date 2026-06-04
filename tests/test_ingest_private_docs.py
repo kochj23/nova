@@ -58,7 +58,7 @@ class TestSecurity(unittest.TestCase):
 
     def test_text_truncated_at_2000(self):
         src = _SCRIPT.read_text()
-        self.assertIn("[:2000]", src)
+        self.assertIn("truncate_at_boundary", src)
 
     def test_slack_post_contains_counts_only(self):
         """Slack notification must contain counts only, no content."""

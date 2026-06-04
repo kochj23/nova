@@ -161,14 +161,15 @@ async def run_audit(clean: bool = False):
             total_count = await conn.fetchval("SELECT count(*) FROM memories")
             logger.info(f"Total memories in database: {total_count:,}")
 
-            offset = 0
-            while offset < total_count:
+            last_id = ""
+            while True:
                 rows = await conn.fetch(
-                    "SELECT id, text, source FROM memories ORDER BY created_at LIMIT $1 OFFSET $2",
-                    BATCH_SIZE, offset
+                    "SELECT id, text, source FROM memories WHERE id > $1 ORDER BY id LIMIT $2",
+                    last_id, BATCH_SIZE
                 )
                 if not rows:
                     break
+                last_id = rows[-1]["id"]
 
                 for row in rows:
                     mid, text, source = row["id"], row["text"], row["source"]
@@ -187,7 +188,6 @@ async def run_audit(clean: bool = False):
                 total_scanned += len(rows)
                 if total_scanned % 50000 == 0:
                     logger.info(f"  Scanned {total_scanned:,}/{total_count:,} memories...")
-                offset += BATCH_SIZE
 
             # Phase 4: Duplicate text_hash collisions
             dupes = await conn.fetch("""

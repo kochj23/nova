@@ -133,7 +133,7 @@ def main():
     while rows:
         for mem_id, text in rows:
             try:
-                vec = embed(text[:2000], args.model)
+                vec = embed(nova_config.truncate_at_boundary(text), args.model)
                 vec_str = "[" + ",".join(str(v) for v in vec) + "]"
                 cur.execute("UPDATE memories SET embedding = %s::vector WHERE id = %s", (vec_str, mem_id))
                 embedded += 1

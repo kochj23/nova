@@ -143,6 +143,17 @@ PRIVATE_SOURCES: set = {
     "email",
 }
 
+def truncate_at_boundary(text, max_chars=2000):
+    """Truncate text at a word boundary to avoid mid-word cutoffs."""
+    if len(text) <= max_chars:
+        return text
+    cut = text[:max_chars]
+    last_space = cut.rfind(' ')
+    if last_space > max_chars * 0.8:
+        return cut[:last_space]
+    return cut
+
+
 def is_private_source(source: str) -> bool:
     """
     Return True if a memory source must NEVER appear in public journal output,
