@@ -104,6 +104,8 @@ C2_PORTS = {4444, 5555, 6666, 1337, 31337, 8443, 9001, 4443, 3333, 7777, 6667, 6
 
 SUSPICIOUS_TLDS = {".tk", ".top", ".xyz", ".cc", ".pw", ".gq", ".ml", ".cf", ".ga", ".buzz", ".work"}
 
+CRASH_EXCLUDE_RE = re.compile(r"SIMCRASH|DFSFileProvider|FileProvider.*simulated", re.IGNORECASE)
+
 SENSITIVE_PATHS_RE = re.compile(
     r"/etc/shadow|/etc/passwd|\.ssh/|id_rsa|keychain|Keychain|"
     r"SecKeychainItem|/var/db/dslocal|/private/etc/sudoers|"
@@ -394,14 +396,14 @@ def detect_anomaly(event: dict) -> dict | None:
                 "severity_level": "warning",
             }
 
-    # 4. Process crash storm — same host crashing 5+ times in 5 minutes
-    if CRASH_RE.search(msg):
+    # 4. Process crash storm — same host crashing 5+ times in 5 minutes (alert once per window)
+    if CRASH_RE.search(msg) and not CRASH_EXCLUDE_RE.search(msg):
         _crash_events[hostname].append(now)
         recent = [t for t in _crash_events[hostname] if now - t < 300]
-        if len(recent) >= 5:
+        if len(recent) == 5:
             return {
                 "threat_type": "crash_storm",
-                "signature": f"Crash storm on {hostname}: {len(recent)} crashes in 5min",
+                "signature": f"Crash storm on {hostname}",
                 "action": "detected",
                 "direction": "local",
                 "src_addr": event.get("source_ip"),
@@ -487,31 +489,46 @@ def should_alert_scan(threat: dict, event: dict) -> bool:
 
 
 def format_alert(threat: dict, event: dict) -> str:
-    """Format a Slack alert message."""
+    """Format a Slack alert message with full device context."""
     type_labels = {
         "ips": "IPS Alert",
         "firewall": "Firewall Block",
         "auth_failure": "Brute Force Detected",
+        "c2_suspect": "C2 Connection Suspect",
+        "lateral_movement": "Lateral Movement",
+        "sensitive_access": "Sensitive Path Access",
+        "crash_storm": "Crash Storm",
+        "suspicious_dns": "Suspicious DNS",
+        "off_hours_auth": "Off-Hours Auth Activity",
+        "volume_spike": "Traffic Volume Spike",
     }
     label = type_labels.get(threat["threat_type"], "Security Event")
-    sig = threat["signature"][:120]
-    hostname = event.get("hostname") or event.get("source_ip") or "unknown"
+    sig = threat["signature"][:150]
+    hostname = event.get("hostname") or "unknown"
+    source_ip = event.get("source_ip") or "unknown"
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    msg_excerpt = event.get("message", "")[:200]
 
     lines = [f":rotating_light: *{label}*"]
-    lines.append(f"  Device: {hostname}")
-    lines.append(f"  Signature: {sig}")
+    lines.append(f"  Host: {hostname} ({source_ip})")
+    lines.append(f"  Detail: {sig}")
     if threat.get("action"):
         lines.append(f"  Action: {threat['action'].title()}")
     if threat.get("src_addr"):
-        lines.append(f"  Source: {threat['src_addr']}" +
-                     (f":{threat['src_port']}" if threat.get("src_port") else ""))
+        src_str = threat['src_addr']
+        if threat.get("src_port"):
+            src_str += f":{threat['src_port']}"
+        lines.append(f"  Source: {src_str}")
     if threat.get("dst_addr"):
-        lines.append(f"  Target: {threat['dst_addr']}" +
-                     (f":{threat['dst_port']}" if threat.get("dst_port") else ""))
+        dst_str = threat['dst_addr']
+        if threat.get("dst_port"):
+            dst_str += f":{threat['dst_port']}"
+        lines.append(f"  Target: {dst_str}")
     if threat.get("direction"):
         lines.append(f"  Direction: {threat['direction'].title()}")
     lines.append(f"  Time: {ts}")
+    if msg_excerpt and threat["threat_type"] in ("ips", "firewall", "c2_suspect"):
+        lines.append(f"  Raw: `{msg_excerpt}`")
     return "\n".join(lines)
 
 

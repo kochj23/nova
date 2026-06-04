@@ -173,7 +173,13 @@ _shutdown = threading.Event()
 # hammering Slack every 60s. Maps stable issue key -> last alert timestamp.
 _issue_last_alerted: dict = {}
 ISSUE_ALERT_COOLDOWN = 600           # 10 min between identical alerts (services)
+DIGEST_MODE = True                   # Buffer all alerts and post one hourly summary
+DIGEST_INTERVAL = 3600               # 1 hour between digest posts
 SCHEDULER_ALERT_COOLDOWN = 14400     # 4h between scheduler task failure alerts (they run daily/weekly)
+
+# Digest buffer
+_digest_buffer: list = []            # [(timestamp, message, is_critical)]
+_last_digest_post: float = time.time()
 
 # Per-service kickstart grace period — after a kickstart, skip port checks
 # for this many seconds to prevent EADDRINUSE false-crash cascade.
@@ -608,15 +614,26 @@ def _save_state():
 # ── Notification ─────────────────────────────────────────────────────────────
 
 def _notify(message: str, is_critical: bool = False):
-    """Post to all channels. Falls back to raw HTTP + signal-cli if gateway is dead."""
-    # Always try nova_config first (Slack HTTP + Discord HTTP — no gateway dep)
+    """Post to all channels. In digest mode, buffers non-critical alerts for hourly summary."""
+    global _last_digest_post
+
+    if DIGEST_MODE and not is_critical:
+        with _lock:
+            _digest_buffer.append((time.time(), message))
+        return
+
+    # Immediate post (critical alerts bypass digest, or digest mode off)
+    _notify_immediate(message, is_critical)
+
+
+def _notify_immediate(message: str, is_critical: bool = False):
+    """Post to all channels immediately. Falls back to raw HTTP + signal-cli if gateway is dead."""
     try:
         nova_config.post_both(message, slack_channel=nova_config.SLACK_BB)
         return
     except Exception as e:
         log(f"Primary notify failed: {e}", level=LOG_WARN, source="big-brother")
 
-    # Fallback: raw Slack HTTP
     token = nova_config.slack_bot_token()
     if token:
         try:
@@ -634,7 +651,6 @@ def _notify(message: str, is_critical: bool = False):
         except Exception as e:
             log(f"Slack fallback failed: {e}", level=LOG_ERROR, source="big-brother")
 
-    # Fallback: signal-cli direct
     if is_critical:
         try:
             subprocess.run(
@@ -644,6 +660,51 @@ def _notify(message: str, is_critical: bool = False):
             )
         except Exception as e:
             log(f"Signal fallback failed: {e}", level=LOG_ERROR, source="big-brother")
+
+
+def _flush_digest():
+    """Post buffered alerts as one hourly summary."""
+    global _last_digest_post
+    now = time.time()
+    if now - _last_digest_post < DIGEST_INTERVAL:
+        return
+    _last_digest_post = now
+
+    with _lock:
+        if not _digest_buffer:
+            return
+        events = _digest_buffer.copy()
+        _digest_buffer.clear()
+
+    # Deduplicate and count
+    issue_counts: dict = {}
+    resolved = 0
+    for ts, msg in events:
+        if "RESOLVED" in msg:
+            resolved += 1
+            continue
+        key = msg[:80]
+        if key not in issue_counts:
+            issue_counts[key] = {"msg": msg, "count": 1, "first": ts, "last": ts}
+        else:
+            issue_counts[key]["count"] += 1
+            issue_counts[key]["last"] = ts
+
+    if not issue_counts and resolved == 0:
+        return
+
+    lines = [":robot_face: *Big Brother Hourly Digest*"]
+    if issue_counts:
+        lines.append(f"  :red_circle: {len(issue_counts)} issues ({sum(v['count'] for v in issue_counts.values())} events)")
+        for info in sorted(issue_counts.values(), key=lambda x: -x["count"])[:10]:
+            count_str = f" (x{info['count']})" if info["count"] > 1 else ""
+            lines.append(f"    • {info['msg'][:100]}{count_str}")
+    if resolved:
+        lines.append(f"  :white_check_mark: {resolved} auto-resolved")
+    if not issue_counts:
+        lines.append("  :white_check_mark: All clear — nothing unresolved")
+
+    _notify_immediate("\n".join(lines))
 
 
 def _maybe_notify(issue_key: str, message: str, is_critical: bool = False,
@@ -3935,6 +3996,8 @@ def main():
         if now - last_sweep >= SWEEP_INTERVAL:
             last_sweep = now
             threading.Thread(target=_full_sweep, daemon=True, name="sweep").start()
+        if DIGEST_MODE:
+            _flush_digest()
         time.sleep(1)
 
     _cleanup_pid()

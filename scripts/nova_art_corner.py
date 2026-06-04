@@ -271,6 +271,8 @@ def generate_title(concept: str, style: dict) -> str:
     title = call_openrouter(system_prompt, user_prompt, max_tokens=30)
     # Clean up: remove quotes, periods, extra whitespace
     title = title.strip('"\'.,!').strip()
+    title = re.sub(r'[🎨🌃📺✨🌙]+\s*', '', title)
+    title = title.replace('"', '').strip()
     return title
 
 

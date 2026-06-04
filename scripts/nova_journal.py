@@ -338,9 +338,23 @@ description: "{description.replace('"', "'")}"
 
 
 def git_push(section: str, title: str):
-    """Stage, commit, push the Hugo repo."""
+    """Stage, commit, push the Hugo repo. Clears stale lock files."""
     try:
-        subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
+        import time as _time
+        lock_file = HUGO_ROOT / ".git" / "index.lock"
+        if lock_file.exists():
+            lock_age = _time.time() - lock_file.stat().st_mtime
+            if lock_age > 300:
+                lock_file.unlink()
+                log(f"Cleared stale git lock ({lock_age:.0f}s old)")
+            else:
+                log(f"Git lock exists ({lock_age:.0f}s old) — skipping push")
+                return
+
+        result = subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
+        if result.returncode != 0:
+            log(f"Git add failed: {result.stderr[:200]}")
+            return
         msg = f"{section}: {today_str()} — {title[:50]}"
         result = subprocess.run(
             ["git", "commit", "-m", msg],
