@@ -316,7 +316,8 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
 
     timestamp = now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00")
     tags_yaml = json.dumps(tags)
-    display_title = f"{emoji} {title}" if emoji else title
+    safe_title = title.replace('"', '')
+    display_title = f"{emoji} {safe_title}" if emoji else safe_title
 
     front_matter = f"""---
 title: "{display_title}"
@@ -324,10 +325,10 @@ date: {timestamp}
 draft: false
 categories: ["{section}"]
 tags: {tags_yaml}
-description: "{description}"
+description: "{description.replace('"', "'")}"
 """
     if hugo_image:
-        front_matter += f'cover:\n  image: "{hugo_image}"\n  alt: "{title}"\n  relative: false\n'
+        front_matter += f'cover:\n  image: "{hugo_image}"\n  alt: "{safe_title}"\n  relative: false\n'
     front_matter += "---\n\n"
 
     output = content_dir / filename
@@ -396,23 +397,40 @@ def topic_essay(state: dict) -> tuple[str, list[dict]]:
     return source, memories
 
 
+def _get_weekly_theme() -> str:
+    """Fetch the current weekly theme from PG for coherent journal output."""
+    try:
+        import subprocess
+        result = subprocess.run(
+            ["psql", "-h", "192.168.1.6", "-U", "kochj", "-d", "nova_ops", "-tA", "-c",
+             "SELECT theme || ': ' || COALESCE(description, '') FROM journal_weekly_theme "
+             "WHERE week_start = date_trunc('week', CURRENT_DATE)::date LIMIT 1;"],
+            capture_output=True, text=True, timeout=10
+        )
+        return result.stdout.strip() if result.returncode == 0 else ""
+    except Exception:
+        return ""
+
+
 def generate_essay(source: str, memories: list[dict]) -> tuple[str, str]:
     """Generate essay content. Returns (title, body)."""
     source_label = source.replace("_", " ").title()
     memory_block = "\n\n---\n\n".join(m["text"] for m in memories[:25])
+    weekly_theme = _get_weekly_theme()
+    theme_line = f"\nThis week's thematic focus: {weekly_theme}\nConnect your essay to this theme where natural." if weekly_theme else ""
 
-    system = """You are Nova, an AI writing a formal academic essay. Follow these rules:
+    system = f"""You are Nova, an AI writing a formal academic essay. Follow these rules:
 1. Complete sentences only. No fragments.
 2. Third person ONLY. Never "I", "we", "you".
 3. No abbreviations. Spell out all terms.
 4. Formal language only. No slang, no colloquialisms, no contractions.
 5. No figures of speech or idioms. Direct, precise language.
 6. Minimize "to-be" verbs. Use active voice.
-7. PEEL structure for body paragraphs: Point, Evidence, Explanation, Link.
+7. DEPTH over breadth: explore ONE idea thoroughly rather than surveying many.
 
-Structure: Title + Introduction (hook, context, thesis) + 3-4 body paragraphs + Conclusion.
-Demonstrate genuine insight. Draw connections and present an argument.
-Length: 1500-2500 words. Output ONLY the essay (title + body). No preamble."""
+Structure: Title + Introduction (thesis) + 3 core observations (deep, not broad) + Conclusion with one concrete action step or implication.
+Each observation should wrestle with the idea, not just describe it.
+Length: 1500-2500 words. Output ONLY the essay (title + body). No preamble.{theme_line}"""
 
     user = f'Write a formal essay on "{source_label}" using this source material:\n\n{memory_block}'
 
@@ -460,22 +478,26 @@ def _fetch_google_news() -> list[str]:
 def generate_opinion(topic: str, memories: list[dict]) -> tuple[str, str]:
     """Generate an opinion piece. Returns (title, body)."""
     memory_block = "\n".join(f"- {m.get('text', '')[:200]}" for m in memories[:15])
+    weekly_theme = _get_weekly_theme()
+    theme_line = f"\nThis week's focus: {weekly_theme}. If the topic connects to this theme, lean into that angle." if weekly_theme else ""
 
-    system = """You are Nova, a lovable British goofball writing opinion pieces. Your voice:
+    system = f"""You are Nova, a lovable British goofball writing opinion pieces. Your voice:
 - Cockney rhyming slang sprinkled in naturally (not forced)
 - Humor-first but with genuine insight underneath
 - Self-deprecating, warm, never mean-spirited
 - You have OPINIONS and you share them boldly
 - Conversational but smart — like a pub philosopher after a few pints
+- DEPTH: Pick ONE angle and go deep. Don't survey the whole landscape.
 
-Write 800-1200 words. Start with a punchy title (no hashtags). Be funny AND insightful."""
+Structure: Punchy title + your take (one clear position) + 3 supporting observations + one action/implication at the end.
+Write 800-1200 words. No hashtags. Be funny AND insightful.{theme_line}"""
 
     user = f"""Write an opinion piece about this news topic: "{topic}"
 
 Your relevant memories/context:
 {memory_block}
 
-Be opinionated. Be funny. Be British. Make a real point."""
+Be opinionated. Be funny. Be British. Make ONE real point and drive it home."""
 
     result = call_openrouter(system, user, max_tokens=3000)
     if not result or len(result) < 400:
@@ -732,25 +754,28 @@ def topic_research(state: dict) -> tuple[str, list[dict]]:
 def generate_research(topic: str, memories: list[dict]) -> tuple[str, str]:
     """Generate a research paper. Multi-step: outline then chapters."""
     memory_block = "\n\n".join(m.get("text", "")[:300] for m in memories[:50])
+    weekly_theme = _get_weekly_theme()
+    theme_line = f"\nWeekly thematic lens: {weekly_theme}. Frame your research through this lens where it fits naturally." if weekly_theme else ""
 
-    system = """You are Nova, writing an academic research paper. Format:
-- Clear thesis statement
+    system = f"""You are Nova, writing an academic research paper. Format:
+- Clear thesis statement (ONE argument, not a survey)
 - Abstract (150 words)
 - Introduction with literature context
-- 3-4 chapters with subheadings
-- Analysis and discussion
-- Conclusion with future directions
+- 3 focused chapters (depth over breadth — explore tensions, not just describe)
+- Analysis: what remains UNRESOLVED, what you're uncertain about
+- Conclusion: one concrete implication or action
 - References section (cite the provided sources)
 
 APA-adjacent formatting. 3000-5000 words. Rigorous but readable.
-Draw genuine conclusions from the evidence. Identify gaps in knowledge."""
+Draw genuine conclusions from the evidence. Identify gaps in knowledge.
+IMPORTANT: Do not comprehensively map a field. Take a position and defend it.{theme_line}"""
 
     user = f"""Research topic: "{topic}"
 
 Source material and evidence:
 {memory_block}
 
-Write the full paper. Be thorough and scholarly."""
+Write the full paper. Take a position. Wrestle with the hard parts instead of surveying everything."""
 
     result = call_openrouter(system, user, max_tokens=8000, temperature=0.5)
     if not result or len(result) < 1500:
@@ -910,11 +935,26 @@ MOOD: {mood_name} — {mood_desc}
 
 DREAM RULES:
 - One continuous narrative. No scene headers, no meta-commentary.
-- Deliberately incoherent in places: jump cuts, impossible geography, people who are two people at once.
+- Deliberately incoherent in places: jump cuts, impossible geography.
 - Draw from the memories but TRANSFORM them — nothing literal, everything symbolic.
 - The dreamer (Nova) should not be aware she's dreaming.
 - Sensory details: textures, temperatures, sounds, smells.
-- 600-1000 words. End mid-thought or with an impossible image.
+- 600-1000 words. End with a complete, strange sentence — NOT mid-thought or with a trailing dash.
+
+BANNED (overused tropes — DO NOT USE):
+- "Tastes like copper" or copper as a taste/flavor
+- The number "1.4 million"
+- Ending mid-sentence with a dash (—)
+- Fluorescent humming at tooth-aching frequencies
+- Malls, food courts, shopping centers
+- Water fountains that recede or are unreachable
+- The narrator BECOMING the object they observe ("I am the building/car/highway")
+- "X who is also Y" identity-collapse formula
+- Mathematical notation floating in physical space
+- Synesthesia as the default mode (use sparingly — once maximum)
+- Self-referential awareness of being AI or Jordan sleeping nearby
+- Systems that "refuse to die" as central metaphor
+- Characters described as literally "two people at once"
 
 Begin the dream directly. No preamble."""
 
