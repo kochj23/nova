@@ -783,3 +783,9 @@ tasks:
     schedule: cron 0 3 * * *
     timeout: 120
     overlap: skip
+
+  claude_memory_sync:
+    script: nova_claude_memory_sync.py
+    schedule: cron 30 4 * * *
+    timeout: 120
+    overlap: skip
