@@ -3,6 +3,7 @@
 #
 # Streams security-relevant events (auth failures, kernel errors, firewall,
 # process crashes, sudo usage) and forwards them as syslog UDP packets.
+# Uses a persistent UDP socket via bash /dev/udp — no per-message nc spawning.
 #
 # Install as a LaunchDaemon (requires root) on any Mac:
 #   sudo cp nova_syslog_forwarder.sh /usr/local/bin/
@@ -17,12 +18,13 @@ SYSLOG_HOST="${NOVA_SYSLOG_HOST:-192.168.1.6}"
 SYSLOG_PORT="${NOVA_SYSLOG_PORT:-1514}"
 HOSTNAME=$(scutil --get LocalHostName 2>/dev/null || hostname -s)
 
+# Open persistent UDP socket
+exec 3>/dev/udp/"$SYSLOG_HOST"/"$SYSLOG_PORT"
+
 send_syslog() {
     local severity="$1"
     local app="$2"
     local msg="$3"
-    # RFC 3164: <PRI>TIMESTAMP HOSTNAME APP: MSG
-    # facility=1 (user) for most, facility=4 (auth) for auth events, facility=0 (kern) for kernel
     local facility=1
     case "$app" in
         sshd|sudo|login*|auth*|security*|opendirectoryd) facility=4 ;;
@@ -31,8 +33,10 @@ send_syslog() {
     local pri=$(( facility * 8 + severity ))
     local ts
     ts=$(date "+%b %d %H:%M:%S")
-    printf "<%d>%s %s %s: %s" "$pri" "$ts" "$HOSTNAME" "$app" "$msg" | \
-        nc -u -w0 "$SYSLOG_HOST" "$SYSLOG_PORT" 2>/dev/null || true
+    printf "<%d>%s %s %s: %s\n" "$pri" "$ts" "$HOSTNAME" "$app" "$msg" >&3 2>/dev/null || {
+        # Reopen socket if it died
+        exec 3>/dev/udp/"$SYSLOG_HOST"/"$SYSLOG_PORT" 2>/dev/null || true
+    }
 }
 
 # Stream the unified log with a predicate covering security-relevant events
@@ -52,7 +56,6 @@ send_syslog() {
     OR (messageType == fault)
     OR (messageType == error AND process == "kernel")
 ' 2>/dev/null | while IFS= read -r line; do
-    # Skip the header line
     [[ "$line" == Filtering* ]] && continue
     [[ -z "$line" ]] && continue
 
