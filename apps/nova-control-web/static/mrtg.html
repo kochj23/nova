@@ -346,6 +346,8 @@ async function loadTraffic() {
         scales: {
           x: {
             type: 'time',
+            min: new Date(Date.now() - currentHours * 3600000),
+            max: new Date(),
             grid: { color: 'rgba(255,255,255,0.05)' },
             ticks: { color: '#ccc', maxTicksLimit: 8 },
           },
@@ -405,14 +407,16 @@ async function loadTraffic() {
         scales: {
           x: {
             type: 'time',
+            min: new Date(Date.now() - currentHours * 3600000),
+            max: new Date(),
             grid: { color: 'rgba(255,255,255,0.05)' },
             ticks: { color: '#ccc', maxTicksLimit: 8 },
           },
           y: {
             beginAtZero: true,
             grid: { color: 'rgba(255,255,255,0.05)' },
-            ticks: { color: '#666' },
-            title: { display: true, text: 'Load', color: '#666' },
+            ticks: { color: '#ccc' },
+            title: { display: true, text: 'Load', color: '#ccc' },
           },
         },
       },
