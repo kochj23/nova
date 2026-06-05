@@ -86,6 +86,22 @@ DEVICES = [
         "port": 161,
         "enabled": True,
     },
+    {
+        "ip": "192.168.1.10",
+        "name": "nuk",
+        "version": "v2c",
+        "community_keychain": "nova-snmp-community",
+        "port": 161,
+        "enabled": True,
+    },
+    {
+        "ip": "192.168.1.190",
+        "name": "mac-mini",
+        "version": "v2c",
+        "community_keychain": "nova-snmp-community",
+        "port": 161,
+        "enabled": True,
+    },
 ]
 
 # ── OID Definitions ───────────────────────────────────────────────────────────
