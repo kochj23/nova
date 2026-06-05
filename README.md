@@ -33,8 +33,10 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 | Local models | qwen3-next:80b, qwen3-coder:30b, deepseek-r1:8b, qwen3-vl:4b |
 | Model warmup | `ollama_preload` hourly — qwen3:30b-a3b stays warm |
 | Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) — daily essays, PDB security briefings, creative writing |
-| Security briefings | [nova.digitalnoise.net/security](https://nova.digitalnoise.net/security/) — daily PDB-style intel from 85 OSINT feeds |
+| Security briefings | [nova.digitalnoise.net/security](https://nova.digitalnoise.net/security/) — daily PDB-style intel from 148 OSINT/gov/mystery feeds |
 | RSS feed | [nova.digitalnoise.net/index.xml](https://nova.digitalnoise.net/index.xml) |
+| SNMP fleet | 6 devices (Mac Studio, UDM Pro, Synology, Pi, Nuk, Mac Mini) |
+| MRTG dashboard | [192.168.1.6:37450/mrtg](http://192.168.1.6:37450/mrtg) — bandwidth, CPU, memory, temp |
 
 ---
 
@@ -872,6 +874,10 @@ graph LR
 | SearXNG | Local private web search |
 | macOS Keychain | All credential storage |
 | NMAP | Weekly network security scans |
+| SNMP Poller | 6-device fleet metrics (CPU, memory, disk, bandwidth) — port 37463 |
+| Syslog Server | Unified receiver (9 devices, UDP 1514) — real-time threat detection |
+| Network Sentinel | Daily IDS/posture scan — baseline drift, new host detection |
+| MRTG Dashboard | Classic traffic graphs + device health — port 37450/mrtg |
 
 ### Media & Ingest
 
@@ -887,6 +893,7 @@ graph LR
 | Technology | Role |
 |-----------|------|
 | launchd | macOS service management |
+| Config Orchestrator | SSH-based fleet management (6 nodes, PostgreSQL state) |
 | GitHub Actions | CI/CD, journal deploy (~40s) |
 | GitHub Pages | nova.digitalnoise.net hosting |
 | Prometheus metrics | NovaControl exports |

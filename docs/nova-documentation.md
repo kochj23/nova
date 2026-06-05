@@ -1560,6 +1560,10 @@ openclaw agent ...
 | `~/.openclaw/logs/stability/` | Gateway crash dumps | JSON files; `message` field has the error |
 | `/tmp/nova-services.log` | nova-services.sh | Start/stop operations |
 | `/tmp/nova-gateway-health.log` | nova_gateway_health.py | Hourly health check results |
+| `~/.openclaw/logs/nova_snmp_poller.log` | SNMP Poller | Poll results, threshold alerts |
+| `~/.openclaw/logs/nova_syslog.log` | Syslog Server | UDP receiver, threat detection |
+| `~/.openclaw/logs/nova_orchestrate.log` | Config Orchestrator | Converge/drift runs per node |
+| `~/.openclaw/logs/nova_chatroom.log` | Chatroom | WebSocket, auth, AI responses |
 
 **Parse runtime log prettily:**
 ```bash
