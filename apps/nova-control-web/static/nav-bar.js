@@ -6,6 +6,7 @@
     {href: '/bb', label: 'Big Brother'},
     {href: '/mrtg', label: 'MRTG'},
     {href: '/birdseye', label: 'Birdseye'},
+    {href: 'http://192.168.1.6:1984/', label: 'Cameras'},
     {href: '/journal', label: 'Journal'},
     {href: '/analytics', label: 'Analytics'},
   ];
