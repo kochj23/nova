@@ -232,6 +232,26 @@ DISCORD_STRIKE_THRESHOLD = 3
 _external_fail_counts: dict = {}   # name → consecutive failure count
 EXTERNAL_FAIL_THRESHOLD = 2        # must fail this many sweeps in a row to alert
 
+# ── Score-History Confirmation (Frigate pattern) ─────────────────────────────
+# Instead of alerting on a single failed check, maintain a sliding window of
+# recent results per service. Only alert when the MEDIAN indicates failure
+# (3 of 5 checks must fail). Kills single-blip alert fatigue.
+from collections import deque
+SCORE_HISTORY_LEN = 5              # sliding window size
+SCORE_FAIL_THRESHOLD = 3           # must fail this many within window to confirm down
+_service_score_history: dict = {}  # name → deque of bool (True=up, False=down)
+
+# ── Adaptive Sweep Frequency (Frigate "stationary object" pattern) ───────────
+# Reduce check frequency for stable services, increase for troubled ones.
+# A service healthy for 6+ hours → relax to 300s checks.
+# On failure or neighbor failure → snap to 30s checks.
+HEALTHY_STRETCH_S = 6 * 3600      # 6 hours before relaxing
+RELAXED_INTERVAL = 300             # 5 min between checks for stable services
+HEIGHTENED_INTERVAL = 30           # 30s checks for recently-troubled services
+_service_check_interval: dict = {} # name → current interval in seconds
+_service_last_checked: dict = {}   # name → timestamp of last actual check
+_service_healthy_since: dict = {}  # name → timestamp when service became healthy
+
 # How far back to look in the gateway log for channel state (seconds).
 # Lines older than this are ignored — prevents stale "websocket closed" lines from
 # triggering a restart loop after the gateway successfully reconnects.
@@ -1411,6 +1431,61 @@ def _service_is_up(name: str, host: str, port: int, health_path) -> bool:
     if health_path:
         return _http_healthy(host, port, health_path)
     return _port_open(host, port)
+
+
+def _score_history_confirms_down(name: str, current_up: bool) -> bool:
+    """Push current check result to sliding window. Returns True only if confirmed down."""
+    if name not in _service_score_history:
+        _service_score_history[name] = deque(maxlen=SCORE_HISTORY_LEN)
+    _service_score_history[name].append(current_up)
+    history = _service_score_history[name]
+    if len(history) < 2:
+        return not current_up
+    fail_count = sum(1 for r in history if not r)
+    return fail_count >= SCORE_FAIL_THRESHOLD
+
+
+def _get_service_interval(name: str) -> int:
+    """Get adaptive check interval for a service."""
+    return _service_check_interval.get(name, SWEEP_INTERVAL)
+
+
+def _should_check_now(name: str) -> bool:
+    """Returns True if enough time has elapsed since last check for this service."""
+    now = time.time()
+    interval = _get_service_interval(name)
+    last = _service_last_checked.get(name, 0)
+    return (now - last) >= interval
+
+
+def _update_adaptive_interval(name: str, is_up: bool):
+    """Adjust service check interval based on health history."""
+    now = time.time()
+    _service_last_checked[name] = now
+
+    if is_up:
+        if name not in _service_healthy_since:
+            _service_healthy_since[name] = now
+        healthy_duration = now - _service_healthy_since[name]
+        if healthy_duration >= HEALTHY_STRETCH_S:
+            _service_check_interval[name] = RELAXED_INTERVAL
+        else:
+            _service_check_interval[name] = SWEEP_INTERVAL
+    else:
+        _service_healthy_since.pop(name, None)
+        _service_check_interval[name] = HEIGHTENED_INTERVAL
+
+
+def _heighten_correlated(name: str):
+    """When a service fails, heighten check frequency for its dependencies."""
+    try:
+        from nova_incident_triage import SERVICE_DEPENDENCIES
+        deps = SERVICE_DEPENDENCIES.get(name, [])
+        for dep in deps:
+            _service_check_interval[dep] = HEIGHTENED_INTERVAL
+            _service_healthy_since.pop(dep, None)
+    except ImportError:
+        pass
 
 
 # ── Slack Socket Mode Check ───────────────────────────────────────────────────
@@ -2718,7 +2793,16 @@ def _full_sweep():
                 level=LOG_INFO, source="big-brother")
             continue
 
+        # Adaptive frequency: skip if not enough time elapsed for this service
+        if not _should_check_now(name):
+            continue
+
         up = _service_is_up(name, host, port, health_path)
+        _update_adaptive_interval(name, up)
+
+        # Score-history confirmation: don't act on single-blip failures
+        confirmed_down = _score_history_confirms_down(name, up)
+
         with _lock:
             prev = _service_status.get(name, {}).get("up", True)
             _service_status[name] = {
@@ -2726,7 +2810,19 @@ def _full_sweep():
                 "last_seen": _now_iso() if up else _service_status.get(name, {}).get("last_seen"),
                 "restarts": _service_status.get(name, {}).get("restarts", 0),
                 "last_error": None if up else f"Not responding on :{port}",
+                "check_interval_s": _get_service_interval(name),
+                "recent_checks": list(_service_score_history.get(name, [])),
             }
+
+        if not confirmed_down:
+            if not up:
+                log(f"[sweep] {name} check failed but not confirmed (score-history: "
+                    f"{list(_service_score_history.get(name, []))})",
+                    level=LOG_INFO, source="big-brother")
+            continue
+
+        # Heighten correlated services when one goes down
+        _heighten_correlated(name)
 
         if not up:
             if name in SILENCED_SERVICES:
