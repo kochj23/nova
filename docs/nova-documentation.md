@@ -1528,6 +1528,8 @@ All secrets stored in macOS Keychain with account `nova`. Use `security find-gen
 | `nova-synology-username` | — | synology scripts | NAS username |
 | `nova-synology-password` | — | synology scripts | NAS password |
 | `nova-unifi-api-key` | — | UniFi monitor | API key |
+| `nova-cf-service-token-id` | `NOVA_CF_SERVICE_TOKEN_ID` | Chatroom API auth | CF Access service token ID (hex) |
+| `nova-cf-service-token-secret` | `NOVA_CF_SERVICE_TOKEN_SECRET` | Chatroom API auth | CF Access service token secret (hex) |
 
 **CRITICAL:** `nova-gateway-auth-token` MUST be a random hex token, NOT the OpenRouter API key. If it looks like `sk-or-v1-...`, it's wrong. Fix with:
 ```bash
