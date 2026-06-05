@@ -62,10 +62,18 @@ DEVICES = [
         "port": 161,
         "enabled": True,
     },
-    # Phase 2: Add after enabling SNMP on these devices
-    # {"ip": "192.168.1.1", "name": "udm-pro", "version": "v3", ...},
-    # {"ip": "192.168.1.11", "name": "synology-nas", "version": "v2c", ...},
-    # {"ip": "192.168.1.69", "name": "unas-pro", "version": "v2c", ...},
+    {
+        "ip": "192.168.1.1",
+        "name": "udm-pro",
+        "version": "v2c",
+        "community_keychain": "nova-snmp-community",
+        "port": 161,
+        "enabled": True,
+    },
+    # Synology: needs SNMP enabled via DSM UI (Control Panel > Terminal & SNMP > SNMP)
+    # {"ip": "192.168.1.11", "name": "synology-nas", "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": False},
+    # UNAS Pro: SSH host key not accepted yet
+    # {"ip": "192.168.1.69", "name": "unas-pro", "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": False},
 ]
 
 # ── OID Definitions ───────────────────────────────────────────────────────────
