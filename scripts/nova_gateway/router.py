@@ -8,6 +8,7 @@ Written by Jordan Koch.
 
 import asyncio
 import logging
+import re
 import time
 
 from nova_gateway.config import (
@@ -16,6 +17,21 @@ from nova_gateway.config import (
 )
 
 log = logging.getLogger("nova_gateway_v2")
+
+_THINK_RE = re.compile(r"^.*?</think>\s*", re.DOTALL)
+_THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
+
+
+def _strip_thinking(text: str) -> str:
+    """Remove thinking content — handles both <think>...</think> and bare ...></think> patterns."""
+    if "</think>" in text:
+        cleaned = _THINK_RE.sub("", text).strip()
+        if cleaned:
+            return cleaned
+    cleaned = _THINK_BLOCK_RE.sub("", text).strip()
+    if cleaned:
+        return cleaned
+    return text
 
 
 class ModelRouter:
@@ -196,28 +212,34 @@ class ModelRouter:
             msgs = [{"role": "system", "content": system}] + messages
 
         if name == "ollama":
-            # Use Ollama's OpenAI-compatible endpoint for consistency
+            # Use Ollama's native API with think:true — thinking goes to
+            # separate field, we only return content.
             model = model_override or "qwen3:30b-a3b"
             payload = {
-                "model":      model,
-                "messages":   msgs,
-                "max_tokens": max_tokens,
-                "temperature": 0.7,
-                "stream":     False,
+                "model":   model,
+                "messages": msgs,
+                "options": {"num_predict": max_tokens + 2048, "temperature": 0.7},
+                "think":   True,
+                "stream":  False,
             }
             if tools:
                 payload["tools"] = tools
             resp = await http.post(
-                f"{base_url}/v1/chat/completions",
+                f"{base_url}/api/chat",
                 json=payload,
-                timeout=180,
+                timeout=45,
             )
             resp.raise_for_status()
             data = resp.json()
+            msg = data.get("message", {})
+            content = (msg.get("content") or "").strip()
             if raw_response:
-                return data
-            msg = data["choices"][0]["message"]
-            return (msg.get("content") or msg.get("thinking") or "").strip()
+                tool_calls = msg.get("tool_calls")
+                oai_msg = {"role": "assistant", "content": content}
+                if tool_calls:
+                    oai_msg["tool_calls"] = tool_calls
+                return {"choices": [{"message": oai_msg, "finish_reason": "stop"}]}
+            return content
 
         elif name == "mlx":
             # MLX LM Server — OpenAI-compatible
@@ -232,7 +254,7 @@ class ModelRouter:
             resp = await http.post(
                 f"{base_url}/v1/chat/completions",
                 json=payload,
-                timeout=180,
+                timeout=45,
             )
             resp.raise_for_status()
             data = resp.json()
@@ -253,7 +275,7 @@ class ModelRouter:
             resp = await http.post(
                 f"{base_url}/v1/chat/completions",
                 json=payload,
-                timeout=180,
+                timeout=45,
             )
             resp.raise_for_status()
             data = resp.json()
