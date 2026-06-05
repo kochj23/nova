@@ -12,7 +12,7 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 
 | Metric | Value |
 |--------|-------|
-| Scripts | 359 Python, Shell, and AppleScript |
+| Scripts | 380+ Python, Shell, and AppleScript |
 | Scheduler tasks | 54 unique |
 | Scheduler runs logged | 13,856 (98.9% success rate) |
 | Vector memories | 1,300,238 unique (deduplicated, HNSW-indexed) |
@@ -22,10 +22,10 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 | Agents | 4 (Chat, Research, Home, Main) |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Databases | PostgreSQL 17 + pgvector (`nova_memories` + `nova_ops`) + Redis |
-| Ops DB tables | 46 tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, chatroom |
+| Ops DB tables | 52 tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, chatroom, snmp_metrics, syslog_events, semantic_triggers, deployment_runs |
 | Hot-reload | Gateway: `POST :18792/reload` or `SIGHUP`. Scheduler: `SIGHUP` reloads tasks. |
 | Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
-| Chatroom | Real-time multi-party chat on port 37480, Nova has full memory access, external via CF tunnel |
+| Chatroom | Real-time multi-party chat on port 37480, Nova has full memory access, external via CF tunnel + service token auth |
 | Gauge Dashboard | Live 3D system monitoring — [gauges.digitalnoise.net](https://gauges.digitalnoise.net/gauges) |
 | Bootstrap source | `nova_ops.agent_docs` (PostgreSQL — not files) |
 | Session storage | `nova_ops.gateway_sessions` + `gateway_query_log` |
