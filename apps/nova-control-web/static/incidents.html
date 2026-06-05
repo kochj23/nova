@@ -1,0 +1,175 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Incidents — Nova Control</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <style>
+    .incident-timeline { padding: 20px 24px; max-width: 1200px; margin: 0 auto; }
+    .incident-item {
+      position: relative; padding: 16px 20px 16px 40px; margin-bottom: 12px;
+      background: var(--bg-card); border: 1px solid var(--border-glow); border-radius: 6px;
+      cursor: pointer; transition: border-color 0.2s;
+    }
+    .incident-item:hover { border-color: var(--border-glow-bright); }
+    .incident-item::before {
+      content: ''; position: absolute; left: 16px; top: 22px;
+      width: 10px; height: 10px; border-radius: 50%;
+    }
+    .incident-item.open::before { background: var(--accent-red); box-shadow: 0 0 6px var(--accent-red); }
+    .incident-item.investigating::before { background: var(--accent-yellow); box-shadow: 0 0 6px var(--accent-yellow); }
+    .incident-item.resolved::before { background: var(--accent-green); }
+    .incident-title { font-size: 14px; font-weight: 600; color: var(--text-primary); }
+    .incident-meta { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+    .incident-services { margin-top: 6px; }
+    .incident-svc-tag {
+      display: inline-block; padding: 1px 6px; margin: 2px 4px 2px 0;
+      background: rgba(0,255,200,0.08); border: 1px solid var(--border-glow);
+      border-radius: 3px; font-size: 10px; color: var(--accent-cyan);
+    }
+    .severity-critical .incident-title { color: var(--accent-red); }
+    .severity-warning .incident-title { color: var(--accent-yellow); }
+    .filter-bar {
+      display: flex; gap: 8px; padding: 16px 24px; align-items: center; flex-wrap: wrap;
+    }
+    .filter-btn {
+      padding: 4px 12px; font-size: 11px; border: 1px solid var(--border-glow);
+      background: transparent; color: var(--text-dim); border-radius: 3px; cursor: pointer;
+    }
+    .filter-btn.active { color: var(--accent-cyan); border-color: var(--accent-cyan); }
+    .create-btn {
+      padding: 4px 14px; font-size: 11px; border: 1px solid var(--accent-cyan);
+      background: rgba(0,255,200,0.1); color: var(--accent-cyan); border-radius: 3px; cursor: pointer;
+      margin-left: auto;
+    }
+    .incident-detail {
+      display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-glow);
+    }
+    .incident-detail.visible { display: block; }
+    .root-cause { color: var(--text-secondary); font-size: 12px; margin-top: 6px; }
+    .event-log-entry { font-size: 11px; color: var(--text-dim); padding: 3px 0; }
+    .resolve-btn {
+      padding: 3px 10px; font-size: 11px; border: 1px solid var(--accent-green);
+      background: rgba(0,255,100,0.1); color: var(--accent-green); border-radius: 3px; cursor: pointer;
+      margin-top: 8px;
+    }
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--text-dim); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>INCIDENTS</h1>
+      <span class="header-subtitle">timeline &amp; root cause tracker</span>
+    </div>
+    <div class="header-right">
+      <a href="/" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">Dashboard</a>
+      <a href="/sla" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">SLA</a>
+      <a href="/alerts" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">Alerts</a>
+    </div>
+  </header>
+
+  <div class="filter-bar">
+    <button class="filter-btn active" data-filter="all">All</button>
+    <button class="filter-btn" data-filter="open">Open</button>
+    <button class="filter-btn" data-filter="investigating">Investigating</button>
+    <button class="filter-btn" data-filter="resolved">Resolved</button>
+    <button class="create-btn" onclick="createIncident()">+ New Incident</button>
+  </div>
+
+  <div class="incident-timeline" id="timeline"></div>
+
+  <script>
+    const esc = s => typeof s === "string" ? s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;") : s;
+    let currentFilter = 'all';
+    let incidents = [];
+
+    async function loadIncidents() {
+      try {
+        const res = await fetch(`/api/incidents?status=${currentFilter}`);
+        incidents = await res.json();
+        render();
+      } catch (e) {
+        document.getElementById('timeline').innerHTML = '<div class="empty-state">Failed to load incidents</div>';
+      }
+    }
+
+    function render() {
+      const el = document.getElementById('timeline');
+      if (!incidents.length) {
+        el.innerHTML = '<div class="empty-state">No incidents found. All systems nominal.</div>';
+        return;
+      }
+      el.innerHTML = incidents.map(inc => {
+        const services = (inc.affected_services || []).map(s =>
+          `<span class="incident-svc-tag">${s}</span>`).join('');
+        const events = (inc.events || []).map(e =>
+          `<div class="event-log-entry">${e.ts ? new Date(e.ts * 1000).toLocaleString() : ''} - ${e.msg || ''}</div>`).join('');
+        const started = inc.started_at ? new Date(inc.started_at).toLocaleString() : '?';
+        const resolved = inc.resolved_at ? new Date(inc.resolved_at).toLocaleString() : '';
+        const duration = inc.resolved_at && inc.started_at ?
+          Math.round((new Date(inc.resolved_at) - new Date(inc.started_at)) / 60000) + ' min' : 'ongoing';
+
+        return `<div class="incident-item ${inc.status} severity-${inc.severity}" data-id="${inc.id}" onclick="toggleDetail(this)">
+          <div class="incident-title">${escapeHtml(inc.title)}</div>
+          <div class="incident-meta">${inc.severity.toUpperCase()} | ${inc.status} | Started: ${started} | Duration: ${duration}</div>
+          <div class="incident-services">${services}</div>
+          <div class="incident-detail" id="detail-${inc.id}">
+            ${inc.root_cause ? `<div class="root-cause"><strong>Root Cause:</strong> ${escapeHtml(inc.root_cause)}</div>` : ''}
+            ${events ? `<div style="margin-top:8px"><strong style="font-size:11px;color:var(--text-secondary)">Event Log:</strong>${events}</div>` : ''}
+            ${inc.status !== 'resolved' ? `<button class="resolve-btn" onclick="event.stopPropagation();resolveIncident('${inc.id}')">Mark Resolved</button>` : `<div style="font-size:11px;color:var(--accent-green);margin-top:6px">Resolved: ${resolved}</div>`}
+          </div>
+        </div>`;
+      }).join('');
+    }
+
+    function toggleDetail(el) {
+      const detail = el.querySelector('.incident-detail');
+      detail.classList.toggle('visible');
+    }
+
+    async function resolveIncident(id) {
+      await fetch(`/api/incidents/${id}`, {
+        method: 'PUT',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({status: 'resolved'})
+      });
+      loadIncidents();
+    }
+
+    async function createIncident() {
+      const title = prompt('Incident title:');
+      if (!title) return;
+      const severity = prompt('Severity (warning/critical):', 'warning') || 'warning';
+      await fetch('/api/incidents', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({title, severity, affected_services: []})
+      });
+      loadIncidents();
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    // Filter buttons
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentFilter = btn.dataset.filter;
+        loadIncidents();
+      });
+    });
+
+    loadIncidents();
+    setInterval(loadIncidents, 30000);
+  </script>
+<script src="/nav-bar.js"></script>
+</body>
+</html>

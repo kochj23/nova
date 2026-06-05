@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SLA Dashboard — Nova Control</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <style>
+    .sla-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 16px; padding: 20px 24px; max-width: 1400px; margin: 0 auto;
+    }
+    .sla-card {
+      background: var(--bg-card); border: 1px solid var(--border-glow);
+      border-radius: 6px; padding: 16px 20px;
+    }
+    .sla-card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .sla-service-name { font-size: 13px; font-weight: 600; color: var(--text-primary); }
+    .sla-uptime {
+      font-size: 20px; font-weight: 700; font-family: var(--font-mono);
+    }
+    .sla-uptime.excellent { color: var(--accent-green); }
+    .sla-uptime.good { color: var(--accent-cyan); }
+    .sla-uptime.degraded { color: var(--accent-yellow); }
+    .sla-uptime.bad { color: var(--accent-red); }
+    .sla-meta { font-size: 11px; color: var(--text-dim); margin-top: 4px; }
+    .budget-bar {
+      height: 6px; background: rgba(255,255,255,0.06); border-radius: 3px;
+      margin-top: 10px; overflow: hidden;
+    }
+    .budget-fill { height: 100%; border-radius: 3px; transition: width 0.5s; }
+    .budget-fill.ok { background: var(--accent-green); }
+    .budget-fill.warn { background: var(--accent-yellow); }
+    .budget-fill.crit { background: var(--accent-red); }
+    .calendar-heatmap {
+      display: flex; flex-wrap: wrap; gap: 2px; margin-top: 12px;
+    }
+    .calendar-day {
+      width: 10px; height: 10px; border-radius: 2px;
+      title: attr(data-date);
+    }
+    .calendar-day.full { background: var(--accent-green); }
+    .calendar-day.good { background: rgba(0,255,100,0.6); }
+    .calendar-day.ok { background: rgba(0,255,200,0.4); }
+    .calendar-day.degraded { background: var(--accent-yellow); }
+    .calendar-day.bad { background: var(--accent-red); }
+    .calendar-day.empty { background: rgba(255,255,255,0.04); }
+    .filter-bar {
+      display: flex; gap: 8px; padding: 16px 24px; align-items: center;
+    }
+    .filter-btn {
+      padding: 4px 12px; font-size: 11px; border: 1px solid var(--border-glow);
+      background: transparent; color: var(--text-dim); border-radius: 3px; cursor: pointer;
+    }
+    .filter-btn.active { color: var(--accent-cyan); border-color: var(--accent-cyan); }
+    .summary-bar {
+      display: flex; gap: 24px; padding: 0 24px 12px; flex-wrap: wrap;
+    }
+    .summary-stat { text-align: center; }
+    .summary-stat .val { font-size: 22px; font-weight: 700; color: var(--accent-cyan); font-family: var(--font-mono); }
+    .summary-stat .lbl { font-size: 10px; color: var(--text-dim); letter-spacing: 0.1em; margin-top: 2px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>SLA DASHBOARD</h1>
+      <span class="header-subtitle">service uptime &amp; error budgets</span>
+    </div>
+    <div class="header-right">
+      <a href="/" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">Dashboard</a>
+      <a href="/incidents" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">Incidents</a>
+      <a href="/alerts" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">Alerts</a>
+      <a href="/capacity" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">Capacity</a>
+    </div>
+  </header>
+
+  <div class="filter-bar">
+    <button class="filter-btn active" data-days="7">7 days</button>
+    <button class="filter-btn" data-days="14">14 days</button>
+    <button class="filter-btn" data-days="30">30 days</button>
+  </div>
+
+  <div class="summary-bar" id="summary"></div>
+  <div class="sla-grid" id="sla-grid"></div>
+
+  <script>
+    const esc = s => typeof s === "string" ? s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;") : s;
+    let currentDays = 7;
+
+    async function loadSLA() {
+      try {
+        const res = await fetch(`/api/sla?days=${currentDays}`);
+        const data = await res.json();
+        renderSummary(data);
+        renderGrid(data);
+      } catch (e) {
+        document.getElementById('sla-grid').innerHTML = '<div style="padding:40px;color:var(--text-dim);text-align:center">Failed to load SLA data</div>';
+      }
+    }
+
+    function renderSummary(data) {
+      if (!data.length) { document.getElementById('summary').innerHTML = ''; return; }
+      const avgUptime = data.reduce((a, s) => a + s.uptime_pct, 0) / data.length;
+      const breaching = data.filter(s => s.budget_burn_pct > 80).length;
+      const perfect = data.filter(s => s.uptime_pct >= 99.99).length;
+      document.getElementById('summary').innerHTML = `
+        <div class="summary-stat"><div class="val">${avgUptime.toFixed(3)}%</div><div class="lbl">AVG UPTIME</div></div>
+        <div class="summary-stat"><div class="val">${data.length}</div><div class="lbl">SERVICES</div></div>
+        <div class="summary-stat"><div class="val" style="color:var(--accent-green)">${perfect}</div><div class="lbl">PERFECT</div></div>
+        <div class="summary-stat"><div class="val" style="color:${breaching > 0 ? 'var(--accent-red)' : 'var(--accent-green)'}">${breaching}</div><div class="lbl">BUDGET RISK</div></div>
+      `;
+    }
+
+    function renderGrid(data) {
+      const grid = document.getElementById('sla-grid');
+      if (!data.length) {
+        grid.innerHTML = '<div style="padding:40px;color:var(--text-dim);text-align:center">No SLA data yet. Data populates as services are monitored.</div>';
+        return;
+      }
+      // Sort: worst uptime first
+      data.sort((a, b) => a.uptime_pct - b.uptime_pct);
+      grid.innerHTML = data.map(svc => {
+        const uptimeClass = svc.uptime_pct >= 99.99 ? 'excellent' : svc.uptime_pct >= 99.9 ? 'good' : svc.uptime_pct >= 99 ? 'degraded' : 'bad';
+        const budgetClass = svc.budget_burn_pct > 80 ? 'crit' : svc.budget_burn_pct > 50 ? 'warn' : 'ok';
+        const budgetWidth = Math.min(100, svc.budget_burn_pct);
+        const calendar = (svc.calendar || []).map(day => {
+          const cls = day.uptime_pct >= 99.99 ? 'full' : day.uptime_pct >= 99.9 ? 'good' : day.uptime_pct >= 99 ? 'ok' : day.uptime_pct >= 95 ? 'degraded' : day.uptime_pct > 0 ? 'bad' : 'empty';
+          return `<div class="calendar-day ${cls}" title="${day.date}: ${day.uptime_pct.toFixed(2)}%"></div>`;
+        }).join('');
+
+        return `<div class="sla-card">
+          <div class="sla-card-header">
+            <span class="sla-service-name">${escapeHtml(svc.service)}</span>
+            <span class="sla-uptime ${uptimeClass}">${svc.uptime_pct.toFixed(3)}%</span>
+          </div>
+          <div class="sla-meta">${svc.total_checks.toLocaleString()} checks | Budget: ${svc.budget_remaining_minutes.toFixed(0)} min remaining (${svc.budget_burn_pct.toFixed(0)}% burned)</div>
+          <div class="budget-bar"><div class="budget-fill ${budgetClass}" style="width:${budgetWidth}%"></div></div>
+          <div class="calendar-heatmap">${calendar}</div>
+        </div>`;
+      }).join('');
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    document.querySelectorAll('.filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.filter-btn').forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        currentDays = parseInt(btn.dataset.days);
+        loadSLA();
+      });
+    });
+
+    loadSLA();
+    setInterval(loadSLA, 60000);
+  </script>
+<script src="/nav-bar.js"></script>
+</body>
+</html>

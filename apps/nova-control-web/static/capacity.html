@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Capacity Planning — Nova Control</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <style>
+    .capacity-container { padding: 20px 24px; max-width: 1200px; margin: 0 auto; }
+    .capacity-grid {
+      display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 16px;
+    }
+    .cap-card {
+      background: var(--bg-card); border: 1px solid var(--border-glow);
+      border-radius: 6px; padding: 16px 20px;
+    }
+    .cap-card-title { font-size: 13px; font-weight: 600; color: var(--text-primary); margin-bottom: 12px; }
+    .cap-stat { display: flex; justify-content: space-between; padding: 4px 0; font-size: 12px; }
+    .cap-label { color: var(--text-dim); }
+    .cap-value { color: var(--text-secondary); font-family: var(--font-mono); }
+    .cap-value.ok { color: var(--accent-green); }
+    .cap-value.warn { color: var(--accent-yellow); }
+    .cap-value.crit { color: var(--accent-red); }
+    .cap-value.stable { color: var(--accent-cyan); }
+    .projection-bar {
+      height: 24px; background: rgba(255,255,255,0.04); border-radius: 4px;
+      margin: 10px 0; position: relative; overflow: hidden;
+    }
+    .projection-fill { height: 100%; border-radius: 4px; transition: width 0.5s; position: relative; }
+    .projection-fill.ok { background: linear-gradient(90deg, rgba(0,255,100,0.3), rgba(0,255,100,0.5)); }
+    .projection-fill.warn { background: linear-gradient(90deg, rgba(255,204,0,0.3), rgba(255,204,0,0.5)); }
+    .projection-fill.crit { background: linear-gradient(90deg, rgba(255,51,68,0.3), rgba(255,51,68,0.5)); }
+    .projection-label {
+      position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+      font-size: 11px; font-weight: 600; font-family: var(--font-mono);
+    }
+    .days-until {
+      font-size: 28px; font-weight: 700; font-family: var(--font-mono); text-align: center;
+      margin: 8px 0;
+    }
+    .days-label { font-size: 10px; color: var(--text-dim); text-align: center; letter-spacing: 0.1em; }
+    .trend-indicator { font-size: 11px; margin-top: 6px; }
+    .trend-up { color: var(--accent-red); }
+    .trend-down { color: var(--accent-green); }
+    .trend-flat { color: var(--accent-cyan); }
+    .section-title { font-size: 14px; font-weight: 600; color: var(--text-primary); margin: 24px 0 12px; }
+    .empty-state { text-align: center; padding: 40px; color: var(--text-dim); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>CAPACITY</h1>
+      <span class="header-subtitle">resource forecasting &amp; projections</span>
+    </div>
+    <div class="header-right">
+      <a href="/" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">Dashboard</a>
+      <a href="/sla" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">SLA</a>
+      <a href="/alerts" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">Alerts</a>
+    </div>
+  </header>
+
+  <div class="capacity-container">
+    <div class="section-title">Disk Projections</div>
+    <div class="capacity-grid" id="disk-grid"></div>
+
+    <div class="section-title" style="margin-top:24px">Memory Trend</div>
+    <div class="capacity-grid" id="memory-grid"></div>
+  </div>
+
+  <script>
+    const esc = s => typeof s === "string" ? s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;") : s;
+    async function load() {
+      try {
+        const res = await fetch('/api/capacity');
+        const data = await res.json();
+        renderDisk(data.disk || {});
+        renderMemory(data.memory || {});
+      } catch (e) {
+        document.getElementById('disk-grid').innerHTML = '<div class="empty-state">Failed to load capacity data. Requires at least 7 days of history.</div>';
+      }
+    }
+
+    function renderDisk(disk) {
+      const grid = document.getElementById('disk-grid');
+      const mounts = Object.entries(disk);
+      if (!mounts.length) {
+        grid.innerHTML = '<div class="empty-state">Insufficient disk history data (need 7+ days).</div>';
+        return;
+      }
+      grid.innerHTML = mounts.map(([mount, d]) => {
+        const daysClass = d.days_until_full === null ? 'stable' : d.days_until_full > 90 ? 'ok' : d.days_until_full > 30 ? 'warn' : 'crit';
+        const daysText = d.days_until_full === null ? 'N/A' : d.days_until_full > 365 ? '365+' : d.days_until_full;
+        const fillClass = d.current_pct > 90 ? 'crit' : d.current_pct > 75 ? 'warn' : 'ok';
+        const slopeText = d.slope_pct_per_day > 0 ? `+${d.slope_pct_per_day}%/day` : `${d.slope_pct_per_day}%/day`;
+        const trendClass = d.slope_pct_per_day > 0.5 ? 'trend-up' : d.slope_pct_per_day < -0.1 ? 'trend-down' : 'trend-flat';
+
+        return `<div class="cap-card">
+          <div class="cap-card-title">${escapeHtml(mount)}</div>
+          <div class="projection-bar">
+            <div class="projection-fill ${fillClass}" style="width:${Math.min(100, d.current_pct)}%">
+              <span class="projection-label" style="color:var(--text-primary)">${d.current_pct}%</span>
+            </div>
+          </div>
+          <div class="days-until ${daysClass}">${daysText}</div>
+          <div class="days-label">DAYS UNTIL FULL</div>
+          <div class="cap-stat"><span class="cap-label">Growth rate</span><span class="cap-value ${trendClass}">${slopeText}</span></div>
+          <div class="cap-stat"><span class="cap-label">Data points</span><span class="cap-value">${d.data_points.toLocaleString()}</span></div>
+          <div class="trend-indicator ${trendClass}">${d.slope_pct_per_day > 0 ? '&#9650; Growing' : d.slope_pct_per_day < -0.1 ? '&#9660; Shrinking' : '&#9644; Stable'}</div>
+        </div>`;
+      }).join('');
+    }
+
+    function renderMemory(mem) {
+      const grid = document.getElementById('memory-grid');
+      if (!mem.current_pct) {
+        grid.innerHTML = '<div class="empty-state">Insufficient memory history data.</div>';
+        return;
+      }
+      const trendClass = mem.trend === 'increasing' ? 'trend-up' : mem.trend === 'decreasing' ? 'trend-down' : 'trend-flat';
+      const fillClass = mem.current_pct > 90 ? 'crit' : mem.current_pct > 75 ? 'warn' : 'ok';
+      const slopeText = mem.slope_pct_per_day > 0 ? `+${mem.slope_pct_per_day}%/day` : `${mem.slope_pct_per_day}%/day`;
+
+      grid.innerHTML = `<div class="cap-card">
+        <div class="cap-card-title">System Memory (RAM)</div>
+        <div class="projection-bar">
+          <div class="projection-fill ${fillClass}" style="width:${Math.min(100, mem.current_pct)}%">
+            <span class="projection-label" style="color:var(--text-primary)">${mem.current_pct}%</span>
+          </div>
+        </div>
+        <div class="cap-stat"><span class="cap-label">Trend</span><span class="cap-value ${trendClass}">${mem.trend}</span></div>
+        <div class="cap-stat"><span class="cap-label">Rate</span><span class="cap-value ${trendClass}">${slopeText}</span></div>
+        <div class="cap-stat"><span class="cap-label">Data points</span><span class="cap-value">${mem.data_points.toLocaleString()}</span></div>
+        <div class="trend-indicator ${trendClass}">${mem.trend === 'increasing' ? '&#9650; Memory pressure increasing' : mem.trend === 'decreasing' ? '&#9660; Memory usage declining' : '&#9644; Memory usage stable'}</div>
+      </div>`;
+    }
+
+    function escapeHtml(str) {
+      if (!str) return '';
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
+    }
+
+    load();
+    setInterval(load, 120000); // Refresh every 2 min
+  </script>
+<script src="/nav-bar.js"></script>
+</body>
+</html>

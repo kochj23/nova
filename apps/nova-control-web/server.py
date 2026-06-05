@@ -4571,6 +4571,18 @@ async def mrtg_dashboard():
     return FileResponse("static/mrtg.html")
 
 
+@app.get("/birdseye")
+async def birdseye_dashboard():
+    """Serve the Birdseye dynamic attention dashboard."""
+    return FileResponse("static/birdseye.html")
+
+
+@app.get("/nav-bar.js")
+async def nav_bar_js():
+    """Serve shared navigation bar script."""
+    return FileResponse("static/nav-bar.js", media_type="application/javascript")
+
+
 @app.get("/api/snmp/devices")
 async def snmp_devices():
     """Return list of SNMP-monitored devices with latest metrics."""

@@ -1,0 +1,314 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova Birdseye — Dynamic Attention Dashboard</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', system-ui, sans-serif;
+  background: #0d1117;
+  color: #e6edf3;
+  min-height: 100vh;
+  padding: 20px;
+}
+h1 { text-align: center; color: #58a6ff; font-size: 22px; margin-bottom: 4px; }
+.subtitle { text-align: center; color: #484f58; font-size: 11px; margin-bottom: 16px; }
+
+.mode-switcher {
+  display: flex; justify-content: center; gap: 8px; margin-bottom: 20px;
+}
+.mode-switcher button {
+  padding: 5px 14px; background: #161b22; border: 1px solid #30363d;
+  border-radius: 20px; color: #8b949e; font-size: 11px; cursor: pointer;
+  font-family: inherit; transition: all 0.2s;
+}
+.mode-switcher button.active { background: #1c2128; border-color: #58a6ff; color: #58a6ff; }
+.mode-switcher button:hover { border-color: #58a6ff; }
+
+.zone-bar {
+  display: flex; justify-content: center; gap: 16px; margin-bottom: 20px;
+  font-size: 11px; color: #484f58;
+}
+.zone-bar .zone { padding: 3px 10px; border-radius: 12px; border: 1px solid #21262d; }
+.zone-bar .zone.active { border-color: #58a6ff; color: #58a6ff; background: #1c2128; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  transition: all 0.3s ease;
+}
+
+.card {
+  background: #161b22;
+  border: 1px solid #21262d;
+  border-radius: 8px;
+  padding: 14px;
+  transition: all 0.4s ease, opacity 0.3s, transform 0.3s;
+  position: relative;
+  overflow: hidden;
+}
+.card.hidden { display: none; }
+.card.prominent {
+  border-color: #58a6ff;
+  box-shadow: 0 0 12px rgba(88, 166, 255, 0.15);
+  grid-column: span 2;
+}
+.card.warning {
+  border-color: #d29922;
+  box-shadow: 0 0 8px rgba(210, 153, 34, 0.15);
+}
+.card.critical {
+  border-color: #f85149;
+  box-shadow: 0 0 12px rgba(248, 81, 73, 0.2);
+  animation: pulse-critical 2s ease-in-out infinite;
+}
+@keyframes pulse-critical {
+  0%, 100% { box-shadow: 0 0 12px rgba(248, 81, 73, 0.2); }
+  50% { box-shadow: 0 0 20px rgba(248, 81, 73, 0.4); }
+}
+
+.card .header {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 8px;
+}
+.card .name { font-weight: 600; font-size: 13px; }
+.card .status-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  display: inline-block; margin-right: 6px;
+}
+.card .status-dot.up { background: #3fb950; }
+.card .status-dot.down { background: #f85149; }
+.card .status-dot.degraded { background: #d29922; }
+.card .age { font-size: 10px; color: #484f58; }
+.card .detail { font-size: 11px; color: #8b949e; margin-top: 4px; line-height: 1.4; }
+.card .metric-row {
+  display: flex; gap: 12px; margin-top: 8px; font-size: 11px;
+}
+.card .metric-row .m { color: #8b949e; }
+.card .metric-row .v { color: #e6edf3; font-weight: 500; }
+.card .metric-row .v.warn { color: #d29922; }
+.card .metric-row .v.crit { color: #f85149; }
+
+.empty-state {
+  text-align: center; padding: 60px 20px; color: #484f58; font-size: 14px;
+}
+
+.stats-bar {
+  display: flex; justify-content: center; gap: 24px;
+  margin-top: 20px; font-size: 11px; color: #484f58;
+}
+.stats-bar .stat { display: flex; align-items: center; gap: 4px; }
+.stats-bar .dot-g { width: 6px; height: 6px; border-radius: 50%; background: #3fb950; }
+.stats-bar .dot-y { width: 6px; height: 6px; border-radius: 50%; background: #d29922; }
+.stats-bar .dot-r { width: 6px; height: 6px; border-radius: 50%; background: #f85149; }
+</style>
+</head>
+<body>
+<h1>Birdseye</h1>
+<p class="subtitle">Dynamic Attention Surface — shows what needs attention, hides what doesn't</p>
+
+<div class="mode-switcher">
+  <button class="active" data-mode="motion">Motion</button>
+  <button data-mode="issues">Issues Only</button>
+  <button data-mode="continuous">All</button>
+</div>
+
+<div class="zone-bar" id="zone-bar">
+  <span class="zone" id="zone-work">work</span>
+  <span class="zone" id="zone-home">home</span>
+  <span class="zone" id="zone-focus">focus</span>
+  <span class="zone" id="zone-rest">rest</span>
+</div>
+
+<div class="grid" id="grid"></div>
+
+<div class="stats-bar" id="stats-bar">
+  <span class="stat"><span class="dot-g"></span> <span id="stat-ok">0</span> healthy</span>
+  <span class="stat"><span class="dot-y"></span> <span id="stat-warn">0</span> warning</span>
+  <span class="stat"><span class="dot-r"></span> <span id="stat-crit">0</span> critical</span>
+  <span class="stat">Queue: <span id="stat-queue">0</span></span>
+  <span class="stat">Last: <span id="stat-time">—</span></span>
+</div>
+
+<script>
+let mode = 'motion';
+let previousState = {};
+
+document.querySelectorAll('.mode-switcher button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.mode-switcher button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    mode = btn.dataset.mode;
+    render();
+  });
+});
+
+async function fetchData() {
+  const [snmp, bb, queue, zones] = await Promise.all([
+    fetch('/api/snmp/summary').then(r => r.json()).catch(() => ({})),
+    fetch('/api/bb/health').then(r => r.json()).catch(() => ({services: {}})),
+    fetch('http://127.0.0.1:37470/health').then(r => r.json()).catch(() => ({queue_depth: 0})),
+    fetch('http://127.0.0.1:37471/zones/status').then(r => r.json()).catch(() => ({active_zone: 'unknown'})),
+  ]);
+  return {snmp, bb, queue, zones};
+}
+
+function classifyService(name, data) {
+  // Determine visibility and severity from available data
+  let status = 'up', severity = 'normal', detail = '', changed = false;
+  let metrics = {};
+
+  // Check BB data
+  if (data.bb && data.bb.services_down && data.bb.services_down.includes(name)) {
+    status = 'down'; severity = 'critical';
+    detail = 'Service not responding';
+  }
+
+  // Check SNMP data
+  if (data.snmp && data.snmp[name]) {
+    const s = data.snmp[name];
+    if (s.cpu_load_5min) {
+      metrics.cpu = s.cpu_load_5min.value;
+      if (metrics.cpu > 10) severity = 'critical';
+      else if (metrics.cpu > 6) severity = 'warning';
+    }
+    if (s.sys_temp) {
+      metrics.temp = s.sys_temp.value;
+      if (metrics.temp > 80) severity = 'critical';
+      else if (metrics.temp > 65) severity = 'warning';
+    }
+    if (s.mem_total_real && s.mem_avail_real && s.mem_total_real.value > 0) {
+      metrics.mem_pct = ((s.mem_total_real.value - s.mem_avail_real.value) / s.mem_total_real.value * 100).toFixed(0);
+    }
+  }
+
+  // Check if state changed from previous
+  const prevSev = previousState[name];
+  if (prevSev && prevSev !== severity) changed = true;
+
+  return {name, status, severity, detail, metrics, changed};
+}
+
+function render() {
+  const grid = document.getElementById('grid');
+  const items = window._lastItems || [];
+
+  let html = '';
+  let okCount = 0, warnCount = 0, critCount = 0;
+
+  for (const item of items) {
+    const visible = mode === 'continuous' ||
+                    (mode === 'issues' && item.severity !== 'normal') ||
+                    (mode === 'motion' && (item.severity !== 'normal' || item.changed));
+
+    const cardClass = visible ? '' : 'hidden';
+    const severityClass = item.severity === 'critical' ? 'critical' :
+                          item.severity === 'warning' ? 'warning' :
+                          item.changed ? 'prominent' : '';
+    const dotClass = item.status === 'down' ? 'down' :
+                     item.severity !== 'normal' ? 'degraded' : 'up';
+
+    if (item.severity === 'critical') critCount++;
+    else if (item.severity === 'warning') warnCount++;
+    else okCount++;
+
+    let metricsHtml = '';
+    if (item.metrics.cpu !== undefined) {
+      const cls = item.metrics.cpu > 10 ? 'crit' : item.metrics.cpu > 6 ? 'warn' : '';
+      metricsHtml += `<span><span class="m">CPU</span> <span class="v ${cls}">${item.metrics.cpu.toFixed(1)}</span></span>`;
+    }
+    if (item.metrics.temp !== undefined) {
+      const cls = item.metrics.temp > 80 ? 'crit' : item.metrics.temp > 65 ? 'warn' : '';
+      metricsHtml += `<span><span class="m">Temp</span> <span class="v ${cls}">${item.metrics.temp}C</span></span>`;
+    }
+    if (item.metrics.mem_pct !== undefined) {
+      const cls = item.metrics.mem_pct > 90 ? 'crit' : item.metrics.mem_pct > 75 ? 'warn' : '';
+      metricsHtml += `<span><span class="m">Mem</span> <span class="v ${cls}">${item.metrics.mem_pct}%</span></span>`;
+    }
+
+    html += `
+      <div class="card ${cardClass} ${severityClass}">
+        <div class="header">
+          <span class="name"><span class="status-dot ${dotClass}"></span>${item.name}</span>
+          <span class="age">${item.severity !== 'normal' ? item.severity : 'ok'}</span>
+        </div>
+        ${item.detail ? `<div class="detail">${item.detail}</div>` : ''}
+        ${metricsHtml ? `<div class="metric-row">${metricsHtml}</div>` : ''}
+      </div>
+    `;
+  }
+
+  if (!html || (mode !== 'continuous' && items.every(i => i.severity === 'normal' && !i.changed))) {
+    grid.innerHTML = '<div class="empty-state">All systems nominal. Nothing needs attention.</div>';
+  } else {
+    grid.innerHTML = html;
+  }
+
+  document.getElementById('stat-ok').textContent = okCount;
+  document.getElementById('stat-warn').textContent = warnCount;
+  document.getElementById('stat-crit').textContent = critCount;
+  document.getElementById('stat-time').textContent = new Date().toLocaleTimeString();
+}
+
+async function refresh() {
+  try {
+    const data = await fetchData();
+
+    // Update zone indicator
+    const activeZone = data.zones.active_zone || 'unknown';
+    document.querySelectorAll('.zone-bar .zone').forEach(z => z.classList.remove('active'));
+    const zoneEl = document.getElementById(`zone-${activeZone}`);
+    if (zoneEl) zoneEl.classList.add('active');
+
+    // Update queue stat
+    document.getElementById('stat-queue').textContent = data.queue.queue_depth || 0;
+
+    // Build items from SNMP devices + BB services
+    const items = [];
+    const seen = new Set();
+
+    // SNMP devices
+    if (data.snmp) {
+      for (const name of Object.keys(data.snmp)) {
+        items.push(classifyService(name, data));
+        seen.add(name);
+      }
+    }
+
+    // BB down services
+    if (data.bb && data.bb.services_down) {
+      for (const svc of data.bb.services_down) {
+        if (!seen.has(svc)) {
+          items.push({name: svc, status: 'down', severity: 'critical', detail: 'Down (Big Brother)', metrics: {}, changed: true});
+        }
+      }
+    }
+
+    // Sort: critical first, then warning, then changed, then normal
+    items.sort((a, b) => {
+      const order = {critical: 0, warning: 1, normal: 2};
+      const diff = (order[a.severity] || 2) - (order[b.severity] || 2);
+      if (diff !== 0) return diff;
+      if (a.changed && !b.changed) return -1;
+      return 0;
+    });
+
+    // Store for change detection
+    for (const item of items) previousState[item.name] = item.severity;
+    window._lastItems = items;
+
+    render();
+  } catch (e) {
+    console.error('Refresh failed:', e);
+  }
+}
+
+refresh();
+setInterval(refresh, 10000);
+</script>
+<script src="/nav-bar.js"></script>
+</body>
+</html>
