@@ -97,6 +97,130 @@ _otp_store: dict = {}  # {email: {"code": str, "expires": float, "attempts": int
 _otp_request_log: dict = {}  # {email: [timestamps]}
 _session_secret: str = ""
 
+# ── Cloudflare Access Service Token ──────────────────────────────────────────
+# Claude Code authenticates via CF Access service token headers when POSTing
+# from external networks (e.g. Jordan's work machine).
+# Token stored in macOS Keychain: service=nova-cf-service-token-id, account=nova
+#                                  service=nova-cf-service-token-secret, account=nova
+_CF_SERVICE_TOKEN_ID = os.environ.get("NOVA_CF_SERVICE_TOKEN_ID", "")
+_CF_SERVICE_TOKEN_SECRET = os.environ.get("NOVA_CF_SERVICE_TOKEN_SECRET", "")
+
+
+def _load_cf_service_token():
+    """Load CF service token from Keychain into environment at startup."""
+    global _CF_SERVICE_TOKEN_ID, _CF_SERVICE_TOKEN_SECRET
+    if _CF_SERVICE_TOKEN_ID and _CF_SERVICE_TOKEN_SECRET:
+        return
+    try:
+        tid = subprocess.run(
+            ["security", "find-generic-password", "-a", "nova", "-s",
+             "nova-cf-service-token-id", "-w"],
+            capture_output=True, text=True, timeout=5
+        )
+        tsec = subprocess.run(
+            ["security", "find-generic-password", "-a", "nova", "-s",
+             "nova-cf-service-token-secret", "-w"],
+            capture_output=True, text=True, timeout=5
+        )
+        if tid.returncode == 0 and tsec.returncode == 0:
+            _CF_SERVICE_TOKEN_ID = tid.stdout.strip()
+            _CF_SERVICE_TOKEN_SECRET = tsec.stdout.strip()
+            log.info("Loaded CF Access service token from Keychain")
+        else:
+            log.warning("CF Access service token not found in Keychain — external API auth disabled")
+    except Exception as e:
+        log.warning(f"Could not load CF service token: {e}")
+
+
+def _validate_service_token(request) -> bool:
+    """Validate Cloudflare Access service token headers."""
+    if not _CF_SERVICE_TOKEN_ID or not _CF_SERVICE_TOKEN_SECRET:
+        return False
+    client_id = request.headers.get("CF-Access-Client-Id", "")
+    client_secret = request.headers.get("CF-Access-Client-Secret", "")
+    if not client_id or not client_secret:
+        return False
+    return (hmac.compare_digest(client_id, _CF_SERVICE_TOKEN_ID) and
+            hmac.compare_digest(client_secret, _CF_SERVICE_TOKEN_SECRET))
+
+
+def _check_api_auth(request) -> bool:
+    """Check API endpoint authentication: LAN, service token, or valid session."""
+    if _is_lan_request(request):
+        return True
+    if _validate_service_token(request):
+        return True
+    return _get_session_email(request) is not None
+
+
+# ── Content Filtering (Response Safety) ──────────────────────────────────────
+# Prevents Nova from leaking private/sensitive info in responses to external users.
+
+_BLOCKED_PATTERNS = [
+    re.compile(r"\b(disney|twdc|the\s+walt\s+disney)\b", re.IGNORECASE),
+    re.compile(r"\$\s*\d{2,}[,.]?\d*\s*(k|K|thousand|million|per\s+(hour|month|year|annum))", re.IGNORECASE),
+    re.compile(r"\b(contract|salary|compensation|paycheck|hourly\s+rate|w-?2|1099)\b.*\$", re.IGNORECASE),
+    re.compile(r"\b(ssn|social\s+security|tax\s+id|ein)\b", re.IGNORECASE),
+    re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),  # SSN format
+    re.compile(r"\b(bank\s+account|routing\s+number|credit\s+card)\b", re.IGNORECASE),
+    re.compile(r"\b(password|api[_\s]?key|secret[_\s]?key|bearer\s+token)\s*[:=]\s*\S+", re.IGNORECASE),
+    re.compile(r"\b(patent\s+proposal|invention\s+disclosure|provisional\s+patent)\b", re.IGNORECASE),
+]
+
+
+def _contains_blocked_content(text: str) -> bool:
+    """Check if text contains content that should not be exposed externally."""
+    for pattern in _BLOCKED_PATTERNS:
+        if pattern.search(text):
+            return True
+    return False
+
+
+def _sanitize_response_for_external(text: str, sender: str) -> str:
+    """Filter Nova/Herd responses before sending to external users.
+    Returns sanitized text or a safe fallback if blocked content detected."""
+    if _is_internal_user(sender):
+        return text
+    if _contains_blocked_content(text):
+        log.warning(f"Blocked content detected in response to external user — filtering")
+        return "(I have some thoughts on that, but they touch on private matters I can't share here.)"
+    return text
+
+
+# ── Rate Limiting (API endpoints) ────────────────────────────────────────────
+
+_api_rate_limits: dict = {}  # {ip: [timestamps]}
+API_RATE_LIMIT = 30  # requests per window
+API_RATE_WINDOW = 60  # seconds
+
+
+def _check_rate_limit(request) -> bool:
+    """Returns True if request is within rate limit, False if exceeded."""
+    ip = (request.headers.get("cf-connecting-ip") or
+          request.headers.get("x-forwarded-for", "").split(",")[0].strip() or
+          request.remote or "unknown")
+    now = time.time()
+    if ip not in _api_rate_limits:
+        _api_rate_limits[ip] = []
+    _api_rate_limits[ip] = [t for t in _api_rate_limits[ip] if now - t < API_RATE_WINDOW]
+    if len(_api_rate_limits[ip]) >= API_RATE_LIMIT:
+        return False
+    _api_rate_limits[ip].append(now)
+    return True
+
+
+# ── Input Sanitization ───────────────────────────────────────────────────────
+
+MAX_MESSAGE_LENGTH = 4000
+
+
+def _sanitize_input(text: str) -> str:
+    """Sanitize user input: strip control chars, limit length, normalize whitespace."""
+    text = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", text)
+    text = text[:MAX_MESSAGE_LENGTH]
+    text = re.sub(r"\n{5,}", "\n\n\n\n", text)
+    return text.strip()
+
 
 def _html_escape(s: str) -> str:
     """Escape HTML special characters to prevent XSS."""
@@ -2003,7 +2127,7 @@ async def handle_websocket(request):
                                 await ws.send_str(json.dumps({"type": "error", "message": f"Invalid datetime: {e}"}))
                         continue
 
-                    text = data.get("message", "").strip()
+                    text = _sanitize_input(data.get("message", ""))
                     sender = ws_identity  # Server-resolved, not client-provided
                     channel = data.get("channel", DEFAULT_CHANNEL)
                     if channel not in CHANNEL_IDS:
@@ -2187,11 +2311,14 @@ def _should_nova_respond(text: str) -> bool:
 
 
 async def _nova_respond(user_message: str, channel: str = None, sender: str = "Jordan"):
-    """Get Nova's response and broadcast it."""
+    """Get Nova's response and broadcast it (with content filtering for external users)."""
     ch = channel or DEFAULT_CHANNEL
     try:
         response = await get_nova_response(user_message, sender=sender)
         if response:
+            # Filter response if triggered by external user
+            if not _is_internal_user(sender):
+                response = _sanitize_response_for_external(response, sender)
             msg_id, ts = await store_message("Nova", "ai", response, channel=ch)
             await broadcast({
                 "type": "message",
@@ -2218,13 +2345,20 @@ async def _nova_respond(user_message: str, channel: str = None, sender: str = "J
 
 
 async def handle_api_message(request):
-    """POST /api/message — endpoint for Claude Code to send messages."""
+    """POST /api/message — endpoint for Claude Code to send messages.
+    Auth: LAN bypass, CF Access service token, or valid session cookie."""
+    if not _check_api_auth(request):
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
+    if not _check_rate_limit(request):
+        return web.json_response({"error": "Rate limit exceeded"}, status=429)
+
     try:
         data = await request.json()
     except json.JSONDecodeError:
         return web.json_response({"error": "Invalid JSON"}, status=400)
 
-    text = data.get("message", "").strip()
+    text = _sanitize_input(data.get("message", ""))
     sender = data.get("sender", "Claude Code")
     sender_type = data.get("sender_type", "agent")
     channel = data.get("channel", DEFAULT_CHANNEL)
@@ -2355,7 +2489,7 @@ async def _herd_respond(text: str, responder_name: str, channel: str = None):
                     # Strip thinking tags if present
                     if "<think>" in content:
                         content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL).strip()
-                    if content:
+                    if content and not _contains_blocked_content(content):
                         msg_id, ts = await store_message(responder_name, "herd", content, channel=ch)
                         await broadcast({
                             "type": "message",
@@ -2635,8 +2769,12 @@ async def handle_api_messages(request):
 
 async def handle_claude_poll(request):
     """GET /api/claude/poll — return queued chatroom messages for Claude Code.
+    Auth: LAN bypass, CF Access service token, or valid session cookie.
     Marks returned items as in_progress so they aren't re-fetched.
     Query params: ?ack=id1,id2 to mark items completed."""
+    if not _check_api_auth(request):
+        return web.json_response({"error": "Unauthorized"}, status=401)
+
     pool = await get_pool()
 
     ack_ids = request.query.get("ack", "")
@@ -2695,12 +2833,14 @@ _start_time = time.time()
 
 async def on_startup(app):
     """Initialize database on startup."""
+    _load_cf_service_token()
     await ensure_table()
     await _load_canvas_state()
     # Start scheduled message background worker
     app["_scheduled_task"] = asyncio.create_task(_scheduled_message_worker())
     log.info(f"Nova Chatroom running on http://{HOST}:{PORT}")
     log.info(f"Claude Code endpoint: POST http://192.168.1.6:{PORT}/api/message")
+    log.info(f"External endpoint: POST https://chat.digitalnoise.net/api/message (CF service token)")
     log.info(f"Channels: {', '.join('#' + ch['id'] for ch in CHANNELS)}")
 
 

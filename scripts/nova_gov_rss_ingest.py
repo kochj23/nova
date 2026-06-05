@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """
-nova_gov_rss_ingest.py — Ingest government & OSINT RSS/Atom feeds into Nova's vector memory.
+nova_gov_rss_ingest.py — Ingest government, OSINT, & interest RSS/Atom feeds into Nova's vector memory.
 
 Covers: US Gov (FBI, GovInfo, CDC, EAC, Space Force), NATO partners (UK NCSC, UK Legislation,
 European Parliament, French Senate/Assembly, Canadian Supreme Court, Norwegian Parliament),
-and OSINT (Bellingcat, RAND, Krebs, Talos, MITRE ATT&CK, Schneier, BleepingComputer, etc).
+OSINT (Bellingcat, RAND, Krebs, Talos, MITRE ATT&CK, Schneier, BleepingComputer, etc),
+and Mystery/Crime Fiction (60+ blogs, magazines, and review sites).
 
 Runs every 6 hours via scheduler. Tracks seen URLs to avoid duplicates.
 Supports both RSS 2.0 (<item>) and Atom (<entry>) feed formats.
@@ -179,6 +180,73 @@ FEEDS = [
     ("https://www.nasa.gov/rss/dyn/breaking_news.rss", "computing", "NASA Breaking News"),
     ("https://www.esa.int/rssfeed/Our_Activities/Space_Safety", "intelligence", "ESA Space Safety"),
     ("https://www.esa.int/rssfeed/Our_Activities/Navigation", "intelligence", "ESA Satellite Navigation"),
+
+    # ══════════════════════════════════════════════════════════════
+    # MYSTERY / CRIME FICTION & TRUE CRIME
+    # ══════════════════════════════════════════════════════════════
+    # Magazines & Publications
+    ("https://strandmag.com/feed/", "mystery", "The Strand Magazine"),
+    ("https://mysterytribune.com/feed/", "mystery", "MysteryTribune"),
+    ("https://crimereads.com/category/genres/mystery/feed/", "mystery", "CrimeReads Mystery"),
+    ("https://www.criminalelement.com/feed/", "mystery", "Criminal Element"),
+    ("https://unsolved.com/feed/", "mystery", "Unsolved Mysteries"),
+    ("https://www.mysterywire.com/feed/", "mystery", "Mystery Wire"),
+    # Blogs & Reviews
+    ("http://feeds.feedburner.com/TheCozyMysteryListBlog", "mystery", "The Cozy Mystery List Blog"),
+    ("https://mysteryfile.com/blog/?feed=rss2", "mystery", "Mystery*File Blog"),
+    ("https://listverse.com/bizarre/mysteries/feed/", "mystery", "Listverse Mysteries"),
+    ("https://elizabethspanncraig.com/feed/", "mystery", "Elizabeth Spann Craig"),
+    ("https://blog.world-mysteries.com/feed/", "mystery", "World Mysteries Blog"),
+    ("https://jsydneyjones.wordpress.com/feed/", "mystery", "Scene of the Crime"),
+    ("https://feeds.feedburner.com/feedburner/MkNK", "mystery", "The Bunburyist"),
+    ("https://feeds.feedburner.com/blogspot/therapsheet", "mystery", "The Rap Sheet"),
+    ("https://www.escapewithdollycas.com/feed/", "mystery", "Escape With Dollycas"),
+    ("http://thepassingtramp.blogspot.com/feeds/posts/default", "mystery", "The Passing Tramp"),
+    ("https://www.marilynsmysteryreads.com/feed/", "mystery", "Marilyn's Mystery Reads"),
+    ("https://robin-stevens.co.uk/feed/", "mystery", "Robin Stevens Blog"),
+    ("https://drusbookmusing.com/feed/", "mystery", "Dru's Book Musings"),
+    ("https://shortmystery.blogspot.com/feeds/posts/default?alt=rss", "mystery", "Short Mystery Fiction Society"),
+    ("https://ladiesofmystery.com/feed/", "mystery", "Ladies of Mystery"),
+    ("https://unmyst3.blogspot.com/feeds/posts/default?alt=rss", "mystery", "Unsolved Mysteries In The World"),
+    ("https://feeds.feedburner.com/MysteriesInParadise", "mystery", "Mysteries in Paradise"),
+    ("https://somethingisgoingtohappen.net/feed/", "mystery", "Something Is Going To Happen"),
+    ("http://bitterteaandmystery.blogspot.com/feeds/posts/default", "mystery", "Bitter Tea and Mystery"),
+    ("https://vancouvermysteries.com/blog-vancouver-mysteries/feed/", "mystery", "Vancouver Mysteries"),
+    ("https://killerhobbies.blogspot.com/feeds/posts/default", "mystery", "Killer Hobbies"),
+    ("https://lesasbookcritiques.com/feed/", "mystery", "Lesa's Book Critiques"),
+    ("https://cuddleupwithacozymysteryandadachshund.blog/feed/", "mystery", "Cuddle Up With a Cozy Mystery"),
+    ("http://feeds.feedblitz.com/omnimysterynews", "mystery", "Omnimystery News"),
+    ("https://www.lesliebudewitz.com/blog/feed/", "mystery", "Leslie Budewitz Blog"),
+    ("http://mysterysuspence.blogspot.com/feeds/posts/default", "mystery", "Mysteries and My Musings"),
+    ("https://classicmystery.blog/feed/", "mystery", "Classic Mystery Novel Blog"),
+    ("https://chicksonthecase.com/feed/", "mystery", "Chicks on the Case"),
+    ("https://ahsweetmystery.com/feed/", "mystery", "Ah Sweet Mystery"),
+    ("https://writerswhokill.blogspot.com/feeds/posts/default", "mystery", "Writers Who Kill"),
+    ("https://mysteryreadersinc.blogspot.com/feeds/posts/default", "mystery", "Mystery Fanfare"),
+    ("https://www.missdemeanors.com/feed/", "mystery", "Miss Demeanors"),
+    ("https://mainecrimewriters.com/feed/", "mystery", "Maine Crime Writers"),
+    ("https://mastersofmystery.com/blogs/latest.atom", "mystery", "Masters of Mystery"),
+    ("https://www.lainaturner.com/blog/feed/", "mystery", "Laina Turner Blog"),
+    ("https://mysteryofmurder.wordpress.com/feed/", "mystery", "Mystery of Murder"),
+    ("https://mysteriesahoy.com/feed/", "mystery", "Mysteries Ahoy!"),
+    ("https://www.suzannewinterly.com/blog?format=rss", "mystery", "Suzanne Winterly Blog"),
+    ("https://www.broadwaymurdermysteries.com/blogs/news.atom", "mystery", "Broadway Murder Mysteries"),
+    ("https://theinvisibleevent.com/feed/", "mystery", "The Invisible Event"),
+    ("https://cozymysterycafe.com/feed/", "mystery", "Cozy Mystery Cafe"),
+    ("https://www.mysterycenter.com/feed/", "mystery", "Mystery Center"),
+    ("https://mru.ink/feed/", "mystery", "MRU.INK"),
+    ("http://lisaksbookthoughts.blogspot.com/feeds/posts/default?alt=rss", "mystery", "Lisa K's Book Reviews"),
+    ("https://mysterypeople.wordpress.com/feed/", "mystery", "Mystery People"),
+    ("https://www.reviewingtheevidence.com/rte_rss.xml", "mystery", "Reviewing The Evidence"),
+    ("https://feeds.feedblitz.com/inreferencetomurder", "mystery", "In Reference to Murder"),
+    ("https://shriploring.wordpress.com/feed/", "mystery", "Explore With Me"),
+    ("https://feeds.feedburner.com/MarilynsMusings", "mystery", "Marilyn's Musings"),
+    ("https://mbtb-books.blogspot.com/feeds/posts/default?alt=rss", "mystery", "MBTB's Mystery Book Blog"),
+    ("https://heresthefuckingtwist.com/feed/", "mystery", "Here's the Fucking Twist"),
+    ("https://stephbroadribb.com/feed/", "mystery", "Steph Broadribb"),
+    ("https://theplainspokenpen.com/category/mystery/feed/", "mystery", "The Plain-Spoken Pen Mystery"),
+    ("http://feeds.feedburner.com/KingsRiverLife", "mystery", "Kings River Life Magazine"),
+    ("https://mysterywriters.org/feed/", "mystery", "Mystery Writers of America"),
 ]
 
 MEMORY_URL = "http://192.168.1.6:18790/remember?async=1"
