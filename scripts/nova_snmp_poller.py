@@ -104,6 +104,16 @@ DEVICES = [
     },
 ]
 
+# Per-device interface indices to monitor (avoids polling hundreds of virtual interfaces)
+DEVICE_INTERFACES = {
+    "udm-pro": [4, 5],         # WAN1 (Gigabit), WAN2 (SFP+)
+    "synology-nas": [7],        # eth4 (LAN NIC)
+    "mac-studio": [0],          # primary interface
+    "lts01-pi": [0],            # eth0
+    "nuk": [0],                 # primary
+    "mac-mini": [0],            # primary
+}
+
 # ── OID Definitions ───────────────────────────────────────────────────────────
 
 FAST_OIDS = {
@@ -161,30 +171,7 @@ SLOW_OIDS = {
 
 # Walk these OID trees to get all interfaces/disks
 WALK_OIDS = {
-    "if_in_octets": {
-        "oid": "1.3.6.1.2.1.2.2.1.10",
-        "unit": "bytes",
-        "poll_group": "fast",
-        "description": "Interface bytes in",
-    },
-    "if_out_octets": {
-        "oid": "1.3.6.1.2.1.2.2.1.16",
-        "unit": "bytes",
-        "poll_group": "fast",
-        "description": "Interface bytes out",
-    },
-    "if_in_errors": {
-        "oid": "1.3.6.1.2.1.2.2.1.14",
-        "unit": "count",
-        "poll_group": "fast",
-        "description": "Interface input errors",
-    },
-    "if_out_errors": {
-        "oid": "1.3.6.1.2.1.2.2.1.20",
-        "unit": "count",
-        "poll_group": "fast",
-        "description": "Interface output errors",
-    },
+    # Interface walks removed — replaced by per-device targeted interface polling below
     "disk_storage_used": {
         "oid": "1.3.6.1.2.1.25.2.3.1.6",
         "unit": "units",
@@ -405,13 +392,16 @@ async def snmp_walk(device, oid_str):
 
 
 async def poll_device(device, oid_group, poll_group):
-    """Poll a single device for a group of OIDs."""
+    """Poll a single device for a group of OIDs + targeted interface metrics."""
     now = datetime.now(timezone.utc)
     ip = device["ip"]
     name = device["name"]
     metrics_collected = 0
 
+    # Poll scalar OIDs (CPU, memory, uptime, temp)
     for metric_name, oid_def in oid_group.items():
+        if isinstance(oid_def, str):
+            continue
         value = await snmp_get(device, oid_def["oid"])
         if value is not None:
             await _metrics_queue.put({
@@ -422,19 +412,63 @@ async def poll_device(device, oid_group, poll_group):
             })
             metrics_collected += 1
 
-    # Walk OIDs for this poll group
-    for metric_name, oid_def in WALK_OIDS.items():
-        if oid_def.get("poll_group") != poll_group:
-            continue
-        results = await snmp_walk(device, oid_def["oid"])
-        for idx, value in results:
-            await _metrics_queue.put({
-                "ts": now, "ip": ip, "name": name,
-                "metric": f"{metric_name}.{idx}", "value": value,
-                "oid": f"{oid_def['oid']}.{idx}", "group": poll_group,
-                "unit": oid_def.get("unit", ""),
-            })
-            metrics_collected += 1
+    # Walk disk OIDs (slow poll only)
+    if poll_group == "slow":
+        for metric_name, oid_def in WALK_OIDS.items():
+            results = await snmp_walk(device, oid_def["oid"])
+            for idx, value in results:
+                await _metrics_queue.put({
+                    "ts": now, "ip": ip, "name": name,
+                    "metric": f"{metric_name}.{idx}", "value": value,
+                    "oid": f"{oid_def['oid']}.{idx}", "group": poll_group,
+                    "unit": oid_def.get("unit", ""),
+                })
+                metrics_collected += 1
+
+    # Poll targeted interface metrics (fast poll only)
+    if poll_group == "fast":
+        iface_indices = DEVICE_INTERFACES.get(name, [0])
+        for idx in iface_indices:
+            # In octets
+            val = await snmp_get(device, f"1.3.6.1.2.1.2.2.1.10.{idx}")
+            if val is not None:
+                await _metrics_queue.put({
+                    "ts": now, "ip": ip, "name": name,
+                    "metric": f"if_in_octets.{idx}", "value": val,
+                    "oid": f"1.3.6.1.2.1.2.2.1.10.{idx}", "group": "fast",
+                    "unit": "bytes",
+                })
+                metrics_collected += 1
+            # Out octets
+            val = await snmp_get(device, f"1.3.6.1.2.1.2.2.1.16.{idx}")
+            if val is not None:
+                await _metrics_queue.put({
+                    "ts": now, "ip": ip, "name": name,
+                    "metric": f"if_out_octets.{idx}", "value": val,
+                    "oid": f"1.3.6.1.2.1.2.2.1.16.{idx}", "group": "fast",
+                    "unit": "bytes",
+                })
+                metrics_collected += 1
+            # In errors
+            val = await snmp_get(device, f"1.3.6.1.2.1.2.2.1.14.{idx}")
+            if val is not None:
+                await _metrics_queue.put({
+                    "ts": now, "ip": ip, "name": name,
+                    "metric": f"if_in_errors.{idx}", "value": val,
+                    "oid": f"1.3.6.1.2.1.2.2.1.14.{idx}", "group": "fast",
+                    "unit": "count",
+                })
+                metrics_collected += 1
+            # Out errors
+            val = await snmp_get(device, f"1.3.6.1.2.1.2.2.1.20.{idx}")
+            if val is not None:
+                await _metrics_queue.put({
+                    "ts": now, "ip": ip, "name": name,
+                    "metric": f"if_out_errors.{idx}", "value": val,
+                    "oid": f"1.3.6.1.2.1.2.2.1.20.{idx}", "group": "fast",
+                    "unit": "count",
+                })
+                metrics_collected += 1
 
     return metrics_collected
 

@@ -4591,32 +4591,77 @@ async def snmp_devices():
     } for r in rows])
 
 
+# Per-device interface index mapping for meaningful traffic graphs
+DEVICE_INTERFACES = {
+    "udm-pro": [
+        {"idx": 4, "label": "WAN1 (Gigabit)"},
+        {"idx": 5, "label": "WAN2 (SFP+)"},
+    ],
+    "synology-nas": [
+        {"idx": 7, "label": "eth4 (LAN)"},
+    ],
+    "mac-studio": [
+        {"idx": 0, "label": "Primary"},
+    ],
+    "lts01-pi": [
+        {"idx": 0, "label": "eth0"},
+    ],
+    "nuk": [
+        {"idx": 0, "label": "Primary"},
+    ],
+    "mac-mini": [
+        {"idx": 0, "label": "Primary"},
+    ],
+}
+
+
 @app.get("/api/snmp/traffic")
 async def snmp_traffic(device: str = "", hours: int = 6):
     """Return interface traffic timeseries for MRTG-style graphs."""
     pool = app.state.history_pool
     hours = min(hours, 168)
+
+    # Build list of metric names to query based on device interface map
+    metric_conditions = []
+    for dev, ifaces in DEVICE_INTERFACES.items():
+        if device and dev != device:
+            continue
+        for iface in ifaces:
+            metric_conditions.append(f"if_in_octets.{iface['idx']}")
+            metric_conditions.append(f"if_out_octets.{iface['idx']}")
+
+    if not metric_conditions:
+        return JSONResponse({})
+
     async with pool.acquire() as conn:
-        query = """
+        rows = await conn.fetch("""
             SELECT timestamp, device_name, metric_name, metric_value
             FROM snmp_metrics
-            WHERE metric_name IN ('if_in_octets.0', 'if_out_octets.0')
-              AND timestamp > now() - make_interval(hours => $1)
-        """
-        params = [hours]
-        if device:
-            query += " AND device_name = $2"
-            params.append(device)
-        query += " ORDER BY device_name, timestamp"
-        rows = await conn.fetch(query, *params)
+            WHERE metric_name = ANY($1::text[])
+              AND timestamp > now() - make_interval(hours => $2)
+            ORDER BY device_name, metric_name, timestamp
+        """, metric_conditions, hours)
 
+    # Group by device + interface label
     result = {}
     for r in rows:
         dev = r["device_name"]
-        if dev not in result:
-            result[dev] = {"in": [], "out": []}
-        direction = "in" if "in_octets" in r["metric_name"] else "out"
-        result[dev][direction].append({
+        metric = r["metric_name"]
+        # Find the interface label
+        idx_str = metric.split(".")[-1]
+        try:
+            idx = int(idx_str)
+        except ValueError:
+            continue
+
+        ifaces = DEVICE_INTERFACES.get(dev, [])
+        label = next((i["label"] for i in ifaces if i["idx"] == idx), f"if.{idx}")
+        key = f"{dev} — {label}"
+
+        if key not in result:
+            result[key] = {"in": [], "out": []}
+        direction = "in" if "in_octets" in metric else "out"
+        result[key][direction].append({
             "t": r["timestamp"].isoformat(),
             "v": r["metric_value"],
         })
