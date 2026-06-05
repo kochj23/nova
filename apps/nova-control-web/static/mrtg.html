@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova MRTG — Network Traffic & Device Health</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: 'SF Mono', 'Fira Code', 'Courier New', monospace;
+  background: #1a1a2e;
+  color: #e0e0e0;
+  min-height: 100vh;
+  padding: 20px;
+}
+h1 {
+  text-align: center;
+  color: #4fc3f7;
+  font-size: 24px;
+  margin-bottom: 8px;
+}
+.subtitle {
+  text-align: center;
+  color: #666;
+  font-size: 12px;
+  margin-bottom: 24px;
+}
+.controls {
+  display: flex;
+  justify-content: center;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.controls button {
+  padding: 6px 16px;
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 4px;
+  color: #e0e0e0;
+  cursor: pointer;
+  font-family: inherit;
+  font-size: 12px;
+}
+.controls button.active {
+  background: #0f3460;
+  border-color: #4fc3f7;
+  color: #4fc3f7;
+}
+.controls button:hover { border-color: #4fc3f7; }
+
+/* Device Summary Cards */
+.device-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 32px;
+}
+.device-card {
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 8px;
+  padding: 16px;
+}
+.device-card h3 {
+  color: #4fc3f7;
+  font-size: 14px;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.device-card h3 .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #66bb6a;
+}
+.device-card .metrics {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.device-card .metric {
+  background: #0f3460;
+  border-radius: 4px;
+  padding: 8px;
+}
+.device-card .metric .label {
+  font-size: 10px;
+  color: #888;
+  text-transform: uppercase;
+}
+.device-card .metric .value {
+  font-size: 16px;
+  font-weight: bold;
+  color: #e0e0e0;
+}
+.device-card .metric .value.warn { color: #ffb74d; }
+.device-card .metric .value.crit { color: #e94560; }
+
+/* Charts */
+.chart-section {
+  margin-bottom: 32px;
+}
+.chart-section h2 {
+  color: #4fc3f7;
+  font-size: 16px;
+  margin-bottom: 12px;
+  padding-left: 8px;
+  border-left: 3px solid #4fc3f7;
+}
+.chart-container {
+  background: #16213e;
+  border: 1px solid #0f3460;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+.chart-container canvas {
+  max-height: 250px;
+}
+.chart-title {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 8px;
+}
+.legend {
+  display: flex;
+  gap: 16px;
+  font-size: 11px;
+  margin-top: 8px;
+}
+.legend .in { color: #66bb6a; }
+.legend .out { color: #42a5f5; }
+
+/* Classic MRTG footer */
+.mrtg-footer {
+  text-align: center;
+  font-size: 10px;
+  color: #555;
+  margin-top: 40px;
+  padding-top: 16px;
+  border-top: 1px solid #0f3460;
+}
+.refresh-indicator {
+  position: fixed;
+  bottom: 16px;
+  right: 16px;
+  font-size: 10px;
+  color: #555;
+}
+</style>
+</head>
+<body>
+<h1>Nova MRTG</h1>
+<p class="subtitle">Network Traffic &amp; Device Health — SNMP Metrics Dashboard</p>
+
+<div class="controls">
+  <button class="active" data-hours="1">1h</button>
+  <button data-hours="6">6h</button>
+  <button data-hours="24">24h</button>
+  <button data-hours="72">3d</button>
+  <button data-hours="168">7d</button>
+</div>
+
+<div class="device-grid" id="device-grid"></div>
+
+<div id="charts"></div>
+
+<div class="mrtg-footer">
+  Nova SNMP Poller v1.0 — Polling every 60s (fast) / 300s (slow)<br>
+  Inspired by MRTG (Multi Router Traffic Grapher) by Tobias Oetiker
+</div>
+<div class="refresh-indicator" id="refresh-time">—</div>
+
+<script>
+let currentHours = 6;
+let charts = {};
+
+// Time range buttons
+document.querySelectorAll('.controls button').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.controls button').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    currentHours = parseInt(btn.dataset.hours);
+    refresh();
+  });
+});
+
+async function fetchJSON(url) {
+  const r = await fetch(url);
+  return r.json();
+}
+
+function formatBytes(bytes) {
+  if (bytes >= 1e9) return (bytes / 1e9).toFixed(1) + ' GB';
+  if (bytes >= 1e6) return (bytes / 1e6).toFixed(1) + ' MB';
+  if (bytes >= 1e3) return (bytes / 1e3).toFixed(1) + ' KB';
+  return bytes + ' B';
+}
+
+function formatRate(bytesPerSec) {
+  const bits = bytesPerSec * 8;
+  if (bits >= 1e9) return (bits / 1e9).toFixed(1) + ' Gbps';
+  if (bits >= 1e6) return (bits / 1e6).toFixed(1) + ' Mbps';
+  if (bits >= 1e3) return (bits / 1e3).toFixed(1) + ' Kbps';
+  return bits.toFixed(0) + ' bps';
+}
+
+async function loadSummary() {
+  const data = await fetchJSON('/api/snmp/summary');
+  const grid = document.getElementById('device-grid');
+  grid.innerHTML = '';
+
+  for (const [device, metrics] of Object.entries(data)) {
+    const card = document.createElement('div');
+    card.className = 'device-card';
+
+    const cpu = metrics.cpu_load_5min;
+    const mem_total = metrics.mem_total_real;
+    const mem_avail = metrics.mem_avail_real;
+    const temp = metrics.sys_temp;
+    const uptime = metrics.sys_uptime;
+
+    let cpuVal = cpu ? cpu.value.toFixed(2) : '—';
+    let cpuClass = '';
+    if (cpu && cpu.value > 10) cpuClass = 'crit';
+    else if (cpu && cpu.value > 6) cpuClass = 'warn';
+
+    let memPct = '—';
+    let memClass = '';
+    if (mem_total && mem_avail && mem_total.value > 0) {
+      const pct = ((mem_total.value - (mem_avail.value || 0)) / mem_total.value * 100);
+      memPct = pct.toFixed(0) + '%';
+      if (pct > 90) memClass = 'crit';
+      else if (pct > 75) memClass = 'warn';
+    }
+
+    let tempVal = temp ? temp.value + '°C' : '—';
+    let tempClass = '';
+    if (temp && temp.value > 80) tempClass = 'crit';
+    else if (temp && temp.value > 65) tempClass = 'warn';
+
+    let uptimeStr = '—';
+    if (uptime) {
+      const hours = Math.floor(uptime.value / 360000);
+      const days = Math.floor(hours / 24);
+      uptimeStr = days > 0 ? `${days}d ${hours % 24}h` : `${hours}h`;
+    }
+
+    card.innerHTML = `
+      <h3><span class="dot"></span>${device}</h3>
+      <div class="metrics">
+        <div class="metric"><div class="label">CPU Load</div><div class="value ${cpuClass}">${cpuVal}</div></div>
+        <div class="metric"><div class="label">Memory</div><div class="value ${memClass}">${memPct}</div></div>
+        <div class="metric"><div class="label">Temp</div><div class="value ${tempClass}">${tempVal}</div></div>
+        <div class="metric"><div class="label">Uptime</div><div class="value">${uptimeStr}</div></div>
+      </div>
+    `;
+    grid.appendChild(card);
+  }
+}
+
+async function loadTraffic() {
+  const data = await fetchJSON(`/api/snmp/traffic?hours=${currentHours}`);
+  const container = document.getElementById('charts');
+  container.innerHTML = '';
+
+  for (const [device, series] of Object.entries(data)) {
+    // Calculate rates (delta between consecutive samples)
+    const inRates = [];
+    const outRates = [];
+
+    for (let i = 1; i < series.in.length; i++) {
+      const dt = (new Date(series.in[i].t) - new Date(series.in[i-1].t)) / 1000;
+      if (dt > 0 && dt < 300) {
+        const rate = Math.max(0, (series.in[i].v - series.in[i-1].v) / dt);
+        inRates.push({ x: new Date(series.in[i].t), y: rate });
+      }
+    }
+    for (let i = 1; i < series.out.length; i++) {
+      const dt = (new Date(series.out[i].t) - new Date(series.out[i-1].t)) / 1000;
+      if (dt > 0 && dt < 300) {
+        const rate = Math.max(0, (series.out[i].v - series.out[i-1].v) / dt);
+        outRates.push({ x: new Date(series.out[i].t), y: rate });
+      }
+    }
+
+    const section = document.createElement('div');
+    section.className = 'chart-section';
+    section.innerHTML = `
+      <h2>${device} — Interface Traffic</h2>
+      <div class="chart-container">
+        <canvas id="traffic-${device}"></canvas>
+        <div class="legend">
+          <span class="in">■ Inbound</span>
+          <span class="out">■ Outbound</span>
+        </div>
+      </div>
+    `;
+    container.appendChild(section);
+
+    const ctx = document.getElementById(`traffic-${device}`).getContext('2d');
+    if (charts[`traffic-${device}`]) charts[`traffic-${device}`].destroy();
+
+    charts[`traffic-${device}`] = new Chart(ctx, {
+      type: 'line',
+      data: {
+        datasets: [
+          {
+            label: 'Inbound',
+            data: inRates,
+            borderColor: '#66bb6a',
+            backgroundColor: 'rgba(102, 187, 106, 0.15)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 0,
+            borderWidth: 1.5,
+          },
+          {
+            label: 'Outbound',
+            data: outRates,
+            borderColor: '#42a5f5',
+            backgroundColor: 'rgba(66, 165, 245, 0.15)',
+            fill: true,
+            tension: 0.3,
+            pointRadius: 0,
+            borderWidth: 1.5,
+          },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { intersect: false, mode: 'index' },
+        plugins: {
+          legend: { display: false },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => `${ctx.dataset.label}: ${formatRate(ctx.raw.y)}`,
+            },
+          },
+        },
+        scales: {
+          x: {
+            type: 'time',
+            grid: { color: 'rgba(255,255,255,0.05)' },
+            ticks: { color: '#666', maxTicksLimit: 8 },
+          },
+          y: {
+            beginAtZero: true,
+            grid: { color: 'rgba(255,255,255,0.05)' },
+            ticks: {
+              color: '#666',
+              callback: (v) => formatRate(v),
+            },
+          },
+        },
+      },
+    });
+  }
+
+  // CPU Load chart
+  const cpuData = await fetchJSON(`/api/snmp/metrics?metric=cpu_load_5min&hours=${currentHours}`);
+  if (Object.keys(cpuData).length > 0) {
+    const section = document.createElement('div');
+    section.className = 'chart-section';
+    section.innerHTML = `
+      <h2>CPU Load (5min avg)</h2>
+      <div class="chart-container">
+        <canvas id="cpu-chart"></canvas>
+      </div>
+    `;
+    container.appendChild(section);
+
+    const datasets = [];
+    const colors = ['#e94560', '#ffb74d', '#66bb6a', '#42a5f5', '#ce93d8'];
+    let i = 0;
+    for (const [dev, info] of Object.entries(cpuData)) {
+      datasets.push({
+        label: dev,
+        data: info.data.map(d => ({ x: new Date(d.t), y: d.v })),
+        borderColor: colors[i % colors.length],
+        backgroundColor: 'transparent',
+        tension: 0.3,
+        pointRadius: 0,
+        borderWidth: 1.5,
+      });
+      i++;
+    }
+
+    const ctx = document.getElementById('cpu-chart').getContext('2d');
+    if (charts['cpu-chart']) charts['cpu-chart'].destroy();
+    charts['cpu-chart'] = new Chart(ctx, {
+      type: 'line',
+      data: { datasets },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { labels: { color: '#888', font: { size: 10 } } },
+        },
+        scales: {
+          x: {
+            type: 'time',
+            grid: { color: 'rgba(255,255,255,0.05)' },
+            ticks: { color: '#666', maxTicksLimit: 8 },
+          },
+          y: {
+            beginAtZero: true,
+            grid: { color: 'rgba(255,255,255,0.05)' },
+            ticks: { color: '#666' },
+            title: { display: true, text: 'Load', color: '#666' },
+          },
+        },
+      },
+    });
+  }
+}
+
+async function refresh() {
+  try {
+    await loadSummary();
+    await loadTraffic();
+    document.getElementById('refresh-time').textContent =
+      'Last refresh: ' + new Date().toLocaleTimeString();
+  } catch (e) {
+    console.error('Refresh failed:', e);
+  }
+}
+
+// Initial load + auto-refresh every 60s
+refresh();
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>

@@ -70,10 +70,22 @@ DEVICES = [
         "port": 161,
         "enabled": True,
     },
-    # Synology: needs SNMP enabled via DSM UI (Control Panel > Terminal & SNMP > SNMP)
-    # {"ip": "192.168.1.11", "name": "synology-nas", "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": False},
-    # UNAS Pro: SSH host key not accepted yet
-    # {"ip": "192.168.1.69", "name": "unas-pro", "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": False},
+    {
+        "ip": "192.168.1.11",
+        "name": "synology-nas",
+        "version": "v2c",
+        "community_keychain": "nova-snmp-community",
+        "port": 161,
+        "enabled": True,
+    },
+    {
+        "ip": "192.168.1.2",
+        "name": "lts01-pi",
+        "version": "v2c",
+        "community_keychain": "nova-snmp-community",
+        "port": 161,
+        "enabled": True,
+    },
 ]
 
 # ── OID Definitions ───────────────────────────────────────────────────────────
@@ -123,6 +135,11 @@ SLOW_OIDS = {
         "oid": "1.3.6.1.4.1.2021.4.4.0",
         "unit": "KB",
         "description": "Available swap space",
+    },
+    "sys_temp": {
+        "oid": "1.3.6.1.4.1.6574.1.2.0",
+        "unit": "celsius",
+        "description": "Synology system temperature",
     },
 }
 

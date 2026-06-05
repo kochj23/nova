@@ -4563,5 +4563,125 @@ async def analytics_events_api(site: str = "", hours: int = 24):
     return JSONResponse([dict(r) for r in rows])
 
 
+# ── MRTG-Style SNMP Dashboard ─────────────────────────────────────────────────
+
+@app.get("/mrtg")
+async def mrtg_dashboard():
+    """Serve the MRTG-style SNMP metrics dashboard."""
+    return FileResponse("static/mrtg.html")
+
+
+@app.get("/api/snmp/devices")
+async def snmp_devices():
+    """Return list of SNMP-monitored devices with latest metrics."""
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT DISTINCT device_name, device_ip,
+                   MAX(timestamp) as last_seen
+            FROM snmp_metrics
+            WHERE timestamp > now() - interval '10 minutes'
+            GROUP BY device_name, device_ip
+            ORDER BY device_name
+        """)
+    return JSONResponse([{
+        "name": r["device_name"],
+        "ip": str(r["device_ip"]),
+        "last_seen": r["last_seen"].isoformat(),
+    } for r in rows])
+
+
+@app.get("/api/snmp/traffic")
+async def snmp_traffic(device: str = "", hours: int = 6):
+    """Return interface traffic timeseries for MRTG-style graphs."""
+    pool = app.state.history_pool
+    hours = min(hours, 168)
+    async with pool.acquire() as conn:
+        query = """
+            SELECT timestamp, device_name, metric_name, metric_value
+            FROM snmp_metrics
+            WHERE metric_name IN ('if_in_octets.0', 'if_out_octets.0')
+              AND timestamp > now() - make_interval(hours => $1)
+        """
+        params = [hours]
+        if device:
+            query += " AND device_name = $2"
+            params.append(device)
+        query += " ORDER BY device_name, timestamp"
+        rows = await conn.fetch(query, *params)
+
+    result = {}
+    for r in rows:
+        dev = r["device_name"]
+        if dev not in result:
+            result[dev] = {"in": [], "out": []}
+        direction = "in" if "in_octets" in r["metric_name"] else "out"
+        result[dev][direction].append({
+            "t": r["timestamp"].isoformat(),
+            "v": r["metric_value"],
+        })
+    return JSONResponse(result)
+
+
+@app.get("/api/snmp/metrics")
+async def snmp_metrics_api(device: str = "", metric: str = "cpu_load_5min", hours: int = 6):
+    """Return metric timeseries for a device (CPU, memory, disk, temp)."""
+    pool = app.state.history_pool
+    hours = min(hours, 168)
+    async with pool.acquire() as conn:
+        query = """
+            SELECT timestamp, device_name, metric_value, unit
+            FROM snmp_metrics
+            WHERE metric_name = $1
+              AND timestamp > now() - make_interval(hours => $2)
+        """
+        params = [metric, hours]
+        if device:
+            query += " AND device_name = $3"
+            params.append(device)
+        query += " ORDER BY device_name, timestamp"
+        rows = await conn.fetch(query, *params)
+
+    result = {}
+    for r in rows:
+        dev = r["device_name"]
+        if dev not in result:
+            result[dev] = {"unit": r["unit"], "data": []}
+        result[dev]["data"].append({
+            "t": r["timestamp"].isoformat(),
+            "v": r["metric_value"],
+        })
+    return JSONResponse(result)
+
+
+@app.get("/api/snmp/summary")
+async def snmp_summary():
+    """Return current snapshot of key metrics per device."""
+    pool = app.state.history_pool
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT DISTINCT ON (device_name, metric_name)
+                device_name, metric_name, metric_value, unit, timestamp
+            FROM snmp_metrics
+            WHERE metric_name IN (
+                'cpu_load_5min', 'mem_total_real', 'mem_avail_real',
+                'sys_temp', 'sys_uptime'
+            )
+            AND timestamp > now() - interval '10 minutes'
+            ORDER BY device_name, metric_name, timestamp DESC
+        """)
+    result = {}
+    for r in rows:
+        dev = r["device_name"]
+        if dev not in result:
+            result[dev] = {}
+        result[dev][r["metric_name"]] = {
+            "value": r["metric_value"],
+            "unit": r["unit"],
+            "time": r["timestamp"].isoformat(),
+        }
+    return JSONResponse(result)
+
+
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=37450)
