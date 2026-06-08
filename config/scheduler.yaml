@@ -831,3 +831,10 @@ tasks:
     timeout: 900
     overlap: skip
     group: llm
+
+  vector_audit:
+    script: nova_vector_audit.py
+    schedule: cron 0 6 * * *
+    timeout: 1800
+    overlap: skip
+    group: llm
