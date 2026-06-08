@@ -648,6 +648,10 @@ def _notify(message: str, is_critical: bool = False):
 
 def _notify_immediate(message: str, is_critical: bool = False):
     """Post to all channels immediately. Falls back to raw HTTP + signal-cli if gateway is dead."""
+    # Local macOS notification — always fires regardless of Slack/Discord
+    clean = message.replace(":rotating_light:", "").replace(":wrench:", "").replace(":x:", "").replace("*", "").strip()
+    nova_config.notify_local("Nova — Big Brother", clean[:200], critical=is_critical)
+
     try:
         nova_config.post_both(message, slack_channel=nova_config.SLACK_BB)
         return

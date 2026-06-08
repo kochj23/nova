@@ -299,6 +299,26 @@ def post_discord(message: str, channel_id: str = DISCORD_CHAT) -> bool:
         return False
 
 
+def notify_local(title: str, message: str, sound: str = "Glass", critical: bool = False) -> None:
+    """Show macOS notification banner + play sound for local alerts."""
+    import subprocess
+    clean_msg = message.replace('"', '\\"').replace("'", "\\'")[:200]
+    clean_title = title.replace('"', '\\"')[:60]
+    try:
+        subprocess.run([
+            "osascript", "-e",
+            f'display notification "{clean_msg}" with title "{clean_title}" sound name "{sound}"'
+        ], timeout=5, capture_output=True)
+    except Exception:
+        pass
+    if critical:
+        try:
+            subprocess.Popen(["/usr/bin/afplay", f"/System/Library/Sounds/Sosumi.aiff"],
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except Exception:
+            pass
+
+
 def post_both(message: str, slack_channel: str = SLACK_CHAN, discord_channel: str = None) -> None:
     """Post to both Slack and the corresponding Discord channel."""
     import json, urllib.request

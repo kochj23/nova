@@ -91,31 +91,32 @@ def post_observation(subject, observation, severity="warning", metadata=None):
 
 
 def slack_alert(msg):
-    """Send Slack notification for critical findings."""
+    """Send Slack notification + local macOS alert for critical findings."""
     try:
         import nova_config
         nova_config.post_both(msg, nova_config.SLACK_NOTIFY)
+        nova_config.notify_local("Security Alert", msg[:200], critical=True)
     except Exception as e:
         print(f"[security_scan] Slack alert failed: {e}", file=sys.stderr)
 
 
 # ── Command Execution ─────────────────────────────────────────────────────────
 
-def run_local(cmd):
+def run_local(cmd, timeout=300):
     """Run a command locally (for mac-studio)."""
     try:
         result = subprocess.run(
             cmd, shell=True,
-            capture_output=True, text=True, timeout=300
+            capture_output=True, text=True, timeout=timeout
         )
         return result.stdout + result.stderr, result.returncode
     except subprocess.TimeoutExpired:
-        return "TIMEOUT: command exceeded 300s", -1
+        return f"TIMEOUT: command exceeded {timeout}s", -1
     except Exception as e:
         return f"ERROR: {e}", -1
 
 
-def run_remote(host, cmd):
+def run_remote(host, cmd, timeout=300):
     """Run a command on a remote host via SSH."""
     user = host.get("user", "kochj")
     ip = host["ip"]
@@ -126,21 +127,21 @@ def run_remote(host, cmd):
     try:
         result = subprocess.run(
             ssh_cmd, shell=True,
-            capture_output=True, text=True, timeout=300
+            capture_output=True, text=True, timeout=timeout
         )
         return result.stdout + result.stderr, result.returncode
     except subprocess.TimeoutExpired:
-        return "TIMEOUT: SSH command exceeded 300s", -1
+        return f"TIMEOUT: SSH command exceeded {timeout}s", -1
     except Exception as e:
         return f"ERROR: {e}", -1
 
 
-def run_on_host(host, cmd):
+def run_on_host(host, cmd, timeout=300):
     """Run command on the appropriate host (local or remote)."""
     if host.get("local"):
-        return run_local(cmd)
+        return run_local(cmd, timeout)
     else:
-        return run_remote(host, cmd)
+        return run_remote(host, cmd, timeout)
 
 
 # ── Whitelist (known-good warnings to suppress) ──────────────────────────────
@@ -309,7 +310,13 @@ PARSERS = {
 COMMANDS = {
     "rkhunter": "sudo rkhunter --check --skip-keypress --no-colors 2>&1",
     "chkrootkit": "sudo chkrootkit 2>&1",
-    "aide": "sudo aide --check 2>&1",
+    "aide": "sudo aide --check --config=/etc/aide/aide.conf 2>&1",
+}
+
+TIMEOUTS = {
+    "rkhunter": 600,
+    "chkrootkit": 300,
+    "aide": 600,
 }
 
 
@@ -330,8 +337,9 @@ def scan_host(host, scan_id, tools=None):
 
     for tool in applicable:
         cmd = COMMANDS[tool]
+        timeout = TIMEOUTS.get(tool, 300)
         start = time.time()
-        output, returncode = run_on_host(host, cmd)
+        output, returncode = run_on_host(host, cmd, timeout)
         duration_ms = int((time.time() - start) * 1000)
 
         # Parse results
