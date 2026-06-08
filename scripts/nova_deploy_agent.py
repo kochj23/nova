@@ -43,9 +43,24 @@ def _conn():
     return c
 
 
+def _get_grafana_auth():
+    """Get Grafana auth header from Keychain."""
+    import base64
+    try:
+        pw = subprocess.check_output(
+            ["security", "find-generic-password", "-a", "nova", "-s", "nova-grafana-password", "-w"],
+            text=True).strip()
+        return "Basic " + base64.b64encode(f"admin:{pw}".encode()).decode()
+    except Exception:
+        return None
+
+
 def _annotate_grafana(text, tags):
     """Post annotation to Grafana for deploy/fix events."""
     import urllib.request
+    auth = _get_grafana_auth()
+    if not auth:
+        return
     try:
         payload = json.dumps({
             "text": text,
@@ -57,7 +72,7 @@ def _annotate_grafana(text, tags):
             data=payload,
             headers={
                 "Content-Type": "application/json",
-                "Authorization": "Basic YWRtaW46Smtvb2dpZTAwMQ==",  # admin:admin base64
+                "Authorization": auth,
             },
             method="POST"
         )
