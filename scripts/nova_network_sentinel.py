@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/opt/homebrew/bin/python3
 """
 nova_network_sentinel.py — Internal network IDS/posture monitor for Nova.
 
@@ -31,10 +31,15 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+nova_config = None
 try:
-    import nova_config
-except ImportError:
-    nova_config = None
+    import importlib
+    spec = importlib.util.spec_from_file_location("nova_config", str(Path(__file__).parent / "nova_config.py"))
+    if spec and spec.loader:
+        nova_config = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(nova_config)
+except Exception:
+    pass
 
 STATE_DIR = Path.home() / ".openclaw/workspace/state"
 BASELINE_FILE = STATE_DIR / "network_baseline.json"
@@ -67,7 +72,7 @@ KNOWN_SAFE = {
     "192.168.1.1": "UniFi Gateway (unifi.digitalnoise.net)",
     "192.168.1.6": "M4 Mac — Nova primary host",
     "192.168.1.10": "Synology NAS (UNAS-Pro-8)",
-    "192.168.1.253": "UniFi Honeypot/IDS (Ubiquiti MAC 74:ac:b9)",
+    "192.168.1.253": "UniFi Honeypot/IDS (Ubiquiti)",
 }
 
 
@@ -295,7 +300,7 @@ posture: {tone}
 
     entry += f"""## Honeypot Status
 
-192.168.1.253 (Ubiquiti MAC 74:ac:b9:5e:0a:72) continues its vigil. FTP, Telnet, SMTP, POP3, MS-SQL, SMB, DNS — all open, all watching. Any scanner that touches it reveals itself. The trap holds.
+192.168.1.253 (Ubiquiti honeypot) continues its vigil. FTP, Telnet, SMTP, POP3, MS-SQL, SMB, DNS — all open, all watching. Any scanner that touches it reveals itself. The trap holds.
 
 ## Recommendation
 
