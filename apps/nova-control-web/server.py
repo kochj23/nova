@@ -436,6 +436,8 @@ async def service_detail(service: str):
             return JSONResponse(await collect_synology_state())
         elif service == "unas":
             return JSONResponse(await collect_unas_state())
+        elif service == "hue":
+            return JSONResponse(await collect_hue_state())
         elif service == "healthkit_status":
             return JSONResponse(await collect_healthkit_status())
         elif service == "homebridge":
@@ -2997,6 +2999,30 @@ async def collect_synology_state() -> dict:
 
 
 UNAS_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_unas_status.json"
+HUE_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_hue_state.json"
+
+
+async def collect_hue_state() -> dict:
+    """Read Philips Hue integration state file."""
+    try:
+        if not HUE_STATE.exists():
+            return {"status": "unavailable"}
+        data = _json.loads(HUE_STATE.read_text())
+        rooms = data.get("rooms", [])
+        rooms_on = sum(1 for r in rooms if r.get("any_on", False))
+        lights_on = sum(r.get("lights_on", 0) for r in rooms)
+        outdoor_temp = data.get("outdoor_temp")
+        outdoor_motion = data.get("outdoor_motion", False)
+        return {
+            "status": "ok",
+            "rooms_on": rooms_on,
+            "lights_on": lights_on,
+            "outdoor_temp": outdoor_temp,
+            "outdoor_motion": outdoor_motion,
+            "rooms": rooms,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
 
 
 async def collect_unas_state() -> dict:
@@ -4336,6 +4362,7 @@ async def poll_loop():
             collect_capacity_summary(),      # 32
             collect_nmap_summary(),          # 33
             collect_unas_state(),            # 34
+            collect_hue_state(),             # 35
             return_exceptions=True,
         )
 
@@ -4403,6 +4430,7 @@ async def poll_loop():
             "capacity_summary": safe(32),
             "nmap": safe(33),
             "unas": safe(34),
+            "hue": safe(35),
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }

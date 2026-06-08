@@ -118,6 +118,13 @@ TOOL_REGISTRY: dict[str, dict] = {
         },
         "required": [],
     },
+    "hue_control": {
+        "description": "Control Philips Hue lights. Commands: 'kitchen off', 'office dim 50', 'living room on', 'status', 'all off'.",
+        "parameters": {
+            "command": {"type": "string", "description": "Light control command (e.g. 'kitchen off', 'office dim 50', 'status', 'all off')"},
+        },
+        "required": ["command"],
+    },
 }
 
 
@@ -162,6 +169,8 @@ async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict) 
         elif tool_name == "memory_quality":
             args = ["--clean"] if tool_params.get("clean") else ["--dry-run"]
             return await _tool_run_script(ctx, {"script": "nova_memory_quality.py", "args": args})
+        elif tool_name == "hue_control":
+            return await _tool_hue_control(ctx, tool_params.get("command", ""))
         else:
             return f"[error: tool '{tool_name}' not implemented]"
     except asyncio.TimeoutError:
@@ -359,6 +368,26 @@ async def _tool_plex_control(ctx: GatewayContext, params: dict) -> str:
             return f"[plex error: {resp.status_code}]"
     except Exception as e:
         return f"[plex error: {e}]"
+
+
+async def _tool_hue_control(ctx: GatewayContext, command: str) -> str:
+    """Control Hue lights. Commands: 'kitchen off', 'office dim 50', 'living room on', 'status', 'all off'."""
+    if not command:
+        return "[error: no command specified]"
+    try:
+        import urllib.request
+        payload = json.dumps({"command": command}).encode()
+        req = urllib.request.Request(
+            "http://127.0.0.1:37476/command",
+            data=payload,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            result = json.loads(resp.read())
+            return result.get("response", "Done")
+    except Exception as e:
+        return f"Hue control failed: {e}"
 
 
 # ── Structured tool call handling ────────────────────────────────────────────

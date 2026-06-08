@@ -57,7 +57,7 @@ def _annotate_grafana(text, tags):
             data=payload,
             headers={
                 "Content-Type": "application/json",
-                "Authorization": "Basic YWRtaW46YWRtaW4=",  # admin:admin base64
+                "Authorization": "Basic YWRtaW46Smtvb2dpZTAwMQ==",  # admin:admin base64
             },
             method="POST"
         )
