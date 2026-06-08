@@ -36,8 +36,8 @@ IMAGES_DIR = HUGO_ROOT / "static" / "images" / "rando"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "google/gemini-2.5-flash"
 MEMORY_URL = "http://192.168.1.6:18790"
-SAMPLE_PER_VECTOR = 20
-MAX_VECTORS_PER_RUN = 30
+SAMPLE_PER_VECTOR = 100
+MAX_VECTORS_PER_RUN = 999
 DB_DSN = "host=localhost dbname=nova_ops user=kochj"
 
 
