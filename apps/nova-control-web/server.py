@@ -434,6 +434,8 @@ async def service_detail(service: str):
             return JSONResponse(await collect_dream_status())
         elif service == "synology":
             return JSONResponse(await collect_synology_state())
+        elif service == "unas":
+            return JSONResponse(await collect_unas_state())
         elif service == "healthkit_status":
             return JSONResponse(await collect_healthkit_status())
         elif service == "homebridge":
@@ -2994,6 +2996,32 @@ async def collect_synology_state() -> dict:
         return {"status": "error", "error": str(e)}
 
 
+UNAS_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_unas_status.json"
+
+
+async def collect_unas_state() -> dict:
+    """Read UNAS Pro 8 state file."""
+    try:
+        if not UNAS_STATE.exists():
+            return {"status": "unavailable"}
+        data = _json.loads(UNAS_STATE.read_text())
+        storage = data.get("storage", {})
+        device = data.get("device", {})
+        shares = data.get("shares", [])
+        return {
+            "status": "ok" if storage.get("status") == "healthy" else "warning",
+            "model": device.get("name", "UNAS Pro 8"),
+            "total_tb": storage.get("total_tb", 0),
+            "free_tb": storage.get("free_tb", 0),
+            "used_pct": storage.get("used_pct", 0),
+            "share_count": len(shares),
+            "shares": [{"name": s.get("name"), "used_tb": s.get("used_tb", 0)} for s in shares[:5]],
+            "cloud_connected": device.get("cloud_connected", False),
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
 async def collect_healthkit_status() -> dict:
     """Check HealthKit launchd agent status."""
     try:
@@ -4307,6 +4335,7 @@ async def poll_loop():
             collect_sla_summary(),           # 31
             collect_capacity_summary(),      # 32
             collect_nmap_summary(),          # 33
+            collect_unas_state(),            # 34
             return_exceptions=True,
         )
 
@@ -4373,6 +4402,7 @@ async def poll_loop():
             "sla_summary": safe(31),
             "capacity_summary": safe(32),
             "nmap": safe(33),
+            "unas": safe(34),
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }
