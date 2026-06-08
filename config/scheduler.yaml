@@ -824,3 +824,10 @@ tasks:
     schedule: cron 0 5 * * *
     timeout: 120
     overlap: skip
+
+  rando_daily_ops:
+    script: nova_rando_daily_ops.py
+    schedule: cron 0 20 * * *
+    timeout: 900
+    overlap: skip
+    group: llm
