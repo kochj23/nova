@@ -347,7 +347,8 @@ def main():
         "Dark moody lighting. Digital art style. Cyberpunk meets suburban."
     )
     try:
-        image_path = generate_image(image_prompt, "rando_daily_ops")
+        image_result = generate_image(image_prompt, "rando_daily_ops")
+        image_path = Path(image_result) if image_result else None
     except Exception as e:
         log(f"Image generation failed: {e}")
         image_path = None
