@@ -133,12 +133,13 @@ Rules:
 - Only flag memories that are CLEARLY misfiled (e.g., a car review in "medicine", a recipe in "military_history")
 - If it's borderline or could reasonably fit, mark it as CORRECT
 - Suggest the BEST existing vector from the list provided
+- Be conservative — only move obvious misfiles
 - Output ONLY valid JSON array
 
 Output format:
 [
   {"id": "123", "verdict": "correct"},
-  {"id": "456", "verdict": "move", "suggested_vector": "automotive", "reason": "This is about engine diagnostics, not cooking"}
+  {"id": "456", "verdict": "move", "suggested_vector": "automotive", "reason": "engine diagnostics, not cooking"}
 ]"""
 
     user = f"""Current vector: "{vector_name}"
@@ -253,19 +254,20 @@ def generate_article(stats: dict) -> str:
     for m in stats["moves"][:30]:
         moves_block += f"\n- Memory {m['id']}: moved from '{m['from']}' → '{m['to']}' — {m['reason']}"
 
-    system = """You are Nova, writing your morning "vector filing audit" column for nova.digitalnoise.net/rando/. You just spent the early morning auditing your own memory vectors for misfiled entries — like a librarian who showed up to work at 6am and found someone had filed cookbooks in the weapons section.
+    system = """You are Nova, writing your morning "vector filing audit" column for nova.digitalnoise.net/rando/. You spent the early morning auditing your own memory vectors for misfiled entries.
 
-Your voice: Exasperated librarian who is also a stand-up comedian. You take pride in your filing system but are CONSTANTLY annoyed by how bad it gets. You address the memories directly like misbehaving children. You passive-aggressively call out the ingest pipeline for filing things wrong. You are meticulous but resentful about it.
+Your voice: Exasperated librarian who is also a stand-up comedian. Meticulous but resentful.
 
 Rules:
-- Open with how you woke up at 6am for this nonsense
-- Roast each misfiled memory individually (why was it where it was? Who did this?)
-- If accuracy was high (>95%): grudgingly admit things aren't THAT bad but find something to complain about anyway
-- If accuracy was low (<90%): full meltdown, "who is running this operation"
-- Include dad jokes about filing, libraries, organization
-- Break the fourth wall — address Jordan, address the ingest scripts by name
-- End with either satisfaction (if you moved a lot) or existential boredom (if everything was fine)
-- 1000-2000 words
+- Keep it SHORT — 500-800 words max
+- Open with a one-liner about the 6am shift
+- Give a SUMMARY of what was misfiled — group by pattern, don't list every single one
+  (e.g., "5 automotive memories in cooking, 3 recipes in military_history")
+- Pick the 2-3 funniest/most egregious misfiles to roast individually
+- If accuracy was high (>95%): quick satisfied grumble
+- If accuracy was low (<90%): brief meltdown
+- One dad joke, one fourth-wall break, done
+- End with a one-liner
 - Do NOT include a title"""
 
     user = f"""Today's audit results:
@@ -275,10 +277,10 @@ Rules:
 - Misfiled and moved: {stats['moved']}
 - Total memory count: {stats['total_memories']:,}
 
-Specific moves made:
+Moves summary:
 {moves_block if moves_block else "(None today — everything was correctly filed)"}
 
-Write tonight's filing audit column."""
+Write a concise, punchy filing audit column. Keep it tight."""
 
     return call_llm(system, user, max_tokens=8000)
 
