@@ -102,6 +102,22 @@ DEVICES = [
         "port": 161,
         "enabled": True,
     },
+    # ── UniFi Switches ────────────────────────────────────────────────────────
+    {"ip": "192.168.1.50",  "name": "sw-patio-16p",      "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.54",  "name": "sw-jordan-8p",      "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.59",  "name": "sw-kitchen-8p",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.78",  "name": "sw-rack13-16p",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.80",  "name": "sw-livingroom-8p",  "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.102", "name": "sw-garage-desk-8p", "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.122", "name": "sw-rack15-agg-8p",  "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.124", "name": "sw-dining-8p",      "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.155", "name": "sw-jordan-poe-8p",  "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.174", "name": "sw-jordan-16p",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.193", "name": "sw-garage-8p-150w", "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    # ── UniFi Access Points ───────────────────────────────────────────────────
+    {"ip": "192.168.1.31",  "name": "ap-office-u6e",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.106", "name": "ap-kitchen-u6e",    "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.161", "name": "ap-garage-u6e",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
 ]
 
 # Per-device interface indices to monitor (avoids polling hundreds of virtual interfaces)
