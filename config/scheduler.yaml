@@ -224,6 +224,19 @@ tasks:
     overlap: skip
     group: llm
 
+  nas_rsync:
+    script: nova_nas_rsync.py
+    schedule: cron 0 2 * * *
+    timeout: 14400
+    overlap: skip
+
+  nas_sync_check:
+    script: nova_nas_sync_check.py
+    args: ["--check"]
+    schedule: cron 0 6 * * *
+    timeout: 1200
+    overlap: skip
+
   goal_check:
     script: nova_goal_check.py
     schedule: cron 5 7 * * *
