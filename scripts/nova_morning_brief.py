@@ -139,28 +139,55 @@ def get_email_priorities():
         return []
 
 
-# ── Calendar events today (via nova_calendar.py) ────────────────────────────
+# ── Calendar events today (via NovaControl API) ─────────────────────────────
+
+def get_calendar():
+    """Fetch today's calendar via NovaControl API."""
+    try:
+        req = urllib.request.Request("http://127.0.0.1:37400/api/calendar/today")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        events = data.get("today", [])
+        if not events:
+            return "No meetings today."
+        lines = []
+        for e in events:
+            title = e.get("title", "Untitled")
+            start = e.get("startDate", "")
+            duration = e.get("durationMinutes", "?")
+            location = e.get("location", "")
+            line = f"• {start[:16]} — {title} ({duration}min)"
+            if location:
+                line += f" @ {location}"
+            lines.append(line)
+        return "\n".join(lines)
+    except Exception as e:
+        return f"Calendar unavailable: {e}"
+
 
 def get_calendar_events():
-    """Pull today's events from all calendar accounts via nova_calendar.py."""
+    """Return calendar as a list of formatted event strings for the brief."""
     try:
-        from nova_calendar import get_todays_events, format_time
-        events = get_todays_events()
+        req = urllib.request.Request("http://127.0.0.1:37400/api/calendar/today")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read())
+        events = data.get("today", [])
+        if not events:
+            return []
         formatted = []
         for e in events:
-            if e.get("raw"):
-                formatted.append(e.get("title", "")[:60])
-                continue
             title = e.get("title", "Untitled")
-            if e.get("allDay"):
-                formatted.append(f"(all day) {title[:55]}")
-            else:
-                start = e.get("start", "")
-                time_str = format_time(start) if start else ""
-                formatted.append(f"{time_str} {title[:50]}".strip())
+            start = e.get("startDate", "")
+            duration = e.get("durationMinutes", "?")
+            location = e.get("location", "")
+            time_str = start[11:16] if len(start) > 16 else ""
+            line = f"{time_str} {title} ({duration}min)".strip()
+            if location:
+                line += f" @ {location}"
+            formatted.append(line)
         return formatted
     except Exception as e:
-        log(f"Calendar import error: {e} — falling back to OneOnOne")
+        log(f"Calendar API error: {e} — falling back to OneOnOne")
         return get_meetings_oneonone()
 
 

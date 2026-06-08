@@ -1,0 +1,397 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nova — All Services & Links</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: 'SF Mono', 'Fira Code', 'JetBrains Mono', monospace;
+      background: #0a0e14;
+      color: #c8d0d8;
+      padding: 24px 32px;
+      line-height: 1.6;
+    }
+    h1 {
+      color: #00ffc8;
+      font-size: 26px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      letter-spacing: 0.05em;
+    }
+    .subtitle {
+      color: #667788;
+      font-size: 13px;
+      margin-bottom: 28px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+    }
+    .section {
+      margin-bottom: 28px;
+    }
+    .section-title {
+      color: #ff6644;
+      font-size: 15px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      margin-bottom: 10px;
+      padding-bottom: 4px;
+      border-bottom: 1px solid rgba(255,102,68,0.2);
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(340px, 1fr));
+      gap: 8px;
+    }
+    .link-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 8px 12px;
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 4px;
+      transition: border-color 0.2s, background 0.2s;
+    }
+    .link-item:hover {
+      border-color: rgba(0,255,200,0.3);
+      background: rgba(0,255,200,0.03);
+    }
+    .link-item a {
+      color: #00d4aa;
+      text-decoration: none;
+      font-size: 14px;
+      font-weight: 600;
+    }
+    .link-item a:hover {
+      color: #00ffc8;
+      text-decoration: underline;
+    }
+    .link-desc {
+      color: #667788;
+      font-size: 12px;
+      flex: 1;
+      text-align: right;
+    }
+    .port {
+      color: #ffcc00;
+      font-size: 12px;
+      font-weight: 600;
+      min-width: 48px;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: #333;
+    }
+    .status-dot.up { background: #00ff66; }
+    .status-dot.down { background: #ff3344; }
+
+    @media (max-width: 768px) {
+      .grid { grid-template-columns: 1fr; }
+      body { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <h1>Nova Service Directory</h1>
+  <div class="subtitle">All browser-accessible services on 192.168.1.6</div>
+
+  <div class="section">
+    <div class="section-title">Dashboards & Monitoring</div>
+    <div class="grid">
+      <div class="link-item">
+        <span class="status-dot" id="dot-37450"></span>
+        <span class="port">:37450</span>
+        <a href="http://192.168.1.6:37450/">Nova Control — Main Dashboard</a>
+        <span class="link-desc">Real-time node graph + service cards</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37450-hud"></span>
+        <span class="port">:37450</span>
+        <a href="http://192.168.1.6:37450/hud">Nova Control — HUD</a>
+        <span class="link-desc">Immersive control room</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37450-gauges"></span>
+        <span class="port">:37450</span>
+        <a href="http://192.168.1.6:37450/gauges">Nova Control — 3D Gauges</a>
+        <span class="link-desc">WebGL system gauges</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37450-bb"></span>
+        <span class="port">:37450</span>
+        <a href="http://192.168.1.6:37450/bb">Nova Control — Big Brother</a>
+        <span class="link-desc">Service oversight + event feed</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37450-journal"></span>
+        <span class="port">:37450</span>
+        <a href="http://192.168.1.6:37450/journal">Nova Control — Journal</a>
+        <span class="link-desc">Journal section freshness + stats</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37450-incidents"></span>
+        <span class="port">:37450</span>
+        <a href="http://192.168.1.6:37450/incidents">Nova Control — Incidents</a>
+        <span class="link-desc">Incident management</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-3001"></span>
+        <span class="port">:3001</span>
+        <a href="http://192.168.1.6:3001/dashboards">Grafana — All Dashboards</a>
+        <span class="link-desc">Historical metrics + alerting</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot"></span>
+        <span class="port">:3001</span>
+        <a href="http://192.168.1.6:3001/d/nova-infra/nova-infrastructure">Grafana — Infrastructure</a>
+        <span class="link-desc">CPU, memory, network, temperature</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot"></span>
+        <span class="port">:3001</span>
+        <a href="http://192.168.1.6:3001/d/nova-scheduler/nova-scheduler">Grafana — Scheduler</a>
+        <span class="link-desc">Task executions + failures</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot"></span>
+        <span class="port">:3001</span>
+        <a href="http://192.168.1.6:3001/d/nova-costs/nova-costs-and-llm-usage">Grafana — LLM Costs</a>
+        <span class="link-desc">Spend by provider + model latency</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot"></span>
+        <span class="port">:3001</span>
+        <a href="http://192.168.1.6:3001/d/nova-memory/nova-memory-growth">Grafana — Memory Growth</a>
+        <span class="link-desc">Vector count trends</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot"></span>
+        <span class="port">:3001</span>
+        <a href="http://192.168.1.6:3001/d/nova-bb/nova-big-brother">Grafana — Big Brother</a>
+        <span class="link-desc">Heal events + pattern confidence</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot"></span>
+        <span class="port">:3001</span>
+        <a href="http://192.168.1.6:3001/d/nova-security/nova-security-posture">Grafana — Security</a>
+        <span class="link-desc">Scan results + fleet posture</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot"></span>
+        <span class="port">:3001</span>
+        <a href="http://192.168.1.6:3001/alerting/list">Grafana — Alerting</a>
+        <span class="link-desc">Active alert rules</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot"></span>
+        <span class="port">:3001</span>
+        <a href="http://192.168.1.6:3001/explore">Grafana — Explore</a>
+        <span class="link-desc">Ad-hoc metric queries</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">AI & Language Models</div>
+    <div class="grid">
+      <div class="link-item">
+        <span class="status-dot" id="dot-11434"></span>
+        <span class="port">:11434</span>
+        <a href="http://192.168.1.6:11434/">Ollama</a>
+        <span class="link-desc">Local LLM inference (GPU)</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-3000"></span>
+        <span class="port">:3000</span>
+        <a href="http://192.168.1.6:3000/">Open WebUI</a>
+        <span class="link-desc">Chat interface for local models</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-18790"></span>
+        <span class="port">:18790</span>
+        <a href="http://192.168.1.6:18790/health">Nova Memory Server</a>
+        <span class="link-desc">1.6M vector embeddings (pgvector)</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Nova Core Services</div>
+    <div class="grid">
+      <div class="link-item">
+        <span class="status-dot" id="dot-18792"></span>
+        <span class="port">:18792</span>
+        <a href="http://192.168.1.6:18792/health">Nova Gateway v2</a>
+        <span class="link-desc">AI orchestration + channel bridge</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37460"></span>
+        <span class="port">:37460</span>
+        <a href="http://192.168.1.6:37460/tasks">Nova Scheduler</a>
+        <span class="link-desc">Task list + cron management</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37461"></span>
+        <span class="port">:37461</span>
+        <a href="http://192.168.1.6:37461/bb/status">Big Brother Daemon</a>
+        <span class="link-desc">Self-healing overseer</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37400"></span>
+        <span class="port">:37400</span>
+        <a href="http://127.0.0.1:37400/api/status">NovaControl API</a>
+        <span class="link-desc">Unified gateway (loopback only)</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37480"></span>
+        <span class="port">:37480</span>
+        <a href="http://192.168.1.6:37480/">Nova Chatroom</a>
+        <span class="link-desc">Real-time chat interface</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Infrastructure Agents</div>
+    <div class="grid">
+      <div class="link-item">
+        <span class="status-dot" id="dot-37463"></span>
+        <span class="port">:37463</span>
+        <a href="http://192.168.1.6:37463/health">SNMP Poller</a>
+        <span class="link-desc">Network device metrics</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37470"></span>
+        <span class="port">:37470</span>
+        <a href="http://127.0.0.1:37470/health">Shared Observations</a>
+        <span class="link-desc">Claude/Nova joint memory</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37471"></span>
+        <span class="port">:37471</span>
+        <a href="http://127.0.0.1:37471/health">Deploy Agent</a>
+        <span class="link-desc">Continuous deployment</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37472"></span>
+        <span class="port">:37472</span>
+        <a href="http://127.0.0.1:37472/health">Auto-Fix Engine</a>
+        <span class="link-desc">Self-healing with confidence tuning</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37473"></span>
+        <span class="port">:37473</span>
+        <a href="http://127.0.0.1:37473/health">Request Router</a>
+        <span class="link-desc">Claude/Nova intent classification</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-37474"></span>
+        <span class="port">:37474</span>
+        <a href="http://127.0.0.1:37474/health">Security Scanner</a>
+        <span class="link-desc">Fleet rkhunter/AIDE/osquery</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Media & Content</div>
+    <div class="grid">
+      <div class="link-item">
+        <span class="status-dot" id="dot-32400"></span>
+        <span class="port">:32400</span>
+        <a href="http://192.168.1.10:32400/web">Plex Media Server</a>
+        <span class="link-desc">Synology NAS — movies, TV, music</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-journal-web"></span>
+        <span class="port">:443</span>
+        <a href="https://nova.digitalnoise.net/">Nova Journal (Public)</a>
+        <span class="link-desc">Nova's essays, dreams, opinions</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Network & Security</div>
+    <div class="grid">
+      <div class="link-item">
+        <span class="status-dot" id="dot-unifi"></span>
+        <span class="port">:443</span>
+        <a href="https://192.168.1.1/">UniFi Dream Machine Pro</a>
+        <span class="link-desc">Network controller + firewall</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-synology"></span>
+        <span class="port">:5001</span>
+        <a href="https://192.168.1.11:5001/">Synology RS1221+ DSM</a>
+        <span class="link-desc">NAS management</span>
+      </div>
+      <div class="link-item">
+        <span class="status-dot" id="dot-protect"></span>
+        <span class="port">:443</span>
+        <a href="https://192.168.1.1/protect">UniFi Protect</a>
+        <span class="link-desc">Camera NVR</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Health Check APIs (JSON)</div>
+    <div class="grid">
+      <div class="link-item">
+        <span class="port">:37450</span>
+        <a href="http://192.168.1.6:37450/api/detail/system">/api/detail/system</a>
+        <span class="link-desc">CPU, RAM, disk, uptime</span>
+      </div>
+      <div class="link-item">
+        <span class="port">:37450</span>
+        <a href="http://192.168.1.6:37450/api/detail/ollama">/api/detail/ollama</a>
+        <span class="link-desc">Running models + VRAM</span>
+      </div>
+      <div class="link-item">
+        <span class="port">:37450</span>
+        <a href="http://192.168.1.6:37450/api/detail/postgresql">/api/detail/postgresql</a>
+        <span class="link-desc">DB size, row counts</span>
+      </div>
+      <div class="link-item">
+        <span class="port">:37450</span>
+        <a href="http://192.168.1.6:37450/api/detail/redis">/api/detail/redis</a>
+        <span class="link-desc">Redis memory, queue depth</span>
+      </div>
+      <div class="link-item">
+        <span class="port">:37474</span>
+        <a href="http://127.0.0.1:37474/status">/status — Security Posture</a>
+        <span class="link-desc">Fleet scan summary</span>
+      </div>
+      <div class="link-item">
+        <span class="port">:37472</span>
+        <a href="http://127.0.0.1:37472/patterns">/patterns — Auto-Fix</a>
+        <span class="link-desc">Active fix patterns + confidence</span>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const checks = [
+      {id: 'dot-37450', url: '/api/detail/system'},
+      {id: 'dot-3001', url: 'http://192.168.1.6:3001/api/health'},
+      {id: 'dot-11434', url: 'http://192.168.1.6:11434/'},
+      {id: 'dot-18790', url: 'http://192.168.1.6:18790/health'},
+      {id: 'dot-18792', url: 'http://192.168.1.6:18792/health'},
+      {id: 'dot-37460', url: 'http://192.168.1.6:37460/status'},
+      {id: 'dot-37461', url: 'http://192.168.1.6:37461/bb/status'},
+      {id: 'dot-37463', url: 'http://192.168.1.6:37463/health'},
+      {id: 'dot-37480', url: 'http://192.168.1.6:37480/'},
+    ];
+    checks.forEach(c => {
+      fetch(c.url, {mode: 'no-cors', signal: AbortSignal.timeout(3000)})
+        .then(() => { const el = document.getElementById(c.id); if(el) el.classList.add('up'); })
+        .catch(() => { const el = document.getElementById(c.id); if(el) el.classList.add('down'); });
+    });
+  </script>
+</body>
+</html>

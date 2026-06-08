@@ -352,6 +352,12 @@ async def grafana_page():
     return FileResponse(Path(__file__).parent / "static" / "grafana.html")
 
 
+@app.get("/links")
+async def links_page():
+    """Directory of all Nova services and browser-accessible pages."""
+    return FileResponse(Path(__file__).parent / "static" / "links.html")
+
+
 @app.get("/api/detail/{service}")
 async def service_detail(service: str):
     try:
@@ -2128,7 +2134,7 @@ async def bb_events():
 @app.get("/bb-graphs")
 async def bb_graphs_redirect():
     """Redirect to Grafana nova-bb dashboard (custom page decommissioned)."""
-    return RedirectResponse("http://127.0.0.1:3000/d/nova-bb/")
+    return RedirectResponse("http://192.168.1.6:3001/d/nova-bb/")
 
 
 @app.get("/api/bb/metrics")
@@ -3451,7 +3457,7 @@ async def update_incident(incident_id: str, request: Request):
 @app.get("/sla")
 async def sla_redirect():
     """Redirect to Grafana nova-infra dashboard (SLA data lives there now)."""
-    return RedirectResponse("http://127.0.0.1:3000/d/nova-infra/")
+    return RedirectResponse("http://192.168.1.6:3001/d/nova-infra/")
 
 
 @app.get("/api/sla")
@@ -3510,7 +3516,7 @@ async def sla_dashboard(days: int = 30):
 @app.get("/alerts")
 async def alerts_redirect():
     """Redirect to Grafana alerting UI (custom page decommissioned)."""
-    return RedirectResponse("http://127.0.0.1:3000/alerting/list")
+    return RedirectResponse("http://192.168.1.6:3001/alerting/list")
 
 
 @app.get("/api/alerts/rules")
@@ -3606,7 +3612,7 @@ async def alert_history():
 @app.get("/capacity")
 async def capacity_redirect():
     """Redirect to Grafana nova-infra dashboard (capacity data lives there now)."""
-    return RedirectResponse("http://127.0.0.1:3000/d/nova-infra/")
+    return RedirectResponse("http://192.168.1.6:3001/d/nova-infra/")
 
 
 @app.get("/api/capacity")

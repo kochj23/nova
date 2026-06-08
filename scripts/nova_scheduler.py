@@ -256,6 +256,28 @@ class NovaScheduler:
         elif task._cron_expr:
             task.state.next_run = next_cron_time(task._cron_expr, now, tz)
 
+    # ── Sleep-aware scheduling ──────────────────────────────────────────
+
+    _sleep_observation_date: str = ""  # tracks once-per-day observation
+
+    def _get_sleep_metrics(self):
+        """Check last night's sleep from health data."""
+        try:
+            health_dir = Path.home() / ".openclaw/private/health"
+            # Try today's file first, then latest
+            today_file = health_dir / f"{datetime.now().strftime('%Y-%m-%d')}.json"
+            latest_file = health_dir / "latest.json"
+            target = today_file if today_file.exists() else latest_file
+            if not target.exists():
+                return {"hours_slept": 7}
+            data = json.loads(target.read_text())
+            sleep_hours = data.get("sleep", data.get("sleep_hours", 7))
+            if isinstance(sleep_hours, list):
+                sleep_hours = sleep_hours[0] if sleep_hours else 7
+            return {"hours_slept": float(sleep_hours), "date": data.get("date", "")}
+        except Exception:
+            return {"hours_slept": 7}
+
     # ── Execution ────────────────────────────────────────────────────────
 
     async def execute_task(self, task: Task):
@@ -638,6 +660,28 @@ class NovaScheduler:
                     )
                     if gpu_busy:
                         continue
+
+                # Sleep-aware: defer GPU-heavy/LLM tasks when under-slept
+                if task.gpu_heavy or task.group == "llm":
+                    sleep = self._get_sleep_metrics()
+                    if sleep["hours_slept"] < 6:
+                        today_str = datetime.now().strftime("%Y-%m-%d")
+                        if self._sleep_observation_date != today_str:
+                            self._sleep_observation_date = today_str
+                            log(f"Sleep-aware: {sleep['hours_slept']:.1f}h sleep detected — "
+                                f"deferring GPU-heavy/LLM tasks this cycle",
+                                level=LOG_INFO, source="scheduler")
+                            try:
+                                nova_ops_writer.record_observation(
+                                    "sleep_aware_defer",
+                                    f"Deferring GPU-heavy tasks: {sleep['hours_slept']:.1f}h sleep"
+                                )
+                            except Exception:
+                                pass
+                        log(f"Sleep-aware: deferring {task.id} (GPU-heavy, "
+                            f"{sleep['hours_slept']:.1f}h sleep)",
+                            level=LOG_INFO, source="scheduler")
+                        continue  # skip this cycle, will retry next tick
 
                 # Post-wake stagger: delay each overdue task by 5s * slot
                 if now < _post_wake_stagger_until:

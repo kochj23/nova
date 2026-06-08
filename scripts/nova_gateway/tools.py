@@ -265,7 +265,7 @@ async def _tool_homekit_scene(ctx: GatewayContext, params: dict) -> str:
 
     try:
         resp = await ctx.http.post(
-            "http://127.0.0.1:37432/scene",
+            "http://127.0.0.1:37400/api/homekit/scenes/execute",
             json={"name": scene},
             timeout=10,
         )

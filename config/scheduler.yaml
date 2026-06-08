@@ -33,7 +33,7 @@ tasks:
 
   protect_monitor:
     script: nova_protect_monitor.py
-    schedule: every 5m
+    schedule: every 2m
     timeout: 120
     overlap: skip
 
@@ -207,6 +207,22 @@ tasks:
     schedule: cron 0 7 * * *
     timeout: 300
     overlap: skip
+
+  health_intelligence:
+    script: nova_health_intelligence.py
+    args: ["--daily"]
+    schedule: cron 0 8 * * *
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  health_intelligence_weekly:
+    script: nova_health_intelligence.py
+    args: ["--weekly"]
+    schedule: cron 0 10 * * 0
+    timeout: 600
+    overlap: skip
+    group: llm
 
   goal_check:
     script: nova_goal_check.py
@@ -664,7 +680,7 @@ tasks:
     script: nova_livetv.py
     args: ["gameshow"]
     schedule: cron 0 19 * * 1-5
-    timeout: 2400
+    timeout: 3600
     overlap: skip
     group: llm
 

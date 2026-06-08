@@ -9,7 +9,7 @@ ONLY accesses cameras whose name starts with "Exterior".
 Credentials: macOS Keychain (nova-unifi-protect-api), NEVER in files.
 All processing local. Interior cameras are NEVER accessed.
 
-Runs via launchd every 5 minutes.
+Runs via scheduler every 2 minutes.
 
 Written by Jordan Koch.
 """
@@ -34,6 +34,11 @@ try:
     from nova_package_clairvoyance import handle_package_detection
 except ImportError:
     handle_package_detection = None
+
+try:
+    from nova_shared_observations import observe as shared_observe
+except ImportError:
+    shared_observe = None
 
 PROTECT_HOST = "192.168.1.9"
 PROTECT_USER = "nova"
@@ -339,6 +344,65 @@ def vector_remember(text, metadata=None):
         pass
 
 
+def _observation_severity(smart_types, event_type, hour=None):
+    """Determine shared_observations severity based on detection type and time.
+
+    Returns: 'critical', 'warning', or 'info'
+    """
+    if hour is None:
+        hour = datetime.now().hour
+
+    # Unusual hours: 11pm - 5am
+    unusual_hour = hour >= 23 or hour < 5
+
+    # Critical: person at unusual hour, ring (doorbell), unknown face
+    if event_type == "ring":
+        return "critical"
+    if "person" in smart_types and unusual_hour:
+        return "critical"
+
+    # Warning: person (normal hours), animal
+    if "person" in smart_types:
+        return "warning"
+    if "animal" in smart_types:
+        return "warning"
+
+    # Info: everything else (package, generic motion, etc.)
+    return "info"
+
+
+def _post_shared_observation(cam_name, smart_types, event_type, event_id, vision_desc=None):
+    """Write a motion event to shared_observations for Grafana alerting pipeline."""
+    if not shared_observe:
+        return
+    try:
+        types_str = ", ".join(sorted(smart_types)) if smart_types else event_type
+        severity = _observation_severity(smart_types, event_type)
+
+        description = f"{types_str} detected on {cam_name}"
+        if vision_desc and "no identifiable" not in vision_desc.lower():
+            description += f" — {vision_desc}"
+
+        metadata = {
+            "camera": cam_name,
+            "event_type": event_type,
+            "smart_types": list(smart_types) if smart_types else [],
+            "event_id": event_id,
+        }
+
+        shared_observe(
+            observer="nova",
+            category="security/camera",
+            subject=cam_name,
+            observation=description,
+            severity=severity,
+            metadata=metadata,
+            expires_hours=24,
+        )
+    except Exception as e:
+        log(f"shared_observations write failed: {e}", level=LOG_WARN, source="protect")
+
+
 def load_state():
     if STATE_FILE.exists():
         try:
@@ -581,6 +645,24 @@ def check_motion_events(client, state):
                             comment=f":question: Unknown face detected on {cam_name}. Who is this?",
                         )
 
+                    # Unknown face → critical observation for alerting pipeline
+                    if unknown_crops and shared_observe:
+                        try:
+                            shared_observe(
+                                observer="nova",
+                                category="security/camera",
+                                subject=cam_name,
+                                observation=f"Unknown face detected on {cam_name}",
+                                severity="critical",
+                                metadata={"camera": cam_name, "event_id": event_id,
+                                          "event_type": "unknown_face",
+                                          "smart_types": ["person"]},
+                                expires_hours=48,
+                            )
+                        except Exception as e:
+                            log(f"shared_observations (unknown face) failed: {e}",
+                                level=LOG_WARN, source="protect")
+
                     try:
                         thumb_path.unlink()
                     except Exception:
@@ -611,6 +693,18 @@ def check_motion_events(client, state):
         vector_remember(
             mem_text,
             {"type": "protect_event", "camera": cam_name, "date": datetime.now().isoformat()}
+        )
+
+        # Post to shared_observations for Grafana alerting pipeline
+        all_smart = set()
+        for e in smart:
+            all_smart.update(e.get("smart_types", []))
+        best_event = max(cam_events, key=lambda e: e.get("timestamp", 0))
+        event_type = best_event.get("type", "motion")
+        _post_shared_observation(
+            cam_name, all_smart, event_type,
+            best_event.get("event_id", ""),
+            vision_desc=vision_desc,
         )
 
     log(f"{len(new_events)} new events across {len(by_camera)} exterior cameras",
