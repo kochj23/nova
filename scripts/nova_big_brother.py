@@ -1960,17 +1960,25 @@ def _scan_log_file(log_file: Path) -> list:
 
 
 # ── Journal Staleness Monitor ─────────────────────────────────────────────────
-# Maps section → (scheduler_task_id, stale_threshold_hours, backfill_env_var_needed)
+# Maps section → (scheduler_task_id, stale_threshold_hours)
 # threshold: how many hours before we declare it stale and trigger a backfill
+# For scheduled content (MWF etc), we also check if today is a scheduled day
+# and the task hasn't run yet — see _is_overdue_today()
 JOURNAL_SECTIONS = {
     "dreams":     ("daily_journal",  26),
-    "essays":     ("daily_essay",    26),
+    "essays":     ("journal_essay",  26),
     "opinions":   ("daily_opinion",  26),
     "after-dark": ("after_dark",     26),
     "tech-today": ("tech_today",     26),
-    "research":   ("research_paper", 50),   # research runs nightly, wider window
+    "research":   ("research_paper", 50),
     "digests":    ("daily_digest",   26),
 }
+
+# Tasks with non-daily schedules: (task_id -> days_of_week as isoweekday 1=Mon)
+JOURNAL_SCHEDULE_DAYS = {
+    "journal_essay": {1, 3, 5},  # Mon, Wed, Fri
+}
+JOURNAL_OVERDUE_AFTER_HOUR = 10  # If it's a scheduled day and past 10am, it's overdue
 JOURNAL_CONTENT_DIR = Path("/Volumes/Data/xcode/nova-journal/content")
 _journal_backfill_cooldown: dict = {}   # section -> last_backfill_ts
 JOURNAL_BACKFILL_COOLDOWN = 7200        # don't re-trigger same section within 2h
@@ -2000,9 +2008,23 @@ def _latest_journal_entry_age(section: str) -> float | None:
     return (time.time() - latest_ts) / 3600.0
 
 
+def _is_overdue_today(task_id: str) -> bool:
+    """Check if a task was supposed to run today but hasn't yet."""
+    schedule_days = JOURNAL_SCHEDULE_DAYS.get(task_id)
+    if not schedule_days:
+        return False
+    now_dt = datetime.now()
+    if now_dt.isoweekday() not in schedule_days:
+        return False
+    if now_dt.hour < JOURNAL_OVERDUE_AFTER_HOUR:
+        return False
+    return True
+
+
 def _check_journal_staleness(issues: list, fixes: list):
     """
     Check every journal section. If the latest entry is older than its threshold,
+    OR if it's a scheduled day and the task is overdue (past 10am, hasn't run),
     trigger a backfill by running the responsible scheduler task via /run/ endpoint.
     Includes a 2-hour per-section cooldown so we don't spam.
     Called from every _full_sweep().
@@ -2014,7 +2036,9 @@ def _check_journal_staleness(issues: list, fixes: list):
         age_h = _latest_journal_entry_age(section)
         if age_h is None:
             continue
-        if age_h < threshold_h:
+
+        overdue_today = _is_overdue_today(task_id)
+        if age_h < threshold_h and not overdue_today:
             continue
 
         # Stale — check cooldown

@@ -304,16 +304,20 @@ def get_plex_epg(channel: str) -> dict | None:
 # ── Content Classification ────────────────────────────────────────────────────
 
 VECTOR_MAP = {
-    "game_show": ["game show", "jeopardy", "wheel of fortune", "price is right", "family feud", "quiz", "contestant"],
-    "comedy": ["comedy", "sitcom", "laugh", "funny", "stand-up", "sketch"],
-    "drama": ["drama", "series", "episode", "season"],
-    "horror": ["horror", "thriller", "suspense", "scary", "murder", "crime"],
-    "documentary": ["documentary", "nature", "science", "history", "biography", "discovery"],
-    "education": ["education", "learning", "teach", "lesson", "course", "lecture"],
-    "news": ["news", "anchor", "reporter", "breaking", "update", "politics", "election"],
-    "sports": ["sports", "game", "score", "player", "team", "championship", "league"],
-    "music": ["music", "concert", "song", "band", "album", "performance"],
-    "action": ["action", "adventure", "fight", "chase", "hero", "battle"],
+    "game_show": ["game show", "jeopardy", "wheel of fortune", "price is right", "family feud", "quiz", "contestant", "bonus round", "final answer"],
+    "comedy": ["comedy", "sitcom", "laugh", "funny", "stand-up", "sketch", "punchline", "joke"],
+    "drama": ["drama", "series", "episode", "season", "cliffhanger", "storyline"],
+    "crime_drama": ["horror", "thriller", "suspense", "scary", "murder", "crime", "detective", "forensic", "homicide", "investigation"],
+    "documentary": ["documentary", "nature", "science", "biography", "discovery", "exploration", "wildlife", "planet"],
+    "education": ["education", "learning", "teach", "lesson", "course", "lecture", "tutorial"],
+    "news": ["news", "anchor", "reporter", "breaking", "update", "politics", "election", "campaign", "congress", "senate"],
+    "sports": ["sports", "game", "score", "player", "team", "championship", "league", "touchdown", "goal", "referee"],
+    "music": ["music", "concert", "song", "band", "album", "performance", "guitar", "vocal"],
+    "action": ["action", "adventure", "fight", "chase", "hero", "battle", "explosion"],
+    "cooking": ["recipe", "cook", "chef", "ingredient", "kitchen", "bake", "grill", "oven"],
+    "automotive": ["car", "engine", "horsepower", "torque", "race", "vehicle", "motor", "garage"],
+    "science_fiction": ["alien", "spaceship", "robot", "android", "cyborg", "starship", "galaxy", "warp", "phaser"],
+    "history": ["history", "century", "ancient", "medieval", "war", "empire", "revolution", "civilization"],
 }
 
 
@@ -327,7 +331,7 @@ def classify_tv_content(title: str, text: str, genres: list[str] = None) -> str:
             scores[vector] = score
 
     if not scores:
-        return "documentary"
+        return "television"
     return max(scores, key=scores.get)
 
 

@@ -17,7 +17,7 @@ import psutil
 import redis.asyncio as aioredis
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, Depends, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 SCHEDULER_BASE = "http://192.168.1.6:37460"
@@ -344,6 +344,12 @@ async def gauges_flat_page():
 @app.get("/gauges-v2")
 async def gauges_v2_page():
     return FileResponse(Path(__file__).parent / "static" / "gauges-v2.html")
+
+
+@app.get("/grafana")
+async def grafana_page():
+    """Landing page with links to all Grafana dashboards."""
+    return FileResponse(Path(__file__).parent / "static" / "grafana.html")
 
 
 @app.get("/api/detail/{service}")
@@ -2120,9 +2126,9 @@ async def bb_events():
 
 
 @app.get("/bb-graphs")
-async def bb_graphs_dashboard():
-    """Serve the Big Brother metrics/graphs dashboard (MRTG-style)."""
-    return FileResponse("static/bb-graphs.html")
+async def bb_graphs_redirect():
+    """Redirect to Grafana nova-bb dashboard (custom page decommissioned)."""
+    return RedirectResponse("http://127.0.0.1:3000/d/nova-bb/")
 
 
 @app.get("/api/bb/metrics")
@@ -3443,8 +3449,9 @@ async def update_incident(incident_id: str, request: Request):
 # --- SLA Routes ---
 
 @app.get("/sla")
-async def sla_page():
-    return FileResponse(Path(__file__).parent / "static" / "sla.html")
+async def sla_redirect():
+    """Redirect to Grafana nova-infra dashboard (SLA data lives there now)."""
+    return RedirectResponse("http://127.0.0.1:3000/d/nova-infra/")
 
 
 @app.get("/api/sla")
@@ -3501,8 +3508,9 @@ async def sla_dashboard(days: int = 30):
 # --- Alert Rules Routes ---
 
 @app.get("/alerts")
-async def alerts_page():
-    return FileResponse(Path(__file__).parent / "static" / "alerts.html")
+async def alerts_redirect():
+    """Redirect to Grafana alerting UI (custom page decommissioned)."""
+    return RedirectResponse("http://127.0.0.1:3000/alerting/list")
 
 
 @app.get("/api/alerts/rules")
@@ -3596,8 +3604,9 @@ async def alert_history():
 # --- Capacity / Forecasting Routes ---
 
 @app.get("/capacity")
-async def capacity_page():
-    return FileResponse(Path(__file__).parent / "static" / "capacity.html")
+async def capacity_redirect():
+    """Redirect to Grafana nova-infra dashboard (capacity data lives there now)."""
+    return RedirectResponse("http://127.0.0.1:3000/d/nova-infra/")
 
 
 @app.get("/api/capacity")

@@ -267,6 +267,12 @@ def _apply_recipe_shell(user, ip, os_family, recipe_name, dry_run):
         return _recipe_nova_base(user, ip, os_family, dry_run)
     elif recipe_name == "nova_monitoring":
         return _recipe_nova_monitoring(user, ip, os_family, dry_run)
+    elif recipe_name == "nova_security":
+        return _recipe_nova_security(user, ip, os_family, dry_run)
+    elif recipe_name == "nova_linux":
+        return _recipe_nova_linux(user, ip, os_family, dry_run)
+    elif recipe_name == "nova_macos":
+        return 0, "nova_macos: [skipped] macOS managed locally", ""
     else:
         return 0, f"{recipe_name}: [skipped] no shell handler", ""
 
@@ -347,6 +353,137 @@ def _recipe_nova_monitoring(user, ip, os_family, dry_run):
                     "sudo sed -i 's/^agentAddress.*/agentAddress udp:161/' /etc/snmp/snmpd.conf && "
                     "sudo systemctl restart snmpd")
                 checks[-1] = "[changed] snmpd listening on all interfaces"
+
+    return 0, "\n".join(checks), ""
+
+
+def _recipe_nova_security(user, ip, os_family, dry_run):
+    """nova_security: Install rkhunter, chkrootkit, AIDE, osquery."""
+    checks = []
+
+    if os_family == "linux":
+        # rkhunter
+        rc, out, _ = ssh_exec(user, ip, "which rkhunter > /dev/null 2>&1 && echo ok || echo missing")
+        if "ok" in out:
+            checks.append("[ok] rkhunter installed")
+        else:
+            checks.append("[drift] rkhunter not installed")
+            if not dry_run:
+                ssh_exec(user, ip, "sudo apt-get install -y rkhunter > /dev/null 2>&1", timeout=120)
+                ssh_exec(user, ip, "sudo rkhunter --propupd > /dev/null 2>&1", timeout=60)
+                checks[-1] = "[changed] rkhunter installed + baseline set"
+
+        # chkrootkit
+        rc, out, _ = ssh_exec(user, ip, "which chkrootkit > /dev/null 2>&1 && echo ok || echo missing")
+        if "ok" in out:
+            checks.append("[ok] chkrootkit installed")
+        else:
+            checks.append("[drift] chkrootkit not installed")
+            if not dry_run:
+                ssh_exec(user, ip, "sudo apt-get install -y chkrootkit > /dev/null 2>&1", timeout=120)
+                checks[-1] = "[changed] chkrootkit installed"
+
+        # AIDE
+        rc, out, _ = ssh_exec(user, ip, "which aide > /dev/null 2>&1 && echo ok || echo missing")
+        if "ok" in out:
+            checks.append("[ok] aide installed")
+        else:
+            checks.append("[drift] aide not installed")
+            if not dry_run:
+                ssh_exec(user, ip,
+                    "sudo apt-get install -y aide > /dev/null 2>&1 && "
+                    "sudo aideinit > /dev/null 2>&1 && "
+                    "sudo cp /var/lib/aide/aide.db.new /var/lib/aide/aide.db 2>/dev/null",
+                    timeout=180)
+                checks[-1] = "[changed] aide installed + database initialized"
+
+        # osquery
+        rc, out, _ = ssh_exec(user, ip, "which osqueryi > /dev/null 2>&1 && echo ok || echo missing")
+        if "ok" in out:
+            checks.append("[ok] osquery installed")
+        else:
+            checks.append("[drift] osquery not installed")
+            if not dry_run:
+                ssh_exec(user, ip,
+                    "curl -fsSL https://pkg.osquery.io/deb/pubkey.gpg | sudo gpg --dearmor -o /usr/share/keyrings/osquery-archive-keyring.gpg 2>/dev/null && "
+                    "echo 'deb [arch=amd64,arm64 signed-by=/usr/share/keyrings/osquery-archive-keyring.gpg] https://pkg.osquery.io/deb deb main' | sudo tee /etc/apt/sources.list.d/osquery.list > /dev/null && "
+                    "sudo apt-get update -qq > /dev/null 2>&1 && "
+                    "sudo apt-get install -y osquery > /dev/null 2>&1",
+                    timeout=180)
+                checks[-1] = "[changed] osquery installed"
+
+    elif os_family == "macos":
+        # rkhunter via brew (remote macOS)
+        rc, out, _ = ssh_exec(user, ip,
+            "/opt/homebrew/bin/brew list rkhunter > /dev/null 2>&1 && echo ok || echo missing")
+        if "ok" in out:
+            checks.append("[ok] rkhunter installed")
+        else:
+            checks.append("[drift] rkhunter not installed")
+            if not dry_run:
+                ssh_exec(user, ip,
+                    "/opt/homebrew/bin/brew install rkhunter > /dev/null 2>&1",
+                    timeout=180)
+                checks[-1] = "[changed] rkhunter installed"
+
+        # osquery via brew
+        rc, out, _ = ssh_exec(user, ip,
+            "/opt/homebrew/bin/brew list osquery > /dev/null 2>&1 && echo ok || echo missing")
+        if "ok" in out:
+            checks.append("[ok] osquery installed")
+        else:
+            checks.append("[drift] osquery not installed")
+            if not dry_run:
+                ssh_exec(user, ip,
+                    "/opt/homebrew/bin/brew install osquery > /dev/null 2>&1",
+                    timeout=180)
+                checks[-1] = "[changed] osquery installed"
+
+    return 0, "\n".join(checks), ""
+
+
+def _recipe_nova_linux(user, ip, os_family, dry_run):
+    """nova_linux: Hardening, fail2ban, UFW, unattended-upgrades."""
+    checks = []
+
+    if os_family != "linux":
+        return 0, "nova_linux: [skipped] not linux", ""
+
+    # fail2ban
+    rc, out, _ = ssh_exec(user, ip, "dpkg -l fail2ban 2>/dev/null | grep -q '^ii' && echo ok || echo missing")
+    if "ok" in out:
+        checks.append("[ok] fail2ban installed")
+    else:
+        checks.append("[drift] fail2ban not installed")
+        if not dry_run:
+            ssh_exec(user, ip, "sudo apt-get install -y fail2ban > /dev/null 2>&1", timeout=120)
+            checks[-1] = "[changed] fail2ban installed"
+
+    # ufw
+    rc, out, _ = ssh_exec(user, ip, "sudo ufw status | grep -q 'Status: active' && echo ok || echo inactive")
+    if "ok" in out:
+        checks.append("[ok] UFW active")
+    else:
+        checks.append("[drift] UFW not active")
+        if not dry_run:
+            ssh_exec(user, ip,
+                "sudo apt-get install -y ufw > /dev/null 2>&1 && "
+                "sudo ufw allow 22 > /dev/null && "
+                "sudo ufw allow 161 > /dev/null && "
+                "sudo ufw allow from 192.168.1.6 > /dev/null && "
+                "echo y | sudo ufw enable > /dev/null 2>&1")
+            checks[-1] = "[changed] UFW enabled with rules"
+
+    # unattended-upgrades
+    rc, out, _ = ssh_exec(user, ip,
+        "dpkg -l unattended-upgrades 2>/dev/null | grep -q '^ii' && echo ok || echo missing")
+    if "ok" in out:
+        checks.append("[ok] unattended-upgrades installed")
+    else:
+        checks.append("[drift] unattended-upgrades not installed")
+        if not dry_run:
+            ssh_exec(user, ip, "sudo apt-get install -y unattended-upgrades > /dev/null 2>&1", timeout=120)
+            checks[-1] = "[changed] unattended-upgrades installed"
 
     return 0, "\n".join(checks), ""
 

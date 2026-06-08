@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Grafana Dashboards — Nova Control</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <style>
+    .grafana-container {
+      max-width: 900px;
+      margin: 40px auto;
+      padding: 0 24px;
+    }
+    .grafana-header {
+      text-align: center;
+      margin-bottom: 36px;
+    }
+    .grafana-header h1 {
+      font-size: 22px;
+      color: var(--text-primary);
+      margin: 0 0 8px;
+      letter-spacing: 1px;
+    }
+    .grafana-header p {
+      color: var(--text-dim);
+      font-size: 13px;
+      margin: 0;
+    }
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+    }
+    .dash-card {
+      background: var(--card-bg);
+      border: 1px solid var(--border-glow);
+      border-radius: 8px;
+      padding: 20px;
+      text-decoration: none;
+      transition: border-color 0.2s, transform 0.15s;
+    }
+    .dash-card:hover {
+      border-color: var(--accent-cyan);
+      transform: translateY(-2px);
+    }
+    .dash-card h3 {
+      margin: 0 0 8px;
+      font-size: 15px;
+      color: var(--accent-cyan);
+      font-weight: 600;
+    }
+    .dash-card p {
+      margin: 0;
+      font-size: 12px;
+      color: var(--text-secondary);
+      line-height: 1.5;
+    }
+    .dash-card .dash-uid {
+      display: inline-block;
+      margin-top: 10px;
+      font-size: 10px;
+      color: var(--text-dim);
+      background: rgba(255,255,255,0.05);
+      padding: 2px 6px;
+      border-radius: 3px;
+      font-family: monospace;
+    }
+    .section-title {
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 1.5px;
+      color: var(--text-dim);
+      margin: 32px 0 12px;
+      padding-bottom: 6px;
+      border-bottom: 1px solid var(--border-glow);
+    }
+    .back-link {
+      display: inline-block;
+      margin-bottom: 20px;
+      font-size: 12px;
+      color: var(--text-dim);
+      text-decoration: none;
+      padding: 4px 10px;
+      border: 1px solid var(--border-glow);
+      border-radius: 3px;
+    }
+    .back-link:hover {
+      color: var(--accent-cyan);
+      border-color: var(--accent-cyan);
+    }
+  </style>
+</head>
+<body>
+  <div class="grafana-container">
+    <a href="/" class="back-link">&larr; Nova Control</a>
+
+    <div class="grafana-header">
+      <h1>GRAFANA DASHBOARDS</h1>
+      <p>Monitoring and observability for the Nova infrastructure stack</p>
+    </div>
+
+    <div class="section-title">Infrastructure Dashboards</div>
+    <div class="dashboard-grid">
+      <a href="http://127.0.0.1:3000/d/nova-infra/" class="dash-card" target="_blank">
+        <h3>Nova Infrastructure</h3>
+        <p>CPU, memory, disk, network, service health, capacity forecasting, and SLA uptime tracking.</p>
+        <span class="dash-uid">nova-infra</span>
+      </a>
+      <a href="http://127.0.0.1:3000/d/nova-scheduler/" class="dash-card" target="_blank">
+        <h3>Nova Scheduler</h3>
+        <p>Task execution rates, success/failure breakdown, agent throughput, and queue depths.</p>
+        <span class="dash-uid">nova-scheduler</span>
+      </a>
+      <a href="http://127.0.0.1:3000/d/nova-costs/" class="dash-card" target="_blank">
+        <h3>Nova Costs</h3>
+        <p>LLM API spend by provider and model, token usage trends, daily/weekly cost roll-ups.</p>
+        <span class="dash-uid">nova-costs</span>
+      </a>
+      <a href="http://127.0.0.1:3000/d/nova-memory/" class="dash-card" target="_blank">
+        <h3>Nova Memory</h3>
+        <p>Vector memory growth, ingest queue depth, source distribution, and consolidation stats.</p>
+        <span class="dash-uid">nova-memory</span>
+      </a>
+      <a href="http://127.0.0.1:3000/d/nova-bb/" class="dash-card" target="_blank">
+        <h3>Big Brother Metrics</h3>
+        <p>Oversight sweep results, service compliance, anomaly detection, and MRTG-style graphs.</p>
+        <span class="dash-uid">nova-bb</span>
+      </a>
+      <a href="http://127.0.0.1:3000/d/nova-security/" class="dash-card" target="_blank">
+        <h3>Nova Security</h3>
+        <p>NMAP scan results, open ports, certificate expiry, firewall events, and intrusion alerts.</p>
+        <span class="dash-uid">nova-security</span>
+      </a>
+    </div>
+
+    <div class="section-title">Grafana Tools</div>
+    <div class="dashboard-grid">
+      <a href="http://127.0.0.1:3000/alerting/list" class="dash-card" target="_blank">
+        <h3>Alerting</h3>
+        <p>Alert rules, silences, contact points, and notification history.</p>
+      </a>
+      <a href="http://127.0.0.1:3000/explore" class="dash-card" target="_blank">
+        <h3>Explore</h3>
+        <p>Ad-hoc queries against PostgreSQL and Prometheus data sources.</p>
+      </a>
+    </div>
+  </div>
+</body>
+</html>

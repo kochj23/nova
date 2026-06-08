@@ -76,13 +76,14 @@ TODAY           = NOW.strftime("%Y-%m-%d")
 
 _TRASH_PATTERNS = [
     re.compile(r"[♪♫♬♩]"),
-    re.compile(r"\b(\w+)\s+\1\s+\1\s+\1", re.IGNORECASE),
+    re.compile(r"\b(\w+)(?:\s+\1){3,}", re.IGNORECASE),
     re.compile(r"^[A-Z\s\W]{20,}$"),
     re.compile(r"^[^aeiouAEIOU\s]{8,}$"),
     re.compile(r"^[\W\d\s]+$"),
     re.compile(r"subtitles?\s+by|transcribed\s+by|closed\s+caption", re.IGNORECASE),
     re.compile(r"^\[?\s*(silence|music|applause|laughter|cheering|crowd|♪)\s*\]?$", re.IGNORECASE),
-    re.compile(r"(.{5,}?)(\s+\1){4,}"),
+    re.compile(r"(.{3,}?)(\s+\1){2,}"),
+    re.compile(r"(.{15,}?)\1{2,}"),
 ]
 
 _MUSIC_PHRASES = ["♪", "♫", "la la la", "da da da", "na na na", "hmm hmm", "mmm mmm", "woo woo"]
@@ -204,10 +205,12 @@ def classify_source(show_name: str, title: str, snippet: str) -> str:
     if any(w in show for w in ["documentary", "biography", "civilizations", "connections",
                                 "nova ", "frontline", "american experience"]):
         return "documentary"
-    if any(w in show for w in ["car", "auto", "garage", "engine", "motor", "mustang",
-                                "corvette", "racing", "drift", "truck", "wheels", "horsepower",
+    if any(w in show for w in ["auto", "garage", "engine", "motor", "mustang",
+                                "corvette", "racing", "drift", "truck", "horsepower",
                                 "finnegan", "car wizard", "chasing classic", "dream car",
                                 "build or bust", "car craft"]):
+        return "automotive"
+    if re.search(r"\bcar\b", show) and not re.search(r"\b(card|cart|care|scar)\b", show):
         return "automotive"
     if any(w in show for w in ["combat", "war", "battle", "military", "bonanza", "western",
                                 "cannon", "batman", "21 jump"]):

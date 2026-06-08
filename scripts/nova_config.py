@@ -144,10 +144,14 @@ PRIVATE_SOURCES: set = {
 }
 
 def truncate_at_boundary(text, max_chars=2000):
-    """Truncate text at a word boundary to avoid mid-word cutoffs."""
+    """Truncate text at sentence or word boundary to avoid mid-word cutoffs."""
     if len(text) <= max_chars:
         return text
     cut = text[:max_chars]
+    for end_char in ['. ', '! ', '? ', '.\n', '!\n', '?\n']:
+        last_sent = cut.rfind(end_char)
+        if last_sent > max_chars * 0.6:
+            return cut[:last_sent + 1]
     last_space = cut.rfind(' ')
     if last_space > max_chars * 0.8:
         return cut[:last_space]

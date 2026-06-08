@@ -240,7 +240,7 @@ def notify(text):
 _credentials_cache = {}
 
 
-def get_community(keychain_service):
+def get_credential(keychain_service):
     if keychain_service in _credentials_cache:
         return _credentials_cache[keychain_service]
     try:
@@ -255,6 +255,37 @@ def get_community(keychain_service):
     except Exception as e:
         log(f"Keychain lookup failed for {keychain_service}: {e}", "WARN")
     return "public"
+
+
+get_community = get_credential
+
+
+def build_snmp_cmd(device, cmd, oid_str):
+    """Build snmpget/snmpwalk command args for v2c or v3."""
+    ip = device["ip"]
+    port = device.get("port", 161)
+    version = device.get("version", "v2c")
+
+    if version == "v3":
+        user = get_credential(device.get("v3_user_keychain", "nova-snmpv3-user"))
+        auth_pass = get_credential(device.get("v3_auth_keychain", "nova-snmpv3-auth"))
+        priv_pass = get_credential(device.get("v3_priv_keychain", "nova-snmpv3-priv"))
+        auth_proto = device.get("v3_auth_proto", "SHA")
+        priv_proto = device.get("v3_priv_proto", "AES")
+        return [
+            cmd, "-v3",
+            "-l", "authPriv",
+            "-u", user,
+            "-a", auth_proto, "-A", auth_pass,
+            "-x", priv_proto, "-X", priv_pass,
+            "-Oqv", "-t", "3", f"{ip}:{port}", oid_str,
+        ]
+    else:
+        community = get_credential(device.get("community_keychain", "nova-snmp-community"))
+        return [
+            cmd, "-v2c", "-c", community,
+            "-Oqv", "-t", "3", f"{ip}:{port}", oid_str,
+        ]
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -328,17 +359,12 @@ def _parse_snmp_value(val):
 
 async def snmp_get(device, oid_str):
     """Execute snmpget via subprocess in thread pool."""
-    community = get_community(device["community_keychain"])
     ip = device["ip"]
-    port = device.get("port", 161)
 
     def _run():
         try:
-            r = subprocess.run(
-                ["/usr/bin/snmpget", "-v2c", "-c", community,
-                 "-Oqv", "-t", "3", f"{ip}:{port}", oid_str],
-                capture_output=True, text=True, timeout=8,
-            )
+            cmd = build_snmp_cmd(device, "/usr/bin/snmpget", oid_str)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=8)
             if r.returncode == 0:
                 return _parse_snmp_value(r.stdout.strip())
         except subprocess.TimeoutExpired:
@@ -357,16 +383,12 @@ async def snmp_get(device, oid_str):
 
 async def snmp_walk(device, oid_str):
     """Execute snmpwalk via subprocess in thread pool."""
-    community = get_community(device["community_keychain"])
     ip = device["ip"]
-    port = device.get("port", 161)
 
     def _run():
         try:
-            r = subprocess.run(
-                ["/usr/bin/snmpwalk", "-v2c", "-c", community,
-                 "-Oqv", "-t", "3", f"{ip}:{port}", oid_str],
-                capture_output=True, text=True, timeout=15,
+            cmd = build_snmp_cmd(device, "/usr/bin/snmpwalk", oid_str)
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=15,
             )
             if r.returncode == 0:
                 results = []

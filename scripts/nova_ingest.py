@@ -282,13 +282,14 @@ def _derive(topic):
 
 _TRASH = [
     re.compile(r"[♪♫♬♭]"),
-    re.compile(r"\b(\w+)(\s+\1){4,}", re.IGNORECASE),
+    re.compile(r"\b(\w+)(?:\s+\1){3,}", re.IGNORECASE),
     re.compile(r"^[A-Z\s\W]{20,}$"),
     re.compile(r"^[^aeiouAEIOU\s]{8,}$"),
     re.compile(r"^[\W\d\s]+$"),
     re.compile(r"subtitles?\s+by|closed\s+caption", re.I),
     re.compile(r"^\[?\s*(silence|music|applause|laughter)\s*\]?$", re.I),
-    re.compile(r"(.{5,}?)(\s+\1){3,}"),
+    re.compile(r"(.{3,}?)(\s+\1){2,}"),
+    re.compile(r"(.{15,}?)\1{2,}"),
 ]
 _MUSIC = ["♪", "♫", "la la la", "da da da", "na na na",
           "woo woo", "oh oh oh", "yeah yeah yeah"]
@@ -366,6 +367,10 @@ def truncate_at_boundary(text, max_chars=2000):
     if len(text) <= max_chars:
         return text
     cut = text[:max_chars]
+    for end_char in ['. ', '! ', '? ', '.\n', '!\n', '?\n']:
+        last_sent = cut.rfind(end_char)
+        if last_sent > max_chars * 0.6:
+            return cut[:last_sent + 1]
     last_space = cut.rfind(' ')
     if last_space > max_chars * 0.8:
         return cut[:last_space]
