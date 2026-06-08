@@ -438,6 +438,8 @@ async def service_detail(service: str):
             return JSONResponse(await collect_unas_state())
         elif service == "hue":
             return JSONResponse(await collect_hue_state())
+        elif service == "lutron":
+            return JSONResponse(await collect_lutron_state())
         elif service == "healthkit_status":
             return JSONResponse(await collect_healthkit_status())
         elif service == "homebridge":
@@ -3000,6 +3002,7 @@ async def collect_synology_state() -> dict:
 
 UNAS_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_unas_status.json"
 HUE_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_hue_state.json"
+LUTRON_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_lutron_state.json"
 
 
 async def collect_hue_state() -> dict:
@@ -3020,6 +3023,29 @@ async def collect_hue_state() -> dict:
             "outdoor_temp": outdoor_temp,
             "outdoor_motion": outdoor_motion,
             "rooms": rooms,
+        }
+    except Exception as e:
+        return {"status": "error", "error": str(e)}
+
+
+async def collect_lutron_state() -> dict:
+    """Read Lutron Caseta integration state file."""
+    try:
+        if not LUTRON_STATE.exists():
+            return {"status": "unavailable"}
+        data = _json.loads(LUTRON_STATE.read_text())
+        devices = data.get("devices", [])
+        devices_on = data.get("devices_on", 0)
+        total = data.get("total_devices", 0)
+        active_rooms = list(set(d.get("room", "") for d in devices if d.get("level", 0) > 0))
+        return {
+            "status": "ok" if data.get("bridge_connected") else "disconnected",
+            "bridge_connected": data.get("bridge_connected", False),
+            "devices_on": devices_on,
+            "total_devices": total,
+            "active_rooms": active_rooms,
+            "last_update": data.get("last_update", ""),
+            "devices": devices,
         }
     except Exception as e:
         return {"status": "error", "error": str(e)}
@@ -4363,6 +4389,7 @@ async def poll_loop():
             collect_nmap_summary(),          # 33
             collect_unas_state(),            # 34
             collect_hue_state(),             # 35
+            collect_lutron_state(),          # 36
             return_exceptions=True,
         )
 
@@ -4431,6 +4458,7 @@ async def poll_loop():
             "nmap": safe(33),
             "unas": safe(34),
             "hue": safe(35),
+            "lutron": safe(36),
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }
