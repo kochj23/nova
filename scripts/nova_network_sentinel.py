@@ -70,8 +70,13 @@ RISKY_PORTS = {
 
 KNOWN_SAFE = {
     "192.168.1.1": "UniFi Gateway (unifi.digitalnoise.net)",
+    "192.168.1.2": "Raspberry Pi (lts01)",
     "192.168.1.6": "M4 Mac — Nova primary host",
-    "192.168.1.10": "Synology NAS (UNAS-Pro-8)",
+    "192.168.1.7": "TV-Movies Mac Mini (itunes)",
+    "192.168.1.10": "NUK (Plex, Homebridge)",
+    "192.168.1.11": "Synology NAS",
+    "192.168.1.89": "HDHomeRun TV tuner (multi-port probe is normal)",
+    "192.168.1.190": "Mac Mini (secondary)",
     "192.168.1.253": "UniFi Honeypot/IDS (Ubiquiti)",
 }
 
