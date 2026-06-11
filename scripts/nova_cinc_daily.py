@@ -75,7 +75,15 @@ def collect_inventory(node):
 
     if os_family == "macos":
         # Homebrew packages
-        rc, out, _ = ssh_cmd(host, user, "/opt/homebrew/bin/brew list --versions 2>/dev/null")
+        # Use local command if this is the local machine
+        if host in ("127.0.0.1", "192.168.1.6"):
+            try:
+                r = subprocess.run(["/opt/homebrew/bin/brew", "list", "--versions"], capture_output=True, text=True, timeout=30)
+                rc, out = r.returncode, r.stdout
+            except Exception:
+                rc, out = 1, ""
+        else:
+            rc, out, _ = ssh_cmd(host, user, "/opt/homebrew/bin/brew list --versions 2>/dev/null")
         if rc == 0:
             for line in out.strip().split("\n"):
                 if line.strip():
@@ -324,7 +332,7 @@ def send_report(results):
                     lines.append(f"  • {r['node']}: {u.get('action', '?')}")
 
     try:
-        nova_config.post_slack("\n".join(lines))
+        nova_config.post_both("\n".join(lines))
     except Exception as e:
         log(f"Slack post failed: {e}")
 
