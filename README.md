@@ -12,31 +12,78 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 
 | Metric | Value |
 |--------|-------|
-| Scripts | 380+ Python, Shell, and AppleScript |
-| Scheduler tasks | 54 unique |
-| Scheduler runs logged | 13,856 (98.9% success rate) |
-| Vector memories | 1,300,238 unique (deduplicated, HNSW-indexed) |
-| Memory sources | 217 domains |
+| Scripts | 272 Python/Shell (nova_* namespace) |
+| Scheduler tasks | 125 unique |
+| Scheduler runs logged | 81,901 (98.9% success rate) |
+| Vector memories | 1,650,483 unique (deduplicated, HNSW-indexed, 20GB) |
+| Memory sources | 217+ domains |
 | Gateway | Nova Gateway v2.4.0 (pure Python asyncio, hot-reloadable config) |
-| Channels | Slack + Discord + Signal + Web Chatroom |
+| Channels | Slack + Discord + Signal + Web Chatroom + Claude Code bridge |
 | Agents | 4 (Chat, Research, Home, Main) |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Databases | PostgreSQL 17 + pgvector (`nova_memories` + `nova_ops`) + Redis |
-| Ops DB tables | 52 tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, chatroom, snmp_metrics, syslog_events, semantic_triggers, deployment_runs |
+| Ops DB tables | 52+ tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, chatroom, snmp_metrics, syslog_events, capacity_snapshots, deploy_requests |
 | Hot-reload | Gateway: `POST :18792/reload` or `SIGHUP`. Scheduler: `SIGHUP` reloads tasks. |
 | Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
 | Chatroom | Real-time multi-party chat on port 37480, Nova has full memory access, external via CF tunnel + service token auth |
 | Gauge Dashboard | Live 3D system monitoring — [gauges.digitalnoise.net](https://gauges.digitalnoise.net/gauges) |
+| Grafana | 13 dashboards on TV-Movies (192.168.1.7:3000) — per-host, capacity, SNMP, scheduler, security |
+| Wazuh SIEM | Manager + Indexer + Dashboard on TV-Movies, agents on all 4 hosts + syslog from UDM/NAS |
 | Bootstrap source | `nova_ops.agent_docs` (PostgreSQL — not files) |
 | Session storage | `nova_ops.gateway_sessions` + `gateway_query_log` |
 | Primary model | `openrouter/qwen/qwen3-235b-a22b-2507` (chat/research) |
-| Local models | qwen3-next:80b, qwen3-coder:30b, deepseek-r1:8b, qwen3-vl:4b |
+| Local models | qwen3:30b-a3b, qwen3-coder:30b, deepseek-r1:8b, qwen3-vl:4b |
 | Model warmup | `ollama_preload` hourly — qwen3:30b-a3b stays warm |
 | Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) — daily essays, PDB security briefings, creative writing |
 | Security briefings | [nova.digitalnoise.net/security](https://nova.digitalnoise.net/security/) — daily PDB-style intel from 148 OSINT/gov/mystery feeds |
 | RSS feed | [nova.digitalnoise.net/index.xml](https://nova.digitalnoise.net/index.xml) |
-| SNMP fleet | 6 devices (Mac Studio, UDM Pro, Synology, Pi, Nuk, Mac Mini) |
-| MRTG dashboard | [192.168.1.6:37450/mrtg](http://192.168.1.6:37450/mrtg) — bandwidth, CPU, memory, temp |
+| SNMP fleet | 14 devices (Mac Studio, NUK, Mac Mini, Pi, UDM Pro, Synology, 5 switches, 3 APs) |
+| Plex | Docker on TV-Movies, NFS media from Synology (6 libraries) |
+| Fleet hosts | Mac Studio (.6), TV-Movies Mac Mini (.7), NUK (.10), Pi (.2), Synology NAS (.11), UDM Pro (.1) |
+
+---
+
+## Infrastructure & Security (June 2026)
+
+### Wazuh SIEM
+
+Full Wazuh 4.9.2 deployment on TV-Movies (Docker):
+- **Indexer** (OpenSearch): `https://192.168.1.7:9200` — GREEN, all alerts indexed
+- **Dashboard**: `https://192.168.1.7:443` (admin/admin)
+- **Manager**: Port 1514 (agents), 514/UDP (syslog), API on 55000
+- **Agents**: Mac Studio, NUK, TV-Movies, Pi — all Active
+- **Syslog forwarding**: UDM-Pro + Synology NAS → Wazuh UDP 514
+- **Big Brother integration**: Polls indexer every 5m for level 10+ alerts → Slack notification
+
+### Big Brother Enhancements
+
+- Kernel zone map monitoring (`data.kalloc.1024`) — alerts at 2GB warning, 5GB critical
+- Wazuh SIEM alert polling with configurable severity threshold
+- Syslog forwarder rate limiting (50 msgs/10s) to prevent logd overload
+
+### Grafana (TV-Movies)
+
+- 13 dashboards migrated from Mac Studio: Big Brother, Capacity, Climate, Costs, Energy, Home Telemetry, Memory, Network, Scheduler, Security, SNMP, Weather
+- Per-host detail dashboard with device variable selector (CPU, RAM, disk, network per machine)
+- Anonymous access (no login required), datasource to Mac Studio PG over LAN
+- URL: `http://192.168.1.7:3000`
+
+### Service Distribution
+
+| Host | Role | Key Services |
+|------|------|-------------|
+| Mac Studio (192.168.1.6) | Nova Core | PG, Redis, Ollama, MLX, Memory Server, Gateway, Scheduler, Big Brother, 58 services |
+| TV-Movies (192.168.1.7) | Infrastructure | Wazuh SIEM, Grafana, Plex (Docker), Homebridge, Docker Desktop |
+| NUK (192.168.1.10) | Edge/Media | Plex (legacy, migrating off), Homebridge (legacy) |
+| Pi (192.168.1.2) | Edge Telemetry | Wazuh agent, lightweight monitoring |
+
+### Plex Migration
+
+Plex moved from NUK (Intel, overloaded at load 24.7) to TV-Movies (M2 Pro Docker):
+- Container: `linuxserver/plex:latest`
+- Media: NFS mount from Synology (`192.168.1.11:/volume1/external/videos`)
+- Libraries: Movies, TV Shows, Music, Comedy, Documentary, YouTube
+- NFS export opened to full 192.168.1.0/24 subnet
 
 ---
 
