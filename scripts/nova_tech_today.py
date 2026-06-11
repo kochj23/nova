@@ -41,7 +41,7 @@ else:
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 MEMORY_SERVER = "http://192.168.1.6:18790"
-SEARXNG_URL = "http://127.0.0.1:8888/search"
+SEARXNG_URL = "http://192.168.1.10:8080/search"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-haiku-4.5"
 

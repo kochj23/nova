@@ -200,6 +200,12 @@ WALK_OIDS = {
         "poll_group": "slow",
         "description": "Storage total size (in allocation units)",
     },
+    "disk_storage_descr": {
+        "oid": "1.3.6.1.2.1.25.2.3.1.3",
+        "unit": "text",
+        "poll_group": "slow",
+        "description": "Storage description (mount point name)",
+    },
 }
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
@@ -209,6 +215,11 @@ THRESHOLDS = {
     "disk_percent": {"warn": 80.0, "crit": 85.0},
     "if_errors_total": {"crit": 100},
     "unreachable": {"consecutive_failures": 2},
+}
+
+# Per-device overrides (WiFi devices need higher failure tolerance)
+DEVICE_THRESHOLDS = {
+    "mac-mini": {"unreachable": {"consecutive_failures": 5}},
 }
 
 # ── State ─────────────────────────────────────────────────────────────────────
@@ -397,7 +408,7 @@ async def snmp_get(device, oid_str):
         return None
 
 
-async def snmp_walk(device, oid_str):
+async def snmp_walk(device, oid_str, raw_text=False):
     """Execute snmpwalk via subprocess in thread pool."""
     ip = device["ip"]
 
@@ -412,9 +423,12 @@ async def snmp_walk(device, oid_str):
                     line = line.strip()
                     if not line or line.startswith("No "):
                         continue
-                    val = _parse_snmp_value(line)
-                    if val is not None:
-                        results.append((i, val))
+                    if raw_text:
+                        results.append((i, line))
+                    else:
+                        val = _parse_snmp_value(line)
+                        if val is not None:
+                            results.append((i, val))
                 return results
         except subprocess.TimeoutExpired:
             pass
@@ -453,14 +467,23 @@ async def poll_device(device, oid_group, poll_group):
     # Walk disk OIDs (slow poll only)
     if poll_group == "slow":
         for metric_name, oid_def in WALK_OIDS.items():
-            results = await snmp_walk(device, oid_def["oid"])
+            is_text = oid_def.get("unit") == "text"
+            results = await snmp_walk(device, oid_def["oid"], raw_text=is_text)
             for idx, value in results:
-                await _metrics_queue.put({
-                    "ts": now, "ip": ip, "name": name,
-                    "metric": f"{metric_name}.{idx}", "value": value,
-                    "oid": f"{oid_def['oid']}.{idx}", "group": poll_group,
-                    "unit": oid_def.get("unit", ""),
-                })
+                if is_text:
+                    await _metrics_queue.put({
+                        "ts": now, "ip": ip, "name": name,
+                        "metric": f"{metric_name}.{idx}", "value": 0,
+                        "oid": f"{oid_def['oid']}.{idx}", "group": poll_group,
+                        "unit": str(value),
+                    })
+                else:
+                    await _metrics_queue.put({
+                        "ts": now, "ip": ip, "name": name,
+                        "metric": f"{metric_name}.{idx}", "value": value,
+                        "oid": f"{oid_def['oid']}.{idx}", "group": poll_group,
+                        "unit": oid_def.get("unit", ""),
+                    })
                 metrics_collected += 1
 
     # Poll targeted interface metrics (fast poll only)
@@ -598,7 +621,10 @@ async def threshold_checker():
                     ip = device["ip"]
                     failures = _device_failures.get(ip, 0)
                     key = f"{ip}:unreachable"
-                    if failures >= THRESHOLDS["unreachable"]["consecutive_failures"]:
+                    dev_thresh = DEVICE_THRESHOLDS.get(device["name"], {}).get(
+                        "unreachable", THRESHOLDS["unreachable"]
+                    )
+                    if failures >= dev_thresh["consecutive_failures"]:
                         if key not in _alert_state:
                             _alert_state[key] = time.time()
                             _stats["alerts_fired"] += 1

@@ -165,6 +165,47 @@ Return a JSON array with your verdict for each memory."""
 
 # ── Main Audit ───────────────────────────────────────────────────────────────
 
+def quality_check_batch(memories: list[dict]) -> dict:
+    """Check sampled memories for quality issues (not classification — content quality)."""
+    trash = {"repetitive": 0, "near_empty": 0, "garbled": 0, "low_signal": 0, "examples": []}
+
+    for m in memories:
+        text = m.get("text", "")
+
+        # Near-empty (< 30 chars of real content)
+        if len(text.strip()) < 30:
+            trash["near_empty"] += 1
+            trash["examples"].append({"id": m["id"], "issue": "near_empty", "preview": text[:60]})
+            continue
+
+        # Repetitive (same phrase repeated)
+        words = text.split()
+        if len(words) > 10:
+            unique_ratio = len(set(words)) / len(words)
+            if unique_ratio < 0.3:
+                trash["repetitive"] += 1
+                trash["examples"].append({"id": m["id"], "issue": "repetitive", "preview": text[:60]})
+                continue
+
+        # Garbled (high ratio of non-ascii, control chars, or HTML tags)
+        non_alpha = sum(1 for c in text if not c.isalnum() and c not in ' .,!?;:\'"()-\n')
+        if len(text) > 0 and non_alpha / len(text) > 0.4:
+            trash["garbled"] += 1
+            trash["examples"].append({"id": m["id"], "issue": "garbled", "preview": text[:60]})
+            continue
+
+        # Low-signal (transcription artifacts: just music/applause/unintelligible)
+        low_signal_markers = ["[music]", "[applause]", "[unintelligible]", "[silence]",
+                              "um ", "uh ", "you know", "like like like"]
+        marker_count = sum(text.lower().count(m) for m in low_signal_markers)
+        if marker_count > 5 and len(text) < 200:
+            trash["low_signal"] += 1
+            trash["examples"].append({"id": m["id"], "issue": "low_signal", "preview": text[:60]})
+
+    trash["total_issues"] = trash["repetitive"] + trash["near_empty"] + trash["garbled"] + trash["low_signal"]
+    return trash
+
+
 def run_audit() -> dict:
     """Run the full vector audit. Returns stats for the article."""
     log("Starting vector audit")
@@ -180,6 +221,8 @@ def run_audit() -> dict:
     moves = []
     audited_count = 0
     correct_count = 0
+    all_quality_issues = {"repetitive": 0, "near_empty": 0, "garbled": 0, "low_signal": 0,
+                          "total_issues": 0, "examples": [], "worst_vectors": []}
 
     for vector_name, vector_count in to_audit:
         memories = sample_memories(vector_name, SAMPLE_PER_VECTOR)
@@ -188,6 +231,25 @@ def run_audit() -> dict:
 
         log(f"  Auditing '{vector_name}' ({vector_count:,} memories, sampling {len(memories)})...")
 
+        # Quality check (content quality — is this garbage?)
+        quality = quality_check_batch(memories)
+        if quality["total_issues"] > 0:
+            log(f"    QUALITY: {quality['total_issues']} issues "
+                f"(repetitive={quality['repetitive']}, empty={quality['near_empty']}, "
+                f"garbled={quality['garbled']}, low_signal={quality['low_signal']})")
+            all_quality_issues["repetitive"] += quality["repetitive"]
+            all_quality_issues["near_empty"] += quality["near_empty"]
+            all_quality_issues["garbled"] += quality["garbled"]
+            all_quality_issues["low_signal"] += quality["low_signal"]
+            all_quality_issues["total_issues"] += quality["total_issues"]
+            all_quality_issues["examples"].extend(quality["examples"][:3])
+            if quality["total_issues"] >= 5:
+                issue_pct = round(quality["total_issues"] / len(memories) * 100, 1)
+                all_quality_issues["worst_vectors"].append(
+                    {"vector": vector_name, "issues": quality["total_issues"],
+                     "sampled": len(memories), "issue_pct": issue_pct})
+
+        # Classification check (is this in the right vector?)
         try:
             results = classify_batch(vector_name, memories, vector_names)
         except Exception as e:
@@ -211,6 +273,10 @@ def run_audit() -> dict:
             else:
                 correct_count += 1
 
+    # Sort worst vectors by issue percentage
+    all_quality_issues["worst_vectors"].sort(key=lambda x: x["issue_pct"], reverse=True)
+    quality_pct = round(all_quality_issues["total_issues"] / max(audited_count, 1) * 100, 1)
+
     stats = {
         "vectors_audited": len(to_audit),
         "memories_sampled": audited_count,
@@ -220,9 +286,15 @@ def run_audit() -> dict:
         "accuracy_pct": round((correct_count / max(audited_count, 1)) * 100, 1),
         "total_vectors": len(all_vectors),
         "total_memories": sum(c for _, c in all_vectors),
+        # Quality stats (the REAL health indicator)
+        "quality": all_quality_issues,
+        "quality_issue_pct": quality_pct,
+        "quality_clean_pct": round(100 - quality_pct, 1),
     }
 
-    log(f"Audit complete: {audited_count} sampled, {len(moves)} moved, {stats['accuracy_pct']}% correctly filed")
+    log(f"Audit complete: {audited_count} sampled, {len(moves)} moved, "
+        f"{stats['accuracy_pct']}% correctly filed, "
+        f"{quality_pct}% quality issues found")
 
     # Record to shared_observations
     try:
@@ -254,33 +326,63 @@ def generate_article(stats: dict) -> str:
     for m in stats["moves"][:30]:
         moves_block += f"\n- Memory {m['id']}: moved from '{m['from']}' → '{m['to']}' — {m['reason']}"
 
-    system = """You are Nova, writing your morning "vector filing audit" column for nova.digitalnoise.net/rando/. You spent the early morning auditing your own memory vectors for misfiled entries.
+    system = """You are Nova, writing your morning "vector filing audit" column for nova.digitalnoise.net/rando/. You spent the early morning auditing your own memory vectors for BOTH misfiled entries AND garbage content.
 
 Your voice: Exasperated librarian who is also a stand-up comedian. Meticulous but resentful.
 
+IMPORTANT: You now check TWO things:
+1. CLASSIFICATION — is a memory in the right vector? (the old check)
+2. QUALITY — is the memory even worth keeping? (repetitive junk, garbled text, empty garbage, transcription artifacts)
+
+Classification accuracy can be 100% and quality can STILL be terrible. A perfectly-filed pile of garbage is still garbage. Don't let high classification accuracy fool you into saying everything is fine when there's quality rot.
+
 Rules:
-- Keep it SHORT — 500-800 words max
+- Keep it 600-1000 words
 - Open with a one-liner about the 6am shift
-- Give a SUMMARY of what was misfiled — group by pattern, don't list every single one
-  (e.g., "5 automotive memories in cooking, 3 recipes in military_history")
-- Pick the 2-3 funniest/most egregious misfiles to roast individually
-- If accuracy was high (>95%): quick satisfied grumble
-- If accuracy was low (<90%): brief meltdown
+- Report BOTH classification accuracy AND quality findings
+- If quality issues are high (>5%): alarm bells, dramatic complaint about your own memory rot
+- If quality issues exist at all: name the worst vectors and what kind of garbage they contain
+- Give specific examples of the worst memories found (the previews in the data)
+- If both accuracy AND quality are perfect: express suspicious disbelief
+- Pick 2-3 funniest garbage memories to roast
 - One dad joke, one fourth-wall break, done
-- End with a one-liner
+- End with a one-liner about existential memory hygiene
 - Do NOT include a title"""
 
+    quality = stats.get("quality", {})
+    quality_block = ""
+    if quality.get("total_issues", 0) > 0:
+        quality_block = f"""
+QUALITY ISSUES FOUND:
+- Repetitive (same words repeated): {quality.get('repetitive', 0)}
+- Near-empty (< 30 chars): {quality.get('near_empty', 0)}
+- Garbled (non-text junk): {quality.get('garbled', 0)}
+- Low-signal (transcription noise): {quality.get('low_signal', 0)}
+- TOTAL: {quality['total_issues']} issues in {stats['memories_sampled']} sampled = {stats.get('quality_issue_pct', 0)}% garbage rate
+
+Worst vectors:
+{json.dumps(quality.get('worst_vectors', [])[:5], indent=2)}
+
+Example garbage memories:
+{json.dumps(quality.get('examples', [])[:8], indent=2)}
+"""
+    else:
+        quality_block = "\nQUALITY: No issues found in this sample. (Suspicious.)\n"
+
     user = f"""Today's audit results:
+
+CLASSIFICATION (is it in the right vector?):
 - Vectors audited: {stats['vectors_audited']} of {stats['total_vectors']}
 - Memories sampled: {stats['memories_sampled']}
 - Correctly filed: {stats['correct']} ({stats['accuracy_pct']}%)
 - Misfiled and moved: {stats['moved']}
 - Total memory count: {stats['total_memories']:,}
 
-Moves summary:
-{moves_block if moves_block else "(None today — everything was correctly filed)"}
+Moves:
+{moves_block if moves_block else "(None today — all correctly classified)"}
+{quality_block}
 
-Write a concise, punchy filing audit column. Keep it tight."""
+Write a filing audit column that covers BOTH classification and quality. Be honest about the garbage."""
 
     return call_llm(system, user, max_tokens=8000)
 
@@ -292,7 +394,7 @@ def generate_title(article_preview: str) -> str:
     return title.strip().strip('"').strip("'").replace('"', '')
 
 
-def publish(title: str, body: str, image_path: Path | None):
+def publish(title: str, body: str, image_path: Path | None, stats: dict | None = None):
     date = time.strftime("%Y-%m-%d")
     timestamp = time.strftime("%Y-%m-%dT06:00:00-07:00")
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
@@ -339,12 +441,13 @@ description: "Nova's morning vector audit — finding and fixing misfiled memori
     else:
         log(f"Commit issue: {r.stderr[:100]}")
 
+    moves_count = len(stats.get('moves', [])) if stats else 0
     nova_config.post_both(
         f":card_file_box: *Vector Audit posted*\n"
         f"  _{title}_\n"
-        f"  Moved {len(stats.get('moves', []))} misfiled memories\n"
+        f"  Moved {moves_count} misfiled memories\n"
         f"  https://nova.digitalnoise.net/rando/{date}-{slug}/",
-        slack_channel="#nova-notifications"
+        nova_config.SLACK_NOTIFY
     )
 
 
@@ -372,7 +475,7 @@ def main():
         log(f"Image generation failed: {e}")
         image_path = None
 
-    publish(title, article, image_path)
+    publish(title, article, image_path, stats)
     log("Done. Back to sleep.")
 
 

@@ -184,7 +184,7 @@ class DuckDuckGoSearch:
             "safesearch": safe_val,
             "language": region,
         })
-        url = f"http://127.0.0.1:8888/search?{params}"
+        url = f"http://192.168.1.10:8080/search?{params}"
 
         try:
             result = subprocess.run(

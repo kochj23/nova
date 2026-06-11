@@ -114,6 +114,7 @@ SENSITIVE_PATHS_RE = re.compile(
 SUDO_RE = re.compile(r"sudo.*COMMAND=(.+)", re.IGNORECASE)
 SANDBOX_DENY_RE = re.compile(r"\(Sandbox\).*deny\(1\)\s+(.+)")
 CRASH_RE = re.compile(r"crash|ReportCrash|EXC_BAD_ACCESS|SIGABRT|SIGSEGV", re.IGNORECASE)
+CRASH_PROCESS_RE = re.compile(r"(?:Process|path):\s*(/\S+/)?(\S+?)(?:\[|$)|(\w+)\[\d+\].*(?:crash|EXC_|SIG)", re.IGNORECASE)
 LATERAL_RE = re.compile(r"SRC=(192\.168\.1\.\d+).*DST=(192\.168\.1\.\d+).*DPT=(\d+)")
 
 BASELINE_WINDOW = 3600
@@ -133,7 +134,7 @@ _shutdown = False
 _device_event_counts: dict[str, deque] = defaultdict(lambda: deque(maxlen=168))  # hourly counts, 7 days
 _device_hour_count: dict[str, int] = defaultdict(int)
 _last_hour_reset: float = time.time()
-_crash_events: dict[str, deque] = defaultdict(lambda: deque(maxlen=20))
+_crash_events: dict[str, list] = defaultdict(list)  # [(timestamp, process_name), ...]
 _lateral_scans: dict[str, deque] = defaultdict(lambda: deque(maxlen=50))
 _sensitive_access: dict[str, deque] = defaultdict(lambda: deque(maxlen=10))
 
@@ -398,12 +399,26 @@ def detect_anomaly(event: dict) -> dict | None:
 
     # 4. Process crash storm — same host crashing 5+ times in 5 minutes (alert once per window)
     if CRASH_RE.search(msg) and not CRASH_EXCLUDE_RE.search(msg):
-        _crash_events[hostname].append(now)
-        recent = [t for t in _crash_events[hostname] if now - t < 300]
+        proc_match = CRASH_PROCESS_RE.search(msg)
+        proc_name = (proc_match.group(2) or proc_match.group(3)) if proc_match else "unknown"
+        _crash_events[hostname].append((now, proc_name))
+        _crash_events[hostname] = [(t, p) for t, p in _crash_events[hostname] if now - t < 300]
+        recent = _crash_events[hostname]
         if len(recent) == 5:
+            from collections import Counter
+            proc_counts = Counter(p for _, p in recent)
+            breakdown = ", ".join(f"{p}({c})" for p, c in proc_counts.most_common(5))
+            top_proc = proc_counts.most_common(1)[0][0]
+            hint = ""
+            if top_proc in ("bird", "nsurlsessiond", "cloudd"):
+                hint = " — likely CloudKit/iCloud sync issue, usually transient"
+            elif top_proc in ("mds", "mds_stores", "mdworker"):
+                hint = " — Spotlight indexing crash, usually self-resolves"
+            elif top_proc in ("kernel", "WindowServer"):
+                hint = " — system-level crash, may need restart"
             return {
                 "threat_type": "crash_storm",
-                "signature": f"Crash storm on {hostname}",
+                "signature": f"{len(recent)} crashes in 5min on {hostname}: {breakdown}{hint}",
                 "action": "detected",
                 "direction": "local",
                 "src_addr": event.get("source_ip"),
