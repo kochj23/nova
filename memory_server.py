@@ -59,13 +59,13 @@ from pydantic import BaseModel
 logger = logging.getLogger("memory_server")
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-PG_DSN      = "postgresql://kochj@192.168.1.6:5432/nova_memories"  # via PgBouncer :6432 → PG :5432
-REDIS_URL   = "redis://192.168.1.6:6379"
+PG_DSN      = "postgresql://kochj@127.0.0.1:5432/nova_memories?sslmode=disable"
+REDIS_URL   = "redis://127.0.0.1:6379"
 REDIS_QUEUE = "nova:memory:ingest"          # list key for write queue
 REDIS_CACHE      = "nova:memory:cache"      # hash key for recall cache
 CACHE_TTL        = 300                      # 5-minute recall cache TTL
 REDIS_DEAD_LETTER = "nova:memory:dead-letter"  # items that fail 3× go here
-OLLAMA_BASE      = "http://192.168.1.6:11434"
+OLLAMA_BASE      = "http://127.0.0.1:11434"
 EMBED_MODEL      = "nomic-embed-text"
 DIMS             = 768
 DEFAULT_N        = 5
@@ -202,6 +202,8 @@ async def lifespan(app: FastAPI):
                 PG_DSN, min_size=2, max_size=8, init=_pg_init,
                 max_inactive_connection_lifetime=600.0,
                 command_timeout=120.0,
+                ssl=False,
+                direct_tls=False,
             )
             break
         except Exception as _e:
@@ -867,4 +869,4 @@ async def forget_all(source: Optional[str] = Query(None)):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="192.168.1.6", port=18790, log_level="info", log_config=None)
+    uvicorn.run(app, host="0.0.0.0", port=18790, log_level="info", log_config=None)

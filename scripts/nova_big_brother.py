@@ -100,25 +100,26 @@ SERVICES = [
     ("PgBouncer",     "127.0.0.1", 6432,  "net.digitalnoise.pgbouncer",           True,  None),
     ("Redis",         "127.0.0.1", 6379,  "net.digitalnoise.redis",               True,  None),
     ("Ollama",        "127.0.0.1", 11434, None,                                   True,  "/api/version"),
-    ("Memory Server", LAN_IP,      18790, "net.digitalnoise.nova-memory-server",  True,  "/health"),
+    ("Memory Server", "127.0.0.1", 18790, "net.digitalnoise.nova-memory-server",  True,  "/health"),
     ("Gateway v2",    "127.0.0.1", 18792, "net.digitalnoise.nova-gateway-v2",     True,  "/health"),
     # OpenClaw intentionally stopped — silenced, kept for fallback reference only
     # ("Gateway (OC)",  "127.0.0.1", 18789, "ai.openclaw.gateway",                  False, "/health"),
-    ("Scheduler",     LAN_IP,      37460, "com.nova.scheduler",                   True,  "/status"),
+    ("Scheduler",     "127.0.0.1", 37460, "com.nova.scheduler",                   True,  "/status"),
     # ── AI inference (non-critical — can recover from) ───────────────────────
-    ("MLX Server",    LAN_IP,      5050,  "net.digitalnoise.mlx-server",          False, "/v1/models"),
+    ("MLX Server",    "127.0.0.1", 5050,  "net.digitalnoise.mlx-server",          False, "/v1/models"),
     ("SwarmUI",       "127.0.0.1", 7801,  None,                                   False, None),
     ("ComfyUI",       "127.0.0.1", 8188,  None,                                   False, None),
     ("TinyChat",      "192.168.1.10", 8000, None,                                  False, None),
-    ("OpenWebUI",     LAN_IP,      3000,  "net.digitalnoise.openwebui",           False, None),
+    ("OpenWebUI",     "192.168.1.6", 3000,  "net.digitalnoise.openwebui",           False, None),
     ("SearXNG",       "192.168.1.10", 8080, None,                                  False, None),
     # ── Channels ─────────────────────────────────────────────────────────────
     ("Signal-cli",    "127.0.0.1", 8080,  None,                                   False, None),
     # ── Nova apps ────────────────────────────────────────────────────────────
     ("NovaControl",   "127.0.0.1", 37400, "net.digitalnoise.NovaControl",         False, "/api/status"),
-    ("NovaControl Web",LAN_IP,      37450, "net.digitalnoise.nova-control-web",    False, None),
-    ("Big Brother",   LAN_IP,      37461, None,                                   False, "/bb/status"),
-    ("Nova Syslog",   LAN_IP,      37462, "net.digitalnoise.nova-syslog",         False, "/health"),
+    ("NovaControl Web","127.0.0.1", 37450, "net.digitalnoise.nova-control-web",    False, None),
+    # BB cannot self-check — removed to prevent false alerts
+    # ("Big Brother",   "127.0.0.1", 37461, None,                                   False, "/bb/status"),
+    ("Nova Syslog",   "127.0.0.1", 37462, "net.digitalnoise.nova-syslog",         False, "/health"),
     # ── External / LAN (monitored but not auto-restarted) ────────────────────
     ("Plex",          PLEX_IP,     32400, None,                                   False, "/web"),
     ("HDHomeRun",     HDHR_IP,     80,    None,                                   False, None),
@@ -439,7 +440,7 @@ def _build_metrics_summary() -> str:
     # Redis
     try:
         import redis as _rds
-        rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
+        rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
         ri = rc.info("memory")
         used_mb = ri.get("used_memory", 0) / 1e6
         max_mb = ri.get("maxmemory", 0) / 1e6
@@ -867,7 +868,7 @@ def _redis_notify_claude(event_type: str, content: str, priority: int = 3):
     """
     try:
         import redis
-        r = redis.from_url(f"redis://{LAN_IP}:6379", decode_responses=True)
+        r = redis.from_url("redis://127.0.0.1:6379", decode_responses=True)
         r.publish("nova:to_claude", json.dumps({
             "type": event_type,
             "source": "big-brother",
@@ -1762,7 +1763,7 @@ def _check_subagent_heartbeats() -> list:
     """Returns list of stale agent names."""
     try:
         import redis
-        r = redis.from_url(f"redis://{LAN_IP}:6379", decode_responses=True)
+        r = redis.from_url("redis://127.0.0.1:6379", decode_responses=True)
         stale = []
         for name in SUBAGENTS:
             status = r.get(f"nova:agent:{name}:status")
@@ -1945,7 +1946,7 @@ def _check_redis_memory_cache() -> bool:
     """Ensure Redis is actually storing/retrieving keys (not just pinging)."""
     try:
         import redis
-        r = redis.from_url(f"redis://{LAN_IP}:6379")
+        r = redis.from_url("redis://127.0.0.1:6379")
         test_key = "big-brother:health-check"
         r.set(test_key, "ok", ex=10)
         val = r.get(test_key)
@@ -2572,7 +2573,7 @@ def _is_maintenance_mode() -> bool:
     """Check Redis global maintenance flag set by pg_maintain / manual ops."""
     try:
         import redis
-        r = redis.from_url(f"redis://{LAN_IP}:6379", decode_responses=True)
+        r = redis.from_url("redis://127.0.0.1:6379", decode_responses=True)
         return bool(r.get("nova:maintenance:active"))
     except Exception:
         return False
@@ -2587,7 +2588,7 @@ def _is_service_in_maintenance(service_name: str) -> bool:
     """
     try:
         import redis
-        r = redis.from_url(f"redis://{LAN_IP}:6379", decode_responses=True)
+        r = redis.from_url("redis://127.0.0.1:6379", decode_responses=True)
         safe_name = service_name.replace(" ", "_").lower()
         return bool(r.get(f"nova:maintenance:service:{safe_name}"))
     except Exception:
@@ -2811,7 +2812,7 @@ def _record_metrics(issues: list, fixes: list, sweep_start: float):
     # Redis memory %
     try:
         import redis as _rds
-        rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
+        rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
         ri = rc.info("memory")
         if ri.get("maxmemory"):
             bucket["redis_pct"] = round(ri["used_memory"] / ri["maxmemory"] * 100, 2)
@@ -3035,8 +3036,8 @@ def _full_sweep():
                 # If either dependency is down, restarting Memory Server just causes
                 # another crash-loop — suppress the restart and let the dependency
                 # fix cascade naturally on the next sweep.
-                pg_up    = _port_open("192.168.1.6", 5432)
-                redis_up = _port_open(LAN_IP, 6379)
+                pg_up    = _port_open("127.0.0.1", 5432)
+                redis_up = _port_open("127.0.0.1", 6379)
                 if not pg_up:
                     log("Memory Server DOWN but PostgreSQL also down — skipping restart, waiting for PG",
                         level=LOG_WARN, source="big-brother")
@@ -3578,7 +3579,7 @@ def _full_sweep():
         home_free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
         if home_free_gb < 5.0:
             import redis as _rds
-            rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
+            rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
             if not rc.get("nova:maintenance:active"):
                 rc.setex("nova:maintenance:active", 3600, "1")  # 1h TTL
                 log(f"CRITICAL: main SSD only {home_free_gb:.1f}GB free — auto-engaged maintenance mode (1h)",
@@ -3907,7 +3908,7 @@ class BBHandler(BaseHTTPRequestHandler):
             maint_info = {"global": False, "global_ttl_s": -1, "services": {}}
             try:
                 import redis as _rds
-                rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
+                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
                 maint_info["global"] = bool(rc.get("nova:maintenance:active"))
                 maint_info["global_ttl_s"] = rc.ttl("nova:maintenance:active")
                 for key in rc.scan_iter("nova:maintenance:service:*"):
@@ -3980,7 +3981,7 @@ class BBHandler(BaseHTTPRequestHandler):
             redis_mem = {}
             try:
                 import redis as _rds
-                rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
+                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
                 ri = rc.info("memory")
                 redis_mem = {
                     "used_mb": round(ri.get("used_memory", 0) / 1e6, 1),
@@ -4102,7 +4103,7 @@ class BBHandler(BaseHTTPRequestHandler):
             # List all active maintenance flags (global + per-service)
             try:
                 import redis as _rds
-                rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
+                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
                 global_flag = bool(rc.get("nova:maintenance:active"))
                 global_ttl  = rc.ttl("nova:maintenance:active")
                 svc_flags = {}
@@ -4142,7 +4143,7 @@ class BBHandler(BaseHTTPRequestHandler):
                 ttl  = int(body.get("ttl", 3600))
                 svc  = body.get("service")
                 import redis as _rds
-                rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
+                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
                 if svc:
                     safe = svc.replace(" ", "_").lower()
                     rc.setex(f"nova:maintenance:service:{safe}", ttl, "1")
@@ -4162,7 +4163,7 @@ class BBHandler(BaseHTTPRequestHandler):
                 body = json.loads(self.rfile.read(length) or b"{}") if length else {}
                 svc  = body.get("service")
                 import redis as _rds
-                rc = _rds.Redis(host=LAN_IP, port=6379, decode_responses=True)
+                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
                 if svc:
                     safe = svc.replace(" ", "_").lower()
                     rc.delete(f"nova:maintenance:service:{safe}")
@@ -4190,7 +4191,7 @@ class BBHandler(BaseHTTPRequestHandler):
 
 def _api_server_thread():
     try:
-        server = HTTPServer((LAN_IP, API_PORT), BBHandler)
+        server = HTTPServer(("127.0.0.1", API_PORT), BBHandler)
         server.timeout = 1
         log(f"Diagnostics API on 127.0.0.1:{API_PORT}", level=LOG_INFO, source="big-brother")
         while not _shutdown.is_set():
