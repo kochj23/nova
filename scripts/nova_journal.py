@@ -337,8 +337,12 @@ description: "{description.replace('"', "'")}"
         front_matter += f'cover:\n  image: "{hugo_image}"\n  alt: "{safe_title}"\n  relative: false\n'
     front_matter += "---\n\n"
 
+    # Add publication timestamp to article body
+    pub_time = now_dt().strftime("%A, %B %d, %Y at %I:%M %p PT")
+    byline = f"*Published {pub_time}*\n\n"
+
     output = content_dir / filename
-    output.write_text(front_matter + scrub_pii(body))
+    output.write_text(front_matter + byline + scrub_pii(body))
     log(f"Published: {section}/{filename}")
     return True
 

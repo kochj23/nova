@@ -479,8 +479,11 @@ description: "Nova's daily ops report — what broke, what worked, and what she'
     if hugo_image:
         body = f"![Today's Infrastructure Ops]({hugo_image})\n\n" + body
 
+    pub_time = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p PT")
+    byline = f"*Published {pub_time}*\n\n"
+
     post_path = CONTENT_DIR / f"{date}-{slug}.md"
-    post_path.write_text(front_matter + body)
+    post_path.write_text(front_matter + byline + body)
     log(f"Post written: {post_path.name}")
 
     # Git commit and push

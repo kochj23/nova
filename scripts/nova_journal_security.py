@@ -211,8 +211,11 @@ description: "{description.replace('"', "'")}"
     if hugo_image:
         body = f"![{safe_title}]({hugo_image})\n\n{body}"
 
+    pub_time = time.strftime("%A, %B %d, %Y at %I:%M %p PT")
+    byline = f"*Published {pub_time}*\n\n"
+
     output = CONTENT_DIR / filename
-    output.write_text(front_matter + body)
+    output.write_text(front_matter + byline + body)
     log(f"Published: security/{filename}")
 
     # Git push (clear stale lock files if present)
