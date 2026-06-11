@@ -844,3 +844,9 @@ tasks:
     schedule: every 2m
     timeout: 60
     overlap: skip
+
+  cinc_daily:
+    script: nova_cinc_daily.py
+    schedule: cron 0 3 * * *
+    timeout: 1800
+    overlap: skip
