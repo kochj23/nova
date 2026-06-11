@@ -228,14 +228,27 @@ def run_sync():
     except Exception as e:
         log(f"DB write failed: {e}")
 
-    # Notify
+    # Notify — always post summary to notifications channel
     try:
         import nova_config
+        all_ok = all(r.get("status") == "ok" for r in results)
+        status_icon = "✅" if all_ok else "⚠️"
+        shares_detail = " | ".join(
+            f"{r['name']}: {r.get('files_transferred', 0)} files ({r.get('bytes_transferred', 0) / 1e9:.2f} GB)"
+            for r in results
+        )
+        msg = (
+            f"{status_icon} *NAS Rsync — Daily Sync*\n"
+            f"Synology → UNAS | {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
+            f"{shares_detail}\n"
+            f"Total: {total_files} files, {total_bytes / 1e9:.2f} GB in {total_duration:.0f}s"
+        )
+        nova_config.post_both(msg, nova_config.SLACK_NOTIFY)
         if total_files > 0:
             nova_config.notify_local("NAS Rsync Complete",
                                      f"{total_files} files synced ({total_bytes / 1e9:.1f} GB)")
-    except Exception:
-        pass
+    except Exception as e:
+        log(f"Notification failed: {e}")
 
     # Save state for dashboard
     state_file = Path.home() / ".openclaw/workspace/state/nova_nas_rsync.json"

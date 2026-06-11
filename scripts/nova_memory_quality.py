@@ -158,7 +158,9 @@ async def run_audit(clean: bool = False):
     try:
         async with pool.acquire() as conn:
             # Phase 1-3, 5: Scan all memories in batches
-            total_count = await conn.fetchval("SELECT count(*) FROM memories")
+            total_count = await conn.fetchval(
+                "SELECT reltuples::bigint FROM pg_class WHERE relname = 'memories'"
+            ) or 0
             logger.info(f"Total memories in database: {total_count:,}")
 
             last_id = ""

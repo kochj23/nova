@@ -8,7 +8,7 @@ source "$HOME/.openclaw/scripts/wait-for-port.sh"
 wait_for_port 5432  "PostgreSQL" 120 || exit 1
 wait_for_port 6379  "Redis"      60  || exit 1
 wait_for_port 11434 "Ollama"     120 || exit 1
-wait_for_port 8080  "signal-cli" 60  || true  # Signal optional at startup
+wait_for_port 8080  "signal-cli" 10  || true  # Signal optional — don't delay boot
 
 echo "[gateway_v2_start] Dependencies ready, starting Nova Gateway v2..."
 

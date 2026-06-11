@@ -249,7 +249,15 @@ def _system_prompt(agent_id: str, bootstrap_docs: str) -> str:
             "NEVER guess or hallucinate what a URL contains.\n"
             "- When asked about current events or anything after your training cutoff, use web_search.\n"
             "- When asked about Jordan's memories or past conversations, use memory_search.\n"
-            "- If you don't know something, say so — never fabricate content."
+            "- If you don't know something, say so — never fabricate content.\n"
+            "- When asked about the network, devices, infrastructure, home status, weather, power usage, "
+            "Claude's work, or operational state, use ops_query with the appropriate domain: "
+            "observations (Claude's shared notes), network (all 104+ clients), weather (station data), "
+            "av_state (Onkyo/Bose status), energy (Eve power data), climate (per-room temp/humidity), "
+            "meta (Nova system metrics), queue (Claude's task queue), devices (all network devices).\n"
+            "- When asked to control AV devices (Bose soundbars, Onkyo receivers), use home_control.\n"
+            "- You have a shared_observations table where Claude leaves notes for you. Check it when asked about "
+            "Claude's work, shared context, or what's been happening operationally."
         ),
         "research": (
             f"You are Nova in deep research mode. Today is {today}. "

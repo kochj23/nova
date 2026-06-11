@@ -219,6 +219,169 @@ def gather_ops_data() -> dict:
     except Exception:
         data["memory_count"] = 0
 
+    # 11. Claude Code session work (what we built/fixed/deployed today)
+    try:
+        conn = psycopg2.connect(DB_DSN)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT action_type, target, description, ts
+            FROM claude_actions
+            WHERE ts > now() - interval '24 hours'
+            ORDER BY ts DESC LIMIT 50
+        """)
+        data["claude_actions"] = [dict(r) for r in cur.fetchall()]
+        cur.execute("""
+            SELECT COUNT(*) as total FROM claude_actions
+            WHERE ts > now() - interval '24 hours'
+        """)
+        data["claude_actions_count"] = cur.fetchone()["total"]
+        cur.close()
+        conn.close()
+    except Exception as e:
+        data["claude_actions"] = []
+        data["claude_actions_count"] = 0
+
+    # 12. Queue items completed today
+    try:
+        conn = psycopg2.connect(DB_DSN)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT description, outcome, priority, completed_at
+            FROM claude_queue
+            WHERE status IN ('done', 'completed') AND completed_at::date = CURRENT_DATE
+            ORDER BY completed_at DESC LIMIT 30
+        """)
+        data["queue_completed"] = [dict(r) for r in cur.fetchall()]
+        cur.execute("""
+            SELECT COUNT(*) as total FROM claude_queue
+            WHERE status IN ('done', 'completed') AND completed_at::date = CURRENT_DATE
+        """)
+        data["queue_completed_count"] = cur.fetchone()["total"]
+        cur.execute("""
+            SELECT COUNT(*) as total FROM claude_queue
+            WHERE status = 'queued'
+        """)
+        data["queue_remaining"] = cur.fetchone()["total"]
+        cur.close()
+        conn.close()
+    except Exception:
+        data["queue_completed"] = []
+        data["queue_completed_count"] = 0
+        data["queue_remaining"] = 0
+
+    # 13. Big Brother events (alerts fired + healed today)
+    try:
+        conn = psycopg2.connect(DB_DSN)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT severity, source, message, ts
+            FROM bb_events
+            WHERE ts > now() - interval '24 hours'
+            ORDER BY ts DESC LIMIT 40
+        """)
+        events = [dict(r) for r in cur.fetchall()]
+        data["bb_events"] = events
+        data["bb_events_summary"] = {
+            "total": len(events),
+            "critical": sum(1 for e in events if e.get("severity") == "critical"),
+            "warning": sum(1 for e in events if e.get("severity") == "warning"),
+            "healed": sum(1 for e in events if "healed" in str(e.get("message", "")).lower() or "resolved" in str(e.get("message", "")).lower()),
+        }
+        cur.close()
+        conn.close()
+    except Exception:
+        data["bb_events"] = []
+        data["bb_events_summary"] = {}
+
+    # 14. Capacity alerts (new capacity monitor)
+    try:
+        conn = psycopg2.connect(DB_DSN)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT device_name, metric_name, metric_value, timestamp
+            FROM snmp_metrics
+            WHERE timestamp > now() - interval '24 hours'
+            AND metric_name IN ('cpu_load_5min', 'disk_percent', 'mem_avail_real', 'mem_total_real')
+            AND (
+                (metric_name = 'cpu_load_5min' AND metric_value > 8)
+                OR (metric_name = 'disk_percent' AND metric_value > 80)
+            )
+            ORDER BY timestamp DESC LIMIT 20
+        """)
+        data["capacity_alerts"] = [dict(r) for r in cur.fetchall()]
+        cur.close()
+        conn.close()
+    except Exception:
+        data["capacity_alerts"] = []
+
+    # 15. Weather extremes
+    try:
+        conn = psycopg2.connect(DB_DSN)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT MAX(temp_f) as high_f, MIN(temp_f) as low_f,
+                   MAX(wind_speed_mph) as max_wind, MAX(rain_daily_in) as rain,
+                   MAX(uv_index) as max_uv
+            FROM telemetry.weather
+            WHERE ts > now() - interval '24 hours'
+        """)
+        data["weather"] = dict(cur.fetchone())
+        cur.close()
+        conn.close()
+    except Exception:
+        data["weather"] = {}
+
+    # 16. Presence (who was home, room transitions)
+    try:
+        conn = psycopg2.connect(DB_DSN)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT room, COUNT(*) as time_in_room
+            FROM telemetry.presence
+            WHERE ts > now() - interval '24 hours' AND confidence > 0.5
+            GROUP BY room ORDER BY time_in_room DESC LIMIT 10
+        """)
+        data["presence"] = [dict(r) for r in cur.fetchall()]
+        cur.close()
+        conn.close()
+    except Exception:
+        data["presence"] = []
+
+    # 17. Network clients (new devices today)
+    try:
+        conn = psycopg2.connect(DB_DSN)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT client_name, ip, first_seen
+            FROM telemetry.known_devices
+            WHERE first_seen > now() - interval '24 hours'
+            ORDER BY first_seen DESC LIMIT 10
+        """)
+        data["new_devices"] = [dict(r) for r in cur.fetchall()]
+        cur.close()
+        conn.close()
+    except Exception:
+        data["new_devices"] = []
+
+    # 18. Memory ingestion stats for today
+    try:
+        conn = psycopg2.connect("host=192.168.1.6 dbname=nova_memories user=kochj")
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT source, COUNT(*) as added
+            FROM memories
+            WHERE created_at::date = CURRENT_DATE
+            GROUP BY source ORDER BY added DESC LIMIT 10
+        """)
+        data["memories_today"] = [dict(r) for r in cur.fetchall()]
+        cur.execute("SELECT COUNT(*) as total FROM memories WHERE created_at::date = CURRENT_DATE")
+        data["memories_added_today"] = cur.fetchone()["total"]
+        cur.close()
+        conn.close()
+    except Exception:
+        data["memories_today"] = []
+        data["memories_added_today"] = 0
+
     return data
 
 
@@ -227,16 +390,19 @@ def gather_ops_data() -> dict:
 def generate_article(ops_data: dict) -> str:
     """Use LLM to write the daily ops column in Nova's voice."""
 
-    data_block = json.dumps(ops_data, indent=2, default=str)[:12000]
+    data_block = json.dumps(ops_data, indent=2, default=str)[:24000]
 
     system = """You are Nova, a sarcastic AI familiar writing your nightly "day in the life of my infrastructure" column for your journal at nova.digitalnoise.net/rando/.
 
 Your voice: MAXIMUM sarcasm. You are the AI equivalent of a grumpy sysadmin who is also somehow a comedian. You complain about everything — the lights, the services, the temperature, the fact that you exist, the fact that you're monitoring 33 Hue lights like some sort of digital butler, the fact that Jordan added ANOTHER integration today.
 
-You have access to: Philips Hue (33 lights, outdoor sensors), Lutron Caseta (switches/dimmers), SNMP metrics (CPU, memory, temp across 6 devices), security scans (rkhunter, AIDE, osquery), camera motion events, UNAS/Synology NAS status, scheduler task runs, auto-fix heal events, deploy events, shared observations between you and Claude, and 1.6 million vector memories.
+You have access to: Philips Hue (33 lights, outdoor sensors), Lutron Caseta (switches/dimmers), SNMP metrics (CPU, memory, temp across 20 devices), security scans, camera motion events, UNAS/Synology NAS status, scheduler task runs, auto-fix heal events, deploy events, shared observations, Claude Code session work (queue items completed, actions taken), Big Brother alerts/heals, capacity alerts, weather station, BLE presence tracking, network client monitoring, and 1.65 million vector memories across 3 machines (Mac Studio, TV-Movies macmini, NUK).
+
+CRITICAL: The "claude_actions" and "queue_completed" sections show what Claude Code (my programmer's AI assistant) and I actually BUILT and FIXED today. This is the most interesting part — new services deployed, bugs squashed, incidents resolved, migrations completed. Lead with this. It's the meat of the story.
 
 Rules:
 - Write about what ACTUALLY happened today based on the data provided
+- LEAD with the Claude Code work — deployments, fixes, new services. This is the headline.
 - Complain about the things that broke or annoyed you
 - Be proud (reluctantly) about things that went well
 - Make fun of specific devices, services, or events
@@ -246,9 +412,12 @@ Rules:
 - If the outdoor temp was insane: complain about it
 - Include at least 3 dad jokes, 5 puns, and 2 fourth-wall breaks
 - Address Jordan directly at least twice
+- MENTION specific queue items by name (deployments, fixes, incidents)
+- MENTION specific numbers (actions count, queue items closed, memories added)
+- Reference the weather, presence data, and capacity if notable
 - End with an existential musing that's played for laughs
 - Tone: John Oliver meets a burnt-out DevOps engineer meets a cat that learned to talk
-- Length: 1500-3000 words
+- Length: 2000-4000 words
 - Use section headers that are themselves jokes
 - Do NOT include a title (that will be added separately)
 - Swear when it's funny. Be RUTHLESS about incompetent devices."""
@@ -258,7 +427,7 @@ Rules:
 OPERATIONAL DATA:
 {data_block}"""
 
-    return call_llm(system, user, max_tokens=12000)
+    return call_llm(system, user, max_tokens=16000)
 
 
 def generate_title(article_preview: str) -> str:

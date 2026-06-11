@@ -50,7 +50,7 @@ OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 OLLAMA_MODEL = "qwen3-coder:30b"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "anthropic/claude-haiku-4.5"
-SEARXNG_URL = "http://127.0.0.1:8888/search"
+SEARXNG_URL = "http://192.168.1.10:8080/search"
 MEMORY_SERVER = "http://192.168.1.6:18790"
 WIKI_API = "https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/all"
 

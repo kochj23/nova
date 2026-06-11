@@ -37,11 +37,12 @@ else
     echo "[ollama_preload] nomic-embed-text loaded"
 fi
 
+# qwen3:30b-a3b: Big Brother health probe model — MUST stay warm
 # qwen3-coder:30b: ~7.5 min cold load — load with generous per-model timeout
 # deepseek-r1:8b: ~30s cold load
-declare -A MODEL_TIMEOUT=( ["qwen3-coder:30b"]="600" ["deepseek-r1:8b"]="120" )
+declare -A MODEL_TIMEOUT=( ["qwen3:30b-a3b"]="600" ["qwen3-coder:30b"]="600" ["deepseek-r1:8b"]="120" )
 
-for model in "qwen3-coder:30b" "deepseek-r1:8b"; do
+for model in "qwen3:30b-a3b" "qwen3-coder:30b" "deepseek-r1:8b"; do
     if echo "$warm_models" | grep -q "$model"; then
         echo "[ollama_preload] $model already warm — skipping"
         continue

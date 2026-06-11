@@ -132,6 +132,23 @@ TOOL_REGISTRY: dict[str, dict] = {
         },
         "required": ["command"],
     },
+    "ops_query": {
+        "description": "Query Nova's home and infrastructure data. Use this for ANY question about: temperature/climate (domain=climate or weather), who's on the network (domain=network or devices), power/energy usage (domain=energy), server health/CPU/RAM/disk (domain=capacity), what music/TV is playing (domain=av_state), task list (domain=queue), BLE devices nearby (domain=bluetooth), or room occupancy (domain=presence). Pick the right domain and answer conversationally.",
+        "parameters": {
+            "domain": {"type": "string", "enum": ["observations", "network", "weather", "av_state", "energy", "climate", "meta", "queue", "devices", "bluetooth", "presence", "capacity"], "description": "Which data domain to query"},
+            "query": {"type": "string", "description": "Optional: natural-language filter or specific question (e.g. 'last 24 hours', 'critical only', 'living room')"},
+            "limit": {"type": "integer", "description": "Max rows to return (default 10)"},
+        },
+        "required": ["domain"],
+    },
+    "home_control": {
+        "description": "Control AV devices and trigger scenes. Devices: Bose soundbars (bedroom/guest_bedroom/kitchen), Onkyo receivers (living_room/office). Scenes: movie (surround+dim), music_everywhere (all speakers), goodnight (all off), morning (kitchen+news), bedtime (dim bedroom only), party (loud+colorful), work (office focus), away (everything off). Use 'scene <name>' as the action.",
+        "parameters": {
+            "device": {"type": "string", "description": "Device name (bedroom, guest_bedroom, kitchen, living_room, office) or 'all', or 'scene'"},
+            "action": {"type": "string", "description": "Action: volume <0-100>, mute, unmute, power on/off, input <name>, play, pause, stop, scene <name>"},
+        },
+        "required": ["device", "action"],
+    },
 }
 
 
@@ -180,6 +197,10 @@ async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict) 
             return await _tool_hue_control(ctx, tool_params.get("command", ""))
         elif tool_name == "lutron_control":
             return await _tool_lutron_control(ctx, tool_params.get("command", ""))
+        elif tool_name == "ops_query":
+            return await _tool_ops_query(ctx, tool_params)
+        elif tool_name == "home_control":
+            return await _tool_home_control(ctx, tool_params)
         else:
             return f"[error: tool '{tool_name}' not implemented]"
     except asyncio.TimeoutError:
@@ -258,7 +279,7 @@ async def _tool_web_search(ctx: GatewayContext, params: dict) -> str:
 
     try:
         resp = await ctx.http.get(
-            "http://127.0.0.1:8888/search",
+            "http://192.168.1.10:8080/search",
             params={"q": query, "format": "json", "categories": "general"},
             timeout=15,
         )
@@ -572,3 +593,137 @@ async def execute_tool_calls_legacy(ctx: GatewayContext, text: str, session_id: 
         clean = clean.replace(m.group(0), "").strip()
 
     return clean, "\n".join(tool_results)
+
+
+# ── Ops Query Tool ────────────────────────────────────────────────────────────
+
+_OPS_QUERIES = {
+    "observations": """
+        SELECT created_at::text, observer, category, subject, observation, severity
+        FROM shared_observations
+        ORDER BY created_at DESC LIMIT {limit}
+    """,
+    "network": """
+        SELECT ts::text, client_name, ip, signal_dbm, rx_bytes, tx_bytes, is_wired
+        FROM telemetry.network
+        WHERE ts > NOW() - INTERVAL '1 hour'
+        ORDER BY tx_bytes DESC LIMIT {limit}
+    """,
+    "weather": """
+        SELECT ts::text, temp_f, humidity, pressure_in, wind_speed_mph, wind_gust_mph,
+               rain_daily_in, uv_index, solar_radiation
+        FROM telemetry.weather
+        ORDER BY ts DESC LIMIT {limit}
+    """,
+    "av_state": """
+        SELECT ts::text, device_id, power, volume, mute, source_input, listening_mode, zone
+        FROM telemetry.av_state
+        ORDER BY ts DESC LIMIT {limit}
+    """,
+    "energy": """
+        SELECT ts::text, device_id, device_name, watts, volts, kwh_total, on_state
+        FROM telemetry.energy
+        ORDER BY ts DESC LIMIT {limit}
+    """,
+    "climate": """
+        SELECT ts::text, room, source, temp_f, humidity, light_lux
+        FROM telemetry.climate
+        ORDER BY ts DESC LIMIT {limit}
+    """,
+    "meta": """
+        SELECT ts::text, metric, value
+        FROM telemetry.nova_meta
+        WHERE ts > NOW() - INTERVAL '1 hour'
+        ORDER BY ts DESC LIMIT {limit}
+    """,
+    "queue": """
+        SELECT id, status, priority, LEFT(description, 120) as description
+        FROM claude_queue
+        WHERE status IN ('queued', 'in_progress')
+        ORDER BY priority DESC, created_at LIMIT {limit}
+    """,
+    "devices": """
+        SELECT DISTINCT ON (client_name) client_name, ip, client_mac, signal_dbm, is_wired,
+               ts::text as last_seen
+        FROM telemetry.network
+        WHERE ts > NOW() - INTERVAL '24 hours'
+        ORDER BY client_name, ts DESC
+        LIMIT {limit}
+    """,
+    "bluetooth": """
+        SELECT DISTINCT ON (device_mac) device_name, device_mac, rssi, battery_pct,
+               device_type, is_connected, ts::text as last_seen
+        FROM telemetry.bluetooth
+        WHERE ts > NOW() - INTERVAL '10 minutes'
+        ORDER BY device_mac, ts DESC
+        LIMIT {limit}
+    """,
+    "presence": """
+        SELECT ts::text, person, room, confidence, metadata::text
+        FROM telemetry.presence
+        ORDER BY ts DESC LIMIT {limit}
+    """,
+    "capacity": """
+        SELECT DISTINCT ON (device_name)
+            device_name, overall_status,
+            cpu_load_5m, cpu_headroom_pct, cpu_cores,
+            ROUND(mem_used_mb::numeric) as mem_used_mb, ROUND(mem_free_mb::numeric) as mem_free_mb, mem_headroom_pct,
+            disk_worst_pct, disks::text,
+            ts::text
+        FROM capacity_snapshots
+        ORDER BY device_name, ts DESC
+    """,
+}
+
+
+async def _tool_ops_query(ctx: GatewayContext, params: dict) -> str:
+    """Query Nova's operational databases."""
+    import psycopg2
+    import psycopg2.extras
+
+    domain = params.get("domain", "observations")
+    limit = min(params.get("limit", 10), 50)
+    query_filter = params.get("query", "")
+
+    if domain not in _OPS_QUERIES:
+        return f"[error: unknown domain '{domain}'. Available: {', '.join(_OPS_QUERIES.keys())}]"
+
+    sql = _OPS_QUERIES[domain].format(limit=limit)
+
+    try:
+        conn = psycopg2.connect("host=localhost dbname=nova_ops user=kochj")
+        conn.set_session(readonly=True)
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute(sql)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+
+        if not rows:
+            return f"No data found in '{domain}' (tables may be empty or no recent data)."
+
+        lines = [f"=== {domain} ({len(rows)} rows) ==="]
+        for row in rows:
+            parts = [f"{k}={v}" for k, v in row.items() if v is not None]
+            lines.append(" | ".join(parts))
+
+        result = "\n".join(lines)
+        if query_filter:
+            result = f"[filter: {query_filter}]\n" + result
+        return result[:4000]
+    except Exception as e:
+        return f"[ops_query error: {e}]"
+
+
+# ── Home Control Tool ─────────────────────────────────────────────────────────
+
+async def _tool_home_control(ctx: GatewayContext, params: dict) -> str:
+    """Control AV devices via nova_home_control.py."""
+    device = params.get("device", "")
+    action = params.get("action", "")
+
+    if not device or not action:
+        return "[error: device and action required]"
+
+    args = [device] + action.split()
+    return await _tool_run_script(ctx, {"script": "nova_home_control.py", "args": args})

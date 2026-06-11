@@ -312,36 +312,87 @@ posture: {tone}
     return entry
 
 
-def notify_critical(findings: dict):
-    """Send alert for critical findings."""
+def notify_results(findings: dict, host_count: int):
+    """Post full summary to notifications channel and alert on critical findings."""
     critical = [r for r in findings.get("risky_services", []) if r["severity"] == "critical"]
+    high = [r for r in findings.get("risky_services", []) if r["severity"] == "high"]
     new_hosts = findings.get("new_hosts", [])
+    new_ports = findings.get("new_ports", [])
 
-    if not critical and not new_hosts:
-        return
+    if critical:
+        posture = "🔴 RED"
+    elif high:
+        posture = "🟠 AMBER"
+    elif new_hosts:
+        posture = "🟡 YELLOW"
+    else:
+        posture = "🟢 GREEN"
 
-    msg_parts = ["🔴 **NETWORK SENTINEL ALERT**\n"]
+    msg_parts = [f"*Network Sentinel — Daily Scan*\n{posture} | {host_count} hosts | {datetime.now().strftime('%Y-%m-%d %H:%M')}"]
 
     if new_hosts:
-        msg_parts.append(f"⚠️ {len(new_hosts)} NEW HOST(S) detected:")
+        msg_parts.append(f"\n⚠️ {len(new_hosts)} NEW host(s):")
         for h in new_hosts[:5]:
             msg_parts.append(f"  • {h['ip']} ({h['hostname'] or h['vendor'] or 'unknown'})")
 
+    if new_ports:
+        msg_parts.append(f"\n📡 {len(new_ports)} new port(s) on known hosts:")
+        for p in new_ports[:5]:
+            msg_parts.append(f"  • {p['ip']} — {p['port']} ({p['service']})")
+
     if critical:
-        msg_parts.append(f"\n🚨 {len(critical)} CRITICAL exposure(s):")
+        msg_parts.append(f"\n🚨 {len(critical)} CRITICAL:")
         for r in critical[:5]:
             msg_parts.append(f"  • {r['ip']} — {r['service_name']} (port {r['port']})")
+
+    if high:
+        msg_parts.append(f"\n⚠️ {len(high)} high-risk:")
+        for r in high[:3]:
+            msg_parts.append(f"  • {r['ip']} — {r['service_name']} (port {r['port']})")
+
+    if not new_hosts and not new_ports and not critical:
+        msg_parts.append("\nNo drift from baseline. The fortress holds.")
 
     message = "\n".join(msg_parts)
 
     if nova_config:
         try:
-            nova_config.post_both(message)
-            log("Alert sent to Slack/Discord")
+            nova_config.post_both(message, nova_config.SLACK_NOTIFY)
+            log("Summary posted to notifications channel")
         except Exception as e:
             log(f"Notification failed: {e}")
     else:
-        log(f"ALERT (no nova_config): {message}")
+        log(f"SUMMARY (no nova_config): {message}")
+
+
+def record_to_pg(findings: dict, host_count: int):
+    """Write scan results to shared_observations for ops memory."""
+    try:
+        import psycopg2
+        conn = psycopg2.connect("host=localhost dbname=nova_ops user=kochj")
+        conn.autocommit = True
+        cur = conn.cursor()
+
+        critical = [r for r in findings.get("risky_services", []) if r["severity"] == "critical"]
+        new_hosts = findings.get("new_hosts", [])
+        new_ports = findings.get("new_ports", [])
+
+        observation = (
+            f"Network scan: {host_count} hosts, "
+            f"{len(new_hosts)} new, {len(new_ports)} new ports, "
+            f"{len(critical)} critical exposures"
+        )
+        severity = "critical" if critical else "warning" if new_hosts else "info"
+
+        cur.execute("""
+            INSERT INTO shared_observations (observer, category, subject, observation, severity, metadata)
+            VALUES ('nova', 'security', 'network-sentinel', %s, %s, %s)
+        """, (observation, severity, json.dumps(findings)))
+        cur.close()
+        conn.close()
+        log("Results recorded to shared_observations")
+    except Exception as e:
+        log(f"PG write failed: {e}")
 
 
 def save_baseline(scan_data: dict):
@@ -418,7 +469,9 @@ def main():
     save_journal(journal_entry)
 
     if not args.no_notify:
-        notify_critical(findings)
+        notify_results(findings, len(scan_data))
+
+    record_to_pg(findings, len(scan_data))
 
     total_risky = len(findings.get("risky_services", []))
     total_new = len(findings.get("new_hosts", []))

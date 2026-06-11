@@ -33,6 +33,26 @@ SPIKE_MULTIPLIER = 10
 REFERRER_BOMB_THRESHOLD = 0.5
 DARK_MINUTES = 30
 
+# Per-site silence thresholds — low-traffic sites get longer grace periods
+# before alerting. "expected_quiet_hours" = hours of zero traffic that are normal.
+SITE_DARK_CONFIG = {
+    "nova.digitalnoise.net": {"threshold_min": 1440, "description": "Nova's public journal — low traffic is normal, only alert after 24h"},
+    "digitalnoise.net": {"threshold_min": 1440, "description": "Personal site — low traffic is normal, only alert after 24h"},
+    "chat.digitalnoise.net": {"threshold_min": 120, "description": "Active chat interface — silence over 2h during daytime is unusual"},
+    "gauges.digitalnoise.net": {"threshold_min": 1440, "description": "Dashboard — internal use only, long silence is normal"},
+}
+
+
+def _probe_site(site: str) -> bool:
+    """HTTP HEAD probe to check if site is actually reachable."""
+    import urllib.request
+    try:
+        req = urllib.request.Request(f"https://{site}/", method="HEAD")
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status < 500
+    except Exception:
+        return False
+
 
 def get_conn():
     return psycopg2.connect(PG_DSN)
@@ -208,22 +228,33 @@ def check_anomalies(conn, hour_start, site_views):
                 "detail": {"domain": row["referrer_domain"], "count": row["cnt"], "pct": round(row["pct"], 1)},
             })
 
-    # Site goes dark (only during daytime 06:00-23:00 local)
+    # Site goes dark — per-site thresholds, HTTP probe to distinguish "quiet" from "down"
     hour_local = hour_start.astimezone().hour
     if 6 <= hour_local <= 23:
         for site in SITES:
             if site not in site_views or site_views[site] == 0:
+                site_cfg = SITE_DARK_CONFIG.get(site, {"threshold_min": DARK_MINUTES})
                 cur.execute("""
                     SELECT MAX(ts) as last_event FROM analytics_pageviews WHERE site = %s
                 """, (site,))
                 row = cur.fetchone()
                 if row and row["last_event"]:
                     minutes_dark = (datetime.now(timezone.utc) - row["last_event"]).total_seconds() / 60
-                    if minutes_dark > DARK_MINUTES:
+                    if minutes_dark > site_cfg["threshold_min"]:
+                        # HTTP probe to check if site is actually reachable
+                        site_up = _probe_site(site)
+                        status = "up but no visitors" if site_up else "UNREACHABLE"
+                        hours_dark = round(minutes_dark / 60, 1)
                         alerts.append({
                             "type": "site_dark",
                             "site": site,
-                            "detail": {"minutes_silent": round(minutes_dark)},
+                            "detail": {
+                                "minutes_silent": round(minutes_dark),
+                                "hours_silent": hours_dark,
+                                "site_reachable": site_up,
+                                "status": status,
+                                "explanation": f"Zero pageviews for {hours_dark}h. Site is {status}.",
+                            },
                         })
 
     cur.close()
@@ -242,7 +273,17 @@ def fire_alerts(conn, alerts):
 
         # Slack notification
         emoji = {"traffic_spike": ":chart_with_upwards_trend:", "referrer_bomb": ":rotating_light:", "site_dark": ":ghost:"}.get(alert["type"], ":warning:")
-        msg = f"{emoji} *Analytics Alert — {alert['type'].replace('_', ' ').title()}*\nSite: {alert.get('site', 'unknown')}\nDetail: {json.dumps(alert.get('detail', {}))}"
+        if alert["type"] == "site_dark":
+            detail = alert.get("detail", {})
+            status_icon = ":white_check_mark:" if detail.get("site_reachable") else ":x:"
+            msg = (
+                f"{emoji} *Site Quiet — {alert.get('site', 'unknown')}*\n"
+                f"  {detail.get('explanation', 'No pageviews detected')}\n"
+                f"  {status_icon} HTTP probe: {'reachable' if detail.get('site_reachable') else 'UNREACHABLE — possible outage'}\n"
+                f"  Silent for: {detail.get('hours_silent', '?')}h"
+            )
+        else:
+            msg = f"{emoji} *Analytics Alert — {alert['type'].replace('_', ' ').title()}*\nSite: {alert.get('site', 'unknown')}\nDetail: {json.dumps(alert.get('detail', {}))}"
         try:
             nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
         except Exception as e:

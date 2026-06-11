@@ -48,7 +48,7 @@ LOG_FILE = Path.home() / ".openclaw/logs/nova_journal_security.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-sonnet-4-6"
 MEMORY_SERVER = f"http://{nova_config.NOVA_HOST}:18790"
-SEARXNG_URL = "http://127.0.0.1:8888/search"
+SEARXNG_URL = "http://192.168.1.10:8080/search"
 
 CONTENT_DIR.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
@@ -398,7 +398,9 @@ Write the breaking alert. Only include confirmed information. Flag uncertainty e
     except Exception:
         img_path = None
 
-    tags = ["breaking", "alert"] + [t.lower().replace(" ", "-") for t in trigger.split()[:3]]
+    import re as _re
+    source_slug = _re.sub(r'[^a-z0-9]+', '-', trigger.lower()).strip('-')[:40]
+    tags = ["breaking-alert", source_slug, "security"]
     description = f"BREAKING: {trigger[:100]}"
     publish_hugo(title, body, tags, description, image_path=img_path, is_breaking=True)
     notify(title, body[:200], is_breaking=True)

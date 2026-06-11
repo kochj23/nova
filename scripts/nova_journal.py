@@ -38,7 +38,7 @@ from nova_image_utils import generate_image
 
 MEMORY_SERVER = f"http://{nova_config.NOVA_HOST}:18790"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-SEARXNG_URL = "http://127.0.0.1:8888/search"
+SEARXNG_URL = "http://192.168.1.10:8080/search"
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
 LOG_FILE = Path.home() / ".openclaw/logs/nova_journal.log"
 STATE_FILE = Path.home() / ".openclaw/config/journal_state.json"

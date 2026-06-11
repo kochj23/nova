@@ -68,7 +68,7 @@ def _annotate_grafana(text, tags):
             "time": int(time.time() * 1000),
         }).encode()
         req = urllib.request.Request(
-            "http://192.168.1.6:3001/api/annotations",
+            "http://192.168.1.7:3000/api/annotations",
             data=payload,
             headers={
                 "Content-Type": "application/json",

@@ -229,8 +229,12 @@ async def lifespan(app: FastAPI):
                 access_count INTEGER NOT NULL DEFAULT 0
             )
         """)
-        # Only create indexes if the table is new (has no rows)
-        row_count = await conn.fetchval("SELECT count(*) FROM memories")
+        # Fast check if table has rows (avoid full count on 1.6M row table)
+        row_count = await conn.fetchval(
+            "SELECT reltuples::bigint FROM pg_class WHERE relname = 'memories'"
+        )
+        if row_count is None or row_count < 0:
+            row_count = 0
         if row_count == 0:
             await conn.execute(
                 "CREATE INDEX IF NOT EXISTS memories_source_created_idx ON memories (source, created_at DESC)"
@@ -768,9 +772,11 @@ async def random_memory(source: Optional[str] = Query(None), n: int = Query(1)):
 @app.get("/health")
 async def health():
     async with _pg_pool.acquire() as conn:
-        count = await conn.fetchval("SELECT COUNT(*) FROM memories")
+        count = await conn.fetchval(
+            "SELECT reltuples::bigint FROM pg_class WHERE relname = 'memories'"
+        )
     queue_len = await _redis.llen(REDIS_QUEUE)
-    return {"status": "ok", "count": count, "model": EMBED_MODEL,
+    return {"status": "ok", "count": count or 0, "model": EMBED_MODEL,
             "backend": "postgresql+pgvector", "queue_length": queue_len,
             "version": "3.1.0"}
 
@@ -778,7 +784,9 @@ async def health():
 @app.get("/stats")
 async def stats():
     async with _pg_pool.acquire() as conn:
-        count    = await conn.fetchval("SELECT COUNT(*) FROM memories")
+        count    = await conn.fetchval(
+            "SELECT reltuples::bigint FROM pg_class WHERE relname = 'memories'"
+        ) or 0
         by_src   = await conn.fetch(
             "SELECT source, COUNT(*) as n FROM memories GROUP BY source ORDER BY n DESC"
         )

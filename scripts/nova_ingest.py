@@ -47,7 +47,7 @@ import nova_config
 
 VERSION       = "1.3.0"
 MEMORY_URL    = "http://192.168.1.6:18790/remember"
-SEARXNG_URL   = "http://127.0.0.1:8888/search"
+SEARXNG_URL   = "http://192.168.1.10:8080/search"
 SLACK_CHANNEL = nova_config.SLACK_NOTIFY
 STATE_DIR     = Path.home() / ".openclaw/workspace/state/ingest"
 LOG_FILE      = Path.home() / ".openclaw/logs/nova_ingest.log"
@@ -380,6 +380,54 @@ def truncate_at_boundary(text, max_chars=2000):
 def text_hash(t):
     return hashlib.md5(t.strip().encode()).hexdigest()
 
+
+# ── Quality Gate ──────────────────────────────────────────────────────────────
+
+_TRIVIAL_TOPICS = {
+    "list of", "lists of", "template:", "category:", "portal:", "module:",
+    "wikipedia:", "file:", "help:", "talk:", "user:", "draft:",
+    "toilet paper", "exploding whale", "wife carrying", "cheese rolling",
+    "duck test", "emu war", "list of unusual", "list of fictional",
+    "blue waffle", "nutmeg challenge", "tide pod", "cinnamon challenge",
+}
+
+_BFS_MAX_DEPTH = 3  # max link hops from seed page
+
+
+def _title_to_words(title):
+    return set(re.sub(r"[^a-z0-9\s]", "", title.lower()).split())
+
+
+def is_relevant_link(link_title, seed_query, vector_name, depth=0):
+    """Decide if a Wikipedia link title is worth following for this ingest."""
+    lt = link_title.lower()
+    for triv in _TRIVIAL_TOPICS:
+        if triv in lt:
+            return False
+    if depth >= _BFS_MAX_DEPTH:
+        return False
+    seed_words = _title_to_words(seed_query)
+    vector_words = set(vector_name.lower().replace("_", " ").split())
+    link_words = _title_to_words(link_title)
+    overlap = link_words & (seed_words | vector_words)
+    if overlap:
+        return True
+    if depth <= 1:
+        return True
+    return False
+
+
+def page_relevance_check(text, seed_query, vector_name):
+    """Quick relevance check — does the page content relate to the topic?"""
+    if not text or len(text) < 200:
+        return False
+    sample = text[:2000].lower()
+    seed_words = _title_to_words(seed_query)
+    vector_words = set(vector_name.lower().replace("_", " ").split())
+    check_words = seed_words | vector_words
+    hits = sum(1 for w in check_words if w in sample and len(w) > 3)
+    return hits >= 1
+
 def remember(text, source, meta, done_hashes, dry_run=False):
     h = text_hash(text)
     if h in done_hashes:
@@ -596,6 +644,9 @@ def run_wikipedia(query, vector, target, state, dry_run, timeout_hours=0):
            (f" \xb7 Timeout: {timeout_hours}h" if timeout_hours else "") +
            ("  (DRY RUN)" if dry_run else ""))
 
+    _depth_map = {start: 0}
+    _skipped = 0
+
     while queue and ct < target and not _shutdown:
         if _deadline and time.time() >= _deadline:
             log(f"Timeout reached ({timeout_hours}h) — stopping at {ct} chunks")
@@ -613,6 +664,10 @@ def run_wikipedia(query, vector, target, state, dry_run, timeout_hours=0):
             save_state(jid, state)
             continue
         done_urls.add(url)
+        current_depth = _depth_map.get(url, 0)
+        if not page_relevance_check(text, query, vector):
+            _skipped += 1
+            continue
         text     = clean_text(text)
         ingested = 0
         for chunk in chunk_prose(text):
@@ -632,7 +687,7 @@ def run_wikipedia(query, vector, target, state, dry_run, timeout_hours=0):
             "items_total":  max(items_done + len(queue), state.get("items_total", 0)),
         })
         save_state(jid, state)
-        log(f"  [{ct}/{target}] {title} -> {ingested} chunks (q:{len(queue)})")
+        log(f"  [{ct}/{target}] {title} -> {ingested} chunks (q:{len(queue)} skip:{_skipped})")
         nxt = queue[0].split("/wiki/")[-1].replace("_", " ") if queue else None
         if time.time() - _last_notify[0] >= 300:
             notify_item(title, vector, ingested, 0,
@@ -641,7 +696,11 @@ def run_wikipedia(query, vector, target, state, dry_run, timeout_hours=0):
             _last_notify[0] = time.time()
         for lnk in links:
             if lnk not in done_urls:
-                queue.append(lnk)
+                lnk_title = urllib.parse.unquote(lnk.split("/wiki/")[-1]).replace("_", " ")
+                child_depth = current_depth + 1
+                if is_relevant_link(lnk_title, query, vector, depth=child_depth):
+                    _depth_map[lnk] = child_depth
+                    queue.append(lnk)
     _finish(jid, query, vector, ct, target, items_done, len(failed), dry_run)
 
 # ---------------------------------------------------------------------------
