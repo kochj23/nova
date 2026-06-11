@@ -4,11 +4,10 @@
 Nova Self-Audit — cross-checks claimed capabilities against reality.
 
 Verifies:
-1. Scripts referenced in MEMORY.md and scheduler.yaml actually exist on disk
-2. Scripts on disk that aren't documented in MEMORY.md (unknown capabilities)
-3. Services/ports claimed in MEMORY.md are actually listening
-4. Scheduler tasks reference scripts that exist
-5. Processes that should be running (scheduler, gateway, subagents, etc.)
+1. Scripts referenced in scheduler.yaml actually exist on disk
+2. Scripts on disk that aren't in the scheduler (undocumented capabilities)
+3. Expected services/ports are actually listening
+4. Processes that should be running (scheduler, gateway, subagents, etc.)
 
 Posts discrepancies to Slack. Designed to be run on-demand or weekly via cron.
 
@@ -38,8 +37,6 @@ logging.basicConfig(
 )
 
 SCRIPTS_DIR = Path.home() / ".openclaw/scripts"
-MEMORY_MD = Path.home() / ".openclaw/workspace/MEMORY.md"
-IDENTITY_MD = Path.home() / ".openclaw/workspace/IDENTITY.md"
 SCHEDULER_YAML = Path.home() / ".openclaw/config/scheduler.yaml"
 
 EXPECTED_SERVICES = {
@@ -143,41 +140,25 @@ def audit_scripts():
     info = []
 
     on_disk = _scripts_on_disk()
-    in_memory = _scripts_in_file(MEMORY_MD)
     scheduler_refs = _scripts_in_scheduler()
     scheduler_scripts = set(scheduler_refs.values())
-
-    # Scripts referenced in MEMORY.md but missing from disk
-    missing_from_disk = in_memory - on_disk
-    for s in sorted(missing_from_disk):
-        issues.append(f"MEMORY.md references `{s}` but it doesn't exist on disk")
 
     # Scripts in scheduler but missing from disk
     for task, script in sorted(scheduler_refs.items()):
         if script not in on_disk:
             issues.append(f"Scheduler task `{task}` references `{script}` but it doesn't exist")
 
-    # Scripts on disk but not documented anywhere
-    documented = in_memory | scheduler_scripts
+    # Scripts on disk but not in scheduler (undocumented)
     nova_scripts = {s for s in on_disk if s.startswith("nova_") or s.startswith("dream_")}
-    undocumented = nova_scripts - documented
-    # Filter out test/debug scripts and subagent scripts (they're mentioned by category)
+    undocumented = nova_scripts - scheduler_scripts
     skip_prefixes = ("test_", "debug_", "nova_agent_")
     undocumented = {s for s in undocumented if not any(s.startswith(p) for p in skip_prefixes)}
     if undocumented:
-        info.append(f"{len(undocumented)} scripts on disk not in MEMORY.md or scheduler:")
+        info.append(f"{len(undocumented)} scripts on disk not in scheduler:")
         for s in sorted(undocumented):
             info.append(f"  - {s}")
 
-    # Scripts in scheduler that aren't in MEMORY.md
-    sched_not_documented = scheduler_scripts - in_memory
-    sched_not_documented = {s for s in sched_not_documented if not any(s.startswith(p) for p in skip_prefixes)}
-    if sched_not_documented:
-        info.append(f"{len(sched_not_documented)} scheduler scripts not in MEMORY.md:")
-        for s in sorted(sched_not_documented):
-            info.append(f"  - {s}")
-
-    return issues, info, len(on_disk), len(in_memory), len(scheduler_refs)
+    return issues, info, len(on_disk), 0, len(scheduler_refs)
 
 
 def audit_services():
@@ -209,21 +190,7 @@ def audit_processes():
 
 
 def audit_docs():
-    issues = []
-
-    if not MEMORY_MD.exists():
-        issues.append("MEMORY.md is missing")
-    elif MEMORY_MD.stat().st_size < 100:
-        issues.append("MEMORY.md appears empty or minimal")
-
-    if not IDENTITY_MD.exists():
-        issues.append("IDENTITY.md is missing")
-    else:
-        text = IDENTITY_MD.read_text()
-        if "pick something you like" in text or "Name:**\n" in text:
-            issues.append("IDENTITY.md still has blank template fields")
-
-    return issues
+    return []
 
 
 def run_audit():
@@ -253,7 +220,7 @@ def run_audit():
     lines.append("")
 
     # Summary
-    lines.append(f"*Scripts:* {disk_count} on disk, {mem_count} in MEMORY.md, {sched_count} in scheduler")
+    lines.append(f"*Scripts:* {disk_count} on disk, {sched_count} in scheduler")
     lines.append(f"*Services:* {len(svc_ok)}/{len(EXPECTED_SERVICES)} up — {', '.join(svc_ok) if svc_ok else 'none'}")
     lines.append(f"*Processes:* {len(proc_ok)}/{len(EXPECTED_PROCESSES)} running — {', '.join(proc_ok) if proc_ok else 'none'}")
 

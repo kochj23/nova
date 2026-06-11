@@ -237,8 +237,25 @@ if port_listening 5432; then
     log "PostgreSQL already running"
 else
     log "Starting PostgreSQL..."
-    brew services start postgresql@17 >/dev/null 2>&1
+    # macOS Tahoe bug: PG 17.9 crashes with "postmaster became multithreaded
+    # during startup" unless LC_ALL is set to a valid locale. brew services /
+    # launchd does not inherit it, so start directly with pg_ctl + LC_ALL.
+    # See memory: pg-17-macos-tahoe-bug
+    export LC_ALL="en_US.UTF-8"
+    export LANG="en_US.UTF-8"
+    PG_DATA="/Volumes/MoreData/postgresql@17"
+    PG_LOG="$PG_DATA/homebrew-log/postgresql@17.log"
+    if [ -d "$PG_DATA" ]; then
+        /opt/homebrew/opt/postgresql@17/bin/pg_ctl -D "$PG_DATA" -l "$PG_LOG" start >/dev/null 2>&1
+    else
+        # Fallback to brew services if data dir not where expected
+        LC_ALL="en_US.UTF-8" LANG="en_US.UTF-8" brew services start postgresql@17 >/dev/null 2>&1
+    fi
 fi
+
+# Also ensure brew services knows PG should be running (survives reboots)
+brew services list 2>/dev/null | grep -q "postgresql@17.*started" || \
+    LC_ALL="en_US.UTF-8" brew services start postgresql@17 >/dev/null 2>&1
 
 # Redis
 if port_listening 6379; then
@@ -265,8 +282,9 @@ else
 fi
 
 # Wait for all four
-wait_for_port 5432  "PostgreSQL" 60
-wait_for_port 6432  "PgBouncer"  15
+# PostgreSQL gets extended timeout for crash recovery (can take 30+ min after unclean shutdown)
+wait_for_port 5432  "PostgreSQL" 600
+wait_for_port 6432  "PgBouncer"  30
 wait_for_port 6379  "Redis"      30
 wait_for_port 11434 "Ollama"     45
 
@@ -274,11 +292,19 @@ wait_for_port 11434 "Ollama"     45
 log ""
 log "── TIER 1: Validation Tests ──"
 
-# PostgreSQL: connection test
-if /opt/homebrew/bin/psql -U kochj -d postgres -c "SELECT 1;" >/dev/null 2>&1; then
+# PostgreSQL: wait for actual query readiness (port open != accepting queries during recovery)
+PG_READY=0
+for i in $(seq 1 60); do
+    if /opt/homebrew/bin/psql -U kochj -d postgres -c "SELECT 1;" >/dev/null 2>&1; then
+        PG_READY=1
+        break
+    fi
+    sleep 5
+done
+if [ "$PG_READY" -eq 1 ]; then
     pass "PostgreSQL: accepts connections"
 else
-    fail "PostgreSQL: cannot connect"
+    fail "PostgreSQL: port open but not accepting queries after 5 min (may still be recovering)"
 fi
 
 # PostgreSQL: nova_memories database exists

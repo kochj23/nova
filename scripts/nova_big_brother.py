@@ -109,9 +109,9 @@ SERVICES = [
     ("MLX Server",    LAN_IP,      5050,  "net.digitalnoise.mlx-server",          False, "/v1/models"),
     ("SwarmUI",       "127.0.0.1", 7801,  None,                                   False, None),
     ("ComfyUI",       "127.0.0.1", 8188,  None,                                   False, None),
-    ("TinyChat",      LAN_IP,      8000,  "net.digitalnoise.tinychat",            False, None),
+    ("TinyChat",      "192.168.1.10", 8000, None,                                  False, None),
     ("OpenWebUI",     LAN_IP,      3000,  "net.digitalnoise.openwebui",           False, None),
-    ("SearXNG",       "127.0.0.1", 8888,  "net.digitalnoise.searxng",             False, None),
+    ("SearXNG",       "192.168.1.10", 8080, None,                                  False, None),
     # ── Channels ─────────────────────────────────────────────────────────────
     ("Signal-cli",    "127.0.0.1", 8080,  None,                                   False, None),
     # ── Nova apps ────────────────────────────────────────────────────────────
@@ -123,6 +123,10 @@ SERVICES = [
     ("Plex",          PLEX_IP,     32400, None,                                   False, "/web"),
     ("HDHomeRun",     HDHR_IP,     80,    None,                                   False, None),
     ("UNAS Pro 8",    "192.168.1.69", 443, None,                                  False, None),  # HTTPS+auth required; TCP port check only
+    # ── TV-Movies macmini (192.168.1.7) ──────────────────────────────────────
+    ("Grafana (TV)",  "192.168.1.7", 3000, None,                                  False, "/api/health"),
+    ("go2rtc (TV)",   "192.168.1.7", 1984, None,                                  False, None),
+    ("Homebridge (TV)","192.168.1.7", 8581, None,                                  False, None),
 ]
 
 # Services that are monitored (shown in dashboard) but never trigger alerts.
@@ -142,7 +146,15 @@ LAUNCHD_MONITORED = [
 EXTERNAL_CHECKS = [
     ("Synology NAS",  NAS_IP,   5001),
     ("UniFi",         UNIFI_IP, 443),
+    ("Wazuh",         "192.168.1.7", 9200),
 ]
+
+# Wazuh SIEM — poll for high-severity alerts
+WAZUH_INDEXER_URL = "https://192.168.1.7:9200"
+WAZUH_INDEXER_USER = "admin"
+WAZUH_INDEXER_PASS = "admin"
+WAZUH_ALERT_LEVEL_THRESHOLD = 10  # Only surface alerts at level 10+
+WAZUH_POLL_INTERVAL = 300  # Poll every 5 minutes (not every sweep)
 
 # Volume mounts that must be accessible for Nova to function
 REQUIRED_MOUNTS = [
@@ -225,6 +237,8 @@ _gpu_escalated_this_cycle: bool = False
 _internet_down: bool = False
 _internet_down_since: float = 0.0
 _internet_down_alerted: bool = False
+_wazuh_last_poll: float = 0.0
+_wazuh_last_alert_id: str = ""
 DISCORD_STRIKE_THRESHOLD = 3
 
 # External LAN check failure dampening — require 2 consecutive failures before alerting.
@@ -453,6 +467,99 @@ def _build_metrics_summary() -> str:
     return "\n".join(lines)
 
 
+def _check_wazuh_alerts(issues: list):
+    """Poll Wazuh indexer for high-severity alerts since last check."""
+    global _wazuh_last_poll, _wazuh_last_alert_id
+    import base64
+    import ssl
+
+    now = time.time()
+    if now - _wazuh_last_poll < WAZUH_POLL_INTERVAL:
+        return
+    _wazuh_last_poll = now
+
+    try:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        creds = base64.b64encode(
+            f"{WAZUH_INDEXER_USER}:{WAZUH_INDEXER_PASS}".encode()
+        ).decode()
+
+        query = json.dumps({
+            "size": 20,
+            "sort": [{"timestamp": {"order": "desc"}}],
+            "query": {
+                "bool": {
+                    "must": [
+                        {"range": {"rule.level": {"gte": WAZUH_ALERT_LEVEL_THRESHOLD}}},
+                        {"range": {"timestamp": {"gte": "now-5m"}}},
+                    ]
+                }
+            }
+        }).encode()
+
+        req = urllib.request.Request(
+            f"{WAZUH_INDEXER_URL}/wazuh-alerts-*/_search",
+            data=query,
+            headers={
+                "Authorization": f"Basic {creds}",
+                "Content-Type": "application/json",
+            },
+            method="POST",
+        )
+        resp = urllib.request.urlopen(req, timeout=10, context=ctx)
+        data = json.loads(resp.read())
+
+        hits = data.get("hits", {}).get("hits", [])
+        if not hits:
+            return
+
+        new_alerts = []
+        for hit in hits:
+            src = hit.get("_source", {})
+            alert_id = hit.get("_id", "")
+            if alert_id == _wazuh_last_alert_id:
+                break
+            rule = src.get("rule", {})
+            agent = src.get("agent", {})
+            new_alerts.append({
+                "level": rule.get("level", 0),
+                "desc": rule.get("description", "unknown"),
+                "agent": agent.get("name", "unknown"),
+                "groups": rule.get("groups", []),
+            })
+
+        if hits:
+            _wazuh_last_alert_id = hits[0].get("_id", "")
+
+        if not new_alerts:
+            return
+
+        for alert in new_alerts[:5]:
+            level = alert["level"]
+            desc = alert["desc"]
+            agent_name = alert["agent"]
+            groups = ", ".join(alert["groups"][:3])
+            issues.append(f"Wazuh L{level} [{agent_name}]: {desc}")
+            _record_event(
+                "critical" if level >= 12 else "warning",
+                f"Wazuh alert L{level} on {agent_name}: {desc}",
+                f"Groups: {groups}. Check Wazuh dashboard: https://192.168.1.7",
+                "Wazuh",
+            )
+
+        if len(new_alerts) > 5:
+            issues.append(f"Wazuh: {len(new_alerts) - 5} more high-severity alerts (check dashboard)")
+
+        log(f"[wazuh] {len(new_alerts)} high-severity alert(s) in last 5m",
+            level=LOG_WARN, source="big-brother")
+
+    except Exception as e:
+        log(f"[wazuh] Poll failed (non-fatal): {e}", level=LOG_INFO, source="big-brother")
+
+
 def _canary_check() -> str | None:
     """Ask a local model if anything looks wrong that rules might miss.
 
@@ -524,7 +631,7 @@ _journal_image_status: dict = {
 GPU_CONTENTION_THRESHOLD = 2         # N+ GPU procs in U/UN state = contention
 GPU_CONTENTION_DURATION = 60         # seconds in contention before acting
 GPU_KILL_COOLDOWN = 300              # 5 min between kills
-OLLAMA_LATENCY_TIMEOUT = 30          # seconds — if generate takes longer, GPU is hung
+OLLAMA_LATENCY_TIMEOUT = 90          # seconds — 30B model cold-load can take 45-60s on Metal
 
 _gpu_contention_first_seen: float = 0.0   # timestamp when contention first detected (0 = not in contention)
 _gpu_last_kill: float = 0.0               # timestamp of last whisper kill action
@@ -3575,6 +3682,44 @@ def _full_sweep():
                                   "Restore script or disable task in scheduler.yaml", "Scheduler")
     except Exception:
         pass
+
+    # ── Kernel zone map usage (crash prevention — 2026-06-11 incident) ─────
+    try:
+        zp = subprocess.run(["sudo", "-n", "zprint"], capture_output=True, text=True, timeout=10)
+        if zp.returncode == 0:
+            for line in zp.stdout.splitlines():
+                if line.startswith("data.kalloc.1024 "):
+                    parts = line.split()
+                    cur_size = parts[2] if len(parts) > 2 else "0K"
+                    size_mb = float(cur_size.rstrip("KMG"))
+                    if "G" in cur_size:
+                        size_mb *= 1024
+                    elif "K" in cur_size:
+                        size_mb /= 1024
+                    if size_mb > 5120:  # 5GB threshold
+                        issues.append(f"KERNEL ZONE ALERT: data.kalloc.1024 at {size_mb:.0f}MB (>5GB)")
+                        _record_event("critical",
+                                      f"Kernel zone data.kalloc.1024 at {size_mb:.0f}MB — approaching zone map exhaustion",
+                                      "Reboot soon to prevent kernel panic. See postmortem 2026-06-11.",
+                                      "System")
+                        _notify(
+                            f":rotating_light: *KERNEL ZONE ALERT*\n"
+                            f"`data.kalloc.1024` is at {size_mb:.0f}MB (threshold: 5GB)\n"
+                            f"This zone leaked to 20GB before the 2026-06-11 kernel panic.\n"
+                            f"Consider rebooting before zone map exhaustion.",
+                            is_critical=True,
+                        )
+                    elif size_mb > 2048:  # 2GB warning
+                        _record_event("warning",
+                                      f"Kernel zone data.kalloc.1024 elevated: {size_mb:.0f}MB",
+                                      "Monitor for growth — may indicate kernel memory leak",
+                                      "System")
+                    break
+    except Exception:
+        pass
+
+    # ── Wazuh SIEM alert polling (every 5 min) ─────────────────────────────
+    _check_wazuh_alerts(issues)
 
     # ── Fresh-Eyes Canary Check (every 10 min, not every sweep) ────────────
     # Ask a local LLM to review metrics for anomalies rules might miss.
