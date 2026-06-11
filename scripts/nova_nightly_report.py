@@ -22,6 +22,12 @@ import urllib.parse
 from datetime import datetime, date, timedelta
 from pathlib import Path
 import nova_config
+try:
+    from nova_ops_context import get_full_context, format_security_brief, format_infra_brief
+except ImportError:
+    def get_full_context(hours=24): return {}
+    def format_security_brief(ctx): return ""
+    def format_infra_brief(ctx): return ""
 
 
 VECTOR_MEM_URL = "http://192.168.1.6:18790/remember"

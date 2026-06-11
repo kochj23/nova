@@ -31,6 +31,12 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 from nova_image_utils import generate_image
+try:
+    from nova_ops_context import get_full_context, format_security_brief, format_infra_brief
+except ImportError:
+    def get_full_context(hours=24): return {}
+    def format_security_brief(ctx): return ""
+    def format_infra_brief(ctx): return ""
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -501,6 +507,16 @@ def main():
     log("Starting daily ops article")
 
     ops_data = gather_ops_data()
+
+    # Enrich with unified security + infra context
+    full_ctx = get_full_context(24)
+    ops_data["security_brief"] = format_security_brief(full_ctx)
+    ops_data["infra_brief"] = format_infra_brief(full_ctx)
+    ops_data["wazuh_events"] = full_ctx.get("security", {}).get("security_event_count", 0)
+    ops_data["threat_scores"] = full_ctx.get("security", {}).get("threat_scores", {})
+    ops_data["firewall_blocks"] = full_ctx.get("syslog", {}).get("firewall_blocks", 0)
+    ops_data["open_incidents"] = full_ctx.get("security", {}).get("open_incidents", [])
+
     log(f"Gathered ops data: {len(ops_data)} sources")
 
     article = generate_article(ops_data)

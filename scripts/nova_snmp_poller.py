@@ -128,6 +128,14 @@ DEVICE_INTERFACES = {
     "lts01-pi": [0],            # eth0
     "nuk": [0],                 # primary
     "mac-mini": [0],            # primary
+    "sw-jordan-16p": [1],       # uplink port
+    "sw-rack13-16p": [1],       # uplink port
+    "sw-rack15-agg-8p": [1],    # uplink port
+    "sw-patio-16p": [1],        # uplink port
+    "sw-garage-desk-8p": [1],   # uplink port
+    "ap-office-u6e": [1],       # LAN interface
+    "ap-kitchen-u6e": [1],      # LAN interface
+    "ap-garage-u6e": [1],       # LAN interface
 }
 
 # ── OID Definitions ───────────────────────────────────────────────────────────

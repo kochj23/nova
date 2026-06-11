@@ -838,3 +838,9 @@ tasks:
     timeout: 2700
     overlap: skip
     group: llm
+
+  wazuh_bridge:
+    script: nova_wazuh_bridge.py
+    schedule: every 2m
+    timeout: 60
+    overlap: skip

@@ -54,6 +54,13 @@ CONTENT_DIR.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
 
+# ── Ops Context (Wazuh + Big Brother + SNMP + syslog) ─────────────────────────
+try:
+    from nova_ops_context import get_full_context, format_security_brief
+except ImportError:
+    def get_full_context(hours=24): return {}
+    def format_security_brief(ctx): return ""
+
 # ── Logging ───────────────────────────────────────────────────────────────────
 
 def log(msg: str):
@@ -257,6 +264,12 @@ def generate_daily_briefing():
     """Generate the daily PDB-style security briefing."""
     log("=== Generating daily security briefing ===")
 
+    # Get unified ops/security context from Wazuh, BB, SNMP, syslog
+    ops_ctx = get_full_context(24)
+    ops_brief = format_security_brief(ops_ctx)
+    log(f"Ops context: {ops_ctx.get('security', {}).get('security_event_count', 0)} security events, "
+        f"{ops_ctx.get('syslog', {}).get('firewall_blocks', 0)} firewall blocks")
+
     memories = get_recent_security_memories(24)
     if not memories:
         log("No security memories in last 24h — skipping")
@@ -312,6 +325,9 @@ INTELLIGENCE FROM LAST 24 HOURS (Nova's ingested feeds — CISA, NCSC, FBI, Kreb
 
 LIVE NEWS SEARCH RESULTS:
 {news_block}
+
+INFRASTRUCTURE SECURITY (Wazuh SIEM + Big Brother + syslog — YOUR network, last 24h):
+{ops_brief}
 
 Write the PDB. If a section has no significant activity, mark it NOSIG and move on. Do not invent threats."""
 

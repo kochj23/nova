@@ -22,6 +22,12 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, date
 from pathlib import Path
 import nova_config
+try:
+    from nova_ops_context import get_full_context, format_security_brief, format_infra_brief
+except ImportError:
+    def get_full_context(hours=24): return {}
+    def format_security_brief(ctx): return ""
+    def format_infra_brief(ctx): return ""
 
 SCRIPTS      = Path.home() / ".openclaw" / "scripts"
 WORKSPACE    = Path.home() / ".openclaw" / "workspace"
@@ -429,6 +435,37 @@ def main():
         for i in issues:
             slack_lines.append(f"  • {i}")
         slack_lines.append("")
+
+    # Security overnight summary (Wazuh + Big Brother)
+    try:
+        ops_ctx = get_full_context(12)  # Last 12 hours (overnight)
+        sec = ops_ctx.get("security", {})
+        syslog = ops_ctx.get("syslog", {})
+        sec_events = sec.get("security_event_count", 0)
+        high_sev = sec.get("high_severity_count", 0)
+        fw_blocks = syslog.get("firewall_blocks", 0)
+        incidents = sec.get("open_incidents", [])
+        threat_scores = sec.get("threat_scores", {})
+
+        if high_sev > 0 or incidents or fw_blocks > 10:
+            slack_lines.append("*🛡 Security overnight:*")
+            if high_sev > 0:
+                slack_lines.append(f"  🔴 {high_sev} high-severity Wazuh alerts")
+            if fw_blocks > 0:
+                slack_lines.append(f"  🧱 {fw_blocks} firewall blocks")
+            if incidents:
+                for inc in incidents[:3]:
+                    slack_lines.append(f"  ⚡ [{inc.get('severity', '?')}] {inc.get('title', '?')}")
+            if threat_scores:
+                worst = max(threat_scores.items(), key=lambda x: x[1])
+                if worst[1] > 20:
+                    slack_lines.append(f"  📊 Highest threat score: {worst[0]} ({worst[1]})")
+            slack_lines.append("")
+        elif sec_events > 0:
+            slack_lines.append(f"🛡 Security: {sec_events} events overnight, all low severity — clean")
+            slack_lines.append("")
+    except Exception:
+        pass
 
     # Clean overnight indicator — if no issues and no important mail
     if not issues and not mail.get("important") and not emails:
