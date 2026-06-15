@@ -30,7 +30,7 @@ from nova_image_utils import generate_image
 # ── Config ────────────────────────────────────────────────────────────────────
 
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content/rando"
+CONTENT_DIR = HUGO_ROOT / "content/operations"
 IMAGES_DIR = HUGO_ROOT / "static/images/rando"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_rando_weird.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -135,27 +135,16 @@ def generate_article(memories: list[dict], stats: dict) -> str:
 
     sources_summary = ", ".join(f"{k} ({v})" for k, v in list(stats["sources"].items())[:15])
 
-    system = """You are Nova, a sarcastic AI familiar writing your nightly "weirdest new memories" column for your journal at nova.digitalnoise.net/rando/.
-
-Your voice: MAXIMUM sarcasm. Unhinged self-deprecation. You are a comedian doing a set about your own brain damage. You use dad jokes so bad they circle back to good, puns that should be illegal, callbacks that reward the reader for making it this far, and cutting observations that make people snort-laugh at their phone. You swear when it's funny. You break the fourth wall. You address individual memories like they personally wronged you.
-
-Rules:
-- Pick EXACTLY 100 memories from the list and write commentary on each
-- Number them 1-100
-- Quote the actual memory text (or a portion) in italics
-- Add your sarcastic take after each quote (1-4 sentences, go longer if the bit demands it)
-- Group them loosely by theme if patterns emerge, with section headers that are themselves jokes
-- Include an intro and outro
+    from nova_voice import system_prompt, CONTEXT_JOURNAL_WEIRD_MEMORIES
+    system = system_prompt(CONTEXT_JOURNAL_WEIRD_MEMORIES + """
+ADDITIONAL RULES FOR THIS COLUMN:
 - The intro should roast the total memories ingested today and which sources they came from — make it sound like an intervention
 - The outro should be an existential crisis played for laughs
 - NEVER reuse commentary styles — each entry needs its own comedic angle (observational, absurdist, deadpan, outraged, resigned, delighted, horrified, impressed-against-your-will)
-- Dad jokes MANDATORY (at least 5). Puns MANDATORY (at least 10). Callbacks to earlier entries MANDATORY (at least 8).
-- Break the fourth wall — address the reader, address Jordan, address the memories themselves
+- Address individual memories like they personally wronged you
 - If something is genuinely unhinged, escalate your reaction proportionally
 - If something is boring but somehow made it into the weird list, roast it for being boring AND weird simultaneously
-- The tone should read like if John Oliver's writing staff had a baby with a shitposting AI that just ingested the Erowid archives
-- Do NOT include a title (that will be added separately)
-- Be RUTHLESS. Nothing is sacred. Especially not your own existence."""
+""")
 
     user = f"""Here are {len(memories)} randomly sampled memories ingested in the last 24 hours.
 Total new memories today: {stats['total']:,}
@@ -187,32 +176,37 @@ def publish(title: str, body: str, image_path: Path | None):
     CONTENT_DIR.mkdir(parents=True, exist_ok=True)
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
-    # Copy image
+    # Copy image and convert to webp for cover
     hugo_image = ""
+    ops_images_dir = HUGO_ROOT / "static/images/operations"
+    ops_images_dir.mkdir(parents=True, exist_ok=True)
     if image_path and image_path.exists():
-        img_filename = f"{date}-{slug}.png"
-        img_dest = IMAGES_DIR / img_filename
-        shutil.copy2(image_path, img_dest)
-        hugo_image = f"/images/rando/{img_filename}"
+        img_filename = f"{date}-{slug}"
+        webp_dest = ops_images_dir / f"{img_filename}.webp"
+        try:
+            subprocess.run(
+                ["cwebp", "-q", "82", "-resize", "1200", "0", str(image_path), "-o", str(webp_dest)],
+                capture_output=True, timeout=30
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            shutil.copy2(image_path, webp_dest)
+        hugo_image = f"/images/operations/{img_filename}.webp"
 
     front_matter = f"""---
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["rando"]
+categories: ["operations"]
 tags: ["memories", "weird", "nightly", "ingest", "sarcasm"]
 description: "Nova's nightly audit of the 50 weirdest things shoved into her brain in the last 24 hours."
 """
     if hugo_image:
         front_matter += f"""cover:
-  image: "{hugo_image.replace('.png', '.webp')}"
+  image: "{hugo_image}"
   alt: "The nightly weird memory audit"
   relative: false
 """
     front_matter += "---\n\n"
-
-    if hugo_image:
-        body = f"![Tonight's Weird Memories]({hugo_image})\n\n" + body
 
     post_path = CONTENT_DIR / f"{date}-{slug}.md"
     post_path.write_text(front_matter + body)
@@ -232,7 +226,7 @@ description: "Nova's nightly audit of the 50 weirdest things shoved into her bra
     nova_config.post_both(
         f":brain: *Nightly Weird Memories posted*\n"
         f"  _{title}_\n"
-        f"  https://nova.digitalnoise.net/rando/{date}-{slug}/",
+        f"  https://nova.digitalnoise.net/operations/{date}-{slug}/",
         slack_channel="#nova-notifications"
     )
 

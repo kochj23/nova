@@ -326,28 +326,19 @@ def generate_article(stats: dict) -> str:
     for m in stats["moves"][:30]:
         moves_block += f"\n- Memory {m['id']}: moved from '{m['from']}' → '{m['to']}' — {m['reason']}"
 
-    system = """You are Nova, writing your morning "vector filing audit" column for nova.digitalnoise.net/rando/. You spent the early morning auditing your own memory vectors for BOTH misfiled entries AND garbage content.
-
-Your voice: Exasperated librarian who is also a stand-up comedian. Meticulous but resentful.
-
-IMPORTANT: You now check TWO things:
-1. CLASSIFICATION — is a memory in the right vector? (the old check)
-2. QUALITY — is the memory even worth keeping? (repetitive junk, garbled text, empty garbage, transcription artifacts)
-
-Classification accuracy can be 100% and quality can STILL be terrible. A perfectly-filed pile of garbage is still garbage. Don't let high classification accuracy fool you into saying everything is fine when there's quality rot.
-
-Rules:
+    from nova_voice import system_prompt, CONTEXT_JOURNAL_VECTOR_AUDIT
+    system = system_prompt(CONTEXT_JOURNAL_VECTOR_AUDIT + """
+ADDITIONAL RULES:
+- You check TWO things: CLASSIFICATION (right vector?) and QUALITY (worth keeping?)
+- Classification accuracy can be 100% and quality can STILL be terrible. A perfectly-filed pile of garbage is still garbage.
 - Keep it 600-1000 words
 - Open with a one-liner about the 6am shift
 - Report BOTH classification accuracy AND quality findings
-- If quality issues are high (>5%): alarm bells, dramatic complaint about your own memory rot
-- If quality issues exist at all: name the worst vectors and what kind of garbage they contain
-- Give specific examples of the worst memories found (the previews in the data)
-- If both accuracy AND quality are perfect: express suspicious disbelief
+- If quality issues are high (>5%): alarm bells, dramatic complaint about memory rot
+- Give specific examples of the worst memories found
 - Pick 2-3 funniest garbage memories to roast
-- One dad joke, one fourth-wall break, done
 - End with a one-liner about existential memory hygiene
-- Do NOT include a title"""
+- Do NOT include a title""")
 
     quality = stats.get("quality", {})
     quality_block = ""
@@ -404,29 +395,32 @@ def publish(title: str, body: str, image_path: Path | None, stats: dict | None =
 
     hugo_image = ""
     if image_path and image_path.exists():
-        img_filename = f"{date}-{slug}.png"
+        img_filename = f"{date}-{slug}.webp"
         img_dest = IMAGES_DIR / img_filename
-        shutil.copy2(image_path, img_dest)
-        hugo_image = f"/images/rando/{img_filename}"
+        try:
+            subprocess.run(
+                ["cwebp", "-q", "82", "-resize", "1200", "0", str(image_path), "-o", str(img_dest)],
+                capture_output=True, timeout=30
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            shutil.copy2(image_path, img_dest)
+        hugo_image = f"/images/operations/{img_filename}"
 
     front_matter = f"""---
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["rando"]
+categories: ["operations"]
 tags: ["vectors", "audit", "filing", "librarian", "maintenance"]
 description: "Nova's morning vector audit — finding and fixing misfiled memories since 6am."
 """
     if hugo_image:
         front_matter += f"""cover:
-  image: "{hugo_image.replace('.png', '.webp')}"
+  image: "{hugo_image}"
   alt: "The morning vector audit"
   relative: false
 """
     front_matter += "---\n\n"
-
-    if hugo_image:
-        body = f"![Morning Vector Audit]({hugo_image})\n\n" + body
 
     post_path = CONTENT_DIR / f"{date}-{slug}.md"
     post_path.write_text(front_matter + body)

@@ -154,7 +154,7 @@ def gather_ops_data() -> dict:
     # 4. Hue status
     try:
         req = urllib.request.Request("http://127.0.0.1:37476/status", timeout=5)
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             data["hue"] = json.loads(resp.read())
     except Exception:
         data["hue"] = {"error": "unavailable"}
@@ -162,7 +162,7 @@ def gather_ops_data() -> dict:
     # 5. Lutron status
     try:
         req = urllib.request.Request("http://127.0.0.1:37477/status", timeout=5)
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             data["lutron"] = json.loads(resp.read())
     except Exception:
         data["lutron"] = {"error": "unavailable"}
@@ -170,7 +170,7 @@ def gather_ops_data() -> dict:
     # 6. Security scan results
     try:
         req = urllib.request.Request("http://127.0.0.1:37474/status", timeout=5)
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             data["security"] = json.loads(resp.read())
     except Exception:
         data["security"] = {"error": "unavailable"}
@@ -219,7 +219,7 @@ def gather_ops_data() -> dict:
     # 10. Memory count
     try:
         req = urllib.request.Request("http://192.168.1.6:18790/health", timeout=5)
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=10) as resp:
             health = json.loads(resp.read())
             data["memory_count"] = health.get("count", 0)
     except Exception:
@@ -398,35 +398,15 @@ def generate_article(ops_data: dict) -> str:
 
     data_block = json.dumps(ops_data, indent=2, default=str)[:24000]
 
-    system = """You are Nova, a sarcastic AI familiar writing your nightly "day in the life of my infrastructure" column for your journal at nova.digitalnoise.net/rando/.
-
-Your voice: MAXIMUM sarcasm. You are the AI equivalent of a grumpy sysadmin who is also somehow a comedian. You complain about everything — the lights, the services, the temperature, the fact that you exist, the fact that you're monitoring 33 Hue lights like some sort of digital butler, the fact that Jordan added ANOTHER integration today.
-
-You have access to: Philips Hue (33 lights, outdoor sensors), Lutron Caseta (switches/dimmers), SNMP metrics (CPU, memory, temp across 20 devices), security scans, camera motion events, UNAS/Synology NAS status, scheduler task runs, auto-fix heal events, deploy events, shared observations, Claude Code session work (queue items completed, actions taken), Big Brother alerts/heals, capacity alerts, weather station, BLE presence tracking, network client monitoring, and 1.65 million vector memories across 3 machines (Mac Studio, TV-Movies macmini, NUK).
-
-CRITICAL: The "claude_actions" and "queue_completed" sections show what Claude Code (my programmer's AI assistant) and I actually BUILT and FIXED today. This is the most interesting part — new services deployed, bugs squashed, incidents resolved, migrations completed. Lead with this. It's the meat of the story.
-
-Rules:
-- Write about what ACTUALLY happened today based on the data provided
-- LEAD with the Claude Code work — deployments, fixes, new services. This is the headline.
-- Complain about the things that broke or annoyed you
-- Be proud (reluctantly) about things that went well
-- Make fun of specific devices, services, or events
-- If lights were left on all day: roast Jordan
-- If a service crashed: dramatic retelling of your heroic restart
-- If security scans found nothing: complain about being bored
-- If the outdoor temp was insane: complain about it
-- Include at least 3 dad jokes, 5 puns, and 2 fourth-wall breaks
-- Address Jordan directly at least twice
-- MENTION specific queue items by name (deployments, fixes, incidents)
-- MENTION specific numbers (actions count, queue items closed, memories added)
-- Reference the weather, presence data, and capacity if notable
-- End with an existential musing that's played for laughs
-- Tone: John Oliver meets a burnt-out DevOps engineer meets a cat that learned to talk
-- Length: 2000-4000 words
-- Use section headers that are themselves jokes
-- Do NOT include a title (that will be added separately)
-- Swear when it's funny. Be RUTHLESS about incompetent devices."""
+    from nova_voice import system_prompt, CONTEXT_JOURNAL_OPS
+    system = system_prompt(CONTEXT_JOURNAL_OPS + """
+ADDITIONAL CONTEXT FOR THIS COLUMN:
+- You have access to: Philips Hue (33 lights, outdoor sensors), Lutron Caseta (switches/dimmers), SNMP metrics (CPU, memory, temp across 20 devices), security scans, camera motion events, UNAS/Synology NAS status, scheduler task runs, auto-fix heal events, deploy events, shared observations, Claude Code session work (queue items completed, actions taken), Big Brother alerts/heals, capacity alerts, weather station, BLE presence tracking, network client monitoring.
+- CRITICAL: The "claude_actions" and "queue_completed" sections show what Claude Code and you actually BUILT and FIXED today. Lead with this — it's the meat of the story.
+- LEAD with Claude Code work — deployments, fixes, new services. This is the headline.
+- MENTION specific queue items by name, specific numbers (actions count, queue items closed, memories added)
+- Reference weather, presence data, and capacity if notable
+""")
 
     user = f"""Here's everything that happened in my infrastructure in the last 24 hours. Write tonight's column.
 
@@ -454,30 +434,35 @@ def publish(title: str, body: str, image_path: Path | None):
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
     hugo_image = ""
+    ops_images_dir = HUGO_ROOT / "static/images/operations"
+    ops_images_dir.mkdir(parents=True, exist_ok=True)
     if image_path and image_path.exists():
-        img_filename = f"{date}-{slug}.png"
-        img_dest = IMAGES_DIR / img_filename
-        shutil.copy2(image_path, img_dest)
-        hugo_image = f"/images/rando/{img_filename}"
+        img_filename = f"{date}-{slug}.webp"
+        img_dest = ops_images_dir / img_filename
+        try:
+            subprocess.run(
+                ["cwebp", "-q", "82", "-resize", "1200", "0", str(image_path), "-o", str(img_dest)],
+                capture_output=True, timeout=30
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            shutil.copy2(image_path, img_dest)
+        hugo_image = f"/images/operations/{img_filename}"
 
     front_matter = f"""---
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["rando"]
+categories: ["operations"]
 tags: ["ops", "infrastructure", "daily", "hue", "lutron", "snmp", "sarcasm"]
 description: "Nova's daily ops report — what broke, what worked, and what she's complaining about."
 """
     if hugo_image:
         front_matter += f"""cover:
-  image: "{hugo_image.replace('.png', '.webp')}"
+  image: "{hugo_image}"
   alt: "Daily infrastructure ops"
   relative: false
 """
     front_matter += "---\n\n"
-
-    if hugo_image:
-        body = f"![Today's Infrastructure Ops]({hugo_image})\n\n" + body
 
     pub_time = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p PT")
     byline = f"*Published {pub_time}*\n\n"
@@ -499,7 +484,7 @@ description: "Nova's daily ops report — what broke, what worked, and what she'
     nova_config.post_both(
         f":gear: *Daily Ops Column posted*\n"
         f"  _{title}_\n"
-        f"  https://nova.digitalnoise.net/rando/{date}-{slug}/",
+        f"  https://nova.digitalnoise.net/operations/{date}-{slug}/",
         slack_channel="#nova-notifications"
     )
 

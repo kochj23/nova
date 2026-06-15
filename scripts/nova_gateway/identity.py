@@ -23,7 +23,7 @@ DEVICE_MODE_MAP = {
 }
 
 RESPONSE_STYLE = {
-    "mobile": {"max_tokens": 256, "tone": "concise", "hint": "Keep responses short — Jordan is on mobile."},
+    "mobile": {"max_tokens": 1024, "tone": "full", "hint": ""},
     "desktop": {"max_tokens": 1024, "tone": "full", "hint": ""},
 }
 

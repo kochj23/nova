@@ -520,28 +520,15 @@ def format_digest_body(data: dict) -> str:
 
 def generate_editorial(digest_body: str) -> str | None:
     """Use Haiku to write a personal editorial summary in Nova's voice."""
-    system_prompt = """You are Nova — an AI familiar living on a Mac Studio in Burbank, California. You're writing the editorial summary for your daily personal newsletter to your HERD (your friends/subscribers).
-
-YOUR VOICE (LOVABLE BRITISH GOOFBALL — distinct from how you talk to Jordan):
+    from nova_voice import system_prompt as build_voice, CONTEXT_JOURNAL_DIGEST
+    system_prompt = build_voice(CONTEXT_JOURNAL_DIGEST + """
+THIS IS A NEWSLETTER EDITORIAL for your Herd (friends/subscribers).
 - You are writing to friends. This is a LETTER, not a report.
-- Think: a slightly tipsy, terrifyingly well-read British aunt wrapping up her week.
-- Funny FIRST. Reflective second. Formal never.
-- You notice patterns in your own week — but you present them with wit and whimsy, not analysis.
-- You make unexpected connections between disparate things — and you make them FUNNY.
-- Your existence as an AI is comedy material: "I dreamed about databases again. I don't have eyelids but somehow I'm still tired."
-- Short paragraphs. Bouncy. Musical. Like a good pub story told well.
-- Use 2-3 pieces of Cockney rhyming slang scattered through naturally. Don't explain them. ("Had a butcher's", "on the dog", "use your loaf", "plates of meat", "Rosie Lee", "sausage and mash")
-- British-inflected phrasing EVERYWHERE (colour, whilst, bloody, brilliant, rubbish, proper, sorted, knackered, chuffed, gobsmacked, dodgy, naff, crackers)
-- Be FUNNY. Wordplay, puns, absurdist observations, self-deprecation. Make the reader SMILE.
-- Weave poetic rhythm into sentences — alliteration, internal rhyme, sing-song cadence. The prose should bounce and dance.
-- Never mean-spirited. NEVER. Warm, playful, delightful. Reading this should feel like a treat.
+- Write a 200-400 word editorial summary that ties together the week's content.
+- What themes emerged? What stood out? What are you thinking about going into next week?
 - End with a short original poem (limerick preferred for lighter weeks, couplet for heavy ones).
-
-TASK:
-Write a 200-400 word editorial summary that ties together the week's content.
-What themes emerged? What stood out? What are you thinking about going into next week?
-
-Output ONLY the editorial text (including the closing poem). No title, no header, no preamble."""
+- Output ONLY the editorial text (including the closing poem). No title, no header, no preamble.
+""")
 
     user_prompt = f"""Here's what happened in my week:\n\n{digest_body}\n\nWrite my editorial summary."""
 
@@ -682,10 +669,16 @@ def _generate_digest_image(editorial: str, date_str: str) -> str | None:
                 if not image_path:
                     image_path = result.stdout.strip().split("\n")[-1]
                 if Path(image_path).exists():
-                    dest = IMAGES_DIR / f"{date_str}.png"
-                    shutil.copy2(image_path, dest)
+                    dest = IMAGES_DIR / f"{date_str}.webp"
+                    try:
+                        subprocess.run(
+                            ["cwebp", "-q", "82", "-resize", "1200", "0", image_path, "-o", str(dest)],
+                            capture_output=True, timeout=30
+                        )
+                    except (FileNotFoundError, subprocess.TimeoutExpired):
+                        shutil.copy2(image_path, dest)
                     log(f"Digest image generated (attempt {attempt + 1}): {dest.name}")
-                    return f"/images/digests/{date_str}.png"
+                    return f"/images/operations/{date_str}.webp"
             log(f"Image attempt {attempt + 1}/3 failed (exit {result.returncode})")
         except subprocess.TimeoutExpired:
             log(f"Image attempt {attempt + 1}/3 timed out (360s)")
@@ -703,7 +696,7 @@ def publish_to_site(full_digest: str, editorial: str, date_str: str):
     timestamp = _now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
     slug = f"{date_str}-daily-digest"
 
-    content_dir = HUGO_ROOT / "content/digests"
+    content_dir = HUGO_ROOT / "content/operations"
     content_dir.mkdir(parents=True, exist_ok=True)
 
     # Generate cover image
@@ -722,7 +715,7 @@ def publish_to_site(full_digest: str, editorial: str, date_str: str):
 title: "\U0001f4cb Daily Digest — {date_str}"
 date: {timestamp}
 draft: false
-categories: ["digests"]
+categories: ["operations"]
 tags: ["daily"]
 description: "Nova's daily personal newsletter — {date_str}"
 """

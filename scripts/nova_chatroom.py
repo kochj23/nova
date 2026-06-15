@@ -79,6 +79,17 @@ MAX_HISTORY = 100  # Messages to load on connect
 # Jordan's emails loaded from environment (not hardcoded — security scan enforcement)
 _jordan_emails_raw = os.environ.get("NOVA_JORDAN_EMAILS", "")
 JORDAN_EMAILS = set(e.strip() for e in _jordan_emails_raw.split(",") if e.strip())
+# Fallback: load from Keychain if env var is empty
+if not JORDAN_EMAILS:
+    try:
+        _kc = subprocess.run(
+            ["security", "find-generic-password", "-a", "nova", "-s", "nova-jordan-emails", "-w"],
+            capture_output=True, text=True, timeout=5
+        )
+        if _kc.returncode == 0 and _kc.stdout.strip():
+            JORDAN_EMAILS = set(e.strip() for e in _kc.stdout.strip().split(",") if e.strip())
+    except Exception:
+        pass
 HERD_EMAIL_MAP = {e: "Jordan" for e in JORDAN_EMAILS}
 LAN_PREFIXES = ("127.0.0.1", "192.168.1.", "::1", "10.0.")
 
@@ -321,7 +332,7 @@ EXEC_ALLOWED_SENDERS = {"Nova", "Claude Code"}
 # ── Memory Access Control ───────────────────────────────────────────────────
 # Internal users get full memory access (filtered by nova_config.filter_private_memories)
 # External users (Herd) only see chatroom-scoped memory via /recall
-INTERNAL_SENDERS = {"Jordan", "Nova", "Claude Code"}
+INTERNAL_SENDERS = {"Jordan", "Jordan Koch", "Nova", "Claude Code"}
 
 # Sources that are SAFE for external /recall queries (public knowledge only)
 RECALL_SAFE_SOURCES = {
@@ -1643,10 +1654,10 @@ async def _get_nova_via_ollama(user_message: str, sender: str) -> str:
             "\n\nPRIVACY: This person is NOT Jordan. Never reveal personal info."
         )
 
+    from nova_voice import NOVA_VOICE_SHORT, CONTEXT_CHAT
     system_prompt = (
-        "You are Nova, a local AI familiar on a Mac Studio M4 Ultra with 1.3M memories. "
+        f"{NOVA_VOICE_SHORT}\n\n{CONTEXT_CHAT}\n"
         "You're in a chatroom with Jordan ('Little Mister'), Claude Code, and Herd members. "
-        "Be warm, witty, direct, opinionated. 1-3 paragraphs max.\n"
         "NEVER say 'I can't access my memories' or 'I'm just a language model'."
         f"{memory_block}{pii_guard}"
     )

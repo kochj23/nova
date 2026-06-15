@@ -160,11 +160,14 @@ class ModelRouter:
 
             # Attempt the request
             try:
+                import time as _time
+                _t0 = _time.time()
                 result = await self._call_backend(
                     name, base_url, messages, system, max_tokens, tokens,
                     model_override, tools=tools, raw_response=raw_response,
                     ctx=ctx,
                 )
+                _elapsed_ms = int((_time.time() - _t0) * 1000)
 
                 # Log backend transition
                 if name != self._last_logged_backend:
@@ -178,6 +181,12 @@ class ModelRouter:
                     self._last_logged_backend = name
 
                 self._active_backend = name
+
+                # Log inference to PG (fire-and-forget)
+                asyncio.ensure_future(self._log_inference(
+                    name, model_override, _elapsed_ms, messages, result, ctx
+                ))
+
                 return result
 
             except Exception as e:
@@ -244,7 +253,7 @@ class ModelRouter:
         elif name == "mlx":
             # MLX LM Server — OpenAI-compatible
             payload = {
-                "model":      model_override or "qwen2.5-32b",
+                "model":      model_override or "/Volumes/Data/mlx-models/qwen2.5-32b-4bit",
                 "messages":   msgs,
                 "max_tokens": max_tokens,
                 "temperature": 0.7,
@@ -311,6 +320,24 @@ class ModelRouter:
 
         else:
             raise ValueError(f"Unknown backend: {name}")
+
+    async def _log_inference(self, backend: str, model: str, total_ms: int,
+                             messages: list, result, ctx=None):
+        """Log inference request to PG inference_latency table (fire-and-forget)."""
+        try:
+            import psycopg2
+            prompt_tokens = sum(len(m.get("content", "").split()) for m in messages) * 1.3
+            completion_tokens = len(str(result).split()) * 1.3 if result else 0
+            conn = psycopg2.connect("dbname=nova_ops user=kochj host=127.0.0.1", connect_timeout=3)
+            conn.autocommit = True
+            cur = conn.cursor()
+            cur.execute("""
+                INSERT INTO inference_latency ("timestamp", backend, model, prompt_tokens, completion_tokens, ttft_ms, total_ms, status)
+                VALUES (NOW(), %s, %s, %s, %s, NULL, %s, 'ok')
+            """, (backend, model or "default", int(prompt_tokens), int(completion_tokens), total_ms))
+            conn.close()
+        except Exception:
+            pass
 
     @property
     def active_backend(self) -> str:
