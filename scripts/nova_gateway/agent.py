@@ -22,6 +22,7 @@ from nova_gateway.config import (
     DISABLE_DURATION, CLAUDE_BRIDGE_SESSION, is_private_content,
 )
 from nova_gateway.context import GatewayContext
+from nova_gateway.identity import get_cross_context, save_cross_context
 from nova_gateway.session import (
     get_pg, log_turn, log_trace, log_degraded_event,
 )
@@ -426,6 +427,75 @@ async def _record_agent_crash(ctx: GatewayContext, agent_id: str, trace_id: str,
         pass
 
 
+# ── Cross-channel summary generation (fire-and-forget) ──────────────────────
+
+OLLAMA_ENDPOINT = "http://127.0.0.1:11434/api/generate"
+SUMMARY_MODEL = "qwen3:0.6b"
+
+
+async def _generate_cross_channel_summary(ctx: GatewayContext, session_id: str, history: list):
+    """Generate a brief summary of recent conversation and save for cross-channel sharing.
+
+    Called as a fire-and-forget task — never blocks the response pipeline.
+    Uses a tiny local model (Ollama qwen3:0.6b) for speed.
+    """
+    try:
+        # Extract channel type from session_id (format: "gw2:slack:C0AMNQ5GX70")
+        parts = session_id.split(":")
+        channel_type = parts[1] if len(parts) > 1 else "unknown"
+
+        # Get last 3 messages for summary
+        recent = history[-3:]
+        convo_text = "\n".join(
+            f"{m['role']}: {m['content'][:200]}" for m in recent
+        )
+
+        # Call Ollama for fast local summarization + topic extraction
+        prompt = (
+            f"Summarize this conversation in 1-2 sentences for context sharing. "
+            f"Then list 2-3 topic keywords.\n\n"
+            f"Conversation:\n{convo_text}\n\n"
+            f"Format your response as:\nSummary: <summary>\nTopics: <comma-separated keywords>"
+        )
+
+        resp = await ctx.http.post(
+            OLLAMA_ENDPOINT,
+            json={"model": SUMMARY_MODEL, "prompt": prompt, "stream": False},
+            timeout=15.0,
+        )
+        if resp.status_code != 200:
+            log.debug(f"Ollama summary call returned {resp.status_code}")
+            return
+
+        result = resp.json().get("response", "").strip()
+        if not result:
+            return
+
+        # Parse summary and topics from response
+        summary = result
+        topics = []
+
+        lines = result.split("\n")
+        for line in lines:
+            if line.lower().startswith("summary:"):
+                summary = line.split(":", 1)[1].strip()
+            elif line.lower().startswith("topics:"):
+                topic_str = line.split(":", 1)[1].strip()
+                topics = [t.strip() for t in topic_str.split(",") if t.strip()][:3]
+
+        # If parsing didn't extract a clean summary, use full response (truncated)
+        if summary == result:
+            summary = result[:300]
+
+        # Save to PG for other channels to pick up
+        pool = await get_pg(ctx)
+        await save_cross_context(pool, channel_type, session_id, summary, topics=topics)
+        log.debug(f"Cross-channel summary saved for {session_id}: {summary[:80]}")
+
+    except Exception as e:
+        log.debug(f"Cross-channel summary generation failed (non-fatal): {e}")
+
+
 # ── Session ID helpers ────────────────────────────────────────────────────────
 
 def session_id(channel: str, channel_id: str) -> str:
@@ -451,6 +521,18 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
     # Load bootstrap docs
     bootstrap = await _load_agent_docs(ctx, agent_id)
     sys_prompt = _system_prompt(agent_id, bootstrap)
+
+    # Cross-channel context injection — share conversation context across channels
+    try:
+        pool = await get_pg(ctx)
+        # session_id format: "gw2:slack:C0AMNQ5GX70" — extract channel type (index 1)
+        parts = session_id.split(":")
+        channel_type = parts[1] if len(parts) > 1 else "unknown"
+        cross_ctx = await get_cross_context(pool, exclude_channel=channel_type)
+        if cross_ctx:
+            sys_prompt = f"{sys_prompt}\n\n[Recent context from other channels]\n{cross_ctx}\n[End cross-context]"
+    except Exception as e:
+        log.debug(f"[{trace_id}] Cross-context injection failed (non-fatal): {e}")
 
     # Memory injection — resilient: continues without context on failure
     try:
@@ -585,6 +667,10 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
         ctx.sessions[session_id] = history
     except Exception as e:
         log.warning(f"[{trace_id}] Failed to store assistant turn: {e}")
+
+    # Cross-channel summary — fire-and-forget if 3+ turns in session
+    if len(history) >= 3:
+        asyncio.create_task(_generate_cross_channel_summary(ctx, session_id, list(history)))
 
     # Log assistant turn
     await log_turn(ctx, session_id, agent_id, "assistant", clean_response,
