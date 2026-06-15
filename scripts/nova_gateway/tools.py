@@ -133,9 +133,9 @@ TOOL_REGISTRY: dict[str, dict] = {
         "required": ["command"],
     },
     "ops_query": {
-        "description": "Query Nova's home and infrastructure data. Use this for ANY question about: temperature/climate (domain=climate or weather), who's on the network (domain=network or devices), power/energy usage (domain=energy), server health/CPU/RAM/disk (domain=capacity), what music/TV is playing (domain=av_state), task list (domain=queue), BLE devices nearby (domain=bluetooth), or room occupancy (domain=presence). Pick the right domain and answer conversationally.",
+        "description": "Query Nova's home and infrastructure data. Use this for ANY question about: temperature/climate (domain=climate or weather), who's on the network (domain=network or devices), power/energy usage (domain=energy), server health/CPU/RAM/disk (domain=capacity), what music/TV is playing (domain=av_state), task list (domain=queue), BLE devices nearby (domain=bluetooth), room occupancy (domain=presence), or who's home (domain=who_is_home). Pick the right domain and answer conversationally.",
         "parameters": {
-            "domain": {"type": "string", "enum": ["observations", "network", "weather", "av_state", "energy", "climate", "meta", "queue", "devices", "bluetooth", "presence", "capacity"], "description": "Which data domain to query"},
+            "domain": {"type": "string", "enum": ["observations", "network", "weather", "av_state", "energy", "climate", "meta", "queue", "devices", "bluetooth", "presence", "capacity", "who_is_home"], "description": "Which data domain to query"},
             "query": {"type": "string", "description": "Optional: natural-language filter or specific question (e.g. 'last 24 hours', 'critical only', 'living room')"},
             "limit": {"type": "integer", "description": "Max rows to return (default 10)"},
         },
@@ -672,6 +672,12 @@ _OPS_QUERIES = {
             ts::text
         FROM capacity_snapshots
         ORDER BY device_name, ts DESC
+    """,
+    "who_is_home": """
+        SELECT person_name, camera, confidence, first_seen::text, last_seen::text, is_home
+        FROM face_presence
+        ORDER BY is_home DESC, last_seen DESC
+        LIMIT {limit}
     """,
 }
 

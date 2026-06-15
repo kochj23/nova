@@ -25,7 +25,8 @@ import sys
 import time
 import importlib.util
 import urllib.request
-from datetime import datetime, date
+import psycopg2
+from datetime import datetime, date, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -45,6 +46,9 @@ CAMERA_FRAMES = WORKSPACE / "camera_frames"
 STATE_FILE = WORKSPACE / "state" / "nova_face_state.json"
 
 SAM_FACES_DIR = Path("/Volumes/Data/Nova/skills/sam-faces/sam_faces")
+
+AWAY_THRESHOLD_MINUTES = 60  # Mark as "away" if not seen for this long
+PG_DSN = "host=localhost dbname=nova_ops user=kochj"
 
 EXTERIOR_CAMERAS = [
     "front_door_latest.jpg",
@@ -100,12 +104,15 @@ def describe_scene(image_path):
 
 
 def _load_sam_faces():
-    """Dynamically import sam-faces identify module."""
-    spec = importlib.util.spec_from_file_location(
-        "identify_faces", SAM_FACES_DIR / "identify_faces.py"
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    """Import sam-faces identify module as a package."""
+    sam_parent = str(SAM_FACES_DIR.parent)
+    if sam_parent not in sys.path:
+        sys.path.insert(0, sam_parent)
+    from sam_faces.identify import identify
+    class _Module:
+        pass
+    mod = _Module()
+    mod.identify = identify
     return mod
 
 
@@ -201,6 +208,86 @@ def save_state(state):
     STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
+# ── Presence tracking ────────────────────────────────────────────────────────
+
+def _get_pg():
+    return psycopg2.connect(PG_DSN)
+
+
+def update_presence(person_name: str, camera: str, confidence: int):
+    """Upsert face_presence row. Returns 'arrived' if newly home, 'seen' if already home."""
+    conn = _get_pg()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM face_people WHERE LOWER(name) = LOWER(%s) LIMIT 1",
+                (person_name,)
+            )
+            row = cur.fetchone()
+            person_id = row[0] if row else person_name.lower()
+
+            # Check current state before upserting
+            cur.execute(
+                "SELECT is_home FROM face_presence WHERE person_id = %s",
+                (person_id,)
+            )
+            existing = cur.fetchone()
+            was_away = existing is None or not existing[0]
+
+            cur.execute("""
+                INSERT INTO face_presence (person_id, person_name, camera, confidence, first_seen, last_seen, is_home)
+                VALUES (%s, %s, %s, %s, NOW(), NOW(), TRUE)
+                ON CONFLICT (person_id) DO UPDATE SET
+                    camera = EXCLUDED.camera,
+                    confidence = EXCLUDED.confidence,
+                    last_seen = NOW(),
+                    is_home = TRUE
+            """, (person_id, person_name, camera, confidence))
+            conn.commit()
+
+            return "arrived" if was_away else "seen"
+    finally:
+        conn.close()
+
+
+def mark_departed():
+    """Mark people as not home if not seen for AWAY_THRESHOLD_MINUTES. Returns list of departed names."""
+    conn = _get_pg()
+    departed = []
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE face_presence
+                SET is_home = FALSE
+                WHERE is_home = TRUE
+                  AND last_seen < NOW() - INTERVAL '%s minutes'
+                RETURNING person_name
+            """, (AWAY_THRESHOLD_MINUTES,))
+            departed = [row[0] for row in cur.fetchall()]
+            conn.commit()
+    finally:
+        conn.close()
+    return departed
+
+
+def get_who_is_home() -> list[dict]:
+    """Query who is currently home."""
+    conn = _get_pg()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT person_name, camera, confidence, last_seen
+                FROM face_presence WHERE is_home = TRUE
+                ORDER BY last_seen DESC
+            """)
+            return [
+                {"name": r[0], "camera": r[1], "confidence": r[2], "last_seen": r[3].isoformat()}
+                for r in cur.fetchall()
+            ]
+    finally:
+        conn.close()
+
+
 # ── Main scan ────────────────────────────────────────────────────────────────
 
 def scan_cameras():
@@ -268,7 +355,7 @@ def scan_cameras():
 
 
 def post_detections(detections):
-    """Post face detections to Slack and vector memory."""
+    """Post face detections to Slack and vector memory, update presence."""
     if not detections:
         return
 
@@ -277,13 +364,26 @@ def post_detections(detections):
 
     if known:
         lines = []
+        arrivals = []
         for d in known:
+            status = update_presence(d["name"], d["camera"], d["confidence"])
+            if status == "arrived":
+                arrivals.append(d["name"])
             lines.append(f"*{d['name']}* seen at {d['camera']} ({d['confidence']}% match)")
             vector_remember(
                 f"{d['name']} detected at {d['camera']} on {TODAY} at {NOW.strftime('%H:%M')}",
                 {"date": TODAY, "type": "face_known", "person": d["name"], "camera": d["camera"]}
             )
-        slack_post(":bust_in_silhouette: *Face Detection*\n" + "\n".join(f"  {l}" for l in lines))
+
+        if arrivals:
+            for name in arrivals:
+                slack_post(f":house_with_garden: *{name} arrived home* — {NOW.strftime('%I:%M %p')}")
+                vector_remember(
+                    f"{name} arrived home on {TODAY} at {NOW.strftime('%H:%M')}",
+                    {"date": TODAY, "type": "presence_arrived", "person": name}
+                )
+        else:
+            slack_post(":bust_in_silhouette: *Face Detection*\n" + "\n".join(f"  {l}" for l in lines))
 
     if unknown:
         for d in unknown:
@@ -321,25 +421,46 @@ def main():
 
     post_detections(detections)
 
+    departed = mark_departed()
+    for name in departed:
+        log(f"Departure: {name} marked away (not seen for {AWAY_THRESHOLD_MINUTES}min)")
+        slack_post(f":wave: *{name} left home* — last seen {AWAY_THRESHOLD_MINUTES}+ min ago")
+        vector_remember(
+            f"{name} departed home on {TODAY} at {NOW.strftime('%H:%M')}",
+            {"date": TODAY, "type": "presence_departed", "person": name}
+        )
+
 
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser(description="Nova Face Recognition")
     parser.add_argument("--scan", action="store_true", help="Scan cameras (default)")
     parser.add_argument("--status", action="store_true", help="Show database status")
+    parser.add_argument("--who-is-home", action="store_true", help="Show who is currently home")
     args = parser.parse_args()
 
-    if args.status:
-        spec = importlib.util.spec_from_file_location("face_db", SAM_FACES_DIR / "face_db.py")
-        db = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(db)
-        db.init_db()
-        people = db.list_people()
-        unknowns = db.list_unknowns()
+    if args.who_is_home:
+        home = get_who_is_home()
+        if home:
+            print(f"{len(home)} person(s) home:")
+            for p in home:
+                print(f"  {p['name']} — last seen at {p['camera']} ({p['confidence']}% confidence, {p['last_seen']})")
+        else:
+            print("Nobody detected home.")
+    elif args.status:
+        sam_parent = str(SAM_FACES_DIR.parent)
+        if sam_parent not in sys.path:
+            sys.path.insert(0, sam_parent)
+        from sam_faces.database import init_db, list_people, list_unknowns
+        init_db()
+        people = list_people()
+        unknowns = list_unknowns()
         print(f"Known people: {len(people)}")
         for p in people:
             print(f"  {p['name']}: {p['encoding_count']} encoding(s)")
         print(f"Unresolved unknowns: {len(unknowns)}")
         print(f"Exterior cameras: {len(EXTERIOR_CAMERAS)}")
+        home = get_who_is_home()
+        print(f"Currently home: {', '.join(p['name'] for p in home) if home else 'nobody'}")
     else:
         main()

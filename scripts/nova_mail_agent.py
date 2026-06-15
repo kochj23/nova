@@ -69,6 +69,8 @@ ENGAGEMENT_FILE      = STATE_DIR / "mail_engagement_scores.json"
 # Gmail folder names
 SENT_FOLDER  = "[Gmail]/Sent Mail"
 TRASH_FOLDER = "[Gmail]/Trash"
+LABEL_PROCESSED = "Nova/Processed"
+LABEL_REPLIED   = "Nova/Replied"
 
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
@@ -721,6 +723,20 @@ def imap_fetch_message(conn: imaplib.IMAP4_SSL, uid: bytes) -> dict:
     }
 
 
+def imap_apply_label(conn: imaplib.IMAP4_SSL, uid: bytes, label: str):
+    """Apply a Gmail label by copying to the label's IMAP folder. Non-fatal on failure."""
+    try:
+        status, _ = conn.uid("COPY", uid, label)
+        if status == "OK":
+            log(f"  Applied label '{label}' to UID {uid.decode()}")
+        else:
+            conn.create(label)
+            conn.uid("COPY", uid, label)
+            log(f"  Created + applied label '{label}' to UID {uid.decode()}")
+    except Exception as e:
+        log(f"  WARNING: label '{label}' failed for UID {uid.decode()}: {e}")
+
+
 def imap_move_to_trash(conn: imaplib.IMAP4_SSL, uid: bytes):
     try:
         conn.uid("COPY", uid, TRASH_FOLDER)
@@ -921,6 +937,7 @@ def main():
                     f"*Preview:* {body[:200].replace(chr(10), ' ')}...\n"
                     f"_(Stored in memory, no reply sent)_"
                 )
+                imap_apply_label(conn, uid, LABEL_PROCESSED)
                 imap_move_to_trash(conn, uid)
                 processed += 1
                 continue
@@ -933,6 +950,7 @@ def main():
                 if not is_addressed_to_nova(to_raw):
                     log(f"  Herd email but Nova not in To: — storing only")
                     vector_remember(f"Email from {msg['from_raw']} re: {subject}. Body: {body[:300]}")
+                    imap_apply_label(conn, uid, LABEL_PROCESSED)
                     imap_move_to_trash(conn, uid)
                     processed += 1
                     continue
@@ -1066,6 +1084,7 @@ def main():
                     replied_threads.add(thread_key)
                     log(f"  [{response_type.upper()}] sent to {len(HERD_REPLY_TO)} herd + CC Jordan ({replies_sent}/{MAX_REPLIES_PER_DAY} today)")
                     imap_save_to_sent(conn, msg_bytes)
+                    imap_apply_label(conn, uid, LABEL_REPLIED)
                 else:
                     log(f"  Reply FAILED")
 
@@ -1098,6 +1117,7 @@ def main():
             if is_known_sender(from_addr):
                 log(f"  Known sender (non-herd) — storing, no reply")
                 vector_remember(f"Email from {from_addr} re: {subject}. Body: {body[:300]}")
+                imap_apply_label(conn, uid, LABEL_PROCESSED)
                 imap_move_to_trash(conn, uid)
                 processed += 1
                 continue
@@ -1111,6 +1131,7 @@ def main():
                 f"*Subject:* {subject}\n"
                 f"*Preview:* {body[:150].replace(chr(10), ' ')}..."
             )
+            imap_apply_label(conn, uid, LABEL_PROCESSED)
             imap_move_to_trash(conn, uid)
             processed += 1
 

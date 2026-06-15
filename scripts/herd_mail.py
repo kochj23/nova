@@ -79,7 +79,7 @@ WAGGLE_IMPORT_ERROR = None
 try:
     from waggle import (
         send_email, check_recently_sent, read_message,
-        list_inbox, download_attachments,
+        list_inbox, download_attachments, move_message,
     )
     WAGGLE_AVAILABLE = True
 except ImportError as e:
@@ -101,6 +101,9 @@ except ImportError as e:
         raise RuntimeError("waggle not installed")
 
     def download_attachments(*args, **kwargs):
+        raise RuntimeError("waggle not installed")
+
+    def move_message(*args, **kwargs):
         raise RuntimeError("waggle not installed")
 
 
@@ -820,6 +823,33 @@ def cmd_check(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
     return 0 if unread else 1
 
 
+def cmd_label(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
+    """Handle the label subcommand — move/label a message."""
+    if not validate_config(cfg, require_smtp=False, require_imap=True):
+        return 1
+
+    try:
+        result = move_message(
+            args.uid,
+            dest_folder=args.label,
+            src_folder=args.folder,
+            config=build_waggle_config(cfg),
+        )
+        if result:
+            logger.info(f"Applied label '{args.label}' to UID {args.uid}")
+            output_json({"uid": args.uid, "label": args.label, "success": True})
+            return 0
+        else:
+            logger.error(f"Failed to apply label '{args.label}' to UID {args.uid}")
+            return 1
+    except (ConnectionError, TimeoutError, OSError) as e:
+        logger.error(f"Failed to apply label: {e}")
+        return 1
+    except Exception as e:
+        logger.error(f"Unexpected error applying label: {e}")
+        return 1
+
+
 def cmd_download(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
     """Handle the download subcommand."""
     if not validate_config(cfg, require_smtp=False, require_imap=True):
@@ -920,6 +950,12 @@ def main() -> int:
     dl_parser.add_argument("--folder", default=DEFAULT_IMAP_FOLDER, help="IMAP folder (default: INBOX)")
     dl_parser.add_argument("--dest-dir", default=".", help="Destination directory (default: .)")
 
+    # label subcommand
+    label_parser = subparsers.add_parser("label", help="Apply a Gmail label to a message")
+    label_parser.add_argument("uid", help="IMAP message UID")
+    label_parser.add_argument("--label", required=True, help="Gmail label to apply (e.g. Nova/Processed)")
+    label_parser.add_argument("--folder", default=DEFAULT_IMAP_FOLDER, help="Source folder (default: INBOX)")
+
     # config subcommand
     subparsers.add_parser("config", help="Validate configuration")
 
@@ -943,6 +979,7 @@ def main() -> int:
         "read": cmd_read,
         "check": cmd_check,
         "download": cmd_download,
+        "label": cmd_label,
         "config": cmd_config,
     }
 
