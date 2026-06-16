@@ -12,7 +12,7 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 
 | Metric | Value |
 |--------|-------|
-| Scripts | 272 Python/Shell (nova_* namespace) |
+| Scripts | 277 Python/Shell (nova_* namespace) |
 | Scheduler tasks | 125 unique |
 | Scheduler runs logged | 81,901 (98.9% success rate) |
 | Vector memories | 1,650,483 unique (deduplicated, HNSW-indexed, 20GB) |
@@ -27,7 +27,11 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 | Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
 | Chatroom | Real-time multi-party chat on port 37480, Nova has full memory access, external via CF tunnel + service token auth |
 | Gauge Dashboard | Live 3D system monitoring — [gauges.digitalnoise.net](https://gauges.digitalnoise.net/gauges) |
-| Grafana | 13 dashboards on TV-Movies (192.168.1.7:3000) — per-host, capacity, SNMP, scheduler, security |
+| Grafana | 31 dashboards on TV-Movies (192.168.1.7:3000) — incl. JARVIS Presence & Activity |
+| Home Assistant | v2025.1.4 on Mac Studio (:8123) — 392 entities (Hue, Lutron, UniFi, Apple TV, Cast, Google) |
+| JARVIS Brain | Activity classifier + environmental awareness on port 37480 |
+| Presence Engine | Multi-signal fusion on port 37465 (mmWave, BLE, camera, lights, media, vehicle, GPS) |
+| Camera Presence | YOLOv8-nano person detection on 5 interior cameras every 60s |
 | Wazuh SIEM | Manager + Indexer + Dashboard on TV-Movies, agents on all 4 hosts + syslog from UDM/NAS |
 | Bootstrap source | `nova_ops.agent_docs` (PostgreSQL — not files) |
 | Session storage | `nova_ops.gateway_sessions` + `gateway_query_log` |
@@ -37,6 +41,7 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 | Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) — daily essays, PDB security briefings, creative writing |
 | Security briefings | [nova.digitalnoise.net/security](https://nova.digitalnoise.net/security/) — daily PDB-style intel from 148 OSINT/gov/mystery feeds |
 | RSS feed | [nova.digitalnoise.net/index.xml](https://nova.digitalnoise.net/index.xml) |
+| Aqara FP2 | 4x mmWave presence sensors (office, bedroom, living room, patio) — awaiting HACS bridge |
 | SNMP fleet | 14 devices (Mac Studio, NUK, Mac Mini, Pi, UDM Pro, Synology, 5 switches, 3 APs) |
 | Plex | Docker on TV-Movies, NFS media from Synology (6 libraries) |
 | Fleet hosts | Mac Studio (.6), TV-Movies Mac Mini (.7), NUK (.10), Pi (.2), Synology NAS (.11), UDM Pro (.1) |

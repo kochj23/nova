@@ -57,11 +57,16 @@ PERSON_DEVICES = {
 }
 
 # Confidence weights for each signal source
+# mmWave is most reliable — no false negatives while stationary
 WEIGHTS = {
-    "ble_rssi": 0.4,
-    "hue_motion": 0.3,
-    "power_draw": 0.2,
-    "wifi_home": 0.1,
+    "mmwave": 0.30,
+    "ble_rssi": 0.22,
+    "hue_motion": 0.15,
+    "ha_lights": 0.08,
+    "vehicle_vision": 0.08,
+    "ha_media": 0.05,
+    "power_draw": 0.07,
+    "wifi_home": 0.05,
 }
 
 AWAY_THRESHOLD_MIN = 30
@@ -95,6 +100,20 @@ async def get_pool():
     return _pool
 
 
+async def get_mmwave_presence():
+    """Get latest mmWave presence per room (Aqara FP2 sensors)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT DISTINCT ON (room)
+                room, confidence, ts, metadata
+            FROM telemetry.presence
+            WHERE method = 'mmwave' AND ts > now() - interval '2 minutes'
+            ORDER BY room, ts DESC
+        """)
+    return {r["room"]: {"confidence": r["confidence"], "ts": r["ts"], "metadata": r["metadata"]} for r in rows}
+
+
 async def get_ble_presence():
     """Get latest BLE presence per person."""
     pool = await get_pool()
@@ -103,7 +122,21 @@ async def get_ble_presence():
             SELECT DISTINCT ON (person)
                 person, room, confidence, ts
             FROM telemetry.presence
-            WHERE ts > now() - interval '2 minutes'
+            WHERE method != 'mmwave' AND ts > now() - interval '2 minutes'
+            ORDER BY person, ts DESC
+        """)
+    return {r["person"]: {"room": r["room"], "confidence": r["confidence"], "ts": r["ts"]} for r in rows}
+
+
+async def get_vehicle_presence():
+    """Get recent vehicle detections — indicates person is home."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT DISTINCT ON (person)
+                person, room, confidence, ts
+            FROM telemetry.presence
+            WHERE method = 'vehicle_vision' AND ts > now() - interval '30 minutes'
             ORDER BY person, ts DESC
         """)
     return {r["person"]: {"room": r["room"], "confidence": r["confidence"], "ts": r["ts"]} for r in rows}
@@ -144,9 +177,11 @@ async def get_wifi_home():
 
 async def compute_occupancy():
     """Fuse all signals into room-level occupancy map."""
+    mmwave = await get_mmwave_presence()
     ble = await get_ble_presence()
     motion = await get_hue_motion()
     wifi = await get_wifi_home()
+    vehicles = await get_vehicle_presence()
 
     occupancy = {}
     for person, cfg in PERSON_DEVICES.items():
@@ -154,12 +189,27 @@ async def compute_occupancy():
         room = "unknown"
         total_confidence = 0.0
 
-        # BLE signal
+        # BLE signal — gives us room-level person identification
         if person in ble:
             ble_data = ble[person]
             room = ble_data["room"]
             signals["ble_rssi"] = {"room": room, "confidence": ble_data["confidence"]}
             total_confidence += ble_data["confidence"] * WEIGHTS["ble_rssi"]
+
+        # mmWave — strongest presence signal (detects stationary humans)
+        # If BLE gave us a room, check if mmWave confirms it
+        # If no BLE, check all mmWave rooms for presence
+        if room != "unknown" and room in mmwave:
+            mw = mmwave[room]
+            signals["mmwave"] = {"room": room, "confidence": mw["confidence"]}
+            total_confidence += mw["confidence"] * WEIGHTS["mmwave"]
+        elif room == "unknown":
+            # No BLE — use mmWave occupied rooms as candidates
+            occupied_rooms = [r for r, data in mmwave.items() if data["confidence"] > 0.5]
+            if len(occupied_rooms) == 1:
+                room = occupied_rooms[0]
+                signals["mmwave"] = {"room": room, "confidence": mmwave[room]["confidence"]}
+                total_confidence += mmwave[room]["confidence"] * WEIGHTS["mmwave"]
 
         # Hue motion corroboration
         if room in motion:
@@ -171,12 +221,18 @@ async def compute_occupancy():
             signals["wifi_home"] = True
             total_confidence += 1.0 * WEIGHTS["wifi_home"]
 
+        # Vehicle detection (home/away signal, not room-level)
+        if person in vehicles:
+            signals["vehicle_vision"] = {"vehicle_seen": True, "camera_room": vehicles[person]["room"]}
+            total_confidence += vehicles[person]["confidence"] * WEIGHTS["vehicle_vision"]
+
         final_confidence = min(total_confidence / sum(WEIGHTS.values()), 1.0) if total_confidence > 0 else 0
 
+        vehicle_home = person in vehicles
         occupancy[person] = {
             "room": room if final_confidence > 0.3 else "unknown",
             "confidence": round(final_confidence, 2),
-            "home": wifi.get(person, False) or (person in ble),
+            "home": wifi.get(person, False) or (person in ble) or (room != "unknown" and room in mmwave) or vehicle_home,
             "signals": signals,
             "ts": datetime.now(timezone.utc).isoformat(),
         }

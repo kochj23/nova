@@ -377,6 +377,20 @@ FEEDS = [
     ("https://www.afgsc.af.mil/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=126&max=10", "military_history", "AF Global Strike Command"),
 
     # ══════════════════════════════════════════════════════════════
+    # UKRAINE WAR (Pro-Ukrainian sources)
+    # ══════════════════════════════════════════════════════════════
+    ("https://www.pravda.com.ua/eng/rss/", "geopolitics", "Ukrainska Pravda (English)"),
+    ("https://www.ukrinform.net/rss/block-lastnews", "geopolitics", "Ukrinform (State News Agency)"),
+    ("https://english.nv.ua/rss/all.xml", "geopolitics", "NV (New Voice of Ukraine)"),
+    ("https://euromaidanpress.com/feed/", "geopolitics", "Euromaidan Press"),
+    ("https://www.atlanticcouncil.org/category/blogs/ukrainealert/feed/", "geopolitics", "Atlantic Council UkraineAlert"),
+    ("https://cepa.org/feed/", "geopolitics", "CEPA (European Policy Analysis)"),
+    ("http://theins.press/en/feed", "geopolitics", "The Insider (Anti-Kremlin Investigative)"),
+    ("https://news.yahoo.com/rss/ukraine", "geopolitics", "Yahoo News Ukraine Aggregator"),
+    ("https://www.ukrainianworldcongress.org/feed/", "geopolitics", "Ukrainian World Congress"),
+    ("https://militarnyi.com/en/feed/", "geopolitics", "Militarnyi (Ukrainian Defense News)"),
+
+    # ══════════════════════════════════════════════════════════════
     # ASTRONOMY (Feedspot astronomy_rss_feeds)
     # ══════════════════════════════════════════════════════════════
     ("https://www.space.com/feeds.xml", "computing", "Space.com"),

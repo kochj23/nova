@@ -403,6 +403,48 @@ def _post_shared_observation(cam_name, smart_types, event_type, event_id, vision
         log(f"shared_observations write failed: {e}", level=LOG_WARN, source="protect")
 
 
+# Vehicle -> presence mapping (cameras that see parked vehicles)
+VEHICLE_CAMERAS = {
+    "External - Carport": {"vehicle": "black_suv", "person": "amy", "room": "carport"},
+    "Exterior - Front Middle": {"vehicle": "red_corvette", "person": "jordan", "room": "garage"},
+    "Exterior - Front Right": {"vehicle": "red_corvette", "person": "jordan", "room": "garage"},
+}
+_last_vehicle_presence = {}  # person -> timestamp (debounce)
+
+
+def _feed_vehicle_presence(cam_name, raw_smart_types):
+    """Write vehicle detection to telemetry.presence as a home/away signal."""
+    if "vehicle" not in raw_smart_types:
+        return
+    if cam_name not in VEHICLE_CAMERAS:
+        return
+
+    config = VEHICLE_CAMERAS[cam_name]
+    person = config["person"]
+    room = config["room"]
+
+    # Debounce: only write once per 5 minutes per person
+    now = time.time()
+    last = _last_vehicle_presence.get(person, 0)
+    if now - last < 300:
+        return
+    _last_vehicle_presence[person] = now
+
+    try:
+        import psycopg2
+        conn = psycopg2.connect("host=localhost dbname=nova_ops user=kochj")
+        conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO telemetry.presence (ts, person, room, confidence, method, metadata)
+                VALUES (now(), %s, %s, 0.95, 'vehicle_vision', %s)
+            """, (person, room, json.dumps({"camera": cam_name, "vehicle": config["vehicle"]})))
+        conn.close()
+        log(f"Vehicle presence: {person} home (seen on {cam_name})", level=LOG_INFO, source="protect")
+    except Exception as e:
+        log(f"Vehicle presence write failed: {e}", level=LOG_WARN, source="protect")
+
+
 def load_state():
     if STATE_FILE.exists():
         try:
@@ -501,6 +543,9 @@ def check_motion_events(client, state):
 
         if event_ts > max_ts:
             max_ts = event_ts
+
+        # Feed vehicle detections to presence engine BEFORE filtering them out
+        _feed_vehicle_presence(cam_name, smart_types)
 
         # Filter out noisy detection types
         smart_types = [t for t in smart_types if t not in ("vehicle", "licensePlate", "alrmSpeak", "alrmBark", "face")]
