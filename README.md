@@ -90,6 +90,39 @@ Plex moved from NUK (Intel, overloaded at load 24.7) to TV-Movies (M2 Pro Docker
 - Libraries: Movies, TV Shows, Music, Comedy, Documentary, YouTube
 - NFS export opened to full 192.168.1.0/24 subnet
 
+> ⚠️ **Status (2026-06-17 audit):** this migration regressed — Plex is again
+> running on NUK (load ~18). The permanent fix is the dedicated `nova-edge`
+> node below, not another shared-box shuffle.
+
+### Target Architecture — `nova-edge` (planned, queue #496–506)
+
+A dedicated **Beelink GTI15** (Core Ultra 9 285H · 16C · 64GB · 1TB NVMe ·
+**Arc 140T iGPU + NPU** · 10G dual LAN, Ubuntu 24.04+HWE) becomes **Nova's
+home**, so Nova no longer depends on a personal Mac being awake.
+
+| Tier | Node | Role |
+|------|------|------|
+| Control plane + state + perception/media | **nova-edge** | gateway, scheduler, Big Brother, memory server, ~66 daemons, **Postgres + pgvector**, MQTT/Zigbee/Z-Wave bus, **Plex (QuickSync)**, **Frigate (NPU)**, Whisper/embeddings |
+| Inference backends | **Mac Studio / Mac Mini** | Ollama + MLX over LAN only |
+| Observability (kept separate) | **TV-Movies** | Grafana, Wazuh, SearXNG, Homebridge |
+| Storage / network | **Synology / UDM** | media, PG backups, Frigate recordings |
+
+Principles: *(1) inference stays on Apple Silicon, everything else on Intel;
+(2) monitoring lives off the box it monitors.* Migration order: Plex → Postgres
+→ service layer → perception → relieve NUK/Pi. Full history + target
+architecture live in the database (`nova_ops.claude_memories`:
+`nova-history-chapters`, `nova-edge-target-architecture`) and Nova's vector
+store (`source=nova_meta`) — not flat files.
+
+### JARVIS Vision — graceful degradation (2026-06-17)
+
+Phase-3 camera vision is **Ollama-primary** (`qwen3-vl:4b`, frames stay on-box)
+behind a **circuit breaker**: after 3 consecutive failures it stops hammering
+the GPU for 15 min and **falls back to a cheap OpenRouter vision model** so
+perception degrades gracefully instead of going dark. The blocking call runs in
+an executor so a stalled vision request can never freeze the brain loop.
+Tested in `tests/test_nova_jarvis_vision.py` (all 7 categories).
+
 ---
 
 ## The OpenClaw Replacement
