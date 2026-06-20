@@ -131,9 +131,9 @@ SERVICES = [
     ("MLX Server",    "127.0.0.1", 5050,  "net.digitalnoise.mlx-server",          False, "/v1/models"),
     ("SwarmUI",       "127.0.0.1", 7801,  None,                                   False, None),
     ("ComfyUI",       "127.0.0.1", 8188,  None,                                   False, None),
-    ("TinyChat",      "192.168.1.7", 8000, None,                                   False, None),
+    ("TinyChat",      "192.168.1.2", 8000, None,                                   False, None),
     ("OpenWebUI",     "192.168.1.6", 3000,  "net.digitalnoise.openwebui",           False, None),
-    ("SearXNG",       "192.168.1.7", 8080, None,                                   False, None),
+    ("SearXNG",       "192.168.1.2", 8080, None,                                   False, None),
     # ── Channels ─────────────────────────────────────────────────────────────
     ("Signal-cli",    "127.0.0.1", 8080,  None,                                   False, None),
     # ── Nova apps ────────────────────────────────────────────────────────────
@@ -144,9 +144,9 @@ SERVICES = [
     ("Plex",          PLEX_IP,     32400, None,                                   False, "/web"),
     ("HDHomeRun",     HDHR_IP,     80,    None,                                   False, None),
     ("UNAS Pro 8",    "192.168.1.69", 443, None,                                  False, None),
-    # ── TV-Movies macmini (192.168.1.7) ──────────────────────────────────────
-    ("Grafana (TV)",  "192.168.1.7", 3000, None,                                  False, "/api/health"),
-    ("Homebridge (TV)","192.168.1.7", 8581, None,                                  False, None),
+    # ── Migrated to nova-core (.7 evacuated 2026-06-20) ──
+    ("Grafana",  "192.168.1.2", 3000, None,                                  False, "/api/health"),
+    ("Homebridge","192.168.1.2", 8581, None,                                  False, None),
 ]
 
 # Services that are monitored (shown in dashboard) but never trigger alerts.
@@ -166,11 +166,11 @@ LAUNCHD_MONITORED = [
 EXTERNAL_CHECKS = [
     ("Synology NAS",  NAS_IP,   5001),
     ("UniFi",         UNIFI_IP, 443),
-    ("Wazuh",         "192.168.1.7", 9200),
+    ("Wazuh",         "192.168.1.2", 9200),
 ]
 
 # Wazuh SIEM — poll for high-severity alerts
-WAZUH_INDEXER_URL = "https://192.168.1.7:9200"
+WAZUH_INDEXER_URL = "https://192.168.1.2:9200"
 WAZUH_INDEXER_USER = "admin"
 WAZUH_INDEXER_PASS = "admin"
 WAZUH_ALERT_LEVEL_THRESHOLD = 10  # Only surface alerts at level 10+
@@ -574,7 +574,7 @@ def _check_wazuh_alerts(issues: list):
             _record_event(
                 "critical" if level >= 12 else "warning",
                 f"Wazuh alert L{level} on {agent_name}: {desc}",
-                f"Groups: {groups}. Check Wazuh dashboard: https://192.168.1.7",
+                f"Groups: {groups}. Check Wazuh dashboard: https://192.168.1.2",
                 "Wazuh",
             )
 
