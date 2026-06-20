@@ -96,6 +96,25 @@ _redis:      aioredis.Redis | None = None
 _http:       httpx.AsyncClient | None = None
 _worker_task: asyncio.Task | None = None
 
+# Quality-filter counters (surfaced in /stats). Reset on restart.
+_quality_stats = {"allowed": 0, "rejected": 0, "demoted_reference": 0, "filter_errors": 0}
+
+
+def _classify_resilient(text: str, source: str) -> tuple[str, str]:
+    """Run the quality filter, defaulting to ALLOW if the filter itself errors.
+
+    Returns (verdict, reason) where verdict ∈ {allow, reference, reject}.
+    A bug in the filter must never silently drop a real memory, so on any
+    exception we allow the write and count it as a filter error.
+    """
+    try:
+        from nova_memory_quality_filter import classify_quality
+        return classify_quality(text, source or "")
+    except Exception as e:
+        _quality_stats["filter_errors"] += 1
+        logger.warning(f"Quality filter errored — allowing write (fail-open): {e}")
+        return "allow", f"filter_error: {e}"
+
 # ── Embedding ───────────────────────────────────────────────────────────────────
 async def embed(text: str) -> list[float]:
     resp = await _http.post(
@@ -150,12 +169,21 @@ async def _ingest_worker():
                 logger.debug(f"Skipping empty text after sanitization for {memory_id}")
                 continue
 
-            # Quality gate for async ingest
-            from nova_memory_quality_filter import passes_quality
-            quality_ok, quality_reason = passes_quality(text, source)
-            if not quality_ok:
-                logger.debug(f"Quality filter rejected async ({quality_reason}): {text[:60]}")
-                continue
+            # Quality gate for async ingest. Items enqueued by /remember are already
+            # classified (carry tier + _quality_checked); items pushed straight to
+            # Redis are classified here. Fail-open via _classify_resilient.
+            target_tier = data.get("tier", "long_term")
+            if not data.get("_quality_checked"):
+                verdict, quality_reason = _classify_resilient(text, source)
+                if verdict == "reject":
+                    _quality_stats["rejected"] += 1
+                    logger.debug(f"Quality filter rejected async ({quality_reason}): {text[:60]}")
+                    continue
+                elif verdict == "reference":
+                    _quality_stats["demoted_reference"] += 1
+                    target_tier = "reference"
+                else:
+                    _quality_stats["allowed"] += 1
 
             try:
                 vector = await embed(text)
@@ -168,10 +196,10 @@ async def _ingest_worker():
                 async with _pg_pool.acquire() as conn:
                     await conn.execute(
                         """INSERT INTO memories
-                             (id, text, metadata, embedding, source, created_at, text_hash)
-                           VALUES ($1, $2, $3, $4::vector, $5, $6, $7)
+                             (id, text, metadata, embedding, source, created_at, text_hash, tier)
+                           VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8)
                            ON CONFLICT (text_hash) DO NOTHING""",
-                        memory_id, text, json.dumps(metadata), vec_str, source, created_dt, text_hash
+                        memory_id, text, json.dumps(metadata), vec_str, source, created_dt, text_hash, target_tier
                     )
             except Exception as e:
                 retries += 1
@@ -335,12 +363,20 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
     if not clean_text:
         raise HTTPException(status_code=400, detail="text cannot be empty after sanitization")
 
-    # Quality gate — reject garbage before embedding (saves GPU cycles + storage)
-    from nova_memory_quality_filter import passes_quality
-    quality_ok, quality_reason = passes_quality(clean_text, req.source or "")
-    if not quality_ok:
+    # Quality gate — reject garbage before embedding (saves GPU cycles + storage),
+    # demote reference/citation chunks to tier='reference' (kept, excluded from recall).
+    # Fail-open: a filter bug must never silently drop a real memory.
+    verdict, quality_reason = _classify_resilient(clean_text, req.source or "")
+    if verdict == "reject":
+        _quality_stats["rejected"] += 1
         logger.info(f"Quality filter rejected ({quality_reason}): {clean_text[:60]}")
         return {"id": None, "status": "rejected", "reason": quality_reason}
+    target_tier = "reference" if verdict == "reference" else "long_term"
+    if verdict == "reference":
+        _quality_stats["demoted_reference"] += 1
+        logger.info(f"Quality filter demoted to reference ({quality_reason}): {clean_text[:60]}")
+    else:
+        _quality_stats["allowed"] += 1
 
     memory_id = str(uuid.uuid4())
     created   = datetime.now(timezone.utc).isoformat()
@@ -349,11 +385,12 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
         payload = json.dumps({
             "id": memory_id, "text": clean_text,
             "source": req.source, "metadata": req.metadata,
-            "created_at": created,
+            "created_at": created, "tier": target_tier,
+            "_quality_checked": True,
         })
         await _redis.rpush(REDIS_QUEUE, payload)
         queue_len = await _redis.llen(REDIS_QUEUE)
-        return {"id": memory_id, "status": "queued", "queue_length": queue_len}
+        return {"id": memory_id, "status": "queued", "queue_length": queue_len, "tier": target_tier}
 
     vector = await embed(clean_text)
     text_hash = hashlib.md5(clean_text.encode()).hexdigest()
@@ -364,13 +401,13 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
     async with _pg_pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO memories
-                 (id, text, metadata, embedding, source, created_at, text_hash)
-               VALUES ($1, $2, $3, $4::vector, $5, $6, $7)
+                 (id, text, metadata, embedding, source, created_at, text_hash, tier)
+               VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8)
                ON CONFLICT (text_hash) DO NOTHING""",
             memory_id, clean_text, json.dumps(req.metadata),
-            _vec_str(vector), req.source, created_dt, text_hash,
+            _vec_str(vector), req.source, created_dt, text_hash, target_tier,
         )
-    return {"id": memory_id, "dims": len(vector), "status": "stored"}
+    return {"id": memory_id, "dims": len(vector), "status": "stored", "tier": target_tier}
 
 
 async def _do_recall(
@@ -831,6 +868,7 @@ async def stats():
         "indexes": [{"name": r["indexrelname"], "size": r["size"], "scans": r["idx_scan"]}
                     for r in idx_info],
         "by_source": {row["source"]: row["n"] for row in by_src},
+        "quality_filter": dict(_quality_stats),
     }
 
 
