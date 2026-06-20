@@ -34,18 +34,55 @@ SYNOLOGY_IP = "192.168.1.11"
 SYNOLOGY_USER = "kochj"
 SSH_OPTS = "-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
 
+UNAS_IP = "192.168.1.69"
+UNAS_USER = "kochj"
+UNAS_KEYCHAIN_SRV = "UNAS-Pro-8._smb._tcp.local"  # internet-password item; pw read live, never hardcoded
+
 SHARES = [
     {
         "name": "nas",
         "source": f"{SYNOLOGY_USER}@{SYNOLOGY_IP}:/volume1/docker/nas/",
         "dest": "/Volumes/nas-1/",
+        "unas_share": "nas",
     },
     {
         "name": "external",
         "source": f"{SYNOLOGY_USER}@{SYNOLOGY_IP}:/volume1/docker/external/",
-        "dest": "/Volumes/external/",
+        "dest": "/Volumes/external-1/",   # UNAS external (NOT the Synology AFP /Volumes/external)
+        "unas_share": "external",
     },
 ]
+
+
+def ensure_mounted(share) -> bool:
+    """Self-heal: if the UNAS dest isn't mounted, mount it from the keychain
+    credential (read live — no hardcoded secret). Fixes the silent-green failure
+    where a dropped mount made rsync transfer 0 bytes yet still report success."""
+    import os
+    import urllib.parse
+    dest = share["dest"].rstrip("/")
+    if os.path.ismount(dest):
+        return True
+    try:
+        pw = subprocess.run(
+            ["security", "find-internet-password", "-s", UNAS_KEYCHAIN_SRV, "-w"],
+            capture_output=True, text=True, timeout=10).stdout.strip()
+        if not pw:
+            log(f"  {share['name']}: no UNAS keychain credential ({UNAS_KEYCHAIN_SRV})")
+            return False
+        os.makedirs(dest, exist_ok=True)
+        enc = urllib.parse.quote(pw, safe="")
+        r = subprocess.run(
+            ["mount_smbfs", f"//{UNAS_USER}:{enc}@{UNAS_IP}/{share['unas_share']}", dest],
+            capture_output=True, text=True, timeout=30)
+        if os.path.ismount(dest):
+            log(f"  {share['name']}: auto-mounted UNAS {share['unas_share']} -> {dest}")
+            return True
+        log(f"  {share['name']}: auto-mount failed — {r.stderr.strip()[:120]}")
+        return False
+    except Exception as e:
+        log(f"  {share['name']}: auto-mount error — {e}")
+        return False
 
 
 def log(msg):
@@ -57,10 +94,12 @@ def preflight_checks():
     """Run all safety checks before syncing."""
     errors = []
 
-    # Check local mounts are accessible
+    # Check local mounts are accessible — self-heal a dropped UNAS mount first
     for share in SHARES:
+        if not os.path.ismount(share["dest"].rstrip("/")):
+            ensure_mounted(share)  # try to remount from keychain before failing
         dest = Path(share["dest"])
-        if not dest.exists():
+        if not os.path.ismount(share["dest"].rstrip("/")):
             errors.append(f"{share['name']}: destination not mounted ({share['dest']})")
         elif not dest.is_dir():
             errors.append(f"{share['name']}: destination is not a directory")
@@ -288,4 +327,11 @@ if __name__ == "__main__":
     else:
         if args.share:
             SHARES[:] = [s for s in SHARES if s["name"] == args.share]
-        run_sync()
+        results = run_sync()
+        # Exit non-zero on real failure so the scheduler records RED, not false-green.
+        # A backup is "failed" if: preflight errored, any share errored, OR any share
+        # returned a non-ok status (e.g. rsync 'service disabled' code 52 = status
+        # 'warning') — a green run that silently moved nothing is the bug we're killing.
+        preflight_failed = bool(results and results[0].get("name") == "preflight")
+        any_bad = any(r.get("status") not in ("ok",) for r in results)
+        sys.exit(1 if (preflight_failed or any_bad) else 0)
