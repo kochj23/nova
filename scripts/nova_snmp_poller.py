@@ -118,6 +118,10 @@ DEVICES = [
     {"ip": "192.168.1.31",  "name": "ap-office-u6e",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.106", "name": "ap-kitchen-u6e",    "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.161", "name": "ap-garage-u6e",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    # ── NAS ───────────────────────────────────────────────────────────────────
+    # UNAS Pro 8 — SNMP enabled 2026-06-20. Exposes system + IF-MIB (per-interface
+    # traffic/errors) only; no hrStorage/CPU via SNMP (those come from the UniFi Drive API).
+    {"ip": "192.168.1.69",  "name": "unas-pro",          "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
 ]
 
 # Per-device interface indices to monitor (avoids polling hundreds of virtual interfaces)
