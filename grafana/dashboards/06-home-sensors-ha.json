@@ -189,6 +189,132 @@
       "targets": [
         { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT DISTINCT ON (entity_id) friendly_name AS \"Entity\", domain AS \"Domain\", COALESCE(area,'-') AS \"Area\", COALESCE(state_text,'') AS \"State\", state_numeric AS \"Brightness\", ts AS \"Last Seen\" FROM telemetry.ha_sensors WHERE domain IN ('light','switch') ORDER BY entity_id, ts DESC" }
       ]
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Smart Lighting (Hue) & Energy",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 39 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Lights On",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 40 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "yellow" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"On\" FROM hue_light_state WHERE is_on = true" } ]
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "Lights Off",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 40 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "dark-gray" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Off\" FROM hue_light_state WHERE is_on = false" } ]
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "Unreachable",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 40 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Unreachable\" FROM hue_light_state WHERE reachable = false" } ]
+    },
+    {
+      "id": 24,
+      "type": "piechart",
+      "title": "Lights by Room",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 40 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "values": ["value"] }, "pieType": "donut", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT room AS metric, COUNT(*) AS value FROM hue_light_state GROUP BY room ORDER BY value DESC" } ]
+    },
+    {
+      "id": 25,
+      "type": "table",
+      "title": "Hue Lights by Room",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 44 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT room AS \"Room\", name AS \"Light\", CASE WHEN is_on THEN 'ON' ELSE 'off' END AS \"State\", brightness AS \"Brightness\", CASE WHEN reachable THEN 'yes' ELSE 'NO' END AS \"Reachable\" FROM hue_light_state ORDER BY room, name" } ]
+    },
+    {
+      "id": 26,
+      "type": "row",
+      "title": "JARVIS Presence & Activity",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 52 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 27,
+      "type": "stat",
+      "title": "Jordan Status",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 53 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "mappings": [ { "type": "value", "options": { "HOME": { "color": "green" }, "AWAY": { "color": "orange" } } } ] }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "/.*/" }, "colorMode": "background", "textMode": "value" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT CASE WHEN confidence > 0 THEN 'HOME' ELSE 'AWAY' END AS \"Status\" FROM telemetry.presence WHERE method = 'gps_tracker' AND person = 'jordan' ORDER BY ts DESC LIMIT 1" } ]
+    },
+    {
+      "id": 28,
+      "type": "stat",
+      "title": "Current Activity",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 53 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "/Activity/" }, "textMode": "value" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT state AS \"Activity\" FROM telemetry.activity WHERE person = 'jordan' ORDER BY ts DESC LIMIT 1" } ]
+    },
+    {
+      "id": 29,
+      "type": "stat",
+      "title": "Detection Methods (24h)",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 53 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT count(DISTINCT method) AS \"Methods\" FROM telemetry.presence WHERE ts > now() - interval '1 day'" } ]
+    },
+    {
+      "id": 30,
+      "type": "timeseries",
+      "title": "Room Presence Confidence (all methods)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 57 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "min": 0, "max": 1, "custom": { "drawStyle": "points", "pointSize": 5 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last"] }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, room AS metric, max(confidence) AS value FROM telemetry.presence WHERE $__timeFilter(ts) AND confidence > 0 GROUP BY ts, room ORDER BY ts" } ]
+    },
+    {
+      "id": 31,
+      "type": "barchart",
+      "title": "Presence Signals by Method (6h)",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 57 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "orientation": "horizontal", "legend": { "showLegend": false } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT method AS \"Method\", count(*) AS \"Events\" FROM telemetry.presence WHERE ts > now() - interval '6 hours' GROUP BY method ORDER BY 2 DESC" } ]
+    },
+    {
+      "id": 32,
+      "type": "state-timeline",
+      "title": "Activity Timeline (Jordan)",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 57 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "custom": { "fillOpacity": 80 } }, "overrides": [] },
+      "options": { "showValue": "auto", "mergeValues": true, "legend": { "displayMode": "list", "placement": "bottom" } },
+      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, 'Activity' AS metric, state FROM telemetry.activity WHERE person = 'jordan' AND $__timeFilter(ts) ORDER BY ts" } ]
     }
   ]
 }

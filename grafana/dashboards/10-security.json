@@ -1,0 +1,271 @@
+{
+  "uid": "nova-security",
+  "title": "Security & Syslog",
+  "tags": ["nova", "starter", "security", "syslog", "soc"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-7d", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "row",
+      "title": "Security Operations Center (Wazuh)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Security Events (24h)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 1 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Events\" FROM security_events WHERE ts > NOW() - INTERVAL '24 hours'" } ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Critical (Level 12+, 24h)",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 1 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Critical\" FROM security_events WHERE rule_level >= 12 AND ts > NOW() - INTERVAL '24 hours'" } ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Correlated Incidents (24h)",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 1 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Correlated\" FROM security_events WHERE correlated = true AND ts > NOW() - INTERVAL '24 hours'" } ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Auto-Responses (24h)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 1 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Auto-Responses\" FROM security_events WHERE auto_response IS NOT NULL AND ts > NOW() - INTERVAL '24 hours'" } ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Security Event Volume by Level",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 5 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 60, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT date_trunc('hour', ts) AS time, CASE WHEN rule_level >= 12 THEN 'Critical (12+)' WHEN rule_level >= 7 THEN 'High (7-11)' ELSE 'Low (0-6)' END AS metric, COUNT(*) AS value FROM security_events WHERE $__timeFilter(ts) GROUP BY 1, 2 ORDER BY 1" } ]
+    },
+    {
+      "id": 7,
+      "type": "piechart",
+      "title": "Events by Level (24h)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 5 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "values": ["value"] }, "pieType": "donut", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT CASE WHEN rule_level >= 12 THEN 'Critical' WHEN rule_level >= 7 THEN 'High' WHEN rule_level >= 4 THEN 'Medium' ELSE 'Low' END AS metric, COUNT(*) AS value FROM security_events WHERE ts > NOW() - INTERVAL '24 hours' GROUP BY 1" } ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Recent High-Severity Events (Level 7+)",
+      "gridPos": { "h": 9, "w": 16, "x": 0, "y": 13 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS \"Time\", agent_name AS \"Agent\", rule_level AS \"Level\", rule_description AS \"Rule\", src_ip::text AS \"Src IP\", dst_ip::text AS \"Dst IP\" FROM security_events WHERE rule_level >= 7 AND ts > NOW() - INTERVAL '24 hours' ORDER BY ts DESC LIMIT 30" } ]
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Top Source IPs (24h)",
+      "gridPos": { "h": 9, "w": 8, "x": 16, "y": 13 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT src_ip::text AS \"Source\", COUNT(*) AS \"Events\", MAX(rule_level) AS \"Max Level\" FROM security_events WHERE src_ip IS NOT NULL AND ts > NOW() - INTERVAL '24 hours' GROUP BY 1 ORDER BY 2 DESC LIMIT 10" } ]
+    },
+    {
+      "id": 10,
+      "type": "row",
+      "title": "Security Posture (Scans & Threat Scores)",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 22 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 11,
+      "type": "stat",
+      "title": "Total Scans (30d)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 23 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Scans\" FROM security_scan_results WHERE scan_time > NOW() - INTERVAL '30 days'" } ]
+    },
+    {
+      "id": 12,
+      "type": "stat",
+      "title": "Clean Scans (30d)",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 23 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Clean\" FROM security_scan_results WHERE status = 'clean' AND scan_time > NOW() - INTERVAL '30 days'" } ]
+    },
+    {
+      "id": 13,
+      "type": "stat",
+      "title": "Warnings (30d)",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 23 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Warnings\" FROM security_scan_results WHERE status = 'warning' AND scan_time > NOW() - INTERVAL '30 days'" } ]
+    },
+    {
+      "id": 14,
+      "type": "stat",
+      "title": "Critical Scans (30d)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 23 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Critical\" FROM security_scan_results WHERE status = 'critical' AND scan_time > NOW() - INTERVAL '30 days'" } ]
+    },
+    {
+      "id": 15,
+      "type": "table",
+      "title": "Recent Scans",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT scan_time AS \"Time\", host_name AS \"Host\", host_ip AS \"IP\", scan_type AS \"Type\", status AS \"Status\", duration_ms AS \"Duration ms\" FROM security_scan_results ORDER BY scan_time DESC LIMIT 20" } ]
+    },
+    {
+      "id": 16,
+      "type": "table",
+      "title": "Host Threat Scores",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT host_name AS \"Host\", ROUND(score::numeric, 2) AS \"Threat Score\", ts AS \"Last Updated\" FROM host_threat_scores ORDER BY score DESC LIMIT 15" } ]
+    },
+    {
+      "id": 17,
+      "type": "row",
+      "title": "Syslog & Firewall",
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "collapsed": false,
+      "panels": []
+    },
+    {
+      "id": 18,
+      "type": "stat",
+      "title": "Syslog Events (1h)",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 36 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Events\" FROM syslog_events WHERE received_at > NOW() - INTERVAL '1 hour'" } ]
+    },
+    {
+      "id": 19,
+      "type": "stat",
+      "title": "Threat Events (24h)",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 36 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Threats\" FROM syslog_events WHERE threat_type IS NOT NULL AND received_at > NOW() - INTERVAL '24 hours'" } ]
+    },
+    {
+      "id": 20,
+      "type": "stat",
+      "title": "Firewall Blocks (24h)",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 36 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Blocks\" FROM syslog_events WHERE action IN ('blocked','drop') AND received_at > NOW() - INTERVAL '24 hours'" } ]
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "Alerts Fired (24h)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 36 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COUNT(*) AS \"Alerts\" FROM syslog_events WHERE alert_fired = true AND received_at > NOW() - INTERVAL '24 hours'" } ]
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Syslog Volume by Severity",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 40 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 50, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT date_trunc('hour', received_at) AS time, CASE WHEN severity <= 3 THEN 'Error+Critical' WHEN severity <= 5 THEN 'Warning+Notice' ELSE 'Info' END AS metric, COUNT(*) AS value FROM syslog_events WHERE $__timeFilter(received_at) GROUP BY 1, 2 ORDER BY 1" } ]
+    },
+    {
+      "id": 23,
+      "type": "piechart",
+      "title": "Events by Host",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 40 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "values": ["value"] }, "pieType": "donut", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT hostname AS metric, COUNT(*) AS value FROM syslog_events WHERE $__timeFilter(received_at) AND hostname IS NOT NULL GROUP BY hostname ORDER BY value DESC LIMIT 10" } ]
+    },
+    {
+      "id": 24,
+      "type": "barchart",
+      "title": "Threat Types",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 40 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "palette-classic" } }, "overrides": [] },
+      "options": { "orientation": "horizontal", "legend": { "showLegend": false } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT threat_type AS \"Type\", COUNT(*) AS \"Count\" FROM syslog_events WHERE threat_type IS NOT NULL AND $__timeFilter(received_at) GROUP BY 1 ORDER BY 2 DESC LIMIT 12" } ]
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "SSH Auth Events / Sudo Usage",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 48 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT date_trunc('hour', received_at) AS time, 'SSH' AS metric, COUNT(*) AS value FROM syslog_events WHERE app_name = 'sshd' AND $__timeFilter(received_at) GROUP BY 1 ORDER BY 1" },
+        { "refId": "B", "format": "time_series", "rawQuery": true, "rawSql": "SELECT date_trunc('hour', received_at) AS time, 'sudo' AS metric, COUNT(*) AS value FROM syslog_events WHERE app_name = 'sudo' AND $__timeFilter(received_at) GROUP BY 1 ORDER BY 1" }
+      ]
+    },
+    {
+      "id": 26,
+      "type": "table",
+      "title": "Recent Threats (syslog)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 48 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT received_at AS \"Time\", hostname AS \"Host\", threat_type AS \"Threat\", signature AS \"Signature\", action AS \"Action\" FROM syslog_events WHERE threat_type IS NOT NULL AND received_at > NOW() - INTERVAL '24 hours' ORDER BY received_at DESC LIMIT 20" } ]
+    }
+  ]
+}
