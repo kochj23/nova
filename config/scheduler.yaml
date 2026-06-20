@@ -150,6 +150,30 @@ tasks:
     timeout: 50
     overlap: skip
 
+  wan_monitor:
+    script: nova_wan_monitor.py
+    schedule: every 5m
+    timeout: 180
+    overlap: skip
+
+  cert_monitor:
+    script: nova_cert_monitor.py
+    schedule: every 6h
+    timeout: 120
+    overlap: skip
+
+  replication_monitor:
+    script: nova_replication_monitor.py
+    schedule: every 1m
+    timeout: 30
+    overlap: skip
+
+  disk_forecast:
+    script: nova_disk_forecast.py
+    schedule: every 1h
+    timeout: 120
+    overlap: skip
+
   # ── Every 1-4 hours ────────────────────────────────────────────────────
 
   session_watchdog:
