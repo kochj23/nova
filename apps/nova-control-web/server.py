@@ -254,7 +254,7 @@ async def analytics_middleware(request: Request, call_next):
 
     if request.method != "GET" or request.url.path.startswith(("/api/", "/ws", "/static/", "/health")):
         return response
-    if not any(request.url.path.endswith(x) or request.url.path == "/" for x in ("", "/", "/gauges", "/hud", "/analytics", "/gauges-flat", "/gauges-v2")):
+    if not any(request.url.path.endswith(x) or request.url.path == "/" for x in ("", "/", "/gauges", "/hud", "/mesh", "/analytics", "/gauges-flat", "/gauges-v2")):
         return response
 
     try:
@@ -329,6 +329,12 @@ async def root():
 @app.get("/hud")
 async def hud_page():
     return FileResponse(Path(__file__).parent / "static" / "hud.html")
+
+
+@app.get("/mesh")
+async def mesh_page():
+    """Serve the live mesh map (fleet topology) page."""
+    return FileResponse(Path(__file__).parent / "static" / "mesh.html")
 
 
 @app.get("/gauges")
@@ -472,6 +478,90 @@ async def service_detail(service: str):
             return JSONResponse({"error": f"Unknown service: {service}"}, status_code=404)
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/mesh")
+async def api_mesh():
+    """Live mesh topology: nodes (node_status) + services grouped by node (service_registry)."""
+    try:
+        conn = await asyncpg.connect(OPS_PG_DSN)
+        try:
+            node_rows = await conn.fetch(
+                """SELECT node_name, node_ip, status, cpu_cores, ram_gb,
+                          load_avg_1m, memory_percent, disk_percent, last_heartbeat
+                   FROM node_status ORDER BY node_name""")
+            svc_rows = await conn.fetch(
+                """SELECT service_name, host, port, node_name, status, priority
+                   FROM service_registry ORDER BY node_name, priority, service_name""")
+        finally:
+            await conn.close()
+
+        now = _dt.datetime.now(_dt.timezone.utc)
+
+        # Count instances per service_name to flag active-active / clustered
+        instance_counts: dict[str, int] = {}
+        for s in svc_rows:
+            instance_counts[s["service_name"]] = instance_counts.get(s["service_name"], 0) + 1
+
+        # Group services by node
+        services_by_node: dict[str, list] = {}
+        up_count = 0
+        down_count = 0
+        for s in svc_rows:
+            st = (s["status"] or "unknown").lower()
+            if st == "up":
+                up_count += 1
+            elif st == "down":
+                down_count += 1
+            clustered = instance_counts.get(s["service_name"], 0) > 1
+            services_by_node.setdefault(s["node_name"], []).append({
+                "service_name": s["service_name"],
+                "host": str(s["host"]) if s["host"] is not None else None,
+                "port": s["port"],
+                "node_name": s["node_name"],
+                "status": s["status"] or "unknown",
+                "priority": s["priority"],
+                "clustered": clustered,
+            })
+
+        nodes = []
+        for n in node_rows:
+            hb = n["last_heartbeat"]
+            hb_age_s = (now - hb).total_seconds() if hb else None
+            load = n["load_avg_1m"]
+            cores = n["cpu_cores"] or 0
+            # derived headroom: how much of CPU capacity is free (0-100)
+            headroom = None
+            if cores and load is not None:
+                headroom = round(max(0.0, min(100.0, (1 - (load / cores)) * 100)), 1)
+            nodes.append({
+                "node_name": n["node_name"],
+                "node_ip": str(n["node_ip"]) if n["node_ip"] is not None else None,
+                "status": n["status"] or "unknown",
+                "cpu_cores": cores,
+                "ram_gb": n["ram_gb"],
+                "load_avg_1m": load,
+                "memory_percent": n["memory_percent"],
+                "disk_percent": n["disk_percent"],
+                "last_heartbeat": hb.isoformat() if hb else None,
+                "heartbeat_age_s": round(hb_age_s, 1) if hb_age_s is not None else None,
+                "headroom": headroom,
+                "services": services_by_node.get(n["node_name"], []),
+            })
+
+        return JSONResponse({
+            "nodes": nodes,
+            "services_by_node": services_by_node,
+            "summary": {
+                "node_count": len(nodes),
+                "service_count": len(svc_rows),
+                "services_up": up_count,
+                "services_down": down_count,
+            },
+            "generated_at": now.isoformat(),
+        })
+    except Exception as e:
+        return JSONResponse({"nodes": [], "services_by_node": {}, "summary": {}, "error": str(e)})
 
 
 async def _detail_postgresql():
