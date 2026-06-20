@@ -1,0 +1,34 @@
+apiVersion: 1
+
+# Notification policy tree: route by severity label.
+#   severity=critical -> #nova-bb        (slack-nova-bb)
+#   severity=warning  -> #nova-notifications (slack-nova-notifications)
+# Default (catch-all) goes to warning channel so nothing is silently dropped.
+policies:
+  - orgId: 1
+    receiver: slack-nova-notifications
+    group_by:
+      - alertname
+      - severity
+    group_wait: 30s
+    group_interval: 5m
+    repeat_interval: 4h
+    routes:
+      - receiver: slack-nova-bb
+        object_matchers:
+          - ['severity', '=', 'critical']
+        group_by:
+          - alertname
+        group_wait: 15s
+        group_interval: 5m
+        repeat_interval: 1h
+        continue: false
+      - receiver: slack-nova-notifications
+        object_matchers:
+          - ['severity', '=', 'warning']
+        group_by:
+          - alertname
+        group_wait: 30s
+        group_interval: 5m
+        repeat_interval: 4h
+        continue: false

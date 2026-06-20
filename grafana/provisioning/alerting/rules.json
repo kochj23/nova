@@ -1,0 +1,717 @@
+{
+  "apiVersion": 1,
+  "groups": [
+    {
+      "orgId": 1,
+      "name": "infra-health",
+      "folder": "Nova Infrastructure",
+      "interval": "1m",
+      "rules": [
+        {
+          "uid": "nova_node_down",
+          "title": "Node down or heartbeat stale",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "nova-ops-pg",
+              "model": {
+                "refId": "A",
+                "datasource": {
+                  "type": "grafana-postgresql-datasource",
+                  "uid": "nova-ops-pg"
+                },
+                "rawSql": "SELECT node_name AS metric, CASE WHEN status <> 'up' OR last_heartbeat IS NULL OR last_heartbeat < now() - interval '3 minutes' THEN 1 ELSE 0 END AS value FROM node_status",
+                "format": "table",
+                "rawQuery": true,
+                "editorMode": "code"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "reducer": "last",
+                "expression": "A",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0.0
+                      ]
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "3m",
+          "labels": {
+            "severity": "critical",
+            "team": "nova"
+          },
+          "annotations": {
+            "summary": "A Nova node is down or its heartbeat is older than 3 minutes.",
+            "description": "node_status reports a node with status != 'up' or a heartbeat staler than 3 minutes. Check the host and its telemetry agent."
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "nova_service_down",
+          "title": "Service registry: service down",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "nova-ops-pg",
+              "model": {
+                "refId": "A",
+                "datasource": {
+                  "type": "grafana-postgresql-datasource",
+                  "uid": "nova-ops-pg"
+                },
+                "rawSql": "SELECT service_name || '@' || node_name AS metric, 1 AS value FROM service_registry WHERE status = 'down'",
+                "format": "table",
+                "rawQuery": true,
+                "editorMode": "code"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "reducer": "last",
+                "expression": "A",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0.0
+                      ]
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "10m",
+          "labels": {
+            "severity": "critical",
+            "team": "nova"
+          },
+          "annotations": {
+            "summary": "One or more registered Nova services report status=down.",
+            "description": "service_registry has at least one service in 'down' state. Known intermittently-down: endpoint_monitor, hue. Investigate any unexpected entries."
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "nova_disk_warn",
+          "title": "Disk usage > 85%",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "nova-ops-pg",
+              "model": {
+                "refId": "A",
+                "datasource": {
+                  "type": "grafana-postgresql-datasource",
+                  "uid": "nova-ops-pg"
+                },
+                "rawSql": "SELECT node_name AS metric, disk_percent AS value FROM node_status WHERE disk_percent IS NOT NULL",
+                "format": "table",
+                "rawQuery": true,
+                "editorMode": "code"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "reducer": "last",
+                "expression": "A",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        85.0
+                      ]
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "10m",
+          "labels": {
+            "severity": "warning",
+            "team": "nova"
+          },
+          "annotations": {
+            "summary": "Node disk usage is above 85%.",
+            "description": "node_status.disk_percent exceeded 85% on a node. Free space or expand storage."
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "nova_disk_crit",
+          "title": "Disk usage > 95%",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "nova-ops-pg",
+              "model": {
+                "refId": "A",
+                "datasource": {
+                  "type": "grafana-postgresql-datasource",
+                  "uid": "nova-ops-pg"
+                },
+                "rawSql": "SELECT node_name AS metric, disk_percent AS value FROM node_status WHERE disk_percent IS NOT NULL",
+                "format": "table",
+                "rawQuery": true,
+                "editorMode": "code"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "reducer": "last",
+                "expression": "A",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        95.0
+                      ]
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "5m",
+          "labels": {
+            "severity": "critical",
+            "team": "nova"
+          },
+          "annotations": {
+            "summary": "Node disk usage is above 95% \u2014 imminent full disk.",
+            "description": "node_status.disk_percent exceeded 95% on a node. Urgent: free space immediately."
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "nova_pg_replica_lag",
+          "title": "PostgreSQL replica lag or disconnected",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "nova-ops-pg",
+              "model": {
+                "refId": "A",
+                "datasource": {
+                  "type": "grafana-postgresql-datasource",
+                  "uid": "nova-ops-pg"
+                },
+                "rawSql": "SELECT COALESCE(application_name, 'replica') AS metric, COALESCE(EXTRACT(EPOCH FROM replay_lag), 0)::float8 AS value FROM pg_stat_replication UNION ALL SELECT 'no_replica_connected' AS metric, 9999::float8 AS value WHERE NOT EXISTS (SELECT 1 FROM pg_stat_replication)",
+                "format": "table",
+                "rawQuery": true,
+                "editorMode": "code"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "reducer": "max",
+                "expression": "A",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        5.0
+                      ]
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "2m",
+          "labels": {
+            "severity": "critical",
+            "team": "nova"
+          },
+          "annotations": {
+            "summary": "PostgreSQL streaming replica lag > 5s or no replica connected.",
+            "description": "pg_stat_replication on the nova_ops primary shows replay_lag > 5s, or no replica is connected (value 9999). Check pg17-replica on nova-core."
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "nova_memory_warn",
+          "title": "Memory usage > 90%",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "nova-ops-pg",
+              "model": {
+                "refId": "A",
+                "datasource": {
+                  "type": "grafana-postgresql-datasource",
+                  "uid": "nova-ops-pg"
+                },
+                "rawSql": "SELECT node_name AS metric, memory_percent AS value FROM node_status WHERE memory_percent IS NOT NULL AND node_name <> 'mac-mini'",
+                "format": "table",
+                "rawQuery": true,
+                "editorMode": "code"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "reducer": "last",
+                "expression": "A",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        90.0
+                      ]
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "10m",
+          "labels": {
+            "severity": "warning",
+            "team": "nova"
+          },
+          "annotations": {
+            "summary": "Node memory usage is above 90% (mac-mini excluded \u2014 its macOS SNMP misreports ~100%).",
+            "description": "node_status.memory_percent exceeded 90% on a node (mac-mini intentionally excluded). Investigate memory pressure."
+          },
+          "isPaused": false
+        }
+      ]
+    },
+    {
+      "orgId": 1,
+      "name": "network-and-tasks",
+      "folder": "Nova Network & Tasks",
+      "interval": "2m",
+      "rules": [
+        {
+          "uid": "nova_snmp_port_errors",
+          "title": "SNMP interface errors rising",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "nova-ops-pg",
+              "model": {
+                "refId": "A",
+                "datasource": {
+                  "type": "grafana-postgresql-datasource",
+                  "uid": "nova-ops-pg"
+                },
+                "rawSql": "SELECT device_name || ' ' || metric_name AS metric, (max(metric_value) - min(metric_value))::float8 AS value FROM snmp_metrics WHERE (metric_name LIKE 'if_in_errors%' OR metric_name LIKE 'if_out_errors%') AND timestamp > now() - interval '10 minutes' GROUP BY device_name, metric_name HAVING (max(metric_value) - min(metric_value)) > 0",
+                "format": "table",
+                "rawQuery": true,
+                "editorMode": "code"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "reducer": "max",
+                "expression": "A",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        1000.0
+                      ]
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "15m",
+          "labels": {
+            "severity": "warning",
+            "team": "nova"
+          },
+          "annotations": {
+            "summary": "A network interface is accumulating errors (>1000 new in/out errors over 10 minutes).",
+            "description": "snmp_metrics if_in_errors/if_out_errors increased by more than 1000 on an interface over the last 10 minutes. Check the switch port / cabling."
+          },
+          "isPaused": false
+        },
+        {
+          "uid": "nova_scheduler_task_failing",
+          "title": "Scheduler task failing",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "nova-ops-pg",
+              "model": {
+                "refId": "A",
+                "datasource": {
+                  "type": "grafana-postgresql-datasource",
+                  "uid": "nova-ops-pg"
+                },
+                "rawSql": "SELECT task_id AS metric, max(CASE WHEN status IN ('failure','timeout') THEN 1 ELSE 0 END)::float8 AS value FROM scheduler_runs WHERE started_at/1000.0 > extract(epoch from now()) - 1800 GROUP BY task_id HAVING max(CASE WHEN status IN ('failure','timeout') THEN 1 ELSE 0 END) = 1",
+                "format": "table",
+                "rawQuery": true,
+                "editorMode": "code"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "reducer": "last",
+                "expression": "A",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0.0
+                      ]
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "OK",
+          "execErrState": "Error",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "team": "nova"
+          },
+          "annotations": {
+            "summary": "A scheduled task failed or timed out in the last 30 minutes.",
+            "description": "scheduler_runs shows a task with status failure/timeout in the last 30 minutes. Check the task script and error_tail."
+          },
+          "isPaused": false
+        }
+      ]
+    }
+  ]
+}

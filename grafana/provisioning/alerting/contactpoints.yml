@@ -1,0 +1,34 @@
+apiVersion: 1
+
+# Nova alerting contact points — route by severity to Slack.
+# Slack integration uses the Nova bot token (__SLACK_BOT_TOKEN_VIA_KEYCHAIN__) + channel ID recipient.
+# Bot token source: macOS Keychain on 192.168.1.6 ->
+#   security find-generic-password -a nova -s nova-slack-bot-token -w
+contactPoints:
+  - orgId: 1
+    name: slack-nova-bb
+    receivers:
+      - uid: nova_slack_critical
+        type: slack
+        settings:
+          token: __SLACK_BOT_TOKEN_VIA_KEYCHAIN__
+          recipient: C0B3G7J6N07
+          title: |
+            {{ template "slack.nova.title" . }}
+          text: |
+            {{ template "slack.nova.text" . }}
+        disableResolveMessage: false
+
+  - orgId: 1
+    name: slack-nova-notifications
+    receivers:
+      - uid: nova_slack_warning
+        type: slack
+        settings:
+          token: __SLACK_BOT_TOKEN_VIA_KEYCHAIN__
+          recipient: C0ATAF7NZG9
+          title: |
+            {{ template "slack.nova.title" . }}
+          text: |
+            {{ template "slack.nova.text" . }}
+        disableResolveMessage: false

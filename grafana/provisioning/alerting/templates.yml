@@ -1,0 +1,14 @@
+apiVersion: 1
+
+templates:
+  - orgId: 1
+    name: nova.slack.templates
+    template: |
+      {{ define "slack.nova.title" }}{{ if eq .Status "firing" }}:rotating_light: [{{ .Status | toUpper }}]{{ else }}:white_check_mark: [RESOLVED]{{ end }} {{ .CommonLabels.alertname }}{{ end }}
+
+      {{ define "slack.nova.text" }}{{ range .Alerts }}*{{ .Labels.alertname }}* ({{ .Labels.severity }})
+      {{ if .Annotations.summary }}{{ .Annotations.summary }}{{ end }}
+      {{ if .Annotations.description }}{{ .Annotations.description }}{{ end }}
+      {{ range .Labels.SortedPairs }}{{ if and (ne .Name "alertname") (ne .Name "__alert_rule_uid__") (ne .Name "grafana_folder") }}• {{ .Name }}: {{ .Value }}
+      {{ end }}{{ end }}_Started: {{ .StartsAt }}_
+      {{ end }}{{ end }}
