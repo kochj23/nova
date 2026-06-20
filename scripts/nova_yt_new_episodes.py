@@ -425,7 +425,10 @@ def _looks_foreign(title: str) -> bool:
     if not letters:
         return False
     non_latin = sum(1 for c in letters if ord(c) > 0x2E80)  # CJK/Hiragana/Katakana/etc.
-    return (non_latin / len(letters)) >= 0.5
+    # All of Jordan's shows are English; legit titles essentially never carry CJK.
+    # Flag on a meaningful absolute count OR a modest ratio (titles often mix in a
+    # few Latin words like "MOD"/"MIDNIGHT" that would dilute a high ratio threshold).
+    return non_latin >= 3 or (non_latin / len(letters)) >= 0.25
 
 
 def get_recent_videos(channel_url: str, count: int = RECENT_VIDEOS_CHECK) -> list:
