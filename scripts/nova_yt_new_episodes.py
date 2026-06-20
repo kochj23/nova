@@ -133,21 +133,10 @@ CHANNELS = {
         "url": "https://www.youtube.com/channel/UCOCElZGcmHm3dcNLq_bIZSQ",
         "mode": "single",
     },
-    "roadkill": {
-        "name": "Roadkill",
-        "url": "https://www.youtube.com/@RoadkillShow",
-        "mode": "single",
-    },
-    "hotrodgarage": {
-        "name": "Hot Rod Garage",
-        "url": "https://www.youtube.com/@HotRodGarage",
-        "mode": "single",
-    },
-    "enginemasters": {
-        "name": "Engine Masters",
-        "url": "https://www.youtube.com/@EngineMasters",
-        "mode": "single",
-    },
+    # REMOVED 2026-06-20: MotorTrend pulled Roadkill / Hot Rod Garage / Engine Masters
+    # behind their paywall; the freed YouTube handles now resolve to empty or a
+    # hijacked Japanese sim-racing channel, so the job was downloading unrelated junk.
+    # @HotRodGarage -> 湾岸MIDNIGHT/Assetto-Corsa drift videos; @RoadkillShow/@EngineMasters -> empty.
     "richrebuilds": {
         "name": "Rich Rebuilds",
         "url": "https://www.youtube.com/@RichRebuilds",
@@ -427,6 +416,18 @@ def is_on_disk(title: str, on_disk: set) -> bool:
     hit = sum(1 for w in words if any(w in dt for dt in on_disk))
     return (hit / len(words)) >= 0.6
 
+def _looks_foreign(title: str) -> bool:
+    """True if the title is predominantly non-Latin (CJK/Cyrillic/etc). All of
+    Jordan's shows are English-language; this is a backstop so a reassigned/
+    hijacked YouTube handle (e.g. @HotRodGarage -> a Japanese channel) can't
+    dump unrelated foreign-language videos into a show."""
+    letters = [c for c in title if c.isalpha()]
+    if not letters:
+        return False
+    non_latin = sum(1 for c in letters if ord(c) > 0x2E80)  # CJK/Hiragana/Katakana/etc.
+    return (non_latin / len(letters)) >= 0.5
+
+
 def get_recent_videos(channel_url: str, count: int = RECENT_VIDEOS_CHECK) -> list:
     """Fetch most recent N videos from a channel."""
     r = subprocess.run(
@@ -439,9 +440,13 @@ def get_recent_videos(channel_url: str, count: int = RECENT_VIDEOS_CHECK) -> lis
     for line in r.stdout.strip().splitlines():
         parts = line.split("\t", 2)
         if len(parts) >= 2:
+            title = parts[1]
+            if _looks_foreign(title):
+                log(f"[skip] non-Latin title (likely hijacked handle): {title[:60]}")
+                continue
             videos.append({
                 "id": parts[0],
-                "title": parts[1],
+                "title": title,
                 "upload_date": parts[2] if len(parts) > 2 and parts[2] != "NA" else "",
             })
     return videos
