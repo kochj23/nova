@@ -47,7 +47,8 @@ import nova_config
 
 VERSION       = "1.3.0"
 MEMORY_URL    = "http://192.168.1.6:18790/remember"
-SEARXNG_URL   = "http://192.168.1.10:8080/search"
+from nova_resolve import resolve_url
+SEARXNG_URL = resolve_url("searxng", "/search")
 SLACK_CHANNEL = nova_config.SLACK_NOTIFY
 STATE_DIR     = Path.home() / ".openclaw/workspace/state/ingest"
 LOG_FILE      = Path.home() / ".openclaw/logs/nova_ingest.log"

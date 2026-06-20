@@ -356,7 +356,7 @@ class NovaScheduler:
                     log(f"FAIL {task.id} exit={proc.returncode} ({task.state.last_duration:.1f}s)",
                         level=LOG_ERROR, source="scheduler")
                     self._total_failures += 1
-                    if task.state.consecutive_failures >= 3:
+                    if task.state.consecutive_failures in (3, 10, 50, 100):
                         await self._slack_alert(f":x: *{task.id}* — {task.state.consecutive_failures} consecutive failures. "
                                                f"Last error: {task.state.last_error[:200]}")
             else:
@@ -381,7 +381,7 @@ class NovaScheduler:
             task.state.last_duration = time.time() - start
             self._total_failures += 1
             log(f"ERROR {task.id}: {e}", level=LOG_ERROR, source="scheduler")
-            if task.state.consecutive_failures >= 3:
+            if task.state.consecutive_failures in (3, 10, 50, 100):
                 await self._slack_alert(f":x: *{task.id}* — {e}")
 
         finally:
@@ -585,11 +585,18 @@ class NovaScheduler:
             loop.add_signal_handler(sig, self._shutdown)
         loop.add_signal_handler(signal.SIGHUP, self._reload)
 
-        # Start HTTP status server
+        # Start HTTP status server — also acts as singleton lock
         port = self.sched_cfg.get("status_port", 37460)
         try:
             server = await asyncio.start_server(self._handle_http, "0.0.0.0", port)
             log(f"Status API on port {port}", level=LOG_INFO, source="scheduler")
+        except OSError as e:
+            if e.errno == 48:  # Address already in use — another scheduler is running
+                log(f"Another scheduler already running on port {port} — exiting to prevent duplicates",
+                    level=LOG_WARN, source="scheduler")
+                self._running = False
+                return
+            log(f"Status API failed to start: {e}", level=LOG_WARN, source="scheduler")
         except Exception as e:
             log(f"Status API failed to start: {e}", level=LOG_WARN, source="scheduler")
 

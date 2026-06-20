@@ -12,6 +12,7 @@ import os
 import re
 import sys
 import time
+from nova_resolve import resolve_url
 import uuid
 from pathlib import Path
 
@@ -279,7 +280,7 @@ async def _tool_web_search(ctx: GatewayContext, params: dict) -> str:
 
     try:
         resp = await ctx.http.get(
-            "http://192.168.1.10:8080/search",
+            resolve_url("searxng", "/search"),
             params={"q": query, "format": "json", "categories": "general"},
             timeout=15,
         )

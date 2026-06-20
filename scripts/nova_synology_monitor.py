@@ -1118,7 +1118,8 @@ def find_problems(sysinfo, utilization, storage):
         for vol in volumes:
             vol_id = vol.get("id", vol.get("vol_path", "?"))
             status = vol.get("status", "unknown")
-            if status not in ("normal", "healthy"):
+            status_lower = status.lower()
+            if status_lower not in ("normal", "healthy", "background_scrubbing", "scrubbing"):
                 problems.append({
                     "severity": "high",
                     "category": "volume",
@@ -1154,7 +1155,8 @@ def find_problems(sysinfo, utilization, storage):
         for pool in pools:
             pool_id = pool.get("id", pool.get("raidPath", "?"))
             status = pool.get("status", "unknown")
-            if status not in ("normal", "healthy"):
+            status_lower = status.lower()
+            if status_lower not in ("normal", "healthy", "background_scrubbing", "scrubbing", "reshaping"):
                 problems.append({
                     "severity": "high",
                     "category": "raid",

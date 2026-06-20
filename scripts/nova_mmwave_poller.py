@@ -1,18 +1,15 @@
 #!/opt/homebrew/bin/python3
 """
-nova_mmwave_poller.py — Aqara FP2 mmWave presence sensor integration for Nova.
+nova_mmwave_poller.py — Aqara FP2 mmWave presence receiver for Nova.
 
-Polls Home Assistant REST API for 4x Aqara FP2 sensors placed in:
-  - Master Bedroom
-  - Office
-  - Living Room
-  - Patio
+Accepts presence data via two methods:
+1. HTTP webhook (POST /presence) — from Apple HomeKit automations
+2. Apple Shortcuts polling — Shortcut reads FP2 state and POSTs here
 
-FP2 connects via WiFi → Aqara Home → HomeKit → Home Assistant integration.
-HA exposes each sensor as binary_sensor (occupancy) + per-zone entities.
+Stores zone-level presence in telemetry.presence and updates presence_state.
 
-Feeds zone-level presence data into telemetry.presence with method='mmwave'.
-The presence_engine fuses this with BLE, Hue motion, and WiFi signals.
+FP2 sensors use Apple MFi auth so can't pair with HA directly.
+Instead, Apple Home automations fire webhooks on occupancy change.
 
 Written by Jordan Koch.
 """
@@ -20,44 +17,43 @@ Written by Jordan Koch.
 import asyncio
 import json
 import signal
-import subprocess
 import sys
 import time
-import urllib.parse
-import urllib.request
 from datetime import datetime, timezone
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from pathlib import Path
+import ssl
+from socketserver import ThreadingMixIn
+from threading import Thread
+from urllib.parse import parse_qs
 
 try:
     import asyncpg
-except ImportError as e:
-    print(f"FATAL: missing dependency: {e}", file=sys.stderr)
+except ImportError:
+    print("FATAL: pip install asyncpg", file=sys.stderr)
     sys.exit(1)
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-VERSION = "2.0.0"
+VERSION = "3.0.0"
 DB_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
-HA_URL = "http://127.0.0.1:8123"
-POLL_INTERVAL = 10
+LISTEN_PORT = 8089
 LOG_FILE = Path.home() / ".openclaw/logs/nova_mmwave.log"
+POLL_INTERVAL = 10
 
-# Entity ID patterns for Aqara FP2 sensors in HA
-# HA creates entities like: binary_sensor.aqara_fp2_bedroom_occupancy
-# These will be auto-discovered, but we map rooms for the ones we know
-ROOM_ENTITY_MAP = {
-    "bedroom": ["presence_sensor_fp2_bedroom", "aqara_fp2_bedroom"],
-    "office": ["presence_sensor_fp2_office", "aqara_fp2_office"],
-    "living_room": ["presence_sensor_fp2_living_room", "aqara_fp2_living_room", "aqara_fp2_living"],
-    "patio": ["presence_sensor_fp2_patio", "aqara_fp2_patio"],
+# Room mapping for the 4 FP2 sensors (by their mDNS suffix)
+FP2_SENSORS = {
+    "66A8": {"room": "office", "ip": "192.168.1.37"},
+    "688B": {"room": "living_room", "ip": "192.168.1.162"},
+    "68C6": {"room": "master_bedroom", "ip": "192.168.1.43"},
+    "67B8": {"room": "patio", "ip": "192.168.1.130"},
 }
 
 _shutdown = False
 _pool = None
 _start_time = time.time()
-_last_state = {}  # room -> {presence, ts}
-_access_token = None
-_token_expires = 0
+_last_state = {}  # room -> {presence: bool, ts: float, zones: dict}
+_event_count = 0
 
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -73,277 +69,309 @@ def log(msg, level="INFO"):
         pass
 
 
-def _keychain(service):
-    result = subprocess.run(
-        ["security", "find-generic-password", "-a", "nova", "-s", service, "-w"],
-        capture_output=True, text=True
-    )
-    return result.stdout.strip() if result.returncode == 0 else None
+# ── Database ──────────────────────────────────────────────────────────────────
+
+_sync_pool = None
 
 
-def get_ha_token():
-    """Get HA access token using refresh token from Keychain."""
-    global _access_token, _token_expires
+def get_sync_conn():
+    import psycopg2
+    return psycopg2.connect("host=localhost dbname=nova_ops user=kochj")
 
-    if _access_token and time.time() < _token_expires:
-        return _access_token
 
-    refresh_token = _keychain("nova-hass-refresh-token")
-    if not refresh_token:
-        log("No HA refresh token in Keychain (nova-hass-refresh-token)", "ERROR")
-        return None
-
-    form_data = urllib.parse.urlencode({
-        "grant_type": "refresh_token",
-        "refresh_token": refresh_token,
-    }).encode()
-
+def write_presence_sync(room, presence, confidence, zones=None, metadata=None):
+    """Write presence reading to telemetry.presence and update presence_state."""
+    global _event_count
     try:
-        req = urllib.request.Request(f"{HA_URL}/auth/token", data=form_data)
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read())
-        _access_token = result["access_token"]
-        _token_expires = time.time() + 1800  # refresh every 30min
-        return _access_token
-    except Exception as e:
-        log(f"Failed to get HA token: {e}", "ERROR")
-        return None
-
-
-def ha_api(endpoint):
-    """Call HA REST API and return JSON."""
-    token = get_ha_token()
-    if not token:
-        return None
-
-    try:
-        req = urllib.request.Request(
-            f"{HA_URL}/api/{endpoint}",
-            headers={"Authorization": f"Bearer {token}"}
-        )
-        resp = urllib.request.urlopen(req, timeout=10)
-        return json.loads(resp.read())
-    except Exception as e:
-        log(f"HA API error ({endpoint}): {e}", "ERROR")
-        return None
-
-
-def discover_fp2_entities():
-    """Auto-discover Aqara FP2 entities from HA state."""
-    states = ha_api("states")
-    if not states:
-        return {}
-
-    discovered = {}  # room -> [entity_ids]
-
-    for state in states:
-        eid = state["entity_id"]
-        attrs = state.get("attributes", {})
-
-        # Match by entity_id pattern or device class
-        is_fp2 = False
-        matched_room = None
-
-        for room, patterns in ROOM_ENTITY_MAP.items():
-            for pattern in patterns:
-                if pattern in eid.lower():
-                    is_fp2 = True
-                    matched_room = room
-                    break
-            if is_fp2:
-                break
-
-        # Also match by manufacturer attribute
-        if not is_fp2 and "aqara" in attrs.get("manufacturer", "").lower():
-            if "fp2" in attrs.get("model", "").lower() or "presence" in eid:
-                is_fp2 = True
-
-        if is_fp2 and ("binary_sensor" in eid or "sensor" in eid):
-            if matched_room:
-                discovered.setdefault(matched_room, []).append(eid)
-            else:
-                discovered.setdefault("_unmatched", []).append(eid)
-
-    return discovered
-
-
-def poll_presence():
-    """Poll HA for current FP2 sensor states."""
-    states = ha_api("states")
-    if not states:
-        return {}
-
-    state_map = {s["entity_id"]: s for s in states}
-    results = {}  # room -> {presence, zones, confidence, metadata}
-
-    for room, patterns in ROOM_ENTITY_MAP.items():
-        presence = False
-        zones = {}
-        metadata = {}
-
-        for pattern in patterns:
-            # Check occupancy binary sensor
-            for eid, state in state_map.items():
-                if pattern not in eid.lower():
-                    continue
-
-                if "binary_sensor" in eid and "occupancy" in eid:
-                    presence = state["state"] == "on"
-                    metadata["occupancy_entity"] = eid
-                    metadata["last_changed"] = state.get("last_changed")
-
-                elif "binary_sensor" in eid and "zone" in eid:
-                    zone_name = eid.split("_zone_")[-1] if "_zone_" in eid else eid
-                    zones[zone_name] = {
-                        "occupied": state["state"] == "on",
-                        "last_changed": state.get("last_changed"),
-                    }
-
-                elif "sensor" in eid and "illuminance" in eid:
-                    try:
-                        metadata["illuminance_lux"] = float(state["state"])
-                    except (ValueError, TypeError):
-                        pass
-
-        # If any zone is occupied, room is occupied
-        if zones and any(z["occupied"] for z in zones.values()):
-            presence = True
-
-        if presence or zones or metadata.get("occupancy_entity"):
-            results[room] = {
-                "presence": presence,
-                "confidence": 0.95 if presence else 0.0,
-                "zones": zones,
-                "metadata": metadata,
-            }
-
-    return results
-
-
-async def get_pool():
-    global _pool
-    if _pool is None:
-        _pool = await asyncpg.create_pool(DB_DSN, min_size=1, max_size=3)
-    return _pool
-
-
-async def write_presence(room, confidence, metadata):
-    """Write mmWave presence reading to telemetry.presence."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO telemetry.presence (ts, person, room, confidence, method, metadata)
-            VALUES (now(), 'mmwave_zone', $1, $2, 'mmwave', $3)
-        """, room, confidence, json.dumps(metadata))
-
-
-async def write_observation(room, observation):
-    """Write presence transition to shared_observations."""
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        await conn.execute("""
-            INSERT INTO shared_observations (observer, category, subject, observation, severity)
-            VALUES ('mmwave_poller', 'presence', $1, $2, 'info')
-        """, f"room_{room}", observation)
-
-
-async def presence_loop():
-    """Main loop — poll HA and write presence data."""
-    await asyncio.sleep(5)
-    log(f"Presence polling started (interval={POLL_INTERVAL}s)")
-
-    # Initial discovery
-    discovered = discover_fp2_entities()
-    if discovered:
-        log(f"Discovered FP2 entities: {json.dumps(discovered, indent=2)}")
-    else:
-        log("No FP2 entities found yet — sensors may not be paired")
-
-    while not _shutdown:
+        conn = get_sync_conn()
         try:
-            results = poll_presence()
+            with conn.cursor() as cur:
+                # Write to telemetry
+                cur.execute("""
+                    INSERT INTO telemetry.presence (ts, person, room, confidence, method, metadata)
+                    VALUES (now(), 'jordan', %s, %s, 'mmwave', %s)
+                """, (room, confidence, json.dumps(metadata or {})))
 
-            for room, data in results.items():
-                now = time.time()
-                prev = _last_state.get(room, {})
-                prev_presence = prev.get("presence", None)
-                prev_ts = prev.get("ts", 0)
+                # Upsert presence_state
+                if presence:
+                    cur.execute("""
+                        INSERT INTO presence_state (person, room, confidence, source, activity_state)
+                        VALUES ('jordan', %s, %s, 'mmwave', 'unknown')
+                        ON CONFLICT (person) DO UPDATE SET
+                            room = EXCLUDED.room,
+                            confidence = EXCLUDED.confidence,
+                            last_confirmed = now(),
+                            source = 'mmwave'
+                    """, (room, confidence))
 
-                state_changed = (data["presence"] != prev_presence)
-                heartbeat_due = (now - prev_ts) > 60
+            conn.commit()
+            _event_count += 1
+        finally:
+            conn.close()
+    except Exception as e:
+        log(f"DB write error: {e}", "ERROR")
 
-                if state_changed or heartbeat_due:
-                    _last_state[room] = {
-                        "presence": data["presence"],
-                        "ts": now,
-                    }
 
-                    # Write to DB
-                    metadata = {
-                        "zones": data["zones"],
-                        **data.get("metadata", {}),
-                    }
-                    await write_presence(room, data["confidence"], metadata)
+def write_observation_sync(room, observation):
+    """Write presence transition to shared_observations."""
+    try:
+        conn = get_sync_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO shared_observations (observer, category, subject, observation, severity)
+                    VALUES ('mmwave_poller', 'presence', %s, %s, 'info')
+                """, (f"room_{room}", observation))
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log(f"Observation write error: {e}", "ERROR")
 
-                    if state_changed:
-                        event = "enter" if data["presence"] else "leave"
-                        log(f"{room}: {'PRESENT' if data['presence'] else 'EMPTY'}")
-                        await write_observation(room, f"mmWave: {event} detected in {room}")
 
+# ── Presence Processing ───────────────────────────────────────────────────────
+
+def process_presence_update(room, presence, zones=None, source="webhook"):
+    """Process a presence update from any source."""
+    now = time.time()
+    prev = _last_state.get(room, {})
+    prev_presence = prev.get("presence")
+    prev_ts = prev.get("ts", 0)
+
+    confidence = 0.95 if presence else 0.05
+    state_changed = (presence != prev_presence)
+    heartbeat_due = (now - prev_ts) > 60
+
+    if state_changed or heartbeat_due:
+        _last_state[room] = {
+            "presence": presence,
+            "ts": now,
+            "zones": zones or {},
+        }
+
+        metadata = {"zones": zones or {}, "source": source}
+        write_presence_sync(room, presence, confidence, zones, metadata)
+
+        if state_changed:
+            event = "enter" if presence else "leave"
+            log(f"{room}: {'PRESENT' if presence else 'EMPTY'} (via {source})")
+            write_observation_sync(room, f"mmWave: {event} detected in {room}")
+
+    return state_changed
+
+
+# ── HTTP Webhook Server ───────────────────────────────────────────────────────
+
+class PresenceHandler(BaseHTTPRequestHandler):
+    """Handles incoming presence webhooks from HomeKit automations."""
+
+    def log_message(self, format, *args):
+        pass  # Suppress default HTTP logging
+
+    def do_GET(self):
+        if self.path == "/health":
+            rooms_present = [r for r, s in _last_state.items() if s.get("presence")]
+            health = {
+                "status": "ok",
+                "version": VERSION,
+                "uptime_s": int(time.time() - _start_time),
+                "events_received": _event_count,
+                "rooms_tracked": len(_last_state),
+                "occupied": rooms_present,
+                "last_state": {r: {"presence": s["presence"], "age_s": int(time.time() - s["ts"])}
+                               for r, s in _last_state.items()},
+            }
+            self._respond(200, health)
+        elif self.path == "/state":
+            self._respond(200, _last_state)
+        else:
+            self._respond(404, {"error": "Not found. Use POST /presence or GET /health"})
+
+    def do_POST(self):
+        if self.path != "/presence":
+            self._respond(404, {"error": "POST to /presence"})
+            return
+
+        try:
+            content_length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(content_length).decode("utf-8")
+
+            # Accept both JSON and form-urlencoded
+            content_type = self.headers.get("Content-Type", "")
+            if "json" in content_type:
+                data = json.loads(body)
+            else:
+                parsed = parse_qs(body)
+                data = {k: v[0] for k, v in parsed.items()}
+
+            room = data.get("room", "").lower().replace(" ", "_")
+            presence = data.get("presence", data.get("occupied", ""))
+
+            if not room:
+                self._respond(400, {"error": "Missing 'room' field"})
+                return
+
+            # Parse presence value
+            if isinstance(presence, bool):
+                is_present = presence
+            elif isinstance(presence, str):
+                is_present = presence.lower() in ("true", "1", "yes", "on", "detected")
+            else:
+                is_present = bool(presence)
+
+            zones = data.get("zones", {})
+            source = data.get("source", "homekit_automation")
+
+            changed = process_presence_update(room, is_present, zones, source)
+
+            self._respond(200, {
+                "ok": True,
+                "room": room,
+                "presence": is_present,
+                "changed": changed,
+            })
+
+        except json.JSONDecodeError:
+            self._respond(400, {"error": "Invalid JSON"})
         except Exception as e:
-            log(f"Poll error: {e}", "ERROR")
+            log(f"Webhook error: {e}", "ERROR")
+            self._respond(500, {"error": str(e)})
 
-        await asyncio.sleep(POLL_INTERVAL)
+    def _respond(self, code, data):
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(json.dumps(data).encode())
 
 
-async def health_reporter():
+class ThreadedHTTPServer(ThreadingMixIn, HTTPServer):
+    daemon_threads = True
+
+
+# ── Shortcut Poller (fallback) ────────────────────────────────────────────────
+
+def run_shortcut_poll():
+    """Run the Nova FP2 Presence Shortcut and parse output.
+    Falls back gracefully if shortcut doesn't exist."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ["shortcuts", "run", "Nova FP2 Presence"],
+            capture_output=True, text=True, timeout=15,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            data = json.loads(result.stdout.strip())
+            for room, occupied in data.items():
+                process_presence_update(room.lower().replace(" ", "_"), occupied, source="shortcut")
+            return True
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, FileNotFoundError):
+        pass
+    except Exception as e:
+        log(f"Shortcut poll error: {e}", "ERROR")
+    return False
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def health_loop():
     """Periodically log health stats."""
     while not _shutdown:
-        await asyncio.sleep(300)
+        time.sleep(300)
         rooms_present = [r for r, s in _last_state.items() if s.get("presence")]
         log(f"Health: up {int(time.time() - _start_time)}s, "
-            f"rooms tracked: {len(_last_state)}, "
-            f"currently occupied: {rooms_present or 'none'}")
+            f"events: {_event_count}, "
+            f"rooms: {len(_last_state)}, "
+            f"occupied: {rooms_present or 'none'}")
 
 
-def _handle_signal(sig, frame):
-    global _shutdown
-    _shutdown = True
-    log("Shutdown signal received")
-
-
-async def main():
-    global _shutdown
-
-    signal.signal(signal.SIGINT, _handle_signal)
-    signal.signal(signal.SIGTERM, _handle_signal)
-
-    log(f"Nova mmWave Poller v{VERSION} starting...")
-    log(f"Polling Home Assistant at {HA_URL}")
-    log(f"Rooms configured: {list(ROOM_ENTITY_MAP.keys())}")
-
-    # Verify HA connectivity
-    token = get_ha_token()
-    if token:
-        log("HA authentication successful")
-    else:
-        log("HA authentication failed — will retry", "WARN")
-
-    tasks = [
-        asyncio.create_task(presence_loop()),
-        asyncio.create_task(health_reporter()),
-    ]
+def shortcut_poll_loop():
+    """Fallback: poll via Shortcut every POLL_INTERVAL seconds."""
+    time.sleep(30)  # Give webhooks time to start flowing
+    consecutive_failures = 0
 
     while not _shutdown:
-        await asyncio.sleep(1)
+        # Only poll via Shortcut if no webhook data received recently
+        all_stale = all(
+            time.time() - s.get("ts", 0) > 120
+            for s in _last_state.values()
+        ) if _last_state else True
+
+        if all_stale:
+            success = run_shortcut_poll()
+            if success:
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+                if consecutive_failures == 1:
+                    log("Shortcut poll unavailable — relying on webhooks only", "WARN")
+                if consecutive_failures > 5:
+                    # Stop trying if shortcut doesn't exist
+                    log("Shortcut polling disabled (not configured)", "WARN")
+                    return
+
+        time.sleep(POLL_INTERVAL)
+
+
+def main():
+    global _shutdown
+
+    signal.signal(signal.SIGINT, lambda s, f: setattr(sys.modules[__name__], '_shutdown', True))
+    signal.signal(signal.SIGTERM, lambda s, f: setattr(sys.modules[__name__], '_shutdown', True))
+
+    log(f"Nova mmWave Presence Receiver v{VERSION}")
+    log(f"HTTP webhook: http://0.0.0.0:{LISTEN_PORT}/presence")
+    log(f"Health check: http://0.0.0.0:{LISTEN_PORT}/health")
+    log(f"FP2 rooms: {[s['room'] for s in FP2_SENSORS.values()]}")
+
+    # Verify DB connectivity
+    try:
+        conn = get_sync_conn()
+        conn.close()
+        log("Database connection verified")
+    except Exception as e:
+        log(f"Database connection failed: {e}", "ERROR")
+        sys.exit(1)
+
+    # Start HTTP server
+    server = ThreadedHTTPServer(("0.0.0.0", LISTEN_PORT), PresenceHandler)
+    server_thread = Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    log(f"Webhook server listening on port {LISTEN_PORT} (HTTP)")
+
+    # Start HTTPS server (required for Apple HomeKit automations)
+    cert_dir = Path.home() / ".openclaw/certs"
+    cert_file = cert_dir / "mmwave_cert.pem"
+    key_file = cert_dir / "mmwave_key.pem"
+    if cert_file.exists() and key_file.exists():
+        ssl_server = ThreadedHTTPServer(("0.0.0.0", LISTEN_PORT + 1), PresenceHandler)
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain(str(cert_file), str(key_file))
+        ssl_server.socket = ctx.wrap_socket(ssl_server.socket, server_side=True)
+        ssl_thread = Thread(target=ssl_server.serve_forever, daemon=True)
+        ssl_thread.start()
+        log(f"Webhook server listening on port {LISTEN_PORT + 1} (HTTPS)")
+    else:
+        log("No SSL certs found — HTTPS disabled (HomeKit automations may not work)", "WARN")
+
+    # Start health reporter
+    health_thread = Thread(target=health_loop, daemon=True)
+    health_thread.start()
+
+    # Start shortcut poller (fallback)
+    poll_thread = Thread(target=shortcut_poll_loop, daemon=True)
+    poll_thread.start()
+
+    # Main loop — just wait for shutdown
+    try:
+        while not _shutdown:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        pass
 
     log("Shutting down...")
-    for task in tasks:
-        task.cancel()
-    if _pool:
-        await _pool.close()
+    server.shutdown()
     log("Shutdown complete")
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()

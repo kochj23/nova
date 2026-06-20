@@ -28,7 +28,8 @@ import nova_config
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-PLEX_URL = "http://192.168.1.10:32400"
+from nova_resolve import resolve_url
+PLEX_URL = resolve_url("plex")
 MEMORY_URL = "http://192.168.1.6:18790/remember?async=1"
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 MLX_WHISPER = "/opt/homebrew/bin/mlx_whisper"

@@ -32,115 +32,90 @@ SWIFT_SCRIPT = '''
 import HealthKit
 import Foundation
 
-let healthStore = HKHealthStore()
+let store = HKHealthStore()
+let group = DispatchGroup()
+var output: [String: Double] = [:]
+let bpmUnit = HKUnit.count().unitDivided(by: HKUnit.minute())
 
-class DataCollector: NSObject {
-    var results = [String: Any]()
-    let group = DispatchGroup()
+let sleepType = HKCategoryType(.sleepAnalysis)
+let hrvType = HKQuantityType(.heartRateVariabilitySDNN)
+let hrType = HKQuantityType(.restingHeartRate)
+let stepType = HKQuantityType(.stepCount)
 
-    // HealthKit types defined as class properties — required in Swift 5.9+
-    // to avoid "class cannot close over value defined in outer scope" error
-    let sleepType = HKObjectType.categoryType(forIdentifier: .sleepAnalysis)!
-    let hrvType   = HKObjectType.quantityType(forIdentifier: .heartRateVariabilitySDNN)!
-    let hrType    = HKObjectType.quantityType(forIdentifier: .heartRate)!
-    let stepType  = HKObjectType.quantityType(forIdentifier: .stepCount)!
+let yesterday = Calendar.current.startOfDay(for: Date().addingTimeInterval(-86400))
+let todayStart = Calendar.current.startOfDay(for: Date())
+let now = Date()
 
-    func requestAuth(completion: @escaping () -> Void) {
-        let typesToRead: Set<HKObjectType> = [sleepType, hrvType, hrType, stepType]
-        healthStore.requestAuthorization(toShare: [], read: typesToRead) { _, error in
-            if let error = error { print("Auth failed: \(error)"); exit(1) }
-            completion()
-        }
-    }
-    
-    // Get sleep from last 24h
-    func fetchSleep() {
-        group.enter()
-        let start = Calendar.current.startOfDay(for: Date().addingTimeInterval(-24*3600))
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: Date(), options: .strictStartDate)
-        let query = HKSampleQuery(sampleType: sleepType!, predicate: predicate, limit: 0, sortDescriptors: nil) { _, samples, _ in
-            var sleepHours = 0.0
-            if let samples = samples as? [HKCategorySample] {
-                for sample in samples {
-                    if sample.value == HKCategoryValueSleepAnalysis.inBed.rawValue {
-                        let duration = sample.endDate.timeIntervalSince(sample.startDate)
-                        sleepHours += duration / 3600.0
-                    }
-                }
-            }
-            self.results["sleep_hours"] = sleepHours
-            self.group.leave()
-        }
-        healthStore.execute(query)
-    }
-    
-    // Get HRV (SDNN) from yesterday
-    func fetchHRV() {
-        group.enter()
-        var interval = DateInterval()
-        Calendar.current.dateInterval(of: .day, start: &interval.start, interval: nil, for: Date().addingTimeInterval(-24*3600))
-        let query = HKStatisticsCollectionQuery(quantityType: hrvType!, quantitySamplePredicate: nil, options: .discreteAverage, anchorDate: interval.start, intervalComponents: DateComponents(day: 1))
-        query.initialResultsHandler = { _, statsColl, _ in
-            if let stats = statsColl?.statistics(for: interval) {
-                let avg = stats.last?.averageQuantity()?.doubleValue(for: HKUnit.millisecond())
-                self.results["hrv_sdnn_ms"] = avg
-            }
-            self.group.leave()
-        }
-        healthStore.execute(query)
-    }
-
-    // Get resting heart rate from yesterday
-    func fetchRestingHR() {
-        group.enter()
-        var interval = DateInterval()
-        Calendar.current.dateInterval(of: .day, start: &interval.start, interval: nil, for: Date().addingTimeInterval(-24*3600))
-        let query = HKStatisticsCollectionQuery(quantityType: hrType!, quantitySamplePredicate: nil, options: .discreteMinimum, anchorDate: interval.start, intervalComponents: DateComponents(day: 1))
-        query.initialResultsHandler = { _, statsColl, _ in
-            if let stats = statsColl?.statistics(for: interval) {
-                let minHR = stats.last?.minimumQuantity()?.doubleValue(for: HKUnit.count().unitDivided(by: HKUnit.minute()))
-                self.results["resting_heart_rate_bpm"] = minHR
-            }
-            self.group.leave()
-        }
-        healthStore.execute(query)
-    }
-
-    // Get step count from today
-    func fetchSteps() {
-        group.enter()
-        let start = Calendar.current.startOfDay(for: Date())
-        let predicate = HKQuery.predicateForSamples(withStart: start, end: Date(), options: .strictStartDate)
-        let query = HKStatisticsQuery(quantityType: stepType!, quantitySamplePredicate: predicate, options: .cumulativeSum) { _, stats, _ in
-            let steps = stats?.sumQuantity()?.doubleValue(for: HKUnit.count())
-            self.results["step_count"] = steps
-            self.group.leave()
-        }
-        healthStore.execute(query)
-    }
-    
-    func collect(completion: @escaping ([String: Any]) -> Void) {
-        requestAuth {
-            self.fetchSleep()
-            self.fetchHRV()
-            self.fetchRestingHR()
-            self.fetchSteps()
-            self.group.notify(queue: .main) {
-                completion(self.results)
-            }
-        }
-    }
+// Auth
+group.enter()
+store.requestAuthorization(toShare: [], read: [sleepType, hrvType, hrType, stepType]) { ok, err in
+    group.leave()
 }
+group.wait()
 
-let collector = DataCollector()
-collector.collect { results in
-    print("COLLECTED: \(results)")
-    exit(0)
+// Sleep (last 24h)
+group.enter()
+let sleepPred = HKQuery.predicateForSamples(withStart: yesterday, end: now)
+let sleepQ = HKSampleQuery(sampleType: sleepType, predicate: sleepPred, limit: 0, sortDescriptors: nil) { _, samples, _ in
+    var hours = 0.0
+    for s in (samples as? [HKCategorySample]) ?? [] {
+        if s.value == HKCategoryValueSleepAnalysis.asleepUnspecified.rawValue ||
+           s.value == HKCategoryValueSleepAnalysis.asleepCore.rawValue ||
+           s.value == HKCategoryValueSleepAnalysis.asleepDeep.rawValue ||
+           s.value == HKCategoryValueSleepAnalysis.asleepREM.rawValue {
+            hours += s.endDate.timeIntervalSince(s.startDate) / 3600.0
+        }
+    }
+    output["sleep_hours"] = hours
+    group.leave()
 }
+store.execute(sleepQ)
 
-// Block
-let sem = DispatchSemaphore(value: 0)
-sem.wait()
+// HRV (yesterday)
+group.enter()
+let hrvPred = HKQuery.predicateForSamples(withStart: yesterday, end: todayStart)
+let hrvSort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+let hrvQ = HKSampleQuery(sampleType: hrvType, predicate: hrvPred, limit: 10, sortDescriptors: [hrvSort]) { _, samples, _ in
+    var total = 0.0; var count = 0.0
+    for s in (samples as? [HKQuantitySample]) ?? [] {
+        total += s.quantity.doubleValue(for: HKUnit.secondUnit(with: .milli))
+        count += 1
+    }
+    if count > 0 { output["hrv_sdnn_ms"] = total / count }
+    group.leave()
+}
+store.execute(hrvQ)
+
+// Resting HR (yesterday)
+group.enter()
+let hrPred = HKQuery.predicateForSamples(withStart: yesterday, end: todayStart)
+let hrSort = NSSortDescriptor(key: HKSampleSortIdentifierStartDate, ascending: false)
+let hrQ = HKSampleQuery(sampleType: hrType, predicate: hrPred, limit: 1, sortDescriptors: [hrSort]) { _, samples, _ in
+    if let s = (samples as? [HKQuantitySample])?.first {
+        output["resting_heart_rate_bpm"] = s.quantity.doubleValue(for: bpmUnit)
+    }
+    group.leave()
+}
+store.execute(hrQ)
+
+// Steps (today)
+group.enter()
+let stepPred = HKQuery.predicateForSamples(withStart: todayStart, end: now)
+let stepQ = HKStatisticsQuery(quantityType: stepType, quantitySamplePredicate: stepPred, options: .cumulativeSum) { _, stats, _ in
+    if let sum = stats?.sumQuantity() {
+        output["step_count"] = sum.doubleValue(for: HKUnit.count())
+    }
+    group.leave()
+}
+store.execute(stepQ)
+
+group.wait()
+
+// JSON output
+if let data = try? JSONSerialization.data(withJSONObject: output, options: .sortedKeys),
+   let json = String(data: data, encoding: .utf8) {
+    print("HEALTHKIT_JSON:\(json)")
+}
 '''
 
 # ── Main Execution ──────────────────────────────────────────────────────────────

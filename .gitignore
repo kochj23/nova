@@ -138,3 +138,6 @@ openclaw.json.last-good
 openclaw.json.clobbered*
 scripts/The Compact Truck*
 scripts/*.mp4
+*_state.json
+*.bak-*
+workspace/or_*.png

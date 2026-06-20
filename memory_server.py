@@ -150,6 +150,13 @@ async def _ingest_worker():
                 logger.debug(f"Skipping empty text after sanitization for {memory_id}")
                 continue
 
+            # Quality gate for async ingest
+            from nova_memory_quality_filter import passes_quality
+            quality_ok, quality_reason = passes_quality(text, source)
+            if not quality_ok:
+                logger.debug(f"Quality filter rejected async ({quality_reason}): {text[:60]}")
+                continue
+
             try:
                 vector = await embed(text)
                 vec_str = "[" + ",".join(str(v) for v in vector) + "]"
@@ -328,6 +335,13 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
     if not clean_text:
         raise HTTPException(status_code=400, detail="text cannot be empty after sanitization")
 
+    # Quality gate — reject garbage before embedding (saves GPU cycles + storage)
+    from nova_memory_quality_filter import passes_quality
+    quality_ok, quality_reason = passes_quality(clean_text, req.source or "")
+    if not quality_ok:
+        logger.info(f"Quality filter rejected ({quality_reason}): {clean_text[:60]}")
+        return {"id": None, "status": "rejected", "reason": quality_reason}
+
     memory_id = str(uuid.uuid4())
     created   = datetime.now(timezone.utc).isoformat()
 
@@ -429,7 +443,7 @@ async def _do_recall(
                     """SELECT id, text, metadata, source, created_at,
                               1 - (embedding <=> $1::vector) AS score
                        FROM memories
-                       WHERE source = $2 AND tier != 'scratchpad'
+                       WHERE source = $2 AND tier NOT IN ('scratchpad', 'reference')
                        ORDER BY embedding <=> $1::vector
                        LIMIT $3""",
                     vec_str, source, k
@@ -441,7 +455,7 @@ async def _do_recall(
                     """SELECT id, text, metadata, source, created_at,
                               1 - (embedding <=> $1::vector) AS score
                        FROM memories
-                       WHERE tier != 'scratchpad'
+                       WHERE tier NOT IN ('scratchpad', 'reference')
                        ORDER BY embedding <=> $1::vector
                        LIMIT $2""",
                     vec_str, k

@@ -41,8 +41,8 @@ except ImportError:
 # ── Config ────────────────────────────────────────────────────────────────────
 
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content" / "rando"
-IMAGES_DIR = HUGO_ROOT / "static" / "images" / "rando"
+CONTENT_DIR = HUGO_ROOT / "content" / "operations"
+IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "google/gemini-2.5-flash"
 

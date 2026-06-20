@@ -184,7 +184,9 @@ class DuckDuckGoSearch:
             "safesearch": safe_val,
             "language": region,
         })
-        url = f"http://192.168.1.10:8080/search?{params}"
+        import sys as _s, os as _o; _s.path.insert(0, _o.path.dirname(_o.path.abspath(__file__)))
+        from nova_resolve import resolve_url
+        url = resolve_url("searxng", f"/search?{params}")
 
         try:
             result = subprocess.run(

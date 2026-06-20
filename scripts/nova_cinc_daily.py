@@ -262,8 +262,11 @@ def detect_drift(node):
             drift_items.append({"type": "package_missing", "package": "rkhunter"})
 
     elif os_family == "macos":
-        # Check launchd services
-        services_to_check = ["net.digitalnoise.nova-memory-server", "com.nova.scheduler"]
+        # Nova services only run on mac-studio (the primary Nova host)
+        if name == "mac-studio":
+            services_to_check = ["net.digitalnoise.nova-memory-server", "com.nova.scheduler"]
+        else:
+            services_to_check = []
         for svc in services_to_check:
             rc, out, _ = ssh_cmd(host, user, f"launchctl list 2>/dev/null | grep {svc}")
             if rc != 0 or not out.strip():

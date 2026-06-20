@@ -84,15 +84,22 @@ JORDAN_SIGNAL = "+1" + "8187310893"         # noqa: Jordan's Signal
 LAN_IP        = "192.168.1.6"
 NOVA_HOST     = LAN_IP   # canonical host for all Nova services
 
-VECTOR_URL    = f"http://{NOVA_HOST}:18790/remember"
-MEMORY_URL    = f"http://{NOVA_HOST}:18790"
+# ── Nova Mesh resolution (dynamic, PG-backed, static fallback) ───────────────
+try:
+    from nova_resolve import resolve_url as _resolve_url
+    VECTOR_URL    = _resolve_url("memory_server", "/remember")
+    MEMORY_URL    = _resolve_url("memory_server")
+    NOVACONTROL   = _resolve_url("novacontrol")
+except Exception:
+    VECTOR_URL    = f"http://{NOVA_HOST}:18790/remember"
+    MEMORY_URL    = f"http://{NOVA_HOST}:18790"
+    NOVACONTROL   = f"http://{NOVA_HOST}:37400"
+
 SCRIPTS_DIR   = str(__import__('pathlib').Path.home() / ".openclaw/scripts")
 
 # ── NovaControl unified API (port 37400) ─────────────────────────────────────
 # Single app serves data for all of Jordan's apps so Nova never needs multiple
 # processes running. Use these constants instead of hardcoding port numbers.
-
-NOVACONTROL   = f"http://{NOVA_HOST}:37400"
 
 # App data endpoints
 NC_ONEONONE   = f"{NOVACONTROL}/api/oneonone"      # meetings, people, action items, goals

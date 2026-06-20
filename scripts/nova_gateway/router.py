@@ -227,7 +227,7 @@ class ModelRouter:
             payload = {
                 "model":   model,
                 "messages": msgs,
-                "options": {"num_predict": max_tokens + 2048, "temperature": 0.7},
+                "options": {"num_predict": max_tokens + 2048, "temperature": 0.4},
                 "think":   True,
                 "stream":  False,
             }

@@ -27,6 +27,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+from nova_resolve import resolve_url
 import nova_config
 
 # ── Paths & Constants ────────────────────────────────────────────────────────
@@ -268,8 +269,8 @@ def get_plex_epg(channel: str) -> dict | None:
 
         now_epoch = int(time.time())
         url = (
-            f"http://192.168.1.10:32400/tv.plex.providers.epg.cloud:2/grid"
-            f"?type=1,4&X-Plex-Token={token}"
+            resolve_url("plex", "/tv.plex.providers.epg.cloud:2/grid")
+            + f"?type=1,4&X-Plex-Token={token}"
         )
         req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=10) as resp:

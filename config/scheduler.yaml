@@ -165,7 +165,7 @@ tasks:
   journal_art:
     script: nova_journal.py
     args: ["art"]
-    schedule: cron 0 4 * * *
+    schedule: cron 0 4 * * 0
     timeout: 1800
     overlap: skip
     group: llm
@@ -174,7 +174,7 @@ tasks:
   journal_dream:
     script: nova_journal.py
     args: ["dream"]
-    schedule: cron 0 6 * * *
+    schedule: cron 0 6 * * 1,3,5
     timeout: 900
     overlap: skip
     group: llm
@@ -322,7 +322,7 @@ tasks:
   journal_opinion:
     script: nova_journal.py
     args: ["opinion"]
-    schedule: cron 0 12 * * *
+    schedule: cron 0 12 * * 2,4,6
     timeout: 600
     overlap: skip
     group: llm
@@ -356,7 +356,7 @@ tasks:
   journal_essay:
     script: nova_journal.py
     args: ["essay"]
-    schedule: cron 0 9 * * 1,3,5
+    schedule: cron 0 9 * * 3
     timeout: 900
     overlap: skip
     group: llm
@@ -377,7 +377,7 @@ tasks:
   journal_after_dark:
     script: nova_journal.py
     args: ["after-dark"]
-    schedule: cron 0 20 * * *
+    schedule: cron 0 20 * * 5,6
     timeout: 900
     overlap: skip
     group: llm
@@ -385,6 +385,20 @@ tasks:
   rando_weird_memories:
     script: nova_rando_weird_memories.py
     schedule: cron 30 21 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  rando_top10_weird:
+    script: nova_rando_top10_weird.py
+    schedule: cron 0 6 * * 1,3,5
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  local_burbank:
+    script: nova_local_burbank.py
+    schedule: cron 0 10 * * *
     timeout: 600
     overlap: skip
     group: llm
@@ -400,7 +414,7 @@ tasks:
   journal_pilot:
     script: nova_journal.py
     args: ["pilot"]
-    schedule: cron 30 20 * * *
+    schedule: cron 30 20 * * 6
     timeout: 900
     overlap: skip
     group: llm
@@ -410,7 +424,7 @@ tasks:
   journal_research:
     script: nova_journal.py
     args: ["research"]
-    schedule: cron 50 23 * * 2,4,6
+    schedule: cron 50 23 * * 4
     timeout: 1800
     overlap: skip
     group: llm
@@ -457,7 +471,7 @@ tasks:
   journal_tech_today:
     script: nova_journal.py
     args: ["tech-today"]
-    schedule: cron 30 23 * * *
+    schedule: cron 30 23 * * 1,4
     timeout: 900
     overlap: skip
     group: llm
@@ -788,8 +802,30 @@ tasks:
   gov_rss_ingest:
     script: nova_gov_rss_ingest.py
     schedule: every 6h
-    timeout: 600
+    timeout: 900
     overlap: skip
+
+  # ── LA County Emergency → local journal (LIVE — enabled 2026-06-20) ──
+  # Daily recap: roundup of the day's LA County public-safety items, in Nova's
+  # full local voice, published to the `local` Hugo section, 6 PM.
+  journal_emergency_daily:
+    script: nova_journal_emergency.py
+    args: ["daily"]
+    schedule: cron 0 18 * * *
+    timeout: 900
+    overlap: skip
+    group: llm
+
+  # Breaking watcher: scans the last 6h of la_public_safety for notable events
+  # (evac orders, NWS warnings, active fires/floods, major incidents) and posts
+  # an immediate `local` article + Slack alert. Dedup state prevents reposts.
+  journal_emergency_breaking:
+    script: nova_journal_emergency.py
+    args: ["breaking"]
+    schedule: every 30m
+    timeout: 300
+    overlap: skip
+    group: llm
 
   # ── Analytics ────────────────────────────────────────────────────────────
 
@@ -827,7 +863,7 @@ tasks:
 
   rando_daily_ops:
     script: nova_rando_daily_ops.py
-    schedule: cron 0 20 * * *
+    schedule: cron 0 18 * * *
     timeout: 900
     overlap: skip
     group: llm
@@ -845,6 +881,30 @@ tasks:
     timeout: 60
     overlap: skip
 
+  wazuh_daily_summary:
+    script: nova_wazuh_daily_summary.py
+    schedule: cron 0 7 * * *
+    timeout: 120
+    overlap: skip
+
+  wazuh_blocklist_update:
+    script: nova_wazuh_blocklist_update.py
+    schedule: cron 0 4 * * 0
+    timeout: 300
+    overlap: skip
+
+  experiment_tracker:
+    script: nova_experiment_tracker.py
+    schedule: cron 0 9 * * *
+    timeout: 60
+    overlap: skip
+
+  crontab_audit:
+    script: nova_crontab_audit.py
+    schedule: cron 30 3 * * *
+    timeout: 120
+    overlap: skip
+
   cinc_daily:
     script: nova_cinc_daily.py
     schedule: cron 0 3 * * *
@@ -855,4 +915,11 @@ tasks:
     script: nova_postmortem.py
     schedule: every 6h
     timeout: 300
+    overlap: skip
+
+  energy_poller:
+    enabled: false
+    script: nova_energy_poller.py
+    schedule: every 1m
+    timeout: 30
     overlap: skip

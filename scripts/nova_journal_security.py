@@ -48,7 +48,8 @@ LOG_FILE = Path.home() / ".openclaw/logs/nova_journal_security.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-sonnet-4-6"
 MEMORY_SERVER = f"http://{nova_config.NOVA_HOST}:18790"
-SEARXNG_URL = "http://192.168.1.10:8080/search"
+from nova_resolve import resolve_url
+SEARXNG_URL = resolve_url("searxng", "/search")
 
 CONTENT_DIR.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)

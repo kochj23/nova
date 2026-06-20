@@ -59,7 +59,8 @@ OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 MODEL = "anthropic/claude-haiku-4.5"
 OLLAMA_MODEL = "qwen3-coder:30b"
 FALLBACK_MODELS = ["qwen3-30b-a3b", "deepseek-r1:8b"]
-PLEX_URL = "http://192.168.1.10:32400"
+from nova_resolve import resolve_url
+PLEX_URL = resolve_url("plex")
 SCHEDULER_STATE = Path.home() / ".openclaw/config/scheduler_state.json"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_daily_digest.log"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/digest_state.json"

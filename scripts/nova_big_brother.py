@@ -86,12 +86,34 @@ QUIET_END = 8
 # Disk space minimum in GB — warn below this
 DISK_WARN_GB = 10.0
 
-# Services to monitor
+# Services to monitor — now loaded from service_registry with static fallback
 LAN_IP  = "192.168.1.6"   # Mac Studio LAN IP
-PLEX_IP = "192.168.1.10"  # Synology NAS running Plex
+from nova_resolve import resolve
+PLEX_IP = resolve("plex")[0]  # auto-resolved via service mesh
 NAS_IP  = "192.168.1.11"  # Synology DSM
 HDHR_IP = "192.168.1.89"  # HDHomeRun TV tuner
 UNIFI_IP = "192.168.1.1"  # UniFi Dream Machine
+
+def _load_services_from_registry():
+    """Load services from PG service_registry. Returns list in SERVICES format or None on failure."""
+    try:
+        import psycopg2
+        conn = psycopg2.connect("dbname=nova_ops user=kochj host=127.0.0.1", connect_timeout=3)
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT sr.service_name, host(sr.host)::text, sr.port, sr.health_url,
+                   COALESCE((sr.metadata->>'critical')::boolean, FALSE)
+            FROM service_registry sr
+            ORDER BY sr.priority ASC
+        """)
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+        if not rows:
+            return None
+        return [(r[0], r[1], r[2], None, r[4], r[3]) for r in rows]
+    except Exception:
+        return None
 
 SERVICES = [
     # name, host, port, launchd_label, is_critical, health_url_path
@@ -109,24 +131,21 @@ SERVICES = [
     ("MLX Server",    "127.0.0.1", 5050,  "net.digitalnoise.mlx-server",          False, "/v1/models"),
     ("SwarmUI",       "127.0.0.1", 7801,  None,                                   False, None),
     ("ComfyUI",       "127.0.0.1", 8188,  None,                                   False, None),
-    ("TinyChat",      "192.168.1.10", 8000, None,                                  False, None),
+    ("TinyChat",      "192.168.1.7", 8000, None,                                   False, None),
     ("OpenWebUI",     "192.168.1.6", 3000,  "net.digitalnoise.openwebui",           False, None),
-    ("SearXNG",       "192.168.1.10", 8080, None,                                  False, None),
+    ("SearXNG",       "192.168.1.7", 8080, None,                                   False, None),
     # ── Channels ─────────────────────────────────────────────────────────────
     ("Signal-cli",    "127.0.0.1", 8080,  None,                                   False, None),
     # ── Nova apps ────────────────────────────────────────────────────────────
-    ("NovaControl",   "127.0.0.1", 37400, "net.digitalnoise.NovaControl",         False, "/api/status"),
+    # NovaControl is a desktop Swift app — not a persistent service, don't monitor
     ("NovaControl Web","127.0.0.1", 37450, "net.digitalnoise.nova-control-web",    False, None),
-    # BB cannot self-check — removed to prevent false alerts
-    # ("Big Brother",   "127.0.0.1", 37461, None,                                   False, "/bb/status"),
     ("Nova Syslog",   "127.0.0.1", 37462, "net.digitalnoise.nova-syslog",         False, "/health"),
     # ── External / LAN (monitored but not auto-restarted) ────────────────────
     ("Plex",          PLEX_IP,     32400, None,                                   False, "/web"),
     ("HDHomeRun",     HDHR_IP,     80,    None,                                   False, None),
-    ("UNAS Pro 8",    "192.168.1.69", 443, None,                                  False, None),  # HTTPS+auth required; TCP port check only
+    ("UNAS Pro 8",    "192.168.1.69", 443, None,                                  False, None),
     # ── TV-Movies macmini (192.168.1.7) ──────────────────────────────────────
     ("Grafana (TV)",  "192.168.1.7", 3000, None,                                  False, "/api/health"),
-    ("go2rtc (TV)",   "192.168.1.7", 1984, None,                                  False, None),
     ("Homebridge (TV)","192.168.1.7", 8581, None,                                  False, None),
 ]
 
@@ -161,7 +180,6 @@ WAZUH_POLL_INTERVAL = 300  # Poll every 5 minutes (not every sweep)
 REQUIRED_MOUNTS = [
     ("/Volumes/Data",     "AI models, Xcode, Nova work"),
     ("/Volumes/MoreData", "PostgreSQL data (1.4M memories)"),
-    ("/Volumes/external", "NAS media store"),
 ]
 
 SUBAGENTS = ["sentinel", "lookout", "analyst", "librarian", "coder"]
@@ -217,6 +235,15 @@ _CRASH_LOOP_MAX      = 3     # max restarts before declaring crash-loop
 _CRASH_LOOP_COOLDOWN = 600   # 10 min cooldown after crash-loop detected
 _service_restart_times: dict = {}    # service_name -> deque of restart timestamps
 _service_crash_loop_until: dict = {} # service_name -> timestamp when cooldown expires
+
+# Systemic failure detection — when 3+ services are confirmed down simultaneously,
+# it's likely an infrastructure issue (resource exhaustion, network, kernel panic)
+# rather than individual service bugs. Back off all restarts for 5 minutes and
+# escalate to Claude queue for root-cause investigation.
+_SYSTEMIC_THRESHOLD = 3           # services confirmed down to trigger systemic mode
+_SYSTEMIC_COOLDOWN  = 300         # 5 min cooldown — no restarts during systemic event
+_systemic_mode_until: float = 0.0 # timestamp when systemic cooldown expires
+_systemic_escalated: bool = False  # whether we already escalated this event
 
 # Discord 3-strike before restart — timeouts ≠ disconnect
 _discord_timeout_count: int = 0
@@ -923,10 +950,12 @@ def _escalate_to_claude(issue_description: str, priority: int = 3, service_name:
             import psycopg2
             conn = psycopg2.connect("postgresql://kochj@127.0.0.1:5432/nova_ops")
             cur = conn.cursor()
-            # Deduplication check
+            # Deduplication check — match on prefix (service name) to avoid re-filing
+            # when minutes-down value changes the description
+            dedup_prefix = issue_description.split(" has been down")[0] if " has been down" in issue_description else issue_description[:80]
             cur.execute(
-                "SELECT 1 FROM claude_queue WHERE description = %s AND status IN ('queued', 'in_progress')",
-                (issue_description,)
+                "SELECT 1 FROM claude_queue WHERE description LIKE %s AND status IN ('queued', 'in_progress')",
+                (dedup_prefix + "%",)
             )
             if cur.fetchone():
                 conn.close()
@@ -1068,6 +1097,94 @@ def _notify_claude_editing_conflict(service_name: str):
         pass
 
 
+# ── Failover Orchestration (Nova Mesh) ────────────────────────────────────────
+
+_failover_attempted = {}  # service_name -> timestamp of last attempt
+
+def _attempt_failover(service_name: str) -> bool:
+    """If a service has been down 2+ minutes and has a failover target, start it remotely."""
+    now = time.time()
+    if service_name in _failover_attempted and now - _failover_attempted[service_name] < 600:
+        return False  # Don't retry failover more than once per 10 min
+
+    try:
+        import psycopg2
+        conn = psycopg2.connect("dbname=nova_ops user=kochj host=127.0.0.1", connect_timeout=3)
+        cur = conn.cursor()
+        cur.execute("SELECT failover_to FROM service_placement WHERE service_name = %s", (service_name,))
+        row = cur.fetchone()
+        if not row or not row[0]:
+            conn.close()
+            return False
+
+        failover_nodes = row[0]  # text[] from PG
+        cur.execute("SELECT node_name, host(node_ip)::text, os_family FROM node_status WHERE node_name = ANY(%s) AND status = 'up'", (failover_nodes,))
+        targets = cur.fetchall()
+        conn.close()
+
+        if not targets:
+            return False
+
+        target_node, target_ip, os_family = targets[0]
+        _failover_attempted[service_name] = now
+
+        log(f"FAILOVER: {service_name} → {target_node} ({target_ip})",
+            level=LOG_WARN, source="big-brother")
+
+        # SSH to target and start the service
+        svc_dashed = service_name.replace("_", "-")
+        if os_family == "macos":
+            cmd = (
+                f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no {target_ip} "
+                f"'launchctl kickstart gui/501/net.digitalnoise.nova-{svc_dashed}' 2>&1 "
+                f"|| ssh -o ConnectTimeout=10 {target_ip} "
+                f"'/opt/homebrew/bin/python3 ~/.openclaw/scripts/nova_{service_name}.py &' 2>&1"
+            )
+        else:
+            cmd = (
+                f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no {target_ip} "
+                f"'systemctl start nova-{svc_dashed} 2>&1 "
+                f"|| python3 ~/.openclaw/scripts/nova_{service_name}.py &' 2>&1"
+            )
+
+        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+
+        # Update registry
+        try:
+            conn2 = psycopg2.connect("dbname=nova_ops user=kochj host=127.0.0.1", connect_timeout=3)
+            conn2.autocommit = True
+            cur2 = conn2.cursor()
+            cur2.execute("""
+                INSERT INTO service_registry (service_name, node_name, host, port, status, last_heartbeat)
+                SELECT %s, %s, %s::inet, port, 'up', NOW()
+                FROM service_registry WHERE service_name = %s LIMIT 1
+                ON CONFLICT (service_name, node_name) DO UPDATE SET status = 'up', last_heartbeat = NOW()
+            """, (service_name, target_node, target_ip, service_name))
+            conn2.close()
+        except Exception:
+            pass
+
+        # Notify
+        _record_event("critical", f"Failover: {service_name} → {target_node}",
+                      f"Service failed over to {target_node} ({target_ip}). Exit={result.returncode}",
+                      service_name)
+        try:
+            import nova_config
+            nova_config.post_both(
+                f":rotating_light: *FAILOVER*: `{service_name}` moved to *{target_node}* ({target_ip})\n"
+                f"  Exit code: {result.returncode}",
+                slack_channel="#nova-notifications"
+            )
+        except Exception:
+            pass
+
+        return result.returncode == 0
+
+    except Exception as e:
+        log(f"Failover failed for {service_name}: {e}", level=LOG_ERROR, source="big-brother")
+        return False
+
+
 # ── Service Restart Logic ─────────────────────────────────────────────────────
 
 def _do_restart(service_name: str) -> bool:
@@ -1131,9 +1248,15 @@ def _do_restart(service_name: str) -> bool:
             time.sleep(3)
             subprocess.run(["launchctl", "start", label], capture_output=True, timeout=5)
             time.sleep(8)
-            return _port_open(host, port)
+            if _port_open(host, port):
+                return True
         except Exception:
-            return False
+            pass
+
+        # Local restart failed — attempt failover to another node
+        normalized = service_name.lower().replace(" ", "_").replace("-", "_")
+        _attempt_failover(normalized)
+        return False
 
     return False
 
@@ -1296,7 +1419,7 @@ def _restart_gateway() -> bool:
     # Wait up to 45s for gateway to come up, then 30s for channels to settle
     for _ in range(45):
         time.sleep(1)
-        if _port_open("127.0.0.1", 18789):
+        if _port_open("127.0.0.1", 18792):
             log("Gateway port up — waiting 30s for channels to settle",
                 level=LOG_INFO, source="big-brother")
             time.sleep(30)  # Let Slack/Discord/Signal connect before next channel check
@@ -2966,6 +3089,59 @@ def _full_sweep():
                 continue
             issues.append(f"{name} (:{port}) DOWN")
 
+            # Systemic failure brake — if too many services are down at once,
+            # it's infrastructure-level. Don't hammer restarts individually.
+            down_count = sum(1 for s in _service_status.values() if not s.get("up", True))
+            if down_count >= _SYSTEMIC_THRESHOLD:
+                global _systemic_mode_until, _systemic_escalated
+                now = time.time()
+                if now < _systemic_mode_until:
+                    log(f"[sweep] {name} DOWN — systemic mode active ({down_count} services down), skipping restart",
+                        level=LOG_WARN, source="big-brother")
+                    _record_event("critical", f"{name} DOWN (systemic event)", "Skipped — multiple services down", name)
+                    continue
+                else:
+                    _systemic_mode_until = now + _SYSTEMIC_COOLDOWN
+                    _systemic_escalated = False
+                    log(f"[sweep] SYSTEMIC EVENT: {down_count} services down simultaneously — entering 5min cooldown",
+                        level=LOG_ERROR, source="big-brother")
+                    _record_event("critical",
+                                  f"Systemic failure: {down_count} services down",
+                                  f"Backing off all restarts for {_SYSTEMIC_COOLDOWN}s — likely infrastructure issue",
+                                  "system")
+
+                if not _systemic_escalated:
+                    _systemic_escalated = True
+                    down_names = [n for n, s in _service_status.items() if not s.get("up", True)]
+                    try:
+                        import psycopg2 as _pg2
+                        conn = _pg2.connect("host=localhost dbname=nova_ops user=kochj")
+                        cur = conn.cursor()
+                        # Dedup: only insert if no open SYSTEMIC alert in the last hour
+                        cur.execute("""
+                            SELECT 1 FROM claude_queue
+                            WHERE description LIKE 'SYSTEMIC:%'
+                              AND status IN ('queued', 'in_progress')
+                              AND created_at > NOW() - INTERVAL '1 hour'
+                            LIMIT 1
+                        """)
+                        if not cur.fetchone():
+                            cur.execute("""
+                                INSERT INTO claude_queue (session_id, description, priority, context)
+                                VALUES (
+                                    (SELECT session_id FROM claude_sessions ORDER BY started_at DESC LIMIT 1),
+                                    %s, 1, %s
+                                )
+                            """, (
+                                f"SYSTEMIC: {down_count} services down simultaneously — {', '.join(down_names[:5])}. Likely infrastructure issue, not individual bugs.",
+                                json.dumps({"down_services": down_names, "trigger": "systemic_detection"}),
+                            ))
+                        conn.commit()
+                        conn.close()
+                    except Exception:
+                        pass
+                continue
+
             # Global or per-service maintenance brake — record but don't restart or alert
             if maintenance_active or _is_service_in_maintenance(name):
                 reason = "global maintenance" if maintenance_active else "per-service maintenance"
@@ -3012,12 +3188,13 @@ def _full_sweep():
             if name == "PostgreSQL":
                 # Use pg_ctl which handles stale postmaster.pid from crashes
                 pg_ctl = "/opt/homebrew/opt/postgresql@17/bin/pg_ctl"
-                pg_data = "/Volumes/MoreData/postgresql@17"
-                pg_log  = f"{pg_data}/homebrew-log/postgresql@17.log"
+                pg_data = "/opt/homebrew/var/postgresql@17"
+                pg_log  = "/Volumes/MoreData/postgresql@17/homebrew-log/postgresql@17.log"
+                env = {**os.environ, "LC_ALL": "en_US.UTF-8", "LANG": "en_US.UTF-8"}
                 try:
                     subprocess.run(
                         [pg_ctl, "start", "-D", pg_data, "-l", pg_log, "-w"],
-                        capture_output=True, timeout=30,
+                        capture_output=True, timeout=30, env=env,
                     )
                 except Exception:
                     if label:
@@ -3112,13 +3289,13 @@ def _full_sweep():
             elif now_ts - _service_down_since[name] > SERVICE_ESCALATION_THRESHOLD:
                 down_min = int((now_ts - _service_down_since[name]) / 60)
                 _escalate_to_claude(
-                    f"{name} has been down for {down_min}+ minutes after Big Brother's "
+                    f"INCIDENT: {name} — {name} has been down for {down_min}+ minutes after Big Brother's "
                     f"auto-heal attempts. Port {port} on {host} not responding. "
                     f"Check launchd label '{label or 'N/A'}' and service logs.",
                     priority=1 if critical else 3
                 )
-                # Reset timer so we don't re-escalate every sweep (dedup handles it anyway)
-                _service_down_since[name] = now_ts
+                # Mark as escalated — don't re-escalate until service recovers and fails again
+                _service_down_since[name] = float('inf')
         else:
             # Service recovered — clear downtime tracking
             _service_down_since.pop(name, None)
@@ -3145,7 +3322,7 @@ def _full_sweep():
 
     # ── Channel health (only if gateway is up and internet is up) ────────────
     global _discord_timeout_count
-    gateway_up = _port_open("127.0.0.1", 18789)
+    gateway_up = _port_open("127.0.0.1", 18792)
     if gateway_up:
         channels = _check_gateway_log_channels()
 
@@ -3436,6 +3613,8 @@ def _full_sweep():
         tasks = json.loads(resp.read())
         task_items = tasks.items() if isinstance(tasks, dict) else [(t.get("name", "?"), t) for t in tasks]
         for task_id, t in task_items:
+            if not t.get("enabled", True):
+                continue
             fails = t.get("consecutive_failures", 0)
             if fails < TIMEOUT_AUTOTUNE_MIN_FAILURES:
                 continue
@@ -3543,6 +3722,50 @@ def _full_sweep():
             issues.append(f"Scheduler failure rate high: {total_fail}/{total_runs} ({total_fail*100//total_runs}%)")
             _record_event("warning", f"Scheduler failure rate: {total_fail}/{total_runs}",
                           "Check ~/.openclaw/logs/scheduler.log for timed-out tasks", "Scheduler")
+    except Exception:
+        pass
+
+    # ── CPU/Memory headroom (resource exhaustion auto-remediation) ──────────
+    try:
+        import psycopg2 as _pg_cap
+        _cap_conn = _pg_cap.connect("host=localhost dbname=nova_ops user=kochj")
+        _cap_cur = _cap_conn.cursor()
+        _cap_cur.execute("""
+            SELECT device_name, cpu_headroom_pct, mem_headroom_pct
+            FROM capacity_snapshots
+            WHERE ts > NOW() - INTERVAL '90 seconds'
+            ORDER BY ts DESC
+        """)
+        recent = {}
+        for row in _cap_cur.fetchall():
+            if row[0] not in recent:
+                recent[row[0]] = {"cpu": row[1], "mem": row[2]}
+        _cap_conn.close()
+
+        # Appliances (UDM, NAS) run at low memory by design — don't alert on them
+        APPLIANCES = {"udm-pro", "synology-nas"}
+        PI_HOSTS = {"nuk"}
+        for host, metrics in recent.items():
+            if host in APPLIANCES:
+                continue
+            cpu = metrics.get("cpu")
+            mem = metrics.get("mem")
+            is_constrained = host in PI_HOSTS
+            cpu_crit = 20.0 if is_constrained else 5.0
+            cpu_warn = 30.0 if is_constrained else 15.0
+            mem_crit = 10.0 if is_constrained else 5.0
+
+            if cpu is not None and cpu <= cpu_crit:
+                issues.append(f"{host} CPU headroom critical: {cpu:.1f}%")
+                _record_event("critical", f"{host} CPU headroom {cpu:.1f}%",
+                              "Resource exhaustion — check for runaway processes", host)
+            elif cpu is not None and cpu <= cpu_warn:
+                _record_event("warning", f"{host} CPU headroom low: {cpu:.1f}%",
+                              "Approaching resource exhaustion", host)
+            if mem is not None and mem <= mem_crit:
+                issues.append(f"{host} memory headroom critical: {mem:.1f}%")
+                _record_event("critical", f"{host} memory headroom {mem:.1f}%",
+                              "Resource exhaustion — OOM risk", host)
     except Exception:
         pass
 
@@ -3685,37 +3908,54 @@ def _full_sweep():
         pass
 
     # ── Kernel zone map usage (crash prevention — 2026-06-11 incident) ─────
+    # Monitors multiple zones for both absolute size and growth rate.
+    _ZONE_THRESHOLDS = {
+        "data.kalloc.1024": {"warn_mb": 6144, "crit_mb": 10240},
+        "data.kalloc.512": {"warn_mb": 2048, "crit_mb": 5120},
+        "data.kalloc.16384": {"warn_mb": 4096, "crit_mb": 8192},
+        "vm_map_entry": {"warn_mb": 1024, "crit_mb": 2048},
+    }
     try:
         zp = subprocess.run(["sudo", "-n", "zprint"], capture_output=True, text=True, timeout=10)
         if zp.returncode == 0:
             for line in zp.stdout.splitlines():
-                if line.startswith("data.kalloc.1024 "):
-                    parts = line.split()
-                    cur_size = parts[2] if len(parts) > 2 else "0K"
-                    size_mb = float(cur_size.rstrip("KMG"))
-                    if "G" in cur_size:
-                        size_mb *= 1024
-                    elif "K" in cur_size:
-                        size_mb /= 1024
-                    if size_mb > 5120:  # 5GB threshold
-                        issues.append(f"KERNEL ZONE ALERT: data.kalloc.1024 at {size_mb:.0f}MB (>5GB)")
-                        _record_event("critical",
-                                      f"Kernel zone data.kalloc.1024 at {size_mb:.0f}MB — approaching zone map exhaustion",
-                                      "Reboot soon to prevent kernel panic. See postmortem 2026-06-11.",
-                                      "System")
-                        _notify(
-                            f":rotating_light: *KERNEL ZONE ALERT*\n"
-                            f"`data.kalloc.1024` is at {size_mb:.0f}MB (threshold: 5GB)\n"
-                            f"This zone leaked to 20GB before the 2026-06-11 kernel panic.\n"
-                            f"Consider rebooting before zone map exhaustion.",
-                            is_critical=True,
-                        )
-                    elif size_mb > 2048:  # 2GB warning
-                        _record_event("warning",
-                                      f"Kernel zone data.kalloc.1024 elevated: {size_mb:.0f}MB",
-                                      "Monitor for growth — may indicate kernel memory leak",
-                                      "System")
-                    break
+                zone_name = None
+                for zn in _ZONE_THRESHOLDS:
+                    if line.startswith(zn + " "):
+                        zone_name = zn
+                        break
+                if not zone_name:
+                    continue
+
+                parts = line.split()
+                cur_size = parts[2] if len(parts) > 2 else "0K"
+                size_mb = float(cur_size.rstrip("KMG"))
+                if "G" in cur_size:
+                    size_mb *= 1024
+                elif "K" in cur_size:
+                    size_mb /= 1024
+
+                thresholds = _ZONE_THRESHOLDS[zone_name]
+                if size_mb > thresholds["crit_mb"]:
+                    issues.append(f"KERNEL ZONE ALERT: {zone_name} at {size_mb:.0f}MB (>{thresholds['crit_mb']}MB)")
+                    _record_event("critical",
+                                  f"Kernel zone {zone_name} at {size_mb:.0f}MB — approaching zone map exhaustion",
+                                  "Auto-killing Ollama to release Metal/GPU memory. See postmortem 2026-06-11.",
+                                  "System")
+                    # Auto-kill Ollama to prevent kernel panic (Metal driver leak)
+                    subprocess.run(["pkill", "-9", "ollama"], capture_output=True)
+                    subprocess.run(["pkill", "-9", "-f", "ollama_llama_server"], capture_output=True)
+                    _notify(
+                        f":rotating_light: *KERNEL ZONE ALERT*\n"
+                        f"`{zone_name}` is at {size_mb:.0f}MB (threshold: {thresholds['crit_mb']}MB)\n"
+                        f"Auto-killed Ollama to release Metal memory. Reboot if zone doesn't decrease.",
+                        is_critical=True,
+                    )
+                elif size_mb > thresholds["warn_mb"]:
+                    _record_event("warning",
+                                  f"Kernel zone {zone_name} elevated: {size_mb:.0f}MB",
+                                  "Monitor for growth — may indicate kernel memory leak",
+                                  "System")
     except Exception:
         pass
 

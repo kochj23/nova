@@ -293,6 +293,18 @@ async def _inject_memory(ctx: GatewayContext, question: str) -> str:
     continues without context. Never crashes the request pipeline.
     Timeout reduced to 5s — if memory is slow, proceed without it.
     """
+    # Memory injection is OPT-IN: only pull recalled memories when the user is actually
+    # asking about the past, a person, or a fact. Dumping old emails/texts into general
+    # conversation makes Nova weaponize them (e.g. needling Jordan with a 2002 email she
+    # was fed). For everything else — greetings, banter, opinions — inject nothing.
+    q = question.strip().lower()
+    _RECALL_INTENT = ("remember", "recall", "what did", "when did", "when was", "who is",
+                      "who was", "what was", "do you know", "last time", "have i ", "did i ",
+                      "tell me about", "what's my", "what is my", "look up", "search your",
+                      "history of", "years ago", " back in ", "used to", "my old", "find the",
+                      "what do you know about", "have we", "did we", "remind me")
+    if not any(k in q for k in _RECALL_INTENT):
+        return ""
     try:
         result = await asyncio.create_subprocess_exec(
             sys.executable, str(SCRIPTS_DIR / "nova_memory_first.py"), question,

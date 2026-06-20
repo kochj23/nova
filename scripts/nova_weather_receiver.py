@@ -11,6 +11,7 @@ Written by Jordan Koch.
 """
 
 import sys
+from pathlib import Path
 sys.path.insert(0, str(Path.home()) + "/.openclaw/scripts")
 
 import logging

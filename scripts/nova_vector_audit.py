@@ -31,8 +31,8 @@ from nova_image_utils import generate_image
 # ── Config ────────────────────────────────────────────────────────────────────
 
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content" / "rando"
-IMAGES_DIR = HUGO_ROOT / "static" / "images" / "rando"
+CONTENT_DIR = HUGO_ROOT / "content" / "operations"
+IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "google/gemini-2.5-flash"
 MEMORY_URL = "http://192.168.1.6:18790"
@@ -219,7 +219,8 @@ def run_audit() -> dict:
     to_audit = random.sample(candidates, min(MAX_VECTORS_PER_RUN, len(candidates)))
 
     moves = []
-    audited_count = 0
+    audited_count = 0          # memories the LLM actually returned a verdict for
+    quality_checked_count = 0  # memories actually pulled + quality-scanned (LLM-independent)
     correct_count = 0
     all_quality_issues = {"repetitive": 0, "near_empty": 0, "garbled": 0, "low_signal": 0,
                           "total_issues": 0, "examples": [], "worst_vectors": []}
@@ -227,8 +228,10 @@ def run_audit() -> dict:
     for vector_name, vector_count in to_audit:
         memories = sample_memories(vector_name, SAMPLE_PER_VECTOR)
         if not memories:
+            log(f"  '{vector_name}' returned 0 sampled rows — skipping")
             continue
 
+        quality_checked_count += len(memories)
         log(f"  Auditing '{vector_name}' ({vector_count:,} memories, sampling {len(memories)})...")
 
         # Quality check (content quality — is this garbage?)
@@ -243,7 +246,7 @@ def run_audit() -> dict:
             all_quality_issues["low_signal"] += quality["low_signal"]
             all_quality_issues["total_issues"] += quality["total_issues"]
             all_quality_issues["examples"].extend(quality["examples"][:3])
-            if quality["total_issues"] >= 5:
+            if quality["total_issues"] >= 5 and len(memories) > 0:
                 issue_pct = round(quality["total_issues"] / len(memories) * 100, 1)
                 all_quality_issues["worst_vectors"].append(
                     {"vector": vector_name, "issues": quality["total_issues"],
@@ -275,25 +278,40 @@ def run_audit() -> dict:
 
     # Sort worst vectors by issue percentage
     all_quality_issues["worst_vectors"].sort(key=lambda x: x["issue_pct"], reverse=True)
-    quality_pct = round(all_quality_issues["total_issues"] / max(audited_count, 1) * 100, 1)
+
+    # Quality % must be computed against the rows we actually QUALITY-CHECKED, not
+    # against the LLM classification count (audited_count). If the LLM errors out or
+    # returns nothing, audited_count stays 0 while we may still have scanned hundreds
+    # of rows — using it as the denominator produced a bogus report ("0 sampled,
+    # 100% clean") and previously risked a divide-by-zero before the max(...,1) band-aid.
+    if quality_checked_count > 0:
+        quality_pct = round(all_quality_issues["total_issues"] / quality_checked_count * 100, 1)
+        accuracy_pct = round((correct_count / audited_count) * 100, 1) if audited_count > 0 else None
+    else:
+        quality_pct = 0.0
+        accuracy_pct = None
+        log("No rows sampled — quality report unavailable (check memory DB / source filters)")
 
     stats = {
         "vectors_audited": len(to_audit),
-        "memories_sampled": audited_count,
+        "memories_sampled": quality_checked_count,   # rows actually pulled + scanned
+        "memories_classified": audited_count,        # rows the LLM returned a verdict for
         "correct": correct_count,
         "moved": len(moves),
         "moves": moves,
-        "accuracy_pct": round((correct_count / max(audited_count, 1)) * 100, 1),
+        "accuracy_pct": accuracy_pct,
         "total_vectors": len(all_vectors),
         "total_memories": sum(c for _, c in all_vectors),
         # Quality stats (the REAL health indicator)
         "quality": all_quality_issues,
         "quality_issue_pct": quality_pct,
-        "quality_clean_pct": round(100 - quality_pct, 1),
+        "quality_clean_pct": round(100 - quality_pct, 1) if quality_checked_count > 0 else None,
     }
 
-    log(f"Audit complete: {audited_count} sampled, {len(moves)} moved, "
-        f"{stats['accuracy_pct']}% correctly filed, "
+    acc_str = f"{accuracy_pct}%" if accuracy_pct is not None else "n/a (no LLM verdicts)"
+    log(f"Audit complete: {quality_checked_count} sampled & quality-checked "
+        f"({audited_count} LLM-classified), {len(moves)} moved, "
+        f"{acc_str} correctly filed, "
         f"{quality_pct}% quality issues found")
 
     # Record to shared_observations
@@ -306,7 +324,7 @@ def run_audit() -> dict:
             INSERT INTO shared_observations (observer, category, subject, observation, severity, metadata)
             VALUES ('nova', 'maintenance', 'vector-audit', %s, 'info', %s)
         """, (
-            f"Vector audit: {audited_count} memories checked, {len(moves)} moved, {stats['accuracy_pct']}% accuracy",
+            f"Vector audit: {quality_checked_count} memories checked, {len(moves)} moved, {acc_str} accuracy",
             json.dumps(stats),
         ))
         cur.close()
@@ -365,7 +383,7 @@ Example garbage memories:
 CLASSIFICATION (is it in the right vector?):
 - Vectors audited: {stats['vectors_audited']} of {stats['total_vectors']}
 - Memories sampled: {stats['memories_sampled']}
-- Correctly filed: {stats['correct']} ({stats['accuracy_pct']}%)
+- Correctly filed: {stats['correct']} ({stats['accuracy_pct'] if stats['accuracy_pct'] is not None else 'n/a'}%)
 - Misfiled and moved: {stats['moved']}
 - Total memory count: {stats['total_memories']:,}
 

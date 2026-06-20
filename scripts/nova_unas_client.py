@@ -24,6 +24,8 @@ from typing import Any
 UNAS_HOST = "https://192.168.1.69"
 KEYCHAIN_SERVICE = "nova"
 KEYCHAIN_ACCOUNT = "nova"
+KEYCHAIN_LOGIN_SERVER = "UNAS-Pro-8._smb._tcp.local"
+KEYCHAIN_LOGIN_ACCOUNT = "kochj"
 DEFAULT_TIMEOUT = 10
 MAX_RETRIES = 3
 RETRY_DELAY = 3  # seconds between retries
@@ -32,6 +34,9 @@ RETRY_DELAY = 3  # seconds between retries
 _SSL_CTX = ssl.create_default_context()
 _SSL_CTX.check_hostname = False
 _SSL_CTX.verify_mode = ssl.CERT_NONE
+
+# Session token cache (avoids re-login on every request)
+_session_token: str | None = None
 
 
 # ── Keychain ─────────────────────────────────────────────────────────────────
@@ -49,6 +54,60 @@ def _load_api_key() -> str | None:
         key = result.stdout.strip()
         if key:
             return key
+    except Exception:
+        pass
+    return None
+
+
+def _load_login_password() -> str | None:
+    """Load UNAS user password from macOS Keychain (internet password)."""
+    try:
+        result = subprocess.run(
+            ["security", "find-internet-password",
+             "-s", KEYCHAIN_LOGIN_SERVER,
+             "-a", KEYCHAIN_LOGIN_ACCOUNT,
+             "-w"],
+            capture_output=True, text=True
+        )
+        pw = result.stdout.strip()
+        if pw:
+            return pw
+    except Exception:
+        pass
+    return None
+
+
+def _get_session_token() -> str | None:
+    """Get a session token via login, caching for reuse."""
+    global _session_token
+    if _session_token:
+        return _session_token
+
+    password = _load_login_password()
+    if not password:
+        return None
+
+    url = UNAS_HOST + "/api/auth/login"
+    body = json.dumps({"username": KEYCHAIN_LOGIN_ACCOUNT, "password": password}).encode()
+    headers = {"Content-Type": "application/json", "Accept": "application/json"}
+
+    try:
+        req = urllib.request.Request(url, data=body, headers=headers, method="POST")
+        with urllib.request.urlopen(req, context=_SSL_CTX, timeout=DEFAULT_TIMEOUT) as resp:
+            # Session token comes back as a cookie or in response headers
+            cookies = resp.headers.get_all("Set-Cookie") or []
+            for cookie in cookies:
+                if "TOKEN" in cookie.upper() or "session" in cookie.lower():
+                    token = cookie.split(";")[0]
+                    _session_token = token
+                    return token
+            # Some UNAS firmware returns token in response body
+            raw = resp.read()
+            if raw:
+                data = json.loads(raw)
+                if isinstance(data, dict) and data.get("token"):
+                    _session_token = data["token"]
+                    return _session_token
     except Exception:
         pass
     return None
@@ -81,6 +140,12 @@ def _request(path: str, params: dict[str, str] | None = None,
         "Content-Type": "application/json",
     }
 
+    # Drive proxy endpoints need session-based auth
+    if "/proxy/" in path:
+        session_token = _get_session_token()
+        if session_token:
+            headers["Cookie"] = session_token
+
     last_exc: Exception | None = None
     for attempt in range(1, retries + 1):
         try:
@@ -90,7 +155,7 @@ def _request(path: str, params: dict[str, str] | None = None,
                 return json.loads(raw) if raw else {}
         except urllib.error.HTTPError as exc:
             if exc.code in (401, 403):
-                raise UNASError(f"Authentication failed ({exc.code}) — check API key in Keychain")
+                raise UNASError(f"Authentication failed ({exc.code}) on {path} — check API key in Keychain")
             if exc.code == 404:
                 raise UNASError(f"Endpoint not found: {path}")
             last_exc = exc
@@ -146,8 +211,14 @@ class UNASClient:
         This is what nova_unas_monitor.py and NovaControl both read.
         """
         info = self.system_info()
-        storage = self.storage_summary()
-        shares = self.shared_drives()
+        try:
+            storage = self.storage_summary()
+        except UNASError:
+            storage = {}
+        try:
+            shares = self.shared_drives()
+        except UNASError:
+            shares = []
 
         total_bytes = storage.get("totalQuota", 0)
         usage = storage.get("usage", {})

@@ -24,6 +24,7 @@ import sys
 import time
 import urllib.request
 import urllib.error
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -66,7 +67,7 @@ FEEDS = [
     ("https://www.eac.gov/rss.xml", "politics", "US Election Assistance Commission"),
     # SoCal Emergency / Physical Security
     ("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.atom", "infrastructure", "USGS Earthquakes 2.5+ Day"),
-    ("https://alerts.weather.gov/cap/ca.php?x=0", "infrastructure", "NWS California Alerts"),
+    ("https://api.weather.gov/alerts/active.atom?area=CA", "infrastructure", "NWS California Alerts"),
 
     # ══════════════════════════════════════════════════════════════
     # NATO PARTNERS — UK
@@ -533,6 +534,45 @@ FEEDS = [
     ("https://calfire.blogspot.com/feeds/posts/default", "infrastructure", "Cal Fire Blog"),
     ("https://api.weather.gov/alerts/active.atom?point=34.18,-118.31", "infrastructure", "NWS Burbank Alerts"),
     ("https://weatherwest.com/feed/", "infrastructure", "Weather West (Daniel Swain)"),
+
+    # ── LA County Public Safety (Burbank/Glendale/Pasadena) ──
+    ("https://feeds.feedburner.com/calfire", "la_public_safety", "CAL FIRE Incidents"),
+    ("https://www.lafd.org/rss.xml", "la_public_safety", "LAFD News"),
+    ("https://fire.lacounty.gov/feed/", "la_public_safety", "LA County Fire"),
+    ("https://inciweb.wildfire.gov/incidents/rss.xml", "la_public_safety", "InciWeb Active Incidents"),
+    ("https://api.weather.gov/alerts/active.atom?zone=CAC037", "la_public_safety", "NWS LA County Alerts"),
+    ("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.atom", "la_public_safety", "USGS Quakes M2.5+ Day"),
+    ("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_week.atom", "la_public_safety", "USGS Significant Quakes Week"),
+    ("https://dpw.lacounty.gov/adm/tools/rssFeed/feed2.aspx?xsltid=10&i=443", "la_public_safety", "LA County Public Works Road Closures"),
+    ("https://www.lapdonline.org/newsroom/feed/", "la_public_safety", "LAPD Newsroom"),
+    ("https://lasd.org/feed/", "la_public_safety", "LA County Sheriff"),
+    ("https://ready.lacounty.gov/feed/", "la_public_safety", "Ready LA County"),
+    ("https://lacounty.gov/feed/", "la_public_safety", "County of LA News"),
+    ("https://www.cityofpasadena.net/public-health/feed/", "la_public_safety", "Pasadena Public Health"),
+    ("https://tools.cdc.gov/api/v2/resources/media/132608.rss", "la_public_safety", "CDC Newsroom"),
+    ("https://www.cdc.gov/mmwr/rss/rss.html", "la_public_safety", "CDC MMWR"),
+    ("https://myburbank.com/feed/", "la_public_safety", "myBurbank"),
+    ("https://myglendale.com/feed/", "la_public_safety", "MyGlendale"),
+    ("https://www.crescentavalleyweekly.com/feed/", "la_public_safety", "Crescenta Valley Weekly"),
+    ("https://www.cityofpasadena.net/feed/", "la_public_safety", "City of Pasadena"),
+    ("https://pasadenanow.com/feed/", "la_public_safety", "Pasadena Now"),
+    ("https://pasadenanow.com/category/crime/feed/", "la_public_safety", "Pasadena Now Crime/Fire/Courts"),
+    ("https://laist.com/index.rss", "la_public_safety", "LAist"),
+    ("https://www.latimes.com/california/rss2.0.xml", "la_public_safety", "LA Times California"),
+    ("https://www.latimes.com/local/lanow/rss2.0.xml", "la_public_safety", "LA Times LA Now"),
+    ("https://ktla.com/news/local-news/feed/", "la_public_safety", "KTLA Local News"),
+    ("https://abc7.com/feed/", "la_public_safety", "ABC7 Los Angeles"),
+    ("https://www.nbclosangeles.com/news/local/?rss=y", "la_public_safety", "NBC LA Local"),
+    ("https://www.foxla.com/rss/category/news", "la_public_safety", "FOX 11 News"),
+    ("https://mynewsla.com/feed/", "la_public_safety", "MyNewsLA (City News Service)"),
+    # SoCal military (verified 2026-06-20)
+    ("https://www.losangeles.spaceforce.mil/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=122&max=20", "la_public_safety", "LA Space Force Base"),
+    ("https://www.ssc.spaceforce.mil/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=1205&max=20", "la_public_safety", "Space Systems Command"),
+    ("https://www.vandenberg.spaceforce.mil/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=120&max=20", "la_public_safety", "Vandenberg SFB"),
+    ("https://www.edwards.af.mil/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=151&max=20", "la_public_safety", "Edwards AFB"),
+    ("https://www.dvidshub.net/rss/unit/175", "la_public_safety", "Fort Irwin NTC"),
+    ("https://www.dvidshub.net/rss/unit/1210", "la_public_safety", "Naval Base Ventura County"),
+    ("https://www.dvidshub.net/rss/unit/366", "la_public_safety", "California National Guard"),
 ]
 
 MEMORY_URL = "http://192.168.1.6:18790/remember?async=1"
@@ -575,7 +615,7 @@ def fetch_feed(url: str) -> list:
         req = urllib.request.Request(url)
         req.add_header("User-Agent", "Nova-OSINT/2.0 (nova.digitalnoise.net)")
         req.add_header("Accept", "application/rss+xml, application/atom+xml, application/xml, text/xml")
-        with urllib.request.urlopen(req, timeout=30) as resp:
+        with urllib.request.urlopen(req, timeout=12) as resp:
             body = resp.read().decode("utf-8", errors="replace")
     except Exception as e:
         log(f"  FETCH FAILED: {url[:60]} — {e}")
@@ -664,8 +704,30 @@ def run():
     total_new = 0
     total_ingested = 0
 
-    for feed_url, vector, label in FEEDS:
-        items = fetch_feed(feed_url)
+    # ── Phase 1: Parallel fetch (network-bound, thread-safe per fetch_feed) ──
+    # fetch_feed has its own per-feed try/except + 12s timeout, so one slow or
+    # dead feed can never block the rest. Collect (vector, label, items) tuples.
+    t_fetch = time.time()
+    results = []  # list of (vector, label, items)
+    with ThreadPoolExecutor(max_workers=24) as executor:
+        future_map = {
+            executor.submit(fetch_feed, feed_url): (vector, label)
+            for feed_url, vector, label in FEEDS
+        }
+        for future in as_completed(future_map):
+            vector, label = future_map[future]
+            try:
+                items = future.result()
+            except Exception as e:
+                # fetch_feed already swallows errors, but stay defensive.
+                log(f"  FETCH FAILED (executor): {label} — {e}")
+                items = []
+            results.append((vector, label, items))
+    log(f"Fetch phase complete in {time.time() - t_fetch:.1f}s "
+        f"({len(results)} feeds, {sum(len(r[2]) for r in results)} raw items)")
+
+    # ── Phase 2: Sequential dedup + ingest (seen set / ingest NOT thread-safe) ──
+    for vector, label, items in results:
         new_items = 0
 
         for item in items:
@@ -701,8 +763,6 @@ def run():
         if new_items:
             log(f"  {label}: {new_items} new items")
             total_new += new_items
-
-        time.sleep(0.5)
 
     save_seen(seen)
     log(f"Done: {total_new} new items, {total_ingested} chunks ingested")

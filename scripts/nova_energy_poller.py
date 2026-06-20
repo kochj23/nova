@@ -26,6 +26,7 @@ Written by Jordan Koch.
 """
 
 import sys
+from pathlib import Path
 sys.path.insert(0, str(Path.home()) + "/.openclaw/scripts")
 
 import asyncio
@@ -35,7 +36,6 @@ import os
 import signal
 import time
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Optional
 
 import psycopg2

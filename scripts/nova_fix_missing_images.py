@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
-from nova_image_utils import ensure_backend, generate_image
+from nova_image_utils import generate_image
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -35,6 +35,9 @@ SECTIONS = {
     "tech-today": "futuristic technology, circuits, neon, cyberpunk",
     "research": "academic research illustration, technical, detailed",
     "after-dark": "late night talk show set, purple blue neon, moody spotlight",
+    "operations": "cyberpunk operations center, server racks, holographic displays, dark moody",
+    "local": "Los Angeles cityscape, Burbank suburban, editorial photography",
+    "synthesis": "abstract neural network, data flow, interconnected nodes, glowing",
 }
 
 LOG_FILE = "/tmp/nova-fix-images.log"
@@ -150,11 +153,6 @@ def add_image_to_post(post: dict, image_path: str) -> bool:
 def main():
     log("=== Scanning for missing images ===")
 
-    # Check SwarmUI first
-    if not ensure_backend():
-        log("SwarmUI not available — skipping this run")
-        return
-
     missing = get_posts_missing_images()
 
     if not missing:
@@ -167,8 +165,10 @@ def main():
 
     fixed = 0
     failed = 0
+    batch = missing[:10]
+    log(f"Processing batch of {len(batch)} (of {len(missing)} total)")
 
-    for post in missing:
+    for post in batch:
         log(f"Generating image for: [{post['section']}] {post['title'][:50]}")
         image_path = generate_image_for_post(post)
 

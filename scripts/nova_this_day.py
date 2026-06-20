@@ -493,20 +493,26 @@ def main():
     # ── Store time machine digest in vector memory ───────────────────────
 
     if memories_by_year:
-        try:
-            summary = f"Memory Time Machine {date_str}: found memories from {sorted(memories_by_year.keys())}"
-            payload = json.dumps({
-                "text": summary,
-                "source": "dream",
-                "metadata": {"type": "time_machine", "date": today.isoformat()}
-            }).encode()
-            req = urllib.request.Request(
-                VECTOR_MEM_URL, data=payload,
-                headers={"Content-Type": "application/json"}, method="POST"
-            )
-            urllib.request.urlopen(req, timeout=10)
-        except Exception:
-            pass
+        excerpts = []
+        for year in sorted(memories_by_year.keys()):
+            for mem in memories_by_year[year][:2]:
+                excerpts.append(f"[{year}] {mem['text'][:200]}")
+        if excerpts:
+            full_summary = f"This Day in Your Life — {date_str}:\n" + "\n".join(excerpts)
+            try:
+                payload = json.dumps({
+                    "text": full_summary,
+                    "source": "dream",
+                    "metadata": {"type": "time_machine", "date": today.isoformat(),
+                                 "years": sorted(memories_by_year.keys())}
+                }).encode()
+                req = urllib.request.Request(
+                    VECTOR_MEM_URL, data=payload,
+                    headers={"Content-Type": "application/json"}, method="POST"
+                )
+                urllib.request.urlopen(req, timeout=10)
+            except Exception:
+                pass
 
     log("Done.", level=LOG_INFO, source="this_day")
 

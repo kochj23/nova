@@ -47,7 +47,8 @@ import nova_config
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-PLEX_URL = "http://192.168.1.10:32400"
+from nova_resolve import resolve_url
+PLEX_URL = resolve_url("plex")
 SKIP_LIBRARIES = {23}
 WORKSPACE = Path.home() / ".openclaw/workspace"
 LOG_FILE = "/tmp/nova-plex.log"

@@ -80,7 +80,7 @@ DEVICES = [
     },
     {
         "ip": "192.168.1.2",
-        "name": "lts01-pi",
+        "name": "nova-core",
         "version": "v2c",
         "community_keychain": "nova-snmp-community",
         "port": 161,
@@ -125,7 +125,7 @@ DEVICE_INTERFACES = {
     "udm-pro": [4, 5],         # WAN1 (Gigabit), WAN2 (SFP+)
     "synology-nas": [7],        # eth4 (LAN NIC)
     "mac-studio": [0],          # primary interface
-    "lts01-pi": [0],            # eth0
+    "nova-core": [0],            # eth0
     "nuk": [0],                 # primary
     "mac-mini": [0],            # primary
     "sw-jordan-16p": [1],       # uplink port
@@ -133,6 +133,12 @@ DEVICE_INTERFACES = {
     "sw-rack15-agg-8p": [1],    # uplink port
     "sw-patio-16p": [1],        # uplink port
     "sw-garage-desk-8p": [1],   # uplink port
+    "sw-jordan-8p": [1],        # uplink port
+    "sw-kitchen-8p": [1],       # uplink port
+    "sw-livingroom-8p": [1],    # uplink port
+    "sw-dining-8p": [1],        # uplink port
+    "sw-jordan-poe-8p": [1],    # uplink port
+    "sw-garage-8p-150w": [1],   # uplink port
     "ap-office-u6e": [1],       # LAN interface
     "ap-kitchen-u6e": [1],      # LAN interface
     "ap-garage-u6e": [1],       # LAN interface

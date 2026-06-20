@@ -70,7 +70,7 @@ RISKY_PORTS = {
 
 KNOWN_SAFE = {
     "192.168.1.1": "UniFi Gateway (unifi.digitalnoise.net)",
-    "192.168.1.2": "Raspberry Pi (lts01)",
+    "192.168.1.2": "nova-core",
     "192.168.1.6": "M4 Mac — Nova primary host",
     "192.168.1.7": "TV-Movies Mac Mini (itunes)",
     "192.168.1.10": "NUK (Plex, Homebridge)",

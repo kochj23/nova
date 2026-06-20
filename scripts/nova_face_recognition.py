@@ -75,6 +75,45 @@ def log(msg):
     print(f"[nova_face {NOW.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
+def volumes_ready():
+    """The sam-faces package and models live on /Volumes/Data; after a reboot the
+    volume may mount late. Bail out gracefully (instead of crashing on an import
+    of PIL/face_recognition) so the scheduler simply retries on the next pass."""
+    for vol in ("/Volumes/Data", "/Volumes/MoreData"):
+        if not os.path.ismount(vol):
+            log(f"{vol} not mounted yet — skipping this run (scheduler will retry)")
+            return False
+    return True
+
+
+def make_context_crop(frame_path, bb, out_path, pad_frac=0.6, min_size=320):
+    """Build a usable face crop from the FULL frame: pad the bounding box with
+    context and upscale tiny/distant faces so the result is viewable in Slack.
+    The raw sam-faces crop is the bare bounding box — for distant cameras that's
+    a ~44px speck that renders as nothing. Returns out_path, or None on failure."""
+    try:
+        from PIL import Image
+        im = Image.open(frame_path).convert("RGB")
+        W, H = im.size
+        top, right, bottom, left = bb["top"], bb["right"], bb["bottom"], bb["left"]
+        fw, fh = max(1, right - left), max(1, bottom - top)
+        pad_x, pad_y = int(fw * pad_frac), int(fh * pad_frac)
+        box = (max(0, left - pad_x), max(0, top - pad_y),
+               min(W, right + pad_x), min(H, bottom + pad_y))
+        crop = im.crop(box)
+        cw, ch = crop.size
+        longest = max(cw, ch)
+        if 0 < longest < min_size:
+            scale = min_size / longest
+            crop = crop.resize((max(1, int(cw * scale)), max(1, int(ch * scale))), Image.LANCZOS)
+        Path(out_path).parent.mkdir(parents=True, exist_ok=True)
+        crop.save(out_path, "JPEG", quality=90)
+        return out_path
+    except Exception as e:
+        log(f"context crop failed: {e}")
+        return None
+
+
 def describe_scene(image_path):
     """Use local vision model to describe what's happening in a camera frame.
     Returns a short description or None on failure."""
@@ -337,12 +376,14 @@ def scan_cameras():
                     last = state.get("unknown_alerts", {}).get(camera_name, 0)
                     if (now_ts - last) > UNKNOWN_COOLDOWN:
                         bb = face["bounding_box"]
-                        crop_dir = SAM_FACES_DIR.parent / "faces" / "unknown"
-                        crop_path = crop_dir / f"unknown_{frame_path.stem}_{bb['top']}_{bb['left']}.jpg"
+                        crop_path = UNKNOWN_DIR / f"unknown_{frame_path.stem}_{bb['top']}_{bb['left']}.jpg"
+                        # Build a padded, min-size crop from the full frame so
+                        # distant faces are actually viewable in Slack.
+                        saved_crop = make_context_crop(str(frame_path), bb, str(crop_path))
                         detections.append({
                             "type": "unknown",
                             "camera": camera_name,
-                            "crop_path": str(crop_path) if crop_path.exists() else None,
+                            "crop_path": saved_crop,
                             "frame_path": str(frame_path),
                         })
                         state.setdefault("unknown_alerts", {})[camera_name] = now_ts
@@ -412,6 +453,8 @@ def post_detections(detections):
 # ── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
+    if not volumes_ready():
+        return
     log("Scanning exterior cameras for faces...")
     detections = scan_cameras()
 

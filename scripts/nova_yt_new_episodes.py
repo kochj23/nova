@@ -403,7 +403,7 @@ def sanitize(s: str) -> str:
 
 def normalize(s: str) -> str:
     s = s.lower()
-    s = re.sub(r"[^a-z0-9 ]", " ", s)
+    s = re.sub(r"[^\w ]", " ", s, flags=re.UNICODE)
     s = re.sub(r"\s+", " ", s).strip()
     return s
 

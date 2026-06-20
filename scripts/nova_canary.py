@@ -38,7 +38,7 @@ def _quick_status() -> dict:
     status = {}
     import socket
 
-    for name, port in [("gateway", 18789), ("memory", 18790), ("scheduler", 37460)]:
+    for name, port in [("gateway", 18792), ("memory", 18790), ("scheduler", 37460)]:
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             s.settimeout(2)

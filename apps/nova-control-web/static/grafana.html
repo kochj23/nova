@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="/static/css/dashboard.css">
   <style>
     .grafana-container {
-      max-width: 900px;
+      max-width: 1100px;
       margin: 40px auto;
       padding: 0 24px;
     }
@@ -96,52 +96,134 @@
 
     <div class="grafana-header">
       <h1>GRAFANA DASHBOARDS</h1>
-      <p>Monitoring and observability for the Nova infrastructure stack</p>
+      <p>20 dashboards monitoring the Nova infrastructure stack</p>
     </div>
 
-    <div class="section-title">Infrastructure Dashboards</div>
+    <div class="section-title">Infrastructure & Capacity</div>
     <div class="dashboard-grid">
-      <a href="http://192.168.1.6:3001/d/nova-infra/" class="dash-card" target="_blank">
+      <a href="http://192.168.1.7:3000/d/nova-infra/" class="dash-card" target="_blank">
         <h3>Nova Infrastructure</h3>
-        <p>CPU, memory, disk, network, service health, capacity forecasting, and SLA uptime tracking.</p>
+        <p>Service dependency graph, CPU/memory, SNMP metrics, deploy activity, shared observations.</p>
         <span class="dash-uid">nova-infra</span>
       </a>
-      <a href="http://192.168.1.6:3001/d/nova-scheduler/" class="dash-card" target="_blank">
+      <a href="http://192.168.1.7:3000/d/nova-capacity/" class="dash-card" target="_blank">
+        <h3>Capacity & Headroom</h3>
+        <p>CPU/memory/disk headroom per host, fleet status, per-mount breakdown.</p>
+        <span class="dash-uid">nova-capacity</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-host-detail/" class="dash-card" target="_blank">
+        <h3>Host Detail</h3>
+        <p>Deep dive on a single host — CPU load, memory, disk, network I/O.</p>
+        <span class="dash-uid">nova-host-detail</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-scheduler/" class="dash-card" target="_blank">
         <h3>Nova Scheduler</h3>
-        <p>Task execution rates, success/failure breakdown, agent throughput, and queue depths.</p>
+        <p>Task execution, success/failure rates, slowest tasks, currently running.</p>
         <span class="dash-uid">nova-scheduler</span>
       </a>
-      <a href="http://192.168.1.6:3001/d/nova-costs/" class="dash-card" target="_blank">
-        <h3>Nova Costs</h3>
-        <p>LLM API spend by provider and model, token usage trends, daily/weekly cost roll-ups.</p>
-        <span class="dash-uid">nova-costs</span>
-      </a>
-      <a href="http://192.168.1.6:3001/d/nova-memory/" class="dash-card" target="_blank">
-        <h3>Nova Memory</h3>
-        <p>Vector memory growth, ingest queue depth, source distribution, and consolidation stats.</p>
-        <span class="dash-uid">nova-memory</span>
-      </a>
-      <a href="http://192.168.1.6:3001/d/nova-bb/" class="dash-card" target="_blank">
-        <h3>Big Brother Metrics</h3>
-        <p>Oversight sweep results, service compliance, anomaly detection, and MRTG-style graphs.</p>
+      <a href="http://192.168.1.7:3000/d/nova-bb/" class="dash-card" target="_blank">
+        <h3>Big Brother</h3>
+        <p>Self-healing events, service compliance, fix confidence, systemic events.</p>
         <span class="dash-uid">nova-bb</span>
       </a>
-      <a href="http://192.168.1.6:3001/d/nova-security/" class="dash-card" target="_blank">
-        <h3>Nova Security</h3>
-        <p>NMAP scan results, open ports, certificate expiry, firewall events, and intrusion alerts.</p>
+      <a href="http://192.168.1.7:3000/d/nova-cinc/" class="dash-card" target="_blank">
+        <h3>CINC Configuration</h3>
+        <p>Node convergence, drift detection, software inventory, package updates.</p>
+        <span class="dash-uid">nova-cinc</span>
+      </a>
+    </div>
+
+    <div class="section-title">Network & Security</div>
+    <div class="dashboard-grid">
+      <a href="http://192.168.1.7:3000/d/nova-network/" class="dash-card" target="_blank">
+        <h3>Network & Security</h3>
+        <p>Connected clients, WiFi signal, top talkers, new/unknown devices.</p>
+        <span class="dash-uid">nova-network</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-bandwidth/" class="dash-card" target="_blank">
+        <h3>Network Bandwidth (SNMP)</h3>
+        <p>WAN/LAN throughput (B/s), memory utilization, swap usage — all devices.</p>
+        <span class="dash-uid">nova-bandwidth</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-switches/" class="dash-card" target="_blank">
+        <h3>Switch & AP Fleet</h3>
+        <p>CPU load, memory, bandwidth per switch and access point.</p>
+        <span class="dash-uid">nova-switches</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-security/" class="dash-card" target="_blank">
+        <h3>Security Posture</h3>
+        <p>Scan status, Wazuh alerts, FIM events, auth events, vulnerability count.</p>
         <span class="dash-uid">nova-security</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-secops/" class="dash-card" target="_blank">
+        <h3>Security Operations</h3>
+        <p>Threat scores, open incidents, security events by level, auto-response actions.</p>
+        <span class="dash-uid">nova-secops</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-syslog/" class="dash-card" target="_blank">
+        <h3>Syslog & Firewall</h3>
+        <p>Event rate, firewall blocks, threat types, SSH events, crash storms.</p>
+        <span class="dash-uid">nova-syslog</span>
+      </a>
+    </div>
+
+    <div class="section-title">AI & Data</div>
+    <div class="dashboard-grid">
+      <a href="http://192.168.1.7:3000/d/nova-llm/" class="dash-card" target="_blank">
+        <h3>LLM & Inference</h3>
+        <p>VRAM usage, gateway latency, task runs, inference TTFT, failure rate.</p>
+        <span class="dash-uid">nova-llm</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-costs/" class="dash-card" target="_blank">
+        <h3>Costs & Inference</h3>
+        <p>LLM API spend, task distribution, duration by model, monthly totals.</p>
+        <span class="dash-uid">nova-costs</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-memory/" class="dash-card" target="_blank">
+        <h3>Memory Growth</h3>
+        <p>Vector count over time, daily growth rate, ingest stats.</p>
+        <span class="dash-uid">nova-memory</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-ingest/" class="dash-card" target="_blank">
+        <h3>Journal & Ingest</h3>
+        <p>Memory count, ingest jobs, scheduler task success vs failure.</p>
+        <span class="dash-uid">nova-ingest</span>
+      </a>
+    </div>
+
+    <div class="section-title">Home & Environment</div>
+    <div class="dashboard-grid">
+      <a href="http://192.168.1.7:3000/d/nova-home-telemetry/" class="dash-card" target="_blank">
+        <h3>Home Telemetry</h3>
+        <p>Network clients, BLE presence, AV devices, Bluetooth signal map.</p>
+        <span class="dash-uid">nova-home-telemetry</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-climate/" class="dash-card" target="_blank">
+        <h3>Climate & Air Quality</h3>
+        <p>Indoor/outdoor temperature, humidity, PM2.5, UV index, light levels.</p>
+        <span class="dash-uid">nova-climate</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-weather/" class="dash-card" target="_blank">
+        <h3>Weather Station</h3>
+        <p>Temperature, humidity, pressure, wind, rain, UV, 7-day summary.</p>
+        <span class="dash-uid">nova-weather</span>
+      </a>
+      <a href="http://192.168.1.7:3000/d/nova-energy/" class="dash-card" target="_blank">
+        <h3>Energy & Power</h3>
+        <p>Eve Energy device power draw, daily kWh, estimated cost (pending data).</p>
+        <span class="dash-uid">nova-energy</span>
       </a>
     </div>
 
     <div class="section-title">Grafana Tools</div>
     <div class="dashboard-grid">
-      <a href="http://192.168.1.6:3001/alerting/list" class="dash-card" target="_blank">
+      <a href="http://192.168.1.7:3000/alerting/list" class="dash-card" target="_blank">
         <h3>Alerting</h3>
         <p>Alert rules, silences, contact points, and notification history.</p>
       </a>
-      <a href="http://192.168.1.6:3001/explore" class="dash-card" target="_blank">
+      <a href="http://192.168.1.7:3000/explore" class="dash-card" target="_blank">
         <h3>Explore</h3>
-        <p>Ad-hoc queries against PostgreSQL and Prometheus data sources.</p>
+        <p>Ad-hoc queries against PostgreSQL and OpenSearch data sources.</p>
       </a>
     </div>
   </div>

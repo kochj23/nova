@@ -273,6 +273,8 @@ def _apply_recipe_shell(user, ip, os_family, recipe_name, dry_run):
         return _recipe_nova_linux(user, ip, os_family, dry_run)
     elif recipe_name == "nova_macos":
         return 0, "nova_macos: [skipped] macOS managed locally", ""
+    elif recipe_name == "nova_dotfiles":
+        return _recipe_nova_dotfiles(user, ip, os_family, dry_run)
     else:
         return 0, f"{recipe_name}: [skipped] no shell handler", ""
 
@@ -550,6 +552,175 @@ def cmd_add(args):
     """Register a new node."""
     add_node(args.ip, args.name, args.os_family, args.run_list.split(",") if args.run_list else None)
     print(f"Added: {args.name} ({args.ip}, {args.os_family})")
+
+
+# ── Dotfiles Recipe ──────────────────────────────────────────────────────────
+
+DOTFILES_SOURCE = Path.home()
+DOTFILES_SYNC = [
+    ".zshrc",
+    ".p10k.zsh",
+    ".vimrc",
+    ".gitconfig",
+    ".fzf.zsh",
+    ".fzf.bash",
+    ".profile",
+    ".bash_profile",
+]
+DOTFILES_DIRS = [
+    ".oh-my-zsh",
+    ".vim",
+    ".git-templates",
+]
+DOTFILES_EXCLUDE = [
+    ".oh-my-zsh/cache/",
+    ".oh-my-zsh/log/",
+]
+
+# Core Homebrew packages that every macOS node should have
+BREW_CORE_PACKAGES = [
+    "bash", "bat", "coreutils", "diffutils", "direnv", "findutils",
+    "fzf", "gawk", "gh", "git", "gnu-sed", "gnu-tar", "grep", "gzip",
+    "htop", "jq", "less", "make", "nano", "net-snmp", "node",
+    "openssl@3", "postgresql@17", "python@3.14", "readline", "rkhunter",
+    "rsync", "screen", "sqlite", "thefuck", "tmux", "tree", "watch",
+    "wget", "xz", "zip", "zstd",
+]
+
+
+def _recipe_nova_dotfiles(user, ip, os_family, dry_run):
+    """nova_dotfiles: Sync shell configs from mac-studio (source of truth) to remote macOS nodes."""
+    if os_family != "macos":
+        return 0, "nova_dotfiles: [skipped] macOS only", ""
+
+    if ip in ("127.0.0.1", "192.168.1.6"):
+        return 0, "nova_dotfiles: [ok] this is the source machine", ""
+
+    checks = []
+    changes = 0
+
+    # Sync individual dotfiles
+    for dotfile in DOTFILES_SYNC:
+        src = DOTFILES_SOURCE / dotfile
+        if not src.exists():
+            continue
+
+        rc, out, _ = ssh_exec(user, ip, f"test -f ~/{dotfile} && echo exists || echo missing")
+        if "missing" in out:
+            if dry_run:
+                checks.append(f"[drift] {dotfile} missing on target")
+                changes += 1
+            else:
+                cmd = ["rsync", "-az", "-e", f"ssh {' '.join(SSH_OPTS)}",
+                       str(src), f"{user}@{ip}:~/{dotfile}"]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                if r.returncode == 0:
+                    checks.append(f"[created] {dotfile}")
+                    changes += 1
+                else:
+                    checks.append(f"[failed] {dotfile}: {r.stderr[:80]}")
+        else:
+            # File exists — check if content matches
+            rc, remote_hash, _ = ssh_exec(user, ip, f"shasum -a 256 ~/{dotfile} | cut -d' ' -f1")
+            local_hash = subprocess.run(
+                ["shasum", "-a", "256", str(src)],
+                capture_output=True, text=True).stdout.split()[0]
+
+            if remote_hash.strip() == local_hash.strip():
+                checks.append(f"[ok] {dotfile}")
+            else:
+                if dry_run:
+                    checks.append(f"[drift] {dotfile} differs")
+                    changes += 1
+                else:
+                    cmd = ["rsync", "-az", "-e", f"ssh {' '.join(SSH_OPTS)}",
+                           str(src), f"{user}@{ip}:~/{dotfile}"]
+                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                    if r.returncode == 0:
+                        checks.append(f"[changed] {dotfile}")
+                        changes += 1
+                    else:
+                        checks.append(f"[failed] {dotfile}: {r.stderr[:80]}")
+
+    # Sync directories (OMZ, vim, git-templates)
+    for dirname in DOTFILES_DIRS:
+        src_dir = DOTFILES_SOURCE / dirname
+        if not src_dir.exists():
+            continue
+
+        exclude_args = []
+        for excl in DOTFILES_EXCLUDE:
+            if excl.startswith(dirname):
+                exclude_args.extend(["--exclude", excl.replace(dirname + "/", "")])
+
+        rc, out, _ = ssh_exec(user, ip, f"test -d ~/{dirname} && echo exists || echo missing")
+        if "missing" in out:
+            if dry_run:
+                checks.append(f"[drift] {dirname}/ missing on target")
+                changes += 1
+            else:
+                cmd = ["rsync", "-az", "--delete", "-e", f"ssh {' '.join(SSH_OPTS)}"] + \
+                      exclude_args + [f"{src_dir}/", f"{user}@{ip}:~/{dirname}/"]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                if r.returncode == 0:
+                    checks.append(f"[created] {dirname}/")
+                    changes += 1
+                else:
+                    checks.append(f"[failed] {dirname}/: {r.stderr[:80]}")
+        else:
+            # Directory exists — rsync with --dry-run to check for drift
+            cmd = ["rsync", "-az", "--delete", "--dry-run", "--itemize-changes",
+                   "-e", f"ssh {' '.join(SSH_OPTS)}"] + exclude_args + \
+                  [f"{src_dir}/", f"{user}@{ip}:~/{dirname}/"]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            diffs = [l for l in r.stdout.strip().splitlines() if l and not l.startswith(".d")]
+            if not diffs:
+                checks.append(f"[ok] {dirname}/")
+            else:
+                if dry_run:
+                    checks.append(f"[drift] {dirname}/ ({len(diffs)} files differ)")
+                    changes += 1
+                else:
+                    cmd = ["rsync", "-az", "--delete", "-e", f"ssh {' '.join(SSH_OPTS)}"] + \
+                          exclude_args + [f"{src_dir}/", f"{user}@{ip}:~/{dirname}/"]
+                    r = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+                    if r.returncode == 0:
+                        checks.append(f"[changed] {dirname}/ ({len(diffs)} files)")
+                        changes += 1
+                    else:
+                        checks.append(f"[failed] {dirname}/: {r.stderr[:80]}")
+
+    # Ensure ~/.vim/undodir exists
+    if not dry_run:
+        ssh_exec(user, ip, "mkdir -p ~/.vim/undodir")
+
+    # Sync core Homebrew packages
+    rc, remote_pkgs, _ = ssh_exec(user, ip,
+        "/opt/homebrew/bin/brew list --formula 2>/dev/null", timeout=30)
+    if rc == 0:
+        installed = set(remote_pkgs.strip().splitlines())
+        missing = [p for p in BREW_CORE_PACKAGES if p not in installed]
+        if missing:
+            if dry_run:
+                checks.append(f"[drift] {len(missing)} brew packages missing: {', '.join(missing[:10])}")
+                changes += 1
+            else:
+                pkg_str = " ".join(missing)
+                rc2, out2, err2 = ssh_exec(user, ip,
+                    f"/opt/homebrew/bin/brew install {pkg_str} 2>&1 | tail -5",
+                    timeout=600)
+                if rc2 == 0:
+                    checks.append(f"[changed] installed {len(missing)} brew packages")
+                    changes += len(missing)
+                else:
+                    checks.append(f"[partial] brew install: {err2[:100]}")
+                    changes += 1
+        else:
+            checks.append(f"[ok] all {len(BREW_CORE_PACKAGES)} core brew packages present")
+    else:
+        checks.append("[skipped] brew not available on target")
+
+    return 0, "\n".join(checks), ""
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────

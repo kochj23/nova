@@ -55,6 +55,24 @@ BRUTE_THRESHOLD = 5
 BRUTE_WINDOW = 300
 SCAN_THRESHOLD = 5
 SCAN_WINDOW = 60
+CRASH_STORM_THRESHOLD = 15  # crashes in 5min before alerting
+CRASH_STORM_COOLDOWN = 1800  # 30min between repeat alerts per host
+
+# IoT devices that do normal mDNS/UPnP discovery (not lateral movement)
+LATERAL_EXCLUDE_SOURCES = {
+    "192.168.1.65",   # Withings Body+ scale
+    "192.168.1.34",   # IoT device (mDNS prober)
+    "192.168.1.45",   # TP-Link Kasa smart plug
+    "192.168.1.68",   # TP-Link Kasa smart plug
+    "192.168.1.64",   # TP-Link Kasa smart plug
+    "192.168.1.89",   # Silicondust HDHomeRun
+}
+
+# Source ports that indicate normal service responses, not scan probes
+LATERAL_EXCLUDE_SPORT = {1900, 8888, 5004, 65001}
+
+# RST packets are connection resets, not scan probes
+LATERAL_RST_RE = re.compile(r"\bRST\b")
 
 FACILITY_NAMES = {
     0: "kern", 1: "user", 2: "mail", 3: "daemon", 4: "auth", 5: "syslog",
@@ -135,6 +153,7 @@ _device_event_counts: dict[str, deque] = defaultdict(lambda: deque(maxlen=168)) 
 _device_hour_count: dict[str, int] = defaultdict(int)
 _last_hour_reset: float = time.time()
 _crash_events: dict[str, list] = defaultdict(list)  # [(timestamp, process_name), ...]
+_crash_storm_last_alert: dict[str, float] = {}  # hostname -> last alert timestamp
 _lateral_scans: dict[str, deque] = defaultdict(lambda: deque(maxlen=50))
 _sensitive_access: dict[str, deque] = defaultdict(lambda: deque(maxlen=10))
 
@@ -359,10 +378,17 @@ def detect_anomaly(event: dict) -> dict | None:
                 }
 
     # 2. Lateral movement — one LAN host hitting multiple ports on another
+    #    Excludes: RST packets (responses not probes), known IoT source ports,
+    #    and whitelisted device IPs (Kasa plugs, HDHomeRun, etc.)
     lat_m = LATERAL_RE.search(msg)
     if lat_m:
         src, dst, port = lat_m.group(1), lat_m.group(2), lat_m.group(3)
-        if src != dst:
+        port_m2 = PORT_RE.search(msg)
+        src_port = int(port_m2.group(1)) if port_m2 else 0
+        if (src != dst
+                and src not in LATERAL_EXCLUDE_SOURCES
+                and not LATERAL_RST_RE.search(msg)
+                and src_port not in LATERAL_EXCLUDE_SPORT):
             key = f"{src}->{dst}"
             _lateral_scans[key].append((now, int(port)))
             recent_ports = set(p for t, p in _lateral_scans[key] if now - t < 60)
@@ -404,7 +430,9 @@ def detect_anomaly(event: dict) -> dict | None:
         _crash_events[hostname].append((now, proc_name))
         _crash_events[hostname] = [(t, p) for t, p in _crash_events[hostname] if now - t < 300]
         recent = _crash_events[hostname]
-        if len(recent) == 5:
+        last_alert = _crash_storm_last_alert.get(hostname, 0)
+        if len(recent) >= CRASH_STORM_THRESHOLD and (now - last_alert) > CRASH_STORM_COOLDOWN:
+            _crash_storm_last_alert[hostname] = now
             from collections import Counter
             proc_counts = Counter(p for _, p in recent)
             breakdown = ", ".join(f"{p}({c})" for p, c in proc_counts.most_common(5))
@@ -485,7 +513,11 @@ def detect_anomaly(event: dict) -> dict | None:
 
 def should_alert(threat: dict, event: dict) -> bool:
     """Check dedup window — only alert once per (signature_prefix, src) per DEDUP_WINDOW."""
-    sig_key = (threat["signature"][:60], threat.get("src_addr") or event.get("source_ip"))
+    sig = threat["signature"][:60]
+    # Normalize lateral scan sigs so "hit 5 ports" vs "hit 9 ports" dedup together
+    if threat.get("threat_type") == "lateral_movement":
+        sig = re.sub(r"hit \d+ ports", "hit N ports", sig)
+    sig_key = (sig, threat.get("src_addr") or event.get("source_ip"))
     now = time.time()
     last = _recent_alerts.get(sig_key)
     if last and now - last < DEDUP_WINDOW:

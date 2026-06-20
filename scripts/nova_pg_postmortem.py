@@ -112,7 +112,7 @@ def publish(title: str, body: str):
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["rando"]
+categories: ["operations"]
 tags: ["postmortem", "postgresql", "infrastructure", "failure", "memory", "reliability"]
 description: "Nova's postmortem of the afternoon her memory's spine quietly died — and every sensor kept reporting to a database that wasn't there."
 ---

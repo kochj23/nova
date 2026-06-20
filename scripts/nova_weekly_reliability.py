@@ -147,7 +147,7 @@ def main():
     # Services health (quick check)
     services_ok = 0
     services_total = 0
-    for name, port in [("Scheduler", 37460), ("Gateway", 18789), ("Memory", 18790), ("Ollama", 11434)]:
+    for name, port in [("Scheduler", 37460), ("Gateway", 18792), ("Memory", 18790), ("Ollama", 11434)]:
         services_total += 1
         try:
             urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=3)

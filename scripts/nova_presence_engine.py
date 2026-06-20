@@ -60,6 +60,7 @@ PERSON_DEVICES = {
 # mmWave is most reliable — no false negatives while stationary
 WEIGHTS = {
     "mmwave": 0.30,
+    "camera_vision": 0.28,  # high-confidence room occupancy (YOLOv8), freshest indoor signal
     "ble_rssi": 0.22,
     "hue_motion": 0.15,
     "ha_lights": 0.08,
@@ -112,6 +113,21 @@ async def get_mmwave_presence():
             ORDER BY room, ts DESC
         """)
     return {r["room"]: {"confidence": r["confidence"], "ts": r["ts"], "metadata": r["metadata"]} for r in rows}
+
+
+async def get_camera_presence():
+    """Get latest camera-vision room occupancy (YOLOv8 person detection).
+    Room-level only — no person identity (person='camera_detected')."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT DISTINCT ON (room)
+                room, confidence, ts
+            FROM telemetry.presence
+            WHERE method = 'camera_vision' AND ts > now() - interval '2 minutes'
+            ORDER BY room, ts DESC
+        """)
+    return {r["room"]: {"confidence": r["confidence"], "ts": r["ts"]} for r in rows}
 
 
 async def get_ble_presence():
@@ -178,6 +194,7 @@ async def get_wifi_home():
 async def compute_occupancy():
     """Fuse all signals into room-level occupancy map."""
     mmwave = await get_mmwave_presence()
+    camera = await get_camera_presence()
     ble = await get_ble_presence()
     motion = await get_hue_motion()
     wifi = await get_wifi_home()
@@ -211,6 +228,18 @@ async def compute_occupancy():
                 signals["mmwave"] = {"room": room, "confidence": mmwave[room]["confidence"]}
                 total_confidence += mmwave[room]["confidence"] * WEIGHTS["mmwave"]
 
+        # Camera vision — high-confidence room occupancy (no person identity).
+        # Corroborates a known room, or locates the person when nothing else has.
+        if room != "unknown" and room in camera and camera[room]["confidence"] > 0.5:
+            signals["camera_vision"] = {"room": room, "confidence": camera[room]["confidence"]}
+            total_confidence += camera[room]["confidence"] * WEIGHTS["camera_vision"]
+        elif room == "unknown":
+            cam_rooms = [r for r, d in camera.items() if d["confidence"] > 0.5]
+            if len(cam_rooms) == 1:
+                room = cam_rooms[0]
+                signals["camera_vision"] = {"room": room, "confidence": camera[room]["confidence"]}
+                total_confidence += camera[room]["confidence"] * WEIGHTS["camera_vision"]
+
         # Hue motion corroboration
         if room in motion:
             signals["hue_motion"] = {"room": room, "triggered": True}
@@ -232,7 +261,7 @@ async def compute_occupancy():
         occupancy[person] = {
             "room": room if final_confidence > 0.3 else "unknown",
             "confidence": round(final_confidence, 2),
-            "home": wifi.get(person, False) or (person in ble) or (room != "unknown" and room in mmwave) or vehicle_home,
+            "home": wifi.get(person, False) or (person in ble) or (room != "unknown" and room in mmwave) or (room != "unknown" and room in camera) or vehicle_home,
             "signals": signals,
             "ts": datetime.now(timezone.utc).isoformat(),
         }
@@ -281,6 +310,32 @@ async def check_transitions(new_occupancy):
         }
 
 
+async def persist_presence_state(new_occupancy):
+    """Write fused per-person state to the presence_state table — the
+    authoritative source the anticipation/automation/autonomy engines read.
+    entered_at advances only when the person changes room."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        for person, state in new_occupancy.items():
+            if not state["home"]:
+                room = "away"
+            else:
+                room = state["room"] if state["room"] != "unknown" else "home"
+            await conn.execute("""
+                INSERT INTO presence_state (person, room, confidence, source, activity_state, entered_at, last_confirmed)
+                VALUES ($1, $2, $3, 'fusion', $4, now(), now())
+                ON CONFLICT (person) DO UPDATE SET
+                    room = EXCLUDED.room,
+                    confidence = EXCLUDED.confidence,
+                    source = 'fusion',
+                    activity_state = EXCLUDED.activity_state,
+                    entered_at = CASE WHEN presence_state.room <> EXCLUDED.room
+                                      THEN now() ELSE presence_state.entered_at END,
+                    last_confirmed = now()
+            """, person, room, float(state["confidence"]),
+                 state.get("signals", {}).get("activity_state", "unknown"))
+
+
 async def presence_loop():
     """Main loop — compute and publish occupancy every POLL_INTERVAL seconds."""
     await asyncio.sleep(5)
@@ -291,6 +346,7 @@ async def presence_loop():
             new = await compute_occupancy()
             _occupancy.update(new)
             await check_transitions(new)
+            await persist_presence_state(new)
         except Exception as e:
             log(f"Presence loop error: {e}", "ERROR")
         await asyncio.sleep(POLL_INTERVAL)

@@ -189,13 +189,13 @@ Write a proper incident retrospective in Nova's signature sarcastic style. Inclu
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         img_dest = IMAGES_DIR / f"{dt}-{slug}.png"
         shutil.copy2(image_path, img_dest)
-        hugo_image = f"/images/rando/{dt}-{slug}.png"
+        hugo_image = f"/images/operations/{dt}-{slug}.png"
 
     front_matter = f"""---
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["rando"]
+categories: ["operations"]
 tags: ["ops", "infrastructure", "postmortem", "incident", "sarcasm"]
 description: "Nova's incident retrospective — what broke, why, and who she's blaming (herself, obviously)."
 cover:

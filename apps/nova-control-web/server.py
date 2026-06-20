@@ -22,7 +22,7 @@ from fastapi.staticfiles import StaticFiles
 
 SCHEDULER_BASE = "http://192.168.1.6:37460"
 GATEWAY_HEALTH = "http://127.0.0.1:18792/health"
-OLLAMA_PS = "http://192.168.1.6:11434/api/ps"
+OLLAMA_PS = "http://127.0.0.1:11434/api/ps"
 REDIS_URL = "redis://192.168.1.6:6379"
 OPS_PG_DSN = "postgresql://192.168.1.6/nova_ops"
 SESSIONS_JSON_ARCHIVED = Path.home() / ".openclaw" / "agents" / "_archived_sessions" / "main_sessions" / "sessions.json"
@@ -38,21 +38,21 @@ AGENTS = ["analyst", "sentinel", "coder", "lookout", "librarian"]
 OPENCLAW_CONFIG = Path.home() / ".openclaw" / "openclaw.json"
 AGENTS_DIR = Path.home() / ".openclaw" / "agents"
 
-PLEX_BASE = "http://192.168.1.10:32400"
+PLEX_BASE = "http://192.168.1.7:32400"
 PLEX_EXCLUDED_LIBS = {"23"}
 HDHR_BASE = "http://192.168.1.89"
 PLEX_PLAYING_STATE = Path.home() / ".openclaw" / "workspace" / "plex_playing.json"
 
 SERVICE_PORTS = {
-    "ollama": {"port": 11434, "url": "http://192.168.1.6:11434"},
-    "tinychat": {"port": 8000, "url": "http://192.168.1.6:8000"},
+    "ollama": {"port": 11434, "url": "http://127.0.0.1:11434"},
+    "tinychat": {"port": 8000, "url": "http://192.168.1.7:8000"},
     "mlx_chat": {"port": 5050, "url": "http://192.168.1.6:5050"},
     "openwebui": {"port": 3000, "url": "http://192.168.1.6:3000"},
-    "searxng": {"port": 8888, "url": "http://127.0.0.1:8888"},
+    "searxng": {"port": 8080, "url": "http://192.168.1.7:8080"},
     "swarmui": {"port": 7801, "url": "http://127.0.0.1:7801"},
     "comfyui": {"port": 8188, "url": "http://127.0.0.1:8188"},
     "memory_server": {"port": 18790, "url": "http://192.168.1.6:18790"},
-    "plex": {"port": 32400, "url": PLEX_BASE, "host": "192.168.1.10"},
+    "plex": {"port": 32400, "url": PLEX_BASE, "host": "192.168.1.7"},
     "hdhr": {"port": 80, "url": HDHR_BASE, "host": "192.168.1.89"},
 }
 
@@ -572,9 +572,9 @@ async def _detail_redis():
 
 async def _detail_ollama():
     session = app.state.http_session
-    async with session.get("http://192.168.1.6:11434/api/tags", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+    async with session.get("http://127.0.0.1:11434/api/tags", timeout=aiohttp.ClientTimeout(total=3)) as resp:
         tags = await resp.json()
-    async with session.get("http://192.168.1.6:11434/api/ps", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+    async with session.get("http://127.0.0.1:11434/api/ps", timeout=aiohttp.ClientTimeout(total=3)) as resp:
         ps = await resp.json()
 
     all_models = []
@@ -2140,7 +2140,7 @@ async def bb_events():
 @app.get("/bb-graphs")
 async def bb_graphs_redirect():
     """Redirect to Grafana nova-bb dashboard (custom page decommissioned)."""
-    return RedirectResponse("http://192.168.1.6:3001/d/nova-bb/")
+    return RedirectResponse("http://192.168.1.7:3000/d/nova-bb/")
 
 
 @app.get("/api/bb/metrics")
@@ -3537,7 +3537,7 @@ async def update_incident(incident_id: str, request: Request):
 @app.get("/sla")
 async def sla_redirect():
     """Redirect to Grafana nova-infra dashboard (SLA data lives there now)."""
-    return RedirectResponse("http://192.168.1.6:3001/d/nova-infra/")
+    return RedirectResponse("http://192.168.1.7:3000/d/nova-infra/")
 
 
 @app.get("/api/sla")
@@ -3596,7 +3596,7 @@ async def sla_dashboard(days: int = 30):
 @app.get("/alerts")
 async def alerts_redirect():
     """Redirect to Grafana alerting UI (custom page decommissioned)."""
-    return RedirectResponse("http://192.168.1.6:3001/alerting/list")
+    return RedirectResponse("http://192.168.1.7:3000/alerting/list")
 
 
 @app.get("/api/alerts/rules")
@@ -3692,7 +3692,7 @@ async def alert_history():
 @app.get("/capacity")
 async def capacity_redirect():
     """Redirect to Grafana nova-infra dashboard (capacity data lives there now)."""
-    return RedirectResponse("http://192.168.1.6:3001/d/nova-infra/")
+    return RedirectResponse("http://192.168.1.7:3000/d/nova-infra/")
 
 
 @app.get("/api/capacity")

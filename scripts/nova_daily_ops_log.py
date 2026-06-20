@@ -372,7 +372,7 @@ def make_cover(title: str, slug: str, date: str) -> str:
     dest = IMAGES_DIR / f"{date}-{slug}{ext}"
     shutil.copy2(img, dest)
     log(f"Cover image: {dest.name}")
-    return f"/images/rando/{dest.name}"
+    return f"/images/operations/{dest.name}"
 
 
 def publish(title: str, body: str, brief_facts: str):
@@ -394,7 +394,7 @@ def publish(title: str, body: str, brief_facts: str):
 title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
-categories: ["rando"]
+categories: ["operations"]
 tags: ["ops-log", "daily", "infrastructure", "network", "telemetry", "watch"]
 description: "Nova's daily operations log — the day's changes, deployments, and what the sensors saw."
 {cover_block}---

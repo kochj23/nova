@@ -400,9 +400,9 @@ def seed_patterns():
         },
         {
             "pattern_name": "gateway_restart",
-            "trigger_condition": {"service_down": "gateway", "port": 18789},
-            "fix_action": {"type": "restart", "service": "net.digitalnoise.nova-gateway",
-                          "health_check_url": "http://127.0.0.1:18789/health"},
+            "trigger_condition": {"service_down": "gateway", "port": 18792},
+            "fix_action": {"type": "restart", "service": "net.digitalnoise.nova-gateway-v2",
+                          "health_check_url": "http://127.0.0.1:18792/health"},
             "confidence": 0.85,
             "created_by": "claude",
         },
