@@ -978,6 +978,182 @@ def _escalate_to_claude(issue_description: str, priority: int = 3, service_name:
     _redis_notify_claude("escalation", issue_description, priority)
 
 
+# ── Incident Auto-Close on Recovery (#508) ───────────────────────────────────
+# When a service that previously had an OPEN incident comes back UP, BB must
+# mark that incident resolved — otherwise incidents pile up forever (resolved_at
+# never gets set). Two stores are closed:
+#   1. claude_queue rows BB itself files: description LIKE 'INCIDENT: <name>%'
+#      (status queued/in_progress) — these are the per-service down escalations.
+#   2. the dedicated `incidents` table ("Multiple services down: ...") written
+#      by nova-control-web. Those use control-web's lowercase service KEYS
+#      (mlx_chat, openwebui, ...) in affected_services, NOT BB's display names,
+#      so we map BB name -> control-web key. A multi-service incident is only
+#      closed once EVERY one of its affected services is back up (avoids closing
+#      a real outage on a single partial recovery).
+#
+# All work is best-effort and fully guarded — this must NEVER crash the BB loop.
+
+# BB display name -> nova-control-web incidents-table service key.
+# (control-web SERVICES map: tinychat/mlx_chat/openwebui/searxng/...)
+_INCIDENT_SERVICE_KEY = {
+    "TinyChat":   "tinychat",
+    "MLX Server": "mlx_chat",
+    "OpenWebUI":  "openwebui",
+    "SearXNG":    "searxng",
+    "ComfyUI":    "comfyui",
+    "SwarmUI":    "swarmui",
+    "Ollama":     "ollama",
+}
+
+# Track which incidents we've already closed this process-lifetime to avoid
+# pointless re-UPDATE churn / log spam when a service stays up across sweeps.
+_closed_incident_keys: set = set()
+
+
+def _auto_close_incidents(recovered_names):
+    """Close OPEN incidents for services that have recovered (are now UP).
+
+    `recovered_names` is an iterable of BB service display names that just
+    transitioned (or are observed) UP. Returns the number of incident records
+    closed across both stores. Never raises.
+    """
+    recovered = {n for n in recovered_names if n}
+    if not recovered:
+        return 0
+    closed = 0
+    try:
+        import psycopg2 as _pg2
+    except Exception as e:  # psycopg2 unavailable — nothing we can do
+        log(f"[auto-close] psycopg2 import failed: {e}", level=LOG_WARN, source="big-brother")
+        return 0
+
+    conn = None
+    try:
+        conn = _pg2.connect("host=localhost dbname=nova_ops user=kochj")
+        conn.autocommit = True
+        cur = conn.cursor()
+
+        # ── 1. claude_queue INCIDENT rows (BB's own escalations) ─────────────
+        for name in recovered:
+            dedup_key = f"queue:{name}"
+            if dedup_key in _closed_incident_keys:
+                continue
+            try:
+                # BB files either 'INCIDENT: <name> — ...' (triage path) or
+                # 'INCIDENT: Unknown — INCIDENT: <name> — ...' (fallback path).
+                cur.execute(
+                    """
+                    UPDATE claude_queue
+                       SET status = 'resolved',
+                           completed_at = now(),
+                           updated_at = now(),
+                           outcome = COALESCE(outcome, '') ||
+                                     '[auto-closed by Big Brother: service recovered]'
+                     WHERE status IN ('queued', 'in_progress')
+                       AND (description LIKE %s OR description LIKE %s)
+                    """,
+                    (f"INCIDENT: {name}%", f"INCIDENT:%— {name} %"),
+                )
+                if cur.rowcount and cur.rowcount > 0:
+                    closed += cur.rowcount
+                    log(f"[auto-close] {name} recovered — closed {cur.rowcount} "
+                        f"claude_queue incident row(s)",
+                        level=LOG_WARN, source="big-brother")
+                _closed_incident_keys.add(dedup_key)
+            except Exception as e:
+                log(f"[auto-close] queue close failed for {name}: {e}",
+                    level=LOG_WARN, source="big-brother")
+
+        # ── 2. dedicated `incidents` table (correlated service outages) ──────
+        # Map recovered BB names to control-web service keys.
+        recovered_keys = {_INCIDENT_SERVICE_KEY[n] for n in recovered
+                          if n in _INCIDENT_SERVICE_KEY}
+        if recovered_keys:
+            try:
+                cur.execute(
+                    "SELECT id, affected_services FROM incidents "
+                    "WHERE status = 'open' AND affected_services && %s::text[]",
+                    (list(recovered_keys),),
+                )
+                rows = cur.fetchall()
+                for inc_id, affected in rows:
+                    affected = affected or []
+                    # Only auto-close once EVERY affected service we can map is
+                    # currently UP. Unknown/unmappable keys (e.g. security
+                    # incidents like 'pi'/'nuk') are NOT service recoveries, so
+                    # if any affected key isn't a known service we leave it.
+                    all_up = True
+                    for key in affected:
+                        bb_name = _key_to_bb_name(key)
+                        if bb_name is None:
+                            all_up = False  # not a service we track → leave alone
+                            break
+                        if not _service_currently_up(bb_name):
+                            all_up = False
+                            break
+                    if not all_up:
+                        continue
+                    dedup_key = f"incident:{inc_id}"
+                    if dedup_key in _closed_incident_keys:
+                        continue
+                    cur.execute(
+                        "UPDATE incidents "
+                        "SET status = 'resolved', resolved_at = now() "
+                        "WHERE id = %s AND status = 'open'",
+                        (inc_id,),
+                    )
+                    if cur.rowcount and cur.rowcount > 0:
+                        closed += cur.rowcount
+                        log(f"[auto-close] incident {inc_id} ({', '.join(affected)}) "
+                            f"— all services recovered, marked resolved",
+                            level=LOG_WARN, source="big-brother")
+                    _closed_incident_keys.add(dedup_key)
+            except Exception as e:
+                log(f"[auto-close] incidents-table close failed: {e}",
+                    level=LOG_WARN, source="big-brother")
+    except Exception as e:
+        log(f"[auto-close] DB error: {e}", level=LOG_WARN, source="big-brother")
+    finally:
+        try:
+            if conn is not None:
+                conn.close()
+        except Exception:
+            pass
+    return closed
+
+
+# Reverse of _INCIDENT_SERVICE_KEY (control-web key -> BB display name).
+_KEY_TO_BB_NAME = {v: k for k, v in _INCIDENT_SERVICE_KEY.items()}
+
+
+def _key_to_bb_name(key):
+    """Map a control-web incidents service key back to a BB display name, or None."""
+    return _KEY_TO_BB_NAME.get(key)
+
+
+def _service_currently_up(bb_name) -> bool:
+    """Best-effort: is this BB service currently UP?
+
+    Prefer the live _service_status snapshot; fall back to an on-demand probe
+    using the SERVICES port table (so backfill works even before the first sweep
+    has populated _service_status for every service).
+    """
+    try:
+        st = _service_status.get(bb_name)
+        if st is not None:
+            return bool(st.get("up", False))
+    except Exception:
+        pass
+    try:
+        entry = next((s for s in SERVICES if s[0] == bb_name), None)
+        if entry is None:
+            return False
+        _n, host, port, _label, _crit, health_path = entry
+        return _service_is_up(bb_name, host, port, health_path)
+    except Exception:
+        return False
+
+
 # ── Protected Task Check ──────────────────────────────────────────────────────
 
 def _is_protected_task_running() -> bool:
@@ -3281,6 +3457,7 @@ def _full_sweep():
     # for >15 minutes despite BB's heal attempts, escalate to claude_queue.
     global _pg_down_since
     now_ts = time.time()
+    _recovered_this_sweep = []   # services observed UP this sweep → auto-close incidents
     for name, host, port, label, critical, health_path in SERVICES:
         svc_up = _service_status.get(name, {}).get("up", True)
         if not svc_up:
@@ -3297,8 +3474,27 @@ def _full_sweep():
                 # Mark as escalated — don't re-escalate until service recovers and fails again
                 _service_down_since[name] = float('inf')
         else:
-            # Service recovered — clear downtime tracking
+            # Service recovered (or has been up) — clear downtime tracking.
+            # If it was previously tracked as down, this is a real recovery, so
+            # clear any cached "already-closed" markers so a *future* incident on
+            # this service can be closed again on its next recovery.
+            if name in _service_down_since:
+                _closed_incident_keys.discard(f"queue:{name}")
             _service_down_since.pop(name, None)
+            _recovered_this_sweep.append(name)
+
+    # ── Auto-close incidents for recovered services (#508) ───────────────────
+    # When a service that had an OPEN incident is UP again, mark that incident
+    # resolved so the queue/incident store stops piling up. Guarded — must never
+    # crash the sweep.
+    try:
+        n_closed = _auto_close_incidents(_recovered_this_sweep)
+        if n_closed:
+            log(f"[auto-close] resolved {n_closed} incident record(s) this sweep",
+                level=LOG_WARN, source="big-brother")
+    except Exception as e:
+        log(f"[auto-close] unexpected error (ignored): {e}",
+            level=LOG_WARN, source="big-brother")
 
     # ── PostgreSQL-specific escalation (>5 min unreachable) ──────────────────
     pg_up = _port_open("127.0.0.1", 5432)
