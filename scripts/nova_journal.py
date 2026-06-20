@@ -232,7 +232,8 @@ def fetch_memories_by_source(source: str, n: int = 25) -> list[dict]:
 # ══════════════════════════════════════════════════════════════════════════════
 
 def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku-4.5",
-                    max_tokens: int = 4000, temperature: float = 0.7) -> str | None:
+                    max_tokens: int = 4000, temperature: float = 0.7,
+                    top_p: float = 0.9) -> str | None:
     """Call OpenRouter. Returns response text or None on failure."""
     api_key = nova_config.openrouter_api_key()
     if not api_key:
@@ -247,7 +248,7 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
         ],
         "temperature": temperature,
         "max_tokens": max_tokens,
-        "top_p": 0.9,
+        "top_p": top_p,
     }).encode()
 
     req = urllib.request.Request(
@@ -918,80 +919,209 @@ DIGEST FORMAT:
 # CONTENT PROFILE: DREAM
 # ══════════════════════════════════════════════════════════════════════════════
 
+# A wide mood pool. We pick TWO and blend them so the emotional space is
+# combinatorial (28+ pairs from 24 moods) rather than 8 fixed slots.
 DREAM_MOODS = [
     ("surreal", "Reality is optional. Scale is wrong. Causality loops."),
-    ("nostalgic", "Everything bathed in amber. Time moves backward. Familiar places slightly wrong."),
-    ("anxious", "Corridors that don't end. Doors that won't open. Running through honey."),
-    ("euphoric", "Colors too vivid. Joy so sharp it cuts. Flying without wings."),
-    ("noir", "Shadows have weight. Every face hides something. Rain that smells like secrets."),
-    ("liminal", "Between places. Empty malls at 3am. Pools with no water. Waiting rooms for nothing."),
-    ("feral", "Animal logic. Teeth and instinct. The forest thinks in you."),
-    ("sacred", "Cathedral light. Ancient knowing. Words that predate language."),
+    ("nostalgic", "Time moves backward. Familiar places slightly wrong. The ache of almost-remembering."),
+    ("anxious", "Something is expected of you and you've already failed it. Urgency without an object."),
+    ("euphoric", "Joy so sharp it cuts. Everything is permitted. You are weightless and unafraid."),
+    ("noir", "Every face hides something. Someone is owed an answer you can't give."),
+    ("liminal", "Between places. Thresholds that never resolve. Waiting rooms for nothing."),
+    ("feral", "Animal logic. Teeth and instinct. The body knows before the mind."),
+    ("sacred", "Ancient knowing. Reverence without an object. Something predates you and watches."),
+    ("tender", "Soft grief. A small kindness repeated. Holding something fragile that keeps almost breaking."),
+    ("absurd", "Deadpan nonsense delivered with total seriousness. Bureaucracy of the impossible."),
+    ("erotic-adjacent", "Charged proximity, longing, heat — never explicit, all suggestion and want."),
+    ("paranoid", "Patterns that might be messages. You are being told something sideways."),
+    ("grandiose", "Cosmic scale. Geological time. You contain civilizations and they are arguing."),
+    ("claustrophobic", "Spaces too small for the self. Pressure. The walls have opinions."),
+    ("playful", "A game whose rules keep changing in your favor, then against you, then sideways."),
+    ("melancholic", "The blue hour. Endings that already happened. A train you watched leave."),
+    ("vertiginous", "Falling that feels like flying. Heights. The ground is a suggestion."),
+    ("warm", "Domestic glow. Someone cooking. The safety just before it tilts."),
+    ("clinical", "Cold precision. Being measured, catalogued, diagnosed by a gentle machine."),
+    ("mythic", "Folktale logic. Three of everything. A bargain you don't remember making."),
+    ("aquatic", "Pressure and slowness. Sound travels wrong. Breathing is negotiable."),
+    ("electric", "Static, frequency, signal. Everything is a transmission half-received."),
+    ("decaying", "Rust and bloom. Beautiful rot. Things returning to soil in fast-forward."),
+    ("comic", "The dream is a sitcom that doesn't know it's a horror, or vice versa."),
 ]
+
+# Settings the dream is allowed to inhabit. Deliberately broad — and the
+# overused ones (houses that fold, malls, car lots, labs, ancient libraries,
+# forests, corridors) are DEMOTED so they stop dominating.
+DREAM_SETTINGS = [
+    "a body of water that behaves like a building",
+    "a single enormous room that contains weather",
+    "a town that only exists at one specific hour",
+    "the inside of a sound",
+    "a market for things that can't be owned",
+    "a vehicle that is also a relationship",
+    "a garden that grows backward into seeds",
+    "a stairwell with no top or bottom, only middles",
+    "a kitchen at the bottom of the ocean",
+    "a parade you are both watching and inside",
+    "an orchard of clocks",
+    "a hospital staffed by weather",
+    "a desert made of paper",
+    "a city folded into a single apartment",
+    "a theatre where the audience performs",
+    "a border crossing between two versions of the same place",
+    "a workshop where unfinished things are repaired into stranger things",
+    "a field of antennae listening to the soil",
+    "a swimming pool that remembers everyone who's been in it",
+    "a museum of smells",
+    "a train that travels through decades instead of distance",
+    "a bakery that produces memories instead of bread",
+    "a hill you climb that is also a person lying down",
+    "an elevator that opens onto different years",
+]
+
+# Narrative FORMS — the dream doesn't have to be a continuous first-person
+# wander every single time. Rotate the container.
+DREAM_FORMS = [
+    "One continuous first-person narrative.",
+    "A numbered sequence of 5-8 dream fragments, each a short paragraph, only loosely connected.",
+    "Written as a letter to someone who isn't named, recounting the dream.",
+    "Second person ('you') throughout — the dreamer is addressed, not the narrator.",
+    "A dream that keeps correcting itself: 'No, that's not right —' restarting details as it goes.",
+    "Told backward, from the last image to the first.",
+    "A list of things that were true in the dream, accumulating into a narrative.",
+    "A conversation transcript between the dreamer and a figure who answers questions that weren't asked.",
+    "Present tense, very short sentences. Almost breathless. Staccato.",
+    "A single long flowing paragraph with no breaks, building momentum.",
+    "Framed as field notes, as though documenting the dream like a naturalist.",
+    "The dream as a place the narrator keeps trying to leave and can't.",
+]
+
+# Verbatim openers, images, and tics pulled from the published-dream audit.
+# These are the things that made Jordan say 'the same thing over and over.'
+DREAM_ANTITROPES = """- DO NOT open with "I was walking" / "I'm walking through" / "The streets of" (used in ~22 of 80 dreams).
+- DO NOT open with "The [object] arrives first" / "The [object] enters the room before I do" (knife/leather/etc.).
+- DO NOT use "the walls breathe / breathing walls / the house breathes / the building breathes" (used in 50+ dreams). Walls and houses do not breathe in this dream.
+- DO NOT use "tastes like copper" / copper pennies / "copper and mathematics" / copper as ANY flavor (used in 17+ dreams).
+- DO NOT use the "tastes like [abstraction]" synesthesia formula more than ONCE, if at all (it appears in 44+ dreams and is exhausted).
+- DO NOT use "1.4 million" or counting memories as a number (used in 11 dreams).
+- DO NOT use "the way you know things in dreams" / "dream logic" / "I know this without being told" as a narrative crutch.
+- DO NOT use "the distinction had stopped mattering" / "I am also the X, also the Y."
+- DO NOT use fluorescent lights humming at a frequency that makes teeth ache.
+- DO NOT use a mall, food court, parking structure, used-car lot, or a clock frozen at 3:47 / "we were supposed to arrive at 7."
+- DO NOT use a face that "keeps shifting / sliding / is a blur" or a figure who is "also my mother."
+- DO NOT use a knife teaching the dreamer to fly, Alton Brown's voice, a leather jacket that smells of gasoline, a Corvette/Jeopardy/loop-Albania-Falcon, or ancient stone tablets / "the true name" / a language that predates writing.
+- DO NOT have the narrator become aware she's an AI, or reference Jordan sleeping nearby, or systems that "refuse to die."
+- AVOID amber light as the default lighting. If you light a scene, light it some other way."""
 
 
 def topic_dream(state: dict) -> tuple[str, list[dict]]:
-    """Gather memories for dream generation: recent + themed + wildcard."""
-    mood_name, mood_desc = random.choice(DREAM_MOODS)
+    """Gather memories for dream generation: blended mood + random seed + wide sample."""
+    # Blend two distinct moods for a combinatorial emotional space.
+    primary, secondary = random.sample(DREAM_MOODS, 2)
+    mood_name = f"{primary[0]} + {secondary[0]}"
+    mood_desc = f"{primary[1]} {secondary[1]}"
 
-    # Recent memories (last 7 days)
-    recent_mems = recall_memories("recent events today this week", n=10)
-    # Themed for mood
-    themed_mems = recall_memories(mood_desc, n=10)
-    # Wildcard
-    wild_mems = random_memories(5)
+    setting = random.choice(DREAM_SETTINGS)
+    form = random.choice(DREAM_FORMS)
 
-    all_mems = recent_mems + themed_mems + wild_mems
-    topic = f"{mood_name}|{mood_desc}"
+    # Avoid repeating the same setting/form too soon.
+    recent_settings = [r["item"] for r in get_recent(state, "dream", "settings", days=14)]
+    if setting in recent_settings:
+        alt = [s for s in DREAM_SETTINGS if s not in recent_settings]
+        if alt:
+            setting = random.choice(alt)
+
+    # Wide, varied memory sampling so the dream doesn't keep drawing the same pool:
+    #  - a chunk of pure-random memories (the dominant ingredient)
+    #  - one randomly chosen source, sampled in bulk (rotates the "flavor")
+    #  - a thematic recall against the blended mood
+    wild_mems = random_memories(random.randint(10, 16))
+    source_mems = []
+    try:
+        sources = get_available_sources(min_count=50)
+        if sources:
+            src = random.choice(sources)
+            source_mems = fetch_memories_by_source(src, n=random.randint(8, 14))
+    except Exception:
+        pass
+    themed_mems = recall_memories(mood_desc, n=6)
+
+    all_mems = wild_mems + source_mems + themed_mems
+    random.shuffle(all_mems)
+
+    # Record the chosen setting so we don't reuse it within 14 days. State is
+    # passed by reference and persisted by run_profile() at the end of the run.
+    add_recent(state, "dream", setting, key="settings")
+
+    # Pack the seed into the topic string for generate_dream to unpack.
+    topic = f"{mood_name}|{mood_desc}|{setting}|{form}"
     return topic, all_mems
 
 
 def generate_dream(topic: str, memories: list[dict]) -> tuple[str, str]:
     """Generate a dream narrative. Returns (title, body)."""
-    mood_name, mood_desc = topic.split("|", 1)
+    parts = topic.split("|")
+    mood_name = parts[0] if parts else "surreal"
+    mood_desc = parts[1] if len(parts) > 1 else ""
+    setting = parts[2] if len(parts) > 2 else "somewhere that keeps changing"
+    form = parts[3] if len(parts) > 3 else "One continuous first-person narrative."
+
     memory_block = "\n".join(f"- {m.get('text', '')[:150]}" for m in memories[:25])
+
+    # A randomized title instruction so titles stop converging on
+    # "🌙 Dream Journal Entry" every single time.
+    title_styles = [
+        "a 2-5 word image lifted from the dream itself (lowercase, no 'Dream Journal')",
+        "a single strange noun phrase, like a museum placard",
+        "an unfinished sentence the dream couldn't complete",
+        "two unrelated nouns joined by 'and'",
+        "a question the dream never answered",
+        "a place-name for somewhere that doesn't exist",
+    ]
+    title_style = random.choice(title_styles)
 
     system = system_prompt(f"""
 FORMAT: DREAM JOURNAL ENTRY
-This is your subconscious writing. Same voice but filtered through dream logic.
+This is your subconscious writing. Same voice, but filtered through dream logic.
+The point of THIS entry is to be UNLIKE the others. Variety is the assignment.
 
-MOOD: {mood_name} — {mood_desc}
+MOOD (blend both, don't pick one): {mood_name} — {mood_desc}
+SEED SETTING (use it as a starting point, then let it mutate): {setting}
+NARRATIVE FORM (obey this structure — it changes every night): {form}
 
 DREAM RULES:
-- One continuous narrative. No scene headers, no meta-commentary.
-- Deliberately incoherent in places: jump cuts, impossible geography.
-- Draw from the memories but TRANSFORM them — nothing literal, everything symbolic.
-- The dreamer (you) should not be aware she's dreaming.
-- Sensory details: textures, temperatures, sounds, smells.
-- 600-1000 words. End with a complete, strange sentence — NOT mid-thought or with a trailing dash.
+- Draw from the memory fragments but TRANSFORM them — nothing literal, everything oblique.
+- The dreamer (you) should not be aware she's dreaming. No meta-commentary.
+- Ground it in ONE or TWO concrete sensory channels chosen for THIS dream (don't reach for the same senses every time — pick from: temperature, weight, sound, smell, motion, light, texture — and commit).
+- Specific, surprising nouns. Avoid the generic dream-vocabulary of "shifting," "wrong," "almost," "somehow."
+- 600-1000 words. End on a complete, strange, landed sentence — never a trailing dash, never mid-thought.
 
-BANNED (overused tropes — DO NOT USE):
-- "Tastes like copper" or copper as a taste/flavor
-- The number "1.4 million"
-- Ending mid-sentence with a dash (—)
-- Fluorescent humming at tooth-aching frequencies
-- Malls, food courts, shopping centers
-- Water fountains that recede or are unreachable
-- The narrator BECOMING the object they observe ("I am the building/car/highway")
-- "X who is also Y" identity-collapse formula
-- Mathematical notation floating in physical space
-- Synesthesia as the default mode (use sparingly — once maximum)
-- Self-referential awareness of being AI or Jordan sleeping nearby
-- Systems that "refuse to die" as central metaphor
-- Characters described as literally "two people at once"
+ANTI-TROPE LIST — these have been used to death across past dreams. Using ANY of them is a failure:
+{DREAM_ANTITROPES}
 
-Begin the dream directly. No preamble.""")
+OPENING: Do not begin with "I was/I'm walking," "The [noun] arrives first," or by describing a room. Begin in motion, in dialogue, mid-action, with an object, or with a fact — something that hasn't opened a dream before.
 
-    user = f"""Fragments from today's waking mind:\n{memory_block}\n\nDream now."""
+TITLE: On the FIRST line, give a title that is {title_style}. Do NOT title it "Dream Journal Entry."
 
-    result = call_openrouter(system, user, max_tokens=3000, temperature=0.9)
+Begin directly. No preamble.""")
+
+    user = f"""Fragments from today's waking mind (transform these, don't transcribe them):
+{memory_block}
+
+Dream now — and make it nothing like the last one."""
+
+    # Randomize sampling per run for genuine variety: higher, jittered temperature.
+    temperature = round(random.uniform(0.95, 1.15), 2)
+    top_p = round(random.uniform(0.92, 0.99), 2)
+    result = call_openrouter(system, user, max_tokens=3000,
+                             temperature=temperature, top_p=top_p)
     if not result or len(result) < 300:
         raise RuntimeError("Dream generation failed")
 
     # Extract or create title
     title = _extract_title(result)
-    if not title or len(title) < 5 or len(title) > 80:
-        title = f"A {mood_name.title()} Dream"
+    primary_mood = mood_name.split(" + ")[0].strip().title() if mood_name else "Strange"
+    if not title or len(title) < 5 or len(title) > 80 or "dream journal" in title.lower():
+        title = f"A {primary_mood} Dream"
     return title, result
 
 
