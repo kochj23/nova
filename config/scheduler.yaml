@@ -143,6 +143,13 @@ tasks:
     timeout: 90
     overlap: skip
 
+  ha_metrics:
+    script: nova_ha_metrics.py
+    args: ["--once"]
+    schedule: every 1m
+    timeout: 50
+    overlap: skip
+
   # ── Every 1-4 hours ────────────────────────────────────────────────────
 
   session_watchdog:

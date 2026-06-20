@@ -1,0 +1,132 @@
+{
+  "uid": "snmp-storage",
+  "title": "Storage SNMP (Synology)",
+  "tags": ["snmp", "storage", "synology", "nova"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "time": { "from": "now-12h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Disk Temperatures",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "celsius", "custom": { "drawStyle": "line", "fillOpacity": 5 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "SELECT timestamp AS time, split_part(unit, '|', 2) AS metric, metric_value AS value FROM snmp_metrics WHERE metric_name LIKE 'syno_disk_temp.%' AND $__timeFilter(timestamp) ORDER BY timestamp"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Disk Status (latest)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Status" },
+            "properties": [
+              { "id": "mappings", "value": [ { "type": "value", "options": { "1": { "text": "Normal", "color": "green" }, "2": { "text": "Initialized", "color": "blue" }, "3": { "text": "NotInit", "color": "yellow" }, "4": { "text": "SystemPartFailed", "color": "red" }, "5": { "text": "Crashed", "color": "red" } } } ] },
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Temp C" },
+            "properties": [ { "id": "unit", "value": "celsius" } ]
+          }
+        ]
+      },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "WITH latest AS (SELECT metric_name, metric_value, unit, split_part(metric_name, '.', 2) AS idx, row_number() OVER (PARTITION BY metric_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name ~ '^syno_disk_(status|temp)\\.' AND timestamp > now() - interval '20 min') SELECT split_part(MAX(unit) FILTER (WHERE metric_name LIKE 'syno_disk_status%'), '|', 2) AS \"Disk\", MAX(metric_value) FILTER (WHERE metric_name LIKE 'syno_disk_status%') AS \"Status\", MAX(metric_value) FILTER (WHERE metric_name LIKE 'syno_disk_temp%') AS \"Temp C\" FROM latest WHERE rn = 1 GROUP BY idx ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "bargauge",
+      "title": "Volume / Pool Used %",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 75 }, { "color": "red", "value": 90 } ] } }, "overrides": [] },
+      "options": { "orientation": "horizontal", "displayMode": "gradient", "showUnfilled": true },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "WITH latest AS (SELECT metric_name, metric_value, unit, split_part(metric_name, '.', 2) AS idx, row_number() OVER (PARTITION BY metric_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name ~ '^syno_raid_(total|free)_bytes\\.' AND timestamp > now() - interval '20 min') SELECT split_part(MAX(unit), '|', 2) AS metric, CASE WHEN MAX(metric_value) FILTER (WHERE metric_name LIKE '%total%') > 0 THEN 100.0 * (MAX(metric_value) FILTER (WHERE metric_name LIKE '%total%') - MAX(metric_value) FILTER (WHERE metric_name LIKE '%free%')) / MAX(metric_value) FILTER (WHERE metric_name LIKE '%total%') ELSE 0 END AS value FROM latest WHERE rn = 1 GROUP BY idx ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "RAID / Volume Status (latest)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Status" },
+            "properties": [
+              { "id": "mappings", "value": [ { "type": "value", "options": { "1": { "text": "Normal", "color": "green" }, "2": { "text": "Repairing", "color": "yellow" }, "3": { "text": "Migrating", "color": "yellow" }, "11": { "text": "Degraded", "color": "red" }, "12": { "text": "Crashed", "color": "red" } } } ] },
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } }
+            ]
+          },
+          { "matcher": { "id": "byName", "options": "Total" }, "properties": [ { "id": "unit", "value": "bytes" } ] },
+          { "matcher": { "id": "byName", "options": "Free" }, "properties": [ { "id": "unit", "value": "bytes" } ] }
+        ]
+      },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "WITH latest AS (SELECT metric_name, metric_value, unit, split_part(metric_name, '.', 2) AS idx, row_number() OVER (PARTITION BY metric_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name ~ '^syno_raid_(status|total_bytes|free_bytes)\\.' AND timestamp > now() - interval '20 min') SELECT split_part(MAX(unit) FILTER (WHERE metric_name LIKE 'syno_raid_status%'), '|', 2) AS \"Volume\", MAX(metric_value) FILTER (WHERE metric_name LIKE 'syno_raid_status%') AS \"Status\", MAX(metric_value) FILTER (WHERE metric_name LIKE '%total%') AS \"Total\", MAX(metric_value) FILTER (WHERE metric_name LIKE '%free%') AS \"Free\" FROM latest WHERE rn = 1 GROUP BY idx ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "hrStorage Used % (HOST-RESOURCES, all SNMP hosts)",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 18 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 5 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "SELECT u.timestamp AS time, u.device_name || ' ' || COALESCE(d.unit, u.metric_name) AS metric, CASE WHEN s.metric_value > 0 THEN 100.0 * u.metric_value / s.metric_value ELSE 0 END AS value FROM snmp_metrics u JOIN snmp_metrics s ON s.device_name = u.device_name AND s.timestamp = u.timestamp AND s.metric_name = 'disk_storage_size.' || split_part(u.metric_name, '.', 2) LEFT JOIN snmp_metrics d ON d.device_name = u.device_name AND d.metric_name = 'disk_storage_descr.' || split_part(u.metric_name, '.', 2) AND d.timestamp = u.timestamp WHERE u.metric_name LIKE 'disk_storage_used.%' AND s.metric_value > 0 AND $__timeFilter(u.timestamp) ORDER BY u.timestamp"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,110 @@
+{
+  "uid": "snmp-switch-ports",
+  "title": "Switch & AP Ports (SNMP)",
+  "tags": ["snmp", "network", "nova"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": {
+    "list": [
+      {
+        "name": "device",
+        "type": "query",
+        "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+        "refresh": 2,
+        "includeAll": true,
+        "multi": true,
+        "query": "SELECT DISTINCT device_name FROM snmp_metrics WHERE metric_name LIKE 'if_hc_in_octets.%' ORDER BY 1",
+        "current": { "text": "All", "value": "$__all" }
+      }
+    ]
+  },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Port RX (download) bps",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "bps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "SELECT m.timestamp AS time, m.device_name || ' ' || COALESCE(n.unit, 'if' || split_part(m.metric_name, '.', 2)) AS metric, m.metric_value AS value FROM snmp_metrics m LEFT JOIN LATERAL (SELECT unit FROM snmp_metrics WHERE device_name = m.device_name AND metric_name = 'if_name.' || split_part(m.metric_name, '.', 2) ORDER BY timestamp DESC LIMIT 1) n ON true WHERE m.metric_name LIKE 'if_in_bps.%' AND m.device_name IN ($device) AND $__timeFilter(m.timestamp) ORDER BY m.timestamp"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Port TX (upload) bps",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "bps", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "SELECT m.timestamp AS time, m.device_name || ' ' || COALESCE(n.unit, 'if' || split_part(m.metric_name, '.', 2)) AS metric, m.metric_value AS value FROM snmp_metrics m LEFT JOIN LATERAL (SELECT unit FROM snmp_metrics WHERE device_name = m.device_name AND metric_name = 'if_name.' || split_part(m.metric_name, '.', 2) ORDER BY timestamp DESC LIMIT 1) n ON true WHERE m.metric_name LIKE 'if_out_bps.%' AND m.device_name IN ($device) AND $__timeFilter(m.timestamp) ORDER BY m.timestamp"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Port Errors & Discards (latest, non-zero)",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "WITH latest AS (SELECT device_name, metric_name, metric_value, split_part(metric_name, '.', 2) AS idx, row_number() OVER (PARTITION BY device_name, metric_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name ~ '^if_(in|out)_(errors|discards)\\.' AND timestamp > now() - interval '20 min') SELECT l.device_name AS \"Device\", COALESCE(n.unit, 'if' || l.idx) AS \"Port\", SUM(l.metric_value) FILTER (WHERE l.metric_name LIKE 'if_in_errors%') AS \"RX Errors\", SUM(l.metric_value) FILTER (WHERE l.metric_name LIKE 'if_out_errors%') AS \"TX Errors\", SUM(l.metric_value) FILTER (WHERE l.metric_name LIKE 'if_in_discards%') AS \"RX Discards\", SUM(l.metric_value) FILTER (WHERE l.metric_name LIKE 'if_out_discards%') AS \"TX Discards\" FROM latest l LEFT JOIN LATERAL (SELECT unit FROM snmp_metrics WHERE device_name = l.device_name AND metric_name = 'if_name.' || l.idx ORDER BY timestamp DESC LIMIT 1) n ON true WHERE l.rn = 1 GROUP BY l.device_name, l.idx, n.unit HAVING SUM(l.metric_value) > 0 ORDER BY 3 DESC NULLS LAST, 1, 2"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "table",
+      "title": "Port Link Status & Speed (latest)",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Status" },
+            "properties": [
+              { "id": "mappings", "value": [ { "type": "value", "options": { "1": { "text": "UP", "color": "green" }, "2": { "text": "DOWN", "color": "red" } } } ] },
+              { "id": "custom.cellOptions", "value": { "type": "color-text" } }
+            ]
+          }
+        ]
+      },
+      "options": { "showHeader": true },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "WITH latest AS (SELECT device_name, metric_name, metric_value, split_part(metric_name, '.', 2) AS idx, row_number() OVER (PARTITION BY device_name, metric_name ORDER BY timestamp DESC) rn FROM snmp_metrics WHERE metric_name ~ '^if_(oper_status|speed_mbps)\\.' AND device_name IN ($device) AND timestamp > now() - interval '20 min') SELECT l.device_name AS \"Device\", COALESCE(n.unit, 'if' || l.idx) AS \"Port\", MAX(l.metric_value) FILTER (WHERE l.metric_name LIKE 'if_oper_status%') AS \"Status\", MAX(l.metric_value) FILTER (WHERE l.metric_name LIKE 'if_speed_mbps%') AS \"Speed Mbps\" FROM latest l LEFT JOIN LATERAL (SELECT unit FROM snmp_metrics WHERE device_name = l.device_name AND metric_name = 'if_name.' || l.idx ORDER BY timestamp DESC LIMIT 1) n ON true WHERE l.rn = 1 GROUP BY l.device_name, l.idx, n.unit ORDER BY 1, 2"
+        }
+      ]
+    }
+  ]
+}
