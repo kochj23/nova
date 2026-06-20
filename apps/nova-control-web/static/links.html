@@ -97,7 +97,7 @@
 </head>
 <body>
   <h1>Nova Service Directory</h1>
-  <div class="subtitle">All browser-accessible services on 192.168.1.6</div>
+  <div class="subtitle">All browser-accessible services across the Nova fleet</div>
 
   <div class="section">
     <div class="section-title">Dashboards & Monitoring</div>
@@ -141,85 +141,43 @@
       <div class="link-item">
         <span class="status-dot" id="dot-3000"></span>
         <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/dashboards">Grafana — All Dashboards</a>
-        <span class="link-desc">Historical metrics + alerting</span>
+        <a href="http://192.168.1.2:3000/dashboards">Grafana — All Dashboards</a>
+        <span class="link-desc">Consolidated on nova-core (.2) — anonymous access</span>
       </div>
       <div class="link-item">
         <span class="status-dot"></span>
         <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/d/nova-infra/nova-infrastructure">Grafana — Infrastructure</a>
-        <span class="link-desc">CPU, memory, network, temperature</span>
+        <a href="http://192.168.1.2:3000/d/nova-home-overview">Grafana — Home / Overview</a>
+        <span class="link-desc">Fleet, services, key sensors at a glance</span>
       </div>
       <div class="link-item">
         <span class="status-dot"></span>
         <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/d/nova-scheduler/nova-scheduler">Grafana — Scheduler</a>
-        <span class="link-desc">Task executions + failures</span>
+        <a href="http://192.168.1.2:3000/d/nova-hosts-fleet">Grafana — Hosts & Fleet</a>
+        <span class="link-desc">Per-host CPU, memory, disk</span>
       </div>
       <div class="link-item">
         <span class="status-dot"></span>
         <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/d/nova-costs/nova-costs-and-llm-usage">Grafana — LLM Costs</a>
-        <span class="link-desc">Spend by provider + model latency</span>
+        <a href="http://192.168.1.2:3000/d/nova-home-sensors">Grafana — Home & Sensors</a>
+        <span class="link-desc">Weather station, room climate, presence</span>
       </div>
       <div class="link-item">
         <span class="status-dot"></span>
         <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/d/nova-memory/nova-memory-growth">Grafana — Memory Growth</a>
-        <span class="link-desc">Vector count trends</span>
+        <a href="http://192.168.1.2:3000/d/nova-network">Grafana — Network</a>
+        <span class="link-desc">UniFi clients/bandwidth/APs + Synology/UNAS storage</span>
       </div>
       <div class="link-item">
         <span class="status-dot"></span>
         <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/d/nova-bb/nova-big-brother">Grafana — Big Brother</a>
-        <span class="link-desc">Heal events + pattern confidence</span>
+        <a href="http://192.168.1.2:3000/d/nova-brain">Grafana — Nova Brain</a>
+        <span class="link-desc">Memory growth, LLM tokens/cost, searches, jobs, queue</span>
       </div>
       <div class="link-item">
         <span class="status-dot"></span>
         <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/d/nova-security/nova-security-posture">Grafana — Security</a>
-        <span class="link-desc">Scan results + fleet posture</span>
-      </div>
-      <div class="link-item">
-        <span class="status-dot"></span>
-        <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/d/nova-home-telemetry/home-telemetry-overview">Grafana — Home Telemetry</a>
-        <span class="link-desc">BLE presence, AV state, network clients, system metrics</span>
-      </div>
-      <div class="link-item">
-        <span class="status-dot"></span>
-        <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/d/nova-weather/weather-station">Grafana — Weather</a>
-        <span class="link-desc">Temp, humidity, wind, rain, UV, pressure</span>
-      </div>
-      <div class="link-item">
-        <span class="status-dot"></span>
-        <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/d/nova-energy/energy-and-power">Grafana — Energy</a>
-        <span class="link-desc">Eve power strips, per-device watts, cost</span>
-      </div>
-      <div class="link-item">
-        <span class="status-dot"></span>
-        <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/d/nova-network/network-and-security">Grafana — Network</a>
-        <span class="link-desc">WiFi clients, bandwidth, signal, unknown devices</span>
-      </div>
-      <div class="link-item">
-        <span class="status-dot"></span>
-        <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/alerting/list">Grafana — Alerting</a>
-        <span class="link-desc">Active alert rules</span>
-      </div>
-      <div class="link-item">
-        <span class="status-dot"></span>
-        <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/explore">Grafana — Explore</a>
-      </div>
-      <div class="link-item">
-        <span class="status-dot" id="dot-grafana-jarvis"></span>
-        <span class="port">:3000</span>
-        <a href="http://192.168.1.7:3000/d/nova-jarvis/jarvis-presence-and-activity">Grafana — JARVIS Presence & Activity</a>
-        <span class="link-desc">NEW — room presence, camera detection, activity state</span>
+        <a href="http://192.168.1.2:3000/explore">Grafana — Explore</a>
         <span class="link-desc">Ad-hoc metric queries</span>
       </div>
     </div>
@@ -357,7 +315,7 @@
       <div class="link-item">
         <span class="status-dot" id="dot-32400"></span>
         <span class="port">:32400</span>
-        <a href="http://192.168.1.10:32400/web">Plex Media Server</a>
+        <a href="http://192.168.1.2:32400/web">Plex Media Server</a>
         <span class="link-desc">Synology NAS — movies, TV, music</span>
       </div>
       <div class="link-item">
@@ -438,7 +396,7 @@
   <script>
     const checks = [
       {id: 'dot-37450', url: '/api/detail/system'},
-      {id: 'dot-3000', url: 'http://192.168.1.7:3000/api/health'},
+      {id: 'dot-3000', url: 'http://192.168.1.2:3000/api/health'},
       {id: 'dot-11434', url: 'http://192.168.1.6:11434/'},
       {id: 'dot-18790', url: 'http://192.168.1.6:18790/health'},
       {id: 'dot-18792', url: 'http://192.168.1.6:18792/health'},
