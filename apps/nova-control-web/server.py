@@ -38,6 +38,33 @@ AGENTS = ["analyst", "sentinel", "coder", "lookout", "librarian"]
 OPENCLAW_CONFIG = Path.home() / ".openclaw" / "openclaw.json"
 AGENTS_DIR = Path.home() / ".openclaw" / "agents"
 
+# Claude Code usage transcripts (per-message usage lives in these JSONL files).
+CLAUDE_PROJECTS_DIR = Path.home() / ".claude" / "projects"
+OPENROUTER_CREDITS_URL = "https://openrouter.ai/api/v1/credits"
+
+# Anthropic per-token prices in USD per 1 token, keyed by substring of the
+# message `model` field. Base input/output from platform.claude.com; cache-write
+# = 1.25x input (5-min TTL), cache-read = 0.1x input (standard multipliers).
+# (in, out, cache_write, cache_read) per 1 token.
+def _claude_rate(in_mtok: float, out_mtok: float) -> tuple[float, float, float, float]:
+    i = in_mtok / 1_000_000
+    o = out_mtok / 1_000_000
+    return (i, o, i * 1.25, i * 0.1)
+
+_CLAUDE_PRICES: dict[str, tuple[float, float, float, float]] = {
+    "opus-4-8": _claude_rate(5.0, 25.0),
+    "opus-4-7": _claude_rate(5.0, 25.0),
+    "opus-4-6": _claude_rate(5.0, 25.0),
+    "opus-4-5": _claude_rate(5.0, 25.0),
+    "sonnet-4-6": _claude_rate(3.0, 15.0),
+    "sonnet-4-5": _claude_rate(3.0, 15.0),
+    "haiku-4-5": _claude_rate(1.0, 5.0),
+    "fable-5": _claude_rate(10.0, 50.0),
+}
+# Fallback if a Claude model id isn't recognized — assume Opus-tier so cost is
+# present rather than silently zero.
+_CLAUDE_FALLBACK = _claude_rate(5.0, 25.0)
+
 PLEX_BASE = "http://192.168.1.7:32400"
 PLEX_EXCLUDED_LIBS = {"23"}
 HDHR_BASE = "http://192.168.1.89"
@@ -385,6 +412,10 @@ async def service_detail(service: str):
             return JSONResponse(await _detail_memory())
         elif service == "model_usage":
             return JSONResponse(await _detail_model_usage())
+        elif service == "claude_usage":
+            return JSONResponse(collect_claude_usage())
+        elif service == "openrouter_credits":
+            return JSONResponse(await collect_openrouter_credits())
         elif service == "agents":
             return JSONResponse(await collect_multi_agents())
         elif service.startswith("agent-"):
@@ -1540,6 +1571,160 @@ async def collect_task_throughput() -> list:
 _model_usage_cache: dict = {}
 _model_usage_ts: float = 0
 
+# Per-model price map in USD per 1 token (input, output).
+# OpenRouter rates sourced from openrouter.ai model pages; local backends are free.
+# Keys are matched case-insensitively as substrings of the model id.
+_LOCAL_PROVIDERS = {"ollama", "mlx", "llamacpp", "llama.cpp", "tinychat", "local"}
+_MODEL_PRICES: dict[str, tuple[float, float]] = {
+    # qwen3-235b-a22b-2507 on OpenRouter: $0.09 / $0.10 per 1M tokens
+    "qwen3-235b-a22b-2507": (0.09 / 1_000_000, 0.10 / 1_000_000),
+    "qwen3-235b": (0.09 / 1_000_000, 0.10 / 1_000_000),
+}
+# Fallback OpenRouter rate when a model isn't in the explicit map (conservative
+# mid-range estimate so cost is non-zero rather than silently $0).
+_OPENROUTER_FALLBACK = (0.20 / 1_000_000, 0.60 / 1_000_000)
+
+
+def compute_token_cost(provider: str, model: str, inp: int, out: int) -> float:
+    """Cost in USD for a single (provider, model) usage record.
+
+    Local backends (ollama/mlx/llamacpp/etc) are free. Paid providers are
+    priced from _MODEL_PRICES (substring match on the model id), falling back
+    to a conservative OpenRouter rate for unknown paid models.
+    """
+    prov = (provider or "").lower()
+    if prov in _LOCAL_PROVIDERS:
+        return 0.0
+    m = (model or "").lower()
+    rate = None
+    for key, r in _MODEL_PRICES.items():
+        if key in m:
+            rate = r
+            break
+    if rate is None:
+        # Unknown but non-local provider — assume paid (OpenRouter-style).
+        rate = _OPENROUTER_FALLBACK
+    return (inp or 0) * rate[0] + (out or 0) * rate[1]
+
+
+def _claude_price_for(model: str) -> tuple[float, float, float, float]:
+    m = (model or "").lower()
+    for key, rate in _CLAUDE_PRICES.items():
+        if key in m:
+            return rate
+    return _CLAUDE_FALLBACK
+
+
+_claude_usage_cache: dict = {}
+_claude_usage_ts: float = 0
+
+
+def collect_claude_usage() -> dict:
+    """Aggregate Claude Code token usage + cost from ~/.claude/projects/**/*.jsonl.
+
+    Each assistant message carries `message.usage` with input/output and cache
+    tokens. Cost = tokens x per-model rate (input, output, cache write, cache
+    read). Returns a provider-shaped dict mergeable into model_usage.by_provider.
+    """
+    global _claude_usage_cache, _claude_usage_ts
+    now = time.time()
+    if now - _claude_usage_ts < 60:
+        return _claude_usage_cache
+    try:
+        agg = {"sessions": 0, "input_tokens": 0, "output_tokens": 0,
+               "cache_creation_tokens": 0, "cache_read_tokens": 0, "cost": 0.0}
+        by_model: dict = {}
+        if CLAUDE_PROJECTS_DIR.exists():
+            for jf in CLAUDE_PROJECTS_DIR.rglob("*.jsonl"):
+                try:
+                    with jf.open() as fh:
+                        for line in fh:
+                            try:
+                                obj = _json.loads(line)
+                            except Exception:
+                                continue
+                            msg = obj.get("message") or {}
+                            u = msg.get("usage")
+                            if not isinstance(u, dict):
+                                continue
+                            model = msg.get("model", "")
+                            if not model or model == "<synthetic>":
+                                continue
+                            inp = u.get("input_tokens", 0) or 0
+                            out = u.get("output_tokens", 0) or 0
+                            cw = u.get("cache_creation_input_tokens", 0) or 0
+                            cr = u.get("cache_read_input_tokens", 0) or 0
+                            ri, ro, rcw, rcr = _claude_price_for(model)
+                            cost = inp * ri + out * ro + cw * rcw + cr * rcr
+                            agg["input_tokens"] += inp
+                            agg["output_tokens"] += out
+                            agg["cache_creation_tokens"] += cw
+                            agg["cache_read_tokens"] += cr
+                            agg["cost"] += cost
+                            bm = by_model.setdefault(
+                                model, {"sessions": 0, "input_tokens": 0,
+                                        "output_tokens": 0, "cost": 0.0,
+                                        "provider": "claude"})
+                            bm["input_tokens"] += inp
+                            bm["output_tokens"] += out
+                            bm["cost"] += cost
+                except Exception:
+                    continue
+        # Count distinct transcript files as "sessions".
+        agg["sessions"] = sum(1 for _ in CLAUDE_PROJECTS_DIR.rglob("*.jsonl")) if CLAUDE_PROJECTS_DIR.exists() else 0
+        result = {"status": "ok", "by_provider": {"claude": agg}, "by_model": by_model}
+        _claude_usage_cache = result
+        _claude_usage_ts = now
+        return result
+    except Exception as e:
+        return _claude_usage_cache or {"status": "error", "error": str(e), "by_provider": {}, "by_model": {}}
+
+
+_or_credits_cache: dict = {}
+_or_credits_ts: float = 0
+
+
+async def collect_openrouter_credits() -> dict:
+    """Fetch OpenRouter credit balance (total granted, used, remaining)."""
+    global _or_credits_cache, _or_credits_ts
+    now = time.time()
+    if now - _or_credits_ts < 300:  # 5-min cache; balance changes slowly
+        return _or_credits_cache
+    try:
+        key = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "security", "find-generic-password", "-s", "nova-openrouter-api-key", "-w",
+                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=5)
+            key = stdout.decode().strip() or None
+        except Exception:
+            key = None
+        if not key:
+            return {"status": "no_key"}
+        session = app.state.http_session
+        async with session.get(
+            OPENROUTER_CREDITS_URL,
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=aiohttp.ClientTimeout(total=8),
+        ) as resp:
+            if resp.status != 200:
+                return _or_credits_cache or {"status": "error", "http": resp.status}
+            data = (await resp.json()).get("data", {})
+        total = float(data.get("total_credits", 0) or 0)
+        used = float(data.get("total_usage", 0) or 0)
+        result = {
+            "status": "ok",
+            "total_credits": round(total, 2),
+            "total_usage": round(used, 2),
+            "remaining": round(total - used, 2),
+        }
+        _or_credits_cache = result
+        _or_credits_ts = now
+        return result
+    except Exception as e:
+        return _or_credits_cache or {"status": "error", "error": str(e)}
+
 
 async def collect_model_usage() -> dict:
     global _model_usage_cache, _model_usage_ts
@@ -1562,7 +1747,9 @@ async def collect_model_usage() -> dict:
             model = val.get("model", "unknown")
             inp = val.get("inputTokens", 0) or 0
             out = val.get("outputTokens", 0) or 0
-            cost = val.get("estimatedCostUsd", 0) or 0
+            # Recompute from a real price map rather than the (historically
+            # wrong/near-zero) estimatedCostUsd field in sessions.json.
+            cost = compute_token_cost(prov, model, inp, out)
 
             if prov not in by_provider:
                 by_provider[prov] = {"sessions": 0, "input_tokens": 0, "output_tokens": 0, "cost": 0.0}
@@ -1579,6 +1766,16 @@ async def collect_model_usage() -> dict:
             by_model[model]["cost"] += cost
 
         total_sessions = len(data)
+
+        # Merge Claude Code's own usage (from ~/.claude/projects transcripts)
+        # so this agent's token spend shows up in the cost graph too.
+        claude = collect_claude_usage()
+        cprov = claude.get("by_provider", {}).get("claude")
+        if cprov:
+            by_provider["claude"] = cprov
+            by_model.update(claude.get("by_model", {}))
+            total_sessions += cprov.get("sessions", 0)
+
         total_cost = sum(v["cost"] for v in by_provider.values())
         total_tokens = sum(v["input_tokens"] + v["output_tokens"] for v in by_provider.values())
 
@@ -4480,6 +4677,7 @@ async def poll_loop():
             collect_unas_state(),            # 34
             collect_hue_state(),             # 35
             collect_lutron_state(),          # 36
+            collect_openrouter_credits(),    # 37
             return_exceptions=True,
         )
 
@@ -4549,6 +4747,7 @@ async def poll_loop():
             "unas": safe(34),
             "hue": safe(35),
             "lutron": safe(36),
+            "openrouter_credits": safe(37),
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }
