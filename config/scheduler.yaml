@@ -244,6 +244,13 @@ tasks:
     timeout: 120
     overlap: skip
 
+  retention:
+    script: nova_retention.py
+    args: ["--apply"]
+    schedule: cron 30 4 * * *
+    timeout: 1800
+    overlap: skip
+
   # ── Daily: morning (Jordan wakes up) ───────────────────────────────────
 
   health_check:
