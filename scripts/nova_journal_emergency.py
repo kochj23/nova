@@ -35,6 +35,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 from nova_voice import system_prompt, NOVA_VOICE, CONTEXT_JOURNAL_LOCAL
+from nova_weather_blurb import weather_forecast_context
 
 # Reuse the shared journal pipeline helpers (publish_hugo, git_push,
 # call_openrouter, generate_image, log) so this stays consistent with the rest
@@ -254,6 +255,7 @@ LA COUNTY EMERGENCY RECAP RULES:
 - Close with a Nova-ish sign-off.
 - 800-1600 words. Do NOT include the title line as a header inside the body.
 - If it was a quiet day, say so and riff on it — a boring safe day is good news.""")
+    system += "\n\n" + weather_forecast_context()  # daily local report includes the forecast
 
     user = f"""Today is {datetime.now().strftime('%A, %B %d, %Y')}. Here are the LA County
 public-safety items Nova ingested in the last 24 hours:

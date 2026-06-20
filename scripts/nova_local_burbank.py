@@ -136,6 +136,8 @@ ADDITIONAL RULES FOR BURBANK DISPATCH:
 - 1000-2000 words total
 - Do NOT include a title (added separately)
 - If the news is thin, pad with observations about Burbank life, the weather, the eternal construction""")
+    from nova_weather_blurb import weather_forecast_context
+    system += "\n\n" + weather_forecast_context()  # daily local report includes the forecast
 
     user = f"""Here are today's local news items for Burbank and surrounding LA area:
 
@@ -239,6 +241,11 @@ description: "Nova's daily dispatch from Burbank — local news with maximum sar
     front_matter += "---\n\n"
 
     post_path = CONTENT_DIR / f"{date}-{slug}.md"
+    try:  # prepend the live backyard-weather dateline to the body
+        from nova_weather_blurb import weather_dateline_line
+        body = weather_dateline_line() + body
+    except Exception:
+        pass
     post_path.write_text(front_matter + body)
     log(f"Post written: {post_path.name}")
 

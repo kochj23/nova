@@ -827,6 +827,19 @@ tasks:
     overlap: skip
     group: llm
 
+  # ── Weekly per-section summaries (LIVE — enabled 2026-06-20) ──
+  # Sunday afternoon (3 PM): for each article section that had MORE THAN ONE
+  # article in the past 7 days, Nova writes a single "This Week in <Section>"
+  # recap reviewing all of that section's pieces, published back to the same
+  # section. Sections with 0 or 1 article are skipped. Dedup state prevents a
+  # section-week from being summarized twice.
+  journal_weekly_summary:
+    script: nova_journal_weekly_summary.py
+    schedule: cron 0 15 * * 0
+    timeout: 1800
+    overlap: skip
+    group: llm
+
   # ── Analytics ────────────────────────────────────────────────────────────
 
   analytics_flush:

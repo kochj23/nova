@@ -300,6 +300,11 @@ def get_image_prompt(title: str, topic: str, section: str) -> str:
 def publish_hugo(title: str, body: str, section: str, tags: list[str],
                  description: str, image_path: str | None = None, emoji: str = "") -> bool:
     """Write a Hugo markdown post and copy cover image."""
+    try:  # prepend the live backyard-weather dateline to the BODY (never the title)
+        from nova_weather_blurb import weather_dateline_line
+        body = weather_dateline_line() + body
+    except Exception:
+        pass
     content_dir = HUGO_ROOT / f"content/{section}"
     images_dir = HUGO_ROOT / f"static/images/{section}"
     content_dir.mkdir(parents=True, exist_ok=True)

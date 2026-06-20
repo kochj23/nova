@@ -25,6 +25,8 @@ import re
 import subprocess
 import sys
 import time
+import urllib.request
+from datetime import datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path.home()) + "/.openclaw/scripts")
@@ -37,6 +39,9 @@ OPENROUTER_MODEL = "google/gemini-2.5-flash"
 DB = "host=localhost dbname=nova_ops user=kochj"
 MEMDB = "host=localhost dbname=nova_memories user=kochj"
 LOG = Path.home() / ".openclaw/logs/daily_ops_log.log"
+GH_OWNER = "kochj23"
+# Memory server /remember endpoint (operations vector). Mirrors nova_config.VECTOR_URL.
+MEMORY_REMEMBER_URL = getattr(nova_config, "VECTOR_URL", "http://192.168.1.6:18790/remember")
 
 
 def log(msg: str):
@@ -93,6 +98,203 @@ def call_llm(system: str, user: str, max_tokens: int = 4000) -> str:
     with urllib.request.urlopen(req, timeout=90) as resp:
         data = json.loads(resp.read())
     return data["choices"][0]["message"]["content"]
+
+
+# ── GitHub daily activity (last 24h) ─────────────────────────────────────────
+
+def _gh_json(args: list, default=None):
+    """Run a `gh` command expecting JSON output. Never raises — returns default
+    (or []) on any error/non-zero exit, exactly like the RSS fetcher's resilience."""
+    try:
+        r = subprocess.run(["gh"] + args, capture_output=True, text=True, timeout=30)
+        if r.returncode != 0:
+            log(f"gh {' '.join(args[:3])} failed: {r.stderr.strip()[:120]}")
+            return [] if default is None else default
+        out = r.stdout.strip()
+        if not out:
+            return [] if default is None else default
+        return json.loads(out)
+    except Exception as e:
+        log(f"gh exception ({' '.join(args[:3])}): {e}")
+        return [] if default is None else default
+
+
+def github_daily_stats() -> tuple[str, dict]:
+    """Gather the past 24h of GitHub activity across Jordan's own repos.
+
+    Returns (human_summary_string, structured_dict). Every gh call is wrapped so
+    that a single repo 403ing on traffic (no push access) or any error is skipped,
+    never fatal — the aggregate is still returned.
+    """
+    since = (datetime.now() - timedelta(days=1)).strftime("%Y-%m-%d")
+    today = datetime.now().strftime("%Y-%m-%d")
+
+    stats = {
+        "date": today,
+        "since": since,
+        "repos_total": 0,
+        "prs_opened": 0,
+        "issues_opened": 0,
+        "prs_merged": 0,
+        "clones_recent_day": 0,
+        "unique_cloners_recent_day": 0,
+        "clones_14d": 0,
+        "unique_cloners_14d": 0,
+        "views_14d": 0,
+        "unique_viewers_14d": 0,
+        "repos_with_traffic": 0,
+        "repos_traffic_denied": 0,
+        "per_repo": [],          # [{name, clones_day, clones_14d, uniques_14d, views_14d}]
+        "top_clones": [],        # top repos by 14d clones
+        "pr_titles": [],         # [{repo, title}]
+        "issue_titles": [],      # [{repo, title}]
+        "merged_titles": [],     # [{repo, title}]
+    }
+
+    # 1. Repo list (his own repos)
+    repos = _gh_json(["repo", "list", GH_OWNER, "--limit", "200",
+                      "--json", "name,nameWithOwner,visibility"])
+    stats["repos_total"] = len(repos)
+
+    # 2a. New PRs opened in the last day (search across all his repos)
+    prs = _gh_json(["search", "prs", "--owner", GH_OWNER,
+                    "--created", f">={since}", "--limit", "100",
+                    "--json", "title,repository"])
+    stats["prs_opened"] = len(prs)
+    for p in prs:
+        repo = (p.get("repository") or {}).get("nameWithOwner", "?")
+        stats["pr_titles"].append({"repo": repo, "title": (p.get("title") or "")[:80]})
+
+    # 2b. New issues opened in the last day (Jordan's "MRs" = issues/PRs)
+    issues = _gh_json(["search", "issues", "--owner", GH_OWNER,
+                       "--created", f">={since}", "--limit", "100",
+                       "--json", "title,repository"])
+    stats["issues_opened"] = len(issues)
+    for i in issues:
+        repo = (i.get("repository") or {}).get("nameWithOwner", "?")
+        stats["issue_titles"].append({"repo": repo, "title": (i.get("title") or "")[:80]})
+
+    # 2c. Merged PRs in the last day
+    merged = _gh_json(["search", "prs", "--owner", GH_OWNER,
+                       "--merged-at", f">={since}", "--limit", "100",
+                       "--json", "title,repository"])
+    stats["prs_merged"] = len(merged)
+    for m in merged:
+        repo = (m.get("repository") or {}).get("nameWithOwner", "?")
+        stats["merged_titles"].append({"repo": repo, "title": (m.get("title") or "")[:80]})
+
+    # 3. Per-repo traffic: clones + views (requires push access; skip on 403/error)
+    for r in repos:
+        name = r.get("name")
+        if not name:
+            continue
+        clones = _gh_json(["api", f"repos/{GH_OWNER}/{name}/traffic/clones"], default={})
+        if not isinstance(clones, dict) or "count" not in clones:
+            # 403 (no access) or any error — skip this repo, not fatal
+            stats["repos_traffic_denied"] += 1
+            continue
+        stats["repos_with_traffic"] += 1
+        c14 = int(clones.get("count", 0) or 0)
+        cu14 = int(clones.get("uniques", 0) or 0)
+        daily = clones.get("clones", []) or []
+        # Most recent day in the breakdown
+        c_day = int(daily[-1]["count"]) if daily else 0
+        cu_day = int(daily[-1]["uniques"]) if daily else 0
+
+        views = _gh_json(["api", f"repos/{GH_OWNER}/{name}/traffic/views"], default={})
+        v14 = int(views.get("count", 0) or 0) if isinstance(views, dict) else 0
+        vu14 = int(views.get("uniques", 0) or 0) if isinstance(views, dict) else 0
+
+        stats["clones_recent_day"] += c_day
+        stats["unique_cloners_recent_day"] += cu_day
+        stats["clones_14d"] += c14
+        stats["unique_cloners_14d"] += cu14
+        stats["views_14d"] += v14
+        stats["unique_viewers_14d"] += vu14
+        stats["per_repo"].append({
+            "name": name, "clones_day": c_day, "clones_14d": c14,
+            "uniques_14d": cu14, "views_14d": v14,
+        })
+
+    # Top repos by 14-day clones
+    stats["top_clones"] = sorted(
+        stats["per_repo"], key=lambda x: x["clones_14d"], reverse=True)[:5]
+
+    # Human-readable summary
+    lines = [
+        f"GitHub activity (last 24h, as of {today}):",
+        f"  Repos scanned: {stats['repos_total']} "
+        f"({stats['repos_with_traffic']} with traffic data, "
+        f"{stats['repos_traffic_denied']} skipped/no-access)",
+        f"  New PRs opened: {stats['prs_opened']}",
+        f"  New issues opened: {stats['issues_opened']}",
+        f"  PRs merged: {stats['prs_merged']}",
+        f"  Clones (most recent day): {stats['clones_recent_day']} "
+        f"({stats['unique_cloners_recent_day']} unique cloners)",
+        f"  Clones (14d total): {stats['clones_14d']} "
+        f"({stats['unique_cloners_14d']} unique)",
+        f"  Views (14d total): {stats['views_14d']} "
+        f"({stats['unique_viewers_14d']} unique viewers)",
+    ]
+    if stats["top_clones"]:
+        top = ", ".join(f"{t['name']} ({t['clones_14d']} clones)"
+                        for t in stats["top_clones"])
+        lines.append(f"  Top repos by clones (14d): {top}")
+    if stats["pr_titles"]:
+        lines.append("  New PRs: " + "; ".join(
+            f"{p['repo']}: {p['title']}" for p in stats["pr_titles"][:5]))
+    if stats["merged_titles"]:
+        lines.append("  Merged: " + "; ".join(
+            f"{m['repo']}: {m['title']}" for m in stats["merged_titles"][:5]))
+
+    return "\n".join(lines), stats
+
+
+def ingest_github_stats(summary: str, stats: dict) -> bool:
+    """Ingest the GitHub activity summary into the operations memory vector.
+
+    Mirrors the canonical /remember POST pattern used across Nova's ingest
+    scripts: {"text", "source", "metadata"}. source='operations' so tomorrow's
+    recall can see 'yesterday we had N clones across M repos'. Never raises."""
+    metadata = {
+        "type": "github_stats",
+        "date": stats.get("date"),
+        "totals": {
+            "repos_total": stats.get("repos_total"),
+            "prs_opened": stats.get("prs_opened"),
+            "issues_opened": stats.get("issues_opened"),
+            "prs_merged": stats.get("prs_merged"),
+            "clones_recent_day": stats.get("clones_recent_day"),
+            "unique_cloners_recent_day": stats.get("unique_cloners_recent_day"),
+            "clones_14d": stats.get("clones_14d"),
+            "unique_cloners_14d": stats.get("unique_cloners_14d"),
+            "views_14d": stats.get("views_14d"),
+            "unique_viewers_14d": stats.get("unique_viewers_14d"),
+        },
+    }
+    text = (f"GitHub daily activity for {stats.get('date')}: "
+            f"{stats.get('clones_recent_day')} clones "
+            f"({stats.get('unique_cloners_recent_day')} unique) across "
+            f"{stats.get('repos_with_traffic')} repos; "
+            f"{stats.get('prs_opened')} new PRs, "
+            f"{stats.get('issues_opened')} new issues, "
+            f"{stats.get('prs_merged')} merged.\n" + summary)
+    try:
+        payload = json.dumps({
+            "text": text,
+            "source": "operations",
+            "metadata": metadata,
+        }).encode()
+        req = urllib.request.Request(
+            MEMORY_REMEMBER_URL, data=payload,
+            headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            json.loads(resp.read())
+        log("GitHub stats ingested into operations vector")
+        return True
+    except Exception as e:
+        log(f"GitHub stats ingest failed: {e}")
+        return False
 
 
 # ── Data gathering (last 24h) ────────────────────────────────────────────────
@@ -225,6 +427,16 @@ def gather() -> dict:
         SELECT priority, LEFT(description,90) FROM claude_queue
         WHERE status='queued' AND description ILIKE 'INCIDENT%' ORDER BY priority DESC LIMIT 8""")
 
+    # 13. GitHub activity (last 24h) — own repos, PRs/issues/merges + traffic.
+    #     Resilient: github_daily_stats never raises. Store both summary + dict.
+    try:
+        gh_summary, gh_stats = github_daily_stats()
+    except Exception as e:
+        log(f"github_daily_stats wrapper failed: {e}")
+        gh_summary, gh_stats = "(github stats unavailable)", {}
+    d["github_summary"] = gh_summary
+    d["github_stats"] = gh_stats
+
     return d
 
 
@@ -308,6 +520,9 @@ top of the open backlog (priority | status | what):
 {tbl(d['work_open_top'])}
 open incidents (priority | what):
 {tbl(d['incidents_open'])}
+
+GITHUB ACTIVITY (last 24h — Jordan's own repos; PRs, issues, merges, clone/view traffic):
+{d.get('github_summary', '(none)')}
 """
 
 
@@ -329,6 +544,7 @@ STRUCTURE (~600-900 words, loose — section headers optional and can be funny):
 3. THE WATCH — the interesting telemetry. Weather extremes, the hottest room, the chattiest device hogging bandwidth, IDS/IDP probes at your boundaries, the rack's temperature, camera motion volume, new devices that wandered in. Pick 2-4 genuinely interesting data points and ROAST or muse on them — don't just list numbers. Give them meaning and attitude.
 4. THE LEDGER — your work queue. What got crossed off, what's piled up, what incidents are open. You're allowed to be salty about the backlog or smug about what got done. This is your to-do list and you have feelings about it.
 5. MEMORY — how much you learned today (memories added/total) and your own health (VRAM, latency, disk). If ingest stalled or you nearly filled a disk, that's a YOU problem worth a quip.
+6. GITHUB ACTIVITY (last 24h) — a short section on the day's GitHub activity across Jordan's repos: total new PRs/issues/merges, total clones + unique cloners, total views, and the top few repos by clones. Roast the numbers in your voice (e.g. someone keeps cloning the same repo, or it was a dead-quiet day on the git front). Use ONLY the numbers in the GITHUB ACTIVITY brief — never invent stars, clones, or repos. Repo names are public and fine to mention.
 
 HARD PRIVACY / OPSEC RULES (non-negotiable, the snark never overrides these):
 - Device and room names are fine (the Kitchen soundbar, the Office AP, the rack, the UNVR).
@@ -434,6 +650,11 @@ def main():
     facts = gather()
     brief = fmt(facts)
     log(f"Gathered brief ({len(brief)} chars)")
+    # Ingest the day's GitHub activity into the operations memory vector so
+    # tomorrow's recall can compare ("yesterday we had N clones across M repos").
+    gh_stats = facts.get("github_stats") or {}
+    if gh_stats:
+        ingest_github_stats(facts.get("github_summary", ""), gh_stats)
     body = call_llm(SYSTEM, brief, max_tokens=4000).strip()
     log(f"Generated log ({len(body)} chars)")
     title = generate_title(body)
