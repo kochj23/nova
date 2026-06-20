@@ -1,0 +1,203 @@
+{
+  "uid": "nova-components",
+  "title": "Nova-MIB — Components",
+  "tags": ["nova", "mib", "components", "self-monitoring"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Component Vitals (latest) — SNMP-style device table for Nova herself",
+      "description": "One row per Nova component. up dot, RSS, CPU%, uptime, and last-write-age. Rows turn RED when a component is up but not writing data (silent failure).",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 13, "w": 24, "x": 0, "y": 0 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "WITH latest AS (SELECT *, row_number() OVER (PARTITION BY component, instance ORDER BY ts DESC) rn FROM telemetry.nova_components WHERE ts > now() - interval '15 minutes') SELECT component AS \"Component\", up AS \"Up\", healthy AS \"Healthy\", rss_mb AS \"RSS (MB)\", cpu_pct AS \"CPU %\", uptime_s AS \"Uptime (s)\", last_write_age_s AS \"Last Write Age (s)\", note AS \"Note\" FROM latest WHERE rn = 1 ORDER BY healthy ASC, up ASC, component ASC"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "auto", "cellOptions": { "type": "auto" } },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Up" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              { "id": "mappings", "value": [
+                { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 0 }, "1": { "text": "UP", "color": "green", "index": 1 } } }
+              ] },
+              { "id": "custom.width", "value": 70 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Healthy" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background" } },
+              { "id": "mappings", "value": [
+                { "type": "value", "options": { "0": { "text": "STALE", "color": "red", "index": 0 }, "1": { "text": "OK", "color": "green", "index": 1 } } }
+              ] },
+              { "id": "custom.width", "value": 85 }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Last Write Age (s)" },
+            "properties": [
+              { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } },
+              { "id": "thresholds", "value": { "mode": "absolute", "steps": [
+                { "color": "green", "value": null }, { "color": "yellow", "value": 600 }, { "color": "red", "value": 1800 }
+              ] } },
+              { "id": "unit", "value": "s" }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "RSS (MB)" },
+            "properties": [ { "id": "unit", "value": "decmbytes" } ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "CPU %" },
+            "properties": [ { "id": "unit", "value": "percent" } ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Uptime (s)" },
+            "properties": [ { "id": "unit", "value": "s" } ]
+          }
+        ]
+      },
+      "options": { "showHeader": true, "sortBy": [] }
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "STALE DATA — components up but not writing within SLA (silent failures)",
+      "description": "The #510 detector: daemons that are UP but have stopped (or never started) producing data. Empty = all healthy.",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 13 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "WITH latest AS (SELECT *, row_number() OVER (PARTITION BY component, instance ORDER BY ts DESC) rn FROM telemetry.nova_components WHERE ts > now() - interval '15 minutes') SELECT component AS \"Component\", last_write_age_s AS \"Last Write Age (s)\", note AS \"Reason\" FROM latest WHERE rn = 1 AND up = 1 AND healthy = 0 ORDER BY last_write_age_s DESC NULLS LAST"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "align": "auto", "cellOptions": { "type": "color-background" } },
+          "color": { "mode": "fixed", "fixedColor": "red" },
+          "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null } ] }
+        },
+        "overrides": [
+          { "matcher": { "id": "byName", "options": "Last Write Age (s)" }, "properties": [ { "id": "unit", "value": "s" } ] }
+        ]
+      },
+      "options": { "showHeader": true }
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "RSS by Component (MB)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 19 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "SELECT ts AS time, component AS metric, rss_mb AS value FROM telemetry.nova_components WHERE $__timeFilter(ts) AND rss_mb IS NOT NULL ORDER BY ts"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "decmbytes", "custom": { "drawStyle": "line", "fillOpacity": 5, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "CPU % by Component",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 19 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "SELECT ts AS time, component AS metric, cpu_pct AS value FROM telemetry.nova_components WHERE $__timeFilter(ts) AND cpu_pct IS NOT NULL ORDER BY ts"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "unit": "percent", "custom": { "drawStyle": "line", "fillOpacity": 5, "showPoints": "never" } },
+        "overrides": []
+      },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] }, "tooltip": { "mode": "multi", "sort": "desc" } }
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Components Up / Total",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 29 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "WITH latest AS (SELECT *, row_number() OVER (PARTITION BY component, instance ORDER BY ts DESC) rn FROM telemetry.nova_components WHERE ts > now() - interval '15 minutes') SELECT sum(up)::int AS \"Up\", count(*)::int AS \"Total\" FROM latest WHERE rn = 1"
+        }
+      ],
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none" }
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Silently-Stale Components",
+      "description": "Up but not writing data within SLA. Should be 0.",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 29 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "WITH latest AS (SELECT *, row_number() OVER (PARTITION BY component, instance ORDER BY ts DESC) rn FROM telemetry.nova_components WHERE ts > now() - interval '15 minutes') SELECT count(*)::int AS value FROM latest WHERE rn = 1 AND up = 1 AND healthy = 0"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } },
+        "overrides": []
+      },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "background", "graphMode": "none" }
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Total Nova RSS (MB)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 29 },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "rawSql": "WITH latest AS (SELECT *, row_number() OVER (PARTITION BY component, instance ORDER BY ts DESC) rn FROM telemetry.nova_components WHERE ts > now() - interval '15 minutes') SELECT round(sum(rss_mb)::numeric, 0) AS value FROM latest WHERE rn = 1 AND rss_mb IS NOT NULL"
+        }
+      ],
+      "fieldConfig": { "defaults": { "unit": "decmbytes", "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "colorMode": "value", "graphMode": "none" }
+    }
+  ]
+}
