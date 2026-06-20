@@ -14,7 +14,7 @@ START=$(date +%s)
 
 # -rltD: recurse, links, times, devices (NO -pog: CIFS can't hold unix perms/owner).
 # NO --delete (additive). Exclude recycle bins / Synology indexer / snapshots.
-FLAGS=(-rltD --stats --human-readable --no-perms --no-owner --no-group
+FLAGS=(-rlt --stats --human-readable --no-perms --no-owner --no-group
        --exclude='#recycle' --exclude='@eaDir' --exclude='#snapshot' --exclude='.DS_Store')
 
 SUMMARY=""
