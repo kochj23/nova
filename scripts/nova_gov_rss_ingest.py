@@ -573,6 +573,16 @@ FEEDS = [
     ("https://www.dvidshub.net/rss/unit/175", "la_public_safety", "Fort Irwin NTC"),
     ("https://www.dvidshub.net/rss/unit/1210", "la_public_safety", "Naval Base Ventura County"),
     ("https://www.dvidshub.net/rss/unit/366", "la_public_safety", "California National Guard"),
+
+    # ── LA traffic conditions ──
+    # Verified 2026-06-20: HTTP 200 + valid RSS 2.0 + >=1 <item>.
+    # NOTE: CHP live LA-region incident data at https://media.chp.ca.gov/sa_xml/sa.xml is LIVE
+    # but a CUSTOM XML schema (State>Center>Dispatch>Log), NOT RSS — needs a custom parser, not added here.
+    # Caltrans District 7 (dot.ca.gov/news/rss and ?_format=rss) returns an HTML "Content Not Available"
+    # page (no <item>/<entry>) — no working D7 RSS found.
+    ("https://ktla.com/traffic/feed/", "la_public_safety", "KTLA Traffic"),
+    ("https://www.foxla.com/rss/category/traffic", "la_public_safety", "FOX 11 LA Traffic"),
+    ("https://thesource.metro.net/feed/", "la_public_safety", "Metro The Source (Transit/Service Updates)"),
 ]
 
 MEMORY_URL = "http://192.168.1.6:18790/remember?async=1"

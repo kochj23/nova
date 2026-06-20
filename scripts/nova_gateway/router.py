@@ -321,20 +321,40 @@ class ModelRouter:
         else:
             raise ValueError(f"Unknown backend: {name}")
 
+    # Default model name per backend, mirrors the literals in _call_backend.
+    # Lets inference_latency.model carry a real, groupable name for Grafana
+    # instead of the placeholder "default".
+    _DEFAULT_MODELS = {
+        "ollama":     "qwen3:30b-a3b",
+        "mlx":        "/Volumes/Data/mlx-models/qwen2.5-32b-4bit",
+        "llamacpp":   "llamacpp",
+        "openrouter": "qwen/qwen3-235b-a22b-2507",
+    }
+
     async def _log_inference(self, backend: str, model: str, total_ms: int,
                              messages: list, result, ctx=None):
         """Log inference request to PG inference_latency table (fire-and-forget)."""
         try:
             import psycopg2
-            prompt_tokens = sum(len(m.get("content", "").split()) for m in messages) * 1.3
-            completion_tokens = len(str(result).split()) * 1.3 if result else 0
+            # Resolve the real model name: explicit override > backend default.
+            model_name = model or self._DEFAULT_MODELS.get(backend, "default")
+            # Prefer exact token usage from a raw API response; else estimate.
+            prompt_tokens = completion_tokens = None
+            if isinstance(result, dict):
+                usage = result.get("usage") or {}
+                prompt_tokens = usage.get("prompt_tokens")
+                completion_tokens = usage.get("completion_tokens")
+            if prompt_tokens is None:
+                prompt_tokens = sum(len(m.get("content", "").split()) for m in messages) * 1.3
+            if completion_tokens is None:
+                completion_tokens = len(str(result).split()) * 1.3 if result else 0
             conn = psycopg2.connect("dbname=nova_ops user=kochj host=127.0.0.1", connect_timeout=3)
             conn.autocommit = True
             cur = conn.cursor()
             cur.execute("""
                 INSERT INTO inference_latency ("timestamp", backend, model, prompt_tokens, completion_tokens, ttft_ms, total_ms, status)
                 VALUES (NOW(), %s, %s, %s, %s, NULL, %s, 'ok')
-            """, (backend, model or "default", int(prompt_tokens), int(completion_tokens), total_ms))
+            """, (backend, model_name, int(prompt_tokens), int(completion_tokens), total_ms))
             conn.close()
         except Exception:
             pass

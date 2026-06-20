@@ -35,6 +35,39 @@ TIMEOUT = int(os.getenv("WEBSEARCH_TIMEOUT", "10"))
 # Ensure cache directory exists
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
+# PostgreSQL ops logging (best-effort; never breaks search)
+PG_DSN = os.getenv("NOVA_OPS_DSN", "host=127.0.0.1 dbname=nova_ops user=kochj")
+
+
+def _log_search_pg(query: str, results: Optional[List[Dict]],
+                   latency_ms: int, cache_hit: bool, region: str) -> None:
+    """Fire-and-forget insert into nova_ops.web_searches. Swallows all errors."""
+    try:
+        import psycopg2
+        results = results or []
+        backend = None
+        if results:
+            backend = results[0].get("source") or "searxng"
+            backend = "searxng" if backend not in ("duckduckgo",) else backend
+        elif not cache_hit:
+            backend = "none"
+        conn = psycopg2.connect(PG_DSN, connect_timeout=2)
+        try:
+            with conn, conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO web_searches
+                        (query, backend, result_count, latency_ms, cache_hit, region, ok)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (query[:2000], backend, len(results), latency_ms,
+                     cache_hit, region, bool(results) or cache_hit),
+                )
+        finally:
+            conn.close()
+    except Exception:
+        pass  # logging must never affect search behavior
+
 
 class WebSearchCache:
     """Manage web search result caching."""
@@ -272,19 +305,23 @@ def search(query: str, count: int = DEFAULT_COUNT,
     if not force_refresh:
         cached = WebSearchCache.get(query)
         if cached:
+            _log_search_pg(query, cached, 0, cache_hit=True, region=region)
             return cached
-    
+
     # If cache_only, don't search web
     if cache_only:
         return None
-    
+
     # Search DuckDuckGo
+    _t0 = time.time()
     results = DuckDuckGoSearch.search(query, count, region, safe_search)
-    
+    _latency_ms = int((time.time() - _t0) * 1000)
+
     if results:
         # Store in cache
         WebSearchCache.store(query, results)
-    
+
+    _log_search_pg(query, results, _latency_ms, cache_hit=False, region=region)
     return results
 
 
