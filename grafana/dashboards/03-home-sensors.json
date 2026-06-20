@@ -1,0 +1,110 @@
+{
+  "uid": "nova-home-sensors",
+  "title": "Home & Sensors",
+  "tags": ["nova", "starter", "telemetry", "home"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Outdoor Temperature (F)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "fahrenheit", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, temp_f AS \"Outdoor Temp\", feels_like_f AS \"Feels Like\", dew_point_f AS \"Dew Point\", temp_indoor_f AS \"Indoor Temp\" FROM telemetry.weather WHERE $__timeFilter(ts) ORDER BY ts;" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Humidity & Pressure",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2 } }, "overrides": [ { "matcher": { "id": "byName", "options": "Pressure (inHg)" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" }, { "id": "unit", "value": "pressureinhg" } ] }, { "matcher": { "id": "byRegexp", "options": "/Humidity/" }, "properties": [ { "id": "unit", "value": "humidity" } ] } ] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, humidity AS \"Outdoor Humidity\", humidity_indoor AS \"Indoor Humidity\", pressure_in AS \"Pressure (inHg)\" FROM telemetry.weather WHERE $__timeFilter(ts) ORDER BY ts;" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Wind (Speed & Gust mph)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "velocitymph", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, wind_speed_mph AS \"Wind Speed\", wind_gust_mph AS \"Wind Gust\" FROM telemetry.weather WHERE $__timeFilter(ts) ORDER BY ts;" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "UV Index & Solar Radiation",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "lineWidth": 2 } }, "overrides": [ { "matcher": { "id": "byName", "options": "Solar Radiation" }, "properties": [ { "id": "custom.axisPlacement", "value": "right" } ] } ] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, uv_index AS \"UV Index\", solar_radiation AS \"Solar Radiation\" FROM telemetry.weather WHERE $__timeFilter(ts) ORDER BY ts;" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Room Climate - Temperature (F)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "fahrenheit", "custom": { "drawStyle": "line", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, room AS metric, temp_f FROM telemetry.climate WHERE temp_f IS NOT NULL AND $__timeFilter(ts) ORDER BY ts;" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Room Climate - Humidity (%)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "humidity", "custom": { "drawStyle": "line", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, room AS metric, humidity FROM telemetry.climate WHERE humidity IS NOT NULL AND $__timeFilter(ts) ORDER BY ts;" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Current Presence (live state)",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT person AS \"Person\", room AS \"Room\", activity_state AS \"Activity\", round(confidence::numeric,2) AS \"Confidence\", source AS \"Source\", last_confirmed AS \"Last Confirmed\" FROM presence_state ORDER BY person;" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Recent Presence Events (telemetry.presence)",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 24 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS \"Time\", person AS \"Person\", room AS \"Room\", round(confidence::numeric,2) AS \"Confidence\", method AS \"Method\" FROM telemetry.presence WHERE $__timeFilter(ts) ORDER BY ts DESC LIMIT 50;" }
+      ]
+    }
+  ]
+}

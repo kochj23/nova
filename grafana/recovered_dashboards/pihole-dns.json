@@ -1,0 +1,328 @@
+{
+  "id": 4123368220155904,
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "degraded": {
+                  "color": "yellow",
+                  "text": "DEGRADED"
+                },
+                "healthy": {
+                  "color": "green",
+                  "text": "ONLINE"
+                },
+                "unhealthy": {
+                  "color": "red",
+                  "text": "OFFLINE"
+                },
+                "unknown": {
+                  "color": "orange",
+                  "text": "UNKNOWN"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT status FROM node_status WHERE node_name = 'lts01-pi'",
+          "refId": "A"
+        }
+      ],
+      "title": "lts01-pi Node Status",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 4
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT load_avg_1m AS \"Load 1m\" FROM node_status WHERE node_name = 'lts01-pi'",
+          "refId": "A"
+        }
+      ],
+      "title": "lts01-pi Load Average",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "id": 3,
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT memory_percent FROM node_status WHERE node_name = 'lts01-pi'",
+          "refId": "A"
+        }
+      ],
+      "title": "lts01-pi Memory %",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "max": 100,
+          "min": 0,
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 70
+              },
+              {
+                "color": "red",
+                "value": 90
+              }
+            ]
+          },
+          "unit": "percent"
+        }
+      },
+      "gridPos": {
+        "h": 5,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "id": 4,
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT disk_percent FROM node_status WHERE node_name = 'lts01-pi'",
+          "refId": "A"
+        }
+      ],
+      "title": "lts01-pi Disk %",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 15,
+            "lineWidth": 2
+          }
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 5
+      },
+      "id": 5,
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp AS time, metric_value AS value, metric_name AS metric FROM snmp_metrics WHERE device_name = 'lts01-pi' AND metric_name IN ('cpu_load_1min', 'cpu_load_5min', 'cpu_load_15min') AND $__timeFilter(timestamp) ORDER BY timestamp",
+          "refId": "A"
+        }
+      ],
+      "title": "lts01-pi CPU Load (SNMP)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 15,
+            "lineWidth": 2
+          },
+          "unit": "Bps"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 5
+      },
+      "id": 6,
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp AS time, SUM(metric_value) AS \"Inbound\" FROM snmp_metrics WHERE device_name = 'lts01-pi' AND metric_name LIKE 'if_in_octets%' AND $__timeFilter(timestamp) GROUP BY timestamp ORDER BY timestamp",
+          "refId": "A"
+        },
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp AS time, SUM(metric_value) AS \"Outbound\" FROM snmp_metrics WHERE device_name = 'lts01-pi' AND metric_name LIKE 'if_out_octets%' AND $__timeFilter(timestamp) GROUP BY timestamp ORDER BY timestamp",
+          "refId": "B"
+        }
+      ],
+      "title": "lts01-pi Network Traffic",
+      "type": "timeseries"
+    },
+    {
+      "gridPos": {
+        "h": 4,
+        "w": 24,
+        "x": 0,
+        "y": 13
+      },
+      "id": 7,
+      "options": {
+        "content": "## Pi-hole API Integration Pending\n\nDirect Pi-hole API metrics will be added once the stats collector is deployed to lts01-pi.\n\n**Planned metrics:** Total DNS queries | Queries blocked (%) | Top blocked domains | Query types breakdown | Upstream response times",
+        "mode": "markdown"
+      },
+      "title": "Pi-hole Integration Status",
+      "type": "text"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          }
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 17
+      },
+      "id": 8,
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp AS time, SUM(metric_value) AS \"In Errors\" FROM snmp_metrics WHERE device_name = 'lts01-pi' AND metric_name LIKE 'if_in_errors%' AND $__timeFilter(timestamp) GROUP BY timestamp ORDER BY timestamp",
+          "refId": "A"
+        },
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp AS time, SUM(metric_value) AS \"Out Errors\" FROM snmp_metrics WHERE device_name = 'lts01-pi' AND metric_name LIKE 'if_out_errors%' AND $__timeFilter(timestamp) GROUP BY timestamp ORDER BY timestamp",
+          "refId": "B"
+        }
+      ],
+      "title": "lts01-pi Interface Errors",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "title": "Pi-hole DNS",
+  "uid": "pihole-dns",
+  "version": 1
+}

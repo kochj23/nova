@@ -1,0 +1,409 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": 2132976871010304,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "fahrenheit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT ts as time, room, temp_f FROM telemetry.climate WHERE $__timeFilter(ts) AND temp_f IS NOT NULL ORDER BY ts",
+          "refId": "A"
+        }
+      ],
+      "title": "Indoor Temperature by Room (\u00b0F)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "fahrenheit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT ts as time, temp_f as \"Outdoor\", feels_like_f as \"Feels Like\", dew_point_f as \"Dew Point\" FROM telemetry.weather WHERE $__timeFilter(ts) AND temp_f IS NOT NULL ORDER BY ts",
+          "refId": "A"
+        }
+      ],
+      "title": "Outdoor Temperature (\u00b0F)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 5,
+            "lineWidth": 2
+          },
+          "unit": "fahrenheit"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT c.ts as time, c.room, (c.temp_f - w.temp_f) as delta_f FROM telemetry.climate c JOIN LATERAL (SELECT temp_f FROM telemetry.weather WHERE ts <= c.ts AND temp_f IS NOT NULL ORDER BY ts DESC LIMIT 1) w ON true WHERE $__timeFilter(c.ts) AND c.temp_f IS NOT NULL ORDER BY c.ts",
+          "refId": "A"
+        }
+      ],
+      "title": "Indoor vs Outdoor Delta (\u00b0F)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "max": 100,
+          "min": 0,
+          "unit": "percent"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT ts as time, room, humidity FROM telemetry.climate WHERE $__timeFilter(ts) AND humidity IS NOT NULL ORDER BY ts",
+          "refId": "A"
+        },
+        {
+          "format": "time_series",
+          "rawSql": "SELECT ts as time, 'Outdoor' as room, humidity FROM telemetry.weather WHERE $__timeFilter(ts) AND humidity IS NOT NULL ORDER BY ts",
+          "refId": "B"
+        }
+      ],
+      "title": "Humidity by Room (%)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 15,
+            "lineWidth": 2
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 12
+              },
+              {
+                "color": "orange",
+                "value": 35
+              },
+              {
+                "color": "red",
+                "value": 55
+              }
+            ]
+          },
+          "unit": "con\u03bcgm3"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT ts as time, pm25 as \"PM2.5\" FROM telemetry.weather WHERE $__timeFilter(ts) AND pm25 IS NOT NULL ORDER BY ts",
+          "refId": "A"
+        }
+      ],
+      "title": "Air Quality \u2014 PM2.5 (\u00b5g/m\u00b3)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          }
+        },
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "UV Index"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "left"
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Solar (W/m\u00b2)"
+            },
+            "properties": [
+              {
+                "id": "custom.axisPlacement",
+                "value": "right"
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT ts as time, uv_index as \"UV Index\" FROM telemetry.weather WHERE $__timeFilter(ts) AND uv_index IS NOT NULL ORDER BY ts",
+          "refId": "A"
+        },
+        {
+          "format": "time_series",
+          "rawSql": "SELECT ts as time, solar_radiation as \"Solar (W/m\u00b2)\" FROM telemetry.weather WHERE $__timeFilter(ts) AND solar_radiation IS NOT NULL ORDER BY ts",
+          "refId": "B"
+        }
+      ],
+      "title": "UV Index & Solar Radiation",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 15,
+            "gradientMode": "scheme",
+            "lineWidth": 2
+          },
+          "unit": "lux"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 24
+      },
+      "options": {
+        "legend": {
+          "displayMode": "list",
+          "placement": "bottom"
+        }
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT ts as time, light_lux as \"Outdoor Lux\" FROM telemetry.climate WHERE $__timeFilter(ts) AND light_lux IS NOT NULL AND room LIKE '%light%' ORDER BY ts",
+          "refId": "A"
+        }
+      ],
+      "title": "Outdoor Light Level (lux)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {}
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 24
+      },
+      "options": {
+        "colorMode": "background",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ]
+        },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT 'Outdoor \u00b0F' as metric, temp_f as value FROM telemetry.weather ORDER BY ts DESC LIMIT 1",
+          "refId": "A"
+        },
+        {
+          "format": "table",
+          "rawSql": "SELECT 'Feels Like' as metric, feels_like_f as value FROM telemetry.weather ORDER BY ts DESC LIMIT 1",
+          "refId": "B"
+        },
+        {
+          "format": "table",
+          "rawSql": "SELECT 'Humidity %' as metric, humidity as value FROM telemetry.weather ORDER BY ts DESC LIMIT 1",
+          "refId": "C"
+        },
+        {
+          "format": "table",
+          "rawSql": "SELECT 'PM2.5' as metric, pm25 as value FROM telemetry.weather ORDER BY ts DESC LIMIT 1",
+          "refId": "D"
+        },
+        {
+          "format": "table",
+          "rawSql": "SELECT 'Hottest Room' as metric, room || ' (' || ROUND(temp_f::numeric,1) || '\u00b0F)' as value FROM telemetry.climate WHERE temp_f IS NOT NULL ORDER BY temp_f DESC LIMIT 1",
+          "refId": "E"
+        },
+        {
+          "format": "table",
+          "rawSql": "SELECT 'Coldest Room' as metric, room || ' (' || ROUND(temp_f::numeric,1) || '\u00b0F)' as value FROM telemetry.climate WHERE temp_f IS NOT NULL ORDER BY temp_f ASC LIMIT 1",
+          "refId": "F"
+        }
+      ],
+      "title": "Current Conditions",
+      "type": "stat"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": [
+    "climate",
+    "telemetry",
+    "nova",
+    "weather"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Climate & Air Quality",
+  "uid": "nova-climate",
+  "version": 1
+}

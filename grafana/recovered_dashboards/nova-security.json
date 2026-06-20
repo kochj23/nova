@@ -1,0 +1,375 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "P698B55778F17878F"
+        },
+        "enable": true,
+        "iconColor": "red",
+        "name": "Critical Findings",
+        "rawQuery": "SELECT scan_time as time, host_name || ': critical finding' as text, 'critical' as tags FROM security_scan_results WHERE status = 'critical' AND $__timeFilter(scan_time)"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": 1395219402846208,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "0": {
+                  "color": "green",
+                  "text": "Clean"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "1": {
+                  "color": "yellow",
+                  "text": "Warning"
+                }
+              },
+              "type": "value"
+            },
+            {
+              "options": {
+                "2": {
+                  "color": "red",
+                  "text": "Critical"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 1
+              },
+              {
+                "color": "red",
+                "value": 2
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT scan_time as time, host_name as metric, CASE status WHEN 'clean' THEN 0 WHEN 'warning' THEN 1 WHEN 'critical' THEN 2 ELSE -1 END as value FROM security_scan_results WHERE $__timeFilter(scan_time) ORDER BY scan_time",
+          "refId": "A"
+        }
+      ],
+      "title": "Security Scan Status by Host",
+      "type": "state-timeline"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {},
+        "overrides": [
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Clean"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "green",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Warning"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "yellow",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          },
+          {
+            "matcher": {
+              "id": "byName",
+              "options": "Critical"
+            },
+            "properties": [
+              {
+                "id": "color",
+                "value": {
+                  "fixedColor": "red",
+                  "mode": "fixed"
+                }
+              }
+            ]
+          }
+        ]
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "options": {
+        "stacking": "normal"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT date_trunc('day', scan_time) as time, COUNT(*) FILTER (WHERE status = 'clean') as \"Clean\", COUNT(*) FILTER (WHERE status = 'warning') as \"Warning\", COUNT(*) FILTER (WHERE status = 'critical') as \"Critical\" FROM security_scan_results WHERE $__timeFilter(scan_time) GROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Findings Count by Severity",
+      "type": "barchart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT host_name as \"Host\", scan_type as \"Type\", status as \"Status\", jsonb_array_length(CASE WHEN findings IS NOT NULL AND findings::text != 'null' THEN findings ELSE '[]'::jsonb END) as \"Findings Count\", scan_time as \"Scan Time\" FROM security_scan_results WHERE scan_time = (SELECT MAX(scan_time) FROM security_scan_results s2 WHERE s2.host_name = security_scan_results.host_name) ORDER BY scan_time DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Latest Scan Results",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT collected_at as \"Collected\", host_name as \"Host\", query_name as \"Query\", diff_type as \"Diff Type\", data::text as \"Data\" FROM osquery_results WHERE diff_type IS NOT NULL AND $__timeFilter(collected_at) ORDER BY collected_at DESC LIMIT 50",
+          "refId": "A"
+        }
+      ],
+      "title": "osquery Alerts",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 0,
+        "y": 24
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT COUNT(DISTINCT host_name) as value FROM security_scan_results WHERE status = 'clean' AND scan_time = (SELECT MAX(scan_time) FROM security_scan_results s2 WHERE s2.host_name = security_scan_results.host_name)",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Clean",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "yellow",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 8,
+        "y": 24
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT COUNT(DISTINCT host_name) as value FROM security_scan_results WHERE status = 'warning' AND scan_time = (SELECT MAX(scan_time) FROM security_scan_results s2 WHERE s2.host_name = security_scan_results.host_name)",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Warnings",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 8,
+        "x": 16,
+        "y": 24
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT COUNT(DISTINCT host_name) as value FROM security_scan_results WHERE status = 'critical' AND scan_time = (SELECT MAX(scan_time) FROM security_scan_results s2 WHERE s2.host_name = security_scan_results.host_name)",
+          "refId": "A"
+        }
+      ],
+      "title": "Total Criticals",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "ms"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT scan_time as time, host_name as metric, duration_ms as value FROM security_scan_results WHERE $__timeFilter(scan_time) AND duration_ms IS NOT NULL ORDER BY scan_time",
+          "refId": "A"
+        }
+      ],
+      "title": "Scan Duration Trend",
+      "type": "timeseries"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": [
+    "nova",
+    "security",
+    "scanning"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-7d",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Nova Security Posture",
+  "uid": "nova-security",
+  "version": 2
+}

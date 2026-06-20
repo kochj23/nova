@@ -1,0 +1,16 @@
+apiVersion: 1
+datasources:
+  - name: nova_ops
+    type: grafana-postgresql-datasource
+    uid: nova-ops-pg
+    access: proxy
+    url: 192.168.1.6:5432
+    user: kochj
+    database: nova_ops
+    isDefault: true
+    jsonData:
+      database: nova_ops
+      sslmode: disable
+      postgresVersion: 1700
+      timescaledb: false
+    editable: true

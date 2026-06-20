@@ -1,0 +1,148 @@
+{
+  "id": 4123420233719808,
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "spanNulls": true
+          },
+          "unit": "Bps"
+        }
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp AS time, SUM(metric_value) AS value, device_name AS metric FROM snmp_metrics WHERE metric_name LIKE 'if_in_octets%' AND device_name LIKE 'sw-%' AND $__timeFilter(timestamp) GROUP BY timestamp, device_name ORDER BY timestamp",
+          "refId": "A"
+        }
+      ],
+      "title": "Switch Inbound Throughput (by Device)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 1,
+            "spanNulls": true
+          },
+          "unit": "Bps"
+        }
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp AS time, SUM(metric_value) AS value, device_name AS metric FROM snmp_metrics WHERE metric_name LIKE 'if_out_octets%' AND device_name LIKE 'sw-%' AND $__timeFilter(timestamp) GROUP BY timestamp, device_name ORDER BY timestamp",
+          "refId": "A"
+        }
+      ],
+      "title": "Switch Outbound Throughput (by Device)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 15,
+            "lineWidth": 2,
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        }
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
+      "id": 3,
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp AS time, SUM(metric_value) AS value, device_name || ' in-err' AS metric FROM snmp_metrics WHERE metric_name LIKE 'if_in_errors%' AND device_name LIKE 'sw-%' AND $__timeFilter(timestamp) GROUP BY timestamp, device_name ORDER BY timestamp",
+          "refId": "A"
+        },
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp AS time, SUM(metric_value) AS value, device_name || ' out-err' AS metric FROM snmp_metrics WHERE metric_name LIKE 'if_out_errors%' AND device_name LIKE 'sw-%' AND $__timeFilter(timestamp) GROUP BY timestamp, device_name ORDER BY timestamp",
+          "refId": "B"
+        }
+      ],
+      "title": "Switch Interface Errors (In + Out)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 16
+      },
+      "id": 4,
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT device_name, COUNT(DISTINCT metric_name) AS metric_count, MAX(timestamp) AS last_seen, SUM(CASE WHEN metric_name LIKE 'if_in_octets%' THEN metric_value ELSE 0 END) AS total_in_octets, SUM(CASE WHEN metric_name LIKE 'if_out_octets%' THEN metric_value ELSE 0 END) AS total_out_octets, SUM(CASE WHEN metric_name LIKE '%error%' THEN metric_value ELSE 0 END) AS total_errors FROM snmp_metrics WHERE device_name LIKE 'sw-%' AND timestamp > NOW() - INTERVAL '5 minutes' GROUP BY device_name ORDER BY device_name",
+          "refId": "A"
+        }
+      ],
+      "title": "Switch Devices \u2014 Latest Metrics Summary",
+      "type": "table"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "title": "SNMP Switch Topology",
+  "uid": "snmp-switches",
+  "version": 1
+}

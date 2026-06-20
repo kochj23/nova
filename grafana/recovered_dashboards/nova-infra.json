@@ -1,0 +1,289 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "P698B55778F17878F"
+        },
+        "enable": true,
+        "iconColor": "green",
+        "name": "Deploys",
+        "rawQuery": "SELECT created_at as time, target_service || ': ' || action as text, 'deploy' as tags FROM deploy_requests WHERE status = 'success' AND $__timeFilter(created_at)"
+      },
+      {
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "P698B55778F17878F"
+        },
+        "enable": true,
+        "iconColor": "orange",
+        "name": "Fix Attempts",
+        "rawQuery": "SELECT applied_at as time, action_taken as text, 'autofix' as tags FROM fix_attempts WHERE status = 'success' AND $__timeFilter(applied_at)"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": 1384535533285376,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 5
+              },
+              {
+                "color": "red",
+                "value": 10
+              }
+            ]
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp as time, device_name as metric, metric_value as value FROM snmp_metrics WHERE metric_name = 'cpu_load_5min' AND $__timeFilter(timestamp) ORDER BY timestamp",
+          "refId": "A"
+        }
+      ],
+      "title": "CPU Load (5min avg) \u2014 All Devices",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "deckbytes"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp as time, device_name as metric, CASE WHEN metric_name = 'mem_total_real' THEN metric_value END as total, CASE WHEN metric_name = 'mem_avail_real' THEN metric_value END as available FROM snmp_metrics WHERE metric_name IN ('mem_total_real', 'mem_avail_real') AND $__timeFilter(timestamp) ORDER BY timestamp",
+          "refId": "A"
+        }
+      ],
+      "title": "Memory Utilization",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 8
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp as time, metric_name as metric, metric_value as value FROM snmp_metrics WHERE device_name = 'udm-pro' AND metric_name LIKE 'if_%_octets%' AND $__timeFilter(timestamp) ORDER BY timestamp",
+          "refId": "A"
+        }
+      ],
+      "title": "Network Traffic \u2014 WAN (UDM Pro)",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 60
+              },
+              {
+                "color": "red",
+                "value": 80
+              }
+            ]
+          },
+          "unit": "celsius"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 8
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp as time, device_name as metric, metric_value as value FROM snmp_metrics WHERE metric_name = 'sys_temp' AND $__timeFilter(timestamp) ORDER BY timestamp",
+          "refId": "A"
+        }
+      ],
+      "title": "System Temperature",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 0,
+        "y": 16
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT created_at as \"Time\", requested_by as \"By\", target_service as \"Service\", action as \"Action\", status as \"Status\" FROM deploy_requests ORDER BY created_at DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "Deploy Activity",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 12,
+        "x": 12,
+        "y": 16
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT applied_at as \"Time\", service as \"Service\", status as \"Status\", result as \"Result\" FROM fix_attempts ORDER BY applied_at DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "Auto-Fix Attempts",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 22
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT observed_at as \"Time\", observer as \"From\", category as \"Category\", subject as \"Subject\", observation as \"Observation\", severity as \"Severity\" FROM shared_observations ORDER BY observed_at DESC LIMIT 30",
+          "refId": "A"
+        }
+      ],
+      "title": "Shared Observations (Recent)",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "grafana-postgresql-datasource",
+            "uid": "P698B55778F17878F"
+          },
+          "format": "table",
+          "rawSql": "SELECT observed_at as \"Time\", observation as \"Status\", severity as \"Severity\" FROM shared_observations WHERE category = 'storage' AND subject IN ('nas-sync', 'nas-rsync') ORDER BY observed_at DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "NAS Sync & Rsync History",
+      "type": "table"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": [
+    "nova",
+    "snmp",
+    "infrastructure"
+  ],
+  "templating": {
+    "list": [
+      {
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "P698B55778F17878F"
+        },
+        "includeAll": true,
+        "multi": true,
+        "name": "device",
+        "query": "SELECT DISTINCT device_name FROM snmp_metrics ORDER BY device_name",
+        "type": "query"
+      }
+    ]
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Nova Infrastructure",
+  "uid": "nova-infra",
+  "version": 3
+}

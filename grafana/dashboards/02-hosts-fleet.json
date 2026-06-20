@@ -1,0 +1,77 @@
+{
+  "uid": "nova-hosts-fleet",
+  "title": "Hosts & Fleet",
+  "tags": ["nova", "starter", "hosts", "snmp"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": {
+    "list": [
+      {
+        "name": "device",
+        "type": "query",
+        "label": "Host",
+        "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+        "includeAll": true,
+        "multi": true,
+        "refresh": 2,
+        "query": "SELECT DISTINCT device_name FROM snmp_metrics WHERE device_name IS NOT NULL AND timestamp > now() - interval '24 hours' ORDER BY device_name;"
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "CPU Load (1 min) by Host",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 5 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT timestamp AS time, device_name AS metric, metric_value FROM snmp_metrics WHERE metric_name = 'cpu_load_1min' AND device_name IN ($device) AND $__timeFilter(timestamp) ORDER BY timestamp;" } ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Memory Used % by Host",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT t.timestamp AS time, t.device_name AS metric, 100.0 * (t.metric_value - a.metric_value) / NULLIF(t.metric_value, 0) AS mem_used_pct FROM snmp_metrics t JOIN snmp_metrics a ON a.device_ip = t.device_ip AND a.timestamp = t.timestamp AND a.metric_name = 'mem_avail_real' WHERE t.metric_name = 'mem_total_real' AND t.device_name IN ($device) AND $__timeFilter(t.timestamp) ORDER BY t.timestamp;" } ]
+    },
+    {
+      "id": 3,
+      "type": "bargauge",
+      "title": "Disk Usage % by Fleet Node (node_status)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 90 } ] } }, "overrides": [] },
+      "options": { "orientation": "horizontal", "displayMode": "gradient", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT node_name, disk_percent FROM node_status WHERE disk_percent IS NOT NULL ORDER BY disk_percent DESC;" } ]
+    },
+    {
+      "id": 4,
+      "type": "bargauge",
+      "title": "Memory % by Fleet Node (node_status)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 80 }, { "color": "red", "value": 92 } ] } }, "overrides": [] },
+      "options": { "orientation": "horizontal", "displayMode": "gradient", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT node_name, memory_percent FROM node_status WHERE memory_percent IS NOT NULL ORDER BY memory_percent DESC;" } ]
+    },
+    {
+      "id": 5,
+      "type": "table",
+      "title": "Latest SNMP Snapshot per Host",
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 17 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "WITH cpu AS (SELECT DISTINCT ON (device_name) device_name, metric_value v FROM snmp_metrics WHERE metric_name='cpu_load_1min' AND timestamp > now()-interval '1 hour' ORDER BY device_name, timestamp DESC), memt AS (SELECT DISTINCT ON (device_name) device_name, metric_value v FROM snmp_metrics WHERE metric_name='mem_total_real' AND timestamp > now()-interval '1 hour' ORDER BY device_name, timestamp DESC), mema AS (SELECT DISTINCT ON (device_name) device_name, metric_value v FROM snmp_metrics WHERE metric_name='mem_avail_real' AND timestamp > now()-interval '1 hour' ORDER BY device_name, timestamp DESC) SELECT cpu.device_name AS \"Host\", round(cpu.v::numeric,2) AS \"CPU Load 1m\", round((100.0*(memt.v-mema.v)/NULLIF(memt.v,0))::numeric,1) AS \"Mem Used %\" FROM cpu LEFT JOIN memt USING(device_name) LEFT JOIN mema USING(device_name) ORDER BY cpu.device_name;" } ]
+    }
+  ]
+}

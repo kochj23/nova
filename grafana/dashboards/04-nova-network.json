@@ -1,0 +1,180 @@
+{
+  "uid": "nova-network",
+  "title": "Nova Network",
+  "tags": ["nova", "network", "unifi", "storage"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "WAN Throughput (Down/Up)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "bps", "custom": { "drawStyle": "line", "fillOpacity": 15, "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "showLegend": true, "displayMode": "table", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, value AS \"WAN Download\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_rx_bps' AND $__timeFilter(ts) ORDER BY ts" },
+        { "refId": "B", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, value AS \"WAN Upload\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_tx_bps' AND $__timeFilter(ts) ORDER BY ts" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "WAN Status",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "mappings": [ { "type": "value", "options": { "0": { "text": "DOWN", "color": "red" }, "1": { "text": "UP", "color": "green" } } } ], "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS time, value FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_up' ORDER BY ts DESC LIMIT 1" } ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "WAN Latency",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "ms", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 30 }, { "color": "red", "value": 60 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS time, value FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_latency_ms' ORDER BY ts DESC LIMIT 1" } ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Latest Speedtest",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "Mbits", "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 100 }, { "color": "green", "value": 300 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name" },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS time, value AS \"Download\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_speedtest_down_mbps' ORDER BY ts DESC LIMIT 1" },
+        { "refId": "B", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS time, value AS \"Upload\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_speedtest_up_mbps' ORDER BY ts DESC LIMIT 1" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Gateway CPU / Memory",
+      "gridPos": { "h": 4, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "showLegend": true, "displayMode": "list" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, value AS \"GW CPU %\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_gw_cpu_pct' AND $__timeFilter(ts) ORDER BY ts" },
+        { "refId": "B", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, value AS \"GW Mem %\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_wan_gw_mem_pct' AND $__timeFilter(ts) ORDER BY ts" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Clients by Band (stacked)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "fillOpacity": 40, "lineWidth": 1, "stacking": { "mode": "normal" } } }, "overrides": [] },
+      "options": { "legend": { "showLegend": true, "displayMode": "table", "calcs": ["last"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, metadata->>'band' AS metric, value FROM telemetry.unifi_metrics WHERE metric = 'unifi_clients_by_band' AND metadata->>'band' <> 'other' AND $__timeFilter(ts) ORDER BY ts" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "Total Clients",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, value FROM telemetry.unifi_metrics WHERE metric = 'unifi_clients_total' AND $__timeFilter(ts) ORDER BY ts" } ]
+    },
+    {
+      "id": 8,
+      "type": "stat",
+      "title": "Wired / Wireless",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "purple", "value": null } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none", "textMode": "value_and_name" },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS time, value AS \"Wired\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_clients_wired' ORDER BY ts DESC LIMIT 1" },
+        { "refId": "B", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS time, value AS \"Wireless\" FROM telemetry.unifi_metrics WHERE metric = 'unifi_clients_wireless' ORDER BY ts DESC LIMIT 1" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "bargauge",
+      "title": "Clients per AP (latest)",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "continuous-GrYlRd" } }, "overrides": [] },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT m.metadata->>'device' AS metric, m.value FROM telemetry.unifi_metrics m JOIN (SELECT metadata->>'device' AS device, max(ts) AS mts FROM telemetry.unifi_metrics WHERE metric='unifi_ap_clients' GROUP BY 1) latest ON latest.device = m.metadata->>'device' AND latest.mts = m.ts WHERE m.metric = 'unifi_ap_clients' ORDER BY m.value DESC" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "timeseries",
+      "title": "AP Radio Satisfaction %",
+      "gridPos": { "h": 7, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 5, "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "showLegend": true, "displayMode": "table", "calcs": ["last", "min"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, (metadata->>'device') || ' ' || (metadata->>'band') AS metric, value FROM telemetry.unifi_metrics WHERE metric = 'unifi_ap_radio_satisfaction' AND $__timeFilter(ts) ORDER BY ts" }
+      ]
+    },
+    {
+      "id": 11,
+      "type": "table",
+      "title": "Switch Port Errors (Top Offenders)",
+      "gridPos": { "h": 7, "w": 12, "x": 12, "y": 18 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true, "sortBy": [ { "displayName": "Total Errors", "desc": true } ] },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "WITH latest AS (SELECT metric, metadata->>'device' AS device, metadata->>'port_name' AS port_name, (metadata->>'port')::int AS port, value, ts, row_number() OVER (PARTITION BY metric, metadata->>'device', metadata->>'port' ORDER BY ts DESC) rn FROM telemetry.unifi_metrics WHERE metric IN ('unifi_port_rx_errors','unifi_port_tx_errors','unifi_port_rx_dropped','unifi_port_tx_dropped')) SELECT device AS \"Device\", port AS \"Port\", port_name AS \"Port Name\", COALESCE(max(value) FILTER (WHERE metric='unifi_port_rx_errors'),0) AS \"RX Err\", COALESCE(max(value) FILTER (WHERE metric='unifi_port_tx_errors'),0) AS \"TX Err\", COALESCE(max(value) FILTER (WHERE metric='unifi_port_rx_dropped'),0) AS \"RX Drop\", COALESCE(max(value) FILTER (WHERE metric='unifi_port_tx_dropped'),0) AS \"TX Drop\", COALESCE(sum(value),0) AS \"Total Errors\" FROM latest WHERE rn=1 GROUP BY device, port, port_name HAVING COALESCE(sum(value),0) > 0 ORDER BY \"Total Errors\" DESC LIMIT 15" }
+      ]
+    },
+    {
+      "id": 12,
+      "type": "gauge",
+      "title": "Storage Volume Used %",
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 23 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 75 }, { "color": "red", "value": 90 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true, "orientation": "auto" },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "WITH latest AS (SELECT source, component_id, component_name, used_pct, row_number() OVER (PARTITION BY source, component_id ORDER BY ts DESC) rn FROM telemetry.storage_metrics WHERE used_pct IS NOT NULL AND component_type IN ('volume','system','share')) SELECT source || ' / ' || component_name AS metric, used_pct AS value FROM latest WHERE rn=1 ORDER BY 1" }
+      ]
+    },
+    {
+      "id": 13,
+      "type": "bargauge",
+      "title": "Disk Temperatures (Synology)",
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 23 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "celsius", "min": 0, "max": 70, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 45 }, { "color": "red", "value": 55 } ] } }, "overrides": [] },
+      "options": { "displayMode": "gradient", "orientation": "horizontal", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "WITH latest AS (SELECT source, component_id, component_name, temp_c, row_number() OVER (PARTITION BY source, component_id ORDER BY ts DESC) rn FROM telemetry.storage_metrics WHERE temp_c IS NOT NULL AND component_type='disk') SELECT component_id || ' (' || component_name || ')' AS metric, temp_c AS value FROM latest WHERE rn=1 ORDER BY temp_c DESC" }
+      ]
+    },
+    {
+      "id": 14,
+      "type": "table",
+      "title": "Disk SMART Status",
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 23 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [ { "matcher": { "id": "byName", "options": "SMART" }, "properties": [ { "id": "custom.cellOptions", "value": { "type": "color-background" } }, { "id": "mappings", "value": [ { "type": "value", "options": { "normal": { "color": "green", "index": 0 }, "warning": { "color": "orange", "index": 1 }, "failed": { "color": "red", "index": 2 } } } ] } ] } ] },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "WITH latest AS (SELECT source, component_id, component_name, smart_status, temp_c, row_number() OVER (PARTITION BY source, component_id ORDER BY ts DESC) rn FROM telemetry.storage_metrics WHERE component_type='disk') SELECT component_id AS \"Disk\", component_name AS \"Model\", smart_status AS \"SMART\", temp_c AS \"Temp C\" FROM latest WHERE rn=1 ORDER BY (smart_status='normal'), component_id" }
+      ]
+    }
+  ]
+}

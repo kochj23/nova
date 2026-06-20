@@ -1,0 +1,205 @@
+{
+  "annotations": {
+    "list": [
+      {
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "P698B55778F17878F"
+        },
+        "enable": true,
+        "iconColor": "green",
+        "name": "Deploys",
+        "rawQuery": "SELECT created_at as time, target_service || ': ' || action as text, 'deploy' as tags FROM deploy_requests WHERE status = 'success' AND $__timeFilter(created_at)"
+      },
+      {
+        "datasource": {
+          "type": "grafana-postgresql-datasource",
+          "uid": "P698B55778F17878F"
+        },
+        "enable": true,
+        "iconColor": "orange",
+        "name": "Fix Attempts",
+        "rawQuery": "SELECT applied_at as time, service || ': ' || action_taken as text, 'autofix' as tags FROM fix_attempts WHERE $__timeFilter(applied_at)"
+      }
+    ]
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": 1395128789102592,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "fixedColor": "orange",
+            "mode": "fixed"
+          },
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 50,
+            "lineWidth": 0
+          },
+          "unit": "short"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT date_trunc('hour', applied_at) as time, COUNT(*) as value FROM fix_attempts WHERE $__timeFilter(applied_at) GROUP BY 1 ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Heal Events Over Time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 0
+      },
+      "options": {
+        "legend": {
+          "displayMode": "table",
+          "placement": "right"
+        },
+        "pieType": "donut"
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT service as metric, COUNT(*) as value FROM fix_attempts WHERE $__timeFilter(applied_at) GROUP BY service ORDER BY value DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Services Healed",
+      "type": "piechart"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "red",
+                "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0.5
+              },
+              {
+                "color": "green",
+                "value": 0.8
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 6,
+        "w": 24,
+        "x": 0,
+        "y": 8
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT pattern_name as metric, confidence as value FROM fix_patterns ORDER BY confidence DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Fix Pattern Confidence",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 14
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT applied_at as \"Applied\", service as \"Service\", action_taken as \"Action\", status as \"Status\", result as \"Result\" FROM fix_attempts WHERE $__timeFilter(applied_at) ORDER BY applied_at DESC LIMIT 30",
+          "refId": "A"
+        }
+      ],
+      "title": "Recent Heal Activity",
+      "type": "table"
+    },
+    {
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "P698B55778F17878F"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 14
+      },
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT observed_at as \"Time\", observer as \"Observer\", subject as \"Subject\", observation as \"Observation\", severity as \"Severity\" FROM shared_observations WHERE $__timeFilter(observed_at) ORDER BY observed_at DESC LIMIT 50",
+          "refId": "A"
+        }
+      ],
+      "title": "Shared Observations Feed",
+      "type": "table"
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": [
+    "nova",
+    "bigbrother",
+    "healing"
+  ],
+  "templating": {
+    "list": []
+  },
+  "time": {
+    "from": "now-24h",
+    "to": "now"
+  },
+  "timepicker": {},
+  "timezone": "",
+  "title": "Nova Big Brother",
+  "uid": "nova-bb",
+  "version": 2
+}

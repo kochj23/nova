@@ -1,0 +1,104 @@
+{
+  "uid": "nova-home-overview",
+  "title": "Home / Overview",
+  "tags": ["nova", "starter", "overview"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "stat",
+      "title": "Fleet Nodes Up",
+      "gridPos": { "h": 4, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS \"Up\" FROM node_status WHERE status = 'up';" } ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Fleet Nodes Down",
+      "gridPos": { "h": 4, "w": 6, "x": 6, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS \"Down\" FROM node_status WHERE status <> 'up' OR status IS NULL;" } ]
+    },
+    {
+      "id": 3,
+      "type": "stat",
+      "title": "Services Up",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS \"Up\" FROM service_registry WHERE status = 'up';" } ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Services Down",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS \"Down\" FROM service_registry WHERE status = 'down';" } ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "Outdoor Temp",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 4 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "fahrenheit", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "blue", "value": null }, { "color": "green", "value": 50 }, { "color": "orange", "value": 85 }, { "color": "red", "value": 100 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS time, temp_f FROM telemetry.weather ORDER BY ts DESC LIMIT 1;" } ]
+    },
+    {
+      "id": 6,
+      "type": "stat",
+      "title": "Outdoor Humidity",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 4 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "humidity", "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS time, humidity FROM telemetry.weather ORDER BY ts DESC LIMIT 1;" } ]
+    },
+    {
+      "id": 7,
+      "type": "table",
+      "title": "Who's Home (Presence)",
+      "gridPos": { "h": 5, "w": 12, "x": 12, "y": 4 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT person AS \"Person\", room AS \"Room\", activity_state AS \"Activity\", round(confidence::numeric,2) AS \"Confidence\", last_confirmed AS \"Last Seen\" FROM presence_state ORDER BY person;" } ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Fleet Node Status",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT node_name AS \"Node\", status AS \"Status\", host(node_ip) AS \"IP\", os_family AS \"OS\", load_avg_1m AS \"Load 1m\", round(memory_percent::numeric,1) AS \"Mem %\", round(disk_percent::numeric,1) AS \"Disk %\", last_heartbeat AS \"Heartbeat\" FROM node_status ORDER BY node_name;" } ]
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Service Registry",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT service_name AS \"Service\", node_name AS \"Node\", host(host) AS \"Host\", port AS \"Port\", status AS \"Status\", last_heartbeat AS \"Heartbeat\" FROM service_registry ORDER BY (status='up') DESC, service_name;" } ]
+    }
+  ]
+}

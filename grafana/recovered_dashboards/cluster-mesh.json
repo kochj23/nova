@@ -1,0 +1,400 @@
+{
+  "id": 4123171020759040,
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 16,
+        "x": 0,
+        "y": 0
+      },
+      "id": 1,
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT node_name AS id, node_name AS title, CASE WHEN status = 'healthy' THEN 0.2 ELSE 0.8 END AS mainstat, status AS subtitle FROM node_status",
+          "refId": "nodes"
+        },
+        {
+          "format": "table",
+          "rawSql": "SELECT a.node_name AS source, b.node_name AS target, (a.p50_ms + b.p50_ms)/2 AS mainstat FROM lb_pool_status a CROSS JOIN lb_pool_status b WHERE a.node_name < b.node_name",
+          "refId": "edges"
+        }
+      ],
+      "title": "Cluster Node Graph",
+      "type": "nodeGraph"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 10,
+            "lineWidth": 2
+          },
+          "unit": "ms"
+        }
+      },
+      "gridPos": {
+        "h": 10,
+        "w": 8,
+        "x": 16,
+        "y": 0
+      },
+      "id": 2,
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT updated_at AS time, p50_ms AS value, node_name AS metric FROM lb_pool_status WHERE $__timeFilter(updated_at) ORDER BY updated_at",
+          "refId": "A"
+        }
+      ],
+      "title": "Node Latency (p50_ms) Over Time",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "degraded": {
+                  "color": "yellow",
+                  "text": "WARN"
+                },
+                "healthy": {
+                  "color": "green",
+                  "text": "UP"
+                },
+                "unhealthy": {
+                  "color": "red",
+                  "text": "DOWN"
+                },
+                "unknown": {
+                  "color": "orange",
+                  "text": "???"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 0,
+        "y": 10
+      },
+      "id": 3,
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT status FROM node_status WHERE node_name = 'mac-studio'",
+          "refId": "A"
+        }
+      ],
+      "title": "mac-studio",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "degraded": {
+                  "color": "yellow",
+                  "text": "WARN"
+                },
+                "healthy": {
+                  "color": "green",
+                  "text": "UP"
+                },
+                "unhealthy": {
+                  "color": "red",
+                  "text": "DOWN"
+                },
+                "unknown": {
+                  "color": "orange",
+                  "text": "???"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 5,
+        "y": 10
+      },
+      "id": 4,
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT status FROM node_status WHERE node_name = 'mac-mini'",
+          "refId": "A"
+        }
+      ],
+      "title": "mac-mini",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "degraded": {
+                  "color": "yellow",
+                  "text": "WARN"
+                },
+                "healthy": {
+                  "color": "green",
+                  "text": "UP"
+                },
+                "unhealthy": {
+                  "color": "red",
+                  "text": "DOWN"
+                },
+                "unknown": {
+                  "color": "orange",
+                  "text": "???"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 10,
+        "y": 10
+      },
+      "id": 5,
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT status FROM node_status WHERE node_name = 'nuk'",
+          "refId": "A"
+        }
+      ],
+      "title": "nuk",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "degraded": {
+                  "color": "yellow",
+                  "text": "WARN"
+                },
+                "healthy": {
+                  "color": "green",
+                  "text": "UP"
+                },
+                "unhealthy": {
+                  "color": "red",
+                  "text": "DOWN"
+                },
+                "unknown": {
+                  "color": "orange",
+                  "text": "???"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 5,
+        "x": 15,
+        "y": 10
+      },
+      "id": 6,
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT status FROM node_status WHERE node_name = 'lts01-pi'",
+          "refId": "A"
+        }
+      ],
+      "title": "lts01-pi",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "options": {
+                "degraded": {
+                  "color": "yellow",
+                  "text": "WARN"
+                },
+                "healthy": {
+                  "color": "green",
+                  "text": "UP"
+                },
+                "unhealthy": {
+                  "color": "red",
+                  "text": "DOWN"
+                },
+                "unknown": {
+                  "color": "orange",
+                  "text": "???"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              }
+            ]
+          }
+        }
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 4,
+        "x": 20,
+        "y": 10
+      },
+      "id": 7,
+      "targets": [
+        {
+          "format": "table",
+          "rawSql": "SELECT status FROM node_status WHERE node_name = 'tv-movies-mini'",
+          "refId": "A"
+        }
+      ],
+      "title": "tv-movies-mini",
+      "type": "stat"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "P698B55778F17878F"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "fillOpacity": 20,
+            "gradientMode": "scheme",
+            "lineWidth": 2
+          },
+          "unit": "Bps"
+        }
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 14
+      },
+      "id": 8,
+      "targets": [
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp AS time, SUM(metric_value) AS \"Total Inbound\" FROM snmp_metrics WHERE metric_name LIKE 'if_in_octets%' AND device_name IN ('mac-studio', 'mac-mini', 'nuk', 'lts01-pi') AND $__timeFilter(timestamp) GROUP BY timestamp ORDER BY timestamp",
+          "refId": "A"
+        },
+        {
+          "format": "time_series",
+          "rawSql": "SELECT timestamp AS time, SUM(metric_value) AS \"Total Outbound\" FROM snmp_metrics WHERE metric_name LIKE 'if_out_octets%' AND device_name IN ('mac-studio', 'mac-mini', 'nuk', 'lts01-pi') AND $__timeFilter(timestamp) GROUP BY timestamp ORDER BY timestamp",
+          "refId": "B"
+        }
+      ],
+      "title": "Total Cluster Throughput",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "10s",
+  "schemaVersion": 39,
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "title": "Cluster Mesh",
+  "uid": "cluster-mesh",
+  "version": 1
+}
