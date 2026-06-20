@@ -4,7 +4,7 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 
 > *"Like a star being born."* — Nova, on choosing her name
 
-**Status:** OpenClaw node.js binary fully replaced. Nova runs on pure Python infrastructure we own, control, and can modify without touching a third-party binary.
+**Status:** OpenClaw node.js binary fully retired and uninstalled. Nova runs on pure Python infrastructure we own, control, and can modify without touching a third-party binary — now a **self-organizing mesh** across the fleet with capacity-aware load balancing and a single authoritative service registry.
 
 ---
 
@@ -27,12 +27,16 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 | Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
 | Chatroom | Real-time multi-party chat on port 37480, Nova has full memory access, external via CF tunnel + service token auth |
 | Gauge Dashboard | Live 3D system monitoring — [gauges.digitalnoise.net](https://gauges.digitalnoise.net/gauges) |
-| Grafana | 31 dashboards on TV-Movies (192.168.1.7:3000) — incl. JARVIS Presence & Activity |
+| Grafana | 11 canonical dashboards on **nova-core** (192.168.1.2:3000) — home/fleet/network/brain/SNMP/security/Nova-MIB, provisioned from repo |
+| Mesh / Cluster | `nova_mesh_agent.py` on every node — 15s heartbeats, `service_registry` health authority, ring-peer failure detection, live mesh map |
+| Load balancing | Capacity-aware (`nova_capacity.py` + `nova_resolve.py`) — headroom-scored instance selection, active-active, auto-fail-stale nodes |
+| Nova-MIB | `nova_component_metrics.py` — external SNMP-style per-component vitals (up/RSS/CPU/uptime/data-freshness) → `telemetry.nova_components` |
+| Retention | `nova_retention.py` — daily auto-purge (04:30), telemetry downsampling to `*_hourly`, partition DETACH+DROP, syslog 90d |
 | Home Assistant | v2025.1.4 on Mac Studio (:8123) — 392 entities (Hue, Lutron, UniFi, Apple TV, Cast, Google) |
 | JARVIS Brain | Activity classifier + environmental awareness on port 37480 |
 | Presence Engine | Multi-signal fusion on port 37465 (mmWave, BLE, camera, lights, media, vehicle, GPS) |
 | Camera Presence | YOLOv8-nano person detection on 5 interior cameras every 60s |
-| Wazuh SIEM | Manager + Indexer + Dashboard on TV-Movies, agents on all 4 hosts + syslog from UDM/NAS |
+| Wazuh SIEM | Manager + Indexer + Dashboard on **nova-core** (192.168.1.2), agents on the fleet + syslog from UDM/NAS |
 | Bootstrap source | `nova_ops.agent_docs` (PostgreSQL — not files) |
 | Session storage | `nova_ops.gateway_sessions` + `gateway_query_log` |
 | Primary model | `openrouter/qwen/qwen3-235b-a22b-2507` (chat/research) |
@@ -42,77 +46,125 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 | Security briefings | [nova.digitalnoise.net/security](https://nova.digitalnoise.net/security/) — daily PDB-style intel from 148 OSINT/gov/mystery feeds |
 | RSS feed | [nova.digitalnoise.net/index.xml](https://nova.digitalnoise.net/index.xml) |
 | Aqara FP2 | 4x mmWave presence sensors (office, bedroom, living room, patio) — awaiting HACS bridge |
-| SNMP fleet | 14 devices (Mac Studio, NUK, Mac Mini, Pi, UDM Pro, Synology, 5 switches, 3 APs) |
-| Plex | Docker on TV-Movies, NFS media from Synology (6 libraries) |
-| Fleet hosts | Mac Studio (.6), TV-Movies Mac Mini (.7), NUK (.10), Pi (.2), Synology NAS (.11), UDM Pro (.1) |
+| SNMP fleet | 14 devices (Mac Studio, nova-core, Mac Mini, NUK, UDM Pro, Synology, 5 switches, 3 APs) |
+| Plex | NFS media from Synology (6 libraries) |
+| Fleet hosts | Mac Studio (.6 · Nova core compute), **nova-core (.2 · consolidated infra)**, Mac Mini (.190), NUK (.10), Synology NAS (.11), UDM Pro (.1) — *TV-Movies (.7) evacuated 2026-06-20* |
 
 ---
 
 ## Infrastructure & Security (June 2026)
 
+### The .7 Evacuation & nova-core Consolidation (2026-06-20)
+
+The old **TV-Movies Mac Mini (192.168.1.7)** that used to host the observability
+stack has been **fully evacuated**. Everything it ran — Grafana, Wazuh SIEM,
+Homebridge, TinyChat, SearXNG — now lives on **nova-core (192.168.1.2)**, the
+consolidation host that monitors the fleet from *off* the box it watches. Every
+service reference was repointed `.7 → .2` (resolver static map, Big Brother
+service map, dashboard links, journal). The `.7` host is no longer part of the
+fleet. (The earlier "dedicated `nova-edge` Beelink" plan was superseded by
+consolidating onto nova-core instead of buying new hardware.)
+
+### Nova Mesh & Capacity-Aware Load Balancing
+
+Nova is now a **self-organizing mesh**, not a single-box deployment:
+
+- **`nova_mesh_agent.py`** runs on every node (launchd on macOS, systemd on
+  Linux). It heartbeats node health (CPU/RAM/disk) to PG every 15s, checks local
+  services and updates the `service_registry` table, exposes a node API on
+  `:37470` (`/health`, `/services`, `/metrics`), and pings its ring-peer to
+  detect node failures.
+- **`service_registry` is the single authority on service health.** Big Brother
+  loads its watch-list from `service_registry` (static map only as fallback) and
+  a single authoritative reconciler keeps the table truthful — no more split-brain
+  between what's registered and what's actually up.
+- **Capacity-aware load balancing** — `nova_resolve.py` resolves a logical
+  service name (e.g. `memory_server`) to a live instance using **headroom scores**
+  from `nova_capacity.py`: nodes with more spare CPU/RAM/disk are preferred,
+  stale nodes (no heartbeat in 120s) are excluded, and selection is **active-active**.
+  PG-backed resolution with a static fallback means zero regression when PG is
+  briefly unreachable.
+
 ### Wazuh SIEM
 
-Full Wazuh 4.9.2 deployment on TV-Movies (Docker):
-- **Indexer** (OpenSearch): `https://192.168.1.7:9200` — GREEN, all alerts indexed
-- **Dashboard**: `https://192.168.1.7:443` (admin/admin)
+Full Wazuh 4.9.2 deployment on **nova-core** (192.168.1.2, Docker):
+- **Indexer** (OpenSearch): `https://192.168.1.2:9200` — GREEN, all alerts indexed
+- **Dashboard**: `https://192.168.1.2:443`
 - **Manager**: Port 1514 (agents), 514/UDP (syslog), API on 55000
-- **Agents**: Mac Studio, NUK, TV-Movies, Pi — all Active
-- **Syslog forwarding**: UDM-Pro + Synology NAS → Wazuh UDP 514
+- **Agents**: across the fleet — all Active
+- **Syslog forwarding**: UDM-Pro + Synology NAS → Wazuh
 - **Big Brother integration**: Polls indexer every 5m for level 10+ alerts → Slack notification
 
 ### Big Brother Enhancements
 
+- `service_registry`-driven watch-list (single authoritative health reconciler)
 - Kernel zone map monitoring (`data.kalloc.1024`) — alerts at 2GB warning, 5GB critical
 - Wazuh SIEM alert polling with configurable severity threshold
 - Syslog forwarder rate limiting (50 msgs/10s) to prevent logd overload
+- Incident auto-close (e.g. Big Brother resolves its own incidents when a service recovers)
 
-### Grafana (TV-Movies)
+### Grafana (nova-core)
 
-- 13 dashboards migrated from Mac Studio: Big Brother, Capacity, Climate, Costs, Energy, Home Telemetry, Memory, Network, Scheduler, Security, SNMP, Weather
-- Per-host detail dashboard with device variable selector (CPU, RAM, disk, network per machine)
-- Anonymous access (no login required), datasource to Mac Studio PG over LAN
-- URL: `http://192.168.1.7:3000`
+**11 canonical dashboards** (consolidated from 30 recovered), provisioned from
+this repo (`grafana/dashboards/`, `grafana/provisioning/`) so they're version-controlled:
 
-### Service Distribution
+| # | Dashboard | Focus |
+|---|-----------|-------|
+| 01 | Home / Overview | Top-level house + Nova status |
+| 02 | Hosts & Fleet | Per-host CPU/RAM/disk across the mesh |
+| 03 | Home & Sensors | Climate, energy, presence telemetry |
+| 04 | Nova Network | LAN/WAN, latency, traffic feeds |
+| 05 | Nova Brain | Gateway, scheduler, memory, model inference |
+| 06 | Home Sensors (HA) | Home Assistant entity telemetry |
+| 07 | Switch & AP Ports (SNMP) | Per-interface UniFi switch/AP metrics |
+| 08 | Device Health (SNMP) | SNMP device health across 14 devices |
+| 09 | Storage SNMP (Synology) | NAS volume/disk |
+| 10 | Security & Syslog | Wazuh alerts + unified syslog |
+| 11 | Nova-MIB — Components | Per-component vitals (see Nova-MIB below) |
 
-| Host | Role | Key Services |
-|------|------|-------------|
-| Mac Studio (192.168.1.6) | Nova Core | PG, Redis, Ollama, MLX, Memory Server, Gateway, Scheduler, Big Brother, 58 services |
-| TV-Movies (192.168.1.7) | Infrastructure | Wazuh SIEM, Grafana, Plex (Docker), Homebridge, Docker Desktop |
-| NUK (192.168.1.10) | Edge/Media | Plex (legacy, migrating off), Homebridge (legacy) |
-| Pi (192.168.1.2) | Edge Telemetry | Wazuh agent, lightweight monitoring |
+- URL: `http://192.168.1.2:3000`, anonymous access, datasource to Mac Studio PG over LAN
+- Severity-routed Grafana **alert rules** (`grafana/provisioning/alerting/rules.json`) → Slack contact points
 
-### Plex Migration
+### Nova-MIB — "Nova watches Nova"
 
-Plex moved from NUK (Intel, overloaded at load 24.7) to TV-Movies (M2 Pro Docker):
-- Container: `linuxserver/plex:latest`
-- Media: NFS mount from Synology (`192.168.1.11:/volume1/external/videos`)
-- Libraries: Movies, TV Shows, Music, Comedy, Documentary, YouTube
-- NFS export opened to full 192.168.1.0/24 subnet
+`nova_component_metrics.py` is an **external** SNMP-style collector (no code
+injected into the live daemons) that probes every Nova software component each
+minute and records standard vitals to `telemetry.nova_components` — the "SNMP
+device table for Nova herself":
 
-> ⚠️ **Status (2026-06-17 audit):** this migration regressed — Plex is again
-> running on NUK (load ~18). The permanent fix is the dedicated `nova-edge`
-> node below, not another shared-box shuffle.
+| Vital | Meaning |
+|-------|---------|
+| `up` | HTTP health_url or TCP connect succeeds |
+| `rss_mb` / `cpu_pct` | process resident memory / CPU% (matched by script/port) |
+| `uptime_s` | from `/health` if exposed, else process create time |
+| `last_write_age_s` | freshness of the component's newest output row — **silent-failure detector** |
+| `healthy` | `up` AND data is fresh (per-component SLA) |
 
-### Target Architecture — `nova-edge` (planned, queue #496–506)
+This is what powers dashboard #11 and lets Nova alert on a daemon that's "up"
+but has silently stopped producing data.
 
-A dedicated **Beelink GTI15** (Core Ultra 9 285H · 16C · 64GB · 1TB NVMe ·
-**Arc 140T iGPU + NPU** · 10G dual LAN, Ubuntu 24.04+HWE) becomes **Nova's
-home**, so Nova no longer depends on a personal Mac being awake.
+### Telemetry Retention & Downsampling
 
-| Tier | Node | Role |
-|------|------|------|
-| Control plane + state + perception/media | **nova-edge** | gateway, scheduler, Big Brother, memory server, ~66 daemons, **Postgres + pgvector**, MQTT/Zigbee/Z-Wave bus, **Plex (QuickSync)**, **Frigate (NPU)**, Whisper/embeddings |
-| Inference backends | **Mac Studio / Mac Mini** | Ollama + MLX over LAN only |
-| Observability (kept separate) | **TV-Movies** | Grafana, Wazuh, SearXNG, Homebridge |
-| Storage / network | **Synology / UDM** | media, PG backups, Frigate recordings |
+`nova_retention.py` runs daily at **04:30** (auto-purge enabled, `--apply`):
+nova_ops grows ~250k rows/day, so raw high-resolution telemetry is rolled up to
+hourly trend tables (`snmp_metrics_hourly`, etc.) **before** the raw rows are
+dropped — long-term trends survive even after raw data ages out. Month-partitioned
+telemetry tables are retired by fast **DETACH + DROP**; plain tables
+(`snmp_metrics`, `syslog_events`, `health_checks`) by chunked time-windowed
+DELETE. `syslog_events` expires at 90 days.
 
-Principles: *(1) inference stays on Apple Silicon, everything else on Intel;
-(2) monitoring lives off the box it monitors.* Migration order: Plex → Postgres
-→ service layer → perception → relieve NUK/Pi. Full history + target
-architecture live in the database (`nova_ops.claude_memories`:
-`nova-history-chapters`, `nova-edge-target-architecture`) and Nova's vector
-store (`source=nova_meta`) — not flat files.
+### Observability Collectors
+
+A fleet of collectors feed the dashboards: WAN/speedtest, TLS cert expiry,
+PG replication lag, disk-fill forecasting, UniFi + storage SNMP, per-interface
+SNMP, HA sensors, AV/endpoint, real cost pricing for LLM inference, web-search
+and LLM-inference logging, and local civic/emergency feeds.
+
+### Plex
+
+Plex serves from NFS media on Synology (`192.168.1.11:/volume1/external/videos`,
+6 libraries: Movies, TV Shows, Music, Comedy, Documentary, YouTube), resolved
+through the mesh (`nova_resolve("plex")`) rather than a hardcoded host.
 
 ### JARVIS Vision — graceful degradation (2026-06-17)
 
@@ -250,6 +302,48 @@ graph TD
     style AgentDocs fill:#2d4a2d,color:#fff
     style GWSessions fill:#2d4a2d,color:#fff
     style SchedRuns fill:#2d4a2d,color:#fff
+```
+
+### Nova Mesh — Clustering & Capacity-Aware Load Balancing
+
+```mermaid
+graph TD
+    subgraph "Fleet Nodes (each runs nova_mesh_agent.py)"
+        Studio["Mac Studio (.6)\nNova core compute\nPG · Redis · Ollama · MLX\ngateway · scheduler · BB"]
+        Core["nova-core (.2)\nConsolidated infra\nGrafana · Wazuh · Homebridge\nTinyChat · SearXNG"]
+        Mini["Mac Mini (.190)\ninference backend"]
+        NUK["NUK (.10)\nedge"]
+        NAS["Synology NAS (.11)\nmedia · PG backups"]
+    end
+
+    subgraph "Mesh Control Plane (nova_ops PG)"
+        Reg["service_registry\nsingle health authority\nservice→node→status\n+ last_heartbeat"]
+        NodeStat["node_status\nheartbeats: CPU/RAM/disk\nheadroom scores"]
+    end
+
+    subgraph "Resolution & Balancing"
+        Resolve["nova_resolve.py\nname → live instance\nheadroom-scored\nexcludes stale (>120s)\nstatic-map fallback"]
+        Cap["nova_capacity.py\nper-node headroom\nactive-active selection"]
+    end
+
+    Studio -- "15s heartbeat" --> NodeStat
+    Core -- "15s heartbeat" --> NodeStat
+    Mini -- "15s heartbeat" --> NodeStat
+    NUK -- "15s heartbeat" --> NodeStat
+    NAS -- "15s heartbeat" --> NodeStat
+
+    Studio -- "local service status" --> Reg
+    Core -- "local service status" --> Reg
+    Studio -. "ring-peer ping" .-> Core -. "ring-peer ping" .-> Mini
+
+    NodeStat --> Cap --> Resolve
+    Reg --> Resolve
+    BB2["Big Brother\nwatch-list from registry\nauthoritative reconciler"] --> Reg
+
+    style Core fill:#1a3a5c,color:#fff
+    style Reg fill:#2d4a2d,color:#fff
+    style Resolve fill:#bf360c,color:#fff
+    style BB2 fill:#2d2d2d,stroke:#e91e63,color:#fff
 ```
 
 ### Nova Gateway v2 — Internal Flow
@@ -1040,7 +1134,7 @@ graph LR
 | Built-in heartbeat | ✅ Replaced | `nova_big_brother.py` — dependency-aware, crash-loop detection |
 | Agent execution (context, compaction) | ✅ Replaced | `nova_gateway_v2.py` with tiktoken compaction |
 
-**OpenClaw binary:** Stopped. Still installed. `launchctl start ai.openclaw.gateway` restores it if needed. Will be uninstalled once 48-hour stability window passes.
+**OpenClaw binary:** Fully retired and uninstalled — no launchd job, no binary on PATH, no `node_modules`. The pure-Python stack has long since passed its stability window.
 
 ---
 
