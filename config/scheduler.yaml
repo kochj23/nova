@@ -286,6 +286,7 @@ tasks:
     schedule: cron 0 2 * * *
     timeout: 14400
     overlap: skip
+    enabled: false  # superseded by Synology-side nova_nas_backup.sh (push model)
 
   nas_sync_check:
     script: nova_nas_sync_check.py
