@@ -628,11 +628,11 @@ def download_video(vid_id: str, output_path: Path) -> str:
     # which fails on the AFP NAS mount for non-ASCII titles (e.g. Japanese, ～)
     # with [Errno 22] Invalid argument. Keep all temp/intermediate files on local
     # APFS (handles Unicode fine); only the final, sanitized .mp4 lands on the NAS.
-    scratch = Path("/Volumes/Data/tmp/yt-dlp")
+    scratch = Path("/Volumes/Data/AI/tmp/yt-dlp")  # local APFS, Unicode-safe, not main SSD
     try:
         scratch.mkdir(parents=True, exist_ok=True)
     except Exception:
-        scratch = Path.home() / ".openclaw" / "tmp" / "yt-dlp"
+        scratch = Path("/Volumes/MoreData/tmp/yt-dlp")
         scratch.mkdir(parents=True, exist_ok=True)
     cmd = [
         YT_DLP,
