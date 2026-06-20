@@ -583,6 +583,68 @@ FEEDS = [
     ("https://ktla.com/traffic/feed/", "la_public_safety", "KTLA Traffic"),
     ("https://www.foxla.com/rss/category/traffic", "la_public_safety", "FOX 11 LA Traffic"),
     ("https://thesource.metro.net/feed/", "la_public_safety", "Metro The Source (Transit/Service Updates)"),
+
+    # ── LA CIVIC / GOVERNMENT — city council, planning, commissions (Granicus + WP) ──
+    # Verified 2026-06-20: HTTP 200 + valid RSS 2.0 + >=100 <item> (Granicus agenda/video feeds).
+    # Granicus URL pattern: https://<city>.granicus.com/ViewPublisherRSS.php?view_id=<N>&mode=agendas
+    # NOTE: Burbank/Glendale CivicPlus city sites (burbankca.gov / glendaleca.gov) are Cloudflare/Akamai
+    # walled (hard 403, UA-independent) — NO usable RSS; Granicus covers their agenda/meeting data instead.
+    # NOTE: Legistar (burbank/glendale/pasadena.legistar.com) Feed.ashx returns "Invalid feed" placeholder —
+    # working RSS needs per-body numeric IDs not publicly enumerable; treat as iCal/scrape-only.
+    ("https://burbank.granicus.com/ViewPublisherRSS.php?view_id=29&mode=agendas", "la_public_safety", "Burbank City Council Agendas"),
+    ("https://burbank.granicus.com/ViewPublisherRSS.php?view_id=30&mode=agendas", "la_public_safety", "Burbank Planning Board Agendas"),
+    ("https://glendale.granicus.com/ViewPublisherRSS.php?view_id=12&mode=agendas", "la_public_safety", "Glendale City Council Agendas"),
+    ("https://glendale.granicus.com/ViewPublisherRSS.php?view_id=27&mode=agendas", "la_public_safety", "Glendale Planning Commission Agendas"),
+    ("https://pasadena.granicus.com/ViewPublisherRSS.php?view_id=25&mode=agendas", "la_public_safety", "Pasadena City Council Agendas"),
+    ("https://pasadena.granicus.com/ViewPublisherRSS.php?view_id=32&mode=agendas", "la_public_safety", "Pasadena Commissions Agendas"),
+    ("https://www.cityofpasadena.net/city-manager/feed/", "la_public_safety", "Pasadena City Manager (Weekly Newsletter)"),
+
+    # ── LA LOCAL YOUTUBE — news/community video (Atom) ──
+    # Verified 2026-06-20: HTTP 200 + 15 <entry>. Pattern: youtube.com/feeds/videos.xml?channel_id=UC...
+    # channel_ids discovered from each channel's page "externalId":"UC...".
+    # Glendale GTV6 / Pasadena KPAS had no resolvable UC id (gov video covered via Granicus above).
+    ("https://www.youtube.com/feeds/videos.xml?channel_id=UCinjnmQEwCddOudyCC1v7qA", "la_public_safety", "KTLA 5 (YouTube)"),
+    ("https://www.youtube.com/feeds/videos.xml?channel_id=UCVxBA3Cbu3pm8w8gEIoMEog", "la_public_safety", "ABC7 LA (YouTube)"),
+    ("https://www.youtube.com/feeds/videos.xml?channel_id=UCSWoppsVL0TLxFQ2qP_DLqQ", "la_public_safety", "NBCLA (YouTube)"),
+    ("https://www.youtube.com/feeds/videos.xml?channel_id=UCHfF8wFnipMeDpJf8OmMxDg", "la_public_safety", "FOX 11 Los Angeles (YouTube)"),
+
+    # ── LA AIR QUALITY ──
+    # Verified 2026-06-20: HTTP 200 + 580 <item>. SCAQMD advisories incl. live smoke/particle advisories.
+    # NOTE: AirNow has no static RSS for LA basin (EnviroFlash needs a per-area numeric ID; non-sequential,
+    # must be pulled from AirNow's area picker) — supplemental real-time AQI = custom collector.
+    ("https://www.aqmd.gov/Custom/RSS/LatestUpdates.aspx", "la_public_safety", "South Coast AQMD Advisories"),
+
+    # ── LA EVENTS / COMMUNITY / CHAMBERS ──
+    # Verified 2026-06-20: HTTP 200 + 10 <item> each (WordPress / chamber CMS).
+    # NOTE: Burbank/Glendale city events + libraries (Communico/BiblioCommons) are edge-walled or iCal/JSON
+    # only — no usable RSS; need custom collectors. Pasadena (cityofpasadena.net WordPress) is the exception.
+    ("https://www.cityofpasadena.net/events/feed/", "la_public_safety", "City of Pasadena Events"),
+    ("https://www.cityofpasadena.net/library/feed/", "la_public_safety", "Pasadena Public Library"),
+    ("https://www.pasadena-chamber.org/rss.xml", "la_public_safety", "Pasadena Chamber of Commerce"),
+    ("https://www.glendalechamber.com/feed", "la_public_safety", "Glendale Chamber of Commerce"),
+
+    # ── LA CRIME / BLOTTER (beyond LAPD/LASD newsrooms) ──
+    # Verified 2026-06-20: HTTP 200 + 10 <item>. Pasadena PD (cityofpasadena.net WordPress).
+    # NOTE: Burbank PD (Liferay+Cloudflare) and Glendale PD (CivicEngage+Akamai WAF) have NO RSS — hard 403.
+    # CrimeMapping.com = F5-WAF AJAX/map API only; Citizen = paid enterprise SSE/WS API. All need collectors.
+    ("https://www.cityofpasadena.net/police/feed/", "la_public_safety", "Pasadena Police Department"),
+
+    # ── LA UTILITIES / EMERGENCY MANAGEMENT ──
+    # Verified 2026-06-20: HTTP 200 + valid RSS (10 <item>).
+    # NOTE: Burbank Water & Power, Glendale Water & Power, SoCal Edison, SoCalGas have NO RSS — outage data
+    # is map/JSON-API only (e.g. outageentry.com for GWP; PowerOutage.us util #765 for SCE) → custom collectors.
+    # NOTE: Cal OES news (news.caloes.ca.gov/feed/) is valid RSS but its TLS chain fails urllib cert
+    # verification (works in curl, not in this script) — excluded until an SSL fix is added.
+    ("https://www.ladwpnews.com/feed/", "la_public_safety", "LADWP News"),
+
+    # ── FOOTHILL / LA CRESCENTA AREA (where Nova's rack lives) ──
+    # Verified 2026-06-20: Foothills Paper HTTP 200 + 10 <item> (Sunland-Tujunga/foothills, incl. fire/burn-area).
+    # NWS San Gabriel Valley forecast zone (CAZ548) covers Pasadena/foothills — Atom alert endpoint (entries
+    # appear only when alerts are active; intrinsically valid). Crescenta Valley Weekly already covered above.
+    # NOTE: MediaNews Group papers (dailynews.com, sgvtribune.com, pasadenastarnews.com) hard-403 all UAs —
+    # need a custom collector. Patch.com California feeds now 404 (platform changed).
+    ("https://www.thefoothillspaper.com/feed/", "la_public_safety", "The Foothills Paper (Sunland-Tujunga)"),
+    ("https://api.weather.gov/alerts/active.atom?zone=CAZ548", "la_public_safety", "NWS San Gabriel Valley/Foothills Alerts"),
 ]
 
 MEMORY_URL = "http://192.168.1.6:18790/remember?async=1"

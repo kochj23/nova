@@ -39,7 +39,7 @@ import nova_config
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-VERSION = "1.0.0"
+VERSION = "1.1.0"
 HTTP_PORT = 37463
 BIND_ADDR = "0.0.0.0"
 DB_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
@@ -162,8 +162,23 @@ FAST_OIDS = {
         "unit": "load",
         "description": "15-minute load average",
     },
-    # Note: UCD-MIB cpu percentage OIDs (.2021.11.9-11) not available on macOS snmpd
-    # They work on Linux hosts with snmpd configured. Use load averages instead.
+    # UCD-MIB ssCpu percentages (.2021.11.9-11). Present on Linux/UniFi/Synology snmpd
+    # (NOT macOS — gracefully returns None there). Gives real CPU% utilization.
+    "cpu_user_pct": {
+        "oid": "1.3.6.1.4.1.2021.11.9.0",
+        "unit": "percent",
+        "description": "CPU user time %",
+    },
+    "cpu_system_pct": {
+        "oid": "1.3.6.1.4.1.2021.11.10.0",
+        "unit": "percent",
+        "description": "CPU system time %",
+    },
+    "cpu_idle_pct": {
+        "oid": "1.3.6.1.4.1.2021.11.11.0",
+        "unit": "percent",
+        "description": "CPU idle time % (cpu_used_pct = 100 - this)",
+    },
 }
 
 SLOW_OIDS = {
@@ -197,6 +212,32 @@ SLOW_OIDS = {
         "unit": "celsius",
         "description": "Synology system temperature",
     },
+    # ── Synology vendor scalars (SYNOLOGY-SYSTEM-MIB .6574.1) ──────────────────
+    "syno_system_status": {
+        "oid": "1.3.6.1.4.1.6574.1.1.0",
+        "unit": "status",
+        "description": "Synology system status (1=Normal, 2=Failed)",
+    },
+    "syno_power_status": {
+        "oid": "1.3.6.1.4.1.6574.1.3.0",
+        "unit": "status",
+        "description": "Synology power status (1=Normal, 2=Failed)",
+    },
+    "syno_fan_system_status": {
+        "oid": "1.3.6.1.4.1.6574.1.4.1.0",
+        "unit": "status",
+        "description": "Synology system fan status (1=Normal, 2=Failed)",
+    },
+    "syno_fan_cpu_status": {
+        "oid": "1.3.6.1.4.1.6574.1.4.2.0",
+        "unit": "status",
+        "description": "Synology CPU fan status (1=Normal, 2=Failed)",
+    },
+    "syno_upgrade_available": {
+        "oid": "1.3.6.1.4.1.6574.1.5.4.0",
+        "unit": "status",
+        "description": "Synology DSM upgrade availability (1=available, 2=unavailable)",
+    },
 }
 
 # Walk these OID trees to get all interfaces/disks
@@ -221,6 +262,63 @@ WALK_OIDS = {
         "description": "Storage description (mount point name)",
     },
 }
+
+# ── Per-interface (ifTable/ifXTable) collection ─────────────────────────────────
+#
+# The big observability win: per-PORT throughput + errors on every switch/AP/router.
+# We walk ifXTable 64-bit counters (no 32-bit wrap), compute bps from sample deltas,
+# and capture errors/discards/operstatus/speed. ifName is stored as a label metric.
+#
+# Devices in IFACE_FULL_WALK get every physical/active interface (switches = all ports).
+# Everything else keeps lightweight scalar host metrics only (avoids hammering Macs
+# with 25 virtual interfaces). Loopback/virtual ifaces are filtered by name/operstatus.
+
+IFACE_FULL_WALK = {
+    # UniFi switches — per-port traffic is the headline metric
+    "sw-patio-16p", "sw-jordan-8p", "sw-kitchen-8p", "sw-rack13-16p",
+    "sw-livingroom-8p", "sw-garage-desk-8p", "sw-rack15-agg-8p", "sw-dining-8p",
+    "sw-jordan-poe-8p", "sw-jordan-16p", "sw-garage-8p-150w",
+    # UniFi APs — wired uplink + radio interfaces
+    "ap-office-u6e", "ap-kitchen-u6e", "ap-garage-u6e",
+    # Router — WAN + LAN segments
+    "udm-pro",
+    # NAS — LAN NICs
+    "synology-nas",
+}
+
+# ifXTable / ifTable columns. (mib_oid, metric_prefix, unit, is_counter)
+# is_counter=True columns get an additional computed *_bps rate metric.
+IFACE_COLUMNS = [
+    ("1.3.6.1.2.1.31.1.1.1.6",  "if_hc_in_octets",  "bytes",  True),   # ifHCInOctets (64-bit)
+    ("1.3.6.1.2.1.31.1.1.1.10", "if_hc_out_octets", "bytes",  True),   # ifHCOutOctets (64-bit)
+    ("1.3.6.1.2.1.2.2.1.14",    "if_in_errors",     "count",  False),  # ifInErrors
+    ("1.3.6.1.2.1.2.2.1.20",    "if_out_errors",    "count",  False),  # ifOutErrors
+    ("1.3.6.1.2.1.2.2.1.13",    "if_in_discards",   "count",  False),  # ifInDiscards
+    ("1.3.6.1.2.1.2.2.1.19",    "if_out_discards",  "count",  False),  # ifOutDiscards
+    ("1.3.6.1.2.1.2.2.1.8",     "if_oper_status",   "status", False),  # ifOperStatus (1=up,2=down)
+    ("1.3.6.1.2.1.31.1.1.1.15", "if_speed_mbps",    "mbps",   False),  # ifHighSpeed (Mbps)
+]
+
+IFNAME_OID = "1.3.6.1.2.1.31.1.1.1.1"   # ifName
+IFOPER_OID = "1.3.6.1.2.1.2.2.1.8"       # ifOperStatus (used to filter active ifaces)
+
+# Skip these interface name patterns (loopback / tunnels / virtual) on full walks
+IFACE_SKIP_PREFIXES = ("lo", "dummy", "gre", "erspan", "ip_vti", "ip6", "sit",
+                       "ifb", "honeypot", "tap", "tun", "br", "switch0.", "veth")
+
+# ── Synology vendor walk tables (SYNOLOGY-DISK-MIB / SYNOLOGY-RAID-MIB) ──────────
+# Per-disk temp/status, per-volume/RAID status + size, per-disk IO. Synology only.
+SYNO_DISK_COLUMNS = [
+    ("1.3.6.1.4.1.6574.2.1.1.2",  "syno_disk_name",   "text",    False),  # diskID label
+    ("1.3.6.1.4.1.6574.2.1.1.5",  "syno_disk_status", "status",  True),   # 1=Normal..5=Crashed
+    ("1.3.6.1.4.1.6574.2.1.1.6",  "syno_disk_temp",   "celsius", True),   # disk temperature
+]
+SYNO_RAID_COLUMNS = [
+    ("1.3.6.1.4.1.6574.3.1.1.2", "syno_raid_name",       "text",   False),  # volume/pool name
+    ("1.3.6.1.4.1.6574.3.1.1.3", "syno_raid_status",     "status", True),   # 1=Normal..others=degraded
+    ("1.3.6.1.4.1.6574.3.1.1.4", "syno_raid_free_bytes", "bytes",  True),   # raidFreeSize
+    ("1.3.6.1.4.1.6574.3.1.1.5", "syno_raid_total_bytes","bytes",  True),   # raidTotalSize
+]
 
 # ── Thresholds ────────────────────────────────────────────────────────────────
 
@@ -252,6 +350,9 @@ _stats = {
 }
 _device_failures = defaultdict(int)
 _alert_state = {}
+# Previous interface counter samples for bps delta computation.
+# Keyed by (device_name, ifindex, counter_name) -> (timestamp_epoch, counter_value)
+_iface_prev = {}
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -457,6 +558,174 @@ async def snmp_walk(device, oid_str, raw_text=False):
         return []
 
 
+async def snmp_walk_index(device, oid_str):
+    """Walk an OID subtree, returning {trailing_index: raw_value_string}.
+
+    Uses -Oqn (numeric OID + bare value) so we can recover the table row index
+    (the OID suffix after oid_str) for joining columns of the same table.
+    """
+    ip = device["ip"]
+    base = "." + oid_str if not oid_str.startswith(".") else oid_str
+
+    def _run():
+        try:
+            community = get_credential(device.get("community_keychain", "nova-snmp-community"))
+            version = device.get("version", "v2c")
+            port = device.get("port", 161)
+            if version == "v3":
+                cmd = build_snmp_cmd(device, "/usr/bin/snmpbulkwalk", oid_str)
+            else:
+                cmd = ["/usr/bin/snmpbulkwalk", "-v2c", "-c", community,
+                       "-Oqn", "-t", "3", f"{ip}:{port}", oid_str]
+            r = subprocess.run(cmd, capture_output=True, text=True, timeout=20)
+            if r.returncode != 0:
+                return {}
+            out = {}
+            for line in r.stdout.strip().split("\n"):
+                line = line.strip()
+                if not line or line.startswith("No "):
+                    continue
+                parts = line.split(None, 1)
+                if len(parts) != 2:
+                    continue
+                oid, val = parts
+                if not oid.startswith(base + "."):
+                    continue
+                idx = oid[len(base) + 1:]
+                out[idx] = val.strip().strip('"')
+            return out
+        except Exception:
+            return {}
+
+    try:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, _run)
+    except Exception:
+        return {}
+
+
+async def collect_interfaces(device, now):
+    """Walk ifTable/ifXTable for all active interfaces; emit traffic/errors/bps.
+
+    Computes bps from the delta against the previous sample (per device+iface+counter)
+    so Grafana can chart throughput directly without needing rate() on a SQL source.
+    Also emits the raw 64-bit counter so rate() in Grafana stays possible.
+    """
+    name = device["name"]
+    ip = device["ip"]
+    collected = 0
+
+    # ifName labels + operstatus to decide which interfaces are worth storing
+    ifnames = await snmp_walk_index(device, IFNAME_OID)
+    if not ifnames:
+        return 0
+    opers = await snmp_walk_index(device, IFOPER_OID)
+
+    def _wanted(idx):
+        nm = ifnames.get(idx, "")
+        low = nm.lower()
+        if any(low.startswith(p) for p in IFACE_SKIP_PREFIXES):
+            return False
+        # keep up interfaces, plus switch ports (numeric "0/N") even if currently down
+        oper = opers.get(idx, "")
+        is_up = "1" in oper.split("(")[0] if oper else False
+        is_switchport = "/" in nm
+        return is_up or is_switchport
+
+    wanted = [i for i in ifnames if _wanted(i)]
+    if not wanted:
+        return 0
+
+    # Emit ifName as a label metric (value=index) so dashboards can join name->index
+    for idx in wanted:
+        await _metrics_queue.put({
+            "ts": now, "ip": ip, "name": name,
+            "metric": f"if_name.{idx}", "value": float(idx) if idx.isdigit() else 0.0,
+            "oid": f"{IFNAME_OID}.{idx}", "group": "fast",
+            "unit": ifnames[idx],   # unit field carries the human-readable port name
+        })
+        collected += 1
+
+    # ifOperStatus comes back as a textual enum under -Oqn (e.g. "up"/"down")
+    _oper_map = {"up": 1.0, "down": 2.0, "testing": 3.0, "unknown": 4.0,
+                 "dormant": 5.0, "notpresent": 6.0, "lowerlayerdown": 7.0}
+
+    now_epoch = time.time()
+    for col_oid, prefix, unit, is_counter in IFACE_COLUMNS:
+        col = await snmp_walk_index(device, col_oid)
+        for idx in wanted:
+            raw = col.get(idx)
+            if raw is None:
+                continue
+            if prefix == "if_oper_status":
+                val = _oper_map.get(raw.split("(")[0].strip().lower(),
+                                    _parse_snmp_value(raw))
+            else:
+                val = _parse_snmp_value(raw)
+            if val is None:
+                continue
+            await _metrics_queue.put({
+                "ts": now, "ip": ip, "name": name,
+                "metric": f"{prefix}.{idx}", "value": val,
+                "oid": f"{col_oid}.{idx}", "group": "fast",
+                "unit": unit,
+            })
+            collected += 1
+
+            # Compute bits-per-second from counter delta
+            if is_counter:
+                key = (name, idx, prefix)
+                prev = _iface_prev.get(key)
+                _iface_prev[key] = (now_epoch, val)
+                if prev:
+                    dt = now_epoch - prev[0]
+                    dv = val - prev[1]
+                    if dt > 0 and dv >= 0:   # dv<0 => counter reset/reboot, skip
+                        bps = (dv * 8.0) / dt
+                        bps_metric = prefix.replace("hc_", "").replace("_octets", "_bps")
+                        await _metrics_queue.put({
+                            "ts": now, "ip": ip, "name": name,
+                            "metric": f"{bps_metric}.{idx}", "value": bps,
+                            "oid": f"{col_oid}.{idx}", "group": "fast",
+                            "unit": "bps",
+                        })
+                        collected += 1
+    return collected
+
+
+async def collect_synology(device, now):
+    """Walk Synology disk + RAID/volume vendor tables. Emits temp/status/size."""
+    name = device["name"]
+    ip = device["ip"]
+    collected = 0
+
+    async def _emit_table(columns):
+        nonlocal collected
+        # First column is the name/label table; fetch it to label rows
+        name_oid = columns[0][0]
+        labels = await snmp_walk_index(device, name_oid)
+        for col_oid, prefix, unit, _store in columns:
+            if not _store:
+                continue
+            col = await snmp_walk_index(device, col_oid)
+            for idx, raw in col.items():
+                val = _parse_snmp_value(raw)
+                if val is None:
+                    continue
+                label = labels.get(idx, idx)
+                await _metrics_queue.put({
+                    "ts": now, "ip": ip, "name": name,
+                    "metric": f"{prefix}.{idx}", "value": val,
+                    "oid": f"{col_oid}.{idx}", "group": "slow",
+                    "unit": f"{unit}|{label}",   # unit carries "unit|RowLabel" for dashboards
+                })
+                collected += 1
+
+    await _emit_table(SYNO_DISK_COLUMNS)
+    await _emit_table(SYNO_RAID_COLUMNS)
+    return collected
+
+
 async def poll_device(device, oid_group, poll_group):
     """Poll a single device for a group of OIDs + targeted interface metrics."""
     now = datetime.now(timezone.utc)
@@ -465,11 +734,13 @@ async def poll_device(device, oid_group, poll_group):
     metrics_collected = 0
 
     # Poll scalar OIDs (CPU, memory, uptime, temp)
+    scalar_vals = {}
     for metric_name, oid_def in oid_group.items():
         if isinstance(oid_def, str):
             continue
         value = await snmp_get(device, oid_def["oid"])
         if value is not None:
+            scalar_vals[metric_name] = value
             await _metrics_queue.put({
                 "ts": now, "ip": ip, "name": name,
                 "metric": metric_name, "value": value,
@@ -477,6 +748,17 @@ async def poll_device(device, oid_group, poll_group):
                 "unit": oid_def.get("unit", ""),
             })
             metrics_collected += 1
+
+    # Derive total CPU utilization % from UCD ssCpuIdle (cleaner single metric for dashboards)
+    if "cpu_idle_pct" in scalar_vals:
+        used = max(0.0, min(100.0, 100.0 - scalar_vals["cpu_idle_pct"]))
+        await _metrics_queue.put({
+            "ts": now, "ip": ip, "name": name,
+            "metric": "cpu_used_pct", "value": used,
+            "oid": "1.3.6.1.4.1.2021.11.11.0", "group": poll_group,
+            "unit": "percent",
+        })
+        metrics_collected += 1
 
     # Walk disk OIDs (slow poll only)
     if poll_group == "slow":
@@ -500,8 +782,53 @@ async def poll_device(device, oid_group, poll_group):
                     })
                 metrics_collected += 1
 
-    # Poll targeted interface metrics (fast poll only)
-    if poll_group == "fast":
+    # Synology vendor tables (slow poll only)
+    if poll_group == "slow" and name == "synology-nas":
+        try:
+            metrics_collected += await collect_synology(device, now)
+        except Exception as e:
+            log(f"Synology collect failed for {name}: {e}", "WARN")
+
+    # hrProcessorLoad — per-CPU utilization % (HOST-RESOURCES-MIB). Slow poll.
+    # Available on Linux/Synology/macOS/UniFi-AP snmpd. We also emit the average.
+    if poll_group == "slow":
+        try:
+            cpus = await snmp_walk_index(device, "1.3.6.1.2.1.25.3.3.1.2")
+            loads = []
+            for idx, raw in cpus.items():
+                val = _parse_snmp_value(raw)
+                if val is None:
+                    continue
+                loads.append(val)
+                await _metrics_queue.put({
+                    "ts": now, "ip": ip, "name": name,
+                    "metric": f"hr_cpu_load.{idx}", "value": val,
+                    "oid": f"1.3.6.1.2.1.25.3.3.1.2.{idx}", "group": "slow",
+                    "unit": "percent",
+                })
+                metrics_collected += 1
+            if loads:
+                await _metrics_queue.put({
+                    "ts": now, "ip": ip, "name": name,
+                    "metric": "hr_cpu_load_avg", "value": sum(loads) / len(loads),
+                    "oid": "1.3.6.1.2.1.25.3.3.1.2", "group": "slow",
+                    "unit": "percent",
+                })
+                metrics_collected += 1
+        except Exception as e:
+            log(f"hrProcessorLoad walk failed for {name}: {e}", "WARN")
+
+    # Full per-interface walk for switches/APs/router/NAS (fast poll only)
+    if poll_group == "fast" and name in IFACE_FULL_WALK:
+        try:
+            metrics_collected += await collect_interfaces(device, now)
+        except Exception as e:
+            log(f"Interface walk failed for {name}: {e}", "WARN")
+
+    # Legacy targeted single-interface metrics (fast poll only) — kept for hosts
+    # that aren't in IFACE_FULL_WALK (Macs/Linux endpoints) so existing
+    # if_in_octets.N / if_out_octets.N series stay continuous.
+    if poll_group == "fast" and name not in IFACE_FULL_WALK:
         iface_indices = DEVICE_INTERFACES.get(name, [0])
         for idx in iface_indices:
             # In octets
