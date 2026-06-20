@@ -170,6 +170,88 @@
       "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "values": ["value"] }, "pieType": "donut", "reduceOptions": { "calcs": ["lastNotNull"] } },
       "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT node_name AS metric, COUNT(*) AS value FROM service_registry WHERE status = 'up' GROUP BY 1 ORDER BY 2 DESC;" } ]
+    },
+    {
+      "id": 20,
+      "type": "row",
+      "title": "Backups",
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 60 },
+      "panels": []
+    },
+    {
+      "id": 21,
+      "type": "stat",
+      "title": "NAS Backup — Last Run Status",
+      "description": "Latest telemetry.backup_runs for the Synology->UNAS job. Green = rc 0, no errors, bytes moved. Red = failed / errored / moved 0 bytes (the silent-green failure).",
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 61 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "mappings": [ { "type": "value", "options": { "1": { "text": "OK", "color": "green" }, "0": { "text": "FAILED", "color": "red" } } } ], "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT CASE WHEN ok AND COALESCE(bytes,0) > 0 THEN 1 ELSE 0 END AS \"Status\" FROM telemetry.backup_runs WHERE job = 'nas_backup' ORDER BY ts DESC LIMIT 1;" } ]
+    },
+    {
+      "id": 22,
+      "type": "stat",
+      "title": "NAS Backup — Last Run Age",
+      "description": "Hours since the last NAS backup run. RED if > 25h (a daily backup that did not run).",
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 61 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "h", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 24 }, { "color": "red", "value": 25 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(ts))) / 3600.0 AS \"Hours Since Last Run\" FROM telemetry.backup_runs WHERE job = 'nas_backup';" } ]
+    },
+    {
+      "id": 23,
+      "type": "stat",
+      "title": "NAS Backup — Last Bytes Moved",
+      "description": "Bytes transferred on the most recent run. 0 here = nothing replicated (investigate if unexpected).",
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 61 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COALESCE(bytes,0) AS \"Bytes\" FROM telemetry.backup_runs WHERE job = 'nas_backup' ORDER BY ts DESC LIMIT 1;" } ]
+    },
+    {
+      "id": 24,
+      "type": "stat",
+      "title": "NAS Backup — Last Errors",
+      "description": "rsync errors on the most recent run.",
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 61 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COALESCE(errors,0) AS \"Errors\" FROM telemetry.backup_runs WHERE job = 'nas_backup' ORDER BY ts DESC LIMIT 1;" } ]
+    },
+    {
+      "id": 25,
+      "type": "timeseries",
+      "title": "NAS Backup — Bytes Transferred per Run",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 66 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 40 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
+      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, 'bytes' AS metric, bytes AS value FROM telemetry.backup_runs WHERE job = 'nas_backup' AND $__timeFilter(ts) ORDER BY ts;" } ]
+    },
+    {
+      "id": 26,
+      "type": "timeseries",
+      "title": "NAS Backup — Files Transferred & Errors per Run",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 66 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 30 } }, "overrides": [ { "matcher": { "id": "byName", "options": "errors" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, 'files' AS metric, files AS value FROM telemetry.backup_runs WHERE job = 'nas_backup' AND $__timeFilter(ts) ORDER BY ts;" }, { "refId": "B", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, 'errors' AS metric, errors AS value FROM telemetry.backup_runs WHERE job = 'nas_backup' AND $__timeFilter(ts) ORDER BY ts;" } ]
+    },
+    {
+      "id": 27,
+      "type": "table",
+      "title": "NAS Backup — Recent Runs",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 74 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [ { "matcher": { "id": "byName", "options": "Bytes" }, "properties": [ { "id": "unit", "value": "bytes" } ] } ] },
+      "options": { "showHeader": true, "sortBy": [ { "displayName": "When", "desc": true } ] },
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS \"When\", rc AS \"rc\", elapsed_s AS \"Elapsed (s)\", files AS \"Files\", bytes AS \"Bytes\", errors AS \"Errors\", CASE WHEN ok AND COALESCE(bytes,0) > 0 THEN 'OK' ELSE 'CHECK' END AS \"Status\" FROM telemetry.backup_runs WHERE job = 'nas_backup' ORDER BY ts DESC LIMIT 30;" } ]
     }
   ]
 }

@@ -712,6 +712,101 @@
           "isPaused": false
         }
       ]
+    },
+    {
+      "orgId": 1,
+      "name": "backup-health",
+      "folder": "Nova Infrastructure",
+      "interval": "5m",
+      "rules": [
+        {
+          "uid": "nova_nas_backup_failed_or_stale",
+          "title": "NAS backup failed or stale",
+          "condition": "C",
+          "data": [
+            {
+              "refId": "A",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "nova-ops-pg",
+              "model": {
+                "refId": "A",
+                "datasource": {
+                  "type": "grafana-postgresql-datasource",
+                  "uid": "nova-ops-pg"
+                },
+                "rawSql": "WITH last AS (SELECT * FROM telemetry.backup_runs WHERE job = 'nas_backup' ORDER BY ts DESC LIMIT 1), recent_ok AS (SELECT 1 FROM telemetry.backup_runs WHERE job = 'nas_backup' AND ok AND COALESCE(bytes,0) > 0 AND ts > now() - interval '25 hours' LIMIT 1) SELECT 'nas_backup' AS metric, CASE WHEN NOT EXISTS (SELECT 1 FROM last) THEN 1 WHEN NOT EXISTS (SELECT 1 FROM recent_ok) THEN 1 WHEN (SELECT COALESCE(rc,1) FROM last) <> 0 THEN 1 WHEN (SELECT COALESCE(bytes,0) FROM last) = 0 THEN 1 ELSE 0 END::float8 AS value",
+                "format": "table",
+                "rawQuery": true,
+                "editorMode": "code"
+              }
+            },
+            {
+              "refId": "B",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "B",
+                "type": "reduce",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "reducer": "last",
+                "expression": "A",
+                "settings": {
+                  "mode": "dropNN"
+                }
+              }
+            },
+            {
+              "refId": "C",
+              "relativeTimeRange": {
+                "from": 600,
+                "to": 0
+              },
+              "datasourceUid": "__expr__",
+              "model": {
+                "refId": "C",
+                "type": "threshold",
+                "datasource": {
+                  "type": "__expr__",
+                  "uid": "__expr__"
+                },
+                "expression": "B",
+                "conditions": [
+                  {
+                    "evaluator": {
+                      "type": "gt",
+                      "params": [
+                        0.0
+                      ]
+                    },
+                    "type": "query"
+                  }
+                ]
+              }
+            }
+          ],
+          "noDataState": "Alerting",
+          "execErrState": "Error",
+          "for": "5m",
+          "labels": {
+            "severity": "warning",
+            "team": "nova"
+          },
+          "annotations": {
+            "summary": "Synology->UNAS NAS backup failed, moved 0 bytes, or has not succeeded in 25h.",
+            "description": "telemetry.backup_runs shows the nas_backup job is unhealthy: no successful run (rc=0, bytes>0) in the last 25 hours, OR the latest run has rc != 0, OR the latest run moved 0 bytes (the silent-green failure). The backup runs daily at 03:30 on the Synology and is ingested to PG on .6 by nova_backup_ingest. Check /volume1/homes/kochj/nova_nas_backup.log on the Synology and the backup_ingest scheduler task."
+          },
+          "isPaused": false
+        }
+      ]
     }
   ]
 }

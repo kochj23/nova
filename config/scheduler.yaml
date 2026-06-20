@@ -168,6 +168,15 @@ tasks:
     timeout: 30
     overlap: skip
 
+  backup_ingest:
+    # Reads the latest nas_backup memory (Synology daily 03:30 POST) and upserts
+    # into telemetry.backup_runs for Grafana. Hourly is ample for a daily backup;
+    # idempotent UPSERT keyed on (ts, job) so re-runs are harmless.
+    script: nova_backup_ingest.py
+    schedule: every 1h
+    timeout: 60
+    overlap: skip
+
   disk_forecast:
     script: nova_disk_forecast.py
     schedule: every 1h
