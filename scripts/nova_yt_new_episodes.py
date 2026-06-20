@@ -624,6 +624,16 @@ def _cookies_args() -> list:
 
 
 def download_video(vid_id: str, output_path: Path) -> str:
+    # yt-dlp writes intermediate fragment/.part files using the RAW video title,
+    # which fails on the AFP NAS mount for non-ASCII titles (e.g. Japanese, ～)
+    # with [Errno 22] Invalid argument. Keep all temp/intermediate files on local
+    # APFS (handles Unicode fine); only the final, sanitized .mp4 lands on the NAS.
+    scratch = Path("/Volumes/Data/tmp/yt-dlp")
+    try:
+        scratch.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        scratch = Path.home() / ".openclaw" / "tmp" / "yt-dlp"
+        scratch.mkdir(parents=True, exist_ok=True)
     cmd = [
         YT_DLP,
         *_cookies_args(),
@@ -633,9 +643,11 @@ def download_video(vid_id: str, output_path: Path) -> str:
         "-f", "bestvideo[height=720]+bestaudio/bestvideo[height=540]+bestaudio/bestvideo[height<=720]+bestaudio/best[height<=720]",
         "--merge-output-format", "mp4",
         "-o", str(output_path),
+        "--paths", f"temp:{scratch}",  # intermediate/.part files on local APFS, not AFP
         "--no-overwrites",
         "--no-playlist",
         "--windows-filenames",   # strip [ ] and other chars invalid on CIFS/SMB (NAS mount)
+        "--trim-filenames", "200",  # cap byte-length so long Unicode names don't blow the 255B fs limit
         f"https://www.youtube.com/watch?v={vid_id}",
     ]
     r = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
