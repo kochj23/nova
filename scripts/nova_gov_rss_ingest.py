@@ -799,6 +799,7 @@ def run():
         f"({len(results)} feeds, {sum(len(r[2]) for r in results)} raw items)")
 
     # ── Phase 2: Sequential dedup + ingest (seen set / ingest NOT thread-safe) ──
+    feed_detail = {}  # label -> list of new item titles (for the per-feed Slack breakdown)
     for vector, label, items in results:
         new_items = 0
 
@@ -811,6 +812,7 @@ def run():
             new_items += 1
 
             title = clean_html(item["title"])
+            feed_detail.setdefault(label, []).append(title[:90])
             desc = clean_html(item["description"])
             content = f"{title}. {desc}" if desc else title
 
@@ -840,11 +842,19 @@ def run():
     log(f"Done: {total_new} new items, {total_ingested} chunks ingested")
 
     if total_new > 0:
-        nova_config.post_both(
-            f":globe_with_meridians: *OSINT/Gov RSS Ingest* — {total_new} new items across {len(FEEDS)} feeds, "
-            f"{total_ingested} chunks ingested",
-            slack_channel=nova_config.SLACK_NOTIFY
-        )
+        # Per-feed breakdown with item titles — every feed that had new items appears,
+        # with up to 3 titles each (so it's "all feeds + detail" without a per-item firehose).
+        lines = [f":globe_with_meridians: *OSINT/Gov RSS Ingest* — {total_new} new items "
+                 f"across {len(feed_detail)} feeds ({total_ingested} chunks)"]
+        for label in sorted(feed_detail, key=lambda k: -len(feed_detail[k])):
+            titles = feed_detail[label]
+            shown = "; ".join(t for t in titles[:3])
+            more = f" _+{len(titles) - 3} more_" if len(titles) > 3 else ""
+            lines.append(f":small_blue_diamond: *{label}* ({len(titles)}): {shown}{more}")
+        msg = "\n".join(lines)
+        if len(msg) > 3500:  # Slack-friendly cap
+            msg = msg[:3500] + "\n…(truncated)"
+        nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 if __name__ == "__main__":
