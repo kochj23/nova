@@ -54,6 +54,63 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 
 ## Infrastructure & Security (June 2026)
 
+### Notification Bus, Incident Correlation & Self-Healing (2026-06-21)
+
+Nova went from **~95 scripts each hardcoding their own Slack channel** to a single
+event-driven nervous system that detects → routes → dedups → **correlates** →
+summarizes (with her *own* local LLMs) → proposes a fix. Everything emits via one
+API; one daemon decides everything.
+
+- **Event bus** — every emitter calls `nova_notify.notify(title, level, category,
+  dedup_key)`, which writes to `telemetry.events`. Emitters declare *intent*, not a
+  destination. (~89 scripts migrated; DM/photos/chat/email posts deliberately left alone.)
+- **`nova_notifier` daemon** (launchd, KeepAlive) — drains the bus and **routes by
+  severity** (`info → #nova-info`, `warning → #nova-warning`, `critical → #nova-critical`),
+  **dedups** repeats within a window (collapses the SNMP/UNAS alert storms), and runs
+  correlation before delivery.
+- **`nova_correlator`** — folds related events into one **incident** via three layers:
+  *topology* (a root cause like a wedged GPU suppresses its downstream symptoms),
+  *temporal* (same-host events within a window), and *semantic* (nomic-embed-text
+  centroids). **qwen3-coder:30b** writes each incident's root-cause/symptom/action
+  summary — local, free, private. Last night's 41-alert GPU-wedge storm now collapses
+  to **one** incident.
+- **`nova_remediation`** — runbook engine that *proposes* fixes for known incidents.
+  **Propose-only by default** (`REMEDIATION_ENABLED=False`), allowlist-only commands,
+  impactful actions (reboot) approval-gated. e.g. GPU wedge → propose `restart_ollama`.
+- **`nova_incident_lifecycle`** — auto-closes resolved incidents, tracks MTTA/MTTR, and
+  flags **recurrence** ("this GPU thing has happened 3× in 7 days — needs a permanent fix").
+- **`nova_prober`** — synthetic **end-to-end** probes every 2m (real HTTP 200+content,
+  memory write→read roundtrip, embedding, Postgres) — tests *reality*, not proxies (kills
+  the "site down for 9 days" false-alarm class).
+- **Tested**: 237 tests across the 6 new modules (7-category convention; bus/LLM/DB mocked).
+- Channels renamed: `#nova-notifications → #nova-warning`, `#nova-bb → #nova-critical`,
+  new `#nova-info` for pure FYI.
+
+```mermaid
+flowchart LR
+    EM["~95 emitters<br/>nova_notify.notify()"] --> BUS[("telemetry.events<br/>event bus")]
+    PR["nova_prober<br/>synthetic probes (2m)"] --> BUS
+    BUS --> D{"nova_notifier<br/>daemon"}
+    D -->|"dedup window"| D
+    D --> CO["nova_correlator<br/>topology · temporal · semantic"]
+    CO --> INC[("telemetry.incidents")]
+    CO -.->|"qwen3-coder:30b"| SUM["root-cause summary"]
+    INC --> REM["nova_remediation<br/>propose-only · allowlist · gated"]
+    INC --> LC["nova_incident_lifecycle<br/>auto-close · MTTR · recurrence"]
+    D --> INFO["#nova-info"]
+    D --> WARN["#nova-warning"]
+    D --> CRIT["#nova-critical"]
+```
+
+### Cloudflare Tunnel — HA, off the GPU box (2026-06-21)
+
+The tunnel is pure ingress, not inference, so it was moved **off `.6`** onto **HA
+connectors on nova-core (`.2`) + nuk (`.10`)** (same tunnel, Cloudflare load-balances;
+each auto-restarts via systemd). The public front door now survives either box dying —
+and no longer goes down when `.6`'s GPU wedges. Watched by `nova_prober`'s
+`cloudflared_tunnel` connector-health probe. (Phase 2 — moving the stateless web
+frontends off `.6` — is queued.)
+
 ### The .7 Evacuation & nova-core Consolidation (2026-06-20)
 
 The old **TV-Movies Mac Mini (192.168.1.7)** that used to host the observability
@@ -832,7 +889,10 @@ On WebSocket connect, server sends `{"type": "identity", "name": "..."}` to over
 
 ### External Access (Cloudflare Tunnel)
 
-**Status:** Live. Tunnel `a20ae87c` routes `chat.digitalnoise.net` → port 37480.
+**Status:** Live, **HA**. Tunnel `a20ae87c` routes `chat`/`gauges`/`analytics`/`digitalnoise.net`.
+As of 2026-06-21 it runs on **dual connectors (nova-core `.2` + nuk `.10`)**, *off* the
+`.6` GPU box — Cloudflare load-balances across both, so the front door survives either
+node dying. Watched by `nova_prober`'s connector-health probe. (See the HA section above.)
 
 **Architecture:**
 - Cloudflare Tunnel daemon (`cloudflared`) on LAN, no open ports
