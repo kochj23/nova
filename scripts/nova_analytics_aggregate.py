@@ -87,7 +87,9 @@ def aggregate_hour(conn, hour_start, hour_end):
             AVG((event_data->>'seconds')::float) as avg_engagement_s
         FROM analytics_events
         WHERE ts >= %s AND ts < %s AND event_type = 'engagement'
-        AND event_data->>'seconds' IS NOT NULL
+        -- only cast valid numbers; a malformed client value like "1.2.3" (multiple
+        -- decimal points) otherwise crashes the ENTIRE aggregation query (#631).
+        AND event_data->>'seconds' ~ '^-?[0-9]+([.][0-9]+)?$'
         GROUP BY site, path
     """, (hour_start, hour_end))
     engagement = {(r["site"], r["path"]): r["avg_engagement_s"] for r in cur.fetchall()}
@@ -98,7 +100,8 @@ def aggregate_hour(conn, hour_start, hour_end):
             AVG((event_data->>'depth')::float) as avg_scroll_pct
         FROM analytics_events
         WHERE ts >= %s AND ts < %s AND event_type = 'scroll'
-        AND event_data->>'depth' IS NOT NULL
+        -- only cast valid numbers (see #631 — malformed "1.2.3" crashes the query)
+        AND event_data->>'depth' ~ '^-?[0-9]+([.][0-9]+)?$'
         GROUP BY site, path
     """, (hour_start, hour_end))
     scroll = {(r["site"], r["path"]): r["avg_scroll_pct"] for r in cur.fetchall()}
