@@ -68,6 +68,11 @@ FEEDS = [
     # SoCal Emergency / Physical Security
     ("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.atom", "infrastructure", "USGS Earthquakes 2.5+ Day"),
     ("https://api.weather.gov/alerts/active.atom?area=CA", "infrastructure", "NWS California Alerts"),
+    # US Army Corps of Engineers, LA District (Site=429). Akamai blocks the HTML
+    # pages but NOT these RSS.ashx endpoints (plain UA gets 200). Covers SoCal
+    # flood-control dams, levees, the LA River, dredging, emergency operations.
+    ("https://www.spl.usace.army.mil/DesktopModules/ArticleCS/RSS.ashx?ContentType=1&Site=429&max=20", "la_public_safety", "USACE LA District News"),
+    ("https://www.spl.usace.army.mil/DesktopModules/ArticleCS/RSS.ashx?ContentType=9&Site=429&max=20", "la_public_safety", "USACE LA District Releases"),
 
     # ══════════════════════════════════════════════════════════════
     # NATO PARTNERS — UK
