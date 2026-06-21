@@ -270,5 +270,10 @@ def slack_post(text):
 
 
 if __name__ == "__main__":
-    issue_count = run_audit()
-    sys.exit(1 if issue_count > 0 else 0)
+    # Finding audit issues is a SUCCESSFUL run, not a task failure. Exiting 1 on
+    # "issues found" made the scheduler flag self_audit as "9 consecutive failures"
+    # every time it did its job (e.g. noticing plex/searxng down). Issues are already
+    # reported to Slack/log above; exit 0 on normal completion. A real crash still
+    # exits nonzero via an uncaught exception.
+    run_audit()
+    sys.exit(0)
