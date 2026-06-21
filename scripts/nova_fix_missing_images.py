@@ -97,6 +97,16 @@ def generate_image_for_post(post: dict) -> str | None:
     style = post["style"]
     section = post["section"]
 
+    # Reuse an already-generated image for this post if one exists on disk under
+    # ANY common extension. The loop bug was posts whose cover ref said .webp while
+    # only a .png existed — those don't need a fresh SwarmUI render, just a convert.
+    img_dir = STATIC_DIR / section
+    slug = post["file"].stem
+    for ext in (".webp", ".png", ".jpg", ".jpeg"):
+        cand = img_dir / f"{slug}{ext}"
+        if cand.exists():
+            return str(cand)
+
     # Clean title for prompt
     clean_title = re.sub(r'[📝🌃💻📄]', '', title).strip()[:60]
     prompt = f"{style}, inspired by: {clean_title}, no text, no words, no letters"
@@ -111,17 +121,26 @@ def add_image_to_post(post: dict, image_path: str) -> bool:
     md_file = post["file"]
     title = post["title"]
 
-    # Create image filename
+    # Output WebP — the journal references .webp everywhere (publish_hugo writes
+    # .webp refs, deploy expects WebP). The repair previously wrote .png, so the
+    # cover ref (.webp) never matched the file (.png) and the post looped as
+    # "missing" forever. Convert to .webp here so the ref resolves and it converges.
     slug = md_file.stem
-    img_filename = f"{slug}.png"
+    img_filename = f"{slug}.webp"
     img_dir = STATIC_DIR / section
     img_dir.mkdir(parents=True, exist_ok=True)
     dest = img_dir / img_filename
 
     try:
-        shutil.copy2(image_path, dest)
+        if image_path.lower().endswith(".webp"):
+            shutil.copy2(image_path, dest)
+        else:
+            r = subprocess.run(["cwebp", "-q", "82", image_path, "-o", str(dest)],
+                               capture_output=True, timeout=30)
+            if r.returncode != 0 or not dest.exists():
+                shutil.copy2(image_path, dest)  # fallback: at least the file exists
     except Exception as e:
-        log(f"  Failed to copy image: {e}")
+        log(f"  Failed to write image: {e}")
         return False
 
     # Update frontmatter
