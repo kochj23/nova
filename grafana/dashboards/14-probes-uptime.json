@@ -1,0 +1,74 @@
+{
+  "uid": "nova-probes-uptime",
+  "title": "Nova / Probes & Uptime",
+  "tags": ["nova", "probes", "uptime", "synthetic"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Current Probe Status (latest per probe)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [ { "matcher": { "id": "byName", "options": "OK" }, "properties": [ { "id": "custom.cellOptions", "value": { "type": "color-background" } }, { "id": "mappings", "value": [ { "type": "value", "options": { "true": { "color": "green", "text": "OK", "index": 0 }, "false": { "color": "red", "text": "FAIL", "index": 1 } } } ] } ] } ] },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT DISTINCT ON (probe) probe AS \"Probe\", ok AS \"OK\", latency_ms AS \"Latency (ms)\", detail AS \"Detail\", ts AS \"Last Run\" FROM telemetry.probe_results ORDER BY probe, ts DESC;" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "table",
+      "title": "Uptime % per Probe (last 24h)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [ { "matcher": { "id": "byName", "options": "Uptime %" }, "properties": [ { "id": "unit", "value": "percent" }, { "id": "decimals", "value": 1 }, { "id": "custom.cellOptions", "value": { "type": "color-background", "mode": "gradient" } }, { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 95 }, { "color": "green", "value": 99 } ] } } ] } ] },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT probe AS \"Probe\", round((100.0 * sum(ok::int) / count(*))::numeric, 2) AS \"Uptime %\", count(*) AS \"Runs\", sum((NOT ok)::int) AS \"Failures\" FROM telemetry.probe_results WHERE ts >= now() - interval '24 hours' GROUP BY probe ORDER BY probe;" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Probe Latency (ms)",
+      "gridPos": { "h": 8, "w": 16, "x": 0, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, probe AS metric, latency_ms AS value FROM telemetry.probe_results WHERE $__timeFilter(ts) AND latency_ms IS NOT NULL ORDER BY ts;" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Cloudflared Tunnel (HA .2/.10)",
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] }, "mappings": [ { "type": "value", "options": { "0": { "text": "DOWN", "index": 0 }, "1": { "text": "UP", "index": 1 } } } ] }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "/.*/" }, "colorMode": "background", "graphMode": "none", "textMode": "value" },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS time, ok::int AS \"Tunnel\" FROM telemetry.probe_results WHERE probe = 'cloudflared_tunnel' ORDER BY ts DESC LIMIT 1;" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Failures Over Time (count where not ok)",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 16 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 60 }, "color": { "mode": "fixed", "fixedColor": "red" } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT date_trunc('hour', ts) AS time, probe AS metric, sum((NOT ok)::int) AS value FROM telemetry.probe_results WHERE $__timeFilter(ts) GROUP BY 1, probe ORDER BY 1;" }
+      ]
+    }
+  ]
+}

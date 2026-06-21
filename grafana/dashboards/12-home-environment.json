@@ -1,0 +1,110 @@
+{
+  "uid": "nova-home-environment",
+  "title": "Home / Environment",
+  "tags": ["nova", "home", "environment", "presence", "air-quality", "fp300", "aqin"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Current Room Occupancy (FP300 mmWave, last 5m)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT DISTINCT ON (room) room AS \"Room\", person AS \"Person\", round(confidence::numeric,2) AS \"Confidence\", method AS \"Method\", ts AS \"Last Seen\" FROM telemetry.presence WHERE method = 'mmwave' AND confidence > 0 AND ts > now() - interval '5 minutes' ORDER BY room, ts DESC;" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Presence Confidence by Room (mmwave)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "percentunit", "min": 0, "max": 1, "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, room AS metric, confidence AS value FROM telemetry.presence WHERE method = 'mmwave' AND confidence IS NOT NULL AND $__timeFilter(ts) ORDER BY ts;" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Temperature by Room (FP300, F)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "fahrenheit", "custom": { "drawStyle": "line", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, room AS metric, temp_f AS value FROM telemetry.climate WHERE source = 'fp300' AND temp_f IS NOT NULL AND $__timeFilter(ts) ORDER BY ts;" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Humidity by Room (FP300, %)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "humidity", "custom": { "drawStyle": "line", "lineWidth": 2 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, room AS metric, humidity AS value FROM telemetry.climate WHERE source = 'fp300' AND humidity IS NOT NULL AND $__timeFilter(ts) ORDER BY ts;" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Light Level by Room (FP300, lux)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "lux", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 5 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, room AS metric, light_lux AS value FROM telemetry.climate WHERE source = 'fp300' AND light_lux IS NOT NULL AND $__timeFilter(ts) ORDER BY ts;" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "gauge",
+      "title": "CO2 (latest, ppm)",
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 16 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "ppm", "min": 400, "max": 2000, "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 800 }, { "color": "red", "value": 1200 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS time, co2 FROM telemetry.air_quality WHERE co2 IS NOT NULL ORDER BY ts DESC LIMIT 1;" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "stat",
+      "title": "AQI (PM2.5, latest)",
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 16 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 0, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 51 }, { "color": "orange", "value": 101 }, { "color": "red", "value": 151 }, { "color": "purple", "value": 201 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "area" },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS time, aqi_pm25 FROM telemetry.air_quality WHERE aqi_pm25 IS NOT NULL ORDER BY ts DESC LIMIT 1;" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "timeseries",
+      "title": "Particulates PM2.5 & PM10 (ug/m3)",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 24 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "conppm", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, pm25 AS \"PM2.5\", pm10 AS \"PM10\" FROM telemetry.air_quality WHERE $__timeFilter(ts) ORDER BY ts;" }
+      ]
+    }
+  ]
+}

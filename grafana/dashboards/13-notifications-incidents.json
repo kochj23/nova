@@ -1,0 +1,134 @@
+{
+  "uid": "nova-notifications-incidents",
+  "title": "Nova / Notifications & Incidents",
+  "tags": ["nova", "notifications", "incidents", "events", "remediations"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "time": { "from": "now-24h", "to": "now" },
+  "annotations": { "list": [] },
+  "templating": { "list": [] },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Events / Hour by Level",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 60, "stacking": { "mode": "normal", "group": "A" } } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT date_trunc('hour', ts) AS time, level AS metric, count(*) AS value FROM telemetry.events WHERE $__timeFilter(ts) GROUP BY date_trunc('hour', ts), level ORDER BY time;" }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "piechart",
+      "title": "Events by Channel (sent)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "right", "values": ["value"] }, "pieType": "donut", "reduceOptions": { "calcs": ["lastNotNull"] } },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT coalesce(channel, 'unknown') AS metric, count(*) AS value FROM telemetry.events WHERE status = 'sent' AND $__timeFilter(ts) GROUP BY channel ORDER BY value DESC;" }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Dedup Effectiveness - Sent vs Suppressed",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 2, "fillOpacity": 15 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["sum"] }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT date_trunc('hour', ts) AS time, status AS metric, count(*) AS value FROM telemetry.events WHERE status IN ('sent','suppressed') AND $__timeFilter(ts) GROUP BY date_trunc('hour', ts), status ORDER BY time;" }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "stat",
+      "title": "Open Incidents",
+      "gridPos": { "h": 4, "w": 6, "x": 12, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 }, { "color": "red", "value": 5 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT count(*) AS \"Open\" FROM telemetry.incidents WHERE status = 'open';" }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "stat",
+      "title": "MTTR Avg (minutes)",
+      "gridPos": { "h": 4, "w": 6, "x": 18, "y": 8 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "m", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 30 }, { "color": "red", "value": 120 } ] } }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT round((avg(mttr_s) / 60.0)::numeric, 1) AS \"MTTR (min)\" FROM telemetry.incidents WHERE status = 'resolved' AND mttr_s IS NOT NULL;" }
+      ]
+    },
+    {
+      "id": 6,
+      "type": "timeseries",
+      "title": "Incidents Over Time (opened)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 50 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT date_trunc('hour', opened_at) AS time, coalesce(severity, 'unknown') AS metric, count(*) AS value FROM telemetry.incidents WHERE $__timeFilter(opened_at) GROUP BY date_trunc('hour', opened_at), severity ORDER BY time;" }
+      ]
+    },
+    {
+      "id": 7,
+      "type": "barchart",
+      "title": "Incidents by Host",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": { "unit": "short", "custom": { "lineWidth": 1, "fillOpacity": 80 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "orientation": "horizontal", "xField": "Host" },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT coalesce(host, 'unknown') AS \"Host\", count(*) AS \"Incidents\" FROM telemetry.incidents WHERE $__timeFilter(opened_at) GROUP BY host ORDER BY \"Incidents\" DESC;" }
+      ]
+    },
+    {
+      "id": 8,
+      "type": "table",
+      "title": "Remediations Proposed (by status & tier)",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 20 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT status AS \"Status\", tier AS \"Tier\", count(*) AS \"Count\" FROM telemetry.remediations WHERE $__timeFilter(requested_at) GROUP BY status, tier ORDER BY \"Count\" DESC, status, tier;" }
+      ]
+    },
+    {
+      "id": 9,
+      "type": "table",
+      "title": "Recent Incidents",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 24 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT opened_at AS \"Opened\", status AS \"Status\", severity AS \"Severity\", host AS \"Host\", title AS \"Title\", member_count AS \"Members\", round((mtta_s/60.0)::numeric,1) AS \"MTTA (min)\", round((mttr_s/60.0)::numeric,1) AS \"MTTR (min)\" FROM telemetry.incidents WHERE $__timeFilter(opened_at) ORDER BY opened_at DESC LIMIT 50;" }
+      ]
+    },
+    {
+      "id": 10,
+      "type": "table",
+      "title": "Recent Events",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 28 },
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "options": { "showHeader": true },
+      "targets": [
+        { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS \"Time\", source AS \"Source\", level AS \"Level\", category AS \"Category\", title AS \"Title\", status AS \"Status\", channel AS \"Channel\", dispatch_count AS \"Dispatches\" FROM telemetry.events WHERE $__timeFilter(ts) ORDER BY ts DESC LIMIT 50;" }
+      ]
+    }
+  ]
+}
