@@ -51,7 +51,7 @@ def log(msg):
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    nova_config.post_both(text, slack_channel=nova_config.SLACK_INFO)
 
 
 # ── HomePod TTS (DISABLED 2026-04-09 — randomly triggering during meetings) ──

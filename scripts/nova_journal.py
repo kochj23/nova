@@ -409,7 +409,7 @@ def notify_slack(section: str, title: str, preview: str):
     emoji = section_emojis.get(section, ":book:")
     short_preview = preview[:250].rsplit(" ", 1)[0] + "..." if len(preview) > 250 else preview
     msg = f"{emoji} *Nova Journal — {section}*\n*{title}*\n_{short_preview}_"
-    nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
+    nova_config.post_both(msg, slack_channel=nova_config.SLACK_INFO)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

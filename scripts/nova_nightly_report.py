@@ -64,7 +64,7 @@ NOW          = datetime.now()
 def slack_post(text):
     chunks = [text[i:i+3000] for i in range(0, len(text), 3000)]
     for chunk in chunks:
-        nova_config.post_both(chunk, slack_channel=nova_config.SLACK_NOTIFY)
+        nova_config.post_both(chunk, slack_channel=nova_config.SLACK_INFO)
 
 
 def log(msg):
