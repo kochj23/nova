@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 JORDAN_DM = nova_config.JORDAN_DM
 NOW = datetime.now()
@@ -254,12 +255,14 @@ def main():
     # ── Regular financial activity to #nova-chat ─────────────────────────────
     non_urgent = [e for e in new_events if not e["urgent"]]
     if non_urgent:
-        lines = [f"*Financial Activity — {NOW.strftime('%I:%M %p')}*"]
+        title = f"Financial Activity — {NOW.strftime('%I:%M %p')}"
+        lines = []
         for event in non_urgent[:10]:
             icon = CATEGORY_ICONS.get(event["category"], "📋")
             amount_str = f" ${event['amount']:.2f}" if event.get("amount") else ""
             lines.append(f"  {icon} [{event['institution']}] {event['subject'][:60]}{amount_str}")
-        slack_post("\n".join(lines))
+        notify(title, body="\n".join(lines), level="info", category="finance",
+               dedup_key="finance-activity")
         log(f"Posted {len(non_urgent)} financial event(s)")
 
     if not new_events:
@@ -536,7 +539,11 @@ if __name__ == "__main__":
 
     if args.weekly:
         text = weekly_digest()
-        slack_post(text)
+        parts = text.split("\n", 1)
+        title = parts[0].lstrip("*").rstrip("*").strip()
+        body = parts[1] if len(parts) > 1 else None
+        notify(title, body=body, level="info", category="finance",
+               dedup_key="finance-weekly-digest")
         log("Weekly digest posted.")
     elif args.digest:
         print(weekly_digest())

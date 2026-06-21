@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 from nova_logger import log, LOG_INFO, LOG_WARN, LOG_ERROR
 
 REDIS_QUEUE       = "nova:memory:ingest"
@@ -59,8 +60,15 @@ def main():
                 source="dead-letter-replay")
             skipped += 1
 
-    msg = f":recycle: *Dead-Letter Replay*\n• Replayed: {replayed}\n• Skipped (malformed): {skipped}"
-    nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
+    # Scheduled-job completion digest — FYI status, not an alert. Weekly cadence,
+    # so dedup on a stable key to collapse repeats.
+    notify(
+        "Dead-Letter Replay",
+        body=f"• Replayed: {replayed}\n• Skipped (malformed): {skipped}",
+        level="info", category="memory_ingest",
+        dedup_key="dead-letter-replay",
+        meta={"replayed": replayed, "skipped": skipped},
+    )
     log(f"Replay complete: {replayed} replayed, {skipped} skipped",
         level=LOG_INFO, source="dead-letter-replay")
 

@@ -43,6 +43,7 @@ def _safe_dumps(obj) -> str:
 
 sys.path.insert(0, str(Path.home()) + "/.openclaw/scripts")
 import nova_config
+from nova_notify import notify
 
 import psycopg2
 import psycopg2.extras
@@ -814,8 +815,16 @@ def post_digest(obs_list: list[Observation]):
 
     msg = format_digest(obs_list)
     if msg:
-        nova_config.post_both(msg, nova_config.SLACK_NOTIFY)
-        log.info("Posted digest to Slack/Discord")
+        body = "\n".join(msg.split("\n")[1:])
+        notify(
+            "Home Telemetry — Hourly Digest",
+            body=body,
+            level="info",
+            category="telemetry",
+            dedup_key="telemetry-hourly-digest",
+            meta={"observations": len(obs_list)},
+        )
+        log.info("Posted digest to notification bus")
 
 
 def post_critical_immediately(obs_list: list[Observation]):
@@ -837,7 +846,13 @@ def post_critical_immediately(obs_list: list[Observation]):
     if len(criticals) > MAX_SHOWN:
         lines.append(f"…and {len(criticals) - MAX_SHOWN} more critical items (see digest).")
 
-    nova_config.post_both("\n".join(lines), nova_config.SLACK_NOTIFY)
+    notify(
+        "CRITICAL ALERTS",
+        body="\n".join(lines[1:]),
+        level="critical",
+        category="telemetry",
+        meta={"critical_count": len(criticals)},
+    )
     log.warning(f"Posted {len(criticals)} critical alerts in one batched message.")
 
 
@@ -887,9 +902,13 @@ def main():
         log.error(f"Fatal error: {e}", exc_info=True)
         # Try to alert on fatal errors
         try:
-            nova_config.post_both(
-                f"\U0001f6a8 *Telemetry Observer CRASHED*\n`{e}`",
-                nova_config.SLACK_NOTIFY
+            notify(
+                "Telemetry Observer CRASHED",
+                body=f"{e}",
+                level="critical",
+                category="telemetry",
+                dedup_key="telemetry-observer-crash",
+                meta={"error": str(e)},
             )
         except Exception:
             pass

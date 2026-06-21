@@ -25,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 import nova_config
+from nova_notify import notify
 
 try:
     import asyncpg
@@ -93,9 +94,13 @@ def parse_sender(metadata: dict):
 
 
 async def main():
-    nova_config.post_both(
-        ":gear: *nova_backfill_date_sender* starting — backfilling extracted_date/extracted_sender",
-        slack_channel=nova_config.SLACK_NOTIFY,
+    notify(
+        "nova_backfill_date_sender starting",
+        body="Backfilling extracted_date/extracted_sender",
+        level="info",
+        category="memory_ingest",
+        dedup_key="backfill-date-sender",
+        meta={"host": "mac-studio"},
     )
     log("Connecting to database...")
     pool = await asyncpg.create_pool(DB_DSN, min_size=2, max_size=5)
@@ -177,15 +182,21 @@ async def main():
         await pool.close()
 
     elapsed = time.time() - start_time
-    summary = (
-        f":white_check_mark: *nova_backfill_date_sender* complete\n"
+    summary_body = (
         f"- Rows processed: {total_processed:,}\n"
         f"- Dates extracted: {total_date_set:,}\n"
         f"- Senders extracted: {total_sender_set:,}\n"
         f"- Duration: {elapsed / 60:.1f} minutes"
     )
-    log(summary)
-    nova_config.post_both(summary, slack_channel=nova_config.SLACK_NOTIFY)
+    log("nova_backfill_date_sender complete\n" + summary_body)
+    notify(
+        "nova_backfill_date_sender complete",
+        body=summary_body,
+        level="info",
+        category="memory_ingest",
+        dedup_key="backfill-date-sender",
+        meta={"host": "mac-studio"},
+    )
 
 
 if __name__ == "__main__":

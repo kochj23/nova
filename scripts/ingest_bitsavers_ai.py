@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify as nova_notify
 
 LOG_DIR = Path.home() / ".openclaw/logs"
 LOG_FILE = LOG_DIR / "ingest_bitsavers_ai.log"
@@ -105,10 +106,21 @@ _stats = {
 
 
 def notify(text):
-    try:
-        nova_config.post_both(text, slack_channel=SLACK_CHANNEL)
-    except Exception as e:
-        log.warning(f"Notification failed: {e}")
+    # Migrated to the central notification bus. All bitsavers ingest posts are
+    # FYI/status/digest-style (start / periodic status / completed / summary),
+    # so they emit at info level under the "ingest" category. A stable dedup_key
+    # collapses the repeating 5-minute status updates for this run.
+    lines = text.split("\n", 1)
+    title = lines[0].strip()
+    body = lines[1].strip() if len(lines) > 1 else None
+    nova_notify(
+        title,
+        body=body,
+        level="info",
+        category="ingest",
+        dedup_key="bitsavers-ai-ingest",
+        meta={"host": "studio", "source": "bitsavers"},
+    )
 
 
 def notify_status():

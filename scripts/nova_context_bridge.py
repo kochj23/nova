@@ -30,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 VECTOR_URL = "http://192.168.1.6:18790"
 NOW = datetime.now()
@@ -56,7 +57,12 @@ def log(msg):
 
 
 def slack_post(text, channel=None):
-    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_NOTIFY)
+    # Migrated to the central notification bus. These are gentle "thread from the
+    # past" echoes — FYI-level reflections, not alerts. Title = first line, rest = body.
+    lines = text.split("\n", 1)
+    title = lines[0].strip().strip("*").strip()
+    body = lines[1].strip() if len(lines) > 1 else None
+    notify(title, body=body, level="info", category="journal")
 
 
 def load_state():

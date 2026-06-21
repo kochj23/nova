@@ -51,6 +51,7 @@ except ImportError:
     sys.exit(1)
 
 import nova_config
+from nova_notify import notify as nova_notify
 from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN, LOG_DEBUG
 
 REDIS_URL = os.environ.get("NOVA_REDIS_URL", "redis://localhost:6379")
@@ -330,9 +331,21 @@ class SubAgent(ABC):
         await self._slack_post(message, SLACK_CHAT)
 
     async def _slack_post(self, message: str, channel: str = None):
+        # Migrated to the central notification bus. Both notify() and
+        # report_to_jordan() funnel through here and previously posted to the
+        # SLACK_NOTIFY alert channel. Now they emit structured intent: a
+        # subagent flag-and-report is a warning in the "subagent" domain.
+        # First line -> title, remaining lines -> body.
         import asyncio
-        ch = channel or nova_config.SLACK_NOTIFY
-        await asyncio.to_thread(nova_config.post_both, message, ch)
+        lines = message.split("\n")
+        title = lines[0].lstrip("*").rstrip("*").strip() or f"subagent {self.name}"
+        body = "\n".join(lines[1:]).strip() or None
+        await asyncio.to_thread(
+            lambda: nova_notify(
+                title, body=body, level="warning", category="subagent",
+                dedup_key=f"subagent-{self.name}", meta={"agent": self.name},
+            )
+        )
 
     # ── Task Publishing ──────────────────────────────────────────────────────
 

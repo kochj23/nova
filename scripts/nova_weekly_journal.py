@@ -21,6 +21,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 logging.basicConfig(
     level=logging.INFO,
@@ -379,8 +380,12 @@ def generate_weekly():
     return "\n\n".join(parts)
 
 
-def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+def slack_post(text, level="info", dedup_key="weekly-journal"):
+    lines = text.split("\n")
+    title = lines[0].replace("*", "").strip()
+    body = "\n".join(lines[1:]).strip() or None
+    notify(title, body=body, level=level, category="journal",
+           dedup_key=dedup_key, meta={"host": "Office-M4-2"})
 
 
 if __name__ == "__main__":
@@ -392,5 +397,6 @@ if __name__ == "__main__":
         slack_post(journal)
     except Exception as e:
         logging.error(f"Weekly journal generation failed: {e}")
-        slack_post(f"Nova Weekly Journal failed: {e}")
+        slack_post(f"Nova Weekly Journal failed: {e}",
+                   level="warning", dedup_key="weekly-journal-failure")
     logging.info("Weekly journal process completed")

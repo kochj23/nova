@@ -22,6 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 FBI_FEEDS = [
     "https://www.fbi.gov/feeds/fbi-top-stories/rss.xml",
@@ -201,9 +202,12 @@ def run():
     log(f"Done: {new_count} new articles, {ingested} chunks ingested into '{VECTOR}'")
 
     if new_count > 0:
-        nova_config.post_both(
-            f"📋 *FBI RSS Ingest* — {new_count} new articles, {ingested} chunks → `{VECTOR}` vector",
-            slack_channel=nova_config.SLACK_INFO
+        notify(
+            f"FBI RSS Ingest — {new_count} new articles",
+            body=f"{ingested} chunks ingested into `{VECTOR}` vector",
+            level="info",
+            category="ingest",
+            dedup_key="fbi-rss-ingest",
         )
 
 

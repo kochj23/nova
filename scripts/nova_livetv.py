@@ -29,6 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_resolve import resolve_url
 import nova_config
+from nova_notify import notify as nova_notify
 
 # ── Paths & Constants ────────────────────────────────────────────────────────
 
@@ -108,7 +109,12 @@ def post(msg, channel=nova_config.SLACK_NOTIFY):
     if QUIET:
         log.info(f"[quiet mode] {msg}")
         return
-    nova_config.post_both(msg, slack_channel=channel)
+    # Live-TV posts are FYI/status (what's-on, news digest, recaps, "Nova's TV time").
+    # Declare intent; nova_notifier handles routing. First line -> title, rest -> body.
+    lines = msg.split("\n", 1)
+    title = lines[0].strip()
+    body = lines[1].strip() if len(lines) > 1 else None
+    nova_notify(title, body=body, level="info", category="tv")
 
 
 def post_dm(msg):

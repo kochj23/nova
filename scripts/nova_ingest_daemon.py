@@ -32,6 +32,7 @@ import asyncpg
 
 sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 import nova_config
+from nova_notify import notify as _bus_notify
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -103,11 +104,22 @@ def release_pid_lock():
 # ── Slack Notifications ──────────────────────────────────────────────────────
 
 def notify(msg: str):
-    """Post to #nova-notifications."""
-    try:
-        nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
-    except Exception as e:
-        log.warning(f"Slack notification failed: {e}")
+    """Emit to the central notification bus (was SLACK_NOTIFY).
+
+    Single choke point for this daemon's alert posts — migrating it migrates all
+    call sites. Level is inferred from the message (failures -> warning, else info);
+    category is the scheduler/ingest domain.
+    """
+    import re
+    text = str(msg)
+    lowered = text.lower()
+    if text.startswith(":x:") or "failed" in lowered:
+        level = "warning"
+    else:
+        level = "info"
+    title = re.sub(r"^:[a-z0-9_+\-]+:\s*", "", text).replace("*", "").strip()
+    _bus_notify(title, level=level, category="ingest",
+                source="nova_ingest_daemon.py")
 
 
 # ── Job Execution ────────────────────────────────────────────────────────────

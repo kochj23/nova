@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+from nova_notify import notify
 
 # ── Date override for backfill ────────────────────────────────────────────────
 import os as _os
@@ -829,7 +830,13 @@ def post_to_slack(outline: dict, paper_num: int, memory_count: int, web_count: i
         f"*Published:* nova.digitalnoise.net/research/\n\n"
         f":brain: Research complete. Full paper live on the journal."
     )
-    nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
+    # Published-content announcement — info-level journal event.
+    notify(
+        f"Nova Research Paper #{paper_num}: {title}",
+        body=msg,
+        level="info",
+        category="journal",
+    )
     log("Posted to Slack")
 
 
@@ -883,9 +890,11 @@ def main():
         log("First cover image attempt returned None — retrying once more...")
         cover_image = generate_cover_image(outline["title"], source)
     if cover_image is None:
-        nova_config.post_both(
-            f":warning: *Image generation failed* for {outline['title']} — published without cover image. SwarmUI may need attention.",
-            slack_channel="C0ATAF7NZG9"
+        notify(
+            "Image generation failed",
+            body=f"{outline['title']} — published without cover image. SwarmUI may need attention.",
+            level="warning",
+            category="media",
         )
 
     # 7. Generate chapters

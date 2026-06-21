@@ -37,6 +37,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 import nova_media_registry as registry
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -444,10 +445,18 @@ def random_memory_for_show(show_name: str) -> str | None:
 # ── Slack notification ────────────────────────────────────────────────────────
 
 def post_slack(msg: str):
+    """Emit a TV-ingest notification onto the central bus.
+
+    Single choke point for all ingest posts. First line -> title, rest -> body.
+    These are FYI/status/digest messages -> info, category tv.
+    """
     try:
-        nova_config.post_both(msg, slack_channel=SLACK_CHANNEL)
+        parts = msg.split("\n", 1)
+        title = re.sub(r"[*_:`]|clapper|tv|rocket", "", parts[0]).strip() or "TV Ingest"
+        body = parts[1] if len(parts) > 1 else None
+        notify(title, body=body, level="info", category="tv")
     except Exception as exc:
-        log(f"Slack error: {exc}")
+        log(f"notify error: {exc}")
 
 
 # ── Per-video processing ──────────────────────────────────────────────────────

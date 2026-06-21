@@ -29,6 +29,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from nova_notify import notify
+
 import psycopg2
 import psycopg2.extras
 
@@ -229,7 +231,13 @@ def apply_fix(pattern, trigger_reason):
 
         log(f"Fix '{pattern_name}' SUCCEEDED")
         _annotate_grafana(f"Auto-fix: {pattern_name}", ["autofix", fix_action.get("service", "unknown")])
-        notify_slack(f":wrench: Auto-fix applied: *{pattern_name}* — {trigger_reason}")
+        notify(
+            f"Auto-fix applied: {pattern_name}",
+            body=f"Trigger: {trigger_reason}",
+            level="info",
+            category="autofix",
+            meta={"host": "mac-studio", "pattern": pattern_name},
+        )
 
         # Record shared observation
         _observe("nova", "runtime", fix_action.get("service", pattern_name),
@@ -243,7 +251,14 @@ def apply_fix(pattern, trigger_reason):
 
         log(f"Fix '{pattern_name}' FAILED: {e}")
         _annotate_grafana(f"Auto-fix FAILED: {pattern_name}", ["autofix", "failed"])
-        notify_slack(f":x: Auto-fix failed: *{pattern_name}* — {e}")
+        notify(
+            f"Auto-fix failed: {pattern_name}",
+            body=str(e),
+            level="critical",
+            category="autofix",
+            dedup_key=f"autofix-failed-{pattern_name}",
+            meta={"host": "mac-studio", "pattern": pattern_name},
+        )
 
 
 def _update_attempt(attempt_id, status, result=None):

@@ -26,6 +26,7 @@ from collections import Counter
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
@@ -55,7 +56,20 @@ def log(msg):
 
 
 def slack_post(text, channel=None):
-    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_NOTIFY)
+    # Migrated to the central notification bus. App-intelligence output is a
+    # periodic FYI digest of contextual suggestions, so it emits at info level
+    # under the "app_intel" category with a stable dedup_key for the daily digest.
+    lines = text.split("\n", 1)
+    title = lines[0].strip()
+    body = lines[1].strip() if len(lines) > 1 else None
+    notify(
+        title,
+        body=body,
+        level="info",
+        category="app_intel",
+        dedup_key="app-suggestions-digest",
+        meta={"host": "studio", "source": "app_suggestions"},
+    )
 
 
 def vector_remember(text, metadata=None):

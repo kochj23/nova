@@ -44,6 +44,7 @@ try:
     VECTOR_URL    = nova_config.VECTOR_URL          # http://192.168.1.6:18790/remember
 except ImportError:
     VECTOR_URL    = "http://192.168.1.6:18790/remember"
+from nova_notify import notify
 TODAY     = date.today().isoformat()
 STALE_DAYS    = 5
 STUCK_MIGRATES = 3
@@ -147,9 +148,19 @@ def remember(text: str, tags: list | None = None):
 
 # ── Slack ────────────────────────────────────────────────────────────────────
 
-def slack_post(text: str, channel: str | None = None):
-    """Post a message to Slack as Nova."""
-    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_NOTIFY)
+def slack_post(text: str, channel: str | None = None, dedup_key: str | None = None):
+    """Emit a bujo notification via the central bus (alerts → SLACK_NOTIFY)."""
+    parts = text.split("\n", 1)
+    title = parts[0].strip().strip("*").strip()
+    body = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+    notify(
+        title,
+        body=body,
+        level="info",
+        category="journal",
+        dedup_key=dedup_key,
+        meta={"host": "mac-studio"},
+    )
 
 
 # ── Data Access Helpers ──────────────────────────────────────────────────────
@@ -650,7 +661,7 @@ def cmd_digest(args):
 
     # Post to Slack
     if not args.quiet:
-        slack_post(digest_text)
+        slack_post(digest_text, dedup_key=f"bujo-digest-{TODAY}")
         log("Digest posted to Slack #nova-notifications")
 
     return digest_text
@@ -736,7 +747,8 @@ def cmd_weekly(args):
 
     # Post to Slack
     if not args.quiet:
-        slack_post(review_text)
+        week_start = date.today() - timedelta(days=date.today().weekday())
+        slack_post(review_text, dedup_key=f"bujo-weekly-{week_start.isoformat()}")
         log("Weekly review posted to Slack #nova-notifications")
 
     return review_text

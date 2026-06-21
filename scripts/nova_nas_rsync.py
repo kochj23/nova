@@ -28,6 +28,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+from nova_notify import notify
 
 DB_DSN = "host=localhost dbname=nova_ops user=kochj"
 SYNOLOGY_IP = "192.168.1.11"
@@ -227,8 +228,10 @@ def run_sync():
         try:
             import nova_config
             nova_config.notify_local("NAS Rsync FAILED", f"Preflight: {errors[0]}", critical=True)
-            nova_config.post_both(f":x: *NAS Rsync preflight failed:*\n" + "\n".join(f"• {e}" for e in errors),
-                                 nova_config.SLACK_NOTIFY)
+            notify("NAS Rsync preflight failed",
+                   body="\n".join(f"• {e}" for e in errors),
+                   level="critical", category="backup",
+                   dedup_key="nas-rsync-preflight")
         except Exception:
             pass
         return [{"name": "preflight", "status": "error", "errors": errors}]
@@ -276,13 +279,14 @@ def run_sync():
             f"{r['name']}: {r.get('files_transferred', 0)} files ({r.get('bytes_transferred', 0) / 1e9:.2f} GB)"
             for r in results
         )
-        msg = (
-            f"{status_icon} *NAS Rsync — Daily Sync*\n"
+        body = (
             f"Synology → UNAS | {datetime.now().strftime('%Y-%m-%d %H:%M')}\n"
             f"{shares_detail}\n"
             f"Total: {total_files} files, {total_bytes / 1e9:.2f} GB in {total_duration:.0f}s"
         )
-        nova_config.post_both(msg, nova_config.SLACK_NOTIFY)
+        notify("NAS Rsync — Daily Sync", body=body,
+               level="info" if all_ok else "warning", category="backup",
+               dedup_key="nas-rsync-daily")
         if total_files > 0:
             nova_config.notify_local("NAS Rsync Complete",
                                      f"{total_files} files synced ({total_bytes / 1e9:.1f} GB)")

@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 SCRIPTS       = Path(__file__).parent
 TODAY         = date.today().isoformat()
@@ -53,7 +54,11 @@ def log(msg):
 
 
 def slack_post(text: str):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    lines = text.split("\n")
+    title = lines[0].strip().strip("*")
+    body = "\n".join(lines[1:]).strip() or None
+    notify(title, body=body, level="warning", category="scheduler",
+           dedup_key="dead-mans-switch-recovery")
 
 
 def get_scheduler_tasks() -> dict:

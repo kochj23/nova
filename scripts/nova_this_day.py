@@ -21,6 +21,7 @@ Written by Jordan Koch.
 """
 
 import json
+import re
 import sys
 import urllib.request
 import urllib.error
@@ -30,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 from nova_logger import log, LOG_INFO, LOG_ERROR
 
 
@@ -363,10 +365,21 @@ def format_memory_file(events, births, deaths, date_str):
 
 
 def slack_post(text):
-    """Post to Slack, splitting long messages into 3000-char chunks."""
-    chunks = [text[i:i + 3000] for i in range(0, len(text), 3000)]
-    for chunk in chunks:
-        nova_config.post_both(chunk, slack_channel=nova_config.SLACK_NOTIFY)
+    """Emit a 'This Day' digest onto the notification bus.
+
+    Splits the first line into the title and keeps the rest as the body so the
+    central daemon can route/dedup it. Daily FYI digest -> info/calendar.
+    """
+    parts = text.split("\n", 1)
+    raw_title = re.sub(r"[*:]|calendar", "", parts[0]).strip() or "On This Day"
+    body = parts[1] if len(parts) > 1 else None
+    notify(
+        raw_title,
+        body=body,
+        level="info",
+        category="calendar",
+        dedup_key="this-day-digest",
+    )
 
 
 # ── Memory file ──────────────────────────────────────────────────────────────

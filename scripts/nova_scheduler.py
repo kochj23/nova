@@ -37,6 +37,7 @@ from zoneinfo import ZoneInfo
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 import nova_ops_writer
+from nova_notify import notify
 from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN, LOG_DEBUG
 
 CONFIG_PATH = Path.home() / ".openclaw/config/scheduler.yaml"
@@ -411,13 +412,25 @@ class NovaScheduler:
 
     # ── Slack ────────────────────────────────────────────────────────────
 
-    async def _slack_post(self, text):
+    async def _slack_post(self, text, level="info", category="scheduler", dedup_key=None):
+        # Migrated to the central notification bus. Declares intent (level +
+        # category) instead of a channel; the notifier daemon routes/dedups.
         import asyncio
-        await asyncio.to_thread(nova_config.post_both, text, nova_config.SLACK_NOTIFY)
+        lines = str(text).split("\n")
+        title = lines[0]
+        for sc in (":x:", ":heartbeat:", ":rocket:", ":sunrise:", ":octagonal_sign:"):
+            title = title.replace(sc, "")
+        title = title.replace("*", "").strip()
+        body = "\n".join(l.strip() for l in lines[1:]).strip() or None
+        await asyncio.to_thread(
+            notify, title, body, level, category, None, dedup_key,
+        )
 
     async def _slack_alert(self, text):
         if self.slack_cfg.get("alerts", True):
-            await self._slack_post(text)
+            # Task failure alerts — warning level, dedup so a flapping task
+            # collapses into one alert thread.
+            await self._slack_post(text, level="warning", dedup_key="scheduler-task-failure")
 
     async def _heartbeat(self):
         healthy = sum(1 for t in self.tasks.values() if t.state.consecutive_failures == 0 and t.enabled)
@@ -468,7 +481,8 @@ class NovaScheduler:
             f"  Tasks: {healthy}/{total} healthy, {running} running\n"
             f"  Runs: {self._total_runs} total, {self._total_failures} failures\n"
             f"  Uptime: {uptime_h:.1f}h"
-            f"{fail_str}"
+            f"{fail_str}",
+            level="info", dedup_key="scheduler-heartbeat",
         )
 
     # ── HTTP Status API ──────────────────────────────────────────────────
@@ -628,7 +642,8 @@ class NovaScheduler:
                 gap = now - self._last_tick
                 log(f"Time jump: {gap:.0f}s gap — likely wake from sleep", level=LOG_WARN, source="scheduler")
                 self._recalculate_next_runs()
-                await self._slack_post(f":sunrise: *Scheduler resumed* — {gap/60:.0f}m gap, recalculating timers")
+                await self._slack_post(f":sunrise: *Scheduler resumed* — {gap/60:.0f}m gap, recalculating timers",
+                                       level="info", dedup_key="scheduler-wake-resume")
                 # Stagger post-wake task launches over 60s to prevent thundering herd.
                 # Tasks that became overdue will be launched 5s apart instead of all at once.
                 _post_wake_stagger_until = now + 60.0

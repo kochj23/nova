@@ -25,6 +25,7 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 OPS_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
 MEMORY_URL = "http://192.168.1.6:18790/remember"
@@ -180,23 +181,26 @@ def run():
         "alerts": len(alerts),
     })
 
-    # Post to Slack
-    slack_msg = (
-        f":bar_chart: *SNMP Daily Digest* ({date_str})\n"
-        f"  :satellite: {len(devices)} devices · {total_metrics:,} data points\n"
-    )
+    # Emit digest to the central notification bus (info-level FYI/status).
+    body_lines = [f"{len(devices)} devices · {total_metrics:,} data points"]
     if cpu_stats:
         top_cpu = max(cpu_stats, key=lambda x: x[2])
-        slack_msg += f"  :zap: Peak CPU: {top_cpu[0]} @ {top_cpu[2]} load\n"
+        body_lines.append(f"Peak CPU: {top_cpu[0]} @ {top_cpu[2]} load")
     if alerts:
-        slack_msg += f"  :rotating_light: {len(alerts)} threshold alerts\n"
+        body_lines.append(f"{len(alerts)} threshold alerts")
     else:
-        slack_msg += f"  :white_check_mark: No threshold alerts\n"
+        body_lines.append("No threshold alerts")
 
     try:
-        nova_config.post_both(slack_msg, slack_channel=nova_config.SLACK_NOTIFY)
+        notify(
+            f"SNMP Daily Digest ({date_str})",
+            body="\n".join(body_lines),
+            level="info",
+            category="snmp",
+            dedup_key="snmp-daily-digest",
+        )
     except Exception as e:
-        log(f"Slack failed: {e}")
+        log(f"Notify failed: {e}")
 
     log("Digest complete")
 

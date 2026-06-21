@@ -30,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 # Feed definitions: (url, vector, label)
 FEEDS = [
@@ -852,17 +853,19 @@ def run():
     if total_new > 0:
         # Per-feed breakdown with item titles — every feed that had new items appears,
         # with up to 3 titles each (so it's "all feeds + detail" without a per-item firehose).
-        lines = [f":globe_with_meridians: *OSINT/Gov RSS Ingest* — {total_new} new items "
-                 f"across {len(feed_detail)} feeds ({total_ingested} chunks)"]
+        title = (f"OSINT/Gov RSS Ingest — {total_new} new items "
+                 f"across {len(feed_detail)} feeds ({total_ingested} chunks)")
+        lines = []
         for label in sorted(feed_detail, key=lambda k: -len(feed_detail[k])):
             titles = feed_detail[label]
             shown = "; ".join(t for t in titles[:3])
             more = f" _+{len(titles) - 3} more_" if len(titles) > 3 else ""
             lines.append(f":small_blue_diamond: *{label}* ({len(titles)}): {shown}{more}")
-        msg = "\n".join(lines)
-        if len(msg) > 3500:  # Slack-friendly cap
-            msg = msg[:3500] + "\n…(truncated)"
-        nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
+        body = "\n".join(lines)
+        if len(body) > 3500:  # keep it digestible
+            body = body[:3500] + "\n…(truncated)"
+        notify(title, body=body, level="info", category="ingest",
+               dedup_key="gov-rss-ingest")
 
 
 if __name__ == "__main__":

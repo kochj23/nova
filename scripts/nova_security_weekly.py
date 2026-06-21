@@ -28,6 +28,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 from nova_image_utils import generate_image
+from nova_notify import notify
 
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content/operations"
@@ -204,9 +205,12 @@ description: "Weekly intelligence strategic rollup — {time.strftime('%d %b %Y'
                    cwd=HUGO_ROOT, capture_output=True, timeout=30)
     subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=60)
 
-    nova_config.post_both(
-        f":bar_chart: *Nova Security — Week in Intelligence*\n*{title}*",
-        slack_channel=nova_config.SLACK_NOTIFY
+    notify(
+        "Nova Security — Week in Intelligence",
+        body=title,
+        level="info",
+        category="journal",
+        dedup_key="security-weekly-rollup",
     )
     log(f"=== Weekly rollup complete: {title} ===")
 

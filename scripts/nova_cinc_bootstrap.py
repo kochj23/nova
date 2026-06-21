@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify as nova_notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -50,11 +51,11 @@ def log(msg, level="INFO"):
     print(f"[cinc-bootstrap {ts}] [{level}] {msg}", flush=True)
 
 
-def notify(text):
-    try:
-        nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
-    except Exception:
-        pass
+def notify(text, level="warning", category="scheduler", dedup_key=None):
+    parts = text.split("\n", 1)
+    title = parts[0].lstrip(": ").replace("x:", "").replace("white_check_mark:", "").strip()
+    body = parts[1] if len(parts) > 1 else None
+    nova_notify(title, body=body, level=level, category=category, dedup_key=dedup_key)
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -359,14 +360,17 @@ def main():
         notify(
             f":x: *CINC Converge Failed* — {node_name} ({node_ip})\n"
             f"  Exit code: {exit_code}\n"
-            f"  Error: {stderr[:200]}"
+            f"  Error: {stderr[:200]}",
+            level="critical", category="scheduler",
+            dedup_key=f"cinc-converge-fail-{node_name}",
         )
     else:
         action = "Drift check" if args.why_run else "Converge"
         notify(
             f":white_check_mark: *CINC {action}* — {node_name} ({node_ip})\n"
             f"  Resources updated: {resources}\n"
-            f"  Duration: {duration:.1f}s"
+            f"  Duration: {duration:.1f}s",
+            level="info", category="scheduler",
         )
 
 

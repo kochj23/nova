@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify as nova_notify
 
 CRON_RUNS_DIR = Path.home() / ".openclaw/cron/runs"
 LOGS_DIR      = Path.home() / ".openclaw/logs"
@@ -30,7 +31,12 @@ def log(msg):
 
 
 def slack_post(text: str):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    # Weekly log-rotation completion digest — FYI maintenance status.
+    lines = text.split("\n", 1)
+    title = lines[0].strip().lstrip("*").rstrip("*").strip()
+    body = lines[1].strip() if len(lines) > 1 else None
+    nova_notify(title, body=body, level="info", category="scheduler",
+                dedup_key="log-rotation-weekly")
 
 
 def trim_jsonl(path: Path) -> tuple[int, int]:

@@ -36,6 +36,7 @@ except ImportError as e:
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -695,10 +696,18 @@ async def threat_detector(queue: asyncio.Queue, db_queue: asyncio.Queue):
             if fire_alert:
                 event["_alert_fired"] = True
                 alert_text = format_alert(threat, event)
-                try:
-                    nova_config.post_both(alert_text, slack_channel=nova_config.SLACK_NOTIFY)
-                except Exception as exc:
-                    log(f"Slack alert error: {exc}", "ERROR")
+                alert_lines = alert_text.split("\n")
+                alert_title = re.sub(r"[:*]|rotating_light", "", alert_lines[0]).strip()
+                notify(
+                    alert_title or "Security Event",
+                    body="\n".join(alert_lines[1:]),
+                    level="critical" if severity == "critical" else "warning",
+                    category=threat.get("threat_type") or "security",
+                    dedup_key=f"syslog-threat-{threat.get('threat_type')}-"
+                              f"{threat.get('src_addr') or event.get('source_ip')}",
+                    meta={"host": event.get("hostname") or event.get("source_ip"),
+                          "threat_type": threat.get("threat_type")},
+                )
 
                 if severity == "critical":
                     _fire_journal_alert(threat, event)
@@ -869,11 +878,11 @@ async def main():
     async def _notify_startup():
         try:
             await asyncio.to_thread(
-                nova_config.post_both,
-                ":satellite: *Nova Syslog Server* online\n"
-                f"  UDP :{SYSLOG_PORT} | HTTP :{HTTP_PORT}\n"
-                f"  Threat detection active",
-                nova_config.SLACK_NOTIFY,
+                notify,
+                "Nova Syslog Server online",
+                f"UDP :{SYSLOG_PORT} | HTTP :{HTTP_PORT}\nThreat detection active",
+                "info",
+                "syslog",
             )
         except Exception as exc:
             log(f"Startup notification failed (non-fatal): {exc}", "WARN")

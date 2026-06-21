@@ -44,6 +44,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify as nova_notify
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -186,6 +187,22 @@ def post_chat(msg: str):
 
 def post_dm(msg: str):
     post(msg, channel=nova_config.JORDAN_DM)
+
+
+def alert(msg: str, level: str = "info", category: str = "plex", dedup_key: str = None):
+    """Emit an ALERT-channel notification via the central bus (replaces the
+    SLACK_NOTIFY posts). First line -> title, remaining lines -> body."""
+    if QUIET:
+        print(msg)
+        return
+    lines = msg.split("\n", 1)
+    title = lines[0].lstrip("* ").rstrip("*").strip()
+    body = lines[1] if len(lines) > 1 else None
+    try:
+        nova_notify(title, body=body, level=level, category=category, dedup_key=dedup_key)
+    except Exception as e:
+        log.error(f"Alert failed: {e}")
+        print(msg)
 
 
 def store_vector(text: str, source: str, metadata: dict = None):
@@ -388,7 +405,8 @@ def cmd_stats(args):
         consecutive[day_key].append({"title": title, "ts": int(viewed_ts) if viewed_ts.isdigit() else 0})
 
     if not titles:
-        post("No Plex viewing this week.")
+        alert("No Plex viewing this week.", level="info", category="plex",
+              dedup_key="plex-weekly-stats")
         return
 
     hours = total_min / 60
@@ -426,7 +444,7 @@ def cmd_stats(args):
         binge_str = "; ".join(f"{d}: {s} in a row ({t})" for d, s, t in binges)
         msg += f"\nBinge detected: {binge_str}"
 
-    post(msg)
+    alert(msg, level="info", category="plex", dedup_key="plex-weekly-stats")
     log.info(f"Weekly stats: {hours:.1f}h, {len(titles)} items")
 
 
@@ -492,10 +510,12 @@ def cmd_sync(args):
 
     if findings:
         msg = "*Plex Library Sync Report*\n\n" + "\n\n".join(findings)
+        sync_level = "warning"
     else:
         msg = "Plex Library Sync: everything looks good. No mismatches found."
+        sync_level = "info"
 
-    post(msg)
+    alert(msg, level=sync_level, category="media", dedup_key="plex-library-sync")
     log.info(f"Sync: {len(findings)} findings")
 
 
@@ -984,7 +1004,8 @@ def cmd_seasonal(args):
             if trending_down:
                 trending_down.sort(key=lambda x: x[1])
                 lines.append("Trending down: " + ", ".join(f"{g} ({d}%)" for g, d in trending_down[:5]))
-            post("\n".join(lines))
+            alert("\n".join(lines), level="info", category="media",
+                  dedup_key="plex-seasonal-drift")
 
     print(f"Seasonal data updated for {month_str}: {total} items, {len(genre_counter)} genres")
 

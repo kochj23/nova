@@ -30,6 +30,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import psycopg2
 import psycopg2.extras
 
+from nova_notify import notify
+
 # ── Configuration ─────────────────────────────────────────────────────────────
 
 DB_DSN = "host=localhost dbname=nova_ops user=kochj"
@@ -91,13 +93,23 @@ def post_observation(subject, observation, severity="warning", metadata=None):
 
 
 def slack_alert(msg):
-    """Send Slack notification + local macOS alert for critical findings."""
+    """Emit a critical security notification + local macOS alert for findings."""
+    # The Slack post is migrated to the central notification bus (critical
+    # security finding). The local macOS desktop alert is NOT a notification
+    # channel, so it's preserved as-is.
+    try:
+        lines = str(msg).split("\n")
+        title = lines[0].replace(":rotating_light:", "").replace("*", "").strip()
+        body = "\n".join(lines[1:]).strip() or None
+        notify(title, body=body, level="critical", category="security",
+               dedup_key="security-scan-critical")
+    except Exception as e:
+        print(f"[security_scan] notify failed: {e}", file=sys.stderr)
     try:
         import nova_config
-        nova_config.post_both(msg, nova_config.SLACK_NOTIFY)
         nova_config.notify_local("Security Alert", msg[:200], critical=True)
     except Exception as e:
-        print(f"[security_scan] Slack alert failed: {e}", file=sys.stderr)
+        print(f"[security_scan] local alert failed: {e}", file=sys.stderr)
 
 
 # ── Command Execution ─────────────────────────────────────────────────────────

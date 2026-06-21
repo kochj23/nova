@@ -25,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify as nova_notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -92,9 +93,14 @@ signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 
-def notify(text):
+def notify(text, title="Plex Auto-Ingest", level="info", category="ingest",
+           dedup_key="plex-auto-ingest"):
+    # Migrated to the central notification bus. The emitter declares intent
+    # (info-level ingest digest); the nova_notifier daemon routes/dedups.
+    body = text if text != title else None
     try:
-        nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+        nova_notify(title, body=body, level=level, category=category,
+                    dedup_key=dedup_key)
     except Exception:
         pass
 
@@ -478,10 +484,10 @@ def main():
                 detail_lines.append(f"  _...and {len(items_list) - 8} more_")
 
         notify(
-            f":clapper: *Plex Auto-Ingest Complete*\n"
-            f"• New items processed: {new_count}\n"
-            f"• Sections scanned: {', '.join(SECTIONS.values())}\n\n"
-            f"{''.join(detail_lines)}"
+            f"New items processed: {new_count}\n"
+            f"Sections scanned: {', '.join(SECTIONS.values())}\n\n"
+            f"{''.join(detail_lines)}",
+            title="Plex Auto-Ingest Complete",
         )
     else:
         log.info("No new content to ingest.")

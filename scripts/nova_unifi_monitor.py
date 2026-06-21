@@ -40,6 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
@@ -103,8 +104,21 @@ def api_get(endpoint):
     return None
 
 
-def slack_post(text, channel=None):
-    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_NOTIFY)
+def slack_post(text, channel=None, level="warning", category="network",
+               dedup_key=None):
+    """Emit a network alert onto the notification bus (intent: level + category).
+
+    Channel param kept for signature compatibility but ignored — routing is now
+    decided centrally. First line -> title, remaining lines -> body.
+    """
+    try:
+        lines = text.split("\n")
+        title = lines[0].strip().lstrip("!  ").strip().strip("*").strip()
+        body = "\n".join(lines[1:]).strip() or None
+        notify(title, body=body, level=level, category=category,
+               dedup_key=dedup_key, meta={"host": "udm-pro"})
+    except Exception as e:
+        log(f"notify failed: {e}")
 
 
 def vector_remember(text, metadata=None):
@@ -353,7 +367,8 @@ def full_check():
 
     if health is None:
         log("Could not reach UDM Pro API")
-        slack_post("*UniFi Monitor*\n  Unable to reach UDM Pro at 192.168.1.1")
+        slack_post("*UniFi Monitor*\n  Unable to reach UDM Pro at 192.168.1.1",
+                   level="critical", category="network", dedup_key="udm-unreachable")
         return
 
     problems = find_problems(health, devices, clients)
@@ -364,7 +379,7 @@ def full_check():
     # Post to Slack if there are problems
     if problems:
         report = format_health_report(health, devices, clients, problems)
-        slack_post(report)
+        slack_post(report, level="warning", category="network", dedup_key="unifi-health")
 
     # Store in memory
     wan = health.get("wan", {})
@@ -478,7 +493,7 @@ def rogue_check():
                 lines.append(f"    Manufacturer: {r['oui']}")
         msg = "\n".join(lines)
         print(msg)
-        slack_post(msg)
+        slack_post(msg, level="warning", category="security", dedup_key="unifi-rogue")
         vector_remember(
             f"Rogue devices detected {TODAY}: {len(rogues)} unknown devices on network",
             {"date": TODAY, "type": "rogue_detection", "count": len(rogues)}
@@ -532,12 +547,12 @@ def wan_log():
 
         if status == "ok" and prev_status != "ok":
             msg = f"*WAN Restored* — back online after {dur_str} outage"
-            slack_post(msg)
+            slack_post(msg, level="info", category="network", dedup_key="unifi-wan")
             vector_remember(msg, {"date": TODAY, "type": "wan_restored"})
             log(msg)
         elif status != "ok":
             msg = f"*WAN Down* — internet went offline (was up for {dur_str})"
-            slack_post(msg)
+            slack_post(msg, level="critical", category="network", dedup_key="unifi-wan")
             vector_remember(msg, {"date": TODAY, "type": "wan_outage"})
             log(msg)
 
@@ -860,7 +875,7 @@ def presence_check(alert=True):
             if departures:
                 parts.append(f"Departed: {', '.join(departures)}")
             msg = f"*Home Presence Update*\n  " + "\n  ".join(parts)
-            slack_post(msg)
+            slack_post(msg, level="info", category="presence", dedup_key="home-presence")
             vector_remember(
                 f"Presence {TODAY}: {'; '.join(parts)}",
                 {"date": TODAY, "type": "presence_change"}
@@ -922,7 +937,8 @@ def firmware_check():
             print(f"  !! {o}")
         slack_post(
             f"*Firmware Alert*\n  {len(outdated)} device(s) need updates:\n  " +
-            "\n  ".join(outdated)
+            "\n  ".join(outdated),
+            level="warning", category="network", dedup_key="unifi-firmware",
         )
     else:
         print("\n  _All devices on latest firmware._")
@@ -1284,7 +1300,8 @@ def full_check_v2():
 
     if health is None:
         log("Could not reach UDM Pro API")
-        slack_post("*UniFi Monitor*\n  Unable to reach UDM Pro at 192.168.1.1")
+        slack_post("*UniFi Monitor*\n  Unable to reach UDM Pro at 192.168.1.1",
+                   level="critical", category="network", dedup_key="udm-unreachable")
         return
 
     problems = find_problems(health, devices, clients)
@@ -1305,7 +1322,7 @@ def full_check_v2():
     # Post to Slack if there are problems
     if problems:
         report = format_health_report(health, devices, clients, problems)
-        slack_post(report)
+        slack_post(report, level="warning", category="network", dedup_key="unifi-health")
 
     # 2. WAN history logging
     wan_log()

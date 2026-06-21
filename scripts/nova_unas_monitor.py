@@ -33,6 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_unas_client import UNASClient, UNASError
 import nova_config
+from nova_notify import notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -70,12 +71,22 @@ def log(msg: str):
 
 # ── Slack alerting ────────────────────────────────────────────────────────────
 
-def post_slack(message: str, channel: str = nova_config.SLACK_NOTIFY):
-    """Post a message to Slack #nova-notifications. Silently skips if token unavailable."""
+def post_slack(message: str, channel: str = nova_config.SLACK_NOTIFY,
+               level: str = "warning", dedup_key: str = "unas-storage"):
+    """Emit a UNAS alert onto the notification bus (intent: storage health).
+
+    Channel param kept for signature compatibility but ignored — routing is now
+    decided centrally by level/category. First line -> title, rest -> body.
+    """
     try:
-        nova_config.post_both(message, slack_channel=channel)
+        # Strip leading markdown/emoji decoration from the title line.
+        lines = message.split("\n")
+        title = lines[0].strip().lstrip("⚠️✅ ").strip().strip("*").strip()
+        body = "\n".join(lines[1:]).strip() or None
+        notify(title, body=body, level=level, category="storage",
+               dedup_key=dedup_key, meta={"host": "unas-pro-8"})
     except Exception as exc:
-        log(f"Slack post failed: {exc}")
+        log(f"notify failed: {exc}")
 
 
 # ── State helpers ─────────────────────────────────────────────────────────────
@@ -285,8 +296,8 @@ def main():
         log(f"Alerted on {len(new_problems)} new problem(s)")
 
     if prev_problems and not curr_problems:
-        post_slack("✅ *UNAS Pro 8* — All problems resolved")
-        log("All problems resolved — notified Slack")
+        post_slack("UNAS Pro 8 — All problems resolved", level="info")
+        log("All problems resolved — notified")
 
     _save_state({
         "problems": list(curr_problems),

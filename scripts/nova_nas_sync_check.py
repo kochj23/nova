@@ -21,6 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 import psycopg2
+from nova_notify import notify
 
 DB_DSN = "host=localhost dbname=nova_ops user=kochj"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_nas_sync.json"
@@ -161,10 +162,15 @@ def run_check():
             nova_config.notify_local("NAS Sync Warning",
                                      f"Only {overall_pct}% synced — {total_diff:,} files differ",
                                      critical=True)
-            nova_config.post_both(
-                f":warning: *NAS Sync Alert:* Only {overall_pct}% in sync — "
-                f"{total_diff:,} files differ between UNAS and Synology",
-                nova_config.SLACK_NOTIFY)
+            notify(
+                "NAS Sync Alert",
+                body=f"Only {overall_pct}% in sync — {total_diff:,} files differ "
+                     f"between UNAS and Synology",
+                level="warning",
+                category="storage",
+                dedup_key="nas-sync",
+                meta={"overall_sync_pct": overall_pct, "files_differ": total_diff},
+            )
         except Exception:
             pass
 

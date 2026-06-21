@@ -41,6 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -575,14 +576,14 @@ def generate_report(days: int) -> str:
 # ── Slack posting ────────────────────────────────────────────────────────────
 
 def post_to_slack(text: str) -> bool:
-    """Post report to Slack+Discord #nova-notifications."""
-    try:
-        nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
-        log("Report posted to Slack+Discord #nova-notifications")
-        return True
-    except Exception as exc:
-        log(f"Slack/Discord post failed: {exc}")
-        return False
+    """Emit health correlation report onto the notification bus (info/health)."""
+    parts = text.split("\n", 1)
+    title = parts[0].lstrip("*").rstrip("*").strip() or "Health Correlation Report"
+    body = parts[1] if len(parts) > 1 else None
+    notify(title, body=body, level="info", category="health",
+           dedup_key="health-correlation-report")
+    log("Report emitted to notification bus (info/health)")
+    return True
 
 
 # ── Vector memory storage ────────────────────────────────────────────────────

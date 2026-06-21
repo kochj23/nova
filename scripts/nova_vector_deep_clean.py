@@ -34,6 +34,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 import nova_config
+from nova_notify import notify
 
 try:
     import asyncpg
@@ -189,10 +190,12 @@ async def main():
     mode = "CLEAN" if args.clean else "DRY RUN"
     log(f"Nova Vector Deep Clean — Mode: {mode}")
 
-    nova_config.post_both(
-        f":broom: *nova_vector_deep_clean* starting [{mode}]"
+    notify(
+        f"nova_vector_deep_clean starting [{mode}]"
         + (f" — vector: {args.vector}" if args.vector else ""),
-        slack_channel=nova_config.SLACK_NOTIFY,
+        level="info",
+        category="memory_ingest",
+        dedup_key="deep-clean-start",
     )
 
     pool = await asyncpg.create_pool(DB_DSN, min_size=2, max_size=8)
@@ -305,10 +308,12 @@ async def main():
         # Periodic Slack update
         now = time.time()
         if now - last_slack_update > SLACK_UPDATE_INTERVAL:
-            nova_config.post_both(
-                f":broom: deep_clean progress: {vectors_processed}/{len(sources_to_process)} vectors, "
+            notify(
+                f"deep_clean progress: {vectors_processed}/{len(sources_to_process)} vectors, "
                 f"{total_misfits_found} misfits found, {len(reclassifications)} reclassified",
-                slack_channel=nova_config.SLACK_NOTIFY,
+                level="info",
+                category="memory_ingest",
+                dedup_key="deep-clean-progress",
             )
             last_slack_update = now
 
@@ -385,14 +390,18 @@ async def main():
         log(f"Journal article written to: {journal_path}")
 
     # ── Final Slack summary ───────────────────────────────────────────────────
-    summary = (
-        f":white_check_mark: *nova_vector_deep_clean* complete [{mode}]\n"
-        f"- Vectors analyzed: {vectors_processed}\n"
-        f"- Misfits found: {total_misfits_found:,}\n"
-        f"- Reclassified: {len(reclassifications):,}\n"
-        f"- Duration: {elapsed / 60:.1f} minutes"
+    notify(
+        f"nova_vector_deep_clean complete [{mode}]",
+        body=(
+            f"- Vectors analyzed: {vectors_processed}\n"
+            f"- Misfits found: {total_misfits_found:,}\n"
+            f"- Reclassified: {len(reclassifications):,}\n"
+            f"- Duration: {elapsed / 60:.1f} minutes"
+        ),
+        level="info",
+        category="memory_ingest",
+        dedup_key="deep-clean-complete",
     )
-    nova_config.post_both(summary, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 if __name__ == "__main__":

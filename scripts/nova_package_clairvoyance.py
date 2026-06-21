@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 from nova_logger import log, LOG_INFO, LOG_WARN
 from nova_protect_monitor import ProtectClient, _get_event_thumbnail, slack_upload_image
 
@@ -84,7 +85,15 @@ def save_state(state):
 
 
 def slack_post(text, channel=None):
-    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_NOTIFY)
+    """Emit a package alert to the central notification bus.
+
+    All callers target the SLACK_NOTIFY alert channel. First line -> title,
+    remainder -> body. Each detection is a distinct event, so no dedup_key.
+    """
+    lines = text.split("\n", 1)
+    title = lines[0].strip()
+    body = lines[1].strip() if len(lines) > 1 else None
+    notify(title, body=body, level="warning", category="package")
 
 
 def handle_package_detection(camera_name, event_id, client=None):

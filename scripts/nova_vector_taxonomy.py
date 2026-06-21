@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 import nova_config
+from nova_notify import notify
 
 try:
     import asyncpg
@@ -209,9 +210,11 @@ def log(msg: str):
 
 
 async def main():
-    nova_config.post_both(
-        ":gear: *nova_vector_taxonomy* starting — backfilling category ltree column",
-        slack_channel=nova_config.SLACK_NOTIFY,
+    notify(
+        "nova_vector_taxonomy starting",
+        body="Backfilling category ltree column",
+        level="info",
+        category="memory_ingest",
     )
     log("Connecting to database...")
     pool = await asyncpg.create_pool(DB_DSN, min_size=2, max_size=5)
@@ -254,14 +257,18 @@ async def main():
         await pool.close()
 
     elapsed = time.time() - start_time
-    summary = (
-        f":white_check_mark: *nova_vector_taxonomy* complete\n"
+    body = (
         f"- Sources processed: {sources_processed:,}\n"
         f"- Rows categorized: {total_updated:,}\n"
         f"- Duration: {elapsed / 60:.1f} minutes"
     )
-    log(summary)
-    nova_config.post_both(summary, slack_channel=nova_config.SLACK_NOTIFY)
+    log(f"nova_vector_taxonomy complete\n{body}")
+    notify(
+        "nova_vector_taxonomy complete",
+        body=body,
+        level="info",
+        category="memory_ingest",
+    )
 
 
 if __name__ == "__main__":

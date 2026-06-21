@@ -26,6 +26,7 @@ import asyncpg
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -222,9 +223,10 @@ async def find_connections(query: str, notify_slack: bool = False) -> str:
     result = format_results(query, connections)
     if notify_slack:
         cross_count = sum(1 for c in connections if c.is_cross_genre)
-        nova_config.post_both(
-            f"Music DNA search: \"{query}\"\n{cross_count} cross-genre hits found.",
-            slack_channel=nova_config.SLACK_NOTIFY,
+        notify(
+            f"Music DNA search: \"{query}\"",
+            body=f"{cross_count} cross-genre hits found.",
+            level="info", category="media",
         )
     return result
 

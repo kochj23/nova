@@ -30,6 +30,7 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+from nova_notify import notify as nova_notify_send
 try:
     import nova_config
     HAS_NOVA_CONFIG = True
@@ -87,11 +88,12 @@ def log(msg):
 
 
 def notify(text):
-    if HAS_NOVA_CONFIG:
-        try:
-            nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
-        except Exception:
-            pass
+    parts = text.split("\n", 1)
+    title = parts[0]
+    body = parts[1] if len(parts) > 1 else None
+    nova_notify_send(title, body=body, level="info", category="media",
+                     dedup_key="youtube-tvshows-download",
+                     meta={"host": "mac-studio"})
 
 
 def sanitize_filename(s):

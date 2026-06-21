@@ -30,6 +30,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
@@ -261,14 +262,16 @@ async def run_audit(clean: bool = False):
 
         report = "\n".join(report_lines)
         logger.info(f"Posting report to Slack")
-        nova_config.post_both(report, slack_channel=nova_config.SLACK_NOTIFY)
+        report_parts = report.split("\n", 1)
+        report_title = report_parts[0].lstrip(": ").replace("*", "").strip()
+        report_body = report_parts[1] if len(report_parts) > 1 else None
+        notify(report_title, body=report_body, level="info", category="memory_ingest",
+               dedup_key="memory-quality-audit")
 
     except Exception as e:
         logger.error(f"Audit failed: {e}", exc_info=True)
-        nova_config.post_both(
-            f":x: *Memory Quality Audit FAILED*\n{e}",
-            slack_channel=nova_config.SLACK_NOTIFY
-        )
+        notify("Memory Quality Audit FAILED", body=str(e), level="warning",
+               category="memory_ingest", dedup_key="memory-quality-audit-fail")
         await pool.close()
         return 1
 

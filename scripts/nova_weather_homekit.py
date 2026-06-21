@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
@@ -92,8 +93,12 @@ def log(msg):
     print(f"[nova_weather_homekit {NOW.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def slack_post(text, channel=None):
-    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_NOTIFY)
+def slack_post(text, channel=None, level="warning", dedup_key="weather-homekit"):
+    lines = text.split("\n")
+    title = lines[0].replace("*", "").strip()
+    body = "\n".join(lines[1:]).strip() or None
+    notify(title, body=body, level=level, category="weather",
+           dedup_key=dedup_key, meta={"host": "Office-M4-2"})
 
 
 def vector_remember(text, metadata=None):

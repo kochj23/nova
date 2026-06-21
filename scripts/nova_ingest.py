@@ -40,6 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify as _bus_notify
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -170,10 +171,17 @@ def log(msg, level="INFO"):
             pass
 
 def notify(text):
-    try:
-        nova_config.post_both(text, slack_channel=SLACK_CHANNEL)
-    except Exception as e:
-        log(f"Slack failed: {e}", "WARN")
+    # Migrated to the central notification bus. This is the single choke point
+    # for all alert-channel (SLACK_NOTIFY) posts in this script, so migrating the
+    # wrapper migrates every call site. Ingest posts are FYI/status/progress/
+    # completion -> info level, category "ingest". First line -> title, rest -> body.
+    parts = str(text).split("\n", 1)
+    first = parts[0]
+    body = parts[1] if len(parts) > 1 else None
+    # Strip a leading :emoji: token and surrounding * bold markers from the title.
+    title = re.sub(r"^:[a-z0-9_+\-]+:\s*", "", first).replace("*", "").strip()
+    _bus_notify(title, body=body, level="info", category="ingest",
+                source="nova_ingest.py")
 
 def notify_item(title, vector, chunks, errors, done, total, nxt, mem):
     pct    = (done / max(total, 1)) * 100

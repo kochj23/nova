@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -470,12 +471,16 @@ def main():
     log(f"  Skipped:        {results['skip']}")
     log("=" * 60)
 
-    nova_config.post_both(
-        f"*TV Retry Complete*\n"
-        f"• Ingested: {results['ingested']} files ({total_chunks} chunks)\n"
-        f"• Still failed: {results['no_transcript']} no transcript, {results['trash']} trash\n"
-        f"• Skipped: {results['skip']} (missing/no audio)",
-        slack_channel=nova_config.SLACK_NOTIFY,
+    notify(
+        "TV Retry Complete",
+        body=(
+            f"• Ingested: {results['ingested']} files ({total_chunks} chunks)\n"
+            f"• Still failed: {results['no_transcript']} no transcript, {results['trash']} trash\n"
+            f"• Skipped: {results['skip']} (missing/no audio)"
+        ),
+        level="info",
+        category="ingest",
+        dedup_key="tv-retry-complete",
     )
 
 

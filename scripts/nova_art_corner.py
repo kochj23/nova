@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 from nova_image_utils import generate_image
+from nova_notify import notify
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -420,15 +421,21 @@ def git_push(message: str):
 def post_to_slack(title: str, style: dict, statement: str, image_path: Path):
     """Post to #nova-notifications."""
     preview = statement[:200].rsplit(" ", 1)[0] + "..." if len(statement) > 200 else statement
-    msg = (
-        f":art: *Nova's Art Corner*\n"
-        f"*Title:* {title}\n"
-        f"*Style:* {style['name']}\n\n"
-        f"_{preview}_\n\n"
-        f"Image: `{image_path}`\n"
-        f"Published to journal."
+    # Published-content announcement — FYI/info on the central bus.
+    notify(
+        "Nova's Art Corner",
+        body=(
+            f"Title: {title}\n"
+            f"Style: {style['name']}\n\n"
+            f"{preview}\n\n"
+            f"Image: {image_path}\n"
+            f"Published to journal."
+        ),
+        level="info",
+        category="media",
+        dedup_key="art-corner-daily",
+        meta={"host": "studio", "source": "art_corner"},
     )
-    nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 # ── Main Pipeline ─────────────────────────────────────────────────────────────
@@ -450,9 +457,13 @@ def run_pipeline(retry_simplified: bool = False):
 
     if len(all_memories) < 3:
         log("ERROR: Not enough memories retrieved — aborting")
-        nova_config.post_both(
-            ":warning: *Art Corner failed* — could not retrieve enough memories.",
-            slack_channel=nova_config.SLACK_NOTIFY
+        notify(
+            "Art Corner failed",
+            body="Could not retrieve enough memories.",
+            level="warning",
+            category="media",
+            dedup_key="art-corner-daily",
+            meta={"host": "studio", "source": "art_corner"},
         )
         return False
 
@@ -492,9 +503,13 @@ def run_pipeline(retry_simplified: bool = False):
             return run_pipeline(retry_simplified=True)
         else:
             log("ERROR: All candidates failed even with simplified prompt — aborting")
-            nova_config.post_both(
-                ":warning: *Art Corner failed* — image generation failed after retry.",
-                slack_channel=nova_config.SLACK_NOTIFY
+            notify(
+                "Art Corner failed",
+                body="Image generation failed after retry.",
+                level="warning",
+                category="media",
+                dedup_key="art-corner-daily",
+                meta={"host": "studio", "source": "art_corner"},
             )
             return False
 
@@ -551,9 +566,13 @@ def main():
         log(f"FATAL ERROR: {e}")
         import traceback
         log(traceback.format_exc())
-        nova_config.post_both(
-            f":x: *Art Corner crashed*: {str(e)[:200]}",
-            slack_channel=nova_config.SLACK_NOTIFY
+        notify(
+            "Art Corner crashed",
+            body=str(e)[:200],
+            level="critical",
+            category="media",
+            dedup_key="art-corner-daily",
+            meta={"host": "studio", "source": "art_corner"},
         )
         sys.exit(1)
 

@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 HDHR_LINEUP  = "http://192.168.1.89/lineup.json"
 HDHR_STREAM  = "http://192.168.1.89:5004/auto/v"
@@ -38,7 +39,10 @@ def log(msg: str):
 
 
 def slack(msg: str):
-    nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
+    parts = msg.split("\n", 1)
+    title = parts[0].lstrip(": ").replace("satellite_antenna:", "").strip()
+    body = parts[1] if len(parts) > 1 else None
+    notify(title, body=body, level="info", category="tv", dedup_key="channel-scan")
 
 
 def load_prefs() -> dict:

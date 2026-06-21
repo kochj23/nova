@@ -41,6 +41,7 @@ sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+from nova_notify import notify
 from herd_config import HERD
 
 NOVA_EMAIL  = nova_config.NOVA_EMAIL
@@ -178,8 +179,11 @@ def read_message(msg_id: str) -> dict | None:
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
 def slack_post(text: str):
-    """Post a message to #nova-notifications."""
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    """Emit a GTNW game-status update onto the notification bus (info/gtnw)."""
+    parts = text.split("\n", 1)
+    title = parts[0].strip()
+    body = parts[1] if len(parts) > 1 else None
+    notify(title, body=body, level="info", category="gtnw")
 
 
 # ── Ollama crisis simulator (fallback when GTNW not running) ──────────────────

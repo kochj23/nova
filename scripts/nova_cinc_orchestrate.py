@@ -31,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify as nova_notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -55,11 +56,11 @@ def log(msg, level="INFO"):
         pass
 
 
-def notify(text):
-    try:
-        nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
-    except Exception:
-        pass
+def notify(text, level="info", category="scheduler", dedup_key=None):
+    parts = text.split("\n", 1)
+    title = parts[0].lstrip(": ").replace("gear:", "").strip()
+    body = parts[1] if len(parts) > 1 else None
+    nova_notify(title, body=body, level=level, category=category, dedup_key=dedup_key)
 
 
 # ── Database ──────────────────────────────────────────────────────────────────
@@ -520,7 +521,8 @@ def cmd_converge(args):
         f"  Nodes: {passed}/{total} OK\n"
         f"  Resources {'drifted' if args.dry_run else 'updated'}: {total_resources}"
     )
-    notify(summary)
+    notify(summary, level="info", category="scheduler",
+           dedup_key=f"orchestrate-{'drift' if args.dry_run else 'converge'}")
     log(f"Complete: {passed}/{total} OK, {total_resources} resources")
 
 

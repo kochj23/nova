@@ -75,6 +75,7 @@ LABEL_REPLIED   = "Nova/Replied"
 sys.path.insert(0, str(SCRIPTS))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 import nova_config
+from nova_notify import notify as nova_notify
 
 # Load herd config
 try:
@@ -797,7 +798,12 @@ def smtp_send(app_pass: str, to_addrs: list[str], cc_addrs: list[str],
 # ── Slack + Memory ────────────────────────────────────────────────────────────
 
 def slack_post(text: str):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    # Email-notification FYIs (Jordan email stored, unknown-sender alerts). First
+    # line -> title, rest -> body. nova_notifier handles routing/dedup centrally.
+    lines = text.split("\n", 1)
+    title = lines[0].strip().lstrip("*").rstrip("*").strip()
+    body = lines[1].strip() if len(lines) > 1 else None
+    nova_notify(title, body=body, level="info", category="email")
 
 
 def vector_remember(text: str):
@@ -1103,10 +1109,11 @@ def main():
                         slack_channel=nova_config.SLACK_EMAIL,
                     )
                 else:
-                    slack_post(
-                        f"*❌ Herd email reply FAILED*\n"
-                        f"*From:* {msg['from_raw']}\n"
-                        f"*Subject:* {subject}"
+                    nova_notify(
+                        "Herd email reply FAILED",
+                        body=f"From: {msg['from_raw']}\nSubject: {subject}",
+                        level="warning",
+                        category="email",
                     )
 
                 imap_move_to_trash(conn, uid)

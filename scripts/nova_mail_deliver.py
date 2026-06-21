@@ -16,6 +16,7 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 import nova_config
+from nova_notify import notify as nova_notify
 
 
 VECTOR_MEM_URL = "http://192.168.1.6:18790/remember"
@@ -71,9 +72,13 @@ def log(msg):
 
 
 def slack_post(text):
-    chunks = [text[i:i+3000] for i in range(0, len(text), 3000)]
-    for chunk in chunks:
-        nova_config.post_both(chunk, slack_channel=nova_config.SLACK_NOTIFY)
+    # Daily mail-summary digest — FYI. First line -> title, rest -> body.
+    # Repeats daily, so dedup centrally. No Slack chunking needed on the bus.
+    lines = text.split("\n", 1)
+    title = lines[0].strip().lstrip("*").rstrip("*").strip()
+    body = lines[1].strip() if len(lines) > 1 else None
+    nova_notify(title, body=body, level="info", category="email",
+                dedup_key="mail-summary-digest")
 
 
 def send_email(subject, body):

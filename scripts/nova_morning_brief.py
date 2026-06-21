@@ -40,6 +40,7 @@ SUMMARY_FILE = WORKSPACE / "state" / "nova_mail_fetch.txt"
 # Import mail delivery helpers for parsing and categorization
 sys.path.insert(0, str(SCRIPTS))
 from nova_mail_deliver import parse_accounts_from_file, is_noise, is_important
+from nova_notify import notify
 
 # Voice output disabled — was randomly triggering during meetings (2026-04-09)
 
@@ -51,7 +52,12 @@ def log(msg):
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_INFO)
+    # Daily morning briefing — FYI digest (weather/calendar/mail), not an alert.
+    parts = str(text).split("\n", 1)
+    title = parts[0].lstrip(": ").replace("*", "").strip()
+    body = parts[1] if len(parts) > 1 else None
+    notify(title, body=body, level="info", category="morning_brief",
+           dedup_key=f"morning-brief-{TODAY}")
 
 
 # ── HomePod TTS (DISABLED 2026-04-09 — randomly triggering during meetings) ──

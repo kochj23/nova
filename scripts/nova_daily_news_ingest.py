@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify as _bus_notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -66,10 +67,20 @@ signal.signal(signal.SIGTERM, signal_handler)
 
 
 def notify(text):
-    try:
-        nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
-    except Exception:
-        pass
+    # Migrated to the central notification bus. This wrapper is the single choke
+    # point for all of this script's alert posts, so mapping it here migrates every
+    # call site. Level is inferred from the message: an :x: failure marker means a
+    # broadcast won't make it into memory this run (warning); everything else is an
+    # FYI status/digest (info). Title = first line, rest = body.
+    lines = text.split("\n", 1)
+    title = lines[0].strip().strip("*").strip()
+    body = lines[1].strip() if len(lines) > 1 else None
+    level = "warning" if (":x:" in text or "Failed" in title) else "info"
+    _bus_notify(
+        title, body=body, level=level, category="news",
+        dedup_key="daily-news-ingest",
+        meta={"channel": CHANNEL, "channel_name": CHANNEL_NAME},
+    )
 
 
 # ── Recording ─────────────────────────────────────────────────────────────────

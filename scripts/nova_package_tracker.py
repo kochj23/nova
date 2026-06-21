@@ -28,6 +28,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
@@ -80,7 +81,16 @@ def log(msg):
 
 
 def slack_post(text, channel=None):
-    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_NOTIFY)
+    """Emit a package status update to the central notification bus.
+
+    Callers target the SLACK_NOTIFY alert channel with FYI status-change
+    digests. First line -> title, remainder -> body. Distinct per update, so
+    no dedup_key.
+    """
+    lines = text.split("\n", 1)
+    title = lines[0].strip()
+    body = lines[1].strip() if len(lines) > 1 else None
+    notify(title, body=body, level="info", category="package")
 
 
 def vector_remember(text, metadata=None):

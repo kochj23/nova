@@ -25,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 from nova_tag_extractor import extract_tags
 
 HUGO_ROOT     = Path("/Volumes/Data/xcode/nova-journal")
@@ -334,8 +335,9 @@ def main():
     synthesis = _generate_synthesis(posts)
     if not synthesis:
         log("Synthesis generation failed")
-        nova_config.post_both(":warning: Weekly synthesis generation failed",
-                               slack_channel=nova_config.SLACK_NOTIFY)
+        notify("Weekly synthesis generation failed", level="warning",
+               category="journal", dedup_key="weekly-synthesis",
+               meta={"host": "mac-studio"})
         return
 
     url = _publish_to_hugo(synthesis, posts, week_str)

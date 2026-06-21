@@ -19,7 +19,9 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path.home() / ".openclaw" / "scripts"))
 import nova_config
+from nova_notify import notify
 from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -283,13 +285,11 @@ def main():
 
     if total > 0 and not _is_quiet_hours():
         subs_with_posts = list({p["sub"] for p in all_today})
-        msg = (
-            f":globe_with_meridians: *Reddit Ingest* — "
-            f"{total} new posts from {len(subs_with_posts)} subreddits\n"
-            f"Sources: {', '.join(f'r/{s}' for s in sorted(subs_with_posts))}"
-        )
         try:
-            nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
+            notify(
+                f"Reddit Ingest — {total} new posts from {len(subs_with_posts)} subreddits",
+                body=f"Sources: {', '.join(f'r/{s}' for s in sorted(subs_with_posts))}",
+                level="info", category="ingest", dedup_key="reddit-ingest")
         except Exception:
             pass
 

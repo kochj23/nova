@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 from nova_voice import system_prompt
+from nova_notify import notify as nova_notify
 
 # Reuse the shared journal pipeline helpers so this stays consistent with the rest
 # of the journal system.
@@ -207,13 +208,15 @@ def collect_section_articles(section: str, cutoff: date) -> list[dict]:
 
 def notify(section: str, title: str, preview: str, slug: str):
     date_str = time.strftime("%Y-%m-%d")
-    msg = (
-        f":calendar: *Nova Journal — Weekly Summary ({section})*\n"
-        f"*{title}*\n"
-        f"_{preview[:250]}_\n"
-        f"https://nova.digitalnoise.net/{section}/{date_str}-{slug}/"
+    url = f"https://nova.digitalnoise.net/{section}/{date_str}-{slug}/"
+    # Published-content digest — FYI. Repeats weekly per section, so dedup on section.
+    nova_notify(
+        f"Nova Journal — Weekly Summary ({section}): {title}",
+        body=f"{preview[:250]}\n{url}",
+        level="info",
+        category="journal",
+        dedup_key=f"journal-weekly-summary-{section}",
     )
-    nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
 
 
 # ── Generation ───────────────────────────────────────────────────────────────────

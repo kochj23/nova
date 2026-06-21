@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
@@ -340,14 +341,30 @@ def main():
     save_state(state)
 
     if alerts:
-        msg = "*App Watchdog Alert*\n" + "\n".join(f"  {a}" for a in alerts)
+        # Services DOWN / crashed (with optional auto-restart) — an outage-class
+        # event: critical on the central bus under the "crash_storm" category.
+        body = "\n".join(a for a in alerts)
         if recoveries:
-            msg += "\n\n*Recovered:*\n" + "\n".join(f"  {r}" for r in recoveries)
-        slack_post(msg)
+            body += "\n\nRecovered:\n" + "\n".join(r for r in recoveries)
+        notify(
+            "App Watchdog Alert",
+            body=body,
+            level="critical",
+            category="crash_storm",
+            dedup_key="app-watchdog",
+            meta={"host": "studio", "source": "app_watchdog"},
+        )
         log(f"Posted {len(alerts)} alert(s), {len(recoveries)} recovery(s)")
     elif recoveries:
-        msg = "*App Watchdog — Recovery*\n" + "\n".join(f"  {r}" for r in recoveries)
-        slack_post(msg)
+        # Recovery-only cycle (services came back up) — FYI/status, info level.
+        notify(
+            "App Watchdog — Recovery",
+            body="\n".join(r for r in recoveries),
+            level="info",
+            category="crash_storm",
+            dedup_key="app-watchdog",
+            meta={"host": "studio", "source": "app_watchdog"},
+        )
         log(f"Posted {len(recoveries)} recovery(s)")
     else:
         # Count alive

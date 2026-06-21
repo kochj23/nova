@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 MEMORY_URL = "http://192.168.1.6:18790"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
@@ -124,8 +125,16 @@ def describe_image(image_path, prompt="Describe this security camera image in 1-
         return None
 
 
-def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+def slack_post(text, level="info", category="vision", dedup_key=None):
+    # First line -> title, remaining -> body. Strip leading emoji/markdown from title.
+    raw_lines = text.split("\n")
+    title = raw_lines[0].lstrip(": ").replace("*", "").strip()
+    if title.startswith(":"):
+        # drop a leading :emoji: token if present
+        title = title.split(" ", 1)[1] if " " in title else title
+    body = "\n".join(raw_lines[1:]).strip() or None
+    notify(title, body=body, level=level, category=category, dedup_key=dedup_key,
+           meta={"host": "Office-M4-2"})
 
 
 def analyze_daily_events():
@@ -165,7 +174,7 @@ Be concise. If nothing unusual, say so in one line."""
             f"{analysis}\n\n"
             f"_— Nova Vision Analyzer (local)_"
         )
-        slack_post(msg)
+        slack_post(msg, level="info", category="vision", dedup_key="vision-daily-report")
         return analysis
 
     log("Analysis failed — LLM unavailable")
@@ -212,7 +221,7 @@ If everything looks normal, say so briefly."""
             f"{report}\n\n"
             f"_— Nova Vision Analyzer (local)_"
         )
-        slack_post(msg)
+        slack_post(msg, level="info", category="vision", dedup_key="vision-weekly-threat")
         return report
 
     return None
@@ -237,7 +246,7 @@ One sentence each."""
 
         if severity == "high":
             msg = f":rotating_light: *HIGH SEVERITY ANOMALY*\n{description}\n\n{response}"
-            slack_post(msg)
+            slack_post(msg, level="critical", category="security")
 
     return response
 

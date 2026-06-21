@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+from nova_notify import notify
 from nova_image_utils import ensure_backend, generate_image
 
 # ── Date override for backfill ────────────────────────────────────────────────
@@ -497,15 +498,21 @@ def commit_and_push():
 
 
 def post_to_slack(title: str, topic: str, word_count: int):
-    """Post summary to nova-notifications."""
-    msg = (
-        f":computer: *Tech Today*\n"
-        f"*Topic:* {topic}\n"
-        f"*Title:* {title}\n"
-        f"*Words:* ~{word_count}\n\n"
+    """Announce the published Tech Today article via the notification bus."""
+    body = (
+        f"Topic: {topic}\n"
+        f"Title: {title}\n"
+        f"Words: ~{word_count}\n\n"
         f"Published to nova.digitalnoise.net/tech-today/"
     )
-    nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
+    notify(
+        "Tech Today published",
+        body=body,
+        level="info",
+        category="journal",
+        dedup_key="tech-today-published",
+        meta={"topic": topic, "title": title, "words": word_count},
+    )
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
@@ -521,9 +528,11 @@ def main():
     web_results = gather_web_results()
     if len(web_results) < 5:
         log("ABORT: Insufficient web results (need at least 5)")
-        nova_config.post_both(
-            ":warning: *Tech Today failed* — SearXNG returned too few results. Check if SearXNG is running.",
-            slack_channel=nova_config.SLACK_NOTIFY
+        notify(
+            "Tech Today failed",
+            body="SearXNG returned too few results. Check if SearXNG is running.",
+            level="warning",
+            category="journal",
         )
         return
 
@@ -551,9 +560,11 @@ def main():
     article = generate_article(topic_data, web_results, memories)
     if not article:
         log("ABORT: Article generation failed")
-        nova_config.post_both(
-            f":warning: *Tech Today failed* — article generation returned empty for topic: {topic}",
-            slack_channel=nova_config.SLACK_NOTIFY
+        notify(
+            "Tech Today failed",
+            body=f"Article generation returned empty for topic: {topic}",
+            level="warning",
+            category="journal",
         )
         return
 
@@ -566,9 +577,11 @@ def main():
     image_path = generate_cover_image(topic, title)
     if not image_path:
         log("Image generation failed after 3 retries — publishing without image")
-        nova_config.post_both(
-            f":warning: *Tech Today image failed* for \"{title}\" — publishing without cover. SwarmUI may need attention.",
-            slack_channel=nova_config.SLACK_NOTIFY
+        notify(
+            "Tech Today image failed",
+            body=f"\"{title}\" — publishing without cover. SwarmUI may need attention.",
+            level="warning",
+            category="journal",
         )
 
     # Step 6: Publish to Hugo

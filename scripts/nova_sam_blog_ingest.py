@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -39,10 +40,13 @@ def log(msg):
     print(f"[sam_blog {now}] {msg}", flush=True)
 
 def slack_post(text):
-    try:
-        nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
-    except Exception:
-        pass
+    # Migrated to the central notification bus. The only caller announces newly
+    # ingested Sam blog posts — an info-level ingest digest.
+    lines = str(text).split("\n")
+    title = lines[0].replace("*", "").strip()
+    body = "\n".join(lines[1:]).strip() or None
+    notify(title, body=body, level="info", category="ingest",
+           dedup_key="sam-blog-ingest")
 
 # ── Vector memory ─────────────────────────────────────────────────────────────
 

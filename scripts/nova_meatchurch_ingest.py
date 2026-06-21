@@ -27,6 +27,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -47,10 +48,12 @@ def log(msg, level="INFO"):
     print(f"[meatchurch {now}] [{level}] {msg}", flush=True)
 
 def slack_post(text):
-    try:
-        nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
-    except Exception:
-        pass
+    # Meat Church ingest status/progress/digest — informational, not an alert.
+    parts = str(text).split("\n", 1)
+    title = parts[0].lstrip(": ").replace("*", "").strip()
+    body = parts[1] if len(parts) > 1 else None
+    notify(title, body=body, level="info", category="ingest",
+           dedup_key="meatchurch-ingest")
 
 # ── HTML parsing ──────────────────────────────────────────────────────────────
 

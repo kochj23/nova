@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 DB_HOST = "localhost"
 DB_NAME = "nova_ops"
@@ -225,8 +226,15 @@ def execute_action(watcher: dict, new_value: str):
         template = action.get("template", "Watcher '{name}' triggered: {new_value}")
         msg = template.format(name=watcher["name"], new_value=new_value[:200],
                               target=watcher["target"], type=watcher["type"])
-        channel = action.get("channel", nova_config.SLACK_NOTIFY)
-        nova_config.post_both(f":eye: {msg}", slack_channel=channel)
+        lines = msg.split("\n")
+        notify(
+            lines[0].strip(),
+            body="\n".join(lines[1:]).strip() or None,
+            level=action.get("level", "warning"),
+            category="scheduler",
+            dedup_key=f"watcher-{watcher['id']}",
+            meta={"host": "Office-M4-2", "watcher": watcher["name"]},
+        )
 
     elif action_type == "run_script":
         script = action.get("script", "")
@@ -275,9 +283,13 @@ def run():
                     f"WHERE watcher_id = '{w['id']}'")
             if w["consecutive_errors"] + 1 >= 5:
                 db_exec(f"UPDATE watchers SET status = 'error' WHERE watcher_id = '{w['id']}'")
-                nova_config.post_both(
-                    f":warning: Watcher '{w['name']}' disabled after 5 consecutive errors: {error[:100]}",
-                    slack_channel=nova_config.SLACK_NOTIFY
+                notify(
+                    f"Watcher '{w['name']}' disabled after 5 consecutive errors",
+                    body=error[:200],
+                    level="warning",
+                    category="scheduler",
+                    dedup_key=f"watcher-error-{w['id']}",
+                    meta={"host": "Office-M4-2", "watcher": w["name"]},
                 )
         else:
             escaped_value = new_value.replace("'", "''")

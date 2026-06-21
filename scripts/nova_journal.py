@@ -36,6 +36,7 @@ from nova_voice import (
 )
 
 import nova_config
+from nova_notify import notify
 from nova_image_utils import generate_image
 try:
     from nova_ops_context import get_full_context, format_security_brief, format_infra_brief
@@ -406,10 +407,12 @@ def notify_slack(section: str, title: str, preview: str):
         "synthesis": ":thread:", "digests": ":newspaper:", "dreams": ":crescent_moon:",
         "art": ":art:",
     }
-    emoji = section_emojis.get(section, ":book:")
     short_preview = preview[:250].rsplit(" ", 1)[0] + "..." if len(preview) > 250 else preview
-    msg = f"{emoji} *Nova Journal — {section}*\n*{title}*\n_{short_preview}_"
-    nova_config.post_both(msg, slack_channel=nova_config.SLACK_INFO)
+    # Published journal content -> central bus, info level (FYI/published-content),
+    # category "journal". Was SLACK_INFO. One-off per post, so no dedup_key.
+    notify(f"Nova Journal — {section}: {title}",
+           body=short_preview, level="info", category="journal",
+           source="nova_journal.py", meta={"section": section})
 
 
 # ══════════════════════════════════════════════════════════════════════════════

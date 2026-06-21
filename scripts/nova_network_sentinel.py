@@ -41,6 +41,8 @@ try:
 except Exception:
     pass
 
+from nova_notify import notify
+
 STATE_DIR = Path.home() / ".openclaw/workspace/state"
 BASELINE_FILE = STATE_DIR / "network_baseline.json"
 LATEST_FILE = STATE_DIR / "network_scan_latest.json"
@@ -360,14 +362,34 @@ def notify_results(findings: dict, host_count: int):
 
     message = "\n".join(msg_parts)
 
-    if nova_config:
-        try:
-            nova_config.post_both(message, nova_config.SLACK_NOTIFY)
-            log("Summary posted to notifications channel")
-        except Exception as e:
-            log(f"Notification failed: {e}")
+    # Declare intent: level reflects what the scan MEANS, not a channel.
+    if critical:
+        level = "critical"
+    elif high or new_hosts or new_ports:
+        level = "warning"
     else:
-        log(f"SUMMARY (no nova_config): {message}")
+        level = "info"
+
+    title = f"Network Sentinel — Daily Scan ({posture})"
+    body = "\n".join(msg_parts[1:]) if len(msg_parts) > 1 else None
+    try:
+        notify(
+            title,
+            body=body,
+            level=level,
+            category="security",
+            dedup_key="network-sentinel-daily",
+            meta={
+                "host_count": host_count,
+                "critical": len(critical),
+                "high": len(high),
+                "new_hosts": len(new_hosts),
+                "new_ports": len(new_ports),
+            },
+        )
+        log("Summary emitted to notification bus")
+    except Exception as e:
+        log(f"Notification failed: {e}")
 
 
 def record_to_pg(findings: dict, host_count: int):

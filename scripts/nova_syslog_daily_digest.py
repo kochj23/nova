@@ -25,6 +25,7 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 OPS_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
 MEMORY_URL = "http://192.168.1.6:18790/remember"
@@ -233,10 +234,14 @@ def main():
         top = data["top_sources"][0]
         slack_lines.append(f"  Top talker: {top[0]} ({top[1]:,} events)")
 
-    try:
-        nova_config.post_both("\n".join(slack_lines), slack_channel=nova_config.SLACK_NOTIFY)
-    except Exception as e:
-        log(f"Slack post error: {e}")
+    notify(
+        f"Syslog Daily Digest — {date_str}",
+        body="\n".join(slack_lines[1:]),
+        level="info",
+        category="syslog",
+        dedup_key="syslog-daily-digest",
+        meta={"date": date_str, "total_events": data["total"]},
+    )
 
     log("Done.")
 

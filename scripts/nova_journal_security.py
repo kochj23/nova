@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 from nova_image_utils import generate_image
+from nova_notify import notify as nova_notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -254,13 +255,20 @@ description: "{description.replace('"', "'")}"
 
 
 def notify(title: str, preview: str, is_breaking: bool = False):
-    emoji = ":rotating_light::rotating_light:" if is_breaking else ":shield:"
     prefix = "BREAKING" if is_breaking else "Daily Briefing"
-    msg = f"{emoji} *Nova Security — {prefix}*\n*{title}*\n_{preview[:250]}_"
-    # Always post to notifications
-    nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
-    # Breaking alerts also go to Nova's chat
+    # Declare intent: breaking security events are critical; the daily briefing
+    # is an FYI digest. Routing is decided centrally by nova_notifier.
+    nova_notify(
+        f"Nova Security — {prefix}: {title}",
+        body=preview[:250],
+        level="critical" if is_breaking else "info",
+        category="security",
+        dedup_key=None if is_breaking else "security-daily-briefing",
+    )
+    # Breaking alerts also go to Nova's chat (interactive, non-alert) — leave as-is.
     if is_breaking:
+        emoji = ":rotating_light::rotating_light:"
+        msg = f"{emoji} *Nova Security — {prefix}*\n*{title}*\n_{preview[:250]}_"
         nova_config.post_both(msg, slack_channel=nova_config.SLACK_CHAT)
 
 

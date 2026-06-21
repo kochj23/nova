@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 logging.basicConfig(
     level=logging.INFO,
@@ -558,11 +559,17 @@ def main():
     print(message)
     print()
 
-    try:
-        nova_config.post_both(message, slack_channel=nova_config.SLACK_NOTIFY)
-        logging.info("Unified journal posted to Slack")
-    except Exception as e:
-        logging.error(f"Slack post failed: {e}")
+    # Emit the nightly digest to the central bus — an FYI status digest, not an
+    # alert. First line (the header) is the title; the rest is the body. Daily,
+    # so dedup on the date to collapse any accidental double-runs.
+    lines = message.split("\n", 1)
+    title = lines[0].strip().strip("*").strip()
+    body = lines[1].lstrip("\n") if len(lines) > 1 else None
+    notify(
+        title, body=body, level="info", category="journal",
+        dedup_key=f"daily-journal-{TODAY}",
+    )
+    logging.info("Unified journal emitted to notification bus")
 
     # Phase 5: Store LLM summary in vector memory for dream pickup
     store_summary_in_memory(llm_summary)

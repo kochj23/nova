@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 NOVA_EMAIL = "nova@digitalnoise.net"
 JOURNAL_URL = "https://nova.digitalnoise.net"
@@ -174,16 +175,21 @@ def main():
     body = build_digest(posts)
     
     if send_digest(body, len(posts)):
-        nova_config.post_both(
-            f":email: *Journal Digest sent to Herd*\n"
-            f":memo: {len(posts)} posts from today\n"
-            f":mailbox_with_mail: Sent to {len(HERD_EMAILS)} Herd members + Jordan",
-            slack_channel=nova_config.SLACK_NOTIFY,
+        # FYI/digest status -> info. Repeats daily on a schedule -> dedup_key.
+        notify(
+            "Journal Digest sent to Herd",
+            body=f"{len(posts)} posts from today\n"
+                 f"Sent to {len(HERD_EMAILS)} Herd members + Jordan",
+            level="info", category="journal",
+            dedup_key="journal-digest-email", source="nova_journal_digest_email.py",
         )
     else:
-        nova_config.post_both(
-            f":x: *Journal Digest FAILED*\nCould not send email.",
-            slack_channel=nova_config.SLACK_NOTIFY,
+        # Send failed -> needs attention -> warning. Repeats daily -> dedup_key.
+        notify(
+            "Journal Digest FAILED",
+            body="Could not send email.",
+            level="warning", category="journal",
+            dedup_key="journal-digest-email-fail", source="nova_journal_digest_email.py",
         )
 
 

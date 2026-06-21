@@ -26,6 +26,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 logging.basicConfig(
     level=logging.INFO,
@@ -266,7 +267,17 @@ def run_audit():
 
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    # Migrated to the central notification bus. The audit report's first line is
+    # the title; remaining lines become the body. "!!" lines indicate services/
+    # processes down (an outage-class condition) -> critical; otherwise warning
+    # (all-clear / informational discrepancies). Repeats on a schedule, so a
+    # stable dedup_key collapses unchanged repeats centrally.
+    lines = text.split("\n")
+    title = lines[0].lstrip("*").rstrip("*").strip() or "Nova Self-Audit Report"
+    body = "\n".join(lines[1:]).strip() or None
+    level = "critical" if " !! " in text or text.strip().endswith("!!") or "!!" in text else "warning"
+    notify(title, body=body, level=level, category="health",
+           dedup_key="self-audit")
 
 
 if __name__ == "__main__":

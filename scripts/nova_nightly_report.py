@@ -22,6 +22,7 @@ import urllib.parse
 from datetime import datetime, date, timedelta
 from pathlib import Path
 import nova_config
+from nova_notify import notify
 try:
     from nova_ops_context import get_full_context, format_security_brief, format_infra_brief
 except ImportError:
@@ -62,9 +63,16 @@ NOW          = datetime.now()
 # ── Slack ─────────────────────────────────────────────────────────────────────
 
 def slack_post(text):
-    chunks = [text[i:i+3000] for i in range(0, len(text), 3000)]
-    for chunk in chunks:
-        nova_config.post_both(chunk, slack_channel=nova_config.SLACK_INFO)
+    """Emit a nightly-digest section to the central notification bus.
+
+    These are pure FYI/digest content (was #nova-info). First line -> title,
+    remainder -> body. Sections are distinct content within one run, so no
+    dedup_key (the daemon still correlates by source/category).
+    """
+    lines = text.split("\n", 1)
+    title = lines[0].strip().lstrip("─").strip() or "Nova Nightly Report"
+    body = lines[1] if len(lines) > 1 else None
+    notify(title, body=body, level="info", category="digest")
 
 
 def log(msg):

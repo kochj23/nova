@@ -24,6 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
@@ -460,7 +461,17 @@ def main():
     # Default: full digest to Slack
     log("Building calendar digest...")
     digest = calendar_digest()
-    slack_post(digest)
+    parts = digest.split("\n", 1)
+    digest_title = parts[0].strip().strip("*").strip()
+    digest_body = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+    notify(
+        digest_title,
+        body=digest_body,
+        level="info",
+        category="calendar",
+        dedup_key=f"calendar-digest-{TODAY}",
+        meta={"host": "mac-studio"},
+    )
 
     # Store in vector memory
     today_events = get_todays_events()

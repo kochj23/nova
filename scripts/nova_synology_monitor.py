@@ -41,6 +41,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 VECTOR_URL = nova_config.VECTOR_URL
 NOW = datetime.now()
@@ -209,7 +210,24 @@ class SynoSession:
 # ── Slack & Vector Memory ──────────────────────────────────────────────────
 
 def slack_post(text, channel=None):
-    nova_config.post_both(text, slack_channel=channel or nova_config.SLACK_NOTIFY)
+    # Migrated to the central notification bus. Every call site here is a NAS
+    # health/storage alert (problem reports, backup failures, auth/API errors).
+    # Infer level from message content: hard-down / auth / backup failures and
+    # "Critical:" sections are critical; degraded/warning sections are warning.
+    # First line -> title, remaining lines -> body. Stable dedup_key collapses
+    # the 30-min monitor's repeats centrally.
+    lower = text.lower()
+    if ("critical" in lower or "cannot authenticate" in lower
+            or "unexpected error" in lower or "backup alert" in lower
+            or "returned no data" in lower):
+        level = "critical"
+    else:
+        level = "warning"
+    lines = text.split("\n")
+    title = lines[0].lstrip("*").rstrip("*").strip() or "Synology NAS"
+    body = "\n".join(lines[1:]).strip() or None
+    notify(title, body=body, level=level, category="storage",
+           dedup_key="synology-monitor", meta={"host": NAS_HOST})
 
 
 def vector_remember(text, metadata=None):

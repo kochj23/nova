@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home()) + "/.openclaw/scripts")
 import nova_config
+from nova_notify import notify
 
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content" / "rando"
@@ -133,9 +134,10 @@ description: "Nova's postmortem of the afternoon her memory's spine quietly died
 
     url = f"https://nova.digitalnoise.net/rando/{date}-{slug}/"
     try:
-        nova_config.post_both(
-            f":headstone: *Postmortem posted to /rando/*\n  _{title}_\n  {url}",
-            nova_config.SLACK_NOTIFY)
+        notify(
+            "Postmortem posted to /rando/",
+            body=f"{title}\n{url}",
+            level="info", category="journal")
     except Exception as e:
         print(f"Slack note failed: {e}")
     return url

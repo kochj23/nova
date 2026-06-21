@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 from nova_image_utils import generate_image
+from nova_notify import notify
 
 # ── Date override for backfill ────────────────────────────────────────────────
 _FOR_DATE = os.environ.get("NOVA_FOR_DATE", "").strip()
@@ -373,12 +374,15 @@ def run_pipeline() -> bool:
     # Git push
     git_push()
 
-    # Notify Slack
-    nova_config.post_both(
-        f":clapper: *New TV Pilot:* \"{title}\"\n"
-        f"_{genre['name']} • Source: {source.replace('_', ' ')}_\n"
-        f"https://nova.digitalnoise.net/pilot/{_today_str()}-{slug}/",
-        slack_channel=nova_config.SLACK_NOTIFY,
+    # Notify (published content — FYI/info)
+    notify(
+        f"New TV Pilot: \"{title}\"",
+        body=(
+            f"{genre['name']} • Source: {source.replace('_', ' ')}\n"
+            f"https://nova.digitalnoise.net/pilot/{_today_str()}-{slug}/"
+        ),
+        level="info",
+        category="media",
     )
 
     log(f"Pipeline complete: \"{title}\"")

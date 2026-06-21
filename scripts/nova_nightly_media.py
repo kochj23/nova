@@ -55,6 +55,7 @@ sys.path.insert(0, SCRIPTS)
 
 import nova_config
 import nova_media_registry as registry
+from nova_notify import notify as bus_notify
 
 # Import CHANNELS dict directly — do not duplicate
 from nova_yt_new_episodes import (
@@ -143,11 +144,27 @@ def log(msg: str) -> None:
 
 
 def notify(text: str, channel: str = SLACK_NOTIFY) -> None:
-    """Post to the given Slack channel (and its Discord mirror)."""
+    """Emit a notification.
+
+    Alert-channel posts (SLACK_NOTIFY) are routed through the central
+    notification bus (nova_notify) as info-level media events. Posts aimed at
+    the interactive chat channel (SLACK_CHAT) are NOT alerts — they stay on
+    Slack so Jordan sees them inline.
+    """
+    if channel == SLACK_CHAT:
+        try:
+            nova_config.post_both(text, slack_channel=channel)
+        except Exception as exc:
+            log(f"Slack notify error: {exc}")
+        return
+    # Alert channel (SLACK_NOTIFY) -> central bus. First line = title.
+    lines = text.split("\n", 1)
+    title = lines[0].strip()
+    body = lines[1].strip() if len(lines) > 1 else None
     try:
-        nova_config.post_both(text, slack_channel=channel)
+        bus_notify(title, body=body, level="info", category="media")
     except Exception as exc:
-        log(f"Slack notify error: {exc}")
+        log(f"notify bus error: {exc}")
 
 
 # ── DB setup ──────────────────────────────────────────────────────────────────

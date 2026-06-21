@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 try:
     import psycopg2
@@ -127,10 +128,10 @@ def main():
 
     log(f"Sync complete: {synced} synced, {skipped} unchanged")
     if synced > 0:
-        nova_config.post_both(
-            f":brain: *Claude Memory Sync* — {synced} memories synced to Nova vector DB"
-            f" ({skipped} unchanged)",
-            slack_channel=nova_config.SLACK_NOTIFY,
+        notify(
+            "Claude Memory Sync",
+            body=f"{synced} memories synced to Nova vector DB ({skipped} unchanged)",
+            level="info", category="memory_ingest", dedup_key="claude-memory-sync",
         )
 
 

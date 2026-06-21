@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 from nova_image_utils import generate_image
+from nova_notify import notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -454,12 +455,16 @@ description: "Nova's morning vector audit — finding and fixing misfiled memori
         log(f"Commit issue: {r.stderr[:100]}")
 
     moves_count = len(stats.get('moves', [])) if stats else 0
-    nova_config.post_both(
-        f":card_file_box: *Vector Audit posted*\n"
-        f"  _{title}_\n"
-        f"  Moved {moves_count} misfiled memories\n"
-        f"  https://nova.digitalnoise.net/rando/{date}-{slug}/",
-        nova_config.SLACK_NOTIFY
+    notify(
+        "Vector Audit posted",
+        body=(
+            f"{title}\n"
+            f"Moved {moves_count} misfiled memories\n"
+            f"https://nova.digitalnoise.net/rando/{date}-{slug}/"
+        ),
+        level="info",
+        category="memory_ingest",
+        dedup_key="vector-audit",
     )
 
 

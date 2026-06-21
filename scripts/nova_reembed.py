@@ -36,6 +36,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 PG_CONN = "host=127.0.0.1 dbname=nova_memories"
 OLLAMA_URL = "http://127.0.0.1:11434/api/embed"
@@ -47,8 +48,15 @@ def log(msg):
     print(f"[reembed {datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 
-def post_slack(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+def post_slack(text, level="info"):
+    # Migrated to the central notification bus. These are status/progress/digest
+    # messages for a long-running re-embed job — info-level memory_ingest.
+    lines = str(text).split("\n")
+    title = lines[0].lstrip(":").replace("brain:", "").replace("white_check_mark:", "").strip()
+    title = title.replace("*", "").strip()
+    body = "\n".join(lines[1:]).strip() or None
+    notify(title, body=body, level=level, category="memory_ingest",
+           dedup_key="reembed-status")
 
 
 def embed(text, model):

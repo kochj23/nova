@@ -36,6 +36,7 @@ except ImportError as e:
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -182,13 +183,14 @@ def execute_action(trigger_result: dict, source_text: str):
     log(f"Firing trigger '{name}' (sim={sim:.3f}, action={action})")
 
     if action == "slack_notify":
-        channel = config.get("channel", nova_config.SLACK_NOTIFY)
-        msg = (
-            f":dart: *Semantic Trigger Fired*: {name}\n"
-            f"  Similarity: {sim:.2f}\n"
-            f"  Content: _{source_text[:150]}..._"
+        notify(
+            f"Semantic Trigger Fired: {name}",
+            body=f"Similarity: {sim:.2f}\nContent: {source_text[:150]}...",
+            level="warning",
+            category="ingest",
+            dedup_key=f"semantic-trigger-{name}",
+            meta={"similarity": round(sim, 4)},
         )
-        nova_config.post_both(msg, slack_channel=channel)
 
     elif action == "queue_for_claude":
         priority = config.get("priority", 3)

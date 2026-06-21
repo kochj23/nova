@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_logger import log, LOG_INFO, LOG_ERROR, read_logs
+from nova_notify import notify
 
 SLACK_CHAN = nova_config.SLACK_NOTIFY  # #nova-chat — Jordan should see this
 VECTOR_URL = nova_config.VECTOR_URL
@@ -27,7 +28,11 @@ WEEK_AGO = TODAY - timedelta(days=7)
 
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    parts = text.split("\n", 1)
+    title = parts[0]
+    body = parts[1] if len(parts) > 1 else None
+    notify(title, body=body, level="info", category="scheduler",
+           dedup_key="weekly-reliability", meta={"host": "mac-studio"})
 
 
 def get_scheduler_tasks():

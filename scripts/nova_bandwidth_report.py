@@ -6,6 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 VECTOR_URL = nova_config.VECTOR_URL
 
@@ -19,7 +20,17 @@ def get_api_key():
     return r.stdout.strip()
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    parts = text.split("\n", 1)
+    title = parts[0].strip().strip("*")
+    body = parts[1] if len(parts) > 1 else None
+    notify(
+        title,
+        body=body,
+        level="info",
+        category="network",
+        dedup_key="bandwidth-daily-report",
+        meta={"host": "udm-pro"},
+    )
 
 def api_get(endpoint, key):
     """GET request to UDM Pro API."""

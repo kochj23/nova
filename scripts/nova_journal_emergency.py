@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+from nova_notify import notify as _bus_notify
 from nova_voice import system_prompt, NOVA_VOICE, CONTEXT_JOURNAL_LOCAL
 from nova_weather_blurb import weather_forecast_context
 
@@ -181,19 +182,35 @@ def find_breaking(items: list[dict]) -> list[dict]:
 # ── Slack ───────────────────────────────────────────────────────────────────────
 
 def notify(title: str, preview: str, slug: str, is_breaking: bool = False):
-    emoji = ":rotating_light::fire:" if is_breaking else ":fire_engine:"
     prefix = "BREAKING — LA County Emergency" if is_breaking else "LA County Emergency Recap"
     date = time.strftime("%Y-%m-%d")
-    msg = (
-        f"{emoji} *Nova — {prefix}*\n"
-        f"*{title}*\n"
-        f"_{preview[:250]}_\n"
-        f"https://nova.digitalnoise.net/{SECTION}/{date}-{slug}/"
-    )
-    # Always to notifications.
-    nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
-    # Breaking also pings Nova's chat channel.
+    url = f"https://nova.digitalnoise.net/{SECTION}/{date}-{slug}/"
+    # The SLACK_NOTIFY alert is migrated to the central bus: breaking emergencies
+    # are critical (active evac/fire/warning), the daily recap is info (digest).
+    # Category "emergency". Breaking dedups per-incident by slug; the daily recap
+    # repeats on a schedule so it dedups per-day.
     if is_breaking:
+        level = "critical"
+        dedup_key = f"la-emergency-breaking-{slug}"
+    else:
+        level = "info"
+        dedup_key = f"la-emergency-recap-{date}"
+    _bus_notify(
+        f"{prefix}: {title}",
+        body=f"{preview[:250]}\n{url}",
+        level=level, category="emergency", dedup_key=dedup_key,
+        source="nova_journal_emergency.py",
+    )
+    # Breaking also pings Nova's chat channel (SLACK_CHAN) — left as-is, not an
+    # alert channel; the central bus does not own the chat surface.
+    if is_breaking:
+        emoji = ":rotating_light::fire:"
+        msg = (
+            f"{emoji} *Nova — {prefix}*\n"
+            f"*{title}*\n"
+            f"_{preview[:250]}_\n"
+            f"{url}"
+        )
         nova_config.post_both(msg, slack_channel=nova_config.SLACK_CHAN)
 
 

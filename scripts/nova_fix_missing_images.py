@@ -19,6 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify as bus_notify
 from nova_image_utils import generate_image
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -52,10 +53,11 @@ def log(msg):
 
 
 def notify(text):
-    try:
-        nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
-    except Exception:
-        pass
+    parts = text.split("\n", 1)
+    title = re.sub(r":[a-z0-9_+-]+:", "", parts[0]).lstrip("*").rstrip("*").strip()
+    body = parts[1] if len(parts) > 1 else None
+    bus_notify(title, body=body, level="info", category="journal",
+               dedup_key="journal-image-repair")
 
 
 def get_posts_missing_images() -> list[dict]:

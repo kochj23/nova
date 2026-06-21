@@ -31,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 VECTOR_URL = "http://192.168.1.6:18790"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
@@ -46,7 +47,13 @@ def log(msg):
 
 
 def post_slack(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    # Migrated to the central notification bus. The only caller is the nightly
+    # REM-sleep consolidation report — an info-level digest that repeats daily.
+    lines = str(text).split("\n")
+    title = lines[0].replace(":brain:", "").replace("*", "").strip()
+    body = "\n".join(lines[1:]).strip() or None
+    notify(title, body=body, level="info", category="memory_ingest",
+           dedup_key="rem-sleep-report")
 
 
 def pg_connect():

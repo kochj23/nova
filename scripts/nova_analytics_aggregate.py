@@ -25,6 +25,7 @@ import psycopg2.extras
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_logger import log, LOG_INFO, LOG_WARN, LOG_ERROR
+from nova_notify import notify
 
 PG_DSN = "host=192.168.1.6 dbname=nova_ops user=kochj"
 
@@ -280,23 +281,35 @@ def fire_alerts(conn, alerts):
             (alert["type"], alert.get("site"), json.dumps(alert.get("detail", {}), default=_json_default))
         )
 
-        # Slack notification
-        emoji = {"traffic_spike": ":chart_with_upwards_trend:", "referrer_bomb": ":rotating_light:", "site_dark": ":ghost:"}.get(alert["type"], ":warning:")
+        # Central notification bus: declare intent (level + category), not a channel.
+        site = alert.get("site", "unknown")
         if alert["type"] == "site_dark":
             detail = alert.get("detail", {})
-            status_icon = ":white_check_mark:" if detail.get("site_reachable") else ":x:"
-            msg = (
-                f"{emoji} *Site Quiet — {alert.get('site', 'unknown')}*\n"
-                f"  {detail.get('explanation', 'No pageviews detected')}\n"
-                f"  {status_icon} HTTP probe: {'reachable' if detail.get('site_reachable') else 'UNREACHABLE — possible outage'}\n"
-                f"  Silent for: {detail.get('hours_silent', '?')}h"
+            reachable = detail.get("site_reachable")
+            # Unreachable site == possible outage (critical); reachable-but-quiet
+            # is a needs-attention warning.
+            level = "warning" if reachable else "critical"
+            title = f"Site Quiet — {site}"
+            body = (
+                f"{detail.get('explanation', 'No pageviews detected')}\n"
+                f"HTTP probe: {'reachable' if reachable else 'UNREACHABLE — possible outage'}\n"
+                f"Silent for: {detail.get('hours_silent', '?')}h"
             )
         else:
-            msg = f"{emoji} *Analytics Alert — {alert['type'].replace('_', ' ').title()}*\nSite: {alert.get('site', 'unknown')}\nDetail: {json.dumps(alert.get('detail', {}), default=_json_default)}"
-        try:
-            nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
-        except Exception as e:
-            log(f"Alert notification failed: {e}", level=LOG_ERROR, source="analytics_agg")
+            level = "warning"
+            title = f"Analytics Alert — {alert['type'].replace('_', ' ').title()}"
+            body = (
+                f"Site: {site}\n"
+                f"Detail: {json.dumps(alert.get('detail', {}), default=_json_default)}"
+            )
+        notify(
+            title,
+            body=body,
+            level=level,
+            category="analytics",
+            dedup_key=f"analytics-{alert['type']}-{site}",
+            meta={"host": "studio", "site": site},
+        )
 
     conn.commit()
     cur.close()

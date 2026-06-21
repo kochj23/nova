@@ -27,6 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import psycopg2
 import psycopg2.extras
+from nova_notify import notify
 
 DB_DSN = "host=localhost dbname=nova_ops user=kochj"
 POLL_INTERVAL = 5
@@ -159,12 +160,11 @@ def update_status(deploy_id, status, **kwargs):
     conn.close()
 
 
-def notify_slack(msg):
-    try:
-        import nova_config
-        nova_config.slack(msg, nova_config.SLACK_NOTIFY)
-    except Exception:
-        pass
+def notify_slack(msg, level="warning"):
+    lines = str(msg).split("\n")
+    title = lines[0].strip()
+    body = "\n".join(lines[1:]).strip() or None
+    notify(title, body=body, level=level, category="deploy")
 
 
 def execute_deploy(deploy):
@@ -207,7 +207,7 @@ def execute_deploy(deploy):
         _trigger_security_scan(service)
         if action == "deploy_script":
             _update_security_baseline(service)
-        notify_slack(f":rocket: Deploy #{deploy_id} success: `{action}` on `{service}`")
+        notify_slack(f"Deploy #{deploy_id} success: `{action}` on `{service}`", level="info")
 
         # Record observation
         _observe("nova", "runtime", service,
@@ -227,13 +227,13 @@ def execute_deploy(deploy):
                 subprocess.run(rollback, shell=True, timeout=30,
                                capture_output=True, text=True)
                 update_status(deploy_id, "rolled_back", error=error_msg)
-                notify_slack(f":warning: Deploy #{deploy_id} failed + rolled back: `{service}` — {error_msg}")
+                notify_slack(f"Deploy #{deploy_id} failed + rolled back: `{service}` — {error_msg}", level="warning")
                 return
             except Exception as rb_err:
                 error_msg += f" (rollback also failed: {rb_err})"
 
         update_status(deploy_id, "failed", error=error_msg)
-        notify_slack(f":x: Deploy #{deploy_id} FAILED: `{service}` — {error_msg}")
+        notify_slack(f"Deploy #{deploy_id} FAILED: `{service}` — {error_msg}", level="critical")
 
 
 def _restart_service(service):

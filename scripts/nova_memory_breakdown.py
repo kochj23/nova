@@ -18,12 +18,18 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 VECTOR_URL = "http://192.168.1.6:18790"
 
 
 def slack_post(text):
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+    # Memory breakdown digest — informational status, not an alert.
+    parts = str(text).split("\n", 1)
+    title = parts[0].lstrip(": ").replace("*", "").strip()
+    body = parts[1] if len(parts) > 1 else None
+    notify(title, body=body, level="info", category="memory_ingest",
+           dedup_key="memory-breakdown")
 
 
 def get_queue_depth():

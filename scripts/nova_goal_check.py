@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 from nova_logger import log, LOG_INFO, LOG_ERROR
 from nova_goals import (
     ensure_schema as ensure_goals_schema,
@@ -84,8 +85,11 @@ def main():
         lines.append("")
         lines.append(f"📝 {promoted} new rule(s) from corrections. {len(rules)} total active rules.")
 
-    nova_config.post_both("\n".join(lines), slack_channel=nova_config.SLACK_NOTIFY)
-    log("Goal check posted to Slack", level=LOG_INFO, source=SOURCE)
+    title = lines[0].lstrip("*").rstrip("*").strip()
+    body = "\n".join(lines[1:]).strip() or None
+    notify(title, body=body, level="warning", category="scheduler",
+           dedup_key="goal-check")
+    log("Goal check emitted to notification bus", level=LOG_INFO, source=SOURCE)
     return 0
 
 

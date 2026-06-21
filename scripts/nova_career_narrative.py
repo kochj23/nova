@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+from nova_notify import notify
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
@@ -315,11 +316,12 @@ def post_to_slack(text: str) -> None:
     if len(text) > 3900:
         chunks = [text[i:i+3900] for i in range(0, len(text), 3900)]
         for i, chunk in enumerate(chunks):
-            prefix = f"*Career Narrative ({i+1}/{len(chunks)})*\n" if len(chunks) > 1 else ""
-            nova_config.post_both(prefix + chunk, slack_channel=nova_config.SLACK_NOTIFY)
+            title = (f"Career Narrative ({i+1}/{len(chunks)})"
+                     if len(chunks) > 1 else "Career Narrative")
+            notify(title, body=chunk, level="info", category="journal")
             time.sleep(1)
     else:
-        nova_config.post_both(text, slack_channel=nova_config.SLACK_NOTIFY)
+        notify("Career Narrative", body=text, level="info", category="journal")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────

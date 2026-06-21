@@ -30,6 +30,7 @@ except ImportError:
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+from nova_notify import notify
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
@@ -318,7 +319,11 @@ async def run():
             topic = extract_topic(text)
             briefing = format_briefing(topic, matches)
             log(f"Posting briefing for: {topic[:60]}")
-            nova_config.post_both(briefing, slack_channel=nova_config.SLACK_NOTIFY)
+            _b_lines = briefing.split("\n", 1)
+            notify(
+                f"Proactive Brief — Re: {topic}",
+                body=_b_lines[1] if len(_b_lines) > 1 else None,
+                level="info", category="memory_ingest")
             record_briefed(state, fp, topic)
             briefings_posted += 1
 
