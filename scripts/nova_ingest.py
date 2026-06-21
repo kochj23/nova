@@ -322,6 +322,11 @@ def clean_text(text):
             clean.append(" ".join(good))
     return "\n\n".join(clean)
 
+# Refuse to delete more than this fraction of a vector in one purge (guardrail
+# against is_garbage over-flagging short-form content). See SAFETY CAP below.
+MAX_PURGE_FRACTION = 0.40
+
+
 def purge_garbage(vector, dry_run=False):
     log(f"Garbage purge on '{vector}'...")
     try:
@@ -333,16 +338,30 @@ def purge_garbage(vector, dry_run=False):
         if r.returncode != 0:
             return 0
         ids = []
+        total_rows = 0
         for line in r.stdout.strip().split("\n"):
             if "\x1f" not in line:
                 continue
+            total_rows += 1
             mid, txt = line.split("\x1f", 1)
             if is_garbage(txt):
                 ids.append(mid.strip())
         if not ids:
             log(f"Purge: nothing to remove from '{vector}'")
             return 0
-        log(f"Purge: {len(ids)} fragments from '{vector}'")
+        # SAFETY CAP: never nuke most of a vector. is_garbage is tuned for prose;
+        # on short-form content (garden tips, spec one-liners) it flags nearly
+        # everything, which once wiped 'gardening' from 2488 -> 17. If the purge
+        # would remove more than MAX_PURGE_FRACTION of the rows, it's the heuristic
+        # that's wrong, not the data — skip and warn instead of deleting.
+        if total_rows and (len(ids) / total_rows) > MAX_PURGE_FRACTION:
+            log(f"Purge ABORTED on '{vector}': would delete {len(ids)}/{total_rows} "
+                f"({100*len(ids)/total_rows:.0f}%) — over-aggressive, protecting vector")
+            notify(f":shield: *Garbage purge SKIPPED* `{vector}`: would have nuked "
+                   f"{len(ids)}/{total_rows} rows ({100*len(ids)/total_rows:.0f}%). "
+                   f"Vector protected — is_garbage too aggressive for this content.")
+            return 0
+        log(f"Purge: {len(ids)} fragments from '{vector}' (of {total_rows})")
         if dry_run:
             return len(ids)
         deleted = 0
