@@ -43,6 +43,20 @@ tasks:
     timeout: 60
     overlap: skip
 
+  prober:                          # synthetic end-to-end probes (real HTTP/memory/embed/PG)
+    script: nova_prober.py
+    schedule: every 2m
+    args: ["--once", "--quiet"]
+    timeout: 90
+    overlap: skip
+
+  incident_lifecycle:              # auto-close resolved incidents + recurrence detection
+    script: nova_incident_lifecycle.py
+    schedule: every 10m
+    args: ["--sweep"]
+    timeout: 120
+    overlap: skip
+
   sky_watcher:
     script: nova_sky_watcher.py
     schedule: every 10m

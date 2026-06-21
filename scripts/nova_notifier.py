@@ -19,6 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 import nova_correlator
+import nova_remediation
 
 DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
 
@@ -118,6 +119,13 @@ def drain(verbose=False, only_source=None) -> int:
                 channel = _route(ev["level"], ev["category"])
                 if corr.get("action") == "opened":
                     summary, model = nova_correlator.llm_summarize(conn, corr["incident_id"])
+                    # Propose remediation for the new incident (propose-only until
+                    # REMEDIATION_ENABLED is flipped on — executes nothing yet).
+                    try:
+                        nova_remediation.propose_for_incident(conn, corr["incident_id"])
+                    except Exception as e:
+                        if verbose:
+                            print(f"  remediation propose error #{corr['incident_id']}: {e}")
                     badge = ":rotating_light:" if ev["level"] == "critical" else ":warning:"
                     by = f" · _summary by {model}_" if model else ""
                     msg = (f"{badge} *Incident #{corr['incident_id']}: {ev['title']}*\n"
