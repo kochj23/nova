@@ -66,7 +66,7 @@ def _connect():
                             cursor_factory=psycopg2.extras.RealDictCursor)
 
 
-def drain(verbose=False) -> int:
+def drain(verbose=False, only_source=None) -> int:
     """Process all 'new' events once. Returns number delivered."""
     sent = 0
     try:
@@ -76,8 +76,13 @@ def drain(verbose=False) -> int:
         return 0
     with conn:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM telemetry.events WHERE status='new' ORDER BY ts ASC LIMIT 200")
+            q = "SELECT * FROM telemetry.events WHERE status='new'"
+            params = []
+            if only_source:  # test-scope: integration tests pass their own source so
+                q += " AND source = %s"  # drain() doesn't pick up live production events
+                params.append(only_source)
+            q += " ORDER BY ts ASC LIMIT 200"
+            cur.execute(q, params)
             events = cur.fetchall()
             for ev in events:
                 # 1) Dedup/rate-limit: was the same key already sent in the window?
