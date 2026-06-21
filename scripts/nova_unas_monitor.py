@@ -6,7 +6,7 @@ Polls UNAS Pro every 5 minutes (via scheduler). Writes status JSON for
 NovaControl to read. Alerts to Slack #nova-notifications on problems.
 
 Thresholds:
-  Storage: warn at 80%, critical at 90%
+  Storage: warn under 3TB free, critical under 1.5TB free
   Status: alert on anything other than "healthy"
 
 PRIVACY: All UNAS data is local-only. Never routed to cloud LLMs.
@@ -46,8 +46,10 @@ STATUS_FILE = STATE_DIR / "nova_unas_status.json"   # NovaControl reads this
 SNAPSHOT_FILE = STATE_DIR / "unas_snapshots.json"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_unas_monitor.log"
 
-STORAGE_WARN_PCT = 80
-STORAGE_CRIT_PCT = 90
+# Free-space based, not percentage — on a big array, "80% used / 11TB free" is a
+# non-event. Warn only when free space actually gets tight. (Per Jordan, 2026-06-21.)
+STORAGE_WARN_FREE_TB = 3.0
+STORAGE_CRIT_FREE_TB = 1.5
 
 client = UNASClient()
 
@@ -108,15 +110,14 @@ def check_storage(snapshot: dict) -> list[str]:
     if status not in ("healthy", ""):
         problems.append(f"Storage status is '{status}' (expected healthy)")
     used_pct = st.get("used_pct", 0)
-    if used_pct >= STORAGE_CRIT_PCT:
-        free_tb = st.get("free_tb", 0)
+    free_tb = st.get("free_tb", 0)
+    if free_tb <= STORAGE_CRIT_FREE_TB:
         problems.append(
-            f"Storage CRITICAL: {used_pct:.1f}% used, only {free_tb:.1f}TB free"
+            f"Storage CRITICAL: only {free_tb:.1f}TB free ({used_pct:.1f}% used)"
         )
-    elif used_pct >= STORAGE_WARN_PCT:
-        free_tb = st.get("free_tb", 0)
+    elif free_tb <= STORAGE_WARN_FREE_TB:
         problems.append(
-            f"Storage warning: {used_pct:.1f}% used, {free_tb:.1f}TB free"
+            f"Storage warning: {free_tb:.1f}TB free ({used_pct:.1f}% used)"
         )
     if st.get("needs_more_disk"):
         problems.append("UNAS reports it needs more disk capacity")
