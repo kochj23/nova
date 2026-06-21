@@ -59,8 +59,9 @@ def slack_bot_token() -> str:
 
 SLACK_API     = "https://slack.com/api"
 SLACK_CHAN     = "C0AMNQ5GX70"   # #nova-chat (interactive conversations with Jordan)
-SLACK_NOTIFY  = "C0ATAF7NZG9"   # #nova-notifications (cron output, status, automated posts)
-SLACK_BB      = "C0B3G7J6N07"   # #nova-bb (Big Brother, loop detector, monitoring alerts)
+SLACK_INFO    = "C0BC4SNUTQR"   # #nova-info (pure FYI: calendar, what's-on, FBI-RSS, digests, Claude Code activity)
+SLACK_NOTIFY  = "C0ATAF7NZG9"   # #nova-warning (warnings — was #nova-notifications, renamed 2026-06-21)
+SLACK_BB      = "C0B3G7J6N07"   # #nova-critical (critical alerts — was #nova-bb, renamed 2026-06-21)
 SLACK_EMAIL   = "C0B0B3B3U1J"   # #nova-email (automated email notifications)
 SLACK_PHOTOS  = "C0B01L9GQTV"   # #nova-photos (camera, sky, dream images, face recognition)
 JORDAN_DM     = "D0AMPB3F4T0"   # Jordan's DM channel with Nova

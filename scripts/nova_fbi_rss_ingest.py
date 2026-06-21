@@ -203,7 +203,7 @@ def run():
     if new_count > 0:
         nova_config.post_both(
             f"📋 *FBI RSS Ingest* — {new_count} new articles, {ingested} chunks → `{VECTOR}` vector",
-            slack_channel=nova_config.SLACK_NOTIFY
+            slack_channel=nova_config.SLACK_INFO
         )
 
 
