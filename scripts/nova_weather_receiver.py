@@ -126,7 +126,12 @@ def insert_reading(data: dict) -> bool:
         uv_index = _float(data.get("uv"))
         temp_indoor_f = _float(data.get("tempinf"))
         humidity_indoor = _int(data.get("humidityin"))
-        pm25 = _float(data.get("pm25_ch1"))
+        # PM2.5: prefer the AQIN indoor air-quality monitor, fall back to a channel sensor.
+        pm25 = _float(data.get("pm25_aqin") or data.get("pm25_ch1"))
+        pm10 = _float(data.get("pm10_aqin"))   # Ambient AQIN indoor PM10
+        co2 = _float(data.get("co2"))          # Ambient AQIN indoor CO2 (ppm)
+        if pm10 is not None or co2 is not None or data.get("pm25_aqin"):
+            logging.info(f"AQIN air quality: pm25={pm25} pm10={pm10} co2={co2}ppm")
 
         # Dew point: use provided or calculate
         dew_point_f = _float(data.get("dewpointf"))
@@ -159,20 +164,20 @@ def insert_reading(data: dict) -> bool:
                         wind_gust_mph, rain_rate_in, rain_daily_in, rain_weekly_in,
                         rain_monthly_in, rain_yearly_in, solar_radiation, uv_index,
                         temp_indoor_f, humidity_indoor, pm25, dew_point_f,
-                        heat_index_f, feels_like_f
+                        heat_index_f, feels_like_f, pm10, co2
                     ) VALUES (
                         %s, %s, %s, %s, %s, %s,
                         %s, %s, %s, %s,
                         %s, %s, %s, %s,
                         %s, %s, %s, %s,
-                        %s, %s
+                        %s, %s, %s, %s
                     )
                 """, (
                     ts, temp_f, humidity, pressure_in, wind_speed_mph, wind_dir,
                     wind_gust_mph, rain_rate_in, rain_daily_in, rain_weekly_in,
                     rain_monthly_in, rain_yearly_in, solar_radiation, uv_index,
                     temp_indoor_f, humidity_indoor, pm25, dew_point_f,
-                    heat_index_f, feels_like_f,
+                    heat_index_f, feels_like_f, pm10, co2,
                 ))
             conn.commit()
         finally:
