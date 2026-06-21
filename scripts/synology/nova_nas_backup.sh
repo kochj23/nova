@@ -12,7 +12,7 @@ MEM_URL="http://192.168.1.6:18790/remember"
 STAMP=$(date '+%Y-%m-%d %H:%M:%S')
 START=$(date +%s)
 
-# -rltD: recurse, links, times, devices (NO -pog: CIFS can't hold unix perms/owner).
+# -rlt: recurse, links, times (NO -D, NO -pog: CIFS can't hold devices/perms/owner).
 # NO --delete (additive). Exclude recycle bins / Synology indexer / snapshots.
 FLAGS=(-rlt --stats --human-readable --no-perms --no-owner --no-group
        --exclude='#recycle' --exclude='@eaDir' --exclude='#snapshot' --exclude='.DS_Store')
