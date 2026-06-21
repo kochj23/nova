@@ -121,6 +121,7 @@ NC_CALENDAR   = f"{NOVACONTROL}/api/calendar"       # today's events, upcoming
 # Slack/Discord post that could be logged or forwarded.
 PRIVATE_SOURCES: set = {
     # Work — NEVER in journal, NEVER in public output
+    "calendar",          # Office 365 work calendar — coworker PTO, internal project names (2026-06-21)
     "cloud_governance",
     "work_internal",
     "work_general",
