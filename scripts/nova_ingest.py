@@ -422,7 +422,10 @@ def page_relevance_check(text, seed_query, vector_name):
     """Quick relevance check — does the page content relate to the topic?"""
     if not text or len(text) < 200:
         return False
-    sample = text[:2000].lower()
+    # Normalize the sample the SAME way _title_to_words normalizes the seed words
+    # (strip intra-word punctuation) so hyphenated topics match: the article says
+    # "z-wave" but the seed word is "zwave" — without this they never line up.
+    sample = re.sub(r"[^a-z0-9\s]", "", text[:2000].lower())
     seed_words = _title_to_words(seed_query)
     vector_words = set(vector_name.lower().replace("_", " ").split())
     check_words = seed_words | vector_words
