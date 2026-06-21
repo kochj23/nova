@@ -209,7 +209,32 @@ def probe_postgres():
 # ---------------------------------------------------------------------------
 # Probe registry
 # ---------------------------------------------------------------------------
+_TUNNEL_ID = "a20ae87c-c869-4cb0-83de-cc6c663df763"  # nova-chatroom Cloudflare tunnel
+
+
+def probe_cloudflared():
+    """The Cloudflare tunnel is part of Nova — it fronts digitalnoise.net, chat,
+    gauges, and analytics. launchd KeepAlive restarts the process on crash; this
+    probe additionally catches the 'process alive but disconnected from the edge'
+    case, making the tunnel a first-class watched service (with a restart runbook)."""
+    import subprocess
+    try:
+        if subprocess.run(["pgrep", "-f", "cloudflared tunnel run"],
+                          capture_output=True, timeout=8).returncode != 0:
+            return False, "cloudflared process not running"
+        info = subprocess.run(["/opt/homebrew/bin/cloudflared", "tunnel", "info", _TUNNEL_ID],
+                              capture_output=True, text=True, timeout=15)
+        if "CONNECTOR ID" not in (info.stdout or ""):
+            return False, "running but no active edge connection (tunnel disconnected)"
+    except Exception as e:
+        return False, f"tunnel check failed: {type(e).__name__}: {e}"
+    return True, "tunnel up, edge connection active"
+
+
 PROBES = [
+    {"name": "cloudflared_tunnel", "fn": probe_cloudflared,
+     "level_on_fail": "critical", "category": "tunnel",
+     "host": "Office-M4-2"},
     {"name": "http_endpoints",   "fn": probe_http,
      "level_on_fail": "critical", "category": "probe",
      "host": "digitalnoise.net"},

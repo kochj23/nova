@@ -78,6 +78,11 @@ ACTIONS = {
         "argv": ["/bin/rm", "-rf", "/tmp/ollama-runners"],
         "desc": "Clear stale Ollama runner temp files (idempotent cache clear).",
     },
+    "restart_cloudflared": {
+        "tier": SAFE,
+        "argv": ["launchctl", "kickstart", "-k", "gui/501/com.cloudflare.tunnel"],
+        "desc": "restart the Cloudflare tunnel (reconnect to edge)",
+    },
     "reboot_host": {
         "tier": IMPACTFUL,
         # DELIBERATELY a no-op. A real reboot would be ["/sbin/shutdown","-r","now"].
@@ -93,6 +98,7 @@ ACTIONS = {
 # (host, root_category). Steps run in order; safe first, impactful last (gated).
 RUNBOOKS = {
     ("Office-M4-2", "gpu"): ["restart_ollama", "reboot_host"],
+    ("Office-M4-2", "tunnel"): ["restart_cloudflared"],  # Cloudflare tunnel down -> reconnect
 }
 
 

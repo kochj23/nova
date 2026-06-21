@@ -53,6 +53,7 @@ EXPECTED_PROCESSES = [
     {"name": "Gateway v2", "match": "nova_gateway_v2.py"},
     {"name": "Memory Server", "match": "memory_server.py"},
     {"name": "Chatroom", "match": "nova_chatroom.py"},
+    {"name": "Cloudflare Tunnel", "match": "cloudflared tunnel run"},
 ]
 
 
