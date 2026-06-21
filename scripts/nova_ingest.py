@@ -623,6 +623,12 @@ def wiki_fetch(url):
     return title, text, links, None
 
 def run_wikipedia(query, vector, target, state, dry_run, timeout_hours=0):
+    # Normalize a full Wikipedia URL to a bare topic title. The /ingest command
+    # passes URLs, but the relevance gate (page_relevance_check / is_relevant_link)
+    # tokenizes `query` as terms — a raw URL matches nothing and silently yields 0
+    # chunks. e.g. "https://en.wikipedia.org/wiki/Zigbee" -> "Zigbee".
+    if "/wiki/" in query:
+        query = urllib.parse.unquote(query.split("/wiki/")[-1]).replace("_", " ")
     jid         = state["job_id"]
     done_urls   = set(state.get("done_urls", []))
     done_hashes = set(state.get("done_hashes", []))
