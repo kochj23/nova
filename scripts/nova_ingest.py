@@ -317,7 +317,26 @@ def is_garbage(text):
     alpha = sum(c.isalpha() for c in s)
     return len(s) > 0 and alpha / len(s) < 0.45
 
+def _keep_sentence(s):
+    """Sentence-level keep test for clean_text — the _TRASH/alpha checks from
+    is_garbage but WITHOUT its chunk-sized MIN_WORDS floor. Sentences are naturally
+    short (10-20 words); the word-count floor is enforced later at CHUNK level.
+    Applying the 30-word floor per-sentence silently dropped whole transcripts."""
+    if len(s.split()) < 5:
+        return False
+    for pat in _TRASH:
+        if pat.search(s):
+            return False
+    alpha = sum(c.isalpha() for c in s)
+    return not (len(s) > 0 and alpha / len(s) < 0.45)
+
+
 def clean_text(text):
+    # Whisper/subtitle transcripts arrive as many short single-newline lines, not
+    # paragraphs. Collapse lone newlines into spaces (keep blank-line paragraph
+    # breaks) so the sentence filter below sees flowing prose, not 3-word lines —
+    # this (plus the MIN_WORDS floor) silently dropped whole transcripts to 0 chunks.
+    text = re.sub(r"(?<!\n)\n(?!\n)", " ", text)
     paras = re.split(r"\n{2,}", text)
     clean = []
     for para in paras:
@@ -325,7 +344,7 @@ def clean_text(text):
         if not para:
             continue
         sents = re.split(r"(?<=[.!?])\s+", para)
-        good  = [s for s in sents if not is_garbage(s) and len(s.split()) >= 5]
+        good  = [s for s in sents if _keep_sentence(s)]
         if len(good) >= max(1, len(sents) * 0.4):
             clean.append(" ".join(good))
     return "\n\n".join(clean)
@@ -1209,8 +1228,13 @@ def _transcribe_dispatch(wav_path, stem, work, vid_url=None, local_only=False):
     openai_key = None
     if not local_only and not _is_pii_content(vid_url=vid_url, source_type="video"):
         openai_key = _get_openai_key()
-        if openai_key:
+        # An OpenRouter key (sk-or-...) 401s against api.openai.com's audio API —
+        # only use cloud with a genuine OpenAI key. Otherwise go straight to local
+        # MLX-Whisper (free, on-GPU, private) instead of wasting a failed round-trip.
+        if openai_key and openai_key.startswith("sk-") and not openai_key.startswith("sk-or-"):
             use_cloud = True
+        elif openai_key:
+            log("  Key is OpenRouter (not OpenAI) -- using local MLX whisper", "INFO")
         else:
             log("  No OpenAI key in Keychain -- falling back to local whisper", "WARN")
 
