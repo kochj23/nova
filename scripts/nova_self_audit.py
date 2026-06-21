@@ -53,7 +53,9 @@ EXPECTED_PROCESSES = [
     {"name": "Gateway v2", "match": "nova_gateway_v2.py"},
     {"name": "Memory Server", "match": "memory_server.py"},
     {"name": "Chatroom", "match": "nova_chatroom.py"},
-    {"name": "Cloudflare Tunnel", "match": "cloudflared tunnel run"},
+    # NOTE: cloudflared moved OFF .6 to HA connectors on .2 + .10 (2026-06-21).
+    # It is watched by nova_prober's cloudflared_tunnel probe (connector health),
+    # not by a local-process check here.
 ]
 
 

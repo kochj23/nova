@@ -80,8 +80,11 @@ ACTIONS = {
     },
     "restart_cloudflared": {
         "tier": SAFE,
-        "argv": ["launchctl", "kickstart", "-k", "gui/501/com.cloudflare.tunnel"],
-        "desc": "restart the Cloudflare tunnel (reconnect to edge)",
+        # Tunnel now runs HA on .2 + .10 (systemd, Restart=always). Restart the
+        # primary connector (.2); .10 keeps serving during the bounce.
+        "argv": ["ssh", "-o", "BatchMode=yes", "kochj@192.168.1.2",
+                 "sudo", "systemctl", "restart", "cloudflared"],
+        "desc": "restart the .2 Cloudflare connector (.10 stays up — HA)",
     },
     "reboot_host": {
         "tier": IMPACTFUL,

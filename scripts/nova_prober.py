@@ -214,21 +214,20 @@ _TUNNEL_ID = "a20ae87c-c869-4cb0-83de-cc6c663df763"  # nova-chatroom Cloudflare 
 
 def probe_cloudflared():
     """The Cloudflare tunnel is part of Nova — it fronts digitalnoise.net, chat,
-    gauges, and analytics. launchd KeepAlive restarts the process on crash; this
-    probe additionally catches the 'process alive but disconnected from the edge'
-    case, making the tunnel a first-class watched service (with a restart runbook)."""
+    gauges, analytics. It now runs HA on .2 + .10 (off the GPU box). This checks the
+    tunnel has at least one live connector via the CF API (run from .6, which holds
+    the management cert), so a total ingress outage is caught."""
     import subprocess
     try:
-        if subprocess.run(["pgrep", "-f", "cloudflared tunnel run"],
-                          capture_output=True, timeout=8).returncode != 0:
-            return False, "cloudflared process not running"
         info = subprocess.run(["/opt/homebrew/bin/cloudflared", "tunnel", "info", _TUNNEL_ID],
-                              capture_output=True, text=True, timeout=15)
-        if "CONNECTOR ID" not in (info.stdout or ""):
-            return False, "running but no active edge connection (tunnel disconnected)"
+                              capture_output=True, text=True, timeout=20)
+        out = info.stdout or ""
+        n = out.count("linux_amd64") + out.count("darwin")
+        if "CONNECTOR ID" not in out or n == 0:
+            return False, "no active tunnel connectors (.2 AND .10 down?)"
+        return True, f"tunnel up, {n} connector(s) active"
     except Exception as e:
         return False, f"tunnel check failed: {type(e).__name__}: {e}"
-    return True, "tunnel up, edge connection active"
 
 
 PROBES = [
