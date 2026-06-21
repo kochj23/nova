@@ -199,7 +199,8 @@ def check_anomalies(conn, hour_start, site_views):
             AND hour >= %s - interval '7 days' AND hour < %s
         """, (site, hour_start, hour_start))
         row = cur.fetchone()
-        avg_views = row["avg_views"] if row and row["avg_views"] else 0
+        # AVG() returns a Decimal; cast to float so alert detail is JSON-serializable.
+        avg_views = float(row["avg_views"]) if row and row["avg_views"] else 0.0
 
         # Traffic spike
         if avg_views > 0 and current_views > avg_views * SPIKE_MULTIPLIER:
@@ -261,6 +262,14 @@ def check_anomalies(conn, hour_start, site_views):
     return alerts
 
 
+def _json_default(o):
+    """Make psycopg2 Decimals (from AVG/pct SQL exprs) JSON-serializable."""
+    from decimal import Decimal
+    if isinstance(o, Decimal):
+        return float(o)
+    raise TypeError(f"Object of type {o.__class__.__name__} is not JSON serializable")
+
+
 def fire_alerts(conn, alerts):
     if not alerts:
         return
@@ -268,7 +277,7 @@ def fire_alerts(conn, alerts):
     for alert in alerts:
         cur.execute(
             "INSERT INTO analytics_alerts (alert_type, site, detail) VALUES (%s, %s, %s)",
-            (alert["type"], alert.get("site"), json.dumps(alert.get("detail", {})))
+            (alert["type"], alert.get("site"), json.dumps(alert.get("detail", {}), default=_json_default))
         )
 
         # Slack notification
@@ -283,7 +292,7 @@ def fire_alerts(conn, alerts):
                 f"  Silent for: {detail.get('hours_silent', '?')}h"
             )
         else:
-            msg = f"{emoji} *Analytics Alert — {alert['type'].replace('_', ' ').title()}*\nSite: {alert.get('site', 'unknown')}\nDetail: {json.dumps(alert.get('detail', {}))}"
+            msg = f"{emoji} *Analytics Alert — {alert['type'].replace('_', ' ').title()}*\nSite: {alert.get('site', 'unknown')}\nDetail: {json.dumps(alert.get('detail', {}), default=_json_default)}"
         try:
             nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY)
         except Exception as e:

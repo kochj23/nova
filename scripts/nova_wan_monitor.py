@@ -75,11 +75,21 @@ def _row(kind, target, **kw):
 # ── Ping ────────────────────────────────────────────────────────────────────
 
 def ping(target):
-    """Return a ping row dict for `target` (latency_ms avg, packet_loss_pct)."""
+    """Return a ping row dict for `target` (latency_ms avg, packet_loss_pct).
+
+    Cross-platform: on macOS/BSD `-t` is a whole-command deadline (seconds);
+    on Linux `-t` is the IP TTL and the per-packet wait is `-W` (seconds).
+    Using the wrong flag (e.g. `-t 10` => TTL=10 on Linux) silently drops
+    far-away hosts, so build the args per platform.
+    """
+    import platform
+    if platform.system() == "Darwin":
+        cmd = ["ping", "-c", str(PING_COUNT), "-t", "10", target]
+    else:
+        cmd = ["ping", "-c", str(PING_COUNT), "-W", "5", target]
     try:
         out = subprocess.run(
-            ["ping", "-c", str(PING_COUNT), "-t", "10", target],
-            capture_output=True, text=True, timeout=30,
+            cmd, capture_output=True, text=True, timeout=30,
         ).stdout
     except Exception as e:
         log(f"ping {target}: {e}")

@@ -155,18 +155,21 @@ tasks:
     schedule: every 5m
     timeout: 180
     overlap: skip
+    enabled: false  # Offload Phase 2 — moved to nova-scheduler-core on nova-core (.2)
 
   cert_monitor:
     script: nova_cert_monitor.py
     schedule: every 6h
     timeout: 120
     overlap: skip
+    enabled: false  # Offload Phase 2 — moved to nova-scheduler-core on nova-core (.2)
 
   replication_monitor:
     script: nova_replication_monitor.py
     schedule: every 1m
     timeout: 30
     overlap: skip
+    enabled: false  # Offload Phase 2 — moved to nova-scheduler-core on nova-core (.2)
 
   backup_ingest:
     # Reads the latest nas_backup memory (Synology daily 03:30 POST) and upserts
@@ -707,6 +710,7 @@ tasks:
     schedule: cron 0 4 * * 0
     timeout: 300
     overlap: skip
+    enabled: false  # Offload Phase 2 — moved to nova-scheduler-core on nova-core (.2)
 
   plex_stats:
     script: nova_plex.py
@@ -920,6 +924,7 @@ tasks:
     schedule: cron 5 * * * *
     timeout: 60
     overlap: skip
+    enabled: false  # Offload Phase 2 — moved to nova-scheduler-core on nova-core (.2)
 
   # ── Syslog ──────────────────────────────────────────────────────────────
 
@@ -960,6 +965,7 @@ tasks:
     schedule: every 2m
     timeout: 60
     overlap: skip
+    enabled: false  # Offload Phase 2 — moved to nova-scheduler-core on nova-core (.2)
 
   wazuh_daily_summary:
     script: nova_wazuh_daily_summary.py
@@ -984,6 +990,9 @@ tasks:
     schedule: cron 30 3 * * *
     timeout: 120
     overlap: skip
+    # KEPT on .6 (Offload Phase 2): treats the local host as mac-studio and runs
+    # `sudo crontab -l` locally; moving it would re-scope "local" to nova-core
+    # and needs passwordless sudo crontab there. Stays on .6.
 
   cinc_daily:
     script: nova_cinc_daily.py
