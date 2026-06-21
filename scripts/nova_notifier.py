@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+import nova_correlator
 
 DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
 
@@ -96,16 +97,40 @@ def drain(verbose=False) -> int:
                         if verbose:
                             print(f"  suppressed #{ev['id']} (dedup of #{prior['id']})")
                         continue
-                # 2) Route + deliver
-                channel = _route(ev["level"], ev["category"])
+                # 2) Correlate: fold symptoms into incidents (deterministic + LLM).
                 try:
-                    nova_config.post_both(_fmt(ev), slack_channel=channel)
+                    corr = nova_correlator.correlate(conn, dict(ev))
+                except Exception as e:
+                    corr = {"action": "standalone", "suppress": False, "incident_id": None}
+                    if verbose:
+                        print(f"  correlate error #{ev['id']}: {e}")
+                if corr.get("suppress"):
+                    if verbose:
+                        print(f"  folded #{ev['id']} into incident #{corr['incident_id']} ({corr['role']})")
+                    continue  # symptom — the incident alert covers it
+
+                # 3) Route + deliver (an incident summary if this opened one, else the event)
+                channel = _route(ev["level"], ev["category"])
+                if corr.get("action") == "opened":
+                    summary, model = nova_correlator.llm_summarize(conn, corr["incident_id"])
+                    badge = ":rotating_light:" if ev["level"] == "critical" else ":warning:"
+                    by = f" · _summary by {model}_" if model else ""
+                    msg = (f"{badge} *Incident #{corr['incident_id']}: {ev['title']}*\n"
+                           f"{summary}\n_correlating further events on this host into this incident{by}_")
+                else:
+                    msg = _fmt(ev)
+                try:
+                    nova_config.post_both(msg, slack_channel=channel)
                     cur.execute(
                         "UPDATE telemetry.events SET status='sent', channel=%s, sent_at=now() "
                         "WHERE id=%s", (channel, ev["id"]))
+                    if corr.get("incident_id"):
+                        cur.execute("UPDATE telemetry.incidents SET slack_ts='posted' WHERE id=%s",
+                                    (corr["incident_id"],))
                     sent += 1
                     if verbose:
-                        print(f"  sent #{ev['id']} [{ev['level']}/{ev['category']}] -> {channel}")
+                        tag = f" [incident #{corr['incident_id']}]" if corr.get("action") == "opened" else ""
+                        print(f"  sent #{ev['id']} [{ev['level']}/{ev['category']}] -> {channel}{tag}")
                 except Exception as e:
                     cur.execute("UPDATE telemetry.events SET status='error' WHERE id=%s", (ev["id"],))
                     print(f"  deliver failed #{ev['id']}: {e}", file=sys.stderr)
