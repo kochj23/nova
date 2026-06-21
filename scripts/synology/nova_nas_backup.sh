@@ -12,10 +12,23 @@ MEM_URL="http://192.168.1.6:18790/remember"
 STAMP=$(date '+%Y-%m-%d %H:%M:%S')
 START=$(date +%s)
 
+# Single-instance lock — NEVER let runs stack. Overlapping rsyncs to the same
+# CIFS dest corrupt --stats and trigger spurious IO errors (this bit us when the
+# 3:30 cron fired on top of a still-running manual sync). Exit quietly if held.
+exec 9>/volume1/homes/kochj/.nova_nas_backup.lock
+if ! flock -n 9; then
+  echo "[$STAMP] another backup run holds the lock — skipping this invocation" >> "$LOG"
+  exit 0
+fi
+
 # -rlt: recurse, links, times (NO -D, NO -pog: CIFS can't hold devices/perms/owner).
 # NO --delete (additive). Exclude recycle bins / Synology indexer / snapshots.
+# Last exclude: a Photos-library thumbnail package whose filenames embed giant
+# captions and exceed the UNAS filesystem's max name length (caused the rc=11
+# rename failures). Skip it rather than fail the whole share every run.
 FLAGS=(-rlt --stats --human-readable --no-perms --no-owner --no-group
-       --exclude='#recycle' --exclude='@eaDir' --exclude='#snapshot' --exclude='.DS_Store')
+       --exclude='#recycle' --exclude='@eaDir' --exclude='#snapshot' --exclude='.DS_Store'
+       --exclude='GoogleDriveBackups/Pics/Pictures/.com-apple-bird-noname-*')
 
 SUMMARY=""
 OVERALL_RC=0
