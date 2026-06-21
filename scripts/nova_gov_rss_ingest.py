@@ -451,6 +451,9 @@ FEEDS = [
     ("https://www.burbankleader.com/arcio/rss/", "local_burbank", "Burbank Leader"),
     ("https://www.burbankca.gov/rss", "local_burbank", "City of Burbank News"),
     ("https://patch.com/california/burbank/feed", "local_burbank", "Patch Burbank"),
+    # Glassell Park (NELA, just down the road from Burbank). No dedicated GP feed
+    # exists; The Eastsider's keyword-search RSS is the best coverage of the area.
+    ("https://www.theeastsiderla.com/search/?f=rss&t=article&l=40&s=start_time&sd=desc&q=glassell+park", "local_burbank", "The Eastsider — Glassell Park"),
     ("https://www.latimes.com/california/rss2.0.xml", "local_news", "LA Times California"),
     ("https://laist.com/feed", "local_news", "LAist"),
     ("https://abc7.com/feed/", "local_news", "ABC7 Los Angeles"),
