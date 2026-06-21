@@ -6,7 +6,7 @@ Pulls the latest reading from telemetry.weather (Ambient Weather station @ 192.1
 fed by nova_weather_receiver.py) and formats it as a fact block to inject into journal
 prompts so every `local`-section article opens with a real date/time/conditions dateline.
 
-Rain fields are deliberately EXCLUDED (rain sensor not configured yet — per Jordan).
+Rain is now LIVE (gauge confirmed working 2026-06-20) and included below.
 
 Written by Jordan Koch.
 """
@@ -16,7 +16,8 @@ PG_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
 
 _FIELDS = ["ts", "temp_f", "feels_like_f", "humidity", "wind_speed_mph",
            "wind_gust_mph", "wind_dir", "pressure_in", "uv_index",
-           "solar_radiation", "dew_point_f", "pm25"]
+           "solar_radiation", "dew_point_f", "pm25",
+           "rain_rate_in", "rain_daily_in"]
 
 
 def weather_snapshot():
@@ -57,7 +58,7 @@ def _fmt(v, fmt):
 
 
 def weather_facts() -> str:
-    """One-line human conditions string (no rain), or '' if unavailable."""
+    """One-line human conditions string (incl. rain), or '' if unavailable."""
     w = weather_snapshot()
     if not w:
         return ""
@@ -87,6 +88,13 @@ def weather_facts() -> str:
     pm = _fmt(w.get("pm25"), ".0f")
     if pm:
         parts.append(f"PM2.5 {pm}")
+    # Rain — only surface it when it's actually relevant (raining now or rained today)
+    rate = _fmt(w.get("rain_rate_in"), ".2f")
+    daily = _fmt(w.get("rain_daily_in"), ".2f")
+    if rate and float(rate) > 0:
+        parts.append(f"raining {rate} in/hr")
+    elif daily and float(daily) > 0:
+        parts.append(f'{daily}" rain today')
     return ", ".join(parts)
 
 
@@ -102,8 +110,7 @@ def weather_intro_context() -> str:
     return (
         "OPEN THE ARTICLE with a short, in-voice dateline blurb (1-2 sentences) that grounds "
         "the reader in the moment: the date, the local time, and the live reading from Jordan's "
-        "backyard weather station in Burbank. Use these exact conditions; do NOT mention rain or "
-        "precipitation (that sensor isn't set up yet):\n"
+        "backyard weather station in Burbank. Use these exact conditions (rain included when present):\n"
         f"  {dateline} — Burbank backyard station: {facts}."
     )
 
@@ -150,7 +157,7 @@ def weather_forecast_context() -> str:
 def weather_dateline_line() -> str:
     """A clean, ready-to-render markdown dateline line for the TOP OF THE BODY
     (prepended by the publisher, NOT written by the model — so it never becomes
-    the title). Italic: place, date, time, live backyard conditions (no rain)."""
+    the title). Italic: place, date, time, live backyard conditions incl. rain."""
     from datetime import datetime
     now = datetime.now()
     dl = now.strftime("%A, %B %d, %Y · %I:%M %p").replace(" 0", " ")
