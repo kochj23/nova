@@ -1,0 +1,60 @@
+{
+  "uid": "nova-dns",
+  "title": "Nova-DNS — network devices",
+  "tags": ["nova", "dns", "unifi"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "timezone": "browser",
+  "time": { "from": "now-30d", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Devices mapped",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(*) AS \"devices\" FROM dns_records", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Active now (<15m)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(*) AS \"active\" FROM dns_records WHERE updated_at > now()-interval '15 minutes'", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "New (24h)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "blue", "value": null }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(*) AS \"new\" FROM dns_records WHERE first_seen > now()-interval '24 hours'", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Stale (>7d unseen)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "gray" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(*) AS \"stale\" FROM dns_records WHERE updated_at < now()-interval '7 days'", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "New devices discovered (per day)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT date_trunc('day', first_seen) AS time, count(*) AS value, 'new devices' AS metric FROM dns_records WHERE $__timeFilter(first_seen) GROUP BY 1 ORDER BY 1", "refId": "A" } ]
+    },
+    {
+      "id": 6, "type": "table", "title": "All devices (.nova)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 12, "w": 24, "x": 0, "y": 15 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT name||'.nova' AS \"Name\", ip AS \"IP\", mac AS \"MAC\", first_seen AS \"First seen\", updated_at AS \"Last seen\", CASE WHEN locked THEN 'yes' ELSE '' END AS \"Locked\" FROM dns_records ORDER BY updated_at DESC", "refId": "A" } ]
+    }
+  ]
+}
