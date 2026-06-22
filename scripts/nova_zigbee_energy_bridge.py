@@ -1,0 +1,85 @@
+#!/usr/bin/env python3
+"""
+nova_zigbee_energy_bridge.py — stream ThirdReality (and any) Zigbee smart-plug
+power readings from zigbee2mqtt into telemetry.energy, so the plugs' whole point
+(per-room power monitoring) shows up in Grafana alongside the Eve Energy plugs.
+
+Subscribes to all zigbee2mqtt device topics; any payload carrying both `power`
+and `voltage` is a metering plug -> insert (watts/volts/amps/kwh/state). Light
+per-device throttle so chatty plugs don't flood the table. Never raises.
+
+New plugs are picked up automatically (no per-device config) — pair it, and its
+power starts flowing.
+"""
+import json
+import time
+
+import paho.mqtt.client as mqtt
+import psycopg2
+
+DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+MQTT_HOST, MQTT_PORT = "127.0.0.1", 1883
+MIN_INTERVAL_S = 15          # min seconds between inserts per device
+_conn = None
+_last = {}                   # device -> last insert epoch
+
+
+def _db():
+    global _conn
+    if _conn is None or _conn.closed:
+        _conn = psycopg2.connect(DSN)
+        _conn.autocommit = True
+    return _conn
+
+
+def _f(v):
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def on_message(client, userdata, msg):
+    device = msg.topic.replace("zigbee2mqtt/", "")
+    if "/" in device or device.startswith("bridge"):
+        return  # sub-topics (/availability, /get) and bridge events
+    try:
+        p = json.loads(msg.payload.decode())
+    except Exception:
+        return
+    # a metering plug reports both power and voltage
+    if not isinstance(p, dict) or "power" not in p or "voltage" not in p:
+        return
+    now = time.time()
+    if now - _last.get(device, 0) < MIN_INTERVAL_S:
+        return
+    _last[device] = now
+    try:
+        with _db().cursor() as cur:
+            cur.execute(
+                "INSERT INTO telemetry.energy "
+                "(ts, device_id, device_name, watts, volts, amps, kwh_total, on_state) "
+                "VALUES (now(), %s, %s, %s, %s, %s, %s, %s)",
+                (device, device, _f(p.get("power")), _f(p.get("voltage")),
+                 _f(p.get("current")), _f(p.get("energy")),
+                 (str(p.get("state")).upper() == "ON") if p.get("state") is not None else None))
+    except Exception as e:
+        print(f"[zigbee-energy] write error for {device}: {e}", flush=True)
+
+
+def main():
+    for _ in range(30):
+        try:
+            _db(); break
+        except Exception:
+            time.sleep(2)
+    client = mqtt.Client()
+    client.on_message = on_message
+    client.connect(MQTT_HOST, MQTT_PORT, 60)
+    client.subscribe("zigbee2mqtt/+")
+    print("[zigbee-energy] streaming Zigbee plug power -> telemetry.energy", flush=True)
+    client.loop_forever()
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,61 @@
+{
+  "uid": "smart-plugs-power",
+  "title": "Smart Plugs — Power",
+  "tags": ["nova", "energy", "zigbee"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "timezone": "browser",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1,
+      "type": "timeseries",
+      "title": "Plug Power (W) by room",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 10, "w": 18, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "watt", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["lastNotNull", "max"] } },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "format": "time_series",
+          "rawSql": "SELECT ts AS time, watts AS value, device_name AS metric FROM telemetry.energy WHERE $__timeFilter(ts) AND device_name NOT LIKE '0x%' ORDER BY ts",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "stat",
+      "title": "Total plug draw (W)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 10, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "watt", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1000 }, { "color": "red", "value": 1500 } ] } }, "overrides": [] },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "format": "table",
+          "rawSql": "SELECT COALESCE(SUM(w),0) AS \"Total W\" FROM (SELECT DISTINCT ON (device_name) watts AS w FROM telemetry.energy WHERE ts > now()-interval '10 min' ORDER BY device_name, ts DESC) s",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Current draw per plug",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 10 },
+      "fieldConfig": { "defaults": {}, "overrides": [ { "matcher": { "id": "byName", "options": "Watts" }, "properties": [ { "id": "unit", "value": "watt" } ] } ] },
+      "targets": [
+        {
+          "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+          "format": "table",
+          "rawSql": "SELECT DISTINCT ON (device_name) device_name AS \"Plug\", watts AS \"Watts\", volts AS \"Volts\", amps AS \"Amps\", on_state AS \"On\", ts AS \"Last seen\" FROM telemetry.energy WHERE ts > now()-interval '1 hour' ORDER BY device_name, ts DESC",
+          "refId": "A"
+        }
+      ]
+    }
+  ]
+}
