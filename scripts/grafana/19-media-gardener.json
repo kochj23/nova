@@ -1,0 +1,60 @@
+{
+  "uid": "media-gardener",
+  "title": "Media Gardener & Backup Reaper",
+  "tags": ["nova", "media", "storage"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "timezone": "browser",
+  "time": { "from": "now-90d", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Total reclaimed (GB)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "decgbytes", "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT COALESCE(sum(proposed_gb),0) AS gb FROM media_gardener_runs WHERE mode='apply'", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Videos pruned",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT COALESCE(sum(proposed_videos),0) AS videos FROM media_gardener_runs WHERE mode='apply'", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Pending prune proposals",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(*) AS pending FROM media_prune_proposals WHERE status='proposed'", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "UNAS orphans (reaper)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 1 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(*) FILTER (WHERE status='proposed') AS reapable FROM backup_orphans", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Reclaim over time (GB per run)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "decgbytes", "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, proposed_gb AS value, mode AS metric FROM media_gardener_runs WHERE $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 6, "type": "table", "title": "Gardener runs",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 15 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT ts AS \"Time\", mode AS \"Mode\", proposed_videos AS \"Videos\", proposed_gb AS \"GB\" FROM media_gardener_runs ORDER BY ts DESC LIMIT 25", "refId": "A" } ]
+    }
+  ]
+}

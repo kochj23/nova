@@ -70,10 +70,21 @@ def propose():
             "size_bytes=EXCLUDED.size_bytes, size_estimated=EXCLUDED.size_estimated, age_days=EXCLUDED.age_days, status='proposed'",
             (fp, show, size, estimated, age, '15-day rolling — transcript retained'))
         n += 1; total += size
+    # telemetry + Slack (notification bus) — propose-only, so this is FYI to #nova-info
+    try:
+        with conn.cursor() as c2:
+            c2.execute("CREATE TABLE IF NOT EXISTS media_gardener_runs (ts timestamptz DEFAULT now(), "
+                       "mode text, proposed_videos int, proposed_gb numeric, est_rows int)")
+            c2.execute("INSERT INTO media_gardener_runs (mode,proposed_videos,proposed_gb,est_rows) VALUES "
+                       "('propose',%s,%s,%s)", (n, round(total / 1e9, 1), est))
+            c2.execute("INSERT INTO telemetry.events (ts,title,body,level,category,source) VALUES "
+                       "(now(),%s,'',%s,'media','nova-media-gardener')",
+                       (f"Media gardener: {n} videos (~{total/1e9:.0f} GB) proposed for prune — review + approve", "info"))
+    except Exception as e:
+        print(f"[gardener] telemetry/notify skipped: {e}", flush=True)
     conn.close()
     print(f"[gardener] PROPOSED {n} videos for prune, ~{total/1e9:.0f} GB "
-          f"({est} sizes estimated — media mount unavailable). Transcripts kept. NOTHING deleted.")
-    print("[gardener] review with the approval query, then run --apply to remove ONLY status='approved' rows.")
+          f"({est} sizes estimated). Transcripts kept. NOTHING deleted.")
     return n
 
 
@@ -95,6 +106,17 @@ def apply():
             cur.execute("UPDATE media_prune_proposals SET status='pruned' WHERE file_path=%s", (fp,))
         except Exception as e:
             print(f"[gardener] could not remove {fp}: {e}")
+    try:
+        with conn.cursor() as c2:
+            c2.execute("CREATE TABLE IF NOT EXISTS media_gardener_runs (ts timestamptz DEFAULT now(), "
+                       "mode text, proposed_videos int, proposed_gb numeric, est_rows int)")
+            c2.execute("INSERT INTO media_gardener_runs (mode,proposed_videos,proposed_gb) VALUES ('apply',%s,%s)",
+                       (done, round(freed / 1e9, 1)))
+            c2.execute("INSERT INTO telemetry.events (ts,title,body,level,category,source) VALUES "
+                       "(now(),%s,'',%s,'media','nova-media-gardener')",
+                       (f"Media gardener: pruned {done} videos, freed ~{freed/1e9:.0f} GB (transcripts kept)", "info"))
+    except Exception:
+        pass
     conn.close()
     print(f"[gardener] pruned {done} videos, freed ~{freed/1e9:.1f} GB. Transcripts intact.")
     return done
