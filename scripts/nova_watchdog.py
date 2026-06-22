@@ -30,6 +30,7 @@ FAIL_THRESHOLD = 2            # consecutive fails before declaring DOWN (debounc
 HEARTBEAT_EVERY = 24 * 3600   # seconds between "still alive" notes to #nova-info
 HTTP_TIMEOUT = 6
 TCP_TIMEOUT = 4
+WATCHER = socket.gethostname().split(".")[0]   # which node is doing the watching
 
 STATE_DIR = os.path.expanduser("~/.openclaw/state")
 STATE_FILE = os.path.join(STATE_DIR, "watchdog_state.json")
@@ -45,6 +46,13 @@ CHECKS = [
     ("nova-core (.2) pg-replica", "tcp",  ("192.168.1.2", 5432)),
     ("nova-core (.2) grafana",    "http", "http://192.168.1.2:3000/api/health"),
     ("mac-mini (.190) ollama",    "http", "http://192.168.1.190:11434/api/tags"),
+    # nuk: so a SECOND watcher (on .2) catches nuk going down — the gap the
+    # 2026-06-22 power event exposed (nuk's own watchdog died with it).
+    ("nuk (.10) host",            "tcp",  ("192.168.1.10", 22)),
+    ("nuk (.10) pg-replica",      "tcp",  ("192.168.1.10", 5432)),
+    # storage tier — also went dark in that outage and nothing alerted.
+    ("synology NAS (.11) smb",    "tcp",  ("192.168.1.11", 445)),
+    ("UNAS backup (.69) smb",     "tcp",  ("192.168.1.69", 445)),
 ]
 
 
@@ -138,7 +146,7 @@ def main():
     trans, up, total = sweep(state)
     save_state(state)
     downs = [l for l, s in state.items() if s["state"] == "down"]
-    snap = (f":dog: *nova-watchdog online on nuk (.10)* — watching {total} fleet "
+    snap = (f":dog: *nova-watchdog online on {WATCHER}* — watching {total} fleet "
             f"checks every {CHECK_INTERVAL}s.\nBaseline: *{up}/{total} up*"
             + (f" — currently DOWN: {', '.join(downs)}" if downs else " — all green."))
     slack_post(CH_INFO, snap)
@@ -154,7 +162,7 @@ def main():
                 if kind == "down":
                     slack_post(CH_CRITICAL,
                                f":rotating_light: *FLEET DOWN* — `{label}` is unreachable "
-                               f"from nuk{(' (' + detail + ')') if detail else ''}. "
+                               f"from {WATCHER}{(' (' + detail + ')') if detail else ''}. "
                                f"({up}/{total} checks up)")
                     print(f"[watchdog] DOWN: {label} {detail}", flush=True)
                 else:
@@ -163,7 +171,7 @@ def main():
                                f"({up}/{total} up)")
                     print(f"[watchdog] recovered: {label}", flush=True)
             if time.time() - last_heartbeat >= HEARTBEAT_EVERY:
-                slack_post(CH_INFO, f":dog: nova-watchdog heartbeat — {up}/{total} fleet checks up.")
+                slack_post(CH_INFO, f":dog: nova-watchdog ({WATCHER}) heartbeat — {up}/{total} fleet checks up.")
                 last_heartbeat = time.time()
         except Exception as e:
             # The watchdog must never die quietly. Log and keep going.
