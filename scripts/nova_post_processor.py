@@ -60,21 +60,27 @@ def _get_redis():
     return redis.from_url(REDIS_URL, decode_responses=True)
 
 
-def _db_query(dsn, sql, params=None):
-    try:
-        conn = psycopg2.connect(dsn)
-        cur = conn.cursor()
-        cur.execute(sql, params or ())
-        if cur.description:
-            cols = [d[0] for d in cur.description]
-            rows = [dict(zip(cols, r)) for r in cur.fetchall()]
-        else:
-            rows = []
-        conn.close()
-        return rows
-    except Exception as e:
-        log(f"DB error: {e}", "ERROR")
-        return []
+def _db_query(dsn, sql, params=None, retries=3):
+    """Rows on success, None on PERSISTENT failure (distinct from [] for a
+    genuinely empty result). Retries transient blips so a momentary DB hiccup
+    can never be mistaken for 'zero memories' in the articles."""
+    for attempt in range(retries):
+        try:
+            conn = psycopg2.connect(dsn, connect_timeout=5)
+            cur = conn.cursor()
+            cur.execute(sql, params or ())
+            if cur.description:
+                cols = [d[0] for d in cur.description]
+                rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+            else:
+                rows = []
+            conn.close()
+            return rows
+        except Exception as e:
+            log(f"DB error (attempt {attempt + 1}/{retries}): {e}", "ERROR")
+            if attempt < retries - 1:
+                time.sleep(0.5 * (attempt + 1))
+    return None  # persistent failure — caller must NOT treat as zero
 
 
 # ── Task: Source Activity Summary ─────────────────────────────────────────────
@@ -89,6 +95,12 @@ def summarize_source_activity(hours: int = 24) -> dict:
         ORDER BY count DESC
         LIMIT 30
     """, (hours,))
+
+    if rows is None:   # DB persistently unreachable — never claim "zero memories"
+        log("source activity: DB unavailable — reporting 'unavailable', not a false zero", "ERROR")
+        return {"period_hours": hours, "unavailable": True, "sources": None,
+                "total_memories": None, "top_sources": [],
+                "generated_at": datetime.now(timezone.utc).isoformat()}
 
     summary = {
         "period_hours": hours,
