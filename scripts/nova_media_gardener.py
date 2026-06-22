@@ -44,13 +44,18 @@ def propose():
     cur = conn.cursor()
     ensure_table(cur)
     cur.execute("DELETE FROM media_prune_proposals WHERE status='proposed'")
+    # HARD folder allowlist: only YouTube-source folders are EVER prunable.
+    # Everything else (Movies, Documentary, Home Videos, Stand-Up, Other, Ripped
+    # Movies, DVR) stays — per Jordan 2026-06-22. The Plex "TV Shows" *library* is
+    # a dumping ground and is NOT a trustworthy signal; the folder path is.
     cur.execute(f"""
         SELECT m.file_path, m.show, m.processed_at
         FROM media_ingest_state m
         JOIN media_policy p ON p.show = m.show
         WHERE p.policy = 'rolling_15' AND p.locked
           AND m.processed_at < now() - interval '{WINDOW_DAYS} days'
-          AND m.file_path IS NOT NULL AND m.file_path <> ''""")
+          AND m.file_path IS NOT NULL AND m.file_path <> ''
+          AND m.file_path ~ '/videos/(TVShows|Liked|yt|Youtube Music Videos|random|My Youtube)/'""")
     rows = cur.fetchall()
     n = 0; total = 0; est = 0
     for fp, show, processed in rows:
