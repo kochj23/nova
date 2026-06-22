@@ -132,6 +132,29 @@ def write_hosts(entries, path=HOSTS_OUT):
     return len(lines)
 
 
+# DNS nodes that serve the .nova zone (nuk primary + nova-core secondary = HA).
+DNS_NODES = ["192.168.1.10", "192.168.1.2"]
+
+
+def deploy(path=HOSTS_OUT):
+    """Push the zone to each DNS node and reload dnsmasq. Best-effort per node."""
+    ok = []
+    for node in DNS_NODES:
+        try:
+            subprocess.run(["scp", "-q", "-o", "ConnectTimeout=8", path,
+                            f"kochj@{node}:/tmp/nova_dns_hosts"],
+                           timeout=25, check=True)
+            # /etc so the privilege-dropped dnsmasq user can read it
+            subprocess.run(["ssh", "-o", "ConnectTimeout=8", f"kochj@{node}",
+                            "sudo cp /tmp/nova_dns_hosts /etc/nova_dns_hosts && "
+                            "(sudo systemctl reload dnsmasq 2>/dev/null || sudo systemctl restart dnsmasq)"],
+                           timeout=25, check=True)
+            ok.append(node)
+        except Exception as e:
+            print(f"[nova-dns] deploy to {node} failed: {type(e).__name__}", flush=True)
+    return ok
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="preview names, no PG/dnsmasq writes")
@@ -147,7 +170,8 @@ def main():
         print(f"\n  {len(entries)} records ({len(clients)} clients + {len(SERVICE_ALIASES)} service aliases)")
     else:
         n = write_hosts(entries)
-        print(f"[nova-dns] {n} records written to {HOSTS_OUT} ({len(clients)} clients)")
+        deployed = deploy()
+        print(f"[nova-dns] {n} records, {len(clients)} clients -> served by {len(deployed)}/{len(DNS_NODES)} DNS nodes: {deployed}")
         conn.close()
     return 0
 
