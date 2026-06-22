@@ -1198,6 +1198,29 @@ graph LR
 
 ---
 
+## Media Lifecycle — Gardener & Reaper
+
+YouTube downloads are transcribed into Nova's memory (kept **forever**, tiny); the heavy `.mp4` is the reclaimable part. The **gardener** prunes only `TVShows` YouTube videos older than 15 days (skips watched + protects real TV series, detected via TVMaze); the **reaper** garbage-collects UNAS backup orphans after a 15-day grace. Both are **propose-only** — a human approves before any deletion.
+
+```mermaid
+flowchart TD
+  YT[YouTube ingest] --> T[Transcribe -> memory KEPT FOREVER]
+  YT --> V[Video -> /videos/TVShows]
+  V --> G{Gardener weekly: policy + 15d + not-watched + real-TV protected}
+  G -->|propose| A[Approval list]
+  A -->|apply| P[Prune video, transcript kept]
+  SYN[Synology source] --> R{Reaper weekly: dest minus source = orphan}
+  UNAS[UNAS backup] --> R
+  R -->|orphan over 15d| A2[Propose + Slack warn]
+  A2 -->|approve| RP[Reap from UNAS]
+  P --> DASH[(Grafana 19: Media Gardener)]
+  RP --> DASH
+```
+
+- `nova_media_gardener.py` — propose/apply, `media_policy` + `media_prune_proposals`, TVShows-only folder allowlist (**1.26 TB reclaimed**, transcripts intact)
+- `nova_backup_reaper.sh` — UNAS orphan GC, `backup_orphans` table, 15-day soft-mirror with accidental-delete safety net
+- Scheduled weekly (gardener propose-only Mon 6am, reaper Sun 5:30am) · Grafana dashboard 19 · Slack warnings via the notification bus
+
 ## Security
 
 - All credentials in macOS Keychain — never in source, env vars in plists, or flat files
