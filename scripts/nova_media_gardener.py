@@ -55,7 +55,7 @@ def propose():
         WHERE p.policy = 'rolling_15' AND p.locked
           AND m.processed_at < now() - interval '{WINDOW_DAYS} days'
           AND m.file_path IS NOT NULL AND m.file_path <> ''
-          AND m.file_path ~ '/videos/(TVShows|Liked|yt|Youtube Music Videos|random|My Youtube)/'""")
+          AND m.file_path ~ '/videos/TVShows/'""")
     rows = cur.fetchall()
     n = 0; total = 0; est = 0
     for fp, show, processed in rows:
