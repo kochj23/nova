@@ -95,7 +95,7 @@ def sync_wazuh_to_pg():
     since = last_ts.isoformat() if last_ts else f"now-{POLL_WINDOW_MINUTES}m"
 
     query = {
-        "size": 200,
+        "size": 5000,   # catch up backlogs fast; steady-state is a few hundred/run
         "sort": [{"timestamp": {"order": "asc"}}],
         "query": {
             "bool": {
