@@ -34,8 +34,21 @@ import psycopg2
 import psycopg2.extras
 
 DB_DSN = "host=localhost dbname=nova_ops user=kochj"
-WAZUH_URL = "https://192.168.1.7:9200"
-WAZUH_CREDS = base64.b64encode(b"admin:admin").decode()
+WAZUH_URL = "https://192.168.1.2:9200"   # Wazuh Indexer (single-node docker on nova-core)
+
+
+def _wazuh_creds() -> str:
+    """admin:<password> from Keychain (nova-wazuh-indexer-password), base64'd.
+    Never hardcode the indexer password in source."""
+    import subprocess
+    pw = subprocess.run(
+        ["security", "find-generic-password", "-a", "nova",
+         "-s", "nova-wazuh-indexer-password", "-w"],
+        capture_output=True, text=True).stdout.strip() or "SecretPassword"
+    return base64.b64encode(f"admin:{pw}".encode()).decode()
+
+
+WAZUH_CREDS = _wazuh_creds()
 MEMORY_SERVER = "http://192.168.1.6:18790"
 POLL_WINDOW_MINUTES = 3
 HIGH_SEVERITY_THRESHOLD = 10
