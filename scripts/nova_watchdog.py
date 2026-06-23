@@ -26,10 +26,15 @@ CH_CRITICAL = "C0B3G7J6N07"   # #nova-critical
 CH_INFO = "C0BC4SNUTQR"       # #nova-info
 
 CHECK_INTERVAL = 45           # seconds between sweeps
-FAIL_THRESHOLD = 2            # consecutive fails before declaring DOWN (debounce flaps)
+FAIL_THRESHOLD = 3            # consecutive SWEEP fails before declaring DOWN (debounce flaps)
 HEARTBEAT_EVERY = 24 * 3600   # seconds between "still alive" notes to #nova-info
-HTTP_TIMEOUT = 6
+HTTP_TIMEOUT = 10             # ollama /api/tags can be slow under load; give it room
 TCP_TIMEOUT = 4
+# Per-probe resilience: a single slow/transient response must not count as a sweep
+# failure. Retry each probe a few times with a short backoff before giving up.
+# Combined with FAIL_THRESHOLD this requires a sustained outage, not a flap.
+PROBE_ATTEMPTS = 3            # attempts per probe within ONE sweep
+PROBE_BACKOFF = 1.5           # seconds between attempts
 WATCHER = socket.gethostname().split(".")[0]   # which node is doing the watching
 
 STATE_DIR = os.path.expanduser("~/.openclaw/state")
@@ -38,14 +43,16 @@ STATE_FILE = os.path.join(STATE_DIR, "watchdog_state.json")
 # Each: (label, kind, target). kind 'tcp' -> (host, port); 'http' -> url (expects 200).
 CHECKS = [
     ("mac-studio (.6) host",      "tcp",  ("192.168.1.6", 22)),
-    ("mac-studio (.6) ollama",    "http", "http://192.168.1.6:11434/api/tags"),
+    # /api/version is a cheap liveness endpoint; /api/tags enumerates every model
+    # and can take seconds (and time out) on a loaded box even when ollama is fine.
+    ("mac-studio (.6) ollama",    "http", "http://192.168.1.6:11434/api/version"),
     ("mac-studio (.6) postgres",  "tcp",  ("192.168.1.6", 5432)),
     ("mac-studio (.6) nova-gw",   "tcp",  ("192.168.1.6", 18792)),
     ("mac-studio (.6) mqtt",      "tcp",  ("192.168.1.6", 1883)),
     ("nova-core (.2) host",       "tcp",  ("192.168.1.2", 22)),
     ("nova-core (.2) pg-replica", "tcp",  ("192.168.1.2", 5432)),
     ("nova-core (.2) grafana",    "http", "http://192.168.1.2:3000/api/health"),
-    ("mac-mini (.190) ollama",    "http", "http://192.168.1.190:11434/api/tags"),
+    ("mac-mini (.190) ollama",    "http", "http://192.168.1.190:11434/api/version"),
     # nuk: so a SECOND watcher (on .2) catches nuk going down — the gap the
     # 2026-06-22 power event exposed (nuk's own watchdog died with it).
     ("nuk (.10) host",            "tcp",  ("192.168.1.10", 22)),
@@ -78,7 +85,23 @@ def check_http(url):
 
 
 def run_check(kind, target):
-    return check_tcp(*target) if kind == "tcp" else check_http(target)
+    """Probe a target, retrying transient failures within a single sweep.
+
+    A node that's actually healthy can still drop one probe (ollama busy listing
+    models, momentary TCP RST, GC pause). Retrying PROBE_ATTEMPTS times with a
+    short backoff means only a *sustained* failure across the whole retry window
+    is reported up to the sweep — which still needs FAIL_THRESHOLD consecutive
+    sweeps before it declares DOWN. Real outages persist; flaps don't.
+    """
+    last_detail = ""
+    for attempt in range(PROBE_ATTEMPTS):
+        ok, detail = check_tcp(*target) if kind == "tcp" else check_http(target)
+        if ok:
+            return True, ""
+        last_detail = detail
+        if attempt < PROBE_ATTEMPTS - 1:
+            time.sleep(PROBE_BACKOFF)
+    return False, last_detail
 
 
 # --- slack (independent path) ----------------------------------------------

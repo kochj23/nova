@@ -29,7 +29,11 @@ from nova_notify import notify
 
 PG_DSN = "host=192.168.1.6 dbname=nova_ops user=kochj"
 
-SITES = ["nova.digitalnoise.net", "digitalnoise.net", "chat.digitalnoise.net", "gauges.digitalnoise.net"]
+# chat.digitalnoise.net is the public TinyChat route: it legitimately returns 404
+# at "/" and generates ~no analytics pageviews, so it would ALWAYS look "quiet".
+# It is intentionally NOT in the dark-site watchlist — its uptime is covered by
+# the TinyChat service check in nova_big_brother / nova_watchdog, not by pageviews.
+SITES = ["nova.digitalnoise.net", "digitalnoise.net", "gauges.digitalnoise.net"]
 SPIKE_MULTIPLIER = 10
 REFERRER_BOMB_THRESHOLD = 0.5
 DARK_MINUTES = 30
@@ -45,14 +49,31 @@ SITE_DARK_CONFIG = {
 
 
 def _probe_site(site: str) -> bool:
-    """HTTP HEAD probe to check if site is actually reachable."""
+    """Check if a site is actually reachable.
+
+    A site is "reachable" if it answers with any non-5xx HTTP status — a 200, a
+    redirect, or even a 404 means the server is up and serving; only a 5xx or a
+    connection/timeout failure means it's actually down.
+
+    Tries HEAD first (cheap), then falls back to GET, because some servers/CDNs
+    don't implement HEAD and return 405/403 or close the connection — that must
+    NOT be misread as "site down" (which would fire a false critical). A
+    urllib HTTPError still carries a real status code, so we honour it.
+    """
     import urllib.request
-    try:
-        req = urllib.request.Request(f"https://{site}/", method="HEAD")
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return resp.status < 500
-    except Exception:
-        return False
+    import urllib.error
+    for method in ("HEAD", "GET"):
+        try:
+            req = urllib.request.Request(f"https://{site}/", method=method)
+            req.add_header("User-Agent", "Nova-Analytics/1.0")
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                return resp.status < 500
+        except urllib.error.HTTPError as e:
+            # Got a real HTTP response (e.g. 404/403/405) — server is up.
+            return e.code < 500
+        except Exception:
+            continue  # try the next method before declaring it unreachable
+    return False
 
 
 def get_conn():
@@ -289,9 +310,13 @@ def fire_alerts(conn, alerts):
         if alert["type"] == "site_dark":
             detail = alert.get("detail", {})
             reachable = detail.get("site_reachable")
-            # Unreachable site == possible outage (critical); reachable-but-quiet
-            # is a needs-attention warning.
-            level = "warning" if reachable else "critical"
+            # A reachable site (HTTP probe OK) with no pageviews is NORMAL for a
+            # low-traffic personal/internal site — it is informational, not an
+            # incident, so route it to #nova-info and never to #nova-warning.
+            # Only an UNREACHABLE site is a genuine outage worth a critical alert.
+            # (Previously reachable-but-quiet was "warning", which made healthy
+            # low-traffic sites like digitalnoise.net cry wolf on #nova-warning.)
+            level = "info" if reachable else "critical"
             title = f"Site Quiet — {site}"
             body = (
                 f"{detail.get('explanation', 'No pageviews detected')}\n"

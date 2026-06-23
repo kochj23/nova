@@ -227,10 +227,17 @@ def execute_action(watcher: dict, new_value: str):
         msg = template.format(name=watcher["name"], new_value=new_value[:200],
                               target=watcher["target"], type=watcher["type"])
         lines = msg.split("\n")
+        # RSS watchers just announce "a new feed item appeared" — pure FYI (FBI RSS,
+        # Pwn2Own and other security-NEWS digests), NOT incidents. Default them to
+        # info so they land in #nova-info, not #nova-warning. Availability-style
+        # watchers (http/db_query/file) keep the warning default. An explicit
+        # action.level still wins, so a genuinely actionable watcher can opt up.
+        default_level = "info" if watcher["type"] == "rss" else "warning"
+        level = action.get("level", default_level)
         notify(
             lines[0].strip(),
             body="\n".join(lines[1:]).strip() or None,
-            level=action.get("level", "warning"),
+            level=level,
             category="scheduler",
             dedup_key=f"watcher-{watcher['id']}",
             meta={"host": "Office-M4-2", "watcher": watcher["name"]},
