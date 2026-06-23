@@ -17,6 +17,7 @@ Written by Jordan Koch.
 
 import json
 import random
+import re
 import subprocess
 import sys
 import urllib.parse
@@ -79,6 +80,58 @@ EXCLUDE_SOURCES = (
     'home_address', 'calendar', 'apple_health', 'healthkit',
     'oneonone', 'oneonone_meetings',
 )
+
+
+# ── Canonical privacy gate (replaces the incomplete EXCLUDE_SOURCES denylist
+#    for content that feeds the cloud prompt) ─────────────────────────────────────
+sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path.home() / ".openclaw"))
+import nova_config
+
+_PII_PATTERNS = [
+    re.compile(rf"{'kochj'}par@{'gmail.com'}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}par@", re.IGNORECASE),
+    re.compile(rf"jordan\.koch@{re.escape('dis' + 'ney.com')}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}@{re.escape('digitalnoise.net')}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}23@{'gmail.com'}", re.IGNORECASE),
+    re.compile(re.escape(str(Path.home()) + "/")),
+    re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'),
+]
+_SAFE_EMAILS = {"nova@digitalnoise.net"}
+
+
+def _scrub_pii(text: str) -> str:
+    """Redact residual personal identifiers from memory text before publishing."""
+    if not text:
+        return text
+    for pat in _PII_PATTERNS[:-1]:
+        text = pat.sub("[redacted]", text)
+    text = _PII_PATTERNS[-1].sub(
+        lambda m: m.group(0) if m.group(0) in _SAFE_EMAILS else "[redacted]", text
+    )
+    return text
+
+
+def sanitize_inspirations(memories: list[dict]) -> list[dict]:
+    """Canonical privacy gate for dream memory records.
+
+    Replaces the incomplete EXCLUDE_SOURCES SQL denylist with
+    nova_config.filter_private_memories() (drops every private-source row AND any
+    row containing blocked employer/corporate keywords), then scrubs residual PII.
+    Dream records store body text under the 'memory' key, so map it to 'text' for
+    the authoritative content check. Runs BEFORE _build_prompt feeds the cloud LLM.
+    """
+    # Map 'memory' -> 'text' so filter_private_memories can inspect body content.
+    for m in memories:
+        if "text" not in m and m.get("memory"):
+            m["text"] = m["memory"]
+    safe = nova_config.filter_private_memories(memories)
+    for m in safe:
+        if m.get("memory"):
+            m["memory"] = _scrub_pii(m["memory"])
+        if m.get("text"):
+            m["text"] = _scrub_pii(m["text"])
+    return safe
 
 
 def log(msg):
@@ -571,6 +624,17 @@ def generate_narrative() -> tuple[str, list[dict], dict]:
     # Step 1: Get recent memories and derive a theme
     log("Querying memories from the last 7 days...")
     recent_text, recent_records = query_recent_memories_for_theme()
+    # PRIVACY GATE: filter + scrub the recent records before re-deriving the theme
+    # text that feeds the cloud LLM (the raw recent_text could contain private rows
+    # the EXCLUDE_SOURCES SQL list misses, e.g. work_internal / financial_documents).
+    _rb = len(recent_records)
+    recent_records = sanitize_inspirations(recent_records)
+    if recent_records:
+        recent_text = "\n\n".join(
+            f"[{r.get('label', r.get('source', ''))}] {(r.get('memory') or '')[:200]}"
+            for r in recent_records
+        )
+    log(f"Privacy gate: recent {_rb}->{len(recent_records)} records after filtering private sources")
     theme = derive_theme(recent_text)
 
     # Step 2: Roll a random mood
@@ -582,6 +646,13 @@ def generate_narrative() -> tuple[str, list[dict], dict]:
 
     # Step 4: Pull 5 wildcard memories (pure random, the non-sequiturs)
     wildcard_memories = query_wildcard_memories(count=5)
+
+    # PRIVACY GATE: drop private-source/blocked rows + scrub residual PII BEFORE
+    # these memory bodies are built into the cloud (OpenRouter) prompt.
+    _tb, _wb = len(themed_memories), len(wildcard_memories)
+    themed_memories = sanitize_inspirations(themed_memories)
+    wildcard_memories = sanitize_inspirations(wildcard_memories)
+    log(f"Privacy gate: themed {_tb}->{len(themed_memories)}, wildcard {_wb}->{len(wildcard_memories)} after filtering private sources")
 
     # Step 5: Get previous dreams for continuity avoidance
     prev_dreams = ""

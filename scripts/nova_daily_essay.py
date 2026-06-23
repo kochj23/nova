@@ -127,8 +127,12 @@ def pick_subject(state: dict) -> str | None:
         log("ERROR: No sources available")
         return None
 
-    # Never pick internal Corporate/work sources for public essays
-    sources = [s for s in sources if s["source"] not in PRIVATE_SOURCES]
+    # Never pick internal Corporate/work sources for public essays.
+    # Use the canonical authoritative gate (nova_config.is_private_source) instead
+    # of the old 8-item local denylist so every private namespace is excluded.
+    sources = [s for s in sources
+               if not nova_config.is_private_source(s["source"])
+               and s["source"] not in PRIVATE_SOURCES]
 
     recent = set(state.get("recent_sources", []))
     candidates = [s for s in sources if s["source"] not in recent]
@@ -145,7 +149,7 @@ def fetch_memories(source: str, n: int = ESSAY_MEMORIES) -> list[dict]:
     import subprocess
     result = subprocess.run(
         ["psql", "-U", "kochj", "-d", "nova_memories", "-tA", "-F", "\x1f", "-c",
-         f"SELECT text, metadata, created_at FROM memories WHERE source = '{source}' AND tier != 'scratchpad' ORDER BY random() LIMIT {n};"],
+         f"SELECT text, metadata, created_at, source FROM memories WHERE source = '{source}' AND tier != 'scratchpad' ORDER BY random() LIMIT {n};"],
         capture_output=True, text=True, timeout=30
     )
     if result.returncode != 0:
@@ -159,8 +163,19 @@ def fetch_memories(source: str, n: int = ESSAY_MEMORIES) -> list[dict]:
         text = parts[0] if parts else ""
         metadata = parts[1] if len(parts) > 1 else "{}"
         created = parts[2] if len(parts) > 2 else ""
+        src = parts[3] if len(parts) > 3 else source
         if text:
-            memories.append({"text": text, "metadata": metadata, "created_at": created})
+            memories.append({"text": text, "metadata": metadata, "created_at": created, "source": src})
+    # PRIVACY GATE (canonical): replace the old 8-item local denylist with
+    # nova_config.filter_private_memories() — drops private-source rows AND any row
+    # containing blocked employer/corporate keywords — then scrub residual PII.
+    # This runs BEFORE memory bodies reach the OpenRouter (cloud) prompt.
+    before = len(memories)
+    memories = nova_config.filter_private_memories(memories)
+    for m in memories:
+        if m.get("text"):
+            m["text"] = _scrub_personal(m["text"])
+    log(f"Privacy gate: {before} -> {len(memories)} memories after filtering private sources")
     return memories
 
 

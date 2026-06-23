@@ -63,6 +63,28 @@ def scrub_emails(text: str) -> str:
     return EMAIL_PATTERN.sub("[email redacted]", text)
 
 
+# ── Full PII scrub (matches nova_journal canonical pattern) ─────────────────────
+# Inbound email is private data. Even when routed to local Ollama we scrub PII;
+# if a cloud fallback is ever used, the scrubbed subject + body is what leaves.
+_PII_PATTERNS = [
+    re.compile(rf"{'kochj'}par@{'gmail.com'}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}par@", re.IGNORECASE),
+    re.compile(rf"jordan\.koch@{re.escape('dis' + 'ney.com')}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}@{re.escape('digitalnoise.net')}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}23@{'gmail.com'}", re.IGNORECASE),
+    re.compile(re.escape(str(Path.home()) + "/")),
+]
+
+
+def scrub_pii(text: str) -> str:
+    """Redact personal identifiers (paths, known addresses) and all emails."""
+    if not text:
+        return text
+    for pat in _PII_PATTERNS:
+        text = pat.sub("[redacted]", text)
+    return scrub_emails(text)
+
+
 def load_state() -> dict:
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
     if STATE_FILE.exists():
@@ -184,9 +206,16 @@ def _generate_via_ollama(system_prompt: str, user_prompt: str, model: str) -> st
 
 
 def extract_personality_signals(member_name: str, subject: str, body: str) -> str | None:
-    """Use Haiku (or Ollama fallback) to extract personality signals from an email."""
-    # Scrub emails from the body before sending to LLM
-    clean_body = scrub_emails(body)
+    """Extract personality signals from an inbound email.
+
+    PRIVACY: inbound email is private data, so this routes to LOCAL Ollama as the
+    PRIMARY path. Both the subject AND body are PII-scrubbed (previously only
+    addresses in the body were scrubbed and the subject went out raw) so that if
+    the cloud (OpenRouter) fallback is ever reached, no unredacted PII leaves the box.
+    """
+    # PRIVACY GATE: scrub subject + body BEFORE building any prompt
+    clean_subject = scrub_pii(subject)
+    clean_body = scrub_pii(body)
 
     # Truncate very long emails
     if len(clean_body) > 3000:
@@ -204,28 +233,28 @@ SUMMARY: [1 sentence capturing the key personality insight from this email]"""
 
     user_prompt = f"""Analyze this email from {member_name}:
 
-Subject: {subject}
+Subject: {clean_subject}
 Body:
 {clean_body}"""
 
-    # Primary: OpenRouter (Haiku)
+    # PRIMARY: local Ollama — inbound email is private; keep it on the box.
     response = ""
-    try:
-        log(f"  Analyzing {member_name}'s email via OpenRouter...")
-        response = _generate_via_openrouter(system_prompt, user_prompt)
-    except Exception as e:
-        log(f"  OpenRouter failed: {e} — trying Ollama fallback")
+    for model in [OLLAMA_MODEL] + FALLBACK_MODELS:
+        try:
+            log(f"  Analyzing {member_name}'s email via local Ollama ({model})...")
+            response = _generate_via_ollama(system_prompt, user_prompt, model)
+            if response:
+                break
+        except Exception as e:
+            log(f"  Ollama {model} failed: {e}")
 
-    # Fallback: Ollama
+    # Fallback: OpenRouter (cloud). Only PII-scrubbed subject + body reach it.
     if not response:
-        for model in [OLLAMA_MODEL] + FALLBACK_MODELS:
-            try:
-                log(f"  Trying Ollama ({model})...")
-                response = _generate_via_ollama(system_prompt, user_prompt, model)
-                if response:
-                    break
-            except Exception as e:
-                log(f"  Ollama {model} failed: {e}")
+        try:
+            log(f"  Local Ollama unavailable — falling back to OpenRouter (PII-scrubbed)...")
+            response = _generate_via_openrouter(system_prompt, user_prompt)
+        except Exception as e:
+            log(f"  OpenRouter fallback failed: {e}")
 
     if not response:
         log(f"  All models failed for {member_name}")

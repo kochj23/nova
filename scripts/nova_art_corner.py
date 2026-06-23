@@ -60,6 +60,39 @@ def scrub_emails(text: str) -> str:
         return "[redacted]"
     return EMAIL_PATTERN.sub(replace_email, text)
 
+
+# ── PII scrubbing + canonical privacy gate ──────────────────────────────────────
+_PII_PATTERNS = [
+    re.compile(rf"{'kochj'}par@{'gmail.com'}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}par@", re.IGNORECASE),
+    re.compile(rf"jordan\.koch@{re.escape('dis' + 'ney.com')}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}@{re.escape('digitalnoise.net')}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}23@{'gmail.com'}", re.IGNORECASE),
+    re.compile(re.escape(str(Path.home()) + "/")),
+]
+
+
+def scrub_pii(text: str) -> str:
+    """Redact residual personal identifiers (incl. emails) from memory text."""
+    if not text:
+        return text
+    for pat in _PII_PATTERNS:
+        text = pat.sub("[redacted]", text)
+    return scrub_emails(text)
+
+
+def sanitize_memories(memories: list[dict]) -> list[dict]:
+    """Canonical privacy gate: drop private-source/blocked rows, then scrub residual PII.
+    Applied to fetched memories BEFORE they reach any OpenRouter (cloud) prompt."""
+    safe = nova_config.filter_private_memories(memories)
+    for m in safe:
+        if isinstance(m, dict):
+            for key in ("text", "content", "memory"):
+                if m.get(key):
+                    m[key] = scrub_pii(m[key])
+    return safe
+
+
 DAILY_STYLES = {
     0: {"name": "Photorealism", "directive": "hyperrealistic photograph, 8K, sharp focus, natural lighting, DSLR quality"},
     1: {"name": "Oil Painting", "directive": "oil painting on canvas, visible brushstrokes, rich impasto texture, gallery quality, museum piece"},
@@ -453,6 +486,12 @@ def run_pipeline(retry_simplified: bool = False):
     log("Fetching memories...")
     random_memories = fetch_random_memories(10)
     themed_memories = fetch_themed_memories(theme_query, 5)
+    # PRIVACY GATE: filter private-source/blocked rows + scrub residual PII BEFORE
+    # any memory text reaches the OpenRouter (cloud) concept/statement prompts.
+    _rb, _tb = len(random_memories), len(themed_memories)
+    random_memories = sanitize_memories(random_memories)
+    themed_memories = sanitize_memories(themed_memories)
+    log(f"Privacy gate: random {_rb}->{len(random_memories)}, themed {_tb}->{len(themed_memories)} after filtering private sources")
     all_memories = random_memories + themed_memories
 
     if len(all_memories) < 3:

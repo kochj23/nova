@@ -27,6 +27,41 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 import nova_config
 from nova_image_utils import generate_image
 
+# ── PII scrubbing (matches nova_journal canonical pattern) ──────────────────────
+# Residual-PII redaction applied to memory text AFTER private-source filtering,
+# before any text is placed into a cloud (OpenRouter) prompt.
+_PII_PATTERNS = [
+    re.compile(rf"{'kochj'}par@{'gmail.com'}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}par@", re.IGNORECASE),
+    re.compile(rf"jordan\.koch@{re.escape('dis' + 'ney.com')}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}@{re.escape('digitalnoise.net')}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}23@{'gmail.com'}", re.IGNORECASE),
+    re.compile(re.escape(str(Path.home()) + "/")),
+    re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'),
+]
+_SAFE_EMAILS = {"nova@digitalnoise.net"}
+
+
+def scrub_pii(text: str) -> str:
+    """Redact residual personal identifiers from memory text before publishing."""
+    if not text:
+        return text
+    for pat in _PII_PATTERNS[:-1]:
+        text = pat.sub("[redacted]", text)
+    text = _PII_PATTERNS[-1].sub(
+        lambda m: m.group(0) if m.group(0) in _SAFE_EMAILS else "[redacted]", text
+    )
+    return text
+
+
+def sanitize_memories(memories: list[dict]) -> list[dict]:
+    """Canonical privacy gate: drop private-source/blocked rows, then scrub residual PII."""
+    safe = nova_config.filter_private_memories(memories)
+    for m in safe:
+        if m.get("text"):
+            m["text"] = scrub_pii(m["text"])
+    return safe
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
@@ -243,6 +278,10 @@ def main():
         return
 
     memories = get_weird_memories(hours=24, limit=400)
+    # PRIVACY GATE: drop private-source rows + scrub residual PII before any cloud prompt
+    before = len(memories)
+    memories = sanitize_memories(memories)
+    log(f"Privacy gate: {before} -> {len(memories)} memories after filtering private sources")
     log(f"Got {len(memories)} candidate memories from {stats['total']} total today")
 
     # Generate article

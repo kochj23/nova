@@ -15,6 +15,7 @@ Written by Jordan Koch.
 import hashlib
 import json
 import random
+import re
 import subprocess
 import sys
 import time
@@ -128,6 +129,31 @@ def pick_story(stories: list[dict], state: dict) -> dict | None:
     return random.choice(candidates)
 
 
+# ── PII scrubbing (matches nova_journal canonical pattern) ──────────────────────
+_PII_PATTERNS = [
+    re.compile(rf"{'kochj'}par@{'gmail.com'}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}par@", re.IGNORECASE),
+    re.compile(rf"jordan\.koch@{re.escape('dis' + 'ney.com')}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}@{re.escape('digitalnoise.net')}", re.IGNORECASE),
+    re.compile(rf"{'kochj'}23@{'gmail.com'}", re.IGNORECASE),
+    re.compile(re.escape(str(Path.home()) + "/")),
+    re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'),
+]
+_SAFE_EMAILS = {"nova@digitalnoise.net"}
+
+
+def scrub_pii(text: str) -> str:
+    """Redact residual personal identifiers from memory text before publishing."""
+    if not text:
+        return text
+    for pat in _PII_PATTERNS[:-1]:
+        text = pat.sub("[redacted]", text)
+    text = _PII_PATTERNS[-1].sub(
+        lambda m: m.group(0) if m.group(0) in _SAFE_EMAILS else "[redacted]", text
+    )
+    return text
+
+
 def fetch_related_memories(topic: str) -> list[dict]:
     """Semantic search for memories related to the news topic."""
     try:
@@ -135,7 +161,15 @@ def fetch_related_memories(topic: str) -> list[dict]:
         url = f"{MEMORY_SERVER}/recall?q={query}&n={MEMORY_COUNT}"
         resp = urllib.request.urlopen(url, timeout=15)
         data = json.loads(resp.read())
-        return data.get("memories", [])
+        memories = data.get("memories", [])
+        # PRIVACY GATE: drop private-source/blocked rows, then scrub residual PII
+        # before this text can reach the OpenRouter (cloud) prompt.
+        safe = nova_config.filter_private_memories(memories)
+        for m in safe:
+            if m.get("text"):
+                m["text"] = scrub_pii(m["text"])
+        log(f"Privacy gate: {len(memories)} -> {len(safe)} memories after filtering private sources")
+        return safe
     except Exception as e:
         log(f"Memory recall failed: {e}")
         return []
