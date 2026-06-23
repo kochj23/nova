@@ -34,8 +34,10 @@ from nova_notify import notify
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content" / "operations"
 IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "google/gemini-2.5-flash"
+# Classification reads RAW memory text from arbitrary vectors (may be private),
+# so it runs on LOCAL Ollama ONLY — raw memory samples never reach the cloud.
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+OLLAMA_MODEL = "qwen3-coder:30b"
 MEMORY_URL = "http://192.168.1.6:18790"
 SAMPLE_PER_VECTOR = 100
 MAX_VECTORS_PER_RUN = 999
@@ -47,35 +49,31 @@ def log(msg: str):
     print(f"[vector_audit {ts}] {msg}", flush=True)
 
 
-def get_openrouter_key() -> str:
-    return subprocess.check_output(
-        ["security", "find-generic-password", "-a", "nova", "-s", "nova-openrouter-api-key", "-w"],
-        text=True).strip()
-
-
 def call_llm(system: str, user: str, max_tokens: int = 4000) -> str:
+    """Classify/summarize on LOCAL Ollama ONLY. Raw memory text (which may be
+    private) never leaves the box. Returns text, or '' on failure (callers
+    already treat empty/garbage output as 'no verdicts'). Matches the local-call
+    idiom in nova_inbox_claude.py."""
     import urllib.request
-    api_key = get_openrouter_key()
     payload = json.dumps({
-        "model": OPENROUTER_MODEL,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "max_tokens": max_tokens,
-        "temperature": 0.3,
+        "model": OLLAMA_MODEL,
+        "prompt": f"/no_think\n\n{system}\n\n{user}",
+        "stream": False,
+        "think": False,
+        "options": {"temperature": 0.3, "num_predict": max_tokens},
     }).encode()
     req = urllib.request.Request(
-        OPENROUTER_URL, data=payload,
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://nova.digitalnoise.net",
-        }
-    )
-    with urllib.request.urlopen(req, timeout=90) as resp:
-        data = json.loads(resp.read())
-    return data["choices"][0]["message"]["content"]
+        OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            data = json.loads(resp.read())
+        text = (data.get("response") or "").strip()
+        if "</think>" in text:
+            text = text.split("</think>", 1)[-1].strip()
+        return text
+    except Exception as e:
+        log(f"Local LLM error: {e} — raw memory samples will NOT be sent to cloud")
+        return ""
 
 
 def psql(sql: str) -> str:

@@ -39,8 +39,10 @@ except ImportError:
 HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content" / "rando"
 IMAGES_DIR = HUGO_ROOT / "static" / "images" / "rando"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "google/gemini-2.5-flash"
+# Postmortems are built from INTERNAL incident/infra/security telemetry, so the
+# editorial generation runs on LOCAL Ollama ONLY — none of this leaves the box.
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+OLLAMA_MODEL = "qwen3-coder:30b"
 DB_DSN = "host=localhost dbname=nova_ops user=kochj"
 
 
@@ -49,37 +51,31 @@ def log(msg):
     print(f"[postmortem {ts}] {msg}", flush=True)
 
 
-def get_openrouter_key():
-    return subprocess.check_output(
-        ["security", "find-generic-password", "-a", "nova", "-s", "nova-openrouter-api-key", "-w"],
-        text=True
-    ).strip()
-
-
 def call_llm(system, user, max_tokens=8000):
-    api_key = get_openrouter_key()
+    """Generate via LOCAL Ollama only. Internal telemetry never goes to cloud.
+
+    Returns the model text, or None on failure (callers already handle a falsy
+    return). Matches the local-call idiom in nova_inbox_claude.py."""
     body = json.dumps({
-        "model": OPENROUTER_MODEL,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user}
-        ],
-        "max_tokens": max_tokens,
-        "temperature": 0.9
-    })
+        "model": OLLAMA_MODEL,
+        "prompt": f"/no_think\n\n{system}\n\n{user}",
+        "stream": False,
+        "think": False,
+        "options": {"temperature": 0.9, "num_predict": max_tokens},
+    }).encode()
     req = urllib.request.Request(
-        OPENROUTER_URL,
-        data=body.encode(),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://nova.digitalnoise.net",
-            "X-Title": "Nova Journal"
-        }
-    )
-    resp = urllib.request.urlopen(req, timeout=60)
-    result = json.loads(resp.read())
-    return result["choices"][0]["message"]["content"]
+        OLLAMA_URL, data=body,
+        headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=300) as resp:
+            result = json.loads(resp.read())
+        text = (result.get("response") or "").strip()
+        if "</think>" in text:
+            text = text.split("</think>", 1)[-1].strip()
+        return text or None
+    except Exception as e:
+        log(f"Local LLM error: {e} — internal telemetry will NOT be sent to cloud")
+        return None
 
 
 def get_recent_incidents():
@@ -165,7 +161,8 @@ Write a proper incident retrospective in Nova's signature sarcastic style. Inclu
 
     # Generate title from article
     title_prompt = f"Generate a short, sarcastic title (max 10 words) for this postmortem:\n\n{article[:500]}"
-    title = call_llm("Generate only a title, no quotes, no markdown.", title_prompt, max_tokens=50).strip().strip('"\'#')
+    title = call_llm("Generate only a title, no quotes, no markdown.", title_prompt, max_tokens=50)
+    title = (title or "Incident Postmortem").strip().strip('"\'#') or "Incident Postmortem"
 
     # Generate cover image
     image_prompt = (

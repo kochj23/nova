@@ -116,21 +116,20 @@ def ha_get_states():
 
 # ── Phase 3: Visual Understanding ───────────────────────────────────────────
 
-# Vision routing: local Ollama (qwen3-vl) is PRIMARY and preferred for privacy —
-# interior camera frames stay on-box. It shares the GPU with everything else and
-# can stall under contention, so a circuit breaker tracks Ollama health: after
+# Vision routing: local Ollama (qwen3-vl) is the ONLY path — interior camera
+# frames of people are strictly on-box and MUST NEVER leave the machine (hard
+# local-only rule, DLP). It shares the GPU with everything else and can stall
+# under contention, so a circuit breaker tracks Ollama health: after
 # VISION_FAIL_THRESHOLD consecutive failures the circuit opens and we stop
 # hammering Ollama for VISION_COOLDOWN seconds (then probe once to recover).
 #
-# When Ollama is unavailable (failing or circuit open), vision FALLS BACK to a
-# cheap OpenRouter vision model so the capability degrades gracefully instead of
-# going dark. NOTE: the fallback sends camera frames to the cloud — authorized
-# explicitly for vision only. nova_agent_sentinel may flag this as cloud traffic.
+# When Ollama is unavailable (failing or circuit open), vision returns None and
+# the capability simply goes dark for the cooldown window. There is NO cloud
+# fallback: we would rather lose scene descriptions than send a frame of a
+# person off-box. Do not reintroduce any remote vision call here.
 VISION_TIMEOUT = 45             # local Ollama per-call ceiling (was 60)
 VISION_FAIL_THRESHOLD = 3       # consecutive Ollama failures before opening
 VISION_COOLDOWN = 900           # seconds the circuit stays open (15 min)
-OPENROUTER_VISION_MODEL = "qwen/qwen3.5-flash-02-23"   # cheap Qwen-VL sibling
-OPENROUTER_VISION_TIMEOUT = 30
 _vision_cb = {"fails": 0, "open_until": 0.0, "logged_open": False}
 
 VISION_PROMPT = (
@@ -159,46 +158,13 @@ def _vision_ollama(b64):
     return content
 
 
-def _vision_openrouter(b64):
-    """FALLBACK: cheap cloud vision model when local Ollama is down.
-
-    Returns a description, or None if the key is missing / the call fails.
-    """
-    try:
-        key = subprocess.run(
-            ["security", "find-generic-password", "-a", "nova",
-             "-s", "nova-openrouter-api-key", "-w"],
-            capture_output=True, text=True, timeout=5).stdout.strip()
-        if not key:
-            return None
-        payload = json.dumps({
-            "model": OPENROUTER_VISION_MODEL,
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": VISION_PROMPT},
-                {"type": "image_url",
-                 "image_url": {"url": f"data:image/jpeg;base64,{b64}"}},
-            ]}],
-            "temperature": 0.2,
-            "max_tokens": 120,
-        }).encode()
-        req = urllib.request.Request(
-            "https://openrouter.ai/api/v1/chat/completions",
-            data=payload, headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {key}",
-                "HTTP-Referer": "https://nova.digitalnoise.net",
-            })
-        resp = urllib.request.urlopen(req, timeout=OPENROUTER_VISION_TIMEOUT)
-        data = json.loads(resp.read())
-        content = data["choices"][0]["message"]["content"]
-        return content.strip() if content else None
-    except Exception as e:
-        log(f"Vision OpenRouter fallback failed: {e}", "ERROR")
-        return None
-
-
 def vision_describe(image_path):
-    """Describe a camera frame: local Ollama primary, OpenRouter fallback.
+    """Describe a camera frame using LOCAL Ollama ONLY.
+
+    Interior camera frames of people are strictly on-box: if local Ollama is
+    unavailable (failing or circuit open) this returns None and the scene is
+    simply skipped this cycle. There is deliberately NO cloud fallback — a
+    frame of a person must never leave the machine.
 
     NOTE: this is a blocking call; callers run it in an executor so it never
     freezes the brain's async loop.
@@ -212,32 +178,31 @@ def vision_describe(image_path):
         log(f"Vision: cannot read frame {image_path}: {e}", "ERROR")
         return None
 
-    # Try local Ollama unless its circuit is open.
-    if now >= _vision_cb["open_until"]:
-        try:
-            content = _vision_ollama(b64)
-            # Success → reset breaker (announce recovery if it had tripped).
-            if _vision_cb["logged_open"]:
-                log("Vision recovered — local circuit closed")
-            _vision_cb["fails"] = 0
-            _vision_cb["logged_open"] = False
-            return content
-        except Exception as e:
-            _vision_cb["fails"] += 1
-            if _vision_cb["fails"] >= VISION_FAIL_THRESHOLD:
-                _vision_cb["open_until"] = time.time() + VISION_COOLDOWN
-                if not _vision_cb["logged_open"]:
-                    log(f"Local vision failing ({_vision_cb['fails']}x, last: {e}) "
-                        f"— circuit OPEN {VISION_COOLDOWN // 60}m, using cloud", "WARN")
-                    _vision_cb["logged_open"] = True
-            else:
-                log(f"Local vision error: {e} — trying cloud fallback", "ERROR")
+    # Local Ollama is the only path. If its circuit is open, do not describe.
+    if now < _vision_cb["open_until"]:
+        return None
 
-    # Ollama down or circuit open → cloud fallback.
-    content = _vision_openrouter(b64)
-    if content:
-        log(f"Vision via OpenRouter fallback ({OPENROUTER_VISION_MODEL})")
-    return content
+    try:
+        content = _vision_ollama(b64)
+        # Success → reset breaker (announce recovery if it had tripped).
+        if _vision_cb["logged_open"]:
+            log("Vision recovered — local circuit closed")
+        _vision_cb["fails"] = 0
+        _vision_cb["logged_open"] = False
+        return content
+    except Exception as e:
+        _vision_cb["fails"] += 1
+        if _vision_cb["fails"] >= VISION_FAIL_THRESHOLD:
+            _vision_cb["open_until"] = time.time() + VISION_COOLDOWN
+            if not _vision_cb["logged_open"]:
+                log(f"Local vision failing ({_vision_cb['fails']}x, last: {e}) "
+                    f"— circuit OPEN {VISION_COOLDOWN // 60}m, vision unavailable "
+                    f"(NO cloud fallback — frames stay on-box)", "WARN")
+                _vision_cb["logged_open"] = True
+        else:
+            log(f"Local vision error: {e} — vision unavailable this cycle "
+                f"(frames stay on-box, no cloud fallback)", "ERROR")
+        return None
 
 
 async def phase3_visual_understanding(pool):

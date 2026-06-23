@@ -7,7 +7,7 @@ Identifies three categories:
 2. Video/podcast transcripts (reclassify by topic via Haiku)
 3. Garbage (repeated text, empty attachments) → delete
 
-Uses OpenRouter Claude Haiku for classification.
+Uses LOCAL Ollama for classification — raw Slack message text never leaves the box.
 Processes in batches of 20, with progress logging.
 
 Written by Jordan Koch (via Claude).
@@ -26,8 +26,10 @@ import nova_config
 # ── Config ────────────────────────────────────────────────────────────────────
 
 DB = "nova_memories"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "anthropic/claude-haiku-4.5"
+# Raw Slack message text is private, so classification runs on LOCAL Ollama
+# ONLY — message bodies never reach the cloud.
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+OLLAMA_MODEL = "qwen3-coder:30b"
 BATCH_SIZE = 20
 LOG_FILE = Path.home() / ".openclaw/logs/slack_reclassify.log"
 SLACK_NOTIFY_INTERVAL = 300  # 5 minutes
@@ -128,12 +130,10 @@ def is_actual_slack(text: str) -> bool:
 # ── LLM Classification ───────────────────────────────────────────────────────
 
 def classify_batch(memories: list[tuple]) -> list[dict]:
-    """Classify a batch of memories using Haiku. Returns [{id, action, target}]."""
-    api_key = nova_config.openrouter_api_key()
-    if not api_key:
-        log("ERROR: No OpenRouter API key")
-        return []
+    """Classify a batch of memories using LOCAL Ollama. Returns [{id, vector}].
 
+    Raw Slack message text is private and is sent to the on-box model ONLY —
+    it never reaches the cloud."""
     vector_list = ", ".join(sorted(VALID_VECTORS))
 
     items = []
@@ -168,37 +168,37 @@ Memories:
 ]"""
 
     payload = json.dumps({
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt},
-        ],
-        "temperature": 0.1,
-        "max_tokens": 2000,
+        "model": OLLAMA_MODEL,
+        "prompt": f"/no_think\n\n{system_prompt}\n\n{user_prompt}",
+        "stream": False,
+        "think": False,
+        "options": {"temperature": 0.1, "num_predict": 2000},
     })
 
     req = urllib.request.Request(
-        OPENROUTER_URL,
+        OLLAMA_URL,
         data=payload.encode(),
-        headers={
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-            "HTTP-Referer": "https://nova.digitalnoise.net",
-            "X-Title": "Nova Slack Reclassify",
-        },
+        headers={"Content-Type": "application/json"},
     )
 
     try:
-        with urllib.request.urlopen(req, timeout=60) as resp:
+        with urllib.request.urlopen(req, timeout=180) as resp:
             data = json.loads(resp.read())
-        content = data["choices"][0]["message"]["content"].strip()
+        content = (data.get("response") or "").strip()
+        if "</think>" in content:
+            content = content.split("</think>", 1)[-1].strip()
         # Strip markdown fences if present
         if content.startswith("```"):
             content = content.split("\n", 1)[1].rsplit("```", 1)[0].strip()
+        # Local model may wrap the array in prose — extract the JSON array.
+        import re as _re
+        m = _re.search(r'\[.*\]', content, _re.DOTALL)
+        if m:
+            content = m.group()
         results = json.loads(content)
         return results
     except Exception as e:
-        log(f"LLM classify error: {e}")
+        log(f"LLM classify error: {e} — raw Slack text will NOT be sent to cloud")
         return []
 
 
@@ -279,7 +279,7 @@ def main():
             )
             last_notify = time.time()
 
-        # Rate limit (avoid hammering OpenRouter)
+        # Rate limit (avoid hammering local Ollama / GPU)
         time.sleep(1)
 
     # Final report

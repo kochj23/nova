@@ -48,6 +48,10 @@ IMAGES_DIR = HUGO_ROOT / "static/images/operations"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_journal_security.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-sonnet-4-6"
+# Internal Wazuh/firewall/IDS telemetry is summarized on-box (local Ollama)
+# before any cloud call. The raw ops_brief must never reach the cloud LLM.
+OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+OLLAMA_MODEL = "qwen3-coder:30b"
 MEMORY_SERVER = f"http://{nova_config.NOVA_HOST}:18790"
 from nova_resolve import resolve_url
 SEARXNG_URL = resolve_url("searxng", "/search")
@@ -106,6 +110,69 @@ def call_llm(system: str, user: str, max_tokens: int = 6000, temperature: float 
     usage = data.get("usage", {})
     log(f"LLM [{MODEL}] in={usage.get('prompt_tokens','?')} out={usage.get('completion_tokens','?')}")
     return text
+
+
+def _strip_internal_identifiers(text: str) -> str:
+    """Belt-and-suspenders: scrub internal IPs/MACs/hostnames from text before
+    it can reach the cloud, even after local summarization."""
+    if not text:
+        return ""
+    s = str(text)
+    s = re.sub(r"\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))(?:\.\d{1,3}){2}\b",
+               "an internal host", s)
+    s = re.sub(r"\b([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b", "a device", s)
+    s = re.sub(r"(?i)\bjordan'?s[-_ ]?\w*", "a personal device", s)
+    return s
+
+
+def call_local_llm(system: str, user: str, max_tokens: int = 1500) -> str:
+    """Summarize on LOCAL Ollama only. Used to condense INTERNAL Wazuh/firewall/
+    IDS telemetry into a generic posture summary before any cloud call. Returns
+    text or '' on failure. Matches nova_inbox_claude.py's local-call idiom."""
+    body = json.dumps({
+        "model": OLLAMA_MODEL,
+        "prompt": f"/no_think\n\n{system}\n\n{user}",
+        "stream": False,
+        "think": False,
+        "options": {"temperature": 0.2, "num_predict": max_tokens},
+    }).encode()
+    req = urllib.request.Request(
+        OLLAMA_URL, data=body, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=180) as resp:
+            result = json.loads(resp.read())
+        text = (result.get("response") or "").strip()
+        if "</think>" in text:
+            text = text.split("</think>", 1)[-1].strip()
+        return text
+    except Exception as e:
+        log(f"Local LLM error: {e} — internal telemetry will NOT be sent to cloud")
+        return ""
+
+
+def summarize_ops_brief_local(ops_brief: str) -> str:
+    """Condense the INTERNAL infra/security telemetry (Wazuh SIEM, firewall
+    blocks, IDS) into a short, generic posture line ON-BOX, then strip any
+    residual internal IPs/MACs/hostnames. The raw ops_brief never leaves the
+    machine — only this sanitized summary is eligible for the cloud prompt."""
+    if not ops_brief or not ops_brief.strip():
+        return ""
+    system = (
+        "You summarize a private home network's own security telemetry into ONE "
+        "or TWO generic sentences for a public briefing. ABSOLUTELY NO internal "
+        "IP addresses, MAC addresses, hostnames, device names, file paths, exact "
+        "IDS signatures, or counts that could fingerprint the network. Describe "
+        "only the overall posture in abstract terms (e.g. 'routine perimeter "
+        "noise, nothing actioned' or 'elevated scanning, all blocked'). If the "
+        "telemetry shows nothing notable, say 'No notable internal security "
+        "activity.' Output only the summary sentence(s)."
+    )
+    summary = call_local_llm(system, f"INTERNAL TELEMETRY (do not echo specifics):\n{ops_brief}")
+    if not summary:
+        # On-box summarizer unavailable: fail closed — emit a generic line rather
+        # than ever forwarding the raw internal telemetry to the cloud.
+        return "No notable internal security activity (local summarizer unavailable)."
+    return _strip_internal_identifiers(summary)
 
 
 # ── Memory Fetching ───────────────────────────────────────────────────────────
@@ -278,11 +345,15 @@ def generate_daily_briefing():
     """Generate the daily PDB-style security briefing."""
     log("=== Generating daily security briefing ===")
 
-    # Get unified ops/security context from Wazuh, BB, SNMP, syslog
+    # Get unified ops/security context from Wazuh, BB, SNMP, syslog.
+    # This is INTERNAL telemetry — summarize it on-box and strip identifiers
+    # BEFORE it can reach the cloud LLM. Only `ops_brief_public` is sent up.
     ops_ctx = get_full_context(24)
-    ops_brief = format_security_brief(ops_ctx)
+    ops_brief_raw = format_security_brief(ops_ctx)
     log(f"Ops context: {ops_ctx.get('security', {}).get('security_event_count', 0)} security events, "
         f"{ops_ctx.get('syslog', {}).get('firewall_blocks', 0)} firewall blocks")
+    ops_brief_public = summarize_ops_brief_local(ops_brief_raw)
+    log(f"Internal telemetry condensed on-box → {len(ops_brief_public)} chars sent to cloud")
 
     memories = get_recent_security_memories(24)
     if not memories:
@@ -340,8 +411,8 @@ INTELLIGENCE FROM LAST 24 HOURS (Nova's ingested feeds — CISA, NCSC, FBI, Kreb
 LIVE NEWS SEARCH RESULTS:
 {news_block}
 
-INFRASTRUCTURE SECURITY (Wazuh SIEM + Big Brother + syslog — YOUR network, last 24h):
-{ops_brief}
+INFRASTRUCTURE SECURITY (generic on-box posture summary — no internal specifics):
+{ops_brief_public}
 
 Write the PDB. If a section has no significant activity, mark it NOSIG and move on. Do not invent threats."""
 
