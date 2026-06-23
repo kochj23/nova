@@ -12,6 +12,7 @@ local dump1090 (http://host/data/aircraft.json) later for better coverage.
 """
 import json
 import sys
+import urllib.error
 import urllib.request
 from pathlib import Path
 
@@ -64,20 +65,27 @@ def lookup_operator(hexid, cur):
     row = cur.fetchone()
     if row is not None:                 # cached (operator may legitimately be NULL)
         return row[0]
+    op = reg = mfr = typ = None
+    cache_it = False
     try:
         req = urllib.request.Request(f"https://hexdb.io/api/v1/aircraft/{hexid}",
                                      headers={"User-Agent": "Nova/flights"})
         with urllib.request.urlopen(req, timeout=6) as r:
             d = json.loads(r.read())
         op = (d.get("RegisteredOwners") or "").strip() or None
+        reg, mfr, typ = d.get("Registration"), d.get("Manufacturer"), d.get("Type")
+        cache_it = True
+    except urllib.error.HTTPError as e:
+        cache_it = (e.code == 404)      # genuinely unknown -> cache NULL so we stop re-querying
+    except Exception:
+        cache_it = False                # network/5xx -> retry next pass, don't cache
+    if cache_it:
         cur.execute(
             "INSERT INTO aircraft_registry (hex,registration,operator,manufacturer,type_desc) "
             "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (hex) DO UPDATE SET operator=EXCLUDED.operator, "
             "manufacturer=EXCLUDED.manufacturer, type_desc=EXCLUDED.type_desc, updated_at=now()",
-            (hexid, d.get("Registration"), op, d.get("Manufacturer"), d.get("Type")))
-        return op
-    except Exception:
-        return None                     # transient failure — retry next pass, don't cache
+            (hexid, reg, op, mfr, typ))
+    return op
 
 
 def main():
