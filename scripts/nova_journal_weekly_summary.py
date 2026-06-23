@@ -52,7 +52,7 @@ STATE_FILE = Path.home() / ".openclaw/config/journal_weekly_summary_state.json"
 MODEL = "anthropic/claude-sonnet-4-6"
 
 # Non-article directories / files to skip when enumerating sections.
-SKIP_DIRS = {"about", "meta", "start-here"}
+SKIP_DIRS = {"about", "meta", "start-here", "rando"}  # rando retired — daily pieces now go to operations
 SKIP_FILES = {"_index.md", "search.md"}
 
 DAYS = 7
