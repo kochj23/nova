@@ -1,0 +1,71 @@
+{
+  "uid": "garden-air",
+  "title": "Garden & Air (Ambient Weather)",
+  "tags": ["nova", "weather", "soil", "air-quality"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "timezone": "browser",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Soil 1 moisture",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 20 }, { "color": "green", "value": 40 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT moisture_pct FROM telemetry.soil WHERE sensor='soil1' ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Soil 2 moisture",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 20 }, { "color": "green", "value": 40 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT moisture_pct FROM telemetry.soil WHERE sensor='soil2' ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Outdoor PM2.5 (µg/m³)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 12 }, { "color": "orange", "value": 35 }, { "color": "red", "value": 55 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT pm25 FROM telemetry.weather WHERE pm25 IS NOT NULL ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Indoor CO₂ (ppm)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 800 }, { "color": "orange", "value": 1200 }, { "color": "red", "value": 2000 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT co2 FROM telemetry.weather WHERE co2 IS NOT NULL ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Soil moisture (per sensor)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 5 },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "custom": { "drawStyle": "line", "fillOpacity": 15, "spanNulls": true } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, moisture_pct AS value, sensor AS metric FROM telemetry.soil WHERE $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Outdoor PM2.5",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 5 },
+      "fieldConfig": { "defaults": { "unit": "conμgm3", "custom": { "drawStyle": "line", "fillOpacity": 25, "spanNulls": true }, "color": { "mode": "fixed", "fixedColor": "orange" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, pm25 AS value, 'outdoor PM2.5' AS metric FROM telemetry.weather WHERE pm25 IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Indoor CO₂ + PM10 (AQIN)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": true } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+          "rawSql": "SELECT ts AS time, co2 AS value, 'CO2 ppm' AS metric FROM telemetry.weather WHERE co2 IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "A" },
+        { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+          "rawSql": "SELECT ts AS time, pm10 AS value, 'indoor PM10' AS metric FROM telemetry.weather WHERE pm10 IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "B" } ]
+    }
+  ]
+}
