@@ -1264,6 +1264,35 @@ flowchart TD
 - **Protected:** `GoogleDriveBackups` + `Google-Drive-kochjpar` are never delete targets (deletes there sync to Google); a dup set living entirely inside them becomes `manual_review`
 - scan → propose → approve → apply · weekly Sun 4am · Grafana 22 · safety suite proves it never deletes from Google
 
+## Slack watch — hourly sentinel over the nova-* channels
+
+Once an hour, 24/7, reads everything new across the `#nova-*` channels, decides
+whether anything is *notable* (alarming, unusual, or trending — not routine
+heartbeat chatter), and posts a concise digest to **#nova-critical**.
+
+```mermaid
+flowchart LR
+  subgraph chans[nova-* channels]
+    CH[chat / info / warning / critical / email]
+  end
+  CH --> FETCH[fetch_new\nstrictly newer than watermark]
+  FETCH --> REDACT[_redact\nmask tokens/keys/passwords]
+  REDACT --> ASSESS{local LLM\nOllama loopback-only}
+  ASSESS -->|reachable| LLM[notable? severity + items]
+  ASSESS -->|down| HEUR[heuristic fallback\nsevere-channel + alarm words]
+  LLM --> NOTE{notable?}
+  HEUR --> NOTE
+  NOTE -->|yes, not already alerted| POST[digest to #nova-critical]
+  NOTE -->|no| QUIET[advance watermark, stay silent]
+  POST --> WM[(slack_watch_state\nslack_watch_reports)]
+  QUIET --> WM
+```
+
+- `nova_slack_watch.py` — launchd `net.digitalnoise.nova-slack-watch`, hourly at :20
+- **Data safety:** inference is **loopback-only** (a non-127.0.0.1 endpoint is refused outright — never falls forward to a cloud API); every message is redacted of token/key/password shapes before it reaches the model; messages truncated to 400 chars
+- **Progress-only + dedup:** strict `ts >` watermark per channel so a message is never re-assessed; a per-digest `dedup_key` blocks re-alerting an identical recurring incident; skips its own posts via the `🔭 Hourly Watch` marker
+- **No quiet hours** — fires 24/7; the offline heuristic guarantees it still flags real trouble when every LLM is down · safety suite `test_nova_slack_watch.py`
+
 ## Security
 
 - All credentials in macOS Keychain — never in source, env vars in plists, or flat files
