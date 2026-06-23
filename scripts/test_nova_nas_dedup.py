@@ -19,6 +19,14 @@ def test_protected_matches_both_google_folders():
     assert not d.protected("/Volumes/NAS/GoogleStuffNope/a.pst")  # substring, not a path segment
 
 
+def test_itunes_is_never_deletable():
+    # Hard rule (Jordan, 2026-06-23): NEVER delete anything under /Volumes/NAS/iTunes.
+    assert d.protected("/Volumes/NAS/iTunes/Music/Artist/track.mp3")
+    assert d.protected("/Volumes/NAS/iTunes/anything/at/all.m4a")
+    assert d.protected("/Volumes/NAS/iTunes")  # the dir itself
+    assert "/Volumes/NAS/iTunes" in d.NEVER_DELETE_PREFIXES
+
+
 def test_keeper_prefers_non_copy_name():
     paths = ["/Volumes/NAS/docs/report copy.pdf", "/Volumes/NAS/docs/report.pdf"]
     assert d._keeper(paths, [1.0, 2.0]) == "/Volumes/NAS/docs/report.pdf"

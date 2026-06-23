@@ -31,13 +31,21 @@ except Exception:
 
 DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
 ROOT = "/Volumes/NAS"
-PROTECTED_DIRS = {"GoogleDriveBackups", "Google-Drive-kochjpar"}   # never delete from these
+PROTECTED_DIRS = {"GoogleDriveBackups", "Google-Drive-kochjpar",
+                  "Shared Google Drives",   # work data + Google-synced
+                  "iTunes"}                 # central iTunes library (.7) — NEVER delete (Jordan, 2026-06-23)
+# Absolute-path prefixes that must NEVER be a deletion target, no matter what.
+# Hard, unconditional guard — checked first in protected().
+NEVER_DELETE_PREFIXES = ("/Volumes/NAS/iTunes",)
 SKIP_DIRS = {"#recycle", "@eaDir", ".Trash", "#snapshot", ".TemporaryItems", "#sharesnap"}
 MIN_SIZE = 1_048_576          # ignore <1MB — focus on space; skips tiny-file noise
 CHUNK = 65536
 
 
 def protected(path: str) -> bool:
+    # Unconditional absolute-prefix guard first (iTunes etc.) — cannot be overridden.
+    if any(path.startswith(p) for p in NEVER_DELETE_PREFIXES):
+        return True
     return any(seg in PROTECTED_DIRS for seg in path.split(os.sep))
 
 
