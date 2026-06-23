@@ -1,0 +1,69 @@
+{
+  "uid": "homekit-sensors",
+  "title": "HomeKit Sensors — Climate, Air, Battery",
+  "tags": ["nova", "homekit", "sensors"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "timezone": "browser",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "bargauge", "title": "Battery levels (latest)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 7, "w": 8, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "orange", "value": 20 }, { "color": "green", "value": 40 } ] } }, "overrides": [] },
+      "options": { "orientation": "horizontal", "displayMode": "gradient" },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT DISTINCT ON (device) device AS \"Device\", level FROM telemetry.battery WHERE level IS NOT NULL ORDER BY device, ts DESC", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Air Quality — Eve Room (rack)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 7, "w": 8, "x": 8, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 300 }, { "color": "red", "value": 500 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT voc AS \"VOC (ug/m3)\" FROM telemetry.air_quality WHERE voc IS NOT NULL ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Rack temp (Eve Room)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 7, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "fahrenheit", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 95 }, { "color": "red", "value": 105 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT temp_f FROM telemetry.climate WHERE source='homekit' AND room='office' AND temp_f IS NOT NULL ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "timeseries", "title": "Temperature by room (HomeKit + all sources)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "fahrenheit", "custom": { "drawStyle": "line", "fillOpacity": 8 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, temp_f AS value, room AS metric FROM telemetry.climate WHERE temp_f IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Light level (lux) by room",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 7 },
+      "fieldConfig": { "defaults": { "unit": "lux", "custom": { "drawStyle": "line", "fillOpacity": 8 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, light_lux AS value, room AS metric FROM telemetry.climate WHERE light_lux IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Humidity by room",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "humidity", "custom": { "drawStyle": "line", "fillOpacity": 8 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, humidity AS value, room AS metric FROM telemetry.climate WHERE humidity IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "VOC density (air quality)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 15 },
+      "fieldConfig": { "defaults": { "unit": "conµgm3", "custom": { "drawStyle": "line", "fillOpacity": 10 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, voc AS value, room AS metric FROM telemetry.air_quality WHERE voc IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    }
+  ]
+}
