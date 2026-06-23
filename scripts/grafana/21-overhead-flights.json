@@ -1,0 +1,60 @@
+{
+  "uid": "overhead-flights",
+  "title": "Overhead Flights — 91506",
+  "tags": ["nova", "flights", "adsb"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "timezone": "browser",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Aircraft (last hour)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(DISTINCT hex) FROM telemetry.overhead_flights WHERE ts > now() - interval '1 hour'", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Helicopters (24h)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(DISTINCT hex) FROM telemetry.overhead_flights WHERE is_helicopter AND ts > now() - interval '24 hours'", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Closest pass (24h, NM)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "decimals": 2, "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 1 }, { "color": "green", "value": 2 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT min(dist_nm) FROM telemetry.overhead_flights WHERE ts > now() - interval '24 hours'", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Lowest (24h, ft)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "lengthft", "color": { "mode": "fixed", "fixedColor": "orange" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT min(alt_ft) FROM telemetry.overhead_flights WHERE ts > now() - interval '24 hours'", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Altitude of overhead traffic (ft)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 5 },
+      "fieldConfig": { "defaults": { "unit": "lengthft", "custom": { "drawStyle": "points", "pointSize": 5 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, alt_ft AS value, CASE WHEN is_helicopter THEN 'helicopter' ELSE 'fixed wing' END AS metric FROM telemetry.overhead_flights WHERE $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 6, "type": "table", "title": "Recent passes",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 10, "w": 24, "x": 0, "y": 13 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT ts AS \"Time\", CASE WHEN is_helicopter THEN 'heli' ELSE 'plane' END AS \"Kind\", type_name AS \"Type\", registration AS \"Reg\", callsign AS \"Callsign\", alt_ft AS \"Alt(ft)\", dist_nm AS \"Dist(NM)\", compass AS \"Dir\", squawk AS \"Squawk\", notified AS \"Pinged\" FROM telemetry.overhead_flights ORDER BY ts DESC LIMIT 40", "refId": "A" } ]
+    }
+  ]
+}
