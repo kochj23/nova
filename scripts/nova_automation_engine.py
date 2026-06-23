@@ -207,16 +207,14 @@ async def rule_presence_lights():
 # outlet/service name — so patio strip-outlets and office bulbs use one path.
 NOVAHOMEKIT_POWER = "http://127.0.0.1:37433/api/accessories/power"
 PRESENCE_DEVICE_ZONES = {
-    # The patio FP2 false-positives (reports occupied when the patio is empty), so gate
-    # the patio on the Zigbee PS-S04D (metadata source 'fp300') as ground truth.
-    # The office FP2 is reliable, so office accepts any source.
+    # Both zones gate on the Zigbee mmWave sensors (metadata source 'fp300'); the HomeKit
+    # FP2s false-positive "occupied" when the room is empty, so they can't be trusted for OFF.
     "patio":  {"devices": ["Bug Zapper", "TV, Stereo, Apple TV"], "source": "fp300"},
-    "office": {"devices": ["Office Corner", "Office - Lamp", "Office accent", "Office Torcherie", "Server closet"], "source": None},
+    "office": {"devices": ["Office Corner", "Office - Lamp", "Office accent", "Office Torcherie", "Server closet"], "source": "fp300"},
 }
-PRESENCE_OFF_DELAY_S = 15 * 60   # turn devices off after 15 min with no presence
-PRESENCE_STALE_S = 2 * 3600      # ignore a latest reading older than this (dead-sensor guard)
+PRESENCE_OFF_DELAY_S = 15 * 60   # power OFF this long after the LAST positive presence reading
+PRESENCE_FRESH_S = 5 * 60        # a positive reading within this window counts as "present now" (drives ON)
 _zone_on = {}                    # zone -> bool: are its devices currently commanded ON
-_zone_last_present = {}          # zone -> epoch of last positive presence reading
 
 
 def _hk_power(name: str, on: bool) -> bool:
@@ -237,31 +235,30 @@ async def rule_presence_devices():
     for zone, cfg in PRESENCE_DEVICE_ZONES.items():
         devices, src = cfg["devices"], cfg["source"]
         async with pool.acquire() as conn:
+            # epoch of the most recent POSITIVE presence reading — i.e. when the zone last
+            # actually saw someone. This is robust to the sensor never sending a "vacant" event.
             row = await conn.fetchrow(
-                "SELECT confidence, extract(epoch from ts) AS ep FROM telemetry.presence "
+                "SELECT extract(epoch from max(ts)) AS ep FROM telemetry.presence "
                 "WHERE room = $1 AND ($2::text IS NULL OR metadata->>'source' = $2) "
-                "ORDER BY ts DESC LIMIT 1", zone, src)
-        present = bool(row and float(row["confidence"] or 0) > 0
-                       and (now - float(row["ep"])) <= PRESENCE_STALE_S)
+                "AND confidence > 0", zone, src)
+        last_seen = float(row["ep"]) if row and row["ep"] is not None else 0.0
+        age = (now - last_seen) if last_seen else 1e9   # seconds since the zone last saw anyone
 
-        if present:
-            _zone_last_present[zone] = now
-            if not _zone_on.get(zone):           # vacant -> occupied edge: power ON
+        if age <= PRESENCE_FRESH_S:                      # a recent positive reading -> occupied
+            if not _zone_on.get(zone):                   # arrival edge -> power ON
                 for d in devices:
                     await asyncio.to_thread(_hk_power, d, True)
                 _zone_on[zone] = True
                 log(f"RULE presence_devices: {zone} occupied → ON ({', '.join(devices)})")
                 _rule_history.append({"ts": datetime.now().isoformat(),
                     "rule": "presence_devices_on", "room": zone, "action": f"on: {', '.join(devices)}"})
-        else:
-            last = _zone_last_present.get(zone, 0)
-            if _zone_on.get(zone) and (now - last) >= PRESENCE_OFF_DELAY_S:
-                for d in devices:
-                    await asyncio.to_thread(_hk_power, d, False)
-                _zone_on[zone] = False
-                log(f"RULE presence_devices: {zone} vacant {int((now-last)/60)}m → OFF ({', '.join(devices)})")
-                _rule_history.append({"ts": datetime.now().isoformat(),
-                    "rule": "presence_devices_off", "room": zone, "action": f"off: {', '.join(devices)}"})
+        elif _zone_on.get(zone) and age >= PRESENCE_OFF_DELAY_S:   # no presence for OFF_DELAY -> power OFF
+            for d in devices:
+                await asyncio.to_thread(_hk_power, d, False)
+            _zone_on[zone] = False
+            log(f"RULE presence_devices: {zone} no presence {int(age/60)}m → OFF ({', '.join(devices)})")
+            _rule_history.append({"ts": datetime.now().isoformat(),
+                "rule": "presence_devices_off", "room": zone, "action": f"off: {', '.join(devices)}"})
 
 
 # ── Rule: Climate Intelligence (#141) ────────────────────────────────────────
