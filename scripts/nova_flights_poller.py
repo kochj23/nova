@@ -58,6 +58,28 @@ def fetch():
         return json.loads(r.read()).get("ac", [])
 
 
+def lookup_operator(hexid, cur):
+    """hex -> registered owner/operator, cached in aircraft_registry (one API call per aircraft)."""
+    cur.execute("SELECT operator FROM aircraft_registry WHERE hex = %s", (hexid,))
+    row = cur.fetchone()
+    if row is not None:                 # cached (operator may legitimately be NULL)
+        return row[0]
+    try:
+        req = urllib.request.Request(f"https://hexdb.io/api/v1/aircraft/{hexid}",
+                                     headers={"User-Agent": "Nova/flights"})
+        with urllib.request.urlopen(req, timeout=6) as r:
+            d = json.loads(r.read())
+        op = (d.get("RegisteredOwners") or "").strip() or None
+        cur.execute(
+            "INSERT INTO aircraft_registry (hex,registration,operator,manufacturer,type_desc) "
+            "VALUES (%s,%s,%s,%s,%s) ON CONFLICT (hex) DO UPDATE SET operator=EXCLUDED.operator, "
+            "manufacturer=EXCLUDED.manufacturer, type_desc=EXCLUDED.type_desc, updated_at=now()",
+            (hexid, d.get("Registration"), op, d.get("Manufacturer"), d.get("Type")))
+        return op
+    except Exception:
+        return None                     # transient failure — retry next pass, don't cache
+
+
 def main():
     try:
         aircraft = fetch()
@@ -86,6 +108,7 @@ def main():
         comp = compass(a.get("dir"))
         callsign = (a.get("flight") or "").strip()
         reg = (a.get("r") or "").strip()
+        operator = lookup_operator(hexid, cur)
 
         # fresh arrival? (table is the state — ponytail-approved)
         cur.execute("SELECT 1 FROM telemetry.overhead_flights WHERE hex=%s AND ts > now() - interval %s LIMIT 1",
@@ -98,16 +121,16 @@ def main():
 
         cur.execute(
             "INSERT INTO telemetry.overhead_flights "
-            "(hex,callsign,registration,aircraft_type,type_name,category,is_helicopter,alt_ft,gs_kt,"
+            "(hex,callsign,registration,operator,aircraft_type,type_name,category,is_helicopter,alt_ft,gs_kt,"
             " track_deg,vert_rate,dist_nm,bearing_deg,compass,squawk,is_mlat,notified,raw) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (hexid, callsign, reg, tcode, tname, a.get("category"), is_heli, int(alt),
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+            (hexid, callsign, reg, operator, tcode, tname, a.get("category"), is_heli, int(alt),
              a.get("gs"), a.get("track"), a.get("baro_rate"), round(float(dst), 2), a.get("dir"),
              comp, squawk, bool(a.get("mlat")), should_ping, json.dumps(a)))
         logged += 1
 
         if should_ping and notify is not None:
-            who = f"{tname} ({reg or callsign or hexid})"
+            who = f"{tname}" + (f" — {operator}" if operator else "") + f" ({reg or callsign or hexid})"
             where = f"{int(alt)} ft, {round(float(dst),1)} NM {comp}"
             if emergency:
                 title = f"🚨 EMERGENCY squawk {squawk} overhead — {who}"
