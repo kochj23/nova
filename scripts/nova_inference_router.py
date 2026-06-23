@@ -76,12 +76,11 @@ POOLS = {
     "reasoner":     [(N6, 11434, "ollama", "deepseek-r1:8b")],
     # vision
     "vision":       [(N6, 11434, "ollama", "qwen3-vl:4b")],
-    # embeddings — .10 (idle CPU node) carries these to keep the GPUs free for
-    # generation; GPU nodes stay in the pool as fallback (latency-aware balances).
-    "embed":        [(N10, 11434, "ollama", "nomic-embed-text:latest"),
-                     (N7, 11434, "ollama", "nomic-embed-text:latest"),
-                     (N190, 11434, "ollama", "nomic-embed-text:latest"),
-                     (N6, 11434, "ollama", "nomic-embed-text:latest")],
+    # embeddings — DEDICATED to .10 (idle CPU node) so every embed offloads the
+    # GPUs entirely, keeping .6/.190/.7 free for generation. nomic is tiny and
+    # fast on CPU. (.10 is reliable always-on infra; if it's ever down the
+    # watchdog alerts.)
+    "embed":        [(N10, 11434, "ollama", "nomic-embed-text:latest")],
 }
 
 # ── Backend health/load state ────────────────────────────────────────────────
