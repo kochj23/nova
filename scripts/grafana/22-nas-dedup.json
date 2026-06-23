@@ -1,0 +1,68 @@
+{
+  "uid": "nas-dedup",
+  "title": "NAS Deduplicator",
+  "tags": ["nova", "nas", "dedup", "storage"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "5m",
+  "timezone": "browser",
+  "time": { "from": "now-90d", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Reclaimable (GB, pending approval)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "decgbytes", "color": { "mode": "fixed", "fixedColor": "orange" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT COALESCE(round(sum(size_bytes)/1e9,1),0) FROM nas_dedup_proposals WHERE status='proposed'", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Duplicate files proposed",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(*) FROM nas_dedup_proposals WHERE status='proposed'", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Google-internal (manual review)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(*) FROM nas_dedup_proposals WHERE status='manual_review'", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Freed to date (GB)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 6, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "decgbytes", "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT COALESCE(sum(freed_gb),0) FROM nas_dedup_runs WHERE mode='apply'", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "stat", "title": "Files inventoried",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 6 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(*) FROM nas_files", "refId": "A" } ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "Reclaimable GB per scan",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 8, "w": 16, "x": 8, "y": 6 },
+      "fieldConfig": { "defaults": { "unit": "decgbytes", "custom": { "drawStyle": "bars", "fillOpacity": 60 } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, reclaimable_gb AS value, 'reclaimable' AS metric FROM nas_dedup_runs WHERE reclaimable_gb IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 7, "type": "table", "title": "Biggest reclaimable duplicates (keep vs delete)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT round(size_bytes/1e6,1) AS \"MB\", set_size AS \"Copies\", path AS \"Delete\", keeper_path AS \"Keep\" FROM nas_dedup_proposals WHERE status='proposed' ORDER BY size_bytes DESC LIMIT 50", "refId": "A" } ]
+    }
+  ]
+}
