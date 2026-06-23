@@ -52,6 +52,7 @@ PROXY_TIMEOUT = 600          # big models can be slow on cold load
 # Models are PER-NODE and need not match across nodes. A backend only serves a
 # class once its health probe confirms the model is present (Ollama) / up (MLX).
 N6, N190, N7, N2 = "192.168.1.6", "192.168.1.190", "192.168.1.7", "192.168.1.2"
+N10 = "192.168.1.10"   # nuk — no GPU, idle; serves CPU embeddings to offload the GPU nodes
 
 POOLS = {
     # code: qwen3:30b-a3b (fast MoE) on both big nodes. qwen3-coder:30b is broken
@@ -75,8 +76,10 @@ POOLS = {
     "reasoner":     [(N6, 11434, "ollama", "deepseek-r1:8b")],
     # vision
     "vision":       [(N6, 11434, "ollama", "qwen3-vl:4b")],
-    # embeddings — offload to .7 first, then peers
-    "embed":        [(N7, 11434, "ollama", "nomic-embed-text:latest"),
+    # embeddings — .10 (idle CPU node) carries these to keep the GPUs free for
+    # generation; GPU nodes stay in the pool as fallback (latency-aware balances).
+    "embed":        [(N10, 11434, "ollama", "nomic-embed-text:latest"),
+                     (N7, 11434, "ollama", "nomic-embed-text:latest"),
                      (N190, 11434, "ollama", "nomic-embed-text:latest"),
                      (N6, 11434, "ollama", "nomic-embed-text:latest")],
 }
