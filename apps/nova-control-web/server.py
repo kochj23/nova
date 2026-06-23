@@ -65,7 +65,7 @@ _CLAUDE_PRICES: dict[str, tuple[float, float, float, float]] = {
 # present rather than silently zero.
 _CLAUDE_FALLBACK = _claude_rate(5.0, 25.0)
 
-PLEX_BASE = "http://192.168.1.7:32400"
+PLEX_BASE = "http://192.168.1.2:32400"
 PLEX_EXCLUDED_LIBS = {"23"}
 HDHR_BASE = "http://192.168.1.89"
 PLEX_PLAYING_STATE = Path.home() / ".openclaw" / "workspace" / "plex_playing.json"
@@ -79,7 +79,7 @@ SERVICE_PORTS = {
     "swarmui": {"port": 7801, "url": "http://127.0.0.1:7801"},
     "comfyui": {"port": 8188, "url": "http://127.0.0.1:8188"},
     "memory_server": {"port": 18790, "url": "http://192.168.1.6:18790"},
-    "plex": {"port": 32400, "url": PLEX_BASE, "host": "192.168.1.7"},
+    "plex": {"port": 32400, "url": PLEX_BASE, "host": "192.168.1.2"},
     "hdhr": {"port": 80, "url": HDHR_BASE, "host": "192.168.1.89"},
 }
 
@@ -2427,7 +2427,7 @@ async def bb_events():
 @app.get("/bb-graphs")
 async def bb_graphs_redirect():
     """Redirect to Grafana nova-bb dashboard (custom page decommissioned)."""
-    return RedirectResponse("http://192.168.1.7:3000/d/nova-bb/")
+    return RedirectResponse("http://192.168.1.2:3000/d/nova-bb/")
 
 
 @app.get("/api/bb/metrics")
@@ -3824,7 +3824,7 @@ async def update_incident(incident_id: str, request: Request):
 @app.get("/sla")
 async def sla_redirect():
     """Redirect to Grafana nova-infra dashboard (SLA data lives there now)."""
-    return RedirectResponse("http://192.168.1.7:3000/d/nova-infra/")
+    return RedirectResponse("http://192.168.1.2:3000/d/nova-infra/")
 
 
 @app.get("/api/sla")
@@ -3883,7 +3883,7 @@ async def sla_dashboard(days: int = 30):
 @app.get("/alerts")
 async def alerts_redirect():
     """Redirect to Grafana alerting UI (custom page decommissioned)."""
-    return RedirectResponse("http://192.168.1.7:3000/alerting/list")
+    return RedirectResponse("http://192.168.1.2:3000/alerting/list")
 
 
 @app.get("/api/alerts/rules")
@@ -3979,7 +3979,7 @@ async def alert_history():
 @app.get("/capacity")
 async def capacity_redirect():
     """Redirect to Grafana nova-infra dashboard (capacity data lives there now)."""
-    return RedirectResponse("http://192.168.1.7:3000/d/nova-infra/")
+    return RedirectResponse("http://192.168.1.2:3000/d/nova-infra/")
 
 
 @app.get("/api/capacity")
