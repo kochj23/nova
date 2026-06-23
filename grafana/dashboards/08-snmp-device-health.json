@@ -42,7 +42,7 @@
           "format": "time_series",
           "rawQuery": true,
           "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
-          "rawSql": "SELECT timestamp AS time, device_name AS metric, metric_value AS value FROM snmp_metrics WHERE metric_name = 'cpu_load_5min' AND $__timeFilter(timestamp) ORDER BY timestamp"
+          "rawSql": "SELECT timestamp AS time, device_name AS metric, metric_value AS value FROM snmp_metrics WHERE metric_name = 'hr_cpu_load_avg' AND $__timeFilter(timestamp) ORDER BY timestamp"
         }
       ]
     },

@@ -31,7 +31,7 @@
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 5 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "table", "placement": "right", "calcs": ["last", "max"] }, "tooltip": { "mode": "multi" } },
-      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT timestamp AS time, device_name AS metric, metric_value FROM snmp_metrics WHERE metric_name = 'cpu_load_1min' AND device_name IN ($device) AND $__timeFilter(timestamp) ORDER BY timestamp;" } ]
+      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT timestamp AS time, device_name AS metric, metric_value FROM snmp_metrics WHERE metric_name = 'hr_cpu_load_avg' AND device_name IN ($device) AND $__timeFilter(timestamp) ORDER BY timestamp;" } ]
     },
     {
       "id": 2,
@@ -71,7 +71,7 @@
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "options": { "showHeader": true },
-      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "WITH cpu AS (SELECT DISTINCT ON (device_name) device_name, metric_value v FROM snmp_metrics WHERE metric_name='cpu_load_1min' AND timestamp > now()-interval '1 hour' ORDER BY device_name, timestamp DESC), memt AS (SELECT DISTINCT ON (device_name) device_name, metric_value v FROM snmp_metrics WHERE metric_name='mem_total_real' AND timestamp > now()-interval '1 hour' ORDER BY device_name, timestamp DESC), mema AS (SELECT DISTINCT ON (device_name) device_name, metric_value v FROM snmp_metrics WHERE metric_name='mem_avail_real' AND timestamp > now()-interval '1 hour' ORDER BY device_name, timestamp DESC) SELECT cpu.device_name AS \"Host\", round(cpu.v::numeric,2) AS \"CPU Load 1m\", round((100.0*(memt.v-mema.v)/NULLIF(memt.v,0))::numeric,1) AS \"Mem Used %\" FROM cpu LEFT JOIN memt USING(device_name) LEFT JOIN mema USING(device_name) ORDER BY cpu.device_name;" } ]
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "WITH cpu AS (SELECT DISTINCT ON (device_name) device_name, metric_value v FROM snmp_metrics WHERE metric_name='hr_cpu_load_avg' AND timestamp > now()-interval '1 hour' ORDER BY device_name, timestamp DESC), memt AS (SELECT DISTINCT ON (device_name) device_name, metric_value v FROM snmp_metrics WHERE metric_name='mem_total_real' AND timestamp > now()-interval '1 hour' ORDER BY device_name, timestamp DESC), mema AS (SELECT DISTINCT ON (device_name) device_name, metric_value v FROM snmp_metrics WHERE metric_name='mem_avail_real' AND timestamp > now()-interval '1 hour' ORDER BY device_name, timestamp DESC) SELECT cpu.device_name AS \"Host\", round(cpu.v::numeric,2) AS \"CPU Load 1m\", round((100.0*(memt.v-mema.v)/NULLIF(memt.v,0))::numeric,1) AS \"Mem Used %\" FROM cpu LEFT JOIN memt USING(device_name) LEFT JOIN mema USING(device_name) ORDER BY cpu.device_name;" } ]
     },
     {
       "id": 10,
@@ -188,7 +188,7 @@
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
       "fieldConfig": { "defaults": { "mappings": [ { "type": "value", "options": { "1": { "text": "OK", "color": "green" }, "0": { "text": "FAILED", "color": "red" } } } ], "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none", "textMode": "value" },
-      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT CASE WHEN ok AND COALESCE(bytes,0) > 0 THEN 1 ELSE 0 END AS \"Status\" FROM telemetry.backup_runs WHERE job = 'nas_backup' ORDER BY ts DESC LIMIT 1;" } ]
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT CASE WHEN ok AND COALESCE(bytes,0) > 0 THEN 1 ELSE 0 END AS \"Status\" FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' ORDER BY ts DESC LIMIT 1;" } ]
     },
     {
       "id": 22,
@@ -199,7 +199,7 @@
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
       "fieldConfig": { "defaults": { "unit": "h", "decimals": 1, "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "orange", "value": 24 }, { "color": "red", "value": 25 } ] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
-      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(ts))) / 3600.0 AS \"Hours Since Last Run\" FROM telemetry.backup_runs WHERE job = 'nas_backup';" } ]
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT EXTRACT(EPOCH FROM (now() - max(ts))) / 3600.0 AS \"Hours Since Last Run\" FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental';" } ]
     },
     {
       "id": 23,
@@ -210,7 +210,7 @@
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
       "fieldConfig": { "defaults": { "unit": "bytes", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "value", "graphMode": "none" },
-      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COALESCE(bytes,0) AS \"Bytes\" FROM telemetry.backup_runs WHERE job = 'nas_backup' ORDER BY ts DESC LIMIT 1;" } ]
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COALESCE(bytes,0) AS \"Bytes\" FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' ORDER BY ts DESC LIMIT 1;" } ]
     },
     {
       "id": 24,
@@ -221,7 +221,7 @@
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
       "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "mode": "absolute", "steps": [ { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "colorMode": "background", "graphMode": "none" },
-      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COALESCE(errors,0) AS \"Errors\" FROM telemetry.backup_runs WHERE job = 'nas_backup' ORDER BY ts DESC LIMIT 1;" } ]
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT COALESCE(errors,0) AS \"Errors\" FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' ORDER BY ts DESC LIMIT 1;" } ]
     },
     {
       "id": 25,
@@ -231,7 +231,7 @@
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
       "fieldConfig": { "defaults": { "unit": "bytes", "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 40 } }, "overrides": [] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "single" } },
-      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, 'bytes' AS metric, bytes AS value FROM telemetry.backup_runs WHERE job = 'nas_backup' AND $__timeFilter(ts) ORDER BY ts;" } ]
+      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, 'bytes' AS metric, bytes AS value FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' AND $__timeFilter(ts) ORDER BY ts;" } ]
     },
     {
       "id": 26,
@@ -241,7 +241,7 @@
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
       "fieldConfig": { "defaults": { "unit": "short", "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 30 } }, "overrides": [ { "matcher": { "id": "byName", "options": "errors" }, "properties": [ { "id": "color", "value": { "mode": "fixed", "fixedColor": "red" } } ] } ] },
       "options": { "legend": { "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
-      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, 'files' AS metric, files AS value FROM telemetry.backup_runs WHERE job = 'nas_backup' AND $__timeFilter(ts) ORDER BY ts;" }, { "refId": "B", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, 'errors' AS metric, errors AS value FROM telemetry.backup_runs WHERE job = 'nas_backup' AND $__timeFilter(ts) ORDER BY ts;" } ]
+      "targets": [ { "refId": "A", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, 'files' AS metric, files AS value FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' AND $__timeFilter(ts) ORDER BY ts;" }, { "refId": "B", "format": "time_series", "rawQuery": true, "rawSql": "SELECT ts AS time, 'errors' AS metric, errors AS value FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' AND $__timeFilter(ts) ORDER BY ts;" } ]
     },
     {
       "id": 27,
@@ -251,7 +251,7 @@
       "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
       "fieldConfig": { "defaults": {}, "overrides": [ { "matcher": { "id": "byName", "options": "Bytes" }, "properties": [ { "id": "unit", "value": "bytes" } ] } ] },
       "options": { "showHeader": true, "sortBy": [ { "displayName": "When", "desc": true } ] },
-      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS \"When\", rc AS \"rc\", elapsed_s AS \"Elapsed (s)\", files AS \"Files\", bytes AS \"Bytes\", errors AS \"Errors\", CASE WHEN ok AND COALESCE(bytes,0) > 0 THEN 'OK' ELSE 'CHECK' END AS \"Status\" FROM telemetry.backup_runs WHERE job = 'nas_backup' ORDER BY ts DESC LIMIT 30;" } ]
+      "targets": [ { "refId": "A", "format": "table", "rawQuery": true, "rawSql": "SELECT ts AS \"When\", rc AS \"rc\", elapsed_s AS \"Elapsed (s)\", files AS \"Files\", bytes AS \"Bytes\", errors AS \"Errors\", CASE WHEN ok AND COALESCE(bytes,0) > 0 THEN 'OK' ELSE 'CHECK' END AS \"Status\" FROM telemetry.backup_runs WHERE job = 'nova-backup:nas:incremental' ORDER BY ts DESC LIMIT 30;" } ]
     }
   ]
 }
