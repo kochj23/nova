@@ -1,0 +1,60 @@
+{
+  "uid": "home-devices",
+  "title": "Home Devices (Bluetooth & A/V)",
+  "tags": ["nova", "bluetooth", "av", "presence"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "timezone": "browser",
+  "time": { "from": "now-6h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "BLE devices seen (5 min)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 8, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(DISTINCT device_mac) FROM telemetry.bluetooth WHERE ts > now() - interval '5 min'", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "BLE connected now",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 8, "x": 8, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(DISTINCT device_mac) FROM telemetry.bluetooth WHERE is_connected = true AND ts > now() - interval '5 min'", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "A/V devices powered on",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 8, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "fixed", "fixedColor": "purple" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(DISTINCT device_id) FROM telemetry.av_state a WHERE power IN ('on','ON','true') AND ts = (SELECT max(ts) FROM telemetry.av_state b WHERE b.device_id = a.device_id)", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "table", "title": "Bluetooth devices (latest)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 11, "w": 12, "x": 0, "y": 5 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT DISTINCT ON (device_mac) coalesce(device_name, device_mac) AS \"Device\", device_type AS \"Type\", rssi AS \"RSSI\", battery_pct AS \"Battery %\" FROM telemetry.bluetooth WHERE ts > now() - interval '10 min' ORDER BY device_mac, ts DESC", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "BLE signal (RSSI) — strongest devices",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 11, "w": 12, "x": 12, "y": 5 },
+      "fieldConfig": { "defaults": { "unit": "dBm", "custom": { "drawStyle": "line", "fillOpacity": 5, "spanNulls": true } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, rssi AS value, coalesce(device_name, device_mac) AS metric FROM telemetry.bluetooth WHERE $__timeFilter(ts) AND device_mac IN (SELECT device_mac FROM telemetry.bluetooth WHERE ts > now() - interval '30 min' GROUP BY device_mac ORDER BY max(rssi) DESC LIMIT 10) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 6, "type": "table", "title": "A/V device state (latest)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT DISTINCT ON (device_id) device_id AS \"Device\", device_type AS \"Type\", zone AS \"Zone\", power AS \"Power\", source_input AS \"Source\", volume AS \"Volume\", media_title AS \"Now Playing\" FROM telemetry.av_state WHERE ts > now() - interval '1 day' ORDER BY device_id, ts DESC", "refId": "A" } ]
+    }
+  ]
+}
