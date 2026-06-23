@@ -7,7 +7,7 @@ set -eo pipefail
 # Usage function
 usage() {
     echo "Usage: $0 <camera_name> [duration_seconds]" >&2
-    echo "Available cameras: front_door, front_yard, front_yard_alt, front_door_patio, alley_north, alley_south, garage, carport, side_yard, back_patio, patio_1, patio_2, 3d_printers, abundio_boundary" >&2
+    echo "Available cameras: front_door, front_yard, front_yard_alt, front_door_patio, alley_north, alley_south, garage, carport, exterior_garbage, back_patio, patio_1, patio_2, 3d_printers, abundio_boundary" >&2
     exit 1
 }
 
@@ -28,7 +28,7 @@ get_camera_url() {
         "alley_south") echo "RTSP_URL_REDACTED" ;;
         "garage") echo "RTSP_URL_REDACTED" ;;
         "carport") echo "RTSP_URL_REDACTED" ;;
-        "side_yard") echo "RTSP_URL_REDACTED" ;;
+        "exterior_garbage") echo "RTSP_URL_REDACTED" ;;
         "back_patio") echo "RTSP_URL_REDACTED" ;;
         "patio_1") echo "RTSP_URL_REDACTED" ;;
         "patio_2") echo "RTSP_URL_REDACTED" ;;
@@ -45,7 +45,7 @@ DURATION="${2:-10}"
 # Validate camera name
 if ! CAMERA_URL=$(get_camera_url "$CAMERA_NAME"); then
     echo "Error: Camera '$CAMERA_NAME' not found in camera list" >&2
-    echo "Available cameras: front_door, front_yard, front_yard_alt, front_door_patio, alley_north, alley_south, garage, carport, side_yard, back_patio, patio_1, patio_2, 3d_printers, abundio_boundary" >&2
+    echo "Available cameras: front_door, front_yard, front_yard_alt, front_door_patio, alley_north, alley_south, garage, carport, exterior_garbage, back_patio, patio_1, patio_2, 3d_printers, abundio_boundary" >&2
     exit 1
 fi
 

@@ -55,7 +55,7 @@ try:
         name for name in [
             "front_yard", "front_yard_alt", "back_patio",
             "carport", "alley_north", "alley_south",
-            "side_yard", "front_door_patio", "abundio_boundary",
+            "exterior_garbage", "front_door_patio", "abundio_boundary",
         ]
         if name in _ALL_CAMERAS
     ]

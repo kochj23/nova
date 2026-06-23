@@ -58,7 +58,9 @@ EXTERIOR_CAMERAS = [
     "carport_latest.jpg",
     "alley_north_latest.jpg",
     "alley_south_latest.jpg",
-    "side_yard_latest.jpg",
+    # "exterior_garbage_latest.jpg",  # 2026-06-23: camera physically misaimed at an
+    # indoor shelf — face-rec kept false-positiving on a Sunbonnet-tin label face.
+    # Re-enable once the camera is re-aimed at the yard.
     "garage_latest.jpg",
     "abundio_boundary_latest.jpg",
 ]

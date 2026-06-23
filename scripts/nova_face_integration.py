@@ -164,7 +164,7 @@ def main():
         "alley_north",
         "alley_south",
         "carport",
-        "side_yard",
+        "exterior_garbage",
     ]
     
     all_events = []
