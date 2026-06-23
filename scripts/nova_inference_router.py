@@ -54,24 +54,25 @@ PROXY_TIMEOUT = 600          # big models can be slow on cold load
 N6, N190, N7, N2 = "192.168.1.6", "192.168.1.190", "192.168.1.7", "192.168.1.2"
 
 POOLS = {
-    # heavy code — big nodes only
-    "code":         [(N6, 11434, "ollama", "qwen3-coder:30b"),
-                     (N190, 11434, "ollama", "qwen3-coder:30b")],
-    # general chat — big nodes, with .7 as a fast small fallback
+    # code: qwen3:30b-a3b (fast MoE) on both big nodes. qwen3-coder:30b is broken
+    # (loads but hangs generation, 2026-06-23) — routed around until re-pulled.
+    "code":         [(N6, 11434, "ollama", "qwen3:30b-a3b"),
+                     (N190, 11434, "ollama", "qwen3:30b-a3b")],
+    # quality general chat — the two fast 30B nodes only (kept .7 OUT so a 3B
+    # never answers a quality-chat request; .7 serves the 'fast' tier instead)
     "conversation": [(N6, 11434, "ollama", "qwen3:30b-a3b"),
-                     (N190, 11434, "ollama", "qwen3:30b-a3b"),
-                     (N7, 11434, "ollama", "qwen3:8b")],
+                     (N190, 11434, "ollama", "qwen3:30b-a3b")],
     # Nova's persona voice
     "nova":         [(N6, 11434, "ollama", "nova:latest")],
-    # fast / cheap chat — small tier + tinychat
-    "fast":         [(N7, 11434, "ollama", "qwen3:8b"),
-                     (N2, 8000, "tinychat", "deepseek-r1:8b")],
+    # fast / cheap chat — .7's light tier. llama3.2:3b (~25 tok/s on the M2 Pro);
+    # qwen3:8b was a chronic 4 tok/s straggler there, dropped. (tinychat is a UI,
+    # not an API — removed.)
+    "fast":         [(N7, 11434, "ollama", "llama3.2:3b")],
     # low-latency single-stream — MTPLX speculative decoding
     "mtplx":        [(N6, 5050, "mtplx", "mtplx-qwen36-27b-optimized-speed"),
                      (N190, 5050, "mtplx", "mtplx-qwen36-27b-optimized-speed")],
-    # reasoning
-    "reasoner":     [(N6, 11434, "ollama", "deepseek-r1:8b"),
-                     (N7, 11434, "ollama", "qwen3:8b")],
+    # reasoning — deepseek-r1 on .6
+    "reasoner":     [(N6, 11434, "ollama", "deepseek-r1:8b")],
     # vision
     "vision":       [(N6, 11434, "ollama", "qwen3-vl:4b")],
     # embeddings — offload to .7 first, then peers
@@ -126,7 +127,8 @@ def _health_loop():
             with _lock:
                 st = _state.setdefault((host, port),
                                        {"healthy": False, "models": set(),
-                                        "inflight": 0, "lat": 0.0, "kind": kind})
+                                        "inflight": 0, "lat": 0.0, "gen_lat": 2.0,
+                                        "kind": kind})
                 st["healthy"], st["models"] = healthy, models
                 st["lat"] = (time.time() - t0) * 1000
         time.sleep(PROBE_INTERVAL)
@@ -142,17 +144,24 @@ def _eligible(pool):
                 continue
             if kind == "ollama" and model not in st["models"]:
                 continue   # model not pulled here yet — skip until it lands
-            out.append((host, port, kind, model, st["inflight"], st["lat"]))
+            out.append((host, port, kind, model, st["inflight"],
+                        st.get("gen_lat", 2.0)))   # observed request latency (EWMA)
     return out
 
 
 def _pick(pool):
-    """Least in-flight among eligible (latency tie-break) -> active/active spread."""
+    """Latency-aware least-loaded: score = (inflight+1) * recent gen-latency.
+
+    This spreads load active/active across fast peers, but stops a slow node
+    (high gen-latency) from being handed concurrent traffic it would straggle on
+    — it only receives a request once the fast nodes are loaded enough that
+    (inflight+1)*fast_lat exceeds the slow node's latency.
+    """
     cand = _eligible(pool)
     if not cand:
         return None
-    cand.sort(key=lambda b: (b[4], b[5]))   # (inflight, latency)
-    return cand[0][:4]                       # (host,port,kind,model)
+    cand.sort(key=lambda b: (b[4] + 1) * b[5])   # (inflight+1) * gen_lat
+    return cand[0][:4]                            # (host,port,kind,model)
 
 
 def _resolve(model_field):
@@ -231,7 +240,8 @@ class Handler(BaseHTTPRequestHandler):
         key = (host, port)
         with _lock:
             _state.setdefault(key, {"healthy": True, "models": set(), "inflight": 0,
-                                    "lat": 0.0, "kind": ""})["inflight"] += 1
+                                    "lat": 0.0, "gen_lat": 2.0, "kind": ""})["inflight"] += 1
+        t0 = time.time()
         try:
             body = json.dumps(payload).encode()
             req = urllib.request.Request(
@@ -239,6 +249,9 @@ class Handler(BaseHTTPRequestHandler):
                 headers={"Content-Type": "application/json"})
             resp = urllib.request.urlopen(req, timeout=PROXY_TIMEOUT)
             data = resp.read()                     # buffered relay — correct + simple
+            with _lock:                            # learn this backend's real speed
+                st = _state[key]
+                st["gen_lat"] = 0.6 * st.get("gen_lat", 2.0) + 0.4 * (time.time() - t0)
             self.send_response(resp.status)
             self.send_header("Content-Type",
                              resp.headers.get("Content-Type", "application/json"))
