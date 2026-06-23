@@ -1221,6 +1221,49 @@ flowchart TD
 - `nova_backup_reaper.sh` — UNAS orphan GC, `backup_orphans` table, 15-day soft-mirror with accidental-delete safety net
 - Scheduled weekly (gardener propose-only Mon 6am, reaper Sun 5:30am) · Grafana dashboard 19 · Slack warnings via the notification bus
 
+## Local Awareness — Overhead Flights (91506)
+
+A poller watches the airspace over the house and tells Nova *who* is flying over — distance, altitude, and the registered owner.
+
+```mermaid
+flowchart LR
+  ADSB[adsb.lol point feed 91506] --> POLL[nova_flights_poller every 30s]
+  POLL --> FILT{low overhead and in zip}
+  FILT -->|yes| ENRICH[hexdb.io hex to owner cached]
+  ENRICH --> DB[(telemetry.overhead_flights)]
+  ENRICH --> ALERT{helicopter or low pass or emergency squawk}
+  ALERT -->|yes| SLACK[Slack ping with operator and altitude]
+  DB --> DASH[(Grafana 21)]
+```
+
+- `nova_flights_poller.py` — free adsb.lol feed, altitude under 10k ft over 91506, arrival-dedup via the table; pings helicopters, low passes, and emergency squawks (7500/7600/7700)
+- Enrichment: `hexdb.io` hex → registered owner (e.g. *Los Angeles Police Department*), cached in `aircraft_registry`; military / non-ADS-B traffic excluded by nature
+- Dashboard 21 · pairs with the queued Uniden SDS200 scanner for position-plus-voice
+
+## NAS Deduplicator
+
+Reclaims space from **exact** duplicate files on `/Volumes/NAS` — propose-first, and structurally incapable of touching Google.
+
+```mermaid
+flowchart TD
+  SCAN[scan walk NAS] --> SIZE{size shared}
+  SIZE -->|no| SKIP[skip unique]
+  SIZE -->|yes| HASH[partial then full content hash]
+  HASH --> SETS[exact duplicate sets]
+  SETS --> G{location vs GoogleDriveBackups}
+  G -->|all inside Google| MR[manual_review never auto-delete]
+  G -->|spans Google and elsewhere| KEEPG[keep Google copy propose the other]
+  G -->|none in Google| KEEP[keep canonical propose the copies]
+  KEEPG --> PROP[propose]
+  KEEP --> PROP
+  PROP -->|you approve| DEL[hard delete recoverable 15d via UNAS reaper]
+  PROP --> DASH[(Grafana 22)]
+```
+
+- `nova_nas_dedup.py` — two-stage hashing (size group → partial → full), exact-dup only, resumable
+- **Protected:** `GoogleDriveBackups` + `Google-Drive-kochjpar` are never delete targets (deletes there sync to Google); a dup set living entirely inside them becomes `manual_review`
+- scan → propose → approve → apply · weekly Sun 4am · Grafana 22 · safety suite proves it never deletes from Google
+
 ## Security
 
 - All credentials in macOS Keychain — never in source, env vars in plists, or flat files
