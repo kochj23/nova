@@ -126,12 +126,15 @@ def insert_reading(data: dict) -> bool:
         uv_index = _float(data.get("uv"))
         temp_indoor_f = _float(data.get("tempinf"))
         humidity_indoor = _int(data.get("humidityin"))
-        # PM2.5: prefer the AQIN indoor air-quality monitor, fall back to a channel sensor.
-        pm25 = _float(data.get("pm25_aqin") or data.get("pm25_ch1"))
-        pm10 = _float(data.get("pm10_aqin"))   # Ambient AQIN indoor PM10
-        co2 = _float(data.get("co2"))          # Ambient AQIN indoor CO2 (ppm)
-        if pm10 is not None or co2 is not None or data.get("pm25_aqin"):
-            logging.info(f"AQIN air quality: pm25={pm25} pm10={pm10} co2={co2}ppm")
+        # Air quality. This station exposes an OUTDOOR PM2.5 sensor as `pm25`,
+        # and an indoor AQIN monitor as `pm25_in_aqin`/`pm10_in_aqin`/`co2_in_aqin`.
+        # (The old `pm25_aqin`/`co2` names never existed on this station, so AQ was
+        # being dropped.) pm25 = outdoor (the headline); pm10/co2 = indoor AQIN.
+        pm25 = _float(data.get("pm25") or data.get("pm25_aqin") or data.get("pm25_ch1"))
+        pm10 = _float(data.get("pm10_in_aqin") or data.get("pm10_aqin"))
+        co2 = _float(data.get("co2_in_aqin") or data.get("co2"))
+        if pm25 is not None or pm10 is not None or co2 is not None:
+            logging.info(f"air quality: pm25(outdoor)={pm25} pm10(in)={pm10} co2(in)={co2}ppm")
 
         # Dew point: use provided or calculate
         dew_point_f = _float(data.get("dewpointf"))
@@ -183,6 +186,8 @@ def insert_reading(data: dict) -> bool:
         finally:
             conn.close()
 
+        insert_soil(data, ts)   # soil-moisture sensors (soilhum1..N)
+
         with _state_lock:
             _state["last_reading_ts"] = ts.isoformat()
             _state["reading_count"] += 1
@@ -199,6 +204,31 @@ def insert_reading(data: dict) -> bool:
         except Exception:
             pass
         return False
+
+
+def insert_soil(data: dict, ts) -> None:
+    """Store Ambient soil-moisture sensors. Ecowitt field `soilhumN` is moisture %
+    (0-100); `soilbattN` is the sensor battery. One row per present sensor."""
+    rows = []
+    for i in range(1, 9):
+        moist = _float(data.get(f"soilhum{i}"))
+        if moist is None:
+            continue
+        rows.append((ts, f"soil{i}", moist, _float(data.get(f"soilbatt{i}"))))
+    if not rows:
+        return
+    try:
+        conn = get_db_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO telemetry.soil (ts, sensor, moisture_pct, battery_pct) "
+                    "VALUES (%s, %s, %s, %s)", rows)
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.error(f"soil insert failed: {e}")
 
 
 def _float(val) -> float | None:
