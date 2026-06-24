@@ -234,7 +234,9 @@ PRESENCE_DEVICE_ZONES = {
     # Both zones gate on the Zigbee mmWave sensors (metadata source 'fp300'); the HomeKit
     # FP2s false-positive "occupied" when the room is empty, so they can't be trusted for OFF.
     "patio":  {"devices": ["Bug Zapper", "TV, Stereo, Apple TV"], "source": "fp300"},
-    "office": {"devices": ["Office Corner", "Office - Lamp", "Office accent", "Office Torcherie", "Server closet"], "source": "fp300"},
+    # office devices are lamps — only auto-on when it's genuinely dark (#680 lux gate),
+    # so presence at the desk in daylight doesn't switch the lamps on.
+    "office": {"devices": ["Office Corner", "Office - Lamp", "Office accent", "Office Torcherie", "Server closet"], "source": "fp300", "dark_only": True},
 }
 PRESENCE_OFF_DELAY_S = 15 * 60   # power OFF this long after the LAST positive presence reading
 PRESENCE_FRESH_S = 5 * 60        # a positive reading within this window counts as "present now" (drives ON)
@@ -270,6 +272,8 @@ async def rule_presence_devices():
 
         if age <= PRESENCE_FRESH_S:                      # a recent positive reading -> occupied
             if not _zone_on.get(zone):                   # arrival edge -> power ON
+                if cfg.get("dark_only") and not await is_dark():
+                    continue                             # daylight — don't auto-on a light zone (#680)
                 for d in devices:
                     await asyncio.to_thread(_hk_power, d, True)
                 _zone_on[zone] = True
