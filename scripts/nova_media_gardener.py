@@ -44,6 +44,11 @@ def propose():
     cur = conn.cursor()
     ensure_table(cur)
     cur.execute("DELETE FROM media_prune_proposals WHERE status='proposed'")
+    # Also drop stale proposals for shows no longer prunable (now 'keep', incl. DVR
+    # shows) or that are DVR recordings (.grab / .ts), regardless of row status (#663).
+    cur.execute("""DELETE FROM media_prune_proposals
+        WHERE show IN (SELECT show FROM media_policy WHERE policy <> 'rolling_15' OR NOT locked)
+           OR file_path LIKE '%/.grab/%' OR file_path ~* '[.]ts$'""")
     # HARD folder allowlist: only YouTube-source folders are EVER prunable.
     # Everything else (Movies, Documentary, Home Videos, Stand-Up, Other, Ripped
     # Movies, DVR) stays — per Jordan 2026-06-22. The Plex "TV Shows" *library* is
@@ -55,7 +60,12 @@ def propose():
         WHERE p.policy = 'rolling_15' AND p.locked
           AND m.processed_at < now() - interval '{WINDOW_DAYS} days'
           AND m.file_path IS NOT NULL AND m.file_path <> ''
-          AND m.file_path ~ '/videos/TVShows/'""")
+          AND m.file_path ~ '/videos/TVShows/'
+          -- NEVER prune Plex DVR content: in-progress/unmatched recordings live in
+          -- the `.grab/` grabber dir, and OTA recordings are .ts transport streams
+          -- (YouTube downloads are .mp4/.mkv/.webm). Belt-and-suspenders vs #663.
+          AND m.file_path NOT LIKE '%/.grab/%'
+          AND m.file_path !~* '[.]ts$'""")
     rows = cur.fetchall()
     n = 0; total = 0; est = 0
     for fp, show, processed in rows:
