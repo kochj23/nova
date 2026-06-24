@@ -14,6 +14,7 @@ from nova_gateway.config import (
 )
 from nova_gateway.context import GatewayContext
 from nova_gateway.agent import run_agent, write_message_for_claude, session_id, gen_trace_id
+from nova_gateway.session import get_pg
 
 log = logging.getLogger("nova_gateway_v2")
 
@@ -203,6 +204,23 @@ async def _slack_handle_event(ctx: GatewayContext, event: dict, bot_user_id: str
     async def _handle():
         async with ctx.channel_locks[f"slack:{channel}"]:
             try:
+                # #nova-claude routes to the REAL Claude Code session, NOT the Ollama chat
+                # agent. nova_claude_code_responder.py consumes this to_claude_code row,
+                # runs it through `claude -p` (read-only) and posts the reply back to
+                # #nova-claude itself. Bot/self messages are filtered above, so the reply
+                # is not re-ingested — no echo loop. (#672)
+                if channel == SLACK_CLAUDE_CHANNEL:
+                    pool = await get_pg(ctx)
+                    await pool.execute(
+                        """INSERT INTO claude_messages (direction, sender, message, metadata)
+                           VALUES ('to_claude_code', $1, $2, $3::jsonb)""",
+                        event.get("user", "slack"), text,
+                        json.dumps({"channel": "slack-claude", "thread_ts": thread_ts,
+                                    "timestamp": time.time()}),
+                    )
+                    log.info(f"[{trace_id}] Slack #nova-claude -> to_claude_code (real Claude Code)")
+                    return
+
                 log.info(f"[{trace_id}] Slack: routing to agent — session={sid}")
                 response = await run_agent(ctx, text, sid, agent_id, trace_id=trace_id)
                 if not response or not response.strip():
@@ -210,14 +228,6 @@ async def _slack_handle_event(ctx: GatewayContext, event: dict, bot_user_id: str
                     response = "I'm thinking about that but came up empty. Can you rephrase?"
                 await slack_post_message(ctx, bot_token, channel, response, thread_ts=thread_ts)
                 log.info(f"Slack: responded in {channel} ({len(response)} chars)")
-
-                # If this is from #nova-claude, also write to claude_messages table
-                if channel == SLACK_CLAUDE_CHANNEL:
-                    await write_message_for_claude(
-                        ctx,
-                        f"[Slack #nova-claude] User: {text}\nNova: {response}",
-                        metadata={"channel": "slack-claude-bridge", "timestamp": time.time()},
-                    )
             except Exception as e:
                 log.error(f"Slack agent error: {e}", exc_info=True)
                 await slack_post_message(ctx, bot_token, channel, "Sorry, something went wrong on my end.")
