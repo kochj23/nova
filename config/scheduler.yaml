@@ -347,6 +347,12 @@ tasks:
     timeout: 120
     overlap: skip
 
+  mostlycopyandpaste_ingest:
+    script: nova_mostlycopyandpaste_ingest.py
+    schedule: cron 35 7 * * *
+    timeout: 600
+    overlap: skip
+
   forgotten_weapons_ingest:
     script: nova_forgotten_weapons_ingest.py
     schedule: cron 0 2 * * *
