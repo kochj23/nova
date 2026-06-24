@@ -157,6 +157,13 @@ tasks:
     timeout: 60
     overlap: skip
 
+  homekit_outlets:                 # ingest HomeKit "Outlet In Use" signals (27 Eve sockets) + left-on alerts (#682)
+    script: nova_homekit_outlets.py
+    args: ["--alert"]
+    schedule: every 5m
+    timeout: 60
+    overlap: skip
+
   # ── Observability collectors (Grafana data layer) ──────────────────────
   unifi_metrics:
     script: nova_unifi_metrics.py
