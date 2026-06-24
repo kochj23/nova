@@ -4,7 +4,7 @@ datasources:
     type: grafana-postgresql-datasource
     uid: nova-ops-pg
     access: proxy
-    url: 192.168.1.2:5432
+    url: 192.168.1.6:5432
     user: kochj
     database: nova_ops
     isDefault: true
