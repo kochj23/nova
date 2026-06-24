@@ -250,6 +250,12 @@ tasks:
     timeout: 1800
     overlap: skip
 
+  config_drift:                    # running launchd config vs committed source-of-truth (#645)
+    script: nova_config_drift.py
+    schedule: cron 20 8 * * *
+    timeout: 60
+    overlap: skip
+
   journal_art:
     script: nova_journal.py
     args: ["art"]
