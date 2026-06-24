@@ -18,7 +18,7 @@ unset PYTHONPATH
 
 exec /opt/homebrew/bin/python3.13 -m mtplx.server.openai \
   --model /Volumes/Data/mlx-models/mtplx/Youssofal--Qwen3.6-27B-MTPLX-Optimized-Speed \
-  --backend-id qwen3_next --host 127.0.0.1 --port 5050 --depth 3 \
+  --backend-id qwen3_next --host 0.0.0.0 --port 5050 --depth 3 \
   --generation-mode mtp --profile sustained --reasoning-mode off --preserve-thinking auto \
   --verify-strategy capture_commit --verify-core linear-gdn-from-conv-tape \
   --draft-lm-head-bits 3 --draft-lm-head-group-size 64 --draft-lm-head-mode affine \
