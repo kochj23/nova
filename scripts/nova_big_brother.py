@@ -657,7 +657,7 @@ _journal_image_status: dict = {
 # ollama runner + mlx_whisper + mlx_lm.server = Metal contention storm.
 # mlx_lm.server is always-on (the librarian) and excluded from kill targets.
 GPU_CONTENTION_THRESHOLD = 2         # N+ GPU procs in U/UN state = contention
-GPU_CONTENTION_DURATION = 60         # seconds in contention before acting
+GPU_CONTENTION_DURATION = 120        # seconds in contention before acting (raised from 60 — heavy multi-model loads need patience)
 GPU_KILL_COOLDOWN = 300              # 5 min between kills
 OLLAMA_LATENCY_TIMEOUT = 90          # seconds — 30B model cold-load can take 45-60s on Metal
 
@@ -2593,7 +2593,7 @@ def _classify_gpu_health() -> tuple:
         # Look for GPU hogs: processes using >50% CPU that aren't Ollama itself
         gpu_hogs = _find_gpu_hogs()
         context["gpu_hog_pids"] = gpu_hogs
-        if gpu_hogs or len(stuck_procs) >= GPU_CONTENTION_THRESHOLD:
+        if gpu_hogs or len(stuck_procs) >= GPU_CONTENTION_THRESHOLD or _legit_inference_load():
             return (HealthState.CONTENDED, context)
         else:
             return (HealthState.STUCK, context)
@@ -2604,7 +2604,7 @@ def _classify_gpu_health() -> tuple:
             # Over hard timeout — contention or stuck
             gpu_hogs = _find_gpu_hogs()
             context["gpu_hog_pids"] = gpu_hogs
-            if gpu_hogs or len(stuck_procs) >= GPU_CONTENTION_THRESHOLD:
+            if gpu_hogs or len(stuck_procs) >= GPU_CONTENTION_THRESHOLD or _legit_inference_load():
                 return (HealthState.CONTENDED, context)
             return (HealthState.STUCK, context)
         elif latency > 3000:
@@ -2612,6 +2612,23 @@ def _classify_gpu_health() -> tuple:
             return (HealthState.SLOW, context)
 
     return (HealthState.HEALTHY, context)
+
+
+def _legit_inference_load() -> bool:
+    """True if a heavy but LEGITIMATE GPU workload is running — MTPLX or
+    mlx_lm.server serving inference. Under such load Ollama is *expected* to be
+    slow; that is CONTENTION (busy), not a STUCK deadlock — so BB must NOT unload
+    Ollama's models (doing so thrashes active inference and wedges the embed
+    model, as happened 2026-06-23 with 14 false 'GPU STUCK' events)."""
+    for pat in ("mtplx", "mlx_lm.server", "mlx_lm/server"):
+        try:
+            r = subprocess.run(["pgrep", "-f", pat],
+                               capture_output=True, text=True, timeout=3)
+            if r.stdout.strip():
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def _find_gpu_hogs() -> list:
