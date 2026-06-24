@@ -73,6 +73,11 @@ STATIC = [
     # Presence (Jordan's room — now room-accurate after #634)
     ("presence_jordan_room", "Jordan Room", "SELECT room FROM presence_state WHERE person='jordan' ORDER BY last_confirmed DESC LIMIT 1", None, None, "Presence", "mdi:account"),
     ("presence_jordan_activity", "Jordan Activity", "SELECT activity_state FROM presence_state WHERE person='jordan' ORDER BY last_confirmed DESC LIMIT 1", None, None, "Presence", "mdi:run"),
+    # Fleet / infra health
+    ("repl_lag", "PG Replica Lag", "SELECT round(max(replay_lag_ms)::numeric,0) FROM telemetry.replication_health WHERE ts>now()-interval '5 min'", "ms", None, "Fleet", "mdi:database-sync"),
+    # Overhead flights (fun)
+    ("flights_overhead", "Aircraft Overhead", "SELECT count(DISTINCT hex) FROM telemetry.overhead_flights WHERE ts>now()-interval '5 min'", None, None, "Overhead", "mdi:airplane"),
+    ("flights_nearest", "Nearest Aircraft", "SELECT round(min(dist_nm)::numeric,1) FROM telemetry.overhead_flights WHERE ts>now()-interval '5 min'", "nm", None, "Overhead", "mdi:airplane-marker"),
 ]
 
 # ── DYNAMIC sensors: (uid_prefix, name_suffix, sql→(key,value) rows, unit, device_class, device_group) ──
@@ -82,6 +87,12 @@ DYNAMIC = [
     ("room_hum", "Humidity", "SELECT DISTINCT ON (room) regexp_replace(lower(room),'[^a-z0-9]+','_','g'), round(humidity::numeric,0) FROM telemetry.climate WHERE ts>now()-interval '30 min' AND humidity IS NOT NULL ORDER BY room, ts DESC", "%", "humidity", "Climate"),
     ("storage", "Used", "SELECT DISTINCT ON (component_name) regexp_replace(lower(component_name),'[^a-z0-9]+','_','g'), round(used_pct::numeric,0) FROM telemetry.storage_metrics WHERE ts>now()-interval '1 hour' AND used_pct IS NOT NULL ORDER BY component_name, ts DESC", "%", None, "Storage"),
     ("av_vol", "Volume", "SELECT DISTINCT ON (device_id) regexp_replace(lower(device_id),'[^a-z0-9]+','_','g'), volume FROM telemetry.av_state WHERE ts>now()-interval '1 hour' AND volume IS NOT NULL ORDER BY device_id, ts DESC", None, None, "AV"),
+    # Garden soil sensors (WS-5000 add-ons, #637)
+    ("soil_moist", "Moisture", "SELECT DISTINCT ON (sensor) regexp_replace(lower(sensor),'[^a-z0-9]+','_','g'), round(moisture_pct::numeric,0) FROM telemetry.soil WHERE ts>now()-interval '1 hour' AND moisture_pct IS NOT NULL ORDER BY sensor, ts DESC", "%", "moisture", "Garden"),
+    # Fleet per-node health (disk / memory / load)
+    ("node_disk", "Disk", "SELECT regexp_replace(lower(node_name),'[^a-z0-9]+','_','g'), round(disk_percent::numeric,0) FROM node_status WHERE disk_percent IS NOT NULL", "%", None, "Fleet"),
+    ("node_mem", "Memory", "SELECT regexp_replace(lower(node_name),'[^a-z0-9]+','_','g'), round(memory_percent::numeric,0) FROM node_status WHERE memory_percent IS NOT NULL", "%", None, "Fleet"),
+    ("node_load", "Load", "SELECT regexp_replace(lower(node_name),'[^a-z0-9]+','_','g'), round(load_avg_1m::numeric,2) FROM node_status WHERE load_avg_1m IS NOT NULL", None, None, "Fleet"),
 ]
 
 
