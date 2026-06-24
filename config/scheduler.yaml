@@ -47,7 +47,7 @@ tasks:
     script: nova_prober.py
     schedule: every 2m
     args: ["--once", "--quiet"]
-    timeout: 90
+    timeout: 135
     overlap: skip
 
   incident_lifecycle:              # auto-close resolved incidents + recurrence detection
@@ -244,6 +244,12 @@ tasks:
     timeout: 10800
     overlap: queue
 
+  backup_restore_test:
+    script: nova_backup_restore_test.py
+    schedule: cron 0 4 1 * *
+    timeout: 1800
+    overlap: skip
+
   journal_art:
     script: nova_journal.py
     args: ["art"]
@@ -324,7 +330,7 @@ tasks:
     script: nova_nas_sync_check.py
     args: ["--check"]
     schedule: cron 0 6 * * *
-    timeout: 1200
+    timeout: 1800
     overlap: skip
 
   goal_check:
@@ -788,7 +794,7 @@ tasks:
     script: nova_livetv.py
     args: ["news"]
     schedule: cron 5 7 * * *
-    timeout: 1200
+    timeout: 1800
     overlap: skip
     gpu_heavy: true
 
