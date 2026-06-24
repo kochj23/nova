@@ -223,6 +223,30 @@ def load_state(jid):
 def save_state(jid, state):
     state["last_updated"] = datetime.now().isoformat()
     _sp(jid).write_text(json.dumps(state, indent=2))
+    _pg_track(state)            # mirror job state into nova_ops.ingest_jobs (#362)
+
+def _pg_track(state, status="running"):
+    """Best-effort mirror of ingest job state into nova_ops.ingest_jobs (#362).
+    Never raises — the JSON file remains the live state; PG is for visibility."""
+    jid = state.get("job_id")
+    if not jid:
+        return
+    esc = lambda v: str(v).replace("'", "''")
+    stored = int(state.get("chunks_total", 0) or 0)
+    done = ", completed_at=now()" if status in ("completed", "failed") else ""
+    sql = (
+        "INSERT INTO ingest_jobs (job_id, mode, query, vector, status, memories_stored, "
+        "started_at, pid, requested_by) VALUES "
+        f"('{esc(jid)}','{esc(state.get('mode',''))}','{esc(state.get('query',''))}',"
+        f"'{esc(state.get('vector') or '')}','{status}',{stored}, now(), {os.getpid()}, 'nova_ingest') "
+        "ON CONFLICT (job_id) DO UPDATE SET status=EXCLUDED.status, "
+        f"memories_stored=EXCLUDED.memories_stored{done};"
+    )
+    try:
+        subprocess.run(["psql", "-h", "localhost", "-U", "kochj", "-d", "nova_ops", "-tAc", sql],
+                       capture_output=True, timeout=5)
+    except Exception:
+        pass
 
 def latest_job_id():
     if not STATE_DIR.exists():
@@ -1367,7 +1391,7 @@ def run_video(url, channel, vector, target, state, dry_run, download_dir=None, d
                     if remember(chunk, vector,
                                 {"title": title, "channel": channel,
                                  "video_id": vid_id, "episode": ep,
-                                 "type": "video_transcript"},
+                                 "type": "video_transcript", "platform": "youtube"},
                                 done_hashes, dry_run):
                         ct      += 1
                         ingested += 1
@@ -1959,31 +1983,38 @@ def main():
         (f" [download-dir={args.download_dir}]" if args.download_dir else "") +
         (" [DRY RUN]" if args.dry_run else ""))
 
-    if args.mode == "wikipedia":
-        run_wikipedia(args.query, vector, args.target, state, args.dry_run,
-                      timeout_hours=args.timeout_hours)
-    elif args.mode == "search":
-        run_search(args.query, vector, args.target, state, args.dry_run)
-    elif args.mode == "video":
-        ch = (args.channel or
-              (args.query.split("/")[-1].lstrip("@") if args.query else "Unknown"))
-        run_video(args.query, ch, vector, args.target, state, args.dry_run,
-                  download_dir=args.download_dir, dateafter=args.dateafter,
-                  local_only=args.local_only)
-    elif args.mode == "discover":
-        run_discover(
-            args.query, vector,
-            args.sites, getattr(args, "per_site", 5),
-            state, args.dry_run,
-            yes=args.yes,
-            download_dir=args.download_dir,
-            _alt_pool=getattr(args, "spicy", False),
-            local_only=args.local_only,
-        )
-    elif args.mode == "url":
-        run_url(args.query, vector, state, args.dry_run)
-    elif args.mode == "file":
-        run_file(args.query, vector, state, args.dry_run)
+    job_status = "completed"
+    try:
+        if args.mode == "wikipedia":
+            run_wikipedia(args.query, vector, args.target, state, args.dry_run,
+                          timeout_hours=args.timeout_hours)
+        elif args.mode == "search":
+            run_search(args.query, vector, args.target, state, args.dry_run)
+        elif args.mode == "video":
+            ch = (args.channel or
+                  (args.query.split("/")[-1].lstrip("@") if args.query else "Unknown"))
+            run_video(args.query, ch, vector, args.target, state, args.dry_run,
+                      download_dir=args.download_dir, dateafter=args.dateafter,
+                      local_only=args.local_only)
+        elif args.mode == "discover":
+            run_discover(
+                args.query, vector,
+                args.sites, getattr(args, "per_site", 5),
+                state, args.dry_run,
+                yes=args.yes,
+                download_dir=args.download_dir,
+                _alt_pool=getattr(args, "spicy", False),
+                local_only=args.local_only,
+            )
+        elif args.mode == "url":
+            run_url(args.query, vector, state, args.dry_run)
+        elif args.mode == "file":
+            run_file(args.query, vector, state, args.dry_run)
+    except Exception:
+        job_status = "failed"
+        raise
+    finally:
+        _pg_track(state, job_status)   # finalize job status in nova_ops.ingest_jobs (#362)
 
 if __name__ == "__main__":
     main()
