@@ -149,6 +149,29 @@ ROOM_BRIGHTNESS = {
 }
 
 
+DARK_LUX_THRESHOLD = 40   # outdoor lux below this = dark enough to auto-light (#680)
+OUTDOOR_LUX_ENTITY = "sensor.hue_outdoor_motion_sensor_1_illuminance"
+
+
+async def is_dark():
+    """True when it's genuinely dark OUTSIDE — real illuminance, not the clock (#680).
+    Reads the Hue outdoor lux sensor; falls back to a conservative clock window only
+    if there's no fresh reading (sensor offline)."""
+    try:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            lux = await conn.fetchval(
+                "SELECT state_numeric FROM telemetry.ha_sensors "
+                "WHERE entity_id = $1 AND ts > now() - interval '30 minutes' "
+                "ORDER BY ts DESC LIMIT 1", OUTDOOR_LUX_ENTITY)
+        if lux is not None:
+            return lux < DARK_LUX_THRESHOLD
+    except Exception:
+        pass
+    h = datetime.now().hour          # fallback: sensor missing/stale
+    return h >= 17 or h < 7
+
+
 async def rule_presence_lights():
     """Turn on lights when Jordan enters a room, off when leaving."""
     import urllib.request
@@ -171,10 +194,11 @@ async def rule_presence_lights():
         return
 
     now = datetime.now()
-    hour = now.hour
 
-    # Only auto-light after sunset / before sunrise
-    if 7 <= hour < 17:
+    # Lux-gate: only auto-light when it's genuinely dark outside (real outdoor
+    # illuminance, not the clock) — handles dark stormy afternoons + bright winter
+    # evenings instead of a fixed 17:00 cutoff. #680.
+    if not await is_dark():
         return
 
     if confidence < 0.5 or room == "unknown":
