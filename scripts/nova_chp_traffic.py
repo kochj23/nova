@@ -34,6 +34,7 @@ Written by Jordan Koch.
 """
 import re
 import sys
+import time
 import xml.etree.ElementTree as ET
 import urllib.request
 
@@ -235,16 +236,22 @@ def main(argv=None):
     argv = argv if argv is not None else sys.argv[1:]
     quiet = "--quiet" in argv
 
-    try:
-        xml_bytes = fetch_xml()
-    except Exception as e:
-        log(f"fetch failed: {type(e).__name__}: {str(e)[:160]}")
-        return 1
-
-    try:
-        incidents = parse_incidents(xml_bytes)
-    except Exception as e:
-        log(f"parse failed: {type(e).__name__}: {str(e)[:160]}")
+    # The CHP edge occasionally serves a truncated body (ParseError: unclosed
+    # token) — a transient that a fresh fetch clears. Retry fetch+parse a few
+    # times before giving up so the scheduler doesn't see a hard failure.
+    incidents = None
+    last_err = None
+    for attempt in range(3):
+        try:
+            xml_bytes = fetch_xml()
+            incidents = parse_incidents(xml_bytes)
+            break
+        except Exception as e:
+            last_err = f"{type(e).__name__}: {str(e)[:160]}"
+            log(f"fetch/parse attempt {attempt + 1}/3 failed: {last_err}")
+            time.sleep(2)
+    if incidents is None:
+        log(f"giving up after 3 attempts: {last_err}")
         return 1
 
     if not incidents:
