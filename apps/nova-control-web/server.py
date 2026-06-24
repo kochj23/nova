@@ -168,7 +168,19 @@ async def lifespan(app: FastAPI):
     app.state.redis = aioredis.from_url(REDIS_URL, decode_responses=False)
 
     # --- History DB init (asyncpg for async-safe startup) ---
-    history_pool = await asyncpg.create_pool(OPS_PG_DSN, min_size=2, max_size=5)
+    # Wait for PG to accept connections: on a reboot, PG may still be in crash-
+    # recovery when this starts. Without the retry the whole app exited with
+    # CannotConnectNowError and left every collector broken until a manual restart (#690).
+    history_pool = None
+    for attempt in range(30):                      # up to ~5 min (30 x 10s)
+        try:
+            history_pool = await asyncpg.create_pool(OPS_PG_DSN, min_size=2, max_size=5)
+            break
+        except Exception as e:
+            print(f"[startup] PG not ready yet ({type(e).__name__}); retry {attempt+1}/30 in 10s", flush=True)
+            await asyncio.sleep(10)
+    if history_pool is None:                        # final attempt — raise if PG is truly down
+        history_pool = await asyncpg.create_pool(OPS_PG_DSN, min_size=2, max_size=5)
     app.state.history_pool = history_pool
 
     # Cleanup rows older than 30 days (async)
