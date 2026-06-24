@@ -39,6 +39,30 @@ def _f(v):
         return None
 
 
+def _drop_conn():
+    # psycopg2 only sets _conn.closed on a CLIENT-side close; a server-side drop
+    # (PG restart, network blip, idle timeout) leaves .closed == 0 and every
+    # subsequent execute fails silently. Null it so the next message reconnects.
+    global _conn
+    try:
+        if _conn is not None and not _conn.closed:
+            _conn.close()
+    except Exception:
+        pass
+    _conn = None
+
+
+def _insert(device, p):
+    with _db().cursor() as cur:
+        cur.execute(
+            "INSERT INTO telemetry.energy "
+            "(ts, device_id, device_name, watts, volts, amps, kwh_total, on_state) "
+            "VALUES (now(), %s, %s, %s, %s, %s, %s, %s)",
+            (device, device, _f(p.get("power")), _f(p.get("voltage")),
+             _f(p.get("current")), _f(p.get("energy")),
+             (str(p.get("state")).upper() == "ON") if p.get("state") is not None else None))
+
+
 def on_message(client, userdata, msg):
     device = msg.topic.replace("zigbee2mqtt/", "")
     if "/" in device or device.startswith("bridge"):
@@ -55,16 +79,16 @@ def on_message(client, userdata, msg):
         return
     _last[device] = now
     try:
-        with _db().cursor() as cur:
-            cur.execute(
-                "INSERT INTO telemetry.energy "
-                "(ts, device_id, device_name, watts, volts, amps, kwh_total, on_state) "
-                "VALUES (now(), %s, %s, %s, %s, %s, %s, %s)",
-                (device, device, _f(p.get("power")), _f(p.get("voltage")),
-                 _f(p.get("current")), _f(p.get("energy")),
-                 (str(p.get("state")).upper() == "ON") if p.get("state") is not None else None))
+        _insert(device, p)
     except Exception as e:
-        print(f"[zigbee-energy] write error for {device}: {e}", flush=True)
+        # Drop the (likely broken) connection and retry once on a fresh one so a
+        # transient PG drop costs at most one reading, not a silent multi-hour gap.
+        _drop_conn()
+        try:
+            _insert(device, p)
+        except Exception as e2:
+            print(f"[zigbee-energy] write error for {device} (reconnect failed): {e2}", flush=True)
+            _drop_conn()
 
 
 def main():
