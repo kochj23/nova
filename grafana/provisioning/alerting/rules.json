@@ -92,7 +92,8 @@
             "summary": "A Nova node is down or its heartbeat is older than 3 minutes.",
             "description": "node_status reports a node with status != 'up' or a heartbeat staler than 3 minutes. Check the host and its telemetry agent."
           },
-          "isPaused": false
+          "isPaused": false,
+          "keep_firing_for": "10m"
         },
         {
           "uid": "nova_service_down",
@@ -179,7 +180,8 @@
             "summary": "One or more registered Nova services report status=down.",
             "description": "service_registry has at least one service in 'down' state. Known intermittently-down: endpoint_monitor, hue. Investigate any unexpected entries."
           },
-          "isPaused": false
+          "isPaused": false,
+          "keep_firing_for": "10m"
         },
         {
           "uid": "nova_disk_warn",
@@ -266,7 +268,8 @@
             "summary": "Node disk usage is above 85%.",
             "description": "node_status.disk_percent exceeded 85% on a node. Free space or expand storage."
           },
-          "isPaused": false
+          "isPaused": false,
+          "keep_firing_for": "20m"
         },
         {
           "uid": "nova_disk_crit",
@@ -353,7 +356,8 @@
             "summary": "Node disk usage is above 95% \u2014 imminent full disk.",
             "description": "node_status.disk_percent exceeded 95% on a node. Urgent: free space immediately."
           },
-          "isPaused": false
+          "isPaused": false,
+          "keep_firing_for": "10m"
         },
         {
           "uid": "nova_pg_replica_lag",
@@ -440,7 +444,8 @@
             "summary": "PostgreSQL streaming replica lag > 5s or no replica connected.",
             "description": "pg_stat_replication on the nova_ops primary shows replay_lag > 5s, or no replica is connected (value 9999). Check pg17-replica on nova-core."
           },
-          "isPaused": false
+          "isPaused": false,
+          "keep_firing_for": "10m"
         },
         {
           "uid": "nova_memory_warn",
@@ -527,7 +532,8 @@
             "summary": "Node memory usage is above 90% (mac-mini excluded \u2014 its macOS SNMP misreports ~100%).",
             "description": "node_status.memory_percent exceeded 90% on a node (mac-mini intentionally excluded). Investigate memory pressure."
           },
-          "isPaused": false
+          "isPaused": false,
+          "keep_firing_for": "20m"
         }
       ]
     },
@@ -622,7 +628,8 @@
             "summary": "A network interface is accumulating errors (>1000 new in/out errors over 10 minutes).",
             "description": "snmp_metrics if_in_errors/if_out_errors increased by more than 1000 on an interface over the last 10 minutes. Check the switch port / cabling."
           },
-          "isPaused": false
+          "isPaused": false,
+          "keep_firing_for": "30m"
         },
         {
           "uid": "nova_scheduler_task_failing",
@@ -703,13 +710,15 @@
           "for": "5m",
           "labels": {
             "severity": "warning",
-            "team": "nova"
+            "team": "nova",
+            "host": "192.168.1.6 (mac-studio)"
           },
           "annotations": {
             "summary": "A scheduled task failed or timed out in the last 30 minutes.",
             "description": "scheduler_runs shows a task with status failure/timeout in the last 30 minutes. Check the task script and error_tail."
           },
-          "isPaused": false
+          "isPaused": false,
+          "keep_firing_for": "20m"
         }
       ]
     },
@@ -798,13 +807,15 @@
           "for": "5m",
           "labels": {
             "severity": "warning",
-            "team": "nova"
+            "team": "nova",
+            "host": "synology \u2192 unas"
           },
           "annotations": {
             "summary": "Synology->UNAS NAS backup failed, moved 0 bytes, or has not succeeded in 25h.",
             "description": "telemetry.backup_runs shows the nas_backup job is unhealthy: no successful run (rc=0, bytes>0) in the last 25 hours, OR the latest run has rc != 0, OR the latest run moved 0 bytes (the silent-green failure). The backup runs daily at 03:30 on the Synology and is ingested to PG on .6 by nova_backup_ingest. Check /volume1/homes/kochj/nova_nas_backup.log on the Synology and the backup_ingest scheduler task."
           },
-          "isPaused": false
+          "isPaused": false,
+          "keep_firing_for": "20m"
         }
       ]
     }

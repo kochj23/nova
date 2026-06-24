@@ -45,6 +45,18 @@ STATE_PATH = Path.home() / ".openclaw/config/scheduler_state.json"
 HEARTBEAT_FILE = Path.home() / ".openclaw/config/scheduler_heartbeat"
 SCRIPTS_DIR = Path.home() / ".openclaw/scripts"
 
+# Host this scheduler runs on — surfaced in every task-failure alert title.
+SCHED_HOST = getattr(nova_config, "NOVA_HOST", "192.168.1.6")
+
+
+def _should_alert_failure(n: int) -> bool:
+    """Exponential-backoff cadence for repeated task failures: alert at
+    consecutive-failure counts 1, 2, 4, 8, 16, 32, 64, 128, ... and never in
+    between. Replaces the old fixed (3,10,50,100) set, which spammed at each
+    fixed step; powers of two thin the cadence out automatically the longer a
+    task stays broken, so a persistently dead task pages ever less often."""
+    return n >= 1 and (n & (n - 1)) == 0
+
 
 # ── Data structures ──────────────────────────────────────────────────────────
 
@@ -357,9 +369,10 @@ class NovaScheduler:
                     log(f"FAIL {task.id} exit={proc.returncode} ({task.state.last_duration:.1f}s)",
                         level=LOG_ERROR, source="scheduler")
                     self._total_failures += 1
-                    if task.state.consecutive_failures in (3, 10, 50, 100):
+                    if _should_alert_failure(task.state.consecutive_failures):
                         await self._slack_alert(f":x: *{task.id}* — {task.state.consecutive_failures} consecutive failures. "
-                                               f"Last error: {task.state.last_error[:200]}")
+                                               f"Last error: {task.state.last_error[:200]}",
+                                               task_id=task.id)
             else:
                 _run_status = "success"
                 if task.state._retry_pending:
@@ -382,8 +395,8 @@ class NovaScheduler:
             task.state.last_duration = time.time() - start
             self._total_failures += 1
             log(f"ERROR {task.id}: {e}", level=LOG_ERROR, source="scheduler")
-            if task.state.consecutive_failures in (3, 10, 50, 100):
-                await self._slack_alert(f":x: *{task.id}* — {e}")
+            if _should_alert_failure(task.state.consecutive_failures):
+                await self._slack_alert(f":x: *{task.id}* — {e}", task_id=task.id)
 
         finally:
             ended_at_ms  = int(time.time() * 1000)
@@ -426,11 +439,15 @@ class NovaScheduler:
             notify, title, body, level, category, None, dedup_key,
         )
 
-    async def _slack_alert(self, text):
+    async def _slack_alert(self, text, task_id=None):
         if self.slack_cfg.get("alerts", True):
-            # Task failure alerts — warning level, dedup so a flapping task
-            # collapses into one alert thread.
-            await self._slack_post(text, level="warning", dedup_key="scheduler-task-failure")
+            # Host prominent in the title so the alert is identifiable at a glance.
+            text = f":x: *[{SCHED_HOST}] {task_id}* — " + text.split("—", 1)[1].strip() \
+                if task_id and "—" in text else f"[{SCHED_HOST}] " + text
+            # Per-task dedup_key so distinct failing tasks don't collapse into each
+            # other (the old shared key meant task B's failure suppressed task A's).
+            dk = f"scheduler-task-failure-{task_id}" if task_id else "scheduler-task-failure"
+            await self._slack_post(text, level="warning", dedup_key=dk)
 
     async def _heartbeat(self):
         healthy = sum(1 for t in self.tasks.values() if t.state.consecutive_failures == 0 and t.enabled)

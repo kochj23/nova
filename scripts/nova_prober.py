@@ -293,15 +293,20 @@ def run_probe(conn, spec, quiet=False):
     meta = {"probe": name, "host": spec.get("host"),
             "latency_ms": latency_ms, "detail": detail}
 
+    # Host/service prominent in the title so the alert is identifiable at a
+    # glance, e.g. "PROBE FAIL: embedding @ 127.0.0.1".
+    host = spec.get("host")
+    where = f" @ {host}" if host else ""
+
     # State-change alerting: quiet on steady success.
     if not ok and prev is not False:
         # newly failing (or first run already broken)
-        notify(f"PROBE FAIL: {name}", body=detail,
+        notify(f"PROBE FAIL: {name}{where}", body=detail,
                level=spec["level_on_fail"], category=spec["category"],
                source="nova_prober.py", dedup_key=f"probe-{name}", meta=meta)
     elif ok and prev is False:
         # recovered
-        notify(f"PROBE RECOVERED: {name}", body=detail,
+        notify(f"PROBE RECOVERED: {name}{where}", body=detail,
                level="info", category=spec["category"],
                source="nova_prober.py", dedup_key=f"probe-{name}", meta=meta)
 

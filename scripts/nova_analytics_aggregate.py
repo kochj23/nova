@@ -298,6 +298,11 @@ def _json_default(o):
 def fire_alerts(conn, alerts):
     if not alerts:
         return
+    # An UNREACHABLE site is an ongoing condition — re-page no more than once per
+    # this window even though aggregation runs hourly. (The central notifier only
+    # dedups for 1h, which let an hourly run re-fire endlessly for days.)
+    UNREACHABLE_COOLDOWN_H = 12
+
     cur = conn.cursor()
     for alert in alerts:
         cur.execute(
@@ -317,7 +322,26 @@ def fire_alerts(conn, alerts):
             # (Previously reachable-but-quiet was "warning", which made healthy
             # low-traffic sites like digitalnoise.net cry wolf on #nova-warning.)
             level = "info" if reachable else "critical"
-            title = f"Site Quiet — {site}"
+            if reachable:
+                title = f"Site Quiet — {site}"
+            else:
+                # SITE/host prominent and the failure mode explicit in the title.
+                title = f"Site UNREACHABLE — {site}"
+                # De-dup the ongoing outage: skip the notify (DB row already logged
+                # above) if we already paged for this same unreachable site recently.
+                cur.execute(
+                    "SELECT ts FROM analytics_alerts "
+                    "WHERE alert_type='site_dark' AND site=%s "
+                    "AND (detail->>'site_reachable')::bool IS FALSE "
+                    "AND ts < now() "
+                    "AND ts > now() - make_interval(hours => %s) "
+                    "ORDER BY ts DESC LIMIT 1",
+                    (site, UNREACHABLE_COOLDOWN_H))
+                if cur.fetchone():
+                    log(f"site_dark/{site} UNREACHABLE — suppressed (within "
+                        f"{UNREACHABLE_COOLDOWN_H}h cooldown)",
+                        level=LOG_INFO, source="analytics_agg")
+                    continue
             body = (
                 f"{detail.get('explanation', 'No pageviews detected')}\n"
                 f"HTTP probe: {'reachable' if reachable else 'UNREACHABLE — possible outage'}\n"

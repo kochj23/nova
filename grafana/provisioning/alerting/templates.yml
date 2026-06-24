@@ -4,11 +4,14 @@ templates:
   - orgId: 1
     name: nova.slack.templates
     template: |
-      {{ define "slack.nova.title" }}{{ if eq .Status "firing" }}:rotating_light: [{{ .Status | toUpper }}]{{ else }}:white_check_mark: [RESOLVED]{{ end }} {{ .CommonLabels.alertname }}{{ end }}
+      {{ define "slack.nova.host" }}{{ or .Labels.host .Labels.node .Labels.node_name .Labels.device_name .Labels.instance .Labels.metric "unknown" }}{{ end }}
 
-      {{ define "slack.nova.text" }}{{ range .Alerts }}*{{ .Labels.alertname }}* ({{ .Labels.severity }})
-      {{ if .Annotations.summary }}{{ .Annotations.summary }}{{ end }}
-      {{ if .Annotations.description }}{{ .Annotations.description }}{{ end }}
-      {{ range .Labels.SortedPairs }}{{ if and (ne .Name "alertname") (ne .Name "__alert_rule_uid__") (ne .Name "grafana_folder") }}• {{ .Name }}: {{ .Value }}
-      {{ end }}{{ end }}_Started: {{ .StartsAt }}_
+      {{ define "slack.nova.title" }}{{ if eq .Status "firing" }}:rotating_light: [FIRING]{{ else }}:white_check_mark: [RESOLVED]{{ end }} {{ .CommonLabels.alertname }}{{ with .CommonLabels.host }} — {{ . }}{{ end }}{{ end }}
+
+      {{ define "slack.nova.text" }}{{ range .Alerts }}:round_pushpin: *Host:* {{ template "slack.nova.host" . }}   |   *Severity:* {{ .Labels.severity }}
+      *{{ .Labels.alertname }}*
+      {{ if .Annotations.summary }}{{ .Annotations.summary }}
+      {{ end }}{{ if .Annotations.description }}{{ .Annotations.description }}
+      {{ end }}{{ range .Labels.SortedPairs }}{{ if and (ne .Name "alertname") (ne .Name "severity") (ne .Name "team") (ne .Name "host") (ne .Name "__alert_rule_uid__") (ne .Name "grafana_folder") }}• {{ .Name }}: {{ .Value }}
+      {{ end }}{{ end }}_Started: {{ .StartsAt.Format "Mon 15:04 MST" }}_
       {{ end }}{{ end }}

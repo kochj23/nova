@@ -57,7 +57,11 @@ BRUTE_WINDOW = 300
 SCAN_THRESHOLD = 5
 SCAN_WINDOW = 60
 CRASH_STORM_THRESHOLD = 15  # crashes in 5min before alerting
-CRASH_STORM_COOLDOWN = 1800  # 30min between repeat alerts per host
+CRASH_STORM_COOLDOWN = 7200  # 2h between repeat alerts per host (was 30min — re-fired every cycle)
+# Require the storm to PERSIST across this many separate detection moments before
+# paging — a single transient burst (e.g. one bad CloudKit sync) should not page.
+CRASH_STORM_CONFIRM = 2       # consecutive over-threshold detections required
+CRASH_STORM_CONFIRM_GAP = 30  # min seconds between counted confirmations (avoid one burst counting twice)
 
 # IoT devices that do normal mDNS/UPnP discovery (not lateral movement)
 LATERAL_EXCLUDE_SOURCES = {
@@ -155,6 +159,8 @@ _device_hour_count: dict[str, int] = defaultdict(int)
 _last_hour_reset: float = time.time()
 _crash_events: dict[str, list] = defaultdict(list)  # [(timestamp, process_name), ...]
 _crash_storm_last_alert: dict[str, float] = {}  # hostname -> last alert timestamp
+# Confirmation tracking so a one-off burst doesn't page: [count, last_confirm_ts]
+_crash_storm_confirm: dict[str, list] = defaultdict(lambda: [0, 0.0])
 _lateral_scans: dict[str, deque] = defaultdict(lambda: deque(maxlen=50))
 _sensitive_access: dict[str, deque] = defaultdict(lambda: deque(maxlen=10))
 
@@ -427,13 +433,33 @@ def detect_anomaly(event: dict) -> dict | None:
     # 4. Process crash storm — same host crashing 5+ times in 5 minutes (alert once per window)
     if CRASH_RE.search(msg) and not CRASH_EXCLUDE_RE.search(msg):
         proc_match = CRASH_PROCESS_RE.search(msg)
-        proc_name = (proc_match.group(2) or proc_match.group(3)) if proc_match else "unknown"
+        proc_name = (proc_match.group(2) or proc_match.group(3)) if proc_match else None
+        if not proc_name:
+            # Fall back to a meaningful crash signature instead of the useless
+            # "unknown" — surface the syslog tag and the crash signal so the
+            # breakdown reads e.g. "SIGABRT" / "EXC_BAD_ACCESS" not "unknown(15)".
+            sig_m = re.search(r"EXC_BAD_ACCESS|SIGABRT|SIGSEGV|SIGKILL|SIGILL|SIGBUS", msg, re.IGNORECASE)
+            tag = event.get("app_name")
+            proc_name = (str(tag).strip() if tag and tag != "-" else None) or \
+                        (sig_m.group(0).upper() if sig_m else "unparsed-crash")
         _crash_events[hostname].append((now, proc_name))
         _crash_events[hostname] = [(t, p) for t, p in _crash_events[hostname] if now - t < 300]
         recent = _crash_events[hostname]
         last_alert = _crash_storm_last_alert.get(hostname, 0)
-        if len(recent) >= CRASH_STORM_THRESHOLD and (now - last_alert) > CRASH_STORM_COOLDOWN:
+        over_threshold = len(recent) >= CRASH_STORM_THRESHOLD
+        # Confirmation gate: require the storm to persist across CRASH_STORM_CONFIRM
+        # separate detection moments (>= CRASH_STORM_CONFIRM_GAP apart) before paging.
+        confirm = _crash_storm_confirm[hostname]
+        if over_threshold:
+            if now - confirm[1] >= CRASH_STORM_CONFIRM_GAP:
+                confirm[0] += 1
+                confirm[1] = now
+        else:
+            confirm[0] = 0  # storm subsided — reset, demand fresh confirmation next time
+        confirmed = over_threshold and confirm[0] >= CRASH_STORM_CONFIRM
+        if confirmed and (now - last_alert) > CRASH_STORM_COOLDOWN:
             _crash_storm_last_alert[hostname] = now
+            confirm[0] = 0  # consume confirmation; next storm must re-confirm
             from collections import Counter
             proc_counts = Counter(p for _, p in recent)
             breakdown = ", ".join(f"{p}({c})" for p, c in proc_counts.most_common(5))
@@ -557,7 +583,10 @@ def format_alert(threat: dict, event: dict) -> str:
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     msg_excerpt = event.get("message", "")[:200]
 
-    lines = [f":rotating_light: *{label}*"]
+    # Host prominent in the TITLE line itself (not just the body) so the Slack
+    # alert is identifiable at a glance: e.g. "Crash Storm — Office-M4-2 (192.168.1.6)".
+    host_tag = f"{hostname} ({source_ip})" if source_ip != "unknown" else hostname
+    lines = [f":rotating_light: *{label} — {host_tag}*"]
     lines.append(f"  Host: {hostname} ({source_ip})")
     lines.append(f"  Detail: {sig}")
     if threat.get("action"):
