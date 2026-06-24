@@ -27,7 +27,7 @@ from nova_gateway.session import (
     get_pg, log_turn, log_trace, log_degraded_event,
 )
 from nova_gateway.tools import (
-    TOOL_REGISTRY, execute_tool_calls, execute_tool_calls_legacy, _EXEC_RE,
+    TOOL_REGISTRY, execute_tool_calls, execute_tool_calls_legacy, execute_spoken_tool_calls, _EXEC_RE,
 )
 from nova_gateway.router import build_tools_payload
 
@@ -211,9 +211,15 @@ async def _load_agent_docs(ctx: GatewayContext, agent_id: str) -> str:
     """
     pool = await get_pg(ctx)
     try:
+        # Persona docs + the concise nova-system-map load into the prompt so Nova
+        # boots understanding the whole system. The bulky reference how-tos
+        # (services-launchd/scripts/data-platform/fleet-integrations) are EXCLUDED
+        # here — they would blow the chat agent's 8k context; query them on demand.
         rows = await pool.fetch(
             """SELECT doc_type, content FROM agent_docs
-               WHERE agent_id = $1 OR agent_id = 'all'
+               WHERE (agent_id = $1 OR agent_id = 'all')
+                 AND doc_type NOT IN
+                     ('services-launchd','scripts','data-platform','fleet-integrations')
                ORDER BY doc_type""",
             agent_id,
         )
@@ -298,6 +304,46 @@ async def _inject_memory(ctx: GatewayContext, question: str) -> str:
     # conversation makes Nova weaponize them (e.g. needling Jordan with a 2002 email she
     # was fed). For everything else — greetings, banter, opinions — inject nothing.
     q = question.strip().lower()
+    # Traffic/commute questions: inject the freshest live-camera digest directly from the
+    # traffic_cams source (nova_traffic_watch). General semantic recall is useless here — it
+    # returns car trivia for "the 134" — so query the source explicitly. Public data, safe.
+    _TRAFFIC_INTENT = ("traffic", "freeway", "commute", "the 134", "the 5 ", "the 210", "the 101",
+                       "the 170", " 134", " 210", "i-5", "i-210", "sr-134", "sr-170", "us-101",
+                       "wildfire", "smoke on")
+    if any(k in q for k in _TRAFFIC_INTENT):
+        try:
+            resp = await ctx.http.get(
+                "http://192.168.1.6:18790/recall",
+                params={"q": question, "n": 2, "source": "traffic_cams"}, timeout=5,
+            )
+            items = resp.json().get("results", resp.json().get("memories", []))
+            digest = (items[0].get("text") or items[0].get("content") or "").strip() if items else ""
+            if digest:
+                log.info(f"Traffic digest injected ({len(digest)} chars)")
+                return ("Use the live traffic-camera report below to answer the question directly "
+                        "(it lists each freeway/camera and current conditions). Do not say you lack "
+                        f"data.\n\n[Live traffic cameras — Nova's latest snapshot]\n{digest}\n"
+                        "[End traffic context]\n\n")
+        except Exception as e:
+            log.warning(f"Traffic memory recall failed (degraded): {e}")
+        # no traffic digest yet — fall through (web_search can still answer)
+    # Printer questions: inject the latest Bambu digest (source=bambu) from nova_bambu_watch.
+    _PRINTER_INTENT = ("printer", "print job", "bambu", "x1c", "how's the print", "hows the print",
+                       "is it done printing", "filament", "the prints")
+    if any(k in q for k in _PRINTER_INTENT):
+        try:
+            resp = await ctx.http.get(
+                "http://192.168.1.6:18790/recall",
+                params={"q": question, "n": 1, "source": "bambu"}, timeout=5,
+            )
+            items = resp.json().get("results", resp.json().get("memories", []))
+            digest = (items[0].get("text") or items[0].get("content") or "").strip() if items else ""
+            if digest:
+                log.info(f"Printer digest injected ({len(digest)} chars)")
+                return ("Use the live printer status below to answer directly.\n\n"
+                        f"[Bambu printers — Nova's latest snapshot]\n{digest}\n[End printer context]\n\n")
+        except Exception as e:
+            log.warning(f"Printer memory recall failed (degraded): {e}")
     _RECALL_INTENT = ("remember", "recall", "what did", "when did", "when was", "who is",
                       "who was", "what was", "do you know", "last time", "have i ", "did i ",
                       "tell me about", "what's my", "what is my", "look up", "search your",
@@ -654,6 +700,23 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
             log.warning(f"[{trace_id}] Legacy tool execution failed (degraded): {e}")
             await log_degraded_event(ctx, "tool_failure", f"Legacy tool execution error: {e}")
 
+    # ── Spoken-tool fallback: model emitted a registered tool call as plain text
+    #    (e.g. `web_search {"query": "..."}`) instead of a structured tool_call.
+    if not tool_output and clean_response:
+        try:
+            spoken_clean, spoken_output = await execute_spoken_tool_calls(
+                ctx, clean_response, session_id=session_id
+            )
+            if spoken_output:
+                tool_calls_log.append({"tool": "spoken", "params": clean_response[:100]})
+                log.info(f"[{trace_id}] spoken tool call recovered from text")
+                clean_response = spoken_clean
+                tool_output = spoken_output
+                raw_response_text = clean_response
+        except Exception as e:
+            log.warning(f"[{trace_id}] Spoken tool execution failed (degraded): {e}")
+            await log_degraded_event(ctx, "tool_failure", f"Spoken tool execution error: {e}")
+
     # ── Follow-up LLM pass if tools produced output ──────────────────────────
     if tool_output:
         followup_msgs = history + [
@@ -669,9 +732,24 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
                 tokens=ctx.tokens,
                 ctx=ctx,
             )
+            # Thinking models (qwen3:30b-a3b) occasionally spend the whole budget thinking and
+            # return empty. Retry once with a larger budget so the user never gets a silent reply.
+            if not (clean_response or "").strip():
+                log.warning(f"[{trace_id}] empty tool follow-up — retrying with larger budget")
+                clean_response = await ctx.router.route(
+                    messages=followup_msgs,
+                    system=sys_prompt,
+                    max_tokens=2048,
+                    private=private,
+                    tokens=ctx.tokens,
+                    ctx=ctx,
+                )
         except Exception:
             # Tool follow-up failed — return the text from the original LLM response
             clean_response = raw_response_text or clean_response
+        # Last resort: never send an empty message back to the user.
+        if not (clean_response or "").strip():
+            clean_response = "I pulled the info but couldn't phrase it just now, Little Mister — ask me again?"
 
     # Store assistant turn (wrapped for session isolation)
     try:
