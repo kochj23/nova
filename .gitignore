@@ -141,3 +141,6 @@ scripts/*.mp4
 *_state.json
 *.bak-*
 workspace/or_*.png
+
+# Claude Code bridge per-session state (#672)
+data/claude_bridge_session.json
