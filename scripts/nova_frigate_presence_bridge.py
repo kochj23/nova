@@ -56,6 +56,8 @@ CAMERA_ROOM = {
     "interior_printer_3d": "living_room",
     "interior_lr_front": "laundry",
     "interior_printers": "office", "3d_printers": "office",
+    # 4 cameras added 2026-06-25 (were unmapped in camera_config) — real Protect names
+    "backyard": "back_yard", "external_patio": "back_yard",
 }
 PERSON_LABELS = {"person"}
 VEHICLE_LABELS = {"car", "truck", "motorcycle", "bus"}
