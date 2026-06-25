@@ -3300,27 +3300,25 @@ async def collect_synology_state() -> dict:
 
 
 UNAS_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_unas_status.json"
-HUE_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_hue_state.json"
+HUE_URL = "http://192.168.1.10:37476"  # nova_hue migrated to nuk/.10 (queue #650); was a local state JSON
 LUTRON_STATE = Path.home() / ".openclaw" / "workspace" / "state" / "nova_lutron_state.json"
 
 
 async def collect_hue_state() -> dict:
-    """Read Philips Hue integration state file."""
+    """Fetch Philips Hue state from the nova_hue service (migrated to nuk/.10, #650)."""
     try:
-        if not HUE_STATE.exists():
-            return {"status": "unavailable"}
-        data = _json.loads(HUE_STATE.read_text())
-        rooms = data.get("rooms", [])
-        rooms_on = sum(1 for r in rooms if r.get("any_on", False))
-        lights_on = sum(r.get("lights_on", 0) for r in rooms)
-        outdoor_temp = data.get("outdoor_temp")
-        outdoor_motion = data.get("outdoor_motion", False)
+        timeout = aiohttp.ClientTimeout(total=4)
+        async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with session.get(f"{HUE_URL}/status") as resp:
+                st = await resp.json()
+            async with session.get(f"{HUE_URL}/rooms") as resp:
+                rooms = (await resp.json()).get("rooms", [])
         return {
             "status": "ok",
-            "rooms_on": rooms_on,
-            "lights_on": lights_on,
-            "outdoor_temp": outdoor_temp,
-            "outdoor_motion": outdoor_motion,
+            "rooms_on": st.get("rooms_on", 0),
+            "lights_on": st.get("lights_on", 0),
+            "outdoor_temp": st.get("outdoor_temp_c"),
+            "outdoor_motion": st.get("outdoor_motion", False),
             "rooms": rooms,
         }
     except Exception as e:
