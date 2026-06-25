@@ -45,7 +45,7 @@ Browser (Canvas + WebSocket)
     ↕ WebSocket push every 2.5s
 FastAPI Server (port 37450)
     ├── Scheduler API (port 37460) — job status, run counts, failures
-    ├── Gateway Health (port 18789) — WebSocket reachability, channel status
+    ├── Gateway Health (port 18792) — Nova Gateway V2 HTTP health + TCP reachability
     ├── Redis (port 6379) — agent status, ingest queue depth
     ├── Ollama API (port 11434) — loaded models, VRAM usage
     ├── PostgreSQL (nova_memories) — DB size, row counts, table stats
@@ -66,7 +66,7 @@ All data collection runs concurrently via `asyncio.gather()`. Each collector is 
 | Source | What It Provides | Update Method |
 |--------|-----------------|---------------|
 | Scheduler API (`37460`) | 36 job statuses, run counts, durations, failures | HTTP GET |
-| Gateway Health (`18789`) | Live/down status, WebSocket reachability | HTTP GET + TCP probe |
+| Gateway Health (`18792`) | Nova Gateway V2 live/down status | HTTP GET + TCP probe |
 | Redis (`6379`) | Agent status/meta, ingest queue depth | Redis commands |
 | Ollama (`11434`) | Loaded models, VRAM, context lengths | HTTP GET `/api/ps` |
 | PostgreSQL | DB size, 1.3M+ memory rows, table stats | `psql` subprocess |
@@ -117,7 +117,7 @@ All service endpoints are configured as constants at the top of `server.py`:
 
 ```python
 SCHEDULER_BASE = "http://127.0.0.1:37460"
-GATEWAY_HEALTH = "http://127.0.0.1:18789/health"
+GATEWAY_HEALTH = "http://127.0.0.1:18792/health"
 OLLAMA_PS = "http://127.0.0.1:11434/api/ps"
 REDIS_URL = "redis://127.0.0.1:6379"
 POLL_INTERVAL = 2.5  # seconds
