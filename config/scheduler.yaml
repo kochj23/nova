@@ -1007,9 +1007,11 @@ tasks:
 
   # Weekly infrastructure report -> /operations/ every Thursday 4pm (7-day lens:
   # changes, crashes, alerts, memory growth, fleet health). Same voice as the daily log.
+  # NOTE: this scheduler's dow uses Python weekday() (Mon=0..Sun=6), NOT standard cron —
+  # so 3 = Thursday (verified via next_cron_time). Don't "fix" to 4 (that's Friday).
   weekly_ops_report:
     script: nova_weekly_ops_report.py
-    schedule: cron 0 16 * * 4
+    schedule: cron 0 16 * * 3
     timeout: 900
     overlap: skip
     group: llm
