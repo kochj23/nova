@@ -1005,6 +1005,15 @@ tasks:
     overlap: skip
     group: llm
 
+  # Weekly infrastructure report -> /operations/ every Thursday 4pm (7-day lens:
+  # changes, crashes, alerts, memory growth, fleet health). Same voice as the daily log.
+  weekly_ops_report:
+    script: nova_weekly_ops_report.py
+    schedule: cron 0 16 * * 4
+    timeout: 900
+    overlap: skip
+    group: llm
+
   vector_audit:
     script: nova_vector_audit.py
     schedule: cron 0 6 * * *
