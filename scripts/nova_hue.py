@@ -11,6 +11,8 @@ API key: macOS Keychain (nova-hue-api-key)
 Written by Jordan Koch.
 """
 
+from __future__ import annotations  # ponytail: 3.8 compat for `X | None` annotations (nuk/.10 runs py3.8)
+
 import json
 import os
 import re
@@ -47,6 +49,11 @@ _api_key_cache = None
 def get_api_key() -> str:
     global _api_key_cache
     if _api_key_cache is None:
+        # Linux nodes (no Keychain) supply the key via env / secrets.env; macOS falls back to Keychain.
+        env_key = os.environ.get("NOVA_HUE_API_KEY")
+        if env_key:
+            _api_key_cache = env_key.strip()
+            return _api_key_cache
         result = subprocess.run(
             ["security", "find-generic-password", "-a", "nova", "-s", "nova-hue-api-key", "-w"],
             capture_output=True, text=True
@@ -218,7 +225,7 @@ def insert_observation(observer: str, category: str, subject: str,
     meta_json = json.dumps(metadata) if metadata else "{}"
     try:
         subprocess.run(
-            ["psql", "-h", "localhost", "-d", "nova_ops", "-U", "kochj", "-c",
+            ["psql", "-h", "192.168.1.6", "-d", "nova_ops", "-U", "kochj", "-c",
              f"INSERT INTO shared_observations (observer, category, subject, observation, severity, metadata) "
              f"VALUES ('nova_hue', '{category}', '{subject}', "
              f"$obs${observation}$obs$, '{severity}', '{meta_json}'::jsonb)"],

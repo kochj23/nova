@@ -12,6 +12,8 @@ Keychain entries:
 Written by Jordan Koch.
 """
 
+from __future__ import annotations  # ponytail: 3.8 compat for `list[str]` etc. (nuk/.10 runs py3.8)
+
 import subprocess
 import sys
 
