@@ -169,12 +169,33 @@ def recall_emergencies(query: str, n: int = 30) -> list[dict]:
         return []
 
 
+# ponytail: block-list heuristic, not a geocoder. Drops a breaking item only when it names a
+# clearly-out-of-area place AND no SoCal place — so it under-blocks rather than wrongly dropping a
+# local alert. Tighten with real geocoding only if non-local items keep slipping through. See
+# tests/test_emergency_geo.py.
+NON_LOCAL_MARKERS = (
+    "venezuela", "colombia", "mexico city", "new mexico", "utah", "nevada", "arizona", "oregon",
+    "washington state", "northern california", "norcal", "bay area", "san francisco", "sacramento",
+    "japan", "turkey", "chile", "alaska", "hawaii", "texas", "florida", "colorado",
+)
+LOCAL_MARKERS = (
+    "los angeles", "l.a.", "la county", "socal", "southern california", "burbank", "glendale",
+    "pasadena", "long beach", "santa monica", "hollywood", "san fernando", "san gabriel",
+    "malibu", "ventura", "orange county", "inland empire", "antelope valley", "foothills",
+    "crescenta", "tujunga", "altadena", "the 5", "the 405", "the 134", "the 210", "the 101",
+)
+
+
+def _is_non_local(low: str) -> bool:
+    return any(m in low for m in NON_LOCAL_MARKERS) and not any(m in low for m in LOCAL_MARKERS)
+
+
 def find_breaking(items: list[dict]) -> list[dict]:
-    """Return items whose text matches a breaking-emergency keyword."""
+    """Return breaking-keyword items, excluding clearly out-of-area events."""
     hits = []
     for it in items:
         low = it["text"].lower()
-        if any(kw in low for kw in BREAKING_KEYWORDS):
+        if any(kw in low for kw in BREAKING_KEYWORDS) and not _is_non_local(low):
             hits.append(it)
     return hits
 
@@ -259,6 +280,12 @@ def generate_daily_recap():
 
     system = system_prompt(CONTEXT_JOURNAL_LOCAL + """
 LA COUNTY EMERGENCY RECAP RULES:
+- GEOGRAPHY GATE (hard rule, overrides everything): write ONLY about events in LA County /
+  Southern California (~150 miles of Los Angeles). SILENTLY DROP everything else — other
+  countries, other states, Northern California, national/global disaster roundups. Never
+  mention a non-local event even to note it isn't local. A feed item being present does NOT
+  mean it belongs here. If nothing local happened, write a short quiet-day note — do NOT pad
+  with out-of-area news.
 - This is a DAILY roundup of public-safety happenings across LA County, with a
   Burbank / Glendale / Pasadena / La Crescenta lean (where Nova's rack lives).
 - Cover fire, flood/weather, police/sheriff, public health, quakes, and anything
@@ -345,6 +372,10 @@ def generate_breaking():
 
     system = system_prompt(CONTEXT_JOURNAL_LOCAL + """
 BREAKING LA COUNTY EMERGENCY RULES:
+- GEOGRAPHY GATE (hard rule, overrides everything): the event MUST be in LA County /
+  Southern California. If the items are about anywhere else (other countries/states,
+  Northern California), there is NO breaking local emergency — respond with exactly the
+  single word SKIP and nothing else. Never write a breaking post about an out-of-area event.
 - Something genuinely notable just happened in LA County (evac order, active
   fire/flood, NWS Warning, major incident). This goes out NOW.
 - Lead with the USEFUL, STRAIGHT facts: what, where, who's affected, what to do
@@ -363,6 +394,9 @@ BREAKING LA COUNTY EMERGENCY RULES:
 Write the breaking emergency article for the local section. Facts and what-to-do first."""
 
     body = call_openrouter(system, user, model=MODEL, max_tokens=2500, temperature=0.7)
+    if body and body.strip().upper().startswith("SKIP"):
+        log("Breaking: model judged items non-local (SKIP) — not publishing")
+        return
     if not body or len(body) < 150:
         log("Breaking generation failed or too short")
         return

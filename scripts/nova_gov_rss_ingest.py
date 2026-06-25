@@ -548,10 +548,11 @@ FEEDS = [
     ("https://feeds.feedburner.com/calfire", "la_public_safety", "CAL FIRE Incidents"),
     ("https://www.lafd.org/rss.xml", "la_public_safety", "LAFD News"),
     ("https://fire.lacounty.gov/feed/", "la_public_safety", "LA County Fire"),
-    ("https://inciweb.wildfire.gov/incidents/rss.xml", "la_public_safety", "InciWeb Active Incidents"),
+    # ponytail: removed InciWeb (NATIONAL fire feed — leaked Utah/NM fires to /local/) and the two USGS feeds
+    # (GLOBAL/national quakes — Venezuela, NorCal). CAL FIRE + LA County Fire cover local fires; LA news RSS
+    # covers any newsworthy local quake. Re-add a geo-bounded USGS fdsnws query (lat/lon+maxradiuskm) only if a
+    # dedicated local seismic feed is wanted — needs a dynamic starttime, so it'd be a small helper, not a static feed.
     ("https://api.weather.gov/alerts/active.atom?zone=CAC037", "la_public_safety", "NWS LA County Alerts"),
-    ("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/2.5_day.atom", "la_public_safety", "USGS Quakes M2.5+ Day"),
-    ("https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/significant_week.atom", "la_public_safety", "USGS Significant Quakes Week"),
     ("https://dpw.lacounty.gov/adm/tools/rssFeed/feed2.aspx?xsltid=10&i=443", "la_public_safety", "LA County Public Works Road Closures"),
     ("https://www.lapdonline.org/newsroom/feed/", "la_public_safety", "LAPD Newsroom"),
     ("https://lasd.org/feed/", "la_public_safety", "LA County Sheriff"),
@@ -612,10 +613,9 @@ FEEDS = [
     # Verified 2026-06-20: HTTP 200 + 15 <entry>. Pattern: youtube.com/feeds/videos.xml?channel_id=UC...
     # channel_ids discovered from each channel's page "externalId":"UC...".
     # Glendale GTV6 / Pasadena KPAS had no resolvable UC id (gov video covered via Granicus above).
-    ("https://www.youtube.com/feeds/videos.xml?channel_id=UCinjnmQEwCddOudyCC1v7qA", "la_public_safety", "KTLA 5 (YouTube)"),
-    ("https://www.youtube.com/feeds/videos.xml?channel_id=UCVxBA3Cbu3pm8w8gEIoMEog", "la_public_safety", "ABC7 LA (YouTube)"),
-    ("https://www.youtube.com/feeds/videos.xml?channel_id=UCSWoppsVL0TLxFQ2qP_DLqQ", "la_public_safety", "NBCLA (YouTube)"),
-    ("https://www.youtube.com/feeds/videos.xml?channel_id=UCHfF8wFnipMeDpJf8OmMxDg", "la_public_safety", "FOX 11 Los Angeles (YouTube)"),
+    # ponytail: removed the 4 TV-station YouTube channel feeds — they publish the stations' WORLD/national
+    # uploads (Venezuela quakes, Colorado watch parties), not local segments. Their LOCAL RSS feeds (KTLA Local
+    # News, ABC7, NBC LA Local, FOX 11) are already in la_public_safety above and stay.
 
     # ── LA AIR QUALITY ──
     # Verified 2026-06-20: HTTP 200 + 580 <item>. SCAQMD advisories incl. live smoke/particle advisories.
