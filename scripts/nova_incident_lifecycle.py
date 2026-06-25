@@ -328,12 +328,44 @@ def stats(conn) -> dict:
         return {}
 
 
+def auto_close_public(conn) -> int:
+    """Age-close stale rows in public.incidents (Big Brother / Wazuh / postmortem
+    write here; nothing was closing them, so #508 zombies piled up). This table
+    has no updated_at and Big Brother creates a NEW row per occurrence, so an old
+    started_at == stale. Policy (Jordan-approved, #508):
+      - operational (non-security): critical 24h, else 6h
+      - security (title ~ 'security'): a long 7-day review window, so genuinely
+        stale ones eventually clear while fresh ones stay visible for ack.
+    """
+    closed = 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE public.incidents
+                   SET status='resolved', resolved_at=now(),
+                       root_cause = COALESCE(root_cause,'') ||
+                           ' [auto-closed by incident_lifecycle: stale past policy window]'
+                   WHERE status='open' AND (
+                       (title ILIKE '%security%' AND started_at < now() - interval '7 days')
+                    OR (title NOT ILIKE '%security%' AND severity='critical'
+                            AND started_at < now() - interval '24 hours')
+                    OR (title NOT ILIKE '%security%' AND COALESCE(severity,'warning') <> 'critical'
+                            AND started_at < now() - interval '6 hours')
+                   )""")
+            closed = cur.rowcount or 0
+        conn.commit()
+    except Exception as e:
+        print(f"incident_lifecycle: auto_close_public failed: {e}", file=sys.stderr)
+        conn.rollback()
+    return closed
+
+
 def sweep(conn, idle_minutes: int = DEFAULT_IDLE_MINUTES) -> dict:
     """One periodic pass: detect recurrence on still-open incidents, then close
     the quiet ones. Recurrence runs first so a closing incident still gets its
     key stamped. Returns a small summary dict. This is the function a scheduler
     task or the daemon loop should call."""
-    summary = {"closed": 0, "recurrence_scanned": 0}
+    summary = {"closed": 0, "recurrence_scanned": 0, "public_closed": 0}
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM telemetry.incidents WHERE status='open'")
@@ -342,6 +374,7 @@ def sweep(conn, idle_minutes: int = DEFAULT_IDLE_MINUTES) -> dict:
             detect_recurrence(conn, inc_id)
             summary["recurrence_scanned"] += 1
         summary["closed"] = auto_close_resolved(conn, idle_minutes)
+        summary["public_closed"] = auto_close_public(conn)
     except Exception as e:
         print(f"incident_lifecycle: sweep failed: {e}", file=sys.stderr)
     return summary
@@ -465,7 +498,7 @@ def main():
         if a.sweep:
             s = sweep(conn, a.minutes)
             print(f"sweep: closed {s['closed']}, recurrence-scanned "
-                  f"{s['recurrence_scanned']}")
+                  f"{s['recurrence_scanned']}, public-closed {s.get('public_closed', 0)}")
             sys.exit(0)
         if a.migrate:
             print("schema applied")
