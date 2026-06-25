@@ -309,7 +309,7 @@ def _recipe_nova_base(user, ip, os_family, dry_run):
             checks.append("[drift] syslog forwarding missing")
             if not dry_run:
                 ssh_exec(user, ip,
-                    "echo '*.* @192.168.1.6:1514' | sudo tee /etc/rsyslog.d/60-nova.conf > /dev/null && "
+                    "echo '*.* @192.168.1.2:1514' | sudo tee /etc/rsyslog.d/60-nova.conf > /dev/null && "
                     "sudo systemctl restart rsyslog")
                 checks[-1] = "[created] syslog forwarding"
 

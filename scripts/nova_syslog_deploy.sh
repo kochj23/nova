@@ -16,7 +16,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-SYSLOG_HOST="192.168.1.6"
+SYSLOG_HOST="192.168.1.2"
 SYSLOG_PORT="1514"
 FORWARDER_SCRIPT="$SCRIPT_DIR/nova_syslog_forwarder.sh"
 FORWARDER_PLIST="$SCRIPT_DIR/net.digitalnoise.nova-syslog-forwarder.plist"

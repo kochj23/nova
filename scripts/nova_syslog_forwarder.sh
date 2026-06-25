@@ -14,7 +14,7 @@
 
 set -euo pipefail
 
-SYSLOG_HOST="${NOVA_SYSLOG_HOST:-192.168.1.6}"
+SYSLOG_HOST="${NOVA_SYSLOG_HOST:-192.168.1.2}"
 SYSLOG_PORT="${NOVA_SYSLOG_PORT:-1514}"
 HOSTNAME=$(scutil --get LocalHostName 2>/dev/null || hostname -s)
 
