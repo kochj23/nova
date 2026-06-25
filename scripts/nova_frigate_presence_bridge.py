@@ -29,16 +29,33 @@ MIN_INTERVAL_S = 20  # min seconds between inserts per (camera,label)
 # are outdoor zones (perimeter), which the presence engine must NOT collapse to
 # "home" (it already guards on this). A few interior mappings are best-guess —
 # confirm with Jordan (see design-636 doc).
+# Rooms reflect the REAL camera each key streams. The camera_config KEYS are
+# historically mislabeled vs Protect (verified 2026-06-25 from the Protect
+# bootstrap — full table in agent_docs reference-635-camera-map), so the room is
+# assigned by what the camera ACTUALLY shows, not by the key name. De-scramble
+# corrections vs the key name:
+#   back_1_unas         -> Interior-Front-Door  (entry, was back_yard)
+#   interior_front_door -> Interior-Kitchen     (kitchen, was entry)
+#   interior_lr_front   -> Interior-Laundry     (laundry, was living_room)
+#   interior_printer_3d -> Interior-LR-Front    (living_room, was office)
+#   exterior_front_right-> Interior-Garage      (garage, was front_yard — DUP of garage,
+#                          mislabeled; the real exterior front-right cam isn't in
+#                          camera_config — 4 Protect cams are unmapped, see the doc)
 CAMERA_ROOM = {
-    "front_door": "entry", "front_door_patio": "entry", "interior_front_door": "entry",
-    "front_yard": "front_yard", "front_yard_alt": "front_yard", "exterior_front_right": "front_yard",
-    "carport": "carport", "garage": "garage",
+    # exterior / perimeter zones
+    "front_door": "entry", "front_door_patio": "entry", "back_1_unas": "entry",
+    "front_yard": "front_yard", "front_yard_alt": "front_yard",
+    "carport": "carport",
     "alley_north": "alley", "alley_south": "alley", "exterior_garbage": "alley",
     "back_patio": "back_yard", "patio_1": "back_yard", "patio_2": "back_yard",
-    "back_1_unas": "back_yard", "abundio_boundary": "boundary",
+    "abundio_boundary": "boundary",
+    # interior rooms (by actual camera)
+    "garage": "garage", "exterior_front_right": "garage",
+    "interior_front_door": "kitchen", "interior_kitchen_alley": "kitchen",
     "interior_living_room": "living_room", "interior_living_room_b": "living_room",
-    "interior_lr_front": "living_room", "interior_kitchen_alley": "kitchen",
-    "3d_printers": "office", "interior_printer_3d": "office", "interior_printers": "office",
+    "interior_printer_3d": "living_room",
+    "interior_lr_front": "laundry",
+    "interior_printers": "office", "3d_printers": "office",
 }
 PERSON_LABELS = {"person"}
 VEHICLE_LABELS = {"car", "truck", "motorcycle", "bus"}
