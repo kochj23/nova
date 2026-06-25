@@ -220,9 +220,12 @@ def make_cover(slug: str, date: str) -> str:
         return ""
     import shutil
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-    ext = Path(img).suffix or ".png"
-    dest = IMAGES_DIR / f"{date}-{slug}{ext}"
-    shutil.copy2(img, dest)
+    # Deterministic .webp cover (matches the /operations/ convention; the committed file
+    # must match the front-matter ref, so convert here rather than trusting a git hook).
+    dest = IMAGES_DIR / f"{date}-{slug}.webp"
+    subprocess.run(["cwebp", "-quiet", "-q", "82", str(img), "-o", str(dest)], capture_output=True)
+    if not dest.exists():
+        shutil.copy2(img, dest)  # fallback if cwebp is unavailable
     log(f"Cover image: {dest.name}")
     return f"/images/operations/{dest.name}"
 
