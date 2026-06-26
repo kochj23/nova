@@ -22,6 +22,7 @@ Written by Jordan Koch (via Claude).
 """
 
 import json
+import math
 import re
 import sys
 import time
@@ -190,13 +191,106 @@ def _is_non_local(low: str) -> bool:
     return any(m in low for m in NON_LOCAL_MARKERS) and not any(m in low for m in LOCAL_MARKERS)
 
 
+# ── Geofence: hard 25-mile radius of 91506 (Burbank) ──────────────────────────
+# The block-list above only catches *clearly* out-of-area items; it let a Littlerock
+# brush fire (~30 mi NE — still "SoCal") through. So for ambiguous SoCal items we do
+# real geocoding: extract the PRIMARY event location (LLM — an item may name a nearby
+# place tangentially, e.g. "smoke may reach Burbank"), geocode it (Nominatim, SoCal-
+# biased, cached), and drop anything farther than RADIUS_MI from home. Ungeocodable ->
+# keep (fail-safe: never drop a real local alert because the geocoder hiccuped).
+HOME_LAT, HOME_LON = 34.176, -118.321   # 91506, Burbank
+RADIUS_MI = 25.0
+GEO_CACHE_FILE = Path.home() / ".openclaw/config/journal_emergency_geocache.json"
+NOMINATIM = "https://nominatim.openstreetmap.org/search"
+# SoCal viewbox (lon_min,lat_max,lon_max,lat_min) biases results to the LA basin so
+# "Littlerock" resolves to CA, not Arkansas. ponytail: bias not bound — far places
+# still geocode (then get distance-dropped); switch to bounded=1 only if mismatches appear.
+_SOCAL_VIEWBOX = "-119.6,35.0,-116.8,33.4"
+
+
+def _haversine_mi(lat1, lon1, lat2, lon2):
+    r = 3958.8  # earth radius, miles
+    p1, p2 = math.radians(lat1), math.radians(lat2)
+    dp, dl = math.radians(lat2 - lat1), math.radians(lon2 - lon1)
+    a = math.sin(dp / 2) ** 2 + math.cos(p1) * math.cos(p2) * math.sin(dl / 2) ** 2
+    return r * 2 * math.asin(math.sqrt(a))
+
+
+def _load_geocache() -> dict:
+    try:
+        return json.loads(GEO_CACHE_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def _geocode(place: str):
+    """(lat, lon) for a place, SoCal-biased + persistently cached. None if not found."""
+    key = place.strip().lower()
+    cache = _load_geocache()
+    if key in cache:                      # cached hit OR cached miss (stored as None)
+        return tuple(cache[key]) if cache[key] else None
+    coords = None
+    try:
+        q = urllib.parse.urlencode({"q": place, "format": "json", "limit": 1,
+                                    "countrycodes": "us", "viewbox": _SOCAL_VIEWBOX})
+        req = urllib.request.Request(
+            f"{NOMINATIM}?{q}",
+            headers={"User-Agent": "nova-emergency-geofence/1.0 (+https://nova.digitalnoise.net)"})
+        data = json.loads(urllib.request.urlopen(req, timeout=10).read())
+        if data:
+            coords = (float(data[0]["lat"]), float(data[0]["lon"]))
+    except Exception as e:
+        log(f"geocode '{place}' failed: {e}")
+        return None                       # transient — don't cache a failure
+    cache[key] = list(coords) if coords else None
+    try:
+        GEO_CACHE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        GEO_CACHE_FILE.write_text(json.dumps(cache))
+    except Exception as e:
+        log(f"geocache save failed: {e}")
+    return coords
+
+
+def _primary_location(text: str):
+    """Ask the model for the single primary physical location of the event (or None)."""
+    out = call_openrouter(
+        "You extract the single primary physical location of a news/emergency item.",
+        ("Where is this event physically happening? Reply with ONLY the most specific "
+         "place name + state/region (e.g. 'Littlerock, CA' or 'Burbank, CA'). "
+         f"If there is no clear location, reply NONE.\n\nItem:\n{text[:600]}"),
+        model=MODEL, max_tokens=30, temperature=0.0)
+    if not out:
+        return None
+    out = out.strip().strip('"').splitlines()[0].strip()
+    return None if (not out or out.upper().startswith("NONE")) else out
+
+
+def within_radius(text: str):
+    """(keep, miles, place, reason) — hard RADIUS_MI gate around home, with fail-safes."""
+    if _is_non_local(text.lower()):           # clearly far -> drop cheaply, skip geocode
+        return False, None, None, "out-of-area (block-list)"
+    place = _primary_location(text)
+    if not place:
+        return True, None, None, "no location -> keep (fail-safe)"
+    coords = _geocode(place)
+    if not coords:
+        return True, None, place, "ungeocodable -> keep (fail-safe)"
+    d = _haversine_mi(HOME_LAT, HOME_LON, coords[0], coords[1])
+    return (d <= RADIUS_MI), d, place, f"{d:.0f} mi"
+
+
 def find_breaking(items: list[dict]) -> list[dict]:
-    """Return breaking-keyword items, excluding clearly out-of-area events."""
+    """Breaking-keyword items within RADIUS_MI of home (91506). Far events are dropped."""
     hits = []
     for it in items:
         low = it["text"].lower()
-        if any(kw in low for kw in BREAKING_KEYWORDS) and not _is_non_local(low):
+        if not any(kw in low for kw in BREAKING_KEYWORDS):
+            continue
+        keep, miles, place, reason = within_radius(it["text"])
+        if keep:
             hits.append(it)
+        else:
+            log(f"geofence DROP [{place or '?'} · {reason}]: {it['text'][:70].strip()}")
     return hits
 
 
