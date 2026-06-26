@@ -33,6 +33,8 @@ Model field resolution:
   The upstream "model" is rewritten to the chosen node's actual model name.
 """
 import json
+import os
+import random
 import sys
 import threading
 import time
@@ -45,6 +47,18 @@ PORT = 37475
 PROBE_INTERVAL = 10          # seconds between backend health probes
 PROBE_TIMEOUT = 4
 PROXY_TIMEOUT = 600          # big models can be slow on cold load
+
+# Keep Ollama models resident between requests so a 30B doesn't cold-load after
+# Ollama's 5-min idle default — matches the convention in nova_vision_analyzer
+# (30m). Injected into every routed Ollama payload that doesn't set its own.
+KEEP_ALIVE = os.environ.get("NOVA_OLLAMA_KEEP_ALIVE", "30m")
+
+# Opt-in Thompson-sampling routing: weight backend choice by learned reliability
+# (Beta(ok+1,fail+1)) on top of least-loaded, so a flaky node gets explored down
+# instead of receiving traffic on a tie. OFF by default — least-loaded stays the
+# live path; ok/fail counts accrue regardless and are visible at /pool/status, so
+# the bandit can be validated from real data before being switched on.
+BANDIT = os.environ.get("NOVA_ROUTER_BANDIT", "") not in ("", "0", "false", "no")
 
 # ── The fabric registry ──────────────────────────────────────────────────────
 # class -> list of backends. Each backend: (host, port, kind, model).
@@ -130,7 +144,7 @@ def _health_loop():
                 st = _state.setdefault((host, port),
                                        {"healthy": False, "models": set(),
                                         "inflight": 0, "lat": 0.0, "gen_lat": 2.0,
-                                        "kind": kind})
+                                        "ok": 0, "fail": 0, "kind": kind})
                 st["healthy"], st["models"] = healthy, models
                 st["lat"] = (time.time() - t0) * 1000
         time.sleep(PROBE_INTERVAL)
@@ -147,22 +161,38 @@ def _eligible(pool):
             if kind == "ollama" and model not in st["models"]:
                 continue   # model not pulled here yet — skip until it lands
             out.append((host, port, kind, model, st["inflight"],
-                        st.get("gen_lat", 2.0)))   # observed request latency (EWMA)
+                        st.get("gen_lat", 2.0),    # observed request latency (EWMA)
+                        st.get("ok", 0), st.get("fail", 0)))
     return out
 
 
-def _pick(pool):
-    """Latency-aware least-loaded: score = (inflight+1) * recent gen-latency.
+def _score(b):
+    """Lower is better. Base = (inflight+1)*gen_lat (least-loaded, latency-aware).
 
-    This spreads load active/active across fast peers, but stops a slow node
-    (high gen-latency) from being handed concurrent traffic it would straggle on
-    — it only receives a request once the fast nodes are loaded enough that
-    (inflight+1)*fast_lat exceeds the slow node's latency.
+    With BANDIT on, divide by a Thompson sample of reliability ~ Beta(ok+1,fail+1)
+    so a backend that has been failing gets a probabilistically worse score and is
+    explored down; a clean backend samples near 1.0 and keeps its least-loaded score.
+    """
+    inflight, gen_lat, ok, fail = b[4], b[5], b[6], b[7]
+    base = (inflight + 1) * gen_lat
+    if BANDIT:
+        rel = random.betavariate(ok + 1, fail + 1)   # sampled per decision
+        return base / max(rel, 0.05)
+    return base
+
+
+def _pick(pool):
+    """Latency-aware least-loaded (Thompson-weighted when BANDIT is on).
+
+    Least-loaded spreads load active/active across fast peers and stops a slow
+    node (high gen-latency) from being handed concurrent traffic it would
+    straggle on — it only receives a request once the fast nodes are loaded
+    enough that (inflight+1)*fast_lat exceeds the slow node's latency.
     """
     cand = _eligible(pool)
     if not cand:
         return None
-    cand.sort(key=lambda b: (b[4] + 1) * b[5])   # (inflight+1) * gen_lat
+    cand.sort(key=_score)
     return cand[0][:4]                            # (host,port,kind,model)
 
 
@@ -209,11 +239,12 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:
                 snap = {f"{h}:{p}": {"healthy": s["healthy"], "inflight": s["inflight"],
                                      "lat_ms": round(s["lat"], 1), "kind": s["kind"],
+                                     "ok": s.get("ok", 0), "fail": s.get("fail", 0),
                                      "models": sorted(s["models"])[:12]}
                         for (h, p), s in _state.items()}
             pools = {cls: [f"{h}:{p}->{m}" for h, p, k, m in pool]
                      for cls, pool in POOLS.items()}
-            return self._json(200, {"backends": snap, "pools": pools})
+            return self._json(200, {"backends": snap, "bandit": BANDIT, "pools": pools})
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
@@ -229,6 +260,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(503, {"error": info})
         host, port, kind, model = chosen
         payload["model"] = model                 # rewrite to node's actual model
+        if kind == "ollama":                     # keep the model resident between calls
+            payload.setdefault("keep_alive", KEEP_ALIVE)
         # OpenAI path for mtplx/mlx; Ollama-native path otherwise
         if kind in ("mtplx", "mlx"):
             up_path = "/v1/chat/completions"
@@ -242,7 +275,8 @@ class Handler(BaseHTTPRequestHandler):
         key = (host, port)
         with _lock:
             _state.setdefault(key, {"healthy": True, "models": set(), "inflight": 0,
-                                    "lat": 0.0, "gen_lat": 2.0, "kind": ""})["inflight"] += 1
+                                    "lat": 0.0, "gen_lat": 2.0, "ok": 0, "fail": 0,
+                                    "kind": ""})["inflight"] += 1
         t0 = time.time()
         try:
             body = json.dumps(payload).encode()
@@ -254,6 +288,7 @@ class Handler(BaseHTTPRequestHandler):
             with _lock:                            # learn this backend's real speed
                 st = _state[key]
                 st["gen_lat"] = 0.6 * st.get("gen_lat", 2.0) + 0.4 * (time.time() - t0)
+                st["ok"] = st.get("ok", 0) + 1     # reliability signal for the bandit
             self.send_response(resp.status)
             self.send_header("Content-Type",
                              resp.headers.get("Content-Type", "application/json"))
@@ -263,8 +298,12 @@ class Handler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(data)
         except urllib.error.HTTPError as e:
+            with _lock:
+                _state[key]["fail"] = _state[key].get("fail", 0) + 1
             self._json(e.code, {"error": f"backend {host}:{port}: {e.reason}"})
         except Exception as e:
+            with _lock:
+                _state[key]["fail"] = _state[key].get("fail", 0) + 1
             self._json(502, {"error": f"backend {host}:{port} unreachable: {e}"})
         finally:
             with _lock:
