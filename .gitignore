@@ -151,3 +151,6 @@ certs/
 nova_ops.db
 config/adt_matter_watch.json
 config/journal_emergency_geocache.json
+
+# Python virtualenvs (incl. nova_make/adc, created 2026-06-26)
+venvs/
