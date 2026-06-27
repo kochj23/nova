@@ -1302,6 +1302,40 @@ flowchart LR
 - `nova_config.py` constants: `LAN_IP = "192.168.1.6"`, `NOVA_HOST = LAN_IP`
 - YouTube cookies: `~/.openclaw/cache/yt_cookies.txt` (mode 600, not in git)
 
+## Maker & Home Integrations (June 2026)
+
+### `nova_make` — Nova prints physical objects from an idea (autonomous)
+
+A text idea becomes a real print with no human in the loop. The geometry gate
+guarantees *printable*; "autonomous" means no approval prompt — physical-bounds
+safety (bed-fit, watertight, filament/time caps, idle guard) instead.
+
+```mermaid
+flowchart LR
+    idea["idea (text)"] --> gen["LLM writes build123d<br/>local qwen3-coder → Claude escalation"]
+    gen --> run["run in py3.12 venv<br/>→ STL + render"]
+    run --> val{"watertight?<br/>fits bed?<br/>self-repair ≤5×"}
+    val -- no --> gen
+    val -- yes --> slice["OrcaSlicer CLI<br/>→ .gcode.3mf"]
+    slice --> caps{"filament + time<br/>under caps?"}
+    caps -- yes --> prnt["nova_bambu_watch print<br/>(idle-guarded, --no-ams)"]
+```
+
+- **Hybrid brain:** local `qwen3-coder:30b` first (free), escalates to Claude (OpenRouter) on failure, self-repairs from tracebacks.
+- **Slicer:** OrcaSlicer CLI (Bambu Studio's CLI segfaults headless). X1C / 0.20 mm / PLA Basic profiles.
+- **Print path:** single external spool, direct-feed (`--no-ams`, no AMS purge waste).
+- Files: `scripts/nova_make.py`, `scripts/nova_make_part.py`.
+
+### Bambu printers — telemetry, dashboard, chamber cams
+- `nova_bambu_watch.py` samples P1/P2 into `bambu_telemetry` (PG) every 5 min → Grafana dashboard *Bambu Printers (P1/P2)* (state, temps, last job, progress).
+- Both X1C chamber cams are first-class **Frigate** cameras (native RTSPS `:322`, record-only), alongside the UniFi fleet.
+
+### Emergency journal — hard 25-mile geofence (91506)
+`nova_journal_emergency.py` breaking `/local/` posts are gated to **25 miles of Burbank**: the model extracts the primary event location → Nominatim geocode (SoCal-biased, cached) → haversine distance → drop if beyond the radius (ungeocodable items kept, fail-safe). A ~30 mi Littlerock fire that used to slip through is now dropped. Tests in `tests/test_emergency_geo.py`.
+
+### ADT+ Matter watch
+`nova_adt_matter_watch.py` (launchd, daily) browses the LAN for Matter devices and pings Slack the day the ADT Self-Setup hub starts advertising Matter — the route to ingesting its door/window/motion sensors into Nova once ADT's firmware rollout reaches it.
+
 ---
 
 *Written by Jordan Koch. Nova chose her own name.*

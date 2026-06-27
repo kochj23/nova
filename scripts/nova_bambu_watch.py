@@ -46,6 +46,13 @@ from nova_notify import notify  # Slack/Discord via PG telemetry.events
 SOURCE = "bambu"
 MEMORY_URL = "http://192.168.1.6:18790"
 DIGEST_EVERY_S = 300  # write a status digest to memory every 5 min
+SAMPLE_EVERY_S = 300  # write a telemetry row per printer to PG this often (Grafana)
+PG_DSN = "host=localhost dbname=nova_ops user=kochj"
+BUSY_STATES = {"RUNNING", "PAUSE", "PREPARE", "SLICING", "RESUMING"}
+
+
+def is_busy(state):
+    return state in BUSY_STATES
 
 # gcode_state -> friendly
 SPEED_LEVELS = {"silent": "1", "standard": "2", "sport": "3", "ludicrous": "4"}
@@ -308,6 +315,57 @@ def _is_filament_runout(attr, hcode):
     return hcode in (0x07008011, 0x07FF8011, 0x07018011, 0x07028011, 0x07038011)
 
 
+# ── telemetry sampling → Postgres (for Grafana) ───────────────────────────────
+_pg_conn = None
+
+
+def _pg():
+    """Lazy, self-healing psycopg2 connection. Returns None if PG is unreachable —
+    telemetry is best-effort and must never stall or crash the watch loop."""
+    global _pg_conn
+    try:
+        if _pg_conn is None or _pg_conn.closed:
+            import psycopg2
+            _pg_conn = psycopg2.connect(PG_DSN)
+            _pg_conn.autocommit = True
+        return _pg_conn
+    except Exception as e:
+        log(f"pg connect failed: {e}")
+        _pg_conn = None
+        return None
+
+
+def pg_sample(printers):
+    """Insert one telemetry row per printer (best-effort; drops the connection on error so the next tick reconnects)."""
+    global _pg_conn
+    conn = _pg()
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            for p in printers:
+                s = p.state
+                if not s:
+                    continue
+                st = s.get("gcode_state")
+                cur.execute(
+                    "INSERT INTO bambu_telemetry "
+                    "(printer,name,state,busy,stage,job,nozzle_temp,bed_temp,chamber_temp,pct,layer,total_layer) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (p.key, p.name, st, is_busy(st),
+                     STAGE.get(s.get("stg_cur"), str(s.get("stg_cur"))),
+                     s.get("subtask_name") or None,
+                     s.get("nozzle_temper"), s.get("bed_temper"), s.get("chamber_temper"),
+                     s.get("mc_percent"), s.get("layer_num"), s.get("total_layer_num")))
+    except Exception as e:
+        log(f"pg sample failed: {e}")
+        try:
+            conn.close()
+        except Exception:
+            pass
+        _pg_conn = None
+
+
 # ── digest across all printers ────────────────────────────────────────────────
 def write_digest(printers, blocking=True):
     lines = [p.status_line() for p in printers]
@@ -330,6 +388,7 @@ def watch():
             log(f"{p.name}: connect failed: {e}")
     log(f"watching {len(printers)} printers")
     last_digest = 0
+    last_sample = 0
     try:
         while True:
             time.sleep(5)
@@ -339,6 +398,9 @@ def watch():
                         p.client.reconnect()
                     except Exception:
                         pass
+            if time.time() - last_sample >= SAMPLE_EVERY_S:
+                pg_sample(printers)
+                last_sample = time.time()
             if time.time() - last_digest >= DIGEST_EVERY_S:
                 write_digest(printers, blocking=False)
                 last_digest = time.time()
@@ -382,6 +444,8 @@ def selftest():
         assert len(c) == 8, f"{k} access code wrong length"
     assert SPEED_LEVELS["ludicrous"] == "4"
     assert _is_filament_runout(0, 0x07008011) and not _is_filament_runout(0, 0x12345678)
+    # telemetry: busy classification (drives the Grafana idle/in-use panel)
+    assert is_busy("RUNNING") and is_busy("PAUSE") and not is_busy("FINISH") and not is_busy(None)
     # status_line tolerates empty + populated state
     p = Printer("P1", PRINTERS["P1"]); p.client.loop_stop()
     assert "Printer 1" in p.status_line()

@@ -144,3 +144,10 @@ workspace/or_*.png
 
 # Claude Code bridge per-session state (#672)
 data/claude_bridge_session.json
+
+# Security / data / runtime state — never commit (added 2026-06-26)
+certs/
+*.db
+nova_ops.db
+config/adt_matter_watch.json
+config/journal_emergency_geocache.json
