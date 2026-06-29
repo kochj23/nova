@@ -962,6 +962,64 @@ AND started_at > extract(epoch from now()-interval '1 hour')*1000;
 
 ---
 
+## Observability Collectors & Grafana Dashboards (June 2026)
+
+Every IoT/infra data source is polled by a small collector on a `nova-scheduler`
+cadence into PostgreSQL, then graphed in Grafana (`.2:3000`). Power is captured
+from **real meters** where available (Zigbee plugs, Eve strips, UniFi PoE) and
+**estimated** only where the hardware has no sensor (Hue bulbs).
+
+```mermaid
+flowchart LR
+  subgraph Sources
+    Z[zigbee2mqtt]
+    HUE[Hue bridge .195]
+    EVE[NovaHomeKit / Eve]
+    UNAS[UNAS Pro .69]
+    UNIFI[UniFi controller]
+    SYN[Synology .11]
+  end
+  Z -->|every 5m| P1[nova_zigbee_poller] --> ER[(energy_readings + telemetry.climate)]
+  HUE -->|every 2m| P2[nova_hue_history] --> HH[(telemetry.hue_light_history)]
+  EVE -->|every 2m| P3[nova_eve_energy] --> EN[(telemetry.energy)]
+  UNAS -->|every 5m, SSH| P4[nova_unas_disk_health] --> SM[(telemetry.storage_metrics)]
+  UNIFI -->|every 2m| P5[nova_unifi_metrics] --> UM[(telemetry.unifi_metrics: PoE)]
+  SYN & UNAS -->|find both sides local| P6[nova_nas_localdiff] --> BR[(telemetry.backup_runs)]
+  ER --> GRAF[[Grafana :3000]]
+  HH --> GRAF
+  EN --> GRAF
+  SM --> GRAF
+  UM --> GRAF
+```
+
+**Collectors added this cycle:**
+
+| Script | Cadence | Captures | Table |
+|--------|---------|----------|-------|
+| `nova_unas_disk_health.py` | 5m | UNAS disk temps + SMART + mdadm RAID + pool % (via SSH; UniFi API/SNMP expose none of this) | `storage_metrics` |
+| `nova_hue_history.py` | 2m | Hue color/ct/brightness/on + **estimated** watts (append-only time-series) | `hue_light_history` |
+| `nova_eve_energy.py` | 2m | Eve Energy strip **real-time watts** via NovaHomeKit (`E863F10C`) | `telemetry.energy` |
+| `nova_zigbee_poller.py` | 5m | extended to also write temperature→`telemetry.climate` | `climate` |
+
+PoE wattage is already collected per-port by `nova_unifi_metrics` (`unifi_port_poe_w`).
+
+**Dashboards (`http://192.168.1.2:3000/d/<uid>`):** `smart-plugs-power` (now incl.
+Eve + energy kWh), `hue-lights`, `poe-power`, `storage-unas`, `fleet-health`,
+`web-analytics`, `security-posture`, `nova-activity`, `chp-traffic`,
+`homekit-outlets`.
+
+**Backup reconcile:** `nova_nas_localdiff.py` finds **both** Synology and UNAS
+trees on their *local* disks (the 3M-file `nas` share over CIFS never finished)
+and rsyncs only the diff. `nova_ssh_rsync_watch.py` watches the direct
+Synology→UNAS SSH transfer used for catch-ups (ext4→ext4 preserves filenames the
+SMB path mangled).
+
+**Code graph:** `nova_codegraph.py` is a stdlib-`ast` code-graph (callers/callees/
+importers/where) over the repo, stored in SQLite and wrapped as an MCP server
+(`.claude/mcp-servers/codegraph/`).
+
+---
+
 ## YouTube Downloads
 
 yt-dlp uses Chrome cookies (Safari cookies rejected by YouTube's bot detection since mid-2026). Cookie file auto-refreshes via `osascript` (GUI session TCC access) when missing or >6 hours old.

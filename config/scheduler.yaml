@@ -47,7 +47,7 @@ tasks:
     script: nova_prober.py
     schedule: every 2m
     args: ["--once", "--quiet"]
-    timeout: 135
+    timeout: 202
     overlap: skip
 
   incident_lifecycle:              # auto-close resolved incidents + recurrence detection
@@ -67,7 +67,7 @@ tasks:
     script: nova_chp_traffic.py
     schedule: every 5m
     args: ["--quiet"]
-    timeout: 60
+    timeout: 90
     overlap: skip
 
   sky_watcher:
@@ -177,6 +177,25 @@ tasks:
     timeout: 90
     overlap: skip
 
+  unas_disk_health:                # UNAS disk temps/SMART/RAID via SSH (UniFi API can't see these)
+    script: nova_unas_disk_health.py
+    schedule: every 5m
+    timeout: 120
+    overlap: skip
+
+  hue_history:                     # append-only Hue time-series: color/ct/brightness/on + est. power
+    script: nova_hue_history.py
+    schedule: every 2m
+    timeout: 60
+    overlap: skip
+
+  eve_energy:                      # Eve Energy strip real-time watts via NovaHomeKit -> telemetry.energy
+    script: nova_eve_energy.py
+    schedule: every 2m
+    timeout: 45
+    overlap: skip
+
+
   ha_metrics:
     script: nova_ha_metrics.py
     args: ["--once"]
@@ -223,7 +242,7 @@ tasks:
   component_metrics:
     script: nova_component_metrics.py
     schedule: every 1m
-    timeout: 60
+    timeout: 90
     overlap: skip
 
   # ── Every 1-4 hours ────────────────────────────────────────────────────
@@ -908,10 +927,24 @@ tasks:
     timeout: 120
     overlap: skip
 
-  skill_detector:
-    script: nova_skill_detector.py
-    schedule: cron 0 5 * * *
-    timeout: 300
+  # DISABLED 2026-06-28 (Claude watch): nova_skill_detector.py was retired to
+  # archive/ in a4bce75 ("KILL the dead autonomy #513 — 0 output ever"), but this
+  # entry was left behind and failed 8 consecutive days (exit 2, script not found).
+  # skill_detector:
+  #   script: nova_skill_detector.py
+  #   schedule: cron 0 5 * * *
+  #   timeout: 300
+  #   overlap: skip
+  #   group: llm
+
+  # Weekly memory hygiene: audit all ~1.66M memories against vector centroids and
+  # reshelve clearly-misclassified PUBLIC/knowledge memories (private/internal are
+  # never moved — provenance over topic). Creates new vectors for homeless clusters,
+  # posts status to #nova-info, and writes an /operations/ article in Nova's voice.
+  memory_reclassify:
+    script: nova_memory_reclassify.py
+    schedule: cron 0 1 * * 6
+    timeout: 7200
     overlap: skip
     group: llm
 
