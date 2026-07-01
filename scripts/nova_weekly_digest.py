@@ -679,7 +679,7 @@ def _generate_digest_image(editorial: str, date_str: str) -> str | None:
                     except (FileNotFoundError, subprocess.TimeoutExpired):
                         shutil.copy2(image_path, dest)
                     log(f"Digest image generated (attempt {attempt + 1}): {dest.name}")
-                    return f"/images/operations/{date_str}.webp"
+                    return f"/images/digests/{date_str}.webp"  # match IMAGES_DIR write path
             log(f"Image attempt {attempt + 1}/3 failed (exit {result.returncode})")
         except subprocess.TimeoutExpired:
             log(f"Image attempt {attempt + 1}/3 timed out (360s)")

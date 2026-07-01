@@ -1048,11 +1048,13 @@ def _werewolf_resolve_night(state: dict) -> None:
             if target_email:
                 target_role = assignments.get(target_email, "villager")
                 seer_results[email] = {"name": action, "role": target_role}
+                # Compute verdict first so target_role interpolates (nested f-string literal would show it verbatim)
+                verdict = "a WEREWOLF" if target_role == "werewolf" else f"NOT a werewolf (they are {target_role})"
                 # Send seer their private result
                 send_email(
                     email,
                     f"[GAME:{game_id}] Seer Vision — Night {day}",
-                    f"Your vision is clear.\n\n{action} is {'a WEREWOLF' if target_role == 'werewolf' else 'NOT a werewolf (they are {target_role})'}\n\nUse this wisely.\n\n— Nova\n[GAME:{game_id}]"
+                    f"Your vision is clear.\n\n{action} is {verdict}\n\nUse this wisely.\n\n— Nova\n[GAME:{game_id}]"
                 )
 
     # Determine actual kill

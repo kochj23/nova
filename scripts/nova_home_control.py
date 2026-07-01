@@ -30,6 +30,7 @@ import sys
 import time
 import urllib.request
 import urllib.error
+from pathlib import Path
 from xml.etree import ElementTree
 
 sys.path.insert(0, str(Path.home()) + "/.openclaw/scripts")

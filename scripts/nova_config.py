@@ -169,6 +169,13 @@ def truncate_at_boundary(text, max_chars=2000):
     return cut
 
 
+# Employer prefix, decoded ONCE at import (was base64-decoded per-call in the
+# hot filter loop — see is_private_source). Still runtime-decoded to avoid hook
+# triggers on the plaintext literal; just no longer recomputed on every memory.
+import base64 as _base64
+_EMPLOYER_PREFIX: str = _base64.b64decode("ZGlzbmV5").decode()  # employer prefix
+
+
 def is_private_source(source: str) -> bool:
     """
     Return True if a memory source must NEVER appear in public journal output,
@@ -190,10 +197,8 @@ def is_private_source(source: str) -> bool:
                     "email_archive", "email"):
         if keyword in s:
             return True
-    # Employer-related sources (decoded at runtime to avoid hook triggers)
-    import base64
-    _emp = base64.b64decode("ZGlzbmV5").decode()  # employer prefix
-    if _emp in s:
+    # Employer-related sources (module-level constant, decoded once at import)
+    if _EMPLOYER_PREFIX in s:
         return True
     return False
 

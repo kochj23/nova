@@ -30,9 +30,13 @@ DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
 TMP = "/private/tmp/claude-501/-Users-kochj/d28a4dfe-64e1-4cee-b77a-bf6ae36d3648/scratchpad"
 
 # name, synology source, unas dest (local), synology CIFS dest mount (for the rsync)
+# NOTE: UniFi UNAS stores each share's contents under <share>/.data/ (owner
+# unifi-drive). The dest scan MUST point at .data/ so relative paths line up with
+# the Synology source — otherwise every file looks "missing". (Writes still go via
+# the CIFS mount, which lands in .data/ correctly.)
 JOBS = [
-    ("nas",      "/volume1/nas",      f"{UROOT}/nas",      "/volume1/docker/nas"),
-    ("external", "/volume1/external", f"{UROOT}/External", "/volume1/docker/external"),
+    ("nas",      "/volume1/nas",      f"{UROOT}/nas/.data",      "/volume1/docker/nas"),
+    ("external", "/volume1/external", f"{UROOT}/External/.data", "/volume1/docker/external"),
 ]
 EXCL = re.compile(r"@eaDir|/#recycle|/#snapshot|\.DS_Store$|\.app/|GoogleDriveBackups/Pics/Pictures/\.com-apple-bird-noname-")
 
@@ -80,6 +84,48 @@ def record(name, rc, files):
         print(f"telemetry write failed: {e}", flush=True)
 
 
+STATE = os.path.expanduser("~/.openclaw/.localdiff_srccount.json")
+
+
+def _last_counts():
+    import json
+    try:
+        return json.load(open(STATE))
+    except Exception:
+        return {}
+
+
+def _save_count(name, n):
+    import json
+    d = _last_counts(); d[name] = n
+    try:
+        json.dump(d, open(STATE, "w"))
+    except Exception as e:
+        print(f"state save failed: {e}", flush=True)
+
+
+def prune_orphans(name, udst, orphans):
+    """Delete UNAS-only files (on dest, absent from source). UNAS ONLY — the
+    Synology source is never touched here. Caller applies the safety gates."""
+    safe = [r for r in orphans if not r.startswith("/") and "../" not in r]
+    if not safe:
+        return 0, 0
+    lst = f"{TMP}/ld_orphans_{name}.lst"
+    with open(lst, "w") as f:
+        f.write("\n".join(safe) + "\n")
+    remote = f"/tmp/ld_orphans_{name}.lst"
+    with open(lst) as f:
+        subprocess.run(["ssh", "-o", "BatchMode=yes", UNAS, f"cat > {remote}"],
+                       stdin=f, timeout=600)
+    # cd into the dest then delete RELATIVE paths (null-delimited → handles spaces/odd bytes)
+    p = subprocess.run(
+        ["ssh", "-o", "BatchMode=yes", UNAS,
+         f"cd {udst!r} && tr '\\n' '\\0' < {remote} | xargs -0 rm -f -- ; echo RC=$?"],
+        capture_output=True, text=True, timeout=14400)
+    m = re.search(r"RC=(\d+)", p.stdout)
+    return len(safe), (int(m.group(1)) if m else 99)
+
+
 def rsync_files(name, src, cifs_dst, tosync_file):
     """Push the to_sync list to the Synology and rsync only those via its CIFS mount."""
     remote_list = f"/tmp/localdiff_{name}.lst"
@@ -107,26 +153,52 @@ def main():
         if find_to(SYNO, src, sf) == 0 or find_to(UNAS, udst, df) == 0:
             slack(f":warning: {name}: find produced no output on one side — skipping."); continue
         dst = load_sizes(df)
+        src_set = set()
         nto = 0
         with open(sf, encoding="utf-8", errors="replace") as s, open(tf, "w") as out:
             for line in s:
                 rel, _, size = line.rstrip("\n").rpartition("\t")
                 if not rel or EXCL.search(rel):
                     continue
+                src_set.add(rel)
                 if dst.get(rel) != size:        # missing on dest OR size differs
                     out.write(rel + "\n"); nto += 1
-        nsrc = sum(1 for _ in open(sf, encoding="utf-8", errors="replace"))
+        nsrc = len(src_set)
         ndst = len(dst)
+        orphans = [rel for rel in dst if rel not in src_set]  # on UNAS, gone from Synology
         scan_s = int(time.time() - t0)
+
+        # --- 1) push differing files (copy) ---
         if nto == 0:
             slack(f"• *{name}*: ✅ already in sync — src={nsrc:,} dst={ndst:,} (scanned in {scan_s}s)")
-            record(name, 0, 0); continue
-        slack(f"• *{name}*: {nto:,} files differ (src={nsrc:,} dst={ndst:,}, scan {scan_s}s) — rsyncing only those…")
-        rc = rsync_files(name, src, cifs, tf)
-        ok = rc in (0, 24)
-        record(name, rc, nto)
-        slack(f"• *{name}*: {'✅' if ok else '❌'} rsync rc={rc} on {nto:,} files "
-              f"(total {int(time.time()-t0)//60}m)")
+            record(name, 0, 0)
+        else:
+            slack(f"• *{name}*: {nto:,} files differ (src={nsrc:,} dst={ndst:,}, scan {scan_s}s) — rsyncing only those…")
+            rc = rsync_files(name, src, cifs, tf)
+            ok = rc in (0, 24)
+            record(name, rc, nto)
+            slack(f"• *{name}*: {'✅' if ok else '❌'} rsync rc={rc} on {nto:,} files "
+                  f"(total {int(time.time()-t0)//60}m)")
+
+        # --- 2) prune UNAS-only orphans so the backup mirrors source (UNAS ONLY) ---
+        # DISABLED 2026-06-30: UNAS stores the share under nas/.data/ (UniFi-managed);
+        # the raw-path comparison wrongly flags .data/ as orphans. Off until the
+        # .data/ vs root:root duplication is reconciled. Opt-in via NOVA_LOCALDIFF_PRUNE=1.
+        norph = len(orphans)
+        if norph and os.environ.get("NOVA_LOCALDIFF_PRUNE") == "1":
+            last = _last_counts().get(name, 0)
+            # GATES: source enumeration must look complete, and the prune can't be absurd.
+            if nsrc < 1000:
+                slack(f"• *{name}*: ⚠️ prune skipped — source scan too small (src={nsrc:,})")
+            elif last and nsrc < int(last * 0.7):
+                slack(f"• *{name}*: ⚠️ prune skipped — source shrank vs last run ({nsrc:,} < 0.7×{last:,}); investigate before deleting")
+            elif norph > int(ndst * 0.7):
+                slack(f"• *{name}*: ⚠️ prune skipped — orphans {norph:,} > 70% of dst ({ndst:,}); suspicious")
+            else:
+                n, prc = prune_orphans(name, udst, orphans)
+                slack(f"• *{name}*: 🧹 pruned {n:,} UNAS-only orphans (rc={prc}) — Synology untouched")
+        if nsrc >= 1000:
+            _save_count(name, nsrc)
     slack(":white_check_mark: *Local-find reconcile complete.*")
 
 

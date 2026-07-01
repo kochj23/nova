@@ -179,7 +179,8 @@ Synthesize into the weekly strategic rollup."""
         img_dest = IMAGES_DIR / f"{dt}-{slug}.webp"
         subprocess.run(["cwebp", "-q", "82", "-resize", "1200", "0", img_path, "-o", str(img_dest)],
                        capture_output=True, timeout=30)
-        hugo_image = f"/images/operations/{dt}-{slug}.webp"
+        # URL must match IMAGES_DIR write path (static/images/security), else cover 404s
+        hugo_image = f"/images/security/{dt}-{slug}.webp"
 
     timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
     front_matter = f'''---

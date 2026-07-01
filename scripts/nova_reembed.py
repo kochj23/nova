@@ -186,7 +186,9 @@ def main():
     for source, idx_name in [
         ("email_archive", "memories_hnsw_email"),
         ("imessage", "memories_hnsw_imessage"),
+        ("music", "memories_hnsw_music"),
         ("vehicles", "memories_hnsw_vehicles"),
+        ("health", "memories_hnsw_health"),
     ]:
         cur.execute(f"""
             CREATE INDEX {idx_name} ON memories

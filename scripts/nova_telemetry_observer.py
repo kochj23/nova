@@ -81,6 +81,10 @@ SIGNAL_POOR_DBM = -75
 BANDWIDTH_HIGH_BYTES_HOUR = 1_073_741_824  # 1GB
 ROOM_TEMP_HIGH_F = 78.0
 ROOM_TEMP_LOW_F = 65.0
+# The server rack idles ~94F under constant load — normal, not a heat alert. Only flag
+# it if it climbs toward a real cooling failure. ponytail: one threshold, raise if noisy.
+RACK_ROOM = "server_rack"
+RACK_TEMP_HIGH_F = 100.0
 HUMIDITY_HIGH = 60
 HUMIDITY_LOW = 30
 MEMORY_RATE_HIGH_MULT = 2.0
@@ -591,7 +595,8 @@ def analyze_climate(conn):
     """, (hour_ago,))
 
     for r in room_temps:
-        if r["max_temp"] and r["max_temp"] > ROOM_TEMP_HIGH_F:
+        high_f = RACK_TEMP_HIGH_F if r["room"] == RACK_ROOM else ROOM_TEMP_HIGH_F
+        if r["max_temp"] and r["max_temp"] > high_f:
             observe("climate", r["room"],
                     f"{r['room']} hit {r['max_temp']:.0f}F this hour. Getting toasty.",
                     severity="warning" if r["max_temp"] > 82 else "info",
@@ -647,14 +652,15 @@ def analyze_climate(conn):
     if room_temps:
         week_ago = now - timedelta(days=7)
         for r in room_temps:
-            if r["max_temp"] and r["max_temp"] > ROOM_TEMP_HIGH_F:
+            high_f = RACK_TEMP_HIGH_F if r["room"] == RACK_ROOM else ROOM_TEMP_HIGH_F
+            if r["max_temp"] and r["max_temp"] > high_f:
                 # Check if this room was hot at this same hour multiple days
                 hot_days = query_one(conn, """
                     SELECT COUNT(DISTINCT DATE(ts AT TIME ZONE 'America/Los_Angeles')) as days
                     FROM telemetry.climate
                     WHERE room = %s AND ts >= %s AND temp_f > %s
                       AND EXTRACT(HOUR FROM ts AT TIME ZONE 'America/Los_Angeles') = %s
-                """, (r["room"], week_ago, ROOM_TEMP_HIGH_F, local_hour))
+                """, (r["room"], week_ago, high_f, local_hour))
 
                 if hot_days and hot_days["days"] and hot_days["days"] >= 3:
                     observe("climate", "pattern",

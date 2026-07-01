@@ -13,6 +13,7 @@ Written by Jordan Koch.
 
 import sys
 import os
+import stat
 import json
 import time
 import logging
@@ -83,30 +84,45 @@ def collect_memories_total() -> tuple[float, dict | None]:
         return None, None
 
 
-def collect_memories_today() -> tuple[float, dict | None]:
-    """Count memories created today from nova_memories."""
+def collect_memories_today(conn=None) -> tuple[float, dict | None]:
+    """Count memories created today from nova_memories.
+
+    Perf: accepts a shared nova_memories connection from poll_once (was one
+    connect/close per call); falls back to its own connection when called
+    standalone (conn=None), preserving original behavior.
+    """
+    own = conn is None
     try:
-        conn = get_conn("nova_memories")
+        if own:
+            conn = get_conn("nova_memories")
         with conn.cursor() as cur:
             cur.execute("SELECT COUNT(*) FROM memories WHERE created_at >= CURRENT_DATE")
             count = cur.fetchone()[0]
-        conn.close()
+        if own:
+            conn.close()
         return float(count), None
     except Exception as e:
         log.warning(f"memories_today failed: {e}")
         return None, None
 
 
-def collect_ingest_rate_per_hour() -> tuple[float, dict | None]:
-    """Count memories ingested in the last hour from nova_memories."""
+def collect_ingest_rate_per_hour(conn=None) -> tuple[float, dict | None]:
+    """Count memories ingested in the last hour from nova_memories.
+
+    Perf: shares poll_once's nova_memories connection when provided; opens its
+    own when called standalone (conn=None).
+    """
+    own = conn is None
     try:
-        conn = get_conn("nova_memories")
+        if own:
+            conn = get_conn("nova_memories")
         with conn.cursor() as cur:
             cur.execute(
                 "SELECT COUNT(*) FROM memories WHERE created_at >= NOW() - INTERVAL '1 hour'"
             )
             count = cur.fetchone()[0]
-        conn.close()
+        if own:
+            conn.close()
         return float(count), None
     except Exception as e:
         log.warning(f"ingest_rate_per_hour failed: {e}")
@@ -158,9 +174,19 @@ def collect_article_count_today() -> tuple[float, dict | None]:
         if not JOURNAL_CONTENT_DIR.exists():
             return 0.0, {"note": "journal content dir not found"}
         today_start = datetime.combine(date.today(), datetime.min.time())
+        today_start_ts = today_start.timestamp()
         count = 0
+        # Perf: original did is_file() + stat() = two stat syscalls per entry
+        # over the whole tree. Do a single stat() and derive is-regular-file
+        # from the mode. Count is identical: S_ISREG matches Path.is_file()
+        # (both follow symlinks), and skipping entries whose stat() raises
+        # (broken symlinks / delete races) matches is_file() returning False.
         for f in JOURNAL_CONTENT_DIR.rglob("*"):
-            if f.is_file() and datetime.fromtimestamp(f.stat().st_mtime) >= today_start:
+            try:
+                st = f.stat()
+            except OSError:
+                continue
+            if stat.S_ISREG(st.st_mode) and st.st_mtime >= today_start_ts:
                 count += 1
         return float(count), None
     except Exception as e:
@@ -243,10 +269,16 @@ def collect_pg_size_gb() -> tuple[float, dict | None]:
     return round(total_gb, 3), metadata if metadata else None
 
 
-def collect_vector_count_by_source() -> tuple[float, dict | None]:
-    """Top 10 sources by count from nova_memories."""
+def collect_vector_count_by_source(conn=None) -> tuple[float, dict | None]:
+    """Top 10 sources by count from nova_memories.
+
+    Perf: shares poll_once's nova_memories connection when provided; opens its
+    own when called standalone (conn=None).
+    """
+    own = conn is None
     try:
-        conn = get_conn("nova_memories")
+        if own:
+            conn = get_conn("nova_memories")
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT source, COUNT(*) as cnt
@@ -256,7 +288,8 @@ def collect_vector_count_by_source() -> tuple[float, dict | None]:
                 LIMIT 10
             """)
             rows = cur.fetchall()
-        conn.close()
+        if own:
+            conn.close()
         total = sum(r[1] for r in rows)
         sources = {r[0]: r[1] for r in rows}
         return float(total), sources
@@ -292,8 +325,34 @@ def poll_once():
         log.error(f"Cannot connect to nova_ops for writing: {e}")
         return
 
+    # Perf: open ONE nova_memories connection per poll and share it across the
+    # three collectors that read from it (was 3 separate connect/close per
+    # poll). autocommit=True so a failed query on one collector does not leave
+    # the shared session in an aborted-transaction state for the next one,
+    # preserving each collector's independent success/failure. If this connect
+    # fails, mem_conn stays None and the collectors fall back to opening their
+    # own connection (original behavior).
+    mem_conn = None
+    try:
+        mem_conn = get_conn("nova_memories")
+        mem_conn.autocommit = True
+    except Exception as e:
+        log.warning(f"shared nova_memories conn failed, collectors will self-connect: {e}")
+        mem_conn = None
+
+    # Per-poll collector list: bind the shared connection to the nova_memories
+    # collectors; all others keep their original no-arg call.
+    poll_collectors = [
+        (name, (lambda fn=fn: fn(mem_conn))
+               if fn in (collect_memories_today,
+                         collect_ingest_rate_per_hour,
+                         collect_vector_count_by_source)
+               else fn)
+        for name, fn in COLLECTORS
+    ]
+
     collected = 0
-    for metric_name, collector_fn in COLLECTORS:
+    for metric_name, collector_fn in poll_collectors:
         try:
             value, metadata = collector_fn()
             if value is not None:
@@ -302,6 +361,8 @@ def poll_once():
         except Exception as e:
             log.error(f"Error collecting {metric_name}: {e}")
 
+    if mem_conn is not None:
+        mem_conn.close()
     conn.close()
     log.info(f"Poll complete: {collected}/{len(COLLECTORS)} metrics collected")
 

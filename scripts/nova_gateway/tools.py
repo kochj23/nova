@@ -596,6 +596,54 @@ async def execute_tool_calls_legacy(ctx: GatewayContext, text: str, session_id: 
     return clean, "\n".join(tool_results)
 
 
+# ── Spoken tool call detection (model emits `tool_name {json}` as plain text) ──
+
+# Built from TOOL_REGISTRY so only real tool names match. Flat JSON params only
+# (`{...}` with no nested braces) — keeps the regex linear and matches the
+# realistic spoken format the models actually emit.
+_SPOKEN_RE = re.compile(
+    r"\b(" + "|".join(re.escape(k) for k in TOOL_REGISTRY) + r")\s*(\{[^{}]*\})"
+)
+
+
+async def execute_spoken_tool_calls(ctx: GatewayContext, text: str, session_id: str = "") -> tuple[str, str]:
+    """Recover registered tool calls the model emitted as plain text.
+
+    Some models write e.g. `web_search {"query": "..."}` inline instead of
+    producing a structured tool_call. Detect `<registered_tool> {json}` patterns,
+    dispatch each, strip them from the response, and return (clean_text, output).
+    ponytail: flat JSON params only; add a brace-counter if a tool ever needs
+    nested spoken args.
+    """
+    matches = list(_SPOKEN_RE.finditer(text))
+    if not matches:
+        return text, ""
+
+    tool_results = []
+    clean = text
+
+    for m in matches:
+        tool_name = m.group(1)
+        try:
+            tool_params = json.loads(m.group(2))
+        except json.JSONDecodeError:
+            continue  # not actually a tool call — leave the text as-is
+
+        log.info(f"Spoken tool call: {tool_name}({json.dumps(tool_params)[:100]})")
+
+        t0 = time.time()
+        output = await dispatch_tool(ctx, tool_name, tool_params)
+        duration_ms = int((time.time() - t0) * 1000)
+
+        log.info(f"Spoken tool result: {tool_name} completed in {duration_ms}ms ({len(output)} chars)")
+        await log_tool_execution(ctx, session_id, f"spoken:{tool_name}", tool_params, output, duration_ms)
+
+        tool_results.append(output)
+        clean = clean.replace(m.group(0), "").strip()
+
+    return clean, "\n".join(tool_results)
+
+
 # ── Ops Query Tool ────────────────────────────────────────────────────────────
 
 _OPS_QUERIES = {

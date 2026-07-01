@@ -504,7 +504,8 @@ def generate_report(days: int) -> str:
 
     health = load_health_data(days)
     if not health:
-        return f"{header}\n\n_No health data available for the last {days} days._"
+        # Match the (text, correlations) tuple the caller unpacks
+        return f"{header}\n\n_No health data available for the last {days} days._", []
 
     # Fetch activity data
     calendar = get_calendar_events_by_date(days)

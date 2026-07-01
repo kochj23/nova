@@ -197,23 +197,52 @@ def tcp_probe(host, port):
         return 0
 
 
-def find_process(match):
-    """Return (rss_mb, cpu_pct, create_time) for the matching local process, else (None,None,None)."""
+def snapshot_processes():
+    """Snapshot the local process list ONCE per cycle as a list of (proc, cmd, name).
+
+    Perf: find_process() used to run a fresh psutil.process_iter() for every
+    component (~26 full process-table scans per cycle). Building the list once and
+    matching substrings against it removes that redundant work while keeping the
+    exact same match semantics. Returns None on any failure so find_process() can
+    reproduce the old "psutil errored -> no match" behavior (never falls back to ps
+    when HAVE_PSUTIL is True).
+
+    Tradeoff: the process table is captured once at cycle start rather than at each
+    per-component probe, so a process that appears/exits mid-cycle is seen
+    consistently across all components. Negligible for a 1-minute external poller.
+    """
+    if not HAVE_PSUTIL:
+        return None
+    try:
+        procs = []
+        for p in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
+            try:
+                cmd = " ".join(p.info.get("cmdline") or [])
+                nm = p.info.get("name") or ""
+                procs.append((p, cmd, nm))
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        return procs
+    except Exception:
+        return None
+
+
+def find_process(match, snapshot=None):
+    """Return (rss_mb, cpu_pct, create_time) for the matching local process, else (None,None,None).
+
+    `snapshot` is the per-cycle process list from snapshot_processes(); passing None
+    is equivalent to an empty scan under psutil (no match).
+    """
     if not match:
         return None, None, None
     if HAVE_PSUTIL:
         try:
             best = None
-            for p in psutil.process_iter(["pid", "name", "cmdline", "create_time"]):
-                try:
-                    cmd = " ".join(p.info.get("cmdline") or [])
-                    nm = p.info.get("name") or ""
-                    if match in cmd or match in nm:
-                        # prefer the longest cmdline match (the real daemon, not a wrapper)
-                        if best is None or len(cmd) > best[1]:
-                            best = (p, len(cmd))
-                except (psutil.NoSuchProcess, psutil.AccessDenied):
-                    continue
+            for p, cmd, nm in (snapshot or []):
+                if match in cmd or match in nm:
+                    # prefer the longest cmdline match (the real daemon, not a wrapper)
+                    if best is None or len(cmd) > best[1]:
+                        best = (p, len(cmd))
             if best is None:
                 return None, None, None
             p = best[0]
@@ -271,6 +300,9 @@ def write_age(conn, sql):
 def collect(conn):
     now = datetime.now(timezone.utc)
     rows = []
+    # Snapshot the process table ONCE per cycle (instead of one process_iter per
+    # component) — see snapshot_processes() for match-semantics/tradeoff notes.
+    proc_snapshot = snapshot_processes()
     for c in COMPONENTS:
         name = c["name"]
         host = c.get("host")
@@ -295,7 +327,7 @@ def collect(conn):
         rss = cpu = None
         is_local = (host in LOCAL_IPS) or (host is None)
         if is_local:
-            rss, cpu, ct = find_process(c.get("proc"))
+            rss, cpu, ct = find_process(c.get("proc"), proc_snapshot)
             if uptime is None and ct:
                 uptime = int(time.time() - ct)
             if (host is None or port is None):

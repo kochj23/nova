@@ -202,11 +202,25 @@ def download_pdf(url: str) -> bytes | None:
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (Nova/ingest)"})
         with urllib.request.urlopen(req, timeout=60) as resp:
+            # Optimization: consult Content-Length before reading so oversized
+            # PDFs are skipped without pulling the whole file into memory. This
+            # is only a fast path — the post-read size check below is preserved
+            # as the authoritative guard for cases where the header is absent or
+            # inaccurate, so the >50MB skip behavior is unchanged.
+            MAX_SIZE = 50 * 1024 * 1024
+            clen = resp.headers.get("Content-Length")
+            if clen is not None:
+                try:
+                    if int(clen) > MAX_SIZE:
+                        log.info(f"Skipping {url} — too large ({int(clen) // 1024 // 1024}MB)")
+                        return None
+                except ValueError:
+                    pass
             data = resp.read()
             if len(data) < 100:
                 return None
             # Skip huge files (>50MB)
-            if len(data) > 50 * 1024 * 1024:
+            if len(data) > MAX_SIZE:
                 log.info(f"Skipping {url} — too large ({len(data) // 1024 // 1024}MB)")
                 return None
             return data

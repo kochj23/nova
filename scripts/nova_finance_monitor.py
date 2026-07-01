@@ -105,7 +105,9 @@ def load_data():
 def save_data(data):
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
     # Keep only last 90 days of events
-    cutoff = (NOW - timedelta(days=90)).isoformat()
+    # Events store date-only strings (TODAY), so compare against a date-only
+    # cutoff — using a full ISO timestamp would prune the 90th day one day early.
+    cutoff = (NOW - timedelta(days=90)).date().isoformat()
     data["events"] = [e for e in data.get("events", []) if e.get("date", "") > cutoff]
     DATA_FILE.write_text(json.dumps(data, indent=2))
 

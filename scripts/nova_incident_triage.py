@@ -194,9 +194,9 @@ def _get_recent_runs(service_name: str, count: int = 5) -> list:
     rows = _pg_query(
         f"SELECT task_id, task_script, started_at, duration_ms, exit_code, status, error_tail "
         f"FROM scheduler_runs "
-        f"WHERE task_script ILIKE '%{pattern}%' "
-        f"ORDER BY started_at DESC LIMIT %s",
-        (str(count),)
+        f"WHERE task_script ILIKE %s "
+        f"ORDER BY started_at DESC LIMIT {int(count)}",
+        (f"%{pattern}%",)
     )
 
     runs = []

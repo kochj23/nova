@@ -192,10 +192,11 @@ def main():
     if wan_health.get("rx_rate_mbps") or wan_health.get("tx_rate_mbps"):
         lines.append(f"  Current: {wan_health.get('rx_rate_mbps', 0):.1f} Mbps down / {wan_health.get('tx_rate_mbps', 0):.1f} Mbps up")
 
+    # Always defined so the vs-yesterday delta below never hits a NameError
+    wan_total_gb = (wan_down + wan_up) / 1024/1024/1024
     if wan_down > 0 or wan_up > 0:
         wan_down_gb = wan_down / 1024/1024/1024
         wan_up_gb = wan_up / 1024/1024/1024
-        wan_total_gb = (wan_down + wan_up) / 1024/1024/1024
         lines.append(f"  Today: {wan_down_gb:,.1f}G down / {wan_up_gb:,.1f}G up ({wan_total_gb:,.1f}G total)")
 
     # ── Delta vs yesterday ──────────────────────────────────────────────
@@ -226,7 +227,7 @@ def main():
                         biggest_growth_name = c["name"]
                 if biggest_growth_name and biggest_growth_delta > 0.1:
                     lines.append(f"  Top grower: {biggest_growth_name} (+{biggest_growth_delta:,.1f}G)")
-    except Exception:
+    except (OSError, ValueError, KeyError):
         pass  # no yesterday data or parse error — skip silently
 
     # Save today's state for tomorrow's comparison

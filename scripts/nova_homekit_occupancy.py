@@ -71,13 +71,16 @@ def check_vehicle_presence():
     Integrates with camera monitoring.
     Returns: {"home": bool, "location": "carport|garage|unknown", "confidence": 0-1}
     """
-    # TODO: Integrate with camera-based vehicle detection
-    # For now, return mock data
+    # TODO: Real vehicle detection is UNIMPLEMENTED — integrate with
+    # camera-based vehicle detection before trusting these values.
+    # Until then this returns a stub marked with "stub": True so callers
+    # do NOT persist/emit occupancy derived from it (see analyze_occupancy_pattern).
     return {
         "home": True,
         "location": "carport",
         "confidence": 0.95,
-        "last_seen": datetime.now().isoformat()
+        "last_seen": datetime.now().isoformat(),
+        "stub": True
     }
 
 def build_occupancy_map(accessories, vehicle_data):
@@ -100,6 +103,9 @@ def build_occupancy_map(accessories, vehicle_data):
     
     occupancy_map = {
         "home_occupied": vehicle_data.get("home", False),
+        # Propagate stub flag so downstream code can avoid persisting
+        # occupancy derived from mock vehicle presence.
+        "vehicle_stub": vehicle_data.get("stub", False),
         "confidence": 0.0,
         "rooms": {},
         "anomalies": [],
@@ -164,6 +170,8 @@ def build_occupancy_map(accessories, vehicle_data):
                 )
     
     # Doors open too long
+    # NOTE: message says ">10 minutes" but there is no duration tracking —
+    # this fires immediately for ANY open door. Left as-is (Tier B may remove/fix).
     for room, state in occupancy_map["rooms"].items():
         if len(state["doors_open"]) > 0:
             occupancy_map["anomalies"].append(
@@ -215,10 +223,15 @@ def analyze_occupancy_pattern(occupancy_map):
     else:
         log(f"✓ HOME UNOCCUPIED")
     
-    remember(
-        f"Occupancy state: home={occupancy_map['home_occupied']}, rooms={occupied_rooms}, confidence={occupancy_map['confidence']:.2f}",
-        source="occupancy"
-    )
+    # Do NOT persist occupancy state while vehicle presence is a stub —
+    # home_occupied is derived from mock data and would poison memory.
+    if occupancy_map.get("vehicle_stub"):
+        log("↷ Skipping occupancy persist: vehicle presence is stubbed (mock data)")
+    else:
+        remember(
+            f"Occupancy state: home={occupancy_map['home_occupied']}, rooms={occupied_rooms}, confidence={occupancy_map['confidence']:.2f}",
+            source="occupancy"
+        )
 
 def occupancy_monitor_loop():
     """

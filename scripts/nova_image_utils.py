@@ -2,7 +2,7 @@ from __future__ import annotations
 """
 nova_image_utils.py — Shared image generation with retry logic, backend health checks, and model rotation.
 
-Used by: nova_daily_essay.py, nova_after_dark.py, nova_daily_opinion.py, nova_research_paper.py,
+Used by: nova_daily_essay.py, nova_after_dark.py, nova_research_paper.py,
          nova_art_corner.py, nova_tech_today.py, nova_fix_missing_images.py
 
 Written by Jordan Koch.

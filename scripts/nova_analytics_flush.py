@@ -102,8 +102,10 @@ def flush():
 
     # Retention: delete pageviews/events older than 90 days
     cur.execute("DELETE FROM analytics_pageviews WHERE ts < now() - interval '90 days'")
-    cur.execute("DELETE FROM analytics_events WHERE ts < now() - interval '90 days'")
     deleted = cur.rowcount
+    cur.execute("DELETE FROM analytics_events WHERE ts < now() - interval '90 days'")
+    # sum both DELETEs so pruned pageviews aren't dropped from the count
+    deleted += cur.rowcount
     if deleted:
         log(f"Retention cleanup: removed {deleted} old rows", level=LOG_INFO, source="analytics_flush")
     conn.commit()

@@ -86,7 +86,7 @@ def github_digest():
     try:
         # Get events from last 24h across all repos
         result = subprocess.run(
-            ["gh", "api", "/users/kochj23/events  # noqa — gh username?per_page=100"],
+            ["gh", "api", "/users/kochj23/events?per_page=100"],
             capture_output=True, text=True, timeout=30
         )
         events = json.loads(result.stdout)
@@ -128,7 +128,7 @@ def github_digest():
 
         # Also check for open PRs needing review
         pr_result = subprocess.run(
-            ["gh", "search", "prs", "--author=kochj23  # noqa", "--state=open", "--json", "title,repository,createdAt,url"],
+            ["gh", "search", "prs", "--author=kochj23", "--state=open", "--json", "title,repository,createdAt,url"],
             capture_output=True, text=True, timeout=30
         )
         open_prs = []

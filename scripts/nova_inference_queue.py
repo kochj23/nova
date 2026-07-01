@@ -214,6 +214,23 @@ async def process_request(payload: dict):
         _stats["active"] -= 1
 
 
+async def _dispatch(payload: dict):
+    """Run one request in a thread executor, then release the concurrency slot.
+
+    process_request() stores its own result and handles its own errors, so the
+    only escapes here would be redis failures in its finally-block — we log
+    those (matching the old worker-loop behavior) and always release the slot.
+    """
+    try:
+        # Run in executor to not block event loop (route() is synchronous)
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, lambda: asyncio.run(process_request(payload)))
+    except Exception as e:
+        log(f"Worker error: {e}", "ERROR")
+    finally:
+        _semaphore.release()
+
+
 async def worker_loop():
     """Main worker: pop from queue and process with concurrency limit."""
     global _semaphore
@@ -223,22 +240,37 @@ async def worker_loop():
     log(f"Worker started (max_concurrent={MAX_CONCURRENT})")
 
     while not _shutdown:
+        # OPTIMIZATION (bug fix): acquire the concurrency slot BEFORE popping and
+        # dispatch each request as a background task that releases the slot when
+        # done. Previously the loop did `async with _semaphore: await
+        # run_in_executor(...)`, which awaited each request to completion before
+        # popping the next — so MAX_CONCURRENT=2 never ran 2 in flight (the
+        # semaphore never admitted a 2nd). Semantics preserved: items are still
+        # popped one at a time in priority order; only execution now overlaps
+        # (the intended behavior). Per-request result storage / callback publish
+        # / error handling all live in process_request() and are unchanged.
+        acquired = False
         try:
+            await _semaphore.acquire()
+            acquired = True
+
             # Pop highest-priority item (lowest score)
             items = rc.zpopmin(QUEUE_KEY, count=1)
             if not items:
+                _semaphore.release()
+                acquired = False
                 await asyncio.sleep(0.1)
                 continue
 
             payload_str, score = items[0]
             payload = json.loads(payload_str)
 
-            async with _semaphore:
-                # Run in executor to not block event loop (route() is synchronous)
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(None, lambda: asyncio.run(process_request(payload)))
+            asyncio.create_task(_dispatch(payload))
+            acquired = False  # slot ownership transferred to the dispatched task
 
         except Exception as e:
+            if acquired:
+                _semaphore.release()
             log(f"Worker error: {e}", "ERROR")
             await asyncio.sleep(1)
 

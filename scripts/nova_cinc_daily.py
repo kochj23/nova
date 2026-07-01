@@ -160,9 +160,19 @@ def apply_updates(node):
         ssh_cmd(host, user, "sudo apt-get autoremove -y -qq && sudo apt-get autoclean -qq", timeout=60)
 
     elif os_family == "macos":
-        # Homebrew upgrade
-        log(f"  {name}: Running brew upgrade...")
+        # Homebrew upgrade. PIN critical infra first so a blanket `brew upgrade`
+        # never auto-upgrades the database/broker layer — an unattended brew
+        # upgrade of postgresql@17 took Nova down TWICE (swapped binaries under the
+        # running server + wiped its launchd wrapper, so it couldn't restart).
+        # `brew upgrade` skips pinned formulae; `pin` is idempotent and harmless on
+        # hosts that don't have these kegs (hence `;` not `&&`, stderr discarded).
+        # node is pinned too: Claude Code runs on Homebrew node, and FDA grants are
+        # path-specific — a node upgrade orphans the grant and breaks /Volumes/Data
+        # access from the Claude session (the "fixed it, breaks next day" loop). 2026-06-28.
+        CRITICAL_PINS = "postgresql@17 pgbouncer mosquitto python@3.12 python@3.14 node"
+        log(f"  {name}: Pinning critical infra ({CRITICAL_PINS}) + running brew upgrade...")
         rc, out, _ = ssh_cmd(host, user,
+                             f"/opt/homebrew/bin/brew pin {CRITICAL_PINS} 2>/dev/null; "
                              "/opt/homebrew/bin/brew update -q 2>/dev/null && /opt/homebrew/bin/brew upgrade 2>&1 | grep -E 'Upgrading|Pouring|==>.*Upgrading'",
                              timeout=300)
         if rc == 0 and out.strip():

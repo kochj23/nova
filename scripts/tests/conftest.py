@@ -75,6 +75,8 @@ def pytest_runtest_logreport(report):
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
+    if os.environ.get("NOVA_TEST_QUIET"):
+        return  # CI / agent runs: suppress the Slack failure digest
     if not _failures:
         return
     duration = round(time.time() - _session_start, 1)

@@ -138,12 +138,12 @@ def main():
             print(f"Swift failed: {result.stderr}")
             sys.exit(1)
 
-        # Parse output
-        if not result.stdout.strip().startswith("COLLECTED:"):
+        # Parse output — Swift emits the "HEALTHKIT_JSON:" prefix (see SWIFT_SCRIPT)
+        if not result.stdout.strip().startswith("HEALTHKIT_JSON:"):
             print("Unexpected output")
             sys.exit(1)
 
-        data_str = result.stdout.strip().replace("COLLECTED: ", "")
+        data_str = result.stdout.strip().replace("HEALTHKIT_JSON:", "")
         data = json.loads(data_str.replace("\"", '"'))
 
         # Add timestamp

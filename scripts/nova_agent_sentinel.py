@@ -196,16 +196,16 @@ class SecuritySentinel(SubAgent):
             if warnings:
                 summary += "\n" + "\n".join(f"  :warning: {w}" for w in warnings)
             await self.report_to_jordan(summary)
-            log(LOG_ERROR, f"[privacy_monitor] VIOLATIONS: {violations}")
+            log(f"[privacy_monitor] VIOLATIONS: {violations}", level=LOG_ERROR)
         elif warnings:
             risk = "medium"
             summary = f":warning: *Privacy Monitor — Warnings*\n"
             summary += "\n".join(f"  :warning: {w}" for w in warnings[:5])
             await self.notify(summary)
-            log(LOG_WARN, f"[privacy_monitor] warnings: {warnings}")
+            log(f"[privacy_monitor] warnings: {warnings}", level=LOG_WARN)
         else:
             risk = "none"
-            log(LOG_INFO, "[privacy_monitor] OK — no routing drift or PII leak vectors detected")
+            log("[privacy_monitor] OK — no routing drift or PII leak vectors detected", level=LOG_INFO)
 
         return {"risk_level": risk, "violations": violations, "warnings": warnings}
 

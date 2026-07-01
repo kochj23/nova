@@ -35,6 +35,9 @@ except ImportError:
     except ImportError:
         HAS_PG = False
 
+sys.path.insert(0, str(Path(__file__).parent))
+from nova_unused_memories import fetch_unused, mark_used
+
 # ── Config ────────────────────────────────────────────────────────────────────
 
 WORKSPACE          = Path.home() / ".openclaw/workspace"
@@ -641,18 +644,24 @@ def generate_narrative() -> tuple[str, list[dict], dict]:
     mood_name, mood_desc = random.choice(MOODS)
     log(f"Mood roll: {mood_name}")
 
-    # Step 3: Pull 10 themed memories from ALL time
-    themed_memories = query_themed_memories(theme, count=10)
-
-    # Step 4: Pull 5 wildcard memories (pure random, the non-sequiturs)
-    wildcard_memories = query_wildcard_memories(count=5)
-
-    # PRIVACY GATE: drop private-source/blocked rows + scrub residual PII BEFORE
-    # these memory bodies are built into the cloud (OpenRouter) prompt.
-    _tb, _wb = len(themed_memories), len(wildcard_memories)
+    # Steps 3-4: the dream is built from the 100 OLDEST UNUSED memories
+    # (access_count=0), private sources excluded at source. Mapped into inspiration
+    # records and fed whole to the prompt; marked used in main() on success so the
+    # pool advances and the same 100 don't recur.
+    unused = fetch_unused(100)
+    used_ids = [m["id"] for m in unused if m.get("id")]
+    themed_memories = [{
+        "source": m["source"],
+        "label": (m.get("metadata") or {}).get("title")
+                 or (m.get("metadata") or {}).get("show") or m["source"],
+        "memory": (m.get("text") or "")[:300],
+        "id": m.get("id"),
+    } for m in unused]
+    wildcard_memories = []   # the 100 unused ARE the inspiration; no separate wildcard pool
+    # Belt-and-suspenders PII scrub before the cloud prompt (fetch_unused already drops private).
+    _tb = len(themed_memories)
     themed_memories = sanitize_inspirations(themed_memories)
-    wildcard_memories = sanitize_inspirations(wildcard_memories)
-    log(f"Privacy gate: themed {_tb}->{len(themed_memories)}, wildcard {_wb}->{len(wildcard_memories)} after filtering private sources")
+    log(f"Unused-memory inspiration: {_tb}->{len(themed_memories)} after PII scrub")
 
     # Step 5: Get previous dreams for continuity avoidance
     prev_dreams = ""
@@ -674,6 +683,7 @@ def generate_narrative() -> tuple[str, list[dict], dict]:
         "mood": mood_name,
         "themed_count": len(themed_memories),
         "wildcard_count": len(wildcard_memories),
+        "used_ids": used_ids,
     }
 
     # Generate
@@ -994,6 +1004,9 @@ def main():
     write_pending(narrative, journal_path, image_path=image_path,
                   inspirations=inspirations, dream_meta=dream_meta)
     store_memory(narrative)
+
+    used = mark_used(dream_meta.get("used_ids", []))
+    log(f"Marked {used} memories used — unused pool advances")
 
     log(f"Generation done. {len(narrative.split())} words, "
         f"theme='{dream_meta.get('theme', '?')}', mood={dream_meta.get('mood', '?')}, "

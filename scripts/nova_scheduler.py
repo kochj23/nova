@@ -345,6 +345,10 @@ class NovaScheduler:
                 proc.kill()
                 await proc.wait()
                 _run_status = "timeout"
+                # Sentinel exit code for timeouts (matches shell's 128+SIGTERM
+                # convention) so a timed-out run isn't recorded with the prior
+                # run's stale exit code.
+                task.state.last_exit_code = 124
                 raise TimeoutError(f"Timed out after {task.timeout}s")
 
             task.state.last_exit_code = proc.returncode

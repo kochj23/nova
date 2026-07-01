@@ -212,7 +212,13 @@ def analyze_sensors(states):
         device_class = attrs.get("device_class", "")
 
         if eid.startswith("binary_sensor.") and device_class == "motion":
-            motion[eid] = s["state"] == "on"
+            detected = s["state"] == "on"
+            motion[eid] = detected
+            # Feed the outdoor Hue motion sensor into the climate row
+            # (climate is the hue_outdoor / outdoor_front device); otherwise
+            # write_climate always inserts motion=False.
+            if "hue_outdoor" in eid:
+                climate["motion_detected"] = detected
 
         elif eid.startswith("sensor."):
             if device_class == "temperature" and "hue_outdoor" in eid:

@@ -25,7 +25,9 @@ SOURCE = "homekit"
 
 # HomeKit room name -> Nova canonical room. Anything unmapped is slugified.
 ROOM_MAP = {
-    "Office": "office", "Outdoor": "patio", "Living Room": "living_room",
+    "Office": "server_rack",  # this HomeKit "Office" accessory is physically IN the rack
+                              # (~94F constant); real office temp comes from office_presence (FP2)
+    "Outdoor": "patio", "Living Room": "living_room",
     "Master Bedroom": "master_bedroom", "Kitchen": "kitchen", "Garage": "garage",
     "Dining Room": "dining", "Dylan’s Room": "dylans_room", "Front Porch": "front_porch",
     "WTF": "server_rack",   # the Eve Room lives in the rack area

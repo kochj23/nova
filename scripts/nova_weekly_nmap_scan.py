@@ -73,16 +73,20 @@ Network status: CLEAN
 ```"""
     
     # Post to Slack
-    subprocess.run([
+    result = subprocess.run([
         "python3", "-c",
         f"""
 import subprocess
+from pathlib import Path
 subprocess.run(['bash', str(Path.home() / '.openclaw/scripts/nova_herd_broadcast.sh'),
   '--subject', 'Weekly Network Security Scan',
   '--body-file', '/dev/stdin'],
 input={repr(message).encode()})
 """
     ], capture_output=True)
+    # Check returncode so a failed broadcast isn't silently swallowed
+    if result.returncode != 0:
+        print(f"✗ Slack post failed (exit {result.returncode}): {result.stderr.decode(errors='replace')}")
 
 if __name__ == "__main__":
     print(f"[{datetime.now().isoformat()}] Running weekly network security scan...")

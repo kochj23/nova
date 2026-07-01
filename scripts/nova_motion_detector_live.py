@@ -7,6 +7,7 @@ Runs every 30 seconds checking latest frames.
 
 import subprocess
 import os
+import shutil
 from pathlib import Path
 from datetime import datetime, timedelta
 import json
@@ -40,11 +41,25 @@ def remember(text, source="vision"):
         return None
 
 def get_latest_frame(camera_name="front_door"):
-    """Get latest captured frame from storage."""
+    """Snapshot the latest captured frame to a unique path.
+
+    The producer overwrites a single "<camera>_latest.jpg" in place, so
+    reusing that path made prev/current point at the same file and absdiff
+    was always ~0. Copying each grab to a unique path yields genuinely
+    distinct consecutive frames to diff.
+    """
     frame_path = FRAMES_DIR / f"{camera_name}_latest.jpg"
-    if frame_path.exists():
-        return str(frame_path)
-    return None
+    if not frame_path.exists():
+        return None
+    snap_dir = FRAMES_DIR / "snapshots"
+    snap_dir.mkdir(parents=True, exist_ok=True)
+    snap_path = snap_dir / f"{camera_name}_{datetime.now().strftime('%Y%m%d_%H%M%S_%f')}.jpg"
+    try:
+        shutil.copy2(frame_path, snap_path)
+    except Exception as e:
+        log(f"Frame snapshot failed: {e}")
+        return None
+    return str(snap_path)
 
 def detect_motion_in_frames(frame1_path, frame2_path, threshold=15):
     """
@@ -237,8 +252,14 @@ def motion_monitor_loop():
                 else:
                     consecutive_motion = 0
             
+            # Retire the previous snapshot; keep only the current one for the next diff
+            if prev_frame and prev_frame != current_frame:
+                try:
+                    os.remove(prev_frame)
+                except OSError:
+                    pass
             prev_frame = current_frame
-            
+
             # Sleep before next check
             time.sleep(30)
             

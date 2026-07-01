@@ -164,7 +164,7 @@ def get_weather():
         # Rain chance — max across remaining hours today
         rain_chance = 0
         for h in hourly:
-            hour_num = int(h.get("time", "0").rstrip("0") or "0") // 100
+            hour_num = int(h.get("time", "0") or "0") // 100  # wttr time is HHMM*? e.g. "1500"->15; rstrip("0") collapsed every hour to 0
             if hour_num >= HOUR:
                 chance = int(h.get("chanceofrain", 0))
                 rain_chance = max(rain_chance, chance)

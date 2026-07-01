@@ -216,6 +216,16 @@ def gather_ops_data() -> dict:
     except Exception:
         data["unas"] = {}
 
+    # 9b. 3D printers — ONLY when actively doing something (idle is skipped so the
+    # column stops repeating the same "printers idle" line every day).
+    try:
+        pf = Path.home() / ".openclaw/workspace/state/nova_bambu_state.json"
+        if pf.exists():
+            allp = json.loads(pf.read_text()).values()
+            data["printers_active"] = [p for p in allp if p.get("active")]
+    except Exception:
+        data["printers_active"] = []
+
     # 10. Memory count
     try:
         req = urllib.request.Request("http://192.168.1.6:18790/health", timeout=5)
@@ -460,6 +470,8 @@ ADDITIONAL CONTEXT FOR THIS COLUMN:
 - LEAD with Claude Code work — deployments, fixes, new services. This is the headline.
 - MENTION specific queue items by name, specific numbers (actions count, queue items closed, memories added)
 - Reference weather, presence data, and capacity if notable
+- DON'T narrate routine, UNCHANGED status — it reads identically every day and Little Mister skips it. Do NOT report steady NAS/UNAS memory/RAM usage (only if it moved materially or is a problem). Same rule for any metric that reads the same as yesterday — skip it unless it changed or matters. Fresh material only.
+- 3D PRINTERS: the "printers_active" field lists printers ONLY when they're actually doing something (printing, paused, failed, just finished hot). If it's present and non-empty, DO comment on it — name the job, % done, time left, or the failure. If it's absent/empty, the printers are idle: say NOTHING about them (no "printers sat idle again" line — that's the exact thing he skips).
 """)
 
     user = f"""Here's everything that happened in my infrastructure in the last 24 hours. Write tonight's column.

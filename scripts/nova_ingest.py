@@ -669,8 +669,14 @@ def wiki_random_article(min_bytes=2000, max_attempts=25):
 
 def wiki_fetch(url):
     tp  = url.split("/wiki/")[-1]
+    # tp comes off the queue already percent-encoded; decode it back to a plain title
+    # and encode ONCE — re-quoting the encoded form double-encodes parens/dashes
+    # (e.g. %28 -> %2528) and the API returns "missing". redirects=1 resolves aliases
+    # (hyphen vs en-dash, etc.) to the canonical page.
+    title = urllib.parse.unquote(tp).replace("_", " ")
     api = ("https://en.wikipedia.org/w/api.php?action=query"
-           "&titles=" + urllib.parse.quote(tp) +
+           "&titles=" + urllib.parse.quote(title) +
+           "&redirects=1"
            "&prop=extracts|links&explaintext=1&pllimit=max&format=json")
     raw = fetch(api, timeout=20)
     if not raw:

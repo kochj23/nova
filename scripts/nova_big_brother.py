@@ -1557,7 +1557,7 @@ def _restart_gateway() -> bool:
 
     _last_gateway_restart = now
 
-    subprocess.run(["pkill", "-9", "-f", "^openclaw$"], capture_output=True)
+    subprocess.run(["pkill", "-9", "-f", "nova_gateway_v2"], capture_output=True)
     subprocess.run(["pkill", "-f", "signal-cli"], capture_output=True)
     time.sleep(3)
 
@@ -3214,7 +3214,7 @@ def _full_sweep():
             if desc == "EPERM on workspace-state.json":
                 uid = os.getuid()
                 subprocess.run(
-                    ["launchctl", "kickstart", "-k", f"gui/{uid}/ai.openclaw.gateway"],
+                    ["launchctl", "kickstart", "-k", f"gui/{uid}/net.digitalnoise.nova-gateway-v2"],
                     capture_output=True, timeout=15,
                 )
                 fixes.append("Kickstarted gateway (EPERM)")
@@ -3347,7 +3347,7 @@ def _full_sweep():
                 _record_event("warning", f"{name} not responding on :{port}", "No action (non-critical)", name)
                 continue
 
-            if protected_running and name not in ("Gateway", "Signal-cli"):
+            if protected_running and name not in ("Gateway v2", "Signal-cli"):
                 _queue_restart(name)
                 fixes.append(f"Queued restart of {name} (protected task running)")
                 _record_event("warning", f"{name} DOWN", "Queued restart", name)
@@ -3439,7 +3439,7 @@ def _full_sweep():
                     fixes.append("Restarted Scheduler (stale heartbeat)")
                     _record_event("critical", "Scheduler stale heartbeat", "Kickstarted via launchctl", "Scheduler")
 
-            elif name == "Gateway" or name == "Signal-cli":
+            elif name == "Gateway v2" or name == "Signal-cli":
                 if not _check_crash_loop("Gateway"):
                     success = _restart_gateway()
                     fix_msg = "Restarted Gateway" if success else "FAILED to restart Gateway"
@@ -3588,7 +3588,7 @@ def _full_sweep():
         if _check_gateway_eperm():
             uid = os.getuid()
             subprocess.run(
-                ["launchctl", "kickstart", "-k", f"gui/{uid}/ai.openclaw.gateway"],
+                ["launchctl", "kickstart", "-k", f"gui/{uid}/net.digitalnoise.nova-gateway-v2"],
                 capture_output=True, timeout=15,
             )
             fixes.append("Kickstarted gateway (EPERM workspace-state.json)")
@@ -3656,7 +3656,7 @@ def _full_sweep():
     # ── Gateway memory check ───────────────────────────────────────────────────
     gw_pids = []
     try:
-        result = subprocess.run(["pgrep", "-f", "^openclaw$"], capture_output=True, text=True)
+        result = subprocess.run(["pgrep", "-f", "nova_gateway_v2"], capture_output=True, text=True)
         gw_pids = [int(p) for p in result.stdout.strip().split() if p]
     except Exception:
         pass

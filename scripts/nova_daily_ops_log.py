@@ -589,7 +589,9 @@ def make_cover(title: str, slug: str, date: str) -> str:
     dest = IMAGES_DIR / f"{date}-{slug}{ext}"
     shutil.copy2(img, dest)
     log(f"Cover image: {dest.name}")
-    return f"/images/operations/{dest.name}"
+    # Web path must match the write dir (static/images/rando) — Hugo serves
+    # static/ at the site root, so the served URL is /images/rando/<name>.
+    return f"/images/rando/{dest.name}"
 
 
 def publish(title: str, body: str, brief_facts: str):
@@ -626,7 +628,8 @@ description: "Nova's daily operations log — the day's changes, deployments, an
     # Commit ONLY this post + its image (repo is huge; git add -A times out)
     subprocess.run(["git", "add", str(post_path)], cwd=HUGO_ROOT, capture_output=True, timeout=20)
     if hugo_image:
-        img_fs = HUGO_ROOT / hugo_image.lstrip("/")
+        # hugo_image is a web path (/images/rando/…); the file lives under static/.
+        img_fs = HUGO_ROOT / "static" / hugo_image.lstrip("/")
         subprocess.run(["git", "add", str(img_fs)], cwd=HUGO_ROOT, capture_output=True, timeout=20)
     msg = f"rando: {date} — daily ops log ({title[:45]})"
     r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=25)

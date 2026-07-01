@@ -89,6 +89,11 @@ SUBREDDITS = {
         "label": "Claude Code",
         "limit": 10,
     },
+    "TheTpGentleman": {
+        "source": "fishbowl",
+        "label": "TP Gentleman / watch-community fishbowl drama",
+        "limit": 25,
+    },
 }
 
 # ── State ─────────────────────────────────────────────────────────────────────

@@ -63,10 +63,7 @@ WEIGHTS = {
     "camera_vision": 0.28,  # high-confidence room occupancy (YOLOv8), freshest indoor signal
     "ble_rssi": 0.22,
     "hue_motion": 0.15,
-    "ha_lights": 0.08,
     "vehicle_vision": 0.08,
-    "ha_media": 0.05,
-    "power_draw": 0.07,
     "wifi_home": 0.05,
 }
 

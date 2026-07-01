@@ -358,6 +358,11 @@ description: "{description.replace('"', "'")}"
     output = content_dir / filename
     output.write_text(front_matter + byline + scrub_pii(body))
     log(f"Published: {section}/{filename}")
+    try:  # store the article into Nova's vector memory as a thing she wrote (non-fatal)
+        from nova_articles_to_memory import remember_article
+        remember_article(str(output))
+    except Exception as e:
+        log(f"article->memory skipped: {e}")
     return True
 
 

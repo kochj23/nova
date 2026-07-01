@@ -85,13 +85,14 @@ def bundle_syslog_threats(hours: int = 12) -> list:
 def bundle_scheduler_failures(hours: int = 12) -> list:
     """Bundle scheduler task failures by task name."""
     rows = _query("""
-        SELECT task_id, COUNT(*) as fail_count,
+        SELECT task_id,
+               COUNT(*) FILTER (WHERE exit_code != 0) as fail_count,
                COUNT(*) FILTER (WHERE exit_code = 0) as success_count,
                MAX(started_at) as last_attempt
         FROM scheduler_runs
         WHERE started_at > now() - make_interval(hours => %s)
-          AND exit_code != 0
         GROUP BY task_id
+        HAVING COUNT(*) FILTER (WHERE exit_code != 0) > 0
         ORDER BY fail_count DESC
     """, (hours,))
 

@@ -16,6 +16,7 @@ Cron: every 2 hours
 Written by Jordan Koch.
 """
 
+import hashlib
 import json
 import re
 import subprocess
@@ -291,7 +292,7 @@ def main():
 
     for pkg in email_packages:
         # Use tracking number as key, or subject hash as fallback
-        key = pkg.get("tracking") or str(hash(pkg["subject"]))[:12]
+        key = pkg.get("tracking") or hashlib.sha1(pkg["subject"].encode()).hexdigest()[:12]  # stable across runs; hash() is per-process salted
 
         if key in existing:
             old = existing[key]

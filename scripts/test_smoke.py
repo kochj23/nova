@@ -36,6 +36,12 @@ SKIP_SCRIPTS = {
 # Local modules that scripts import from the scripts dir
 LOCAL_MODULES = {"nova_config", "nova_logger", "herd_config"}
 
+# 3rd-party / skill deps that live in a venv or on /Volumes (not the default python).
+# Scripts using them run under that env (or import them lazily), so their absence in
+# THIS interpreter is not a regression — don't fail smoke on them.
+KNOWN_OPTIONAL_DEPS = {"pg8000", "psycopg", "build123d", "trimesh",
+                       "sentence_transformers", "sam_faces"}
+
 
 def test_syntax(path: Path) -> tuple[bool, str]:
     """Check if the script has valid Python syntax."""
@@ -74,6 +80,7 @@ def test_imports(path: Path) -> tuple[bool, str]:
                 if not _can_import(mod):
                     missing.append(mod)
 
+    missing = [m for m in missing if m not in KNOWN_OPTIONAL_DEPS]
     if missing:
         unique = sorted(set(missing))
         return False, f"Missing imports: {', '.join(unique)}"
@@ -83,6 +90,10 @@ def test_imports(path: Path) -> tuple[bool, str]:
 def _can_import(module_name: str) -> bool:
     """Check if a module can be found (without actually importing it)."""
     if module_name in LOCAL_MODULES:
+        return True
+    # local modules live in scripts/ or its parent (~/.openclaw); scripts add these
+    # to sys.path at runtime, but this test's path doesn't have them.
+    if (SCRIPTS_DIR / f"{module_name}.py").exists() or (SCRIPTS_DIR.parent / f"{module_name}.py").exists():
         return True
     if module_name in sys.stdlib_module_names:
         return True
@@ -94,10 +105,12 @@ def _can_import(module_name: str) -> bool:
 
 
 def main():
-    scripts = sorted(SCRIPTS_DIR.glob("nova_*.py"))
-    # Also check other Python scripts
-    scripts += sorted(SCRIPTS_DIR.glob("dream_*.py"))
-    scripts += sorted(SCRIPTS_DIR.glob("slack_*.py"))
+    # Smoke ALL top-level scripts (not just nova_/dream_/slack_) so the ~90 other
+    # tools — ingest_*, herd_*, camera_config, bambu_printers, memory_cleanup, etc. —
+    # also get Frame coverage. glob("*.py") is non-recursive, so tests/, archive/,
+    # and the nova_gateway/ package dir are excluded; test_*.py are skipped below.
+    scripts = sorted(p for p in SCRIPTS_DIR.glob("*.py")
+                     if not p.name.startswith("test_") and p.name not in SKIP_SCRIPTS)
 
     total = 0
     passed = 0

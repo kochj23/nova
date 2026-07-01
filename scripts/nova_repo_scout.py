@@ -50,6 +50,12 @@ WHEELHOUSE_MATCH = {
 }
 TRENDING_URL = "https://github.com/trending?since=daily"
 
+# Already in Nova's production stack — don't pitch "you should adopt this".
+ALREADY_ADOPTED = {
+    "ollama", "ollama/ollama", "open-webui", "openwebui", "comfyui",
+    "searxng", "pgvector", "llama.cpp", "llama-cpp", "mlx",
+}
+
 # Nova's real stack — the yardstick every repo is measured against.
 NOVA_STACK = """Nova's actual stack (measure fit against THIS, concretely):
 - Inference: Ollama (Qwen3 30B-A3B, Qwen3-Coder, DeepSeek-R1, Qwen3-VL) + MLX (Qwen2.5 32B) on Apple Silicon (Mac Studio). 100% local, no cloud inference.
@@ -171,6 +177,13 @@ def _in_wheelhouse(repo: dict) -> bool:
     return any(kw in hay for kw in WHEELHOUSE_MATCH)
 
 
+def _is_adopted(repo: dict) -> bool:
+    """True if it's already in Nova's stack — don't write an 'adopt this' article."""
+    fn = repo.get("full_name", "").lower()
+    name = fn.split("/")[-1]
+    return any(a == name or a == fn for a in ALREADY_ADOPTED)
+
+
 def _pick_by_search(seen: set) -> dict | None:
     """Fallback: highest-starred active wheelhouse repo via the search API."""
     now = datetime.now(timezone.utc)
@@ -181,6 +194,8 @@ def _pick_by_search(seen: set) -> dict | None:
         for it in gh_search(topic, pushed_cutoff, created_cutoff):
             fn = it.get("full_name")
             if not fn or fn in seen or it.get("archived") or it.get("fork") or it.get("disabled"):
+                continue
+            if _is_adopted(it):
                 continue
             merged[fn] = it
     if not merged:
@@ -205,6 +220,9 @@ def pick_repo(cur) -> dict | None:
         if not repo or repo.get("archived") or repo.get("fork"):
             continue
         if not _in_wheelhouse(repo):
+            continue
+        if _is_adopted(repo):
+            nj.log(f"[scout] skip {full} — already in Nova's stack")
             continue
         repo["_stars_today"] = stars_today
         nj.log(f"[scout] trending pick {full} (+{stars_today} today, "

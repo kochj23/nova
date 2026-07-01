@@ -666,18 +666,21 @@ def log(msg: str):
     print(f"[gov-rss {ts}] {msg}", flush=True)
 
 
-def load_seen() -> set:
+def load_seen() -> dict:
     try:
         if STATE_FILE.exists():
-            return set(json.loads(STATE_FILE.read_text()))
+            # Use an insertion-ordered dict (not a set) so save_seen can retain the NEWEST entries.
+            return dict.fromkeys(json.loads(STATE_FILE.read_text()))
     except Exception:
         pass
-    return set()
+    return {}
 
 
-def save_seen(seen: set):
+def save_seen(seen: dict):
     STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    # Keep last 25000 entries (expanded for 400+ feeds)
+    # Keep last 25000 entries (expanded for 400+ feeds). seen is an insertion-ordered
+    # dict, so slicing its keys keeps the newest; a set is unordered and would drop
+    # recent URLs, causing them to be re-ingested.
     STATE_FILE.write_text(json.dumps(list(seen)[-25000:]))
 
 
@@ -817,7 +820,7 @@ def run():
             if url_hash in seen:
                 continue
 
-            seen.add(url_hash)
+            seen[url_hash] = None  # insertion-ordered dict; newest kept on save
             new_items += 1
 
             title = clean_html(item["title"])

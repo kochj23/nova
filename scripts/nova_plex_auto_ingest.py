@@ -328,7 +328,7 @@ def ingest_chunks(chunks: list[str], vector: str, metadata: dict) -> int:
 
 # ── Main Processing ───────────────────────────────────────────────────────────
 
-def process_item(item, section_name: str) -> bool:
+def process_item(item, section_name: str) -> str | None:
     item_type = item.get("type", "")
     title = item.get("title", "Unknown")
     show_name = item.get("grandparentTitle", "")
@@ -404,7 +404,8 @@ def process_item(item, section_name: str) -> bool:
     ingested = ingest_chunks(chunks, vector, metadata)
     log.info(f"Ingested {ingested}/{len(chunks)} chunks → `{vector}`")
 
-    return True
+    # Return the actual vector used so callers report/store the same one
+    return vector
 
 
 def trigger_library_scan():
@@ -445,15 +446,13 @@ def main():
             if not rating_key or rating_key in state["ingested"]:
                 continue
 
-            success = process_item(item, section_name)
-            if success:
+            vector = process_item(item, section_name)
+            if vector:
                 new_count += 1
                 show = item.get("grandparentTitle", "")
                 title = item.get("title", "")
                 display = f"{show} — {title}" if show else title
-                # Get the vector it was classified as (re-derive from item)
-                genres = [g.get("tag", "") for g in item.get("Genre", [])]
-                vector = classify_content(title, show, genres, "")
+                # Use the vector process_item actually ingested under (not a re-derive)
                 ingested_details.append({"display": display, "vector": vector})
                 state["ingested"][rating_key] = {
                     "title": title,

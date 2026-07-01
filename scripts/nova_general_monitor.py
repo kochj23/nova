@@ -7,6 +7,7 @@ Similar to Burbank subreddit summary job
 import subprocess
 import os
 from datetime import datetime
+from pathlib import Path
 import json
 
 def get_general_channel_messages():

@@ -29,6 +29,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 from nova_image_utils import generate_image
+from nova_unused_memories import fetch_unused, mark_used
 from nova_notify import notify
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -482,23 +483,22 @@ def run_pipeline(retry_simplified: bool = False):
 
     log(f"Starting Art Corner — {style['name']} ({today.strftime('%A')})")
 
-    # Fetch memories
-    log("Fetching memories...")
-    random_memories = fetch_random_memories(10)
-    themed_memories = fetch_themed_memories(theme_query, 5)
-    # PRIVACY GATE: filter private-source/blocked rows + scrub residual PII BEFORE
-    # any memory text reaches the OpenRouter (cloud) concept/statement prompts.
-    _rb, _tb = len(random_memories), len(themed_memories)
-    random_memories = sanitize_memories(random_memories)
-    themed_memories = sanitize_memories(themed_memories)
-    log(f"Privacy gate: random {_rb}->{len(random_memories)}, themed {_tb}->{len(themed_memories)} after filtering private sources")
-    all_memories = random_memories + themed_memories
+    # Fetch the 100 OLDEST UNUSED memories (access_count=0). Private sources are
+    # excluded at source (nova_unused_memories). Feed the whole set as inspiration;
+    # mark them used on success so the pool advances and the same 100 don't recur.
+    log("Fetching the 100 oldest unused memories...")
+    all_memories = fetch_unused(100)
+    used_ids = [m["id"] for m in all_memories if m.get("id")]  # capture before scrub mutates
+    # Belt-and-suspenders: re-run the local PII scrub before any text reaches the cloud prompt.
+    _before = len(all_memories)
+    all_memories = sanitize_memories(all_memories)
+    log(f"Privacy gate: {_before}->{len(all_memories)} after PII scrub")
 
     if len(all_memories) < 3:
-        log("ERROR: Not enough memories retrieved — aborting")
+        log("ERROR: Not enough unused memories retrieved — aborting")
         notify(
             "Art Corner failed",
-            body="Could not retrieve enough memories.",
+            body="Could not retrieve enough unused memories.",
             level="warning",
             category="media",
             dedup_key="art-corner-daily",
@@ -506,7 +506,7 @@ def run_pipeline(retry_simplified: bool = False):
         )
         return False
 
-    log(f"Got {len(random_memories)} random + {len(themed_memories)} themed memories")
+    log(f"Got {len(all_memories)} oldest-unused memories")
 
     # Synthesize concept
     log("Synthesizing visual concept...")
@@ -585,6 +585,8 @@ def run_pipeline(retry_simplified: bool = False):
     except Exception:
         pass
 
+    used = mark_used(used_ids)
+    log(f"Marked {used} memories used — unused pool advances")
     log(f"Art Corner complete: \"{title}\" — {style['name']}")
     return True
 
