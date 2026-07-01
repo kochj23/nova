@@ -12,10 +12,11 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 
 | Metric | Value |
 |--------|-------|
-| Scripts | 277 Python/Shell (nova_* namespace) |
-| Scheduler tasks | 125 unique |
+| Scripts | 380 Python/Shell (nova_* namespace) |
+| Scheduler tasks | 156 unique |
 | Scheduler runs logged | 81,901 (98.9% success rate) |
-| Vector memories | 1,650,483 unique (deduplicated, HNSW-indexed, 20GB) |
+| Vector memories | 1,689,142 unique (deduplicated, HNSW-indexed, 20GB) |
+| Tests | ~9,550 (pytest) — smoke covers all 353 scripts; dedicated suites on the highest-risk services |
 | Memory sources | 217+ domains |
 | Gateway | Nova Gateway v2.4.0 (pure Python asyncio, hot-reloadable config) |
 | Channels | Slack + Discord + Signal + Web Chatroom + Claude Code bridge |
@@ -52,7 +53,16 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 
 ---
 
-## Infrastructure & Security (June 2026)
+## Infrastructure & Security (June–July 2026)
+
+### Fleet Audit, Bug Sweep & Test Hardening (2026-07-01)
+
+A full adversarially-verified audit of every `nova_*` script + the control repos (dead code, optimizations, correctness, and 7-category test coverage), then a fixed → deleted → optimized → tested pass:
+
+- **Correctness (28 bugs fixed).** Highlights: Big Brother's gateway self-heal was checking stale service-name literals (`Gateway` vs the live `Gateway v2` / `nova_gateway_v2`) — it can now actually detect and restart the gateway; incident-triage's `_pg_query` `%s`/`ILIKE` collision that silently returned empty for `signal`/`slack`/`scheduler`; `nova_reembed` dropping 5 HNSW indexes but rebuilding only 3 (music/health indexes were being lost); two launchd jobs (`nova_home_control`, `nova_general_monitor`) crashing on every run with an unimported `Path`; motion detection comparing a frame to itself; blog cover-image 404s.
+- **Dead code.** Removed 7 orphaned scripts superseded by `nova_journal.py` (`nova_daily_opinion`, `nova_daily_journal`, …) and retired stubs.
+- **Optimizations.** `nova_component_metrics` full process-table scan per component → one snapshot per cycle; `nova_config` base64 decode hoisted out of the per-memory hot path; `nova_inference_queue` semaphore now admits real 2-way concurrency; pollers reuse a single DB connection per cycle.
+- **Tests.** Smoke coverage broadened to **all 353 scripts** (now local/optional-dep aware) and **+372 new tests** across the 10 highest-blast-radius services — the memory-reclassify *private→public never* guard, syslog untrusted-input parsing, finance *PII-never-to-cloud*, an incident-triage regression anchor, and the autofix command allowlist. A `NOVA_TEST_QUIET` env guard keeps CI/agent runs from paging Slack.
 
 ### Notification Bus, Incident Correlation & Self-Healing (2026-06-21)
 
