@@ -79,38 +79,17 @@ DISCOVERY_SITES = [
     ("Internet Archive","https://archive.org/search?query={q}&mediatype=movies"),
 ]
 
-_SPICY_SITES = [
-    # Big four -- most reliable search support
-    ("PornHub",     "https://www.pornhub.com/video/search?search={q}"),
-    ("XVideos",     "https://www.xvideos.com/?k={q}"),
-    ("XHamster",    "https://xhamster.com/search/{q}"),
-    ("XNXX",        "https://www.xnxx.com/search/{q}"),
-    # Second tier
-    ("RedTube",     "https://www.redtube.com/?search={q}"),
-    ("YouPorn",     "https://www.youporn.com/search/videos/?query={q}"),
-    ("SpankBang",   "https://spankbang.com/s/{q}/"),
-    ("Eporner",     "https://www.eporner.com/search/{q}/"),
-    ("DrTuber",     "https://www.drtuber.com/search/videos?q={q}"),
-    ("SunPorno",    "https://www.sunporno.com/search/{q}/"),
-    ("TNAFlix",     "https://www.tnaflix.com/search/?query={q}"),
-    ("Txxx",        "https://www.txxx.com/videos/?q={q}"),
-    ("Nuvid",       "https://www.nuvid.com/search/videos?q={q}"),
-    ("PornTube",    "https://www.porntube.com/videos/search?query={q}"),
-    ("Pornotube",   "https://pornotube.com/?search={q}"),
-    ("PornFlip",    "https://pornflip.com/search/{q}"),
-    ("PornerBros",  "https://www.pornerbros.com/videos/search.html?q={q}"),
-    ("AlphaPorno",  "https://www.alphaporno.com/videos/search/?q={q}"),
-    ("Slutload",    "https://www.slutload.com/search/?q={q}"),
-    ("HellPorno",   "https://hellporno.com/search/?q={q}"),
-    ("ZenPorn",     "https://zenporn.com/search/?q={q}"),
-    ("Beeg",        "https://beeg.com/search?q={q}"),
-    ("ManyVids",    "https://www.manyvids.com/search/?query={q}"),
-    ("NubilesPorn", "https://nubilesporn.com/search?q={q}"),
-    ("LoveHomePorn","https://www.lovehomeporn.com/search?q={q}"),
-    ("Pornbox",     "https://pornbox.com/application/search?query={q}"),
-    # Broken in yt-dlp but sometimes work -- kept for completeness
-    # ("Tube8",    "https://www.tube8.com/search/videos/?searchValue={q}"),  # BROKEN
-]
+_SPICY_SITES = []  # REMOVED 2026-07-04: porn-site crawler stripped (no-sexual-content policy)
+
+# Hard filter: no sexual/explicit content may enter Nova's vector memory (per Jordan, absolute).
+# Targets pornographic/explicit terms and specific acts/paraphilias -- NOT clinical words like
+# "sexual reproduction" or "sex chromosome", so legitimate biology/health content still ingests.
+_FORBIDDEN_INGEST_RE = re.compile(
+    r"\b(porn\w*|xxx|nsfw|hentai|erotica?|blow ?jobs?|cum ?shots?|creampie|"
+    r"gang ?bang|bukkake|deep ?throat|reverse cowgirl|hand ?jobs?|rim ?jobs?|"
+    r"fellatio|cunnilingus|masturbat\w+|coprophilia|urophilia|bestiality|zoophilia|"
+    r"milf|cam ?girl|only ?fans|escort\s+service|sexually explicit|explicit sexual|"
+    r"18\+\s*only|barely legal|nubile)\b", re.I)
 
 # ---------------------------------------------------------------------------
 # yt-dlp self-upgrade (runs once at startup)
@@ -506,6 +485,9 @@ def remember(text, source, meta, done_hashes, dry_run=False):
     h = text_hash(text)
     if h in done_hashes:
         return False
+    if _FORBIDDEN_INGEST_RE.search(text or ""):
+        done_hashes.add(h)
+        return False  # explicit content blocked from memory
     if dry_run:
         done_hashes.add(h)
         return True
