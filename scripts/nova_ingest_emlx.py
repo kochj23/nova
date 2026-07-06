@@ -6,7 +6,7 @@ Reads .emlx files from the Apple Mail V10 directory structure, extracts
 email content, and stores via the async Redis queue endpoint.
 
 Usage: python3 nova_ingest_emlx.py [base_dir]
-Default: /Volumes/Data/Mail/V10
+Default: ~/Library/Mail/V10 (the live Apple Mail store)
 
 Uses POST /remember?async=1 — fire-and-forget, 8ms per call, worker handles embedding.
 
@@ -52,7 +52,10 @@ def _pii_filter(subject: str, body: str) -> tuple[bool, str]:
     for pat, rep in _REDACT:
         body = pat.sub(rep, body)
     return False, body
-BASE_DIR    = Path(sys.argv[1]) if len(sys.argv) > 1 else Path("/Volumes/Data/Mail/V10")
+# Live Apple Mail store is the local ~/Library/Mail/V10. (Was /Volumes/Data/Mail/V10,
+# a stale copy on the external that failed 2026-07-05 — ingestion silently read nothing,
+# which surfaced as false "no email received in days" health alerts.)
+BASE_DIR    = Path(sys.argv[1]) if len(sys.argv) > 1 else Path.home() / "Library" / "Mail" / "V10"
 BATCH_LOG   = 5000   # log progress every N files
 
 # Skip these mailbox types entirely
