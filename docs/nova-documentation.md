@@ -1712,3 +1712,13 @@ psql -U kochj -d nova_memories -c "VACUUM ANALYZE nova_memories;"
 df -h /Volumes/MoreData  # PostgreSQL data
 df -h /Volumes/Data       # AI models, apps
 ```
+
+---
+
+## 2026-07-06 — Session changelog (secret store, DB repair, home-bus migration)
+
+- **Fleet secret store (NEW):** PG+pgcrypto app-side-decrypt store replacing Mac-only Keychain for Linux. `get_secret()` shim on all nodes; master key via systemd-creds (nova-core/.2, nova-core2/.86), EnvironmentFile (nuk/.10), or Keychain (macOS). See agent_docs `secret-store`. Keychain entries kept as backup.
+- **CRITICAL DB fix:** 07-05 migration landed on a vanilla `postgres:17` container lacking **pgvector** → `nova_memories` (1.74M memories) was unreadable, silently breaking fishbowl articles, memory recall, and email-freshness alerts. Fixed by installing `postgresql-17-pgvector 0.8.4`. **Durability TODO:** switch compose image to `pgvector/pgvector:pg17`; do not recreate the container until then.
+- **Home bus migration:** `zigbee2mqtt` + `zwave-js-ui` moved .6 → nova-core (.2) as Docker; old .6 launchd disabled. Z-Wave 800 dongle now on .2.
+- **Bug fixes:** anticipation-engine meeting reminders (dedup + expiry — stops repeated "starting in 15 minutes" spam); emlx ingester repointed from dead `/Volumes/Data/Mail/V10` to live `~/Library/Mail/V10`.
+- **Network:** nova-core2 (.86) converted DHCP → static; all present cluster nodes on fixed addressing.
