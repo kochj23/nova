@@ -268,6 +268,11 @@ def check_meeting_prep() -> list:
 
     for m in meetings:
         title = m["title"]
+        # A meeting reminder is worthless once the meeting has started — expire it then.
+        try:
+            expires_at = datetime.fromisoformat(m["start"].replace("Z", "+00:00")).replace(tzinfo=None).timestamp()
+        except (ValueError, TypeError, KeyError):
+            expires_at = time.time() + 900
         # Search memory for previous discussions on this topic
         try:
             payload = json.dumps({"query": title, "limit": 3}).encode()
@@ -284,6 +289,7 @@ def check_meeting_prep() -> list:
                     "priority": 2,
                     "message": f"Meeting '{title}' in 15 min. Last relevant context: {context}",
                     "topic": f"meeting:{title}",
+                    "expires_at": expires_at,
                 })
         except Exception:
             observations.append({
@@ -291,6 +297,7 @@ def check_meeting_prep() -> list:
                 "priority": 3,
                 "message": f"Meeting '{title}' starting in 15 minutes.",
                 "topic": f"meeting:{title}",
+                "expires_at": expires_at,
             })
 
     return observations
@@ -437,13 +444,17 @@ def deliver(observation: dict, state: dict):
 
 def queue_for_later(observation: dict, state: dict):
     """Queue an observation for delivery when Jordan is available."""
-    state.setdefault("hold_queue", []).append({
-        **observation,
-        "queued_at": time.time(),
-    })
+    q = state.setdefault("hold_queue", [])
+    # Don't pile up duplicates of the same topic — the engine runs every ~1 min, so a
+    # meeting reminder in its 15-min window would otherwise queue ~15 copies that then
+    # dribble out one per cooldown for hours. One queued item per topic is enough.
+    topic = observation.get("topic", "")
+    if topic and any(o.get("topic") == topic for o in q):
+        return
+    q.append({**observation, "queued_at": time.time()})
     # Cap queue size
-    if len(state["hold_queue"]) > 20:
-        state["hold_queue"] = state["hold_queue"][-20:]
+    if len(q) > 20:
+        state["hold_queue"] = q[-20:]
 
 
 def flush_hold_queue(state: dict, activity: str):
@@ -464,6 +475,9 @@ def flush_hold_queue(state: dict, activity: str):
             continue
         # Skip stale items (> 4 hours old)
         if time.time() - obs.get("queued_at", 0) > 14400:
+            continue
+        # Drop time-sensitive items whose moment has passed (e.g. meeting already started)
+        if obs.get("expires_at") and time.time() > obs["expires_at"]:
             continue
         if should_deliver(obs, state, activity):
             deliver(obs, state)
