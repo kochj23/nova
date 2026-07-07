@@ -340,9 +340,10 @@ def post_both(message: str, slack_channel: str = SLACK_CHAN, discord_channel: st
     import json, urllib.request
     if discord_channel is None:
         discord_channel = CHANNEL_MAP.get(slack_channel, DISCORD_CHAT)
-    # Slack
+    # Slack — #nova-notifications was retired (renamed 2026-06-21); silently drop posts to it
+    # instead of erroring channel_not_found on every article/agent notification.
     token = slack_bot_token()
-    if token:
+    if token and slack_channel != "#nova-notifications":
         data = json.dumps({"channel": slack_channel, "text": message, "mrkdwn": True}).encode()
         req = urllib.request.Request(
             f"{SLACK_API}/chat.postMessage",
