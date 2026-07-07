@@ -408,6 +408,26 @@ def _resolve_escalation(issue_id: str) -> tuple:
         return (True, suffix)
 
 
+def _data_liveness_checks():
+    """Output-liveness checks (nova_data_checks): verify subsystems PRODUCE correct results,
+    not just that a process is alive. Routes through the same escalation/digest machinery.
+    Lazy import + guarded so a check-module issue can never crash the sweep."""
+    try:
+        from nova_data_checks import run_due_checks
+        for r in run_due_checks():
+            iid = f"data:{r.id}"
+            if r.ok:
+                was, suffix = _resolve_escalation(iid)
+                if was:
+                    _notify(f":white_check_mark: {r.id}{suffix}")
+            else:
+                send, suffix = should_notify(iid, r.severity)
+                if send:
+                    _notify(r.message + suffix, is_critical=(r.severity == "critical"))
+    except Exception as e:
+        log(f"[data-checks] error (ignored): {e}", level=LOG_WARN, source="big-brother")
+
+
 # ── Fresh-Eyes Canary Check (Boot-Dog Pattern) ───────────────────────────────
 # Every 10 minutes, ask a local LLM to review system metrics for anomalies
 # that rule-based logic might miss.
@@ -4719,6 +4739,7 @@ def main():
         if now - last_sweep >= SWEEP_INTERVAL:
             last_sweep = now
             threading.Thread(target=_full_sweep, daemon=True, name="sweep").start()
+            threading.Thread(target=_data_liveness_checks, daemon=True, name="data-checks").start()
         if DIGEST_MODE:
             _flush_digest()
         time.sleep(1)
