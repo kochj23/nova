@@ -13,9 +13,9 @@ set -uo pipefail
 
 # ── Config ───────────────────────────────────────────────────────────────────
 DB_USER="kochj"
-LOCAL_DIR="/Volumes/Data/backups/postgres"
+LOCAL_DIR="$HOME/.openclaw/backup-staging/postgres"   # transient internal staging (was /Volumes/Data — off the FDA-blocked volume); deleted after NAS copy
 NAS_DIR="/Volumes/nas/backups/postgres"
-RETENTION_DAYS=7
+RETENTION_DAYS=7    # 7 nightly dumps is plenty; the streaming replicas are the real HA
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="$HOME/.openclaw/logs/nova_pg_backup.log"
 export PATH="/opt/homebrew/opt/postgresql@17/bin:/opt/homebrew/bin:$PATH"
@@ -77,9 +77,9 @@ backup_one() {
     local nas="local-only"
     if $NAS_AVAILABLE; then
         if rsync -a --timeout=600 "$LOCAL_DIR/$DUMP_DIR" "$NAS_DIR/" 2>>"$LOG_FILE"; then
-            nas="local+NAS"
+            nas="NAS"; rm -rf "$LOCAL_DIR/$DUMP_DIR"   # NAS is authoritative — free the internal staging
         else
-            log "WARNING: NAS copy of $DB failed — local backup is safe"; nas="local-only (NAS copy FAILED)"
+            log "WARNING: NAS copy of $DB failed — kept on internal staging as fallback"; nas="internal-staging-only (NAS FAILED)"
         fi
     fi
     # rotation (per-DB)

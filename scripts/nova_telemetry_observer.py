@@ -85,6 +85,14 @@ ROOM_TEMP_LOW_F = 65.0
 # it if it climbs toward a real cooling failure. ponytail: one threshold, raise if noisy.
 RACK_ROOM = "server_rack"
 RACK_TEMP_HIGH_F = 100.0
+# Fridge probe (Ambient WH31 on aux_sensors channel 1). Only alert on a genuine
+# warm-up AFTER it's been cold (door left open / compressor failing) — not during the
+# initial cool-down or while it's sitting out of the fridge.
+FRIDGE_CHANNEL = 1
+FRIDGE_COLD_F = 40.0    # must have dipped below this recently = actually in a fridge
+FRIDGE_WARM_F = 45.0    # sustained above this = problem
+FRIDGE_WARM_MIN = 15    # for this long (rides out normal door-opens)
+FRIDGE_STALE_MIN = 45   # no reading this long = sensor offline
 HUMIDITY_HIGH = 60
 HUMIDITY_LOW = 30
 MEMORY_RATE_HIGH_MULT = 2.0
@@ -864,6 +872,50 @@ def post_critical_immediately(obs_list: list[Observation]):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+def analyze_fridge(conn):
+    """Fridge probe (aux_sensors ch1). Alert only if it WAS cold recently (so it's
+    genuinely in a working fridge) yet is now sustained-warm — i.e. door left open or
+    compressor failing. Avoids spam during initial cool-down / when it's out of the
+    fridge. Also flags a low battery and a stale/offline sensor."""
+    now = datetime.now(timezone.utc)
+    rows = query(conn, """
+        SELECT ts, temp_f, humidity, battery FROM telemetry.aux_sensors
+        WHERE channel = %s AND ts >= %s AND temp_f IS NOT NULL
+        ORDER BY ts
+    """, (FRIDGE_CHANNEL, now - timedelta(hours=6)))
+    if not rows:
+        return  # no data / sensor not deployed
+
+    latest = rows[-1]
+    age_min = (now - latest["ts"]).total_seconds() / 60
+
+    # Offline: was reporting, now silent
+    if age_min > FRIDGE_STALE_MIN:
+        observe("fridge", "offline",
+                f"Fridge sensor went quiet — no reading for {age_min:.0f} min. Battery or radio dropout?",
+                severity="warning", metadata={"age_min": round(age_min)})
+        return
+
+    # Low battery (Ecowitt battN: 0 = low, 1 = ok on WH31)
+    if latest["battery"] == 0:
+        observe("fridge", "battery",
+                "Fridge sensor battery is low — swap it before it drops off the mesh.",
+                severity="warning", metadata={"battery": latest["battery"]})
+
+    # Only alarm on warm-up if it was actually cold recently (= really in a fridge)
+    if min(r["temp_f"] for r in rows) >= FRIDGE_COLD_F:
+        return
+
+    warm_since = now - timedelta(minutes=FRIDGE_WARM_MIN)
+    recent = [r for r in rows if r["ts"] >= warm_since]
+    if recent and all(r["temp_f"] > FRIDGE_WARM_F for r in recent):
+        observe("fridge", "warming",
+                f"Fridge has been above {FRIDGE_WARM_F:.0f}F for {FRIDGE_WARM_MIN}+ min "
+                f"(now {latest['temp_f']:.0f}F). Door left open, or the fridge is failing.",
+                severity="critical",
+                metadata={"temp_f": latest["temp_f"], "warm_min": FRIDGE_WARM_MIN})
+
+
 def main():
     log.info("=== Telemetry Observer starting ===")
 
@@ -889,6 +941,9 @@ def main():
 
         log.info("Analyzing climate comfort...")
         analyze_climate(ops_conn)
+
+        log.info("Analyzing fridge...")
+        analyze_fridge(ops_conn)
 
         log.info("Analyzing Nova meta...")
         analyze_nova_meta(ops_conn, mem_conn)

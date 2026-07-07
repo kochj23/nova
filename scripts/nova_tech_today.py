@@ -46,7 +46,7 @@ SEARXNG_URL = "http://192.168.1.7:8080/search"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-haiku-4.5"
 
-JOURNAL_DIR = Path("/Volumes/Data/xcode/nova-journal")
+JOURNAL_DIR = (Path.home() / "nova-journal")
 CONTENT_DIR = JOURNAL_DIR / "content/tech-today"
 IMAGES_DIR = JOURNAL_DIR / "static/images/tech-today"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_tech_today.log"

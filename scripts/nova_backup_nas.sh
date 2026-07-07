@@ -63,11 +63,11 @@ echo ""
 echo "--- Backup size ---"
 du -sh "$SNAPSHOT_DIR"
 
-# Prune snapshots older than 30 days (keep latest 30)
+# Prune snapshots: keep latest 14 (~2 weeks; older isn't restored, we roll forward)
 echo ""
-echo "--- Pruning snapshots older than 30 days ---"
+echo "--- Pruning snapshots, keeping latest 14 ---"
 TOTAL=$(find "$NAS_TARGET/snapshots" -maxdepth 1 -type d -name "20*" | wc -l | tr -d ' ')
-TO_DELETE=$(( TOTAL > 30 ? TOTAL - 30 : 0 ))
+TO_DELETE=$(( TOTAL > 14 ? TOTAL - 14 : 0 ))
 if [ "$TO_DELETE" -gt 0 ]; then
     find "$NAS_TARGET/snapshots" -maxdepth 1 -type d -name "20*" | sort | head -n "$TO_DELETE" | while read -r old_dir; do
         echo "Removing: $old_dir"

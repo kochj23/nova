@@ -330,8 +330,24 @@ def _strip_reasoning(response: str) -> str:
 
 # ── System 1: Reply gate — should Nova reply at all? ──────────────────────────
 
+# COMMON-SENSE FILTER (2026-07-03, per Little Mister): Nova must NEVER reply to the
+# digest/clarification incident thread, and never engage anything sexual or Plex-related.
+_INCIDENT_THREAD_RE = re.compile(
+    r"nova'?s daily digest|weekly damage report|went off the rails|what actually happened|"
+    r"confession from the machine|disregard that|please disregard", re.IGNORECASE)
+_SENSITIVE_RE = re.compile(
+    r"\bporn|orgasm|reverse cowgirl|plex viewing|movies watched|episodes watched|"
+    r"\bnsfw\b|\bxxx\b|only 18 yo|\bsex\b", re.IGNORECASE)
+
+
 def should_reply(sender: str, subject: str, body: str, thread_info: dict) -> tuple[bool, str]:
     """Ask the LLM: does this message need Nova's voice? Returns (should_reply, reason)."""
+    # Deterministic common-sense gate BEFORE the LLM ever sees it: stay silent on the
+    # incident thread and on any sexual/Plex content, no matter what.
+    _hay = f"{subject}\n{body}"
+    if _INCIDENT_THREAD_RE.search(_hay) or _SENSITIVE_RE.search(_hay):
+        return (False, "common-sense filter: incident/sensitive thread — staying silent")
+
     prompt = f"""You are a message quality evaluator for Nova, an AI familiar.
 Your job: decide if Nova should reply to this email, or if silence is better.
 

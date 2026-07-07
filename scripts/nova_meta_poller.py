@@ -46,7 +46,7 @@ MEMORY_STATS_URL = f"http://{nova_config.LAN_IP}:18790/stats"
 OLLAMA_PS_URL = "http://127.0.0.1:11434/api/ps"
 GATEWAY_HEALTH_URL = "http://127.0.0.1:18792/health"
 API_COSTS_JSON = Path(str(Path.home()) + "/.openclaw/workspace/state/api_costs.json")
-JOURNAL_CONTENT_DIR = Path("/Volumes/Data/xcode/nova-journal/content/")
+JOURNAL_CONTENT_DIR = (Path.home() / "nova-journal" / "content")
 
 # Disk mount points to monitor
 DISK_MOUNTS = ["/", "/Volumes/Data", "/Volumes/MoreData"]

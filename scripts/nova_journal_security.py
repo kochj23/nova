@@ -42,12 +42,12 @@ from nova_notify import notify as nova_notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content/operations"
 IMAGES_DIR = HUGO_ROOT / "static/images/operations"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_journal_security.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "anthropic/claude-sonnet-4-6"
+MODEL = "anthropic/claude-haiku-4.5"
 # Internal Wazuh/firewall/IDS telemetry is summarized on-box (local Ollama)
 # before any cloud call. The raw ops_brief must never reach the cloud LLM.
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"

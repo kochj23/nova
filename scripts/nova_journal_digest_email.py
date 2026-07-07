@@ -23,7 +23,7 @@ from nova_notify import notify
 
 NOVA_EMAIL = "nova@digitalnoise.net"
 JOURNAL_URL = "https://nova.digitalnoise.net"
-JOURNAL_DIR = Path("/Volumes/Data/xcode/nova-journal/content")
+JOURNAL_DIR = (Path.home() / "nova-journal" / "content")
 SMTP_HOST = "smtp.gmail.com"
 SMTP_PORT = 587
 

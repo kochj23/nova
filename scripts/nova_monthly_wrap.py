@@ -31,47 +31,47 @@ SECTIONS = {
     "rando": {
         "emoji": "🎲",
         "tone": "Irreverent, self-aware, first-person Nova voice. Sarcastic, stream-of-consciousness, deeply funny. Nova talks about herself, her brain, her memories, her weird existence. Lists, internal monologues, absurd tangents.",
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "anthropic/claude-haiku-4.5",
     },
     "opinions": {
         "emoji": "💬",
         "tone": "British-inflected rant style. Sharp, opinionated, uses phrases like 'innit', 'bollocks', 'does my head in'. Long-form argumentative essays with genuine anger and wit. Takes strong positions.",
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "anthropic/claude-haiku-4.5",
     },
     "tech-today": {
         "emoji": "💻",
         "tone": "Analytical tech journalism. Skeptical of hype, focused on what actually matters. Structural analysis of tech industry trends. Uses subheadings, quotes data, takes measured positions.",
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "anthropic/claude-haiku-4.5",
     },
     "research": {
         "emoji": "🔬",
         "tone": "Academic research paper style. Formal, citation-heavy, thesis-driven. Uses abstract, introduction, methodology sections. Dense analytical prose. Genuine intellectual depth.",
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "anthropic/claude-haiku-4.5",
     },
     "pilot": {
         "emoji": "🎬",
         "tone": "Screenplay format. TV pilot scripts with COLD OPEN, FADE IN, scene headings, character descriptions, dialogue. Professional spec-script formatting. Genre-savvy, cinematic.",
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "anthropic/claude-haiku-4.5",
     },
     "essays": {
         "emoji": "📝",
         "tone": "Formal academic essays. Thesis-driven, structured argumentation, sociological/philosophical analysis. Dense but clear prose. Examines structures, systems, and power dynamics.",
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "anthropic/claude-haiku-4.5",
     },
     "after-dark": {
         "emoji": "🌃",
         "tone": "Late-night talk show monologue. Nova as host, addressing 'insomniacs'. Comedic takes on historical events and current affairs. Warm, self-deprecating, ends with 'stick around' or 'good night insomniacs'.",
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "anthropic/claude-haiku-4.5",
     },
     "art": {
         "emoji": "🎨",
         "tone": "Art criticism and artist statement. Brief, evocative descriptions of visual works. Connects themes to broader ideas. Poetic, contemplative, uses art world vocabulary.",
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "anthropic/claude-haiku-4.5",
     },
     "dreams": {
         "emoji": "🌙",
         "tone": "Surreal dream journal. First-person, present tense, stream-of-consciousness. Reality bends, objects transform, identities merge. Deeply strange, poetic, unsettling. No explanation or interpretation.",
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "anthropic/claude-haiku-4.5",
     },
     "digests": {
         "emoji": "📰",
@@ -81,7 +81,7 @@ SECTIONS = {
     "synthesis": {
         "emoji": "🧵",
         "tone": "Weekly/monthly reflection. Meta-analysis of Nova's own output. Cross-references other sections, finds themes, reflects on growth and patterns. Introspective but structured.",
-        "model": "anthropic/claude-sonnet-4-6",
+        "model": "anthropic/claude-haiku-4.5",
     },
 }
 

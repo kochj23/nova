@@ -31,7 +31,7 @@ LOG_FILE = Path.home() / ".openclaw/logs/nova_self_improve.log"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/self_improve_state.json"
 LESSONS_FILE = Path.home() / ".openclaw/workspace/state/writing_lessons.md"
 
-JOURNAL_ROOT = Path("/Volumes/Data/xcode/nova-journal/content")
+JOURNAL_ROOT = (Path.home() / "nova-journal" / "content")
 DREAMS_DIR = JOURNAL_ROOT / "dreams"
 ESSAYS_DIR = JOURNAL_ROOT / "essays"
 OPINIONS_DIR = JOURNAL_ROOT / "opinions"

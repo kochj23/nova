@@ -45,7 +45,7 @@ UNKNOWN_DIR = WORKSPACE / "faces" / "unknown"
 CAMERA_FRAMES = WORKSPACE / "camera_frames"
 STATE_FILE = WORKSPACE / "state" / "nova_face_state.json"
 
-SAM_FACES_DIR = Path("/Volumes/Data/Nova/skills/sam-faces/sam_faces")
+SAM_FACES_DIR = Path("/Volumes/nas/nova/Nova/skills/sam-faces/sam_faces")
 
 AWAY_THRESHOLD_MINUTES = 60  # Mark as "away" if not seen for this long
 PG_DSN = "host=localhost dbname=nova_ops user=kochj"
@@ -78,10 +78,10 @@ def log(msg):
 
 
 def volumes_ready():
-    """The sam-faces package and models live on /Volumes/Data; after a reboot the
-    volume may mount late. Bail out gracefully (instead of crashing on an import
-    of PIL/face_recognition) so the scheduler simply retries on the next pass."""
-    for vol in ("/Volumes/Data", "/Volumes/MoreData"):
+    """The sam-faces package lives on /Volumes/nas (NAS — no macOS TCC/FDA gate, so it
+    survives reboots and path drift). It may mount late after a reboot; bail out gracefully
+    (instead of crashing on an import) so the scheduler simply retries on the next pass."""
+    for vol in ("/Volumes/nas",):
         if not os.path.ismount(vol):
             log(f"{vol} not mounted yet — skipping this run (scheduler will retry)")
             return False

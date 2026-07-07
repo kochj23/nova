@@ -19,7 +19,7 @@ from pathlib import Path
 import urllib.request
 import urllib.error
 
-SAM_FACES_DIR = "/Volumes/Data/Nova/skills/sam-faces/sam_faces"
+SAM_FACES_DIR = "/Volumes/nas/nova/Nova/skills/sam-faces/sam_faces"
 
 WORKSPACE = Path.home() / ".openclaw/workspace"
 FACES_DIR = WORKSPACE / "faces"

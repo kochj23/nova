@@ -35,11 +35,24 @@ CATEGORY_OVERRIDE = {
     "security_news": nova_config.SLACK_INFO,   # CVE/threat NEWS is FYI, not your-network
     "claude_code":   nova_config.SLACK_INFO,   # Claude Code activity is FYI
     "calendar":      nova_config.SLACK_INFO,
+    "strix":         nova_config.SLACK_INFO,   # Strix pentest run-status feed -> #nova-info (survives the maintenance mute)
 }
 
 # Dedup/rate-limit: a repeat of the same dedup_key within this window is folded
 # into the prior sent alert (count bumped) instead of re-posted.
 DEDUP_WINDOW_S = 3600
+
+
+# Maintenance gate (fail-open): during an authorized window, mute security-category
+# Slack routing. Import guarded so a missing/broken gate never affects notification.
+try:
+    import nova_maintenance
+    _MAINT_CATS = nova_maintenance.SECURITY_CATEGORIES
+    _maint_active = nova_maintenance.is_active
+except Exception:
+    _MAINT_CATS = frozenset()
+    def _maint_active() -> bool:
+        return False
 
 
 def _route(level: str, category: str | None) -> str:
@@ -85,7 +98,19 @@ def drain(verbose=False, only_source=None) -> int:
             q += " ORDER BY ts ASC LIMIT 200"
             cur.execute(q, params)
             events = cur.fetchall()
+            try:
+                _in_maint = _maint_active()   # checked once per drain, not per event
+            except Exception:
+                _in_maint = False
             for ev in events:
+                # 0) Maintenance window: mute security-category Slack routing (the event
+                #    row stays in telemetry.events for purple-team detection scoring).
+                if _in_maint and ev.get("category") in _MAINT_CATS:
+                    cur.execute("UPDATE telemetry.events SET status='suppressed', "
+                                "channel='maintenance-muted', sent_at=now() WHERE id=%s", (ev["id"],))
+                    if verbose:
+                        print(f"  muted #{ev['id']} [{ev['category']}] — maintenance window")
+                    continue
                 # 1) Dedup/rate-limit: was the same key already sent in the window?
                 if ev["dedup_key"]:
                     cur.execute(

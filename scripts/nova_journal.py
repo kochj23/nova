@@ -53,7 +53,7 @@ MEMORY_SERVER = f"http://{nova_config.NOVA_HOST}:18790"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 from nova_resolve import resolve_url
 SEARXNG_URL = resolve_url("searxng", "/search")
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 LOG_FILE = Path.home() / ".openclaw/logs/nova_journal.log"
 STATE_FILE = Path.home() / ".openclaw/config/journal_state.json"
 
@@ -667,7 +667,7 @@ Draw from the source material for world-building details, but create an ORIGINAL
 
     user = f"""Source material for world-building:\n\n{memory_block}\n\nWrite the full pilot. Go."""
 
-    result = call_openrouter(system, user, model="anthropic/claude-sonnet-4-6",
+    result = call_openrouter(system, user, model="anthropic/claude-haiku-4.5",
                              max_tokens=16000, temperature=0.8)
     if not result or len(result) < 2000:
         raise RuntimeError("Pilot generation failed or too short")

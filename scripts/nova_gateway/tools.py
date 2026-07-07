@@ -150,6 +150,11 @@ TOOL_REGISTRY: dict[str, dict] = {
         },
         "required": ["device", "action"],
     },
+    "school_report": {
+        "description": "Summarize what Nova learned/ingested TODAY, broken down by memory vector (count + a sample per topic). Use when Jordan asks 'how was school today?', 'how was your day', or 'what did you learn today'. Nova is the student; her school day = what she ingested today.",
+        "parameters": {},
+        "required": [],
+    },
 }
 
 
@@ -202,6 +207,8 @@ async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict) 
             return await _tool_ops_query(ctx, tool_params)
         elif tool_name == "home_control":
             return await _tool_home_control(ctx, tool_params)
+        elif tool_name == "school_report":
+            return await _tool_run_script(ctx, {"script": "nova_school_report.py"})
         else:
             return f"[error: tool '{tool_name}' not implemented]"
     except asyncio.TimeoutError:

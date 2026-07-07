@@ -31,7 +31,7 @@ from nova_notify import notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content" / "operations"
 IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 # Classification reads RAW memory text from arbitrary vectors (may be private),

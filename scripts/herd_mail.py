@@ -551,6 +551,24 @@ def output_human_check(data: dict[str, Any]) -> None:
         print(f"{count} unread message(s) in {folder}.")
 
 
+# ── HARD CONTENT BLOCK (2026-07-03, absolute policy per Little Mister) ─────────
+# No outbound email may EVER contain sexual content or ANY Plex viewing/history.
+# Enforced here at the send chokepoint so no caller (digest, generator, script) can
+# bypass it. Deliberately over-blocks — a missed newsletter beats another incident.
+_FORBIDDEN_EMAIL_RE = re.compile(
+    r"plex viewing|viewing summary|movies watched|episodes watched|music tracks played|"
+    r"librarysectiontitle|plex[^\n]{0,40}watch|watch[^\n]{0,40}plex|"
+    r"\bporn|orgasm|reverse cowgirl|teen sex|\bmilf\b|\bnsfw\b|\bxxx\b|\bsex\b|only 18 yo",
+    re.IGNORECASE,
+)
+
+
+def _forbidden_email_content(subject: str, body: str) -> str:
+    """Return the matched forbidden phrase if this email must NOT be sent, else ''."""
+    m = _FORBIDDEN_EMAIL_RE.search(f"{subject or ''}\n{body or ''}")
+    return m.group(0) if m else ""
+
+
 def cmd_send(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
     """Handle the send subcommand."""
     # Handle --dry-run as alias for config command (before email validation)
@@ -601,6 +619,15 @@ def cmd_send(args: argparse.Namespace, cfg: dict[str, Any]) -> int:
                 return 1
         else:
             body = DEFAULT_NO_BODY_MESSAGE
+
+    # HARD BLOCK: never send sexual content or any Plex history (absolute, 2026-07-03).
+    _bad = _forbidden_email_content(args.subject or "", body or "")
+    if _bad:
+        logger.error(
+            f"BLOCKED: refusing to send — forbidden content in email (matched '{_bad}'). "
+            f"Policy: no sexual content, no Plex history in outbound email."
+        )
+        return 2
 
     # Check for duplicates (unless skipped)
     if not args.skip_duplicate_check:

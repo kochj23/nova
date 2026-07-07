@@ -51,7 +51,7 @@ SOURCE_VECTOR = "la_public_safety"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_journal_emergency.log"
 STATE_FILE = Path.home() / ".openclaw/config/journal_emergency_state.json"
 PG_HOST = "192.168.1.6"  # nova_memories lives on .6 (mac-studio)
-MODEL = "anthropic/claude-sonnet-4-6"
+MODEL = "anthropic/claude-haiku-4.5"
 
 # Keywords that flag a genuinely notable, postable-now emergency. Used both to
 # detect "breaking" conditions and to weight the daily recap.

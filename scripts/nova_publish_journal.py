@@ -34,7 +34,7 @@ else:
     def _today() -> str: return time.strftime("%Y-%m-%d")
     def _now_dt() -> _dt_cls: return _dt_cls.now()
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DREAMS = HUGO_ROOT / "content/dreams"
 CONTENT_ESSAYS = HUGO_ROOT / "content/essays"
 IMAGES_DREAMS = HUGO_ROOT / "static/images/dreams"

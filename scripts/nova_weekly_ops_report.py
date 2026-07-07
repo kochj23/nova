@@ -33,7 +33,7 @@ _sanitize, _gh_json = daily._sanitize, daily._gh_json
 DB, MEMDB = daily.DB, daily.MEMDB
 log = daily.log
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content" / "operations"
 IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 GH_OWNER = "kochj23"

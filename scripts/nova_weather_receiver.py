@@ -187,6 +187,7 @@ def insert_reading(data: dict) -> bool:
             conn.close()
 
         insert_soil(data, ts)   # soil-moisture sensors (soilhum1..N)
+        insert_aux_sensors(data, ts)   # extra temp/humidity probes (temp1f..N); ch1=fridge
 
         with _state_lock:
             _state["last_reading_ts"] = ts.isoformat()
@@ -229,6 +230,33 @@ def insert_soil(data: dict, ts) -> None:
             conn.close()
     except Exception as e:
         log.error(f"soil insert failed: {e}")
+
+
+def insert_aux_sensors(data: dict, ts) -> None:
+    """Store Ambient extra temp/humidity probes (WH31-style) on channels 1-8.
+    Ecowitt fields: tempNf (°F), humidityN (%), battN (battery). One row per
+    present channel. Channel 1 = fridge sensor (added 2026-07-01)."""
+    rows = []
+    for i in range(1, 9):
+        t = _float(data.get(f"temp{i}f"))
+        h = _int(data.get(f"humidity{i}"))
+        if t is None and h is None:
+            continue
+        rows.append((ts, i, t, h, _int(data.get(f"batt{i}"))))
+    if not rows:
+        return
+    try:
+        conn = get_db_conn()
+        try:
+            with conn.cursor() as cur:
+                cur.executemany(
+                    "INSERT INTO telemetry.aux_sensors (ts, channel, temp_f, humidity, battery) "
+                    "VALUES (%s, %s, %s, %s, %s)", rows)
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        log.error(f"aux_sensors insert failed: {e}")
 
 
 def _float(val) -> float | None:

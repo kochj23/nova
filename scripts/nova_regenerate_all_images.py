@@ -19,7 +19,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_image_utils import _openrouter_generate, SECTION_MODEL_MAP
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 IMAGES_ROOT = HUGO_ROOT / "static/images"
 CONTENT_ROOT = HUGO_ROOT / "content"
 

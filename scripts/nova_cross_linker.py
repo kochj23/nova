@@ -18,7 +18,7 @@ from pathlib import Path
 from datetime import datetime
 
 MEMORY_SERVER = "http://192.168.1.6:18790"
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 BASE_URL = "https://nova.digitalnoise.net"
 
 # Category to URL prefix mapping

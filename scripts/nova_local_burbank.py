@@ -27,12 +27,12 @@ import nova_config
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content/local"
 IMAGES_DIR = HUGO_ROOT / "static/images/local"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_local_burbank.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-ARTICLE_MODEL = "anthropic/claude-sonnet-4-6"
+ARTICLE_MODEL = "anthropic/claude-haiku-4.5"
 IMAGE_MODEL = "openai/gpt-5-image"
 PG_DSN = "dbname=nova_memories user=kochj host=192.168.1.6"
 

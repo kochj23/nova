@@ -66,7 +66,7 @@ LOG_FILE = Path.home() / ".openclaw/logs/nova_research_paper.log"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/research_paper_state.json"
 GENERATE_IMAGE_SH = Path.home() / ".openclaw/scripts/generate_image.sh"
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content/research"
 IMAGES_DIR = HUGO_ROOT / "static/images/research"
 

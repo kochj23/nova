@@ -65,7 +65,7 @@ def get_model():
     global _model
     if _model is None:
         from ultralytics import YOLO
-        _model = YOLO("/Volumes/Data/Nova/models/yolov8n.pt")
+        _model = YOLO("/Volumes/nas/nova/Nova/models/yolov8n.pt")
         log("YOLOv8-nano model loaded")
     return _model
 

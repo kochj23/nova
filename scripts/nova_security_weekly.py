@@ -30,12 +30,12 @@ import nova_config
 from nova_image_utils import generate_image
 from nova_notify import notify
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content/operations"
 IMAGES_DIR = HUGO_ROOT / "static/images/security"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_security_weekly.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "anthropic/claude-sonnet-4-6"
+MODEL = "anthropic/claude-haiku-4.5"
 
 CONTENT_DIR.mkdir(parents=True, exist_ok=True)
 IMAGES_DIR.mkdir(parents=True, exist_ok=True)

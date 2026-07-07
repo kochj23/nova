@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path.home()) + "/.openclaw/scripts")
 import nova_config
 from nova_notify import notify
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content" / "rando"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "google/gemini-2.5-flash"

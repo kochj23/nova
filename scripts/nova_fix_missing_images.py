@@ -24,7 +24,7 @@ from nova_image_utils import generate_image
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-JOURNAL_DIR = Path("/Volumes/Data/xcode/nova-journal")
+JOURNAL_DIR = (Path.home() / "nova-journal")
 CONTENT_DIR = JOURNAL_DIR / "content"
 STATIC_DIR = JOURNAL_DIR / "static/images"
 

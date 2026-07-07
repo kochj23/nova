@@ -55,8 +55,8 @@ else:
 
 MEMORY_SERVER = f"http://{nova_config.NOVA_HOST}:18790"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "anthropic/claude-sonnet-4-6"
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+MODEL = "anthropic/claude-haiku-4.5"
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content/pilot"
 IMAGES_DIR = HUGO_ROOT / "static/images/pilot"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_tv_pilot.log"

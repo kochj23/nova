@@ -28,7 +28,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 STATS_FILE   = Path.home() / ".openclaw/workspace/state/journal_stats.json"
 HISTORY_FILE = Path.home() / ".openclaw/workspace/state/journal_traffic_history.json"
-CONTENT_DIR  = Path("/Volumes/Data/xcode/nova-journal/content")
+CONTENT_DIR  = (Path.home() / "nova-journal" / "content")
 REPO         = "kochj23/nova-journal"
 LOG_FILE     = Path.home() / ".openclaw/logs/journal_stats_poller.log"
 

@@ -40,7 +40,7 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content" / "operations"
 IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -62,6 +62,12 @@ def get_openrouter_key() -> str:
 
 
 def call_llm(system: str, user: str, max_tokens: int = 12000) -> str:
+    # Prefer the Claude Code Max subscription (free + high quality); fall back to OpenRouter.
+    try:
+        import nova_claude_code
+        return nova_claude_code.claude_generate(user, system=system)
+    except Exception:
+        pass
     import urllib.request
     api_key = get_openrouter_key()
     payload = json.dumps({

@@ -225,7 +225,7 @@ def _face_recognize(image_path, camera_name):
     """Run face recognition via sam-faces skill (CNN + SQLite).
     Returns (description_string, [unknown_crop_paths]) or (None, [])."""
     try:
-        sam_faces_dir = Path("/Volumes/Data/Nova/skills/sam-faces/sam_faces")
+        sam_faces_dir = Path("/Volumes/nas/nova/Nova/skills/sam-faces/sam_faces")
         if not sam_faces_dir.exists():
             log("sam-faces skill not found", level=LOG_WARN, source="protect")
             return None, []

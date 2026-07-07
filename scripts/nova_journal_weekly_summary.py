@@ -45,11 +45,11 @@ from nova_journal import publish_hugo, git_push, call_openrouter, generate_image
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_ROOT = HUGO_ROOT / "content"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_journal_weekly_summary.log"
 STATE_FILE = Path.home() / ".openclaw/config/journal_weekly_summary_state.json"
-MODEL = "anthropic/claude-sonnet-4-6"
+MODEL = "anthropic/claude-haiku-4.5"
 
 # Non-article directories / files to skip when enumerating sections.
 SKIP_DIRS = {"about", "meta", "start-here", "rando"}  # rando retired — daily pieces now go to operations

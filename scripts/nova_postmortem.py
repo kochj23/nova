@@ -36,7 +36,7 @@ except ImportError:
     def format_security_brief(ctx): return ""
     def format_infra_brief(ctx): return ""
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content" / "rando"
 IMAGES_DIR = HUGO_ROOT / "static" / "images" / "rando"
 # Postmortems are built from INTERNAL incident/infra/security telemetry, so the

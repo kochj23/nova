@@ -118,8 +118,8 @@ def _load_services_from_registry():
 SERVICES = [
     # name, host, port, launchd_label, is_critical, health_url_path
     # ── Core (critical — Nova can't function without these) ──────────────────
-    ("PostgreSQL",    "127.0.0.1", 5432,  "homebrew.mxcl.postgresql@17",         True,  None),
-    ("PgBouncer",     "127.0.0.1", 6432,  "net.digitalnoise.pgbouncer",           True,  None),
+    ("DB access (→.2)", "127.0.0.1", 5432, "homebrew.mxcl.pgbouncer",             True,  None),
+    ("DB primary (.2 Beelink)", "192.168.1.2", 5432, None,                        True,  None),
     ("Redis",         "127.0.0.1", 6379,  "net.digitalnoise.redis",               True,  None),
     ("Ollama",        "127.0.0.1", 11434, None,                                   True,  "/api/version"),
     ("Memory Server", "127.0.0.1", 18790, "net.digitalnoise.nova-memory-server",  True,  "/health"),
@@ -2390,7 +2390,7 @@ JOURNAL_SCHEDULE_DAYS = {
     "journal_essay": {1, 3, 5},  # Mon, Wed, Fri
 }
 JOURNAL_OVERDUE_AFTER_HOUR = 10  # If it's a scheduled day and past 10am, it's overdue
-JOURNAL_CONTENT_DIR = Path("/Volumes/Data/xcode/nova-journal/content")
+JOURNAL_CONTENT_DIR = (Path.home() / "nova-journal" / "content")
 _journal_backfill_cooldown: dict = {}   # section -> last_backfill_ts
 JOURNAL_BACKFILL_COOLDOWN = 7200        # don't re-trigger same section within 2h
 

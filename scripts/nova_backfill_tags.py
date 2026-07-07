@@ -18,7 +18,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_tag_extractor import extract_tags
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 LOG_FILE = Path.home() / ".openclaw/logs/nova_backfill_tags.log"
 
 MOOD_WORDS = {"surreal", "anxious", "euphoric", "melancholic", "intense", "peaceful",

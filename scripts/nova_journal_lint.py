@@ -23,7 +23,7 @@ import sys
 import time
 from pathlib import Path
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_journal_lint.log"
 

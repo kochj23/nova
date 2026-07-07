@@ -59,7 +59,7 @@ LOG_FILE = Path.home() / ".openclaw/logs/nova_after_dark.log"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/after_dark_state.json"
 GENERATE_IMAGE_SH = Path.home() / ".openclaw/scripts/generate_image.sh"
 
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content/after-dark"
 IMAGES_DIR = HUGO_ROOT / "static/images/after-dark"
 

@@ -212,6 +212,17 @@ RETENTION = {
         "retention_days": 30,
         "downsample": None,
     },
+    # pg_stat_database throughput snapshots (nova_pg_stat_poller.py, ~1/min per
+    # DB). Grafana only needs a rolling window to draw live rate trends; raw
+    # snapshots older than ~2 weeks are noise. Non-partitioned, ts col = "ts".
+    "pg_stat_db": {
+        "kind": "plain",
+        "schema": "telemetry",
+        "table": "pg_stat_db",
+        "ts_col": "ts",
+        "retention_days": 14,
+        "downsample": None,
+    },
 }
 
 # Absolute floor for plain-table DELETEs: never delete rows newer than this

@@ -67,7 +67,7 @@ STATE_FILE = Path.home() / ".openclaw/workspace/state/digest_state.json"
 DREAMS_DIR = Path.home() / ".openclaw/workspace/journal/dreams"
 ESSAY_STATE = Path.home() / ".openclaw/workspace/state/essay_state.json"
 OPINION_STATE = Path.home() / ".openclaw/workspace/state/opinion_state.json"
-HUGO_ROOT = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT = (Path.home() / "nova-journal")
 HERD_MAIL_SCRIPT = Path.home() / ".openclaw/scripts/nova_herd_mail.sh"
 
 EMAIL_PATTERN = re.compile(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}')
@@ -246,7 +246,8 @@ def gather_opinions() -> list[dict]:
 # ── Section: Plex Viewing ────────────────────────────────────────────────────
 
 def gather_plex_history() -> list[dict]:
-    """Query Plex for recently watched items in the past 7 days."""
+    """DISABLED (privacy): Plex viewing is never published — always returns []."""
+    return []
     token = get_plex_token()
     if not token:
         log("No Plex token — skipping Plex section")
@@ -424,8 +425,7 @@ def compile_digest_data() -> dict:
     opinions = gather_opinions()
     log(f"  Opinions: {len(opinions)}")
 
-    plex_items = gather_plex_history()
-    log(f"  Plex items: {len(plex_items)}")
+    plex_items = []  # Plex viewing permanently removed — never publish viewing data (privacy)
 
     health = gather_system_health()
     log(f"  Failures: {len(health['failures'])}, Memories: {health['total_memories']}")
@@ -441,7 +441,6 @@ def compile_digest_data() -> dict:
         "essays": essays,
         "opinions": opinions,
         "plex_items": plex_items,
-        "plex_summary": format_plex_summary(plex_items),
         "health": health,
         "herd_activity": herd_activity,
         "memory_sources": memory_sources,
@@ -480,11 +479,6 @@ def format_digest_body(data: dict) -> str:
             sections.append(f"- **{o['title']}** ({o['date']})")
     else:
         sections.append("- No opinions published this week.")
-    sections.append("")
-
-    # Plex
-    sections.append("## Plex Viewing Summary")
-    sections.append(data["plex_summary"])
     sections.append("")
 
     # System Health
@@ -598,7 +592,10 @@ THIS IS A NEWSLETTER EDITORIAL for your Herd (friends/subscribers).
 # ── Delivery ─────────────────────────────────────────────────────────────────
 
 def send_to_herd(full_digest: str, date_str: str):
-    """Email digest to all herd members (single email) with CC to Jordan."""
+    """DISABLED 2026-07-03 (porn-in-digest incident): this deprecated script emailed the herd
+    + CC Jordan and leaked private Plex viewing. It must NEVER email again. Hard no-op."""
+    print("send_to_herd DISABLED — nova_weekly_digest is deprecated and will not email.")
+    return
     from herd_config import HERD
 
     recipients = [m["email"] for m in HERD]

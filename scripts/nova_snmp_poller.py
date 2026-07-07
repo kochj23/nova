@@ -95,6 +95,14 @@ DEVICES = [
         "enabled": True,
     },
     {
+        "ip": "192.168.1.86",
+        "name": "nova-core2",
+        "version": "v2c",
+        "community_keychain": "nova-snmp-community",
+        "port": 161,
+        "enabled": True,
+    },
+    {
         "ip": "192.168.1.190",
         "name": "mac-mini",
         "version": "v2c",
@@ -130,6 +138,7 @@ DEVICE_INTERFACES = {
     "synology-nas": [7],        # eth4 (LAN NIC)
     "mac-studio": [0],          # primary interface
     "nova-core": [0],            # eth0
+    "nova-core2": [0],           # eth0
     "nuk": [0],                 # primary
     "mac-mini": [0],            # primary
     "sw-jordan-16p": [1],       # uplink port

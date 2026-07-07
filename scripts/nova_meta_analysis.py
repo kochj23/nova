@@ -27,7 +27,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_tag_extractor import extract_tags
 
-HUGO_ROOT    = Path("/Volumes/Data/xcode/nova-journal")
+HUGO_ROOT    = (Path.home() / "nova-journal")
 CONTENT_OUT  = HUGO_ROOT / "content/meta"
 SCRIPTS      = Path(__file__).parent
 LOG_FILE     = Path.home() / ".openclaw/logs/nova_meta_analysis.log"
