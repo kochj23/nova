@@ -116,6 +116,21 @@ def make_context_crop(frame_path, bb, out_path, pad_frac=0.6, min_size=320):
         return None
 
 
+def _scene_has_no_people(desc: str) -> bool:
+    """True if the scene caption clearly states there are no people present. Used to veto
+    false-positive 'unknown person' alerts — glare/headlights/vehicles fool the person detector,
+    but the VLM caption correctly says 'no people'. Only suppresses on an affirmative negative;
+    an empty/uncertain caption still alerts (better to ask than miss a real person)."""
+    d = (desc or "").lower()
+    if not d:
+        return False
+    return any(p in d for p in (
+        "no people", "no person", "no one", "no humans", "nobody",
+        "no visible people", "no pedestrians", "no individuals",
+        "no people present", "no people are present", "without any people",
+    ))
+
+
 def describe_scene(image_path):
     """Use local vision model to describe what's happening in a camera frame.
     Returns a short description or None on failure."""
@@ -434,6 +449,12 @@ def post_detections(detections):
             scene_desc = ""
             if d.get("frame_path") and Path(d["frame_path"]).exists():
                 scene_desc = describe_scene(d["frame_path"]) or ""
+
+            # VETO false positives: if the scene caption says there are no people, this is
+            # glare/headlights/a vehicle that fooled the person detector — don't page Jordan.
+            if _scene_has_no_people(scene_desc):
+                log(f"Suppressed false 'unknown person' at {d['camera']} — scene says no people: {scene_desc[:80]}")
+                continue
 
             desc_line = f"\n  _Scene: {scene_desc}_" if scene_desc else ""
             msg = f":question: *Unknown person* at {d['camera']} — {NOW.strftime('%I:%M %p')}. Who is this?{desc_line}"
