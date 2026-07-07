@@ -182,11 +182,14 @@ ADDITIONAL RULES FOR THIS COLUMN:
 - If something is boring but somehow made it into the weird list, roast it for being boring AND weird simultaneously
 """)
 
+    target = min(len(memories), 50)   # never more entries than real memories; cap at 50
     user = f"""Here are {len(memories)} randomly sampled memories ingested in the last 24 hours.
 Total new memories today: {stats['total']:,}
 Sources: {sources_summary}
 
-Pick the 100 weirdest, funniest, most unhinged entries and write your nightly column.
+Write your nightly column: pick the {target} weirdest/funniest/most unhinged of these memories and
+give each ONE roast. Fewer than {target} is fine if not that many are weird. NEVER repeat a memory,
+fragment one into pieces, or pad to reach a count — a short tight column beats a padded one.
 
 MEMORIES:
 {mem_block}"""
@@ -288,10 +291,10 @@ def main():
     # GROUNDING GUARD: never invent memories. If the real sample is thin (e.g. the vector DB
     # was unreadable during a pgvector outage), refuse rather than let the LLM confabulate a
     # whole fake column (see the 2026-07-06 article that fabricated 3D-print jobs & emails).
-    MIN_REAL_MEMORIES = 15
+    MIN_REAL_MEMORIES = 6   # below this it's not worth a column; above it, cap entries at the real count
     if len(memories) < MIN_REAL_MEMORIES:
         log(f"GROUNDING GUARD: only {len(memories)} real memories (< {MIN_REAL_MEMORIES}) — "
-            f"refusing to generate tonight's column to avoid fabrication.")
+            f"refusing to generate tonight's column to avoid fabrication/padding.")
         return
 
     # Generate article

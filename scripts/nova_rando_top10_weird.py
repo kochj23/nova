@@ -174,8 +174,8 @@ def generate_article(memories: list[dict], stats: dict) -> str:
     system = system_prompt(f"""
 FORMAT: TOP 10 WEIRDEST MEMORIES — {period} edition.
 - GROUNDING (CRITICAL): Use ONLY the memories in the provided list. Quote their REAL text. NEVER invent memories, emails, 3D-print jobs, device events, or numbers not in the list. If the list is short or mundane, work with what's there — do not fabricate.
-- From the provided list, pick EXACTLY the 10 weirdest/funniest/most unhinged entries
-- Number them 1-10 (countdown — save the weirdest for #1)
+- From the provided list, pick UP TO 10 of the weirdest/funniest/most unhinged entries (use fewer if there aren't 10 genuinely weird ones — never repeat, fragment, or pad an entry to reach 10)
+- Number them as a countdown — save the weirdest for #1
 - Quote the actual memory text (or a juicy portion) in italics
 - Add your sarcastic take after each (2-5 sentences, go long if the bit demands it)
 - Include an intro roasting the ingestion period — make it sound like an intervention
@@ -364,10 +364,10 @@ def main():
     # GROUNDING GUARD: this is a TOP-10 of REAL memories — never invent them. If the sample is
     # thin (e.g. the vector DB was unreadable during a pgvector outage), refuse rather than let
     # the LLM confabulate (see the 2026-07-06 sibling article that fabricated 3D-print jobs).
-    MIN_REAL_MEMORIES = 10
+    MIN_REAL_MEMORIES = 5   # a "top N" needs a few real ones; below this, skip rather than pad
     if len(memories) < MIN_REAL_MEMORIES:
         log(f"GROUNDING GUARD: only {len(memories)} real memories (< {MIN_REAL_MEMORIES}) — "
-            f"refusing to generate to avoid fabrication.")
+            f"refusing to generate to avoid fabrication/padding.")
         return
 
     article = generate_article(memories, stats)
