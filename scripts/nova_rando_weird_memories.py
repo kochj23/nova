@@ -173,6 +173,7 @@ def generate_article(memories: list[dict], stats: dict) -> str:
     from nova_voice import system_prompt, CONTEXT_JOURNAL_WEIRD_MEMORIES
     system = system_prompt(CONTEXT_JOURNAL_WEIRD_MEMORIES + """
 ADDITIONAL RULES FOR THIS COLUMN:
+- GROUNDING (CRITICAL): Roast ONLY the actual memories in the MEMORIES list below. Quote or paraphrase their REAL text. NEVER invent memories, emails, calendar entries, 3D-print jobs, device events, or numbers that are not in the list. If the real memories are mundane, roast them for being mundane — do NOT replace them with funnier fabrications. Produce no more entries than there are real memories.
 - The intro should roast the total memories ingested today and which sources they came from — make it sound like an intervention
 - The outro should be an existential crisis played for laughs
 - NEVER reuse commentary styles — each entry needs its own comedic angle (observational, absurdist, deadpan, outraged, resigned, delighted, horrified, impressed-against-your-will)
@@ -283,6 +284,15 @@ def main():
     memories = sanitize_memories(memories)
     log(f"Privacy gate: {before} -> {len(memories)} memories after filtering private sources")
     log(f"Got {len(memories)} candidate memories from {stats['total']} total today")
+
+    # GROUNDING GUARD: never invent memories. If the real sample is thin (e.g. the vector DB
+    # was unreadable during a pgvector outage), refuse rather than let the LLM confabulate a
+    # whole fake column (see the 2026-07-06 article that fabricated 3D-print jobs & emails).
+    MIN_REAL_MEMORIES = 15
+    if len(memories) < MIN_REAL_MEMORIES:
+        log(f"GROUNDING GUARD: only {len(memories)} real memories (< {MIN_REAL_MEMORIES}) — "
+            f"refusing to generate tonight's column to avoid fabrication.")
+        return
 
     # Generate article
     article = generate_article(memories, stats)

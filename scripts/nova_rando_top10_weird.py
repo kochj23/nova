@@ -173,6 +173,7 @@ def generate_article(memories: list[dict], stats: dict) -> str:
     from nova_voice import system_prompt
     system = system_prompt(f"""
 FORMAT: TOP 10 WEIRDEST MEMORIES — {period} edition.
+- GROUNDING (CRITICAL): Use ONLY the memories in the provided list. Quote their REAL text. NEVER invent memories, emails, 3D-print jobs, device events, or numbers not in the list. If the list is short or mundane, work with what's there — do not fabricate.
 - From the provided list, pick EXACTLY the 10 weirdest/funniest/most unhinged entries
 - Number them 1-10 (countdown — save the weirdest for #1)
 - Quote the actual memory text (or a juicy portion) in italics
@@ -359,6 +360,15 @@ def main():
     memories = sanitize_memories(memories)
     log(f"Privacy gate: {before} -> {len(memories)} memories after filtering private sources")
     log(f"Got {len(memories)} candidate memories from {stats['total']} total")
+
+    # GROUNDING GUARD: this is a TOP-10 of REAL memories — never invent them. If the sample is
+    # thin (e.g. the vector DB was unreadable during a pgvector outage), refuse rather than let
+    # the LLM confabulate (see the 2026-07-06 sibling article that fabricated 3D-print jobs).
+    MIN_REAL_MEMORIES = 10
+    if len(memories) < MIN_REAL_MEMORIES:
+        log(f"GROUNDING GUARD: only {len(memories)} real memories (< {MIN_REAL_MEMORIES}) — "
+            f"refusing to generate to avoid fabrication.")
+        return
 
     article = generate_article(memories, stats)
     log(f"Article generated: {len(article)} chars")
