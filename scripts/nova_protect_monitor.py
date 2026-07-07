@@ -658,6 +658,24 @@ def check_motion_events(client, state):
                             pass
                         continue
 
+                    # Pet gate: household pets can't use the human face model, so identify them
+                    # with the vision model. A recognized pet needs no alert — only UNKNOWN animals do.
+                    if filtered_types and "animal" in filtered_types and "person" not in filtered_types:
+                        try:
+                            import nova_pet_recognition
+                            pet = nova_pet_recognition.identify_pet(str(thumb_path))
+                        except Exception as e:
+                            pet = None
+                            log(f"Pet recognition failed: {e}", level=LOG_WARN, source="protect")
+                        if pet:
+                            log(f"Known pet {pet} at {cam_name} — no alert", level=LOG_INFO, source="protect")
+                            try:
+                                thumb_path.unlink()
+                            except Exception:
+                                pass
+                            continue
+                        alert_text += "\n  :paw_prints: unknown animal"
+
                     if vision_desc and "no identifiable" not in vision_desc.lower():
                         alert_text += f"\n  :eye: {vision_desc}"
 
