@@ -306,19 +306,77 @@ _TRASH = [
 _MUSIC = ["♪", "♫", "la la la", "da da da", "na na na",
           "woo woo", "oh oh oh", "yeah yeah yeah"]
 
-def is_garbage(text):
+def _garbage_reason(text):
+    """Ingest gate. Return (reason|None, word_count, alpha_ratio).
+
+    reason is None when the chunk passes. The two metrics are the "how close was it" signal
+    for discards: a too_short chunk with 28 words (floor is 30) or a low_alpha chunk at 0.44
+    (bar is 0.45) is a near-miss; a 3-word fragment or a wall of symbols is not. That distance
+    from the boundary is what makes the discard distribution auditable."""
     s = text.strip()
-    if len(s.split()) < MIN_WORDS:
-        return True
+    wc = len(s.split())
+    alpha = sum(c.isalpha() for c in s)
+    ratio = (alpha / len(s)) if s else 0.0
+    if wc < MIN_WORDS:
+        return "too_short", wc, ratio
     for pat in _TRASH:
         if pat.search(s):
-            return True
+            return "trash_pattern", wc, ratio
     lower = s.lower()
     for ph in _MUSIC:
         if lower.count(ph) >= 3:
-            return True
-    alpha = sum(c.isalpha() for c in s)
-    return len(s) > 0 and alpha / len(s) < 0.45
+            return "music", wc, ratio
+    if s and ratio < 0.45:
+        return "low_alpha", wc, ratio
+    return None, wc, ratio
+
+
+def is_garbage(text):
+    """Backward-compatible boolean gate (see _garbage_reason for the reason + metrics)."""
+    return _garbage_reason(text)[0] is not None
+
+
+# --- Discard audit trail -------------------------------------------------------------------
+# The gate used to just increment a skip counter; now every discard is recorded with its
+# reason and closeness metrics so the "close calls" are queryable, not evaporated.
+_discard_buf = []
+_discard_conn = None
+_discard_off = False
+
+
+def _record_discard(text, reason, wc, ratio, source):
+    if _discard_off:
+        return
+    _discard_buf.append((source, reason, wc, round(ratio, 3), text_hash(text), text[:200]))
+    if len(_discard_buf) >= 100:
+        flush_discards()
+
+
+def flush_discards():
+    """Write buffered ingest-gate discards to nova_memories.memory_discards (best-effort;
+    never blocks ingest — on any error it disables itself and drops the buffer)."""
+    global _discard_conn, _discard_off
+    if _discard_off or not _discard_buf:
+        return
+    try:
+        if _discard_conn is None:
+            import psycopg2
+            _discard_conn = psycopg2.connect("host=localhost dbname=nova_memories user=kochj")
+            with _discard_conn, _discard_conn.cursor() as cur:
+                cur.execute("""CREATE TABLE IF NOT EXISTS memory_discards (
+                    id BIGSERIAL PRIMARY KEY, ts timestamptz DEFAULT now(),
+                    source TEXT, reason TEXT, word_count INT, alpha_ratio REAL,
+                    text_hash TEXT, text_preview TEXT)""")
+        with _discard_conn, _discard_conn.cursor() as cur:
+            cur.executemany(
+                "INSERT INTO memory_discards "
+                "(source, reason, word_count, alpha_ratio, text_hash, text_preview) "
+                "VALUES (%s, %s, %s, %s, %s, %s)", _discard_buf)
+        _discard_buf.clear()
+    except Exception as e:
+        log(f"Discard audit disabled ({e})", "WARN")
+        _discard_off = True
+        _discard_buf.clear()
 
 def _keep_sentence(s):
     """Sentence-level keep test for clean_text — the _TRASH/alpha checks from
@@ -739,7 +797,12 @@ def run_wikipedia(query, vector, target, state, dry_run, timeout_hours=0):
         text     = clean_text(text)
         ingested = 0
         for chunk in chunk_prose(text):
-            if ct >= target or is_garbage(chunk):
+            if ct >= target:
+                continue
+            _r, _wc, _ratio = _garbage_reason(chunk)
+            if _r:
+                if not dry_run:
+                    _record_discard(chunk, _r, _wc, _ratio, vector)
                 continue
             if remember(chunk, vector,
                         {"title": title, "url": url, "type": "wikipedia"},
@@ -755,6 +818,7 @@ def run_wikipedia(query, vector, target, state, dry_run, timeout_hours=0):
             "items_total":  max(items_done + len(queue), state.get("items_total", 0)),
         })
         save_state(jid, state)
+        flush_discards()
         log(f"  [{ct}/{target}] {title} -> {ingested} chunks (q:{len(queue)} skip:{_skipped})")
         nxt = queue[0].split("/wiki/")[-1].replace("_", " ") if queue else None
         if time.time() - _last_notify[0] >= 300:
@@ -823,7 +887,12 @@ def run_search(query, vector, target, state, dry_run):
             title    = r.get("title", url[:60])
             ingested = 0
             for chunk in chunk_prose(text):
-                if ct >= target or is_garbage(chunk):
+                if ct >= target:
+                    continue
+                _r, _wc, _ratio = _garbage_reason(chunk)
+                if _r:
+                    if not dry_run:
+                        _record_discard(chunk, _r, _wc, _ratio, vector)
                     continue
                 if remember(chunk, vector,
                             {"title": title, "url": url,
@@ -839,6 +908,7 @@ def run_search(query, vector, target, state, dry_run):
                 "items_done":   items_done,
             })
             save_state(jid, state)
+            flush_discards()
             nxt = results[i+1].get("title", "")[:60] if i+1 < len(results) else None
             if time.time() - _last_notify[0] >= 300:
                 notify_item(title[:80], vector, ingested, failed,
