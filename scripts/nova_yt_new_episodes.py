@@ -32,7 +32,7 @@ YT_DLP         = "/opt/homebrew/bin/yt-dlp"
 CHANNELS_CACHE  = Path.home() / ".openclaw/cache/yt_channels.json"
 YT_COOKIES_FILE = Path.home() / ".openclaw/cache/yt_cookies.txt"
 LOG_FILE  = Path.home() / ".openclaw/logs/nova_yt_new_episodes.log"
-SLACK     = "#nova-notifications"
+SLACK     = nova_config.SLACK_NOTIFY
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".m4v", ".wmv", ".flv"}
 
 MAX_RESOLUTION      = "720"

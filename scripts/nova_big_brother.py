@@ -1369,7 +1369,7 @@ def _attempt_failover(service_name: str) -> bool:
             nova_config.post_both(
                 f":rotating_light: *FAILOVER*: `{service_name}` moved to *{target_node}* ({target_ip})\n"
                 f"  Exit code: {result.returncode}",
-                slack_channel="#nova-notifications"
+                slack_channel=nova_config.SLACK_BB   # #nova-critical (failover is critical)
             )
         except Exception:
             pass

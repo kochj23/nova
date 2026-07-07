@@ -40,7 +40,7 @@ LOG_FILE      = Path.home() / ".openclaw/logs/nova_fw_ingest.log"
 
 MEMORY_URL    = "http://192.168.1.6:18790/remember"
 RECALL_URL    = "http://192.168.1.6:18790/recall"
-SLACK_CHANNEL = "#nova-notifications"
+SLACK_CHANNEL = nova_config.SLACK_NOTIFY
 
 WHISPER_BIN   = "/opt/homebrew/bin/mlx_whisper"
 WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"

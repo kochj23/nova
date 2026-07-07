@@ -32,7 +32,7 @@ FFPROBE         = "/opt/homebrew/bin/ffprobe"
 YT_COOKIES_FILE = Path.home() / ".openclaw/cache/yt_cookies.txt"
 LOG_FILE        = Path.home() / ".openclaw/logs/nova_yt_liked_download.log"
 STATE_FILE      = Path.home() / ".openclaw/cache/yt_liked_state.json"
-SLACK           = "#nova-notifications"
+SLACK           = nova_config.SLACK_NOTIFY
 
 DELAY_MIN       = 60             # 1 minute
 DELAY_MAX       = math.pi * 60  # pi minutes (~188.5s)
