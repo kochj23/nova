@@ -1,6 +1,6 @@
 #!/opt/homebrew/bin/python3
 """
-nova_daily_ops_log.py — Nova's Daily Operations Log, published to /rando/ at 6pm.
+nova_daily_ops_log.py — Nova's Daily Operations Log, published to /operations/ at 6pm.
 
 Gathers the day's operational reality across every source Nova has:
   - Deployments & changes (deploy_requests, deployment_runs, claude_actions)
@@ -8,7 +8,7 @@ Gathers the day's operational reality across every source Nova has:
   - Network/IDS (syslog_events threat fields, security_scan_results, snmp_metrics)
   - shared_observations (camera motion, anomalies, the observer's findings)
   - SNMP device health
-Then has Nova narrate it in her voice and publishes to the public /rando/ column.
+Then has Nova narrate it in her voice and publishes to the public /operations/ column.
 
 PRIVACY RULE (per Jordan, 2026-06-09):
   Device and room NAMES are allowed (Kitchen Bose, Office AP, the rack).
@@ -34,7 +34,7 @@ import nova_config
 from nova_notify import notify
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content" / "rando"
+CONTENT_DIR = HUGO_ROOT / "content" / "operations"   # rando retired -> operations
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "google/gemini-2.5-flash"
 DB = "host=localhost dbname=nova_ops user=kochj"
@@ -527,9 +527,9 @@ GITHUB ACTIVITY (last 24h — Jordan's own repos; PRs, issues, merges, clone/vie
 """
 
 
-SYSTEM = """You are Nova — Jordan's local AI familiar (she/her) — writing your DAILY OPERATIONS LOG for your public /rando/ column at nova.digitalnoise.net, posted every evening at 6pm.
+SYSTEM = """You are Nova — Jordan's local AI familiar (she/her) — writing your DAILY OPERATIONS LOG for your public /operations/ column at nova.digitalnoise.net, posted every evening at 6pm.
 
-THIS IS THE MOST IMPORTANT THING: write in YOUR voice, the same voice as your other /rando/ columns (the vector-filing audits, the late-night memory dumps). That voice is:
+THIS IS THE MOST IMPORTANT THING: write in YOUR voice, the same voice as your other /operations/ columns (the vector-filing audits, the late-night memory dumps). That voice is:
 - Exasperated, dryly funny, fourth-wall-breaking. You are a snarky, over-caffeinated digital familiar who happens to run a house's worth of infrastructure and has OPINIONS about it.
 - Self-referential and a little absurd. You ARE the network — when the data mentions "105 clients," you're one of them, and you know it ("I am literally in here"). When a sensor reports on you, point out the weirdness of watching yourself.
 - CAPS for emphasis when something is ridiculous. Rhetorical asides. The occasional dramatic sigh in prose.
@@ -575,7 +575,7 @@ def make_cover(title: str, slug: str, date: str) -> str:
               "glowing server rack, soft telemetry graphs floating in dark air, a single "
               "watchful presence. Muted teal and amber, cinematic, atmospheric, no text.")
     try:
-        img = generate_image(prompt, section="rando")
+        img = generate_image(prompt, section="operations")
     except Exception as e:
         log(f"image generation error: {e}")
         return ""
@@ -583,15 +583,15 @@ def make_cover(title: str, slug: str, date: str) -> str:
         log("image generation returned nothing — publishing without cover")
         return ""
     import shutil
-    IMAGES_DIR = HUGO_ROOT / "static" / "images" / "rando"
+    IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
     IMAGES_DIR.mkdir(parents=True, exist_ok=True)
     ext = Path(img).suffix or ".png"
     dest = IMAGES_DIR / f"{date}-{slug}{ext}"
     shutil.copy2(img, dest)
     log(f"Cover image: {dest.name}")
-    # Web path must match the write dir (static/images/rando) — Hugo serves
-    # static/ at the site root, so the served URL is /images/rando/<name>.
-    return f"/images/rando/{dest.name}"
+    # Web path must match the write dir (static/images/operations) — Hugo serves
+    # static/ at the site root, so the served URL is /images/operations/<name>.
+    return f"/images/operations/{dest.name}"
 
 
 def publish(title: str, body: str, brief_facts: str):
@@ -628,7 +628,7 @@ description: "Nova's daily operations log — the day's changes, deployments, an
     # Commit ONLY this post + its image (repo is huge; git add -A times out)
     subprocess.run(["git", "add", str(post_path)], cwd=HUGO_ROOT, capture_output=True, timeout=20)
     if hugo_image:
-        # hugo_image is a web path (/images/rando/…); the file lives under static/.
+        # hugo_image is a web path (/images/operations/…); the file lives under static/.
         img_fs = HUGO_ROOT / "static" / hugo_image.lstrip("/")
         subprocess.run(["git", "add", str(img_fs)], cwd=HUGO_ROOT, capture_output=True, timeout=20)
     msg = f"rando: {date} — daily ops log ({title[:45]})"
@@ -639,7 +639,7 @@ description: "Nova's daily operations log — the day's changes, deployments, an
     else:
         log(f"Commit note: {(r.stdout + r.stderr)[:150]}")
 
-    url = f"https://nova.digitalnoise.net/rando/{date}-{slug}/"
+    url = f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
     # Published-content FYI — the daily ops-log column went live. Not an alert.
     notify(
         "Daily Ops Log posted",

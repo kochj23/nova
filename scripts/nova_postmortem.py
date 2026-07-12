@@ -37,8 +37,8 @@ except ImportError:
     def format_infra_brief(ctx): return ""
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content" / "rando"
-IMAGES_DIR = HUGO_ROOT / "static" / "images" / "rando"
+CONTENT_DIR = HUGO_ROOT / "content" / "operations"   # rando retired -> operations
+IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 # Postmortems are built from INTERNAL incident/infra/security telemetry, so the
 # editorial generation runs on LOCAL Ollama ONLY — none of this leaves the box.
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
@@ -170,7 +170,7 @@ Write a proper incident retrospective in Nova's signature sarcastic style. Inclu
         "a cute cartoon AI character facepalming, screens showing error messages. "
         "Cyberpunk noir style, dark blues and electric oranges, dramatic lighting."
     )
-    image_path = generate_image(image_prompt, section="rando")
+    image_path = generate_image(image_prompt, section="operations")
 
     # Publish
     import re
@@ -186,8 +186,8 @@ Write a proper incident retrospective in Nova's signature sarcastic style. Inclu
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         img_dest = IMAGES_DIR / f"{dt}-{slug}.png"
         shutil.copy2(image_path, img_dest)
-        # URL must match IMAGES_DIR write path (static/images/rando), not "operations"
-        hugo_image = f"/images/rando/{dt}-{slug}.png"
+        # URL must match IMAGES_DIR write path (static/images/operations)
+        hugo_image = f"/images/operations/{dt}-{slug}.png"
 
     front_matter = f"""---
 title: "{title.replace('"', '')}"
@@ -212,7 +212,7 @@ cover:
     CONTENT_DIR.mkdir(parents=True, exist_ok=True)
     output = CONTENT_DIR / filename
     output.write_text(front_matter + body)
-    log(f"Published: rando/{filename}")
+    log(f"Published: operations/{filename}")
 
     # Git push
     try:

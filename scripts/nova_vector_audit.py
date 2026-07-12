@@ -458,7 +458,7 @@ description: "Nova's morning vector audit — finding and fixing misfiled memori
         body=(
             f"{title}\n"
             f"Moved {moves_count} misfiled memories\n"
-            f"https://nova.digitalnoise.net/rando/{date}-{slug}/"
+            f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
         ),
         level="info",
         category="memory_ingest",

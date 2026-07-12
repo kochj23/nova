@@ -299,9 +299,20 @@ def get_image_prompt(title: str, topic: str, section: str) -> str:
 # HUGO PUBLISHING
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _canon_section(section: str) -> str:
+    """rando is retired (Jordan, 2026-07-12): every write to it is redirected to operations."""
+    return "operations" if section == "rando" else section
+
+
 def publish_hugo(title: str, body: str, section: str, tags: list[str],
-                 description: str, image_path: str | None = None, emoji: str = "") -> bool:
-    """Write a Hugo markdown post and copy cover image."""
+                 description: str, image_path: str | None = None, emoji: str = "",
+                 stable_slug: str | None = None) -> bool:
+    """Write a Hugo markdown post and copy cover image.
+
+    stable_slug: if set, the post uses a FIXED filename ("<slug>.md", no date prefix) so
+    repeated runs overwrite the same evergreen article instead of creating a new dated post.
+    """
+    section = _canon_section(section)
     try:  # prepend the live backyard-weather dateline to the BODY (never the title)
         from nova_weather_blurb import weather_dateline_line
         body = weather_dateline_line() + body
@@ -312,14 +323,20 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
     content_dir.mkdir(parents=True, exist_ok=True)
 
     dt = today_str()
-    slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
-    filename = f"{dt}-{slug}.md"
+    if stable_slug:
+        slug = stable_slug
+        filename = f"{slug}.md"          # evergreen: same file overwritten each run
+        img_base = slug
+    else:
+        slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
+        filename = f"{dt}-{slug}.md"
+        img_base = f"{dt}-{slug}"
 
     # Handle cover image — save as .webp since deploy pipeline converts PNG→WebP
     hugo_image = ""
     if image_path and Path(image_path).exists():
         images_dir.mkdir(parents=True, exist_ok=True)
-        img_dest = images_dir / f"{dt}-{slug}.webp"
+        img_dest = images_dir / f"{img_base}.webp"
         # Convert to webp locally if source is PNG
         if image_path.lower().endswith(".png"):
             try:
@@ -331,7 +348,7 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
                 shutil.copy2(image_path, img_dest)
         else:
             shutil.copy2(image_path, img_dest)
-        hugo_image = f"/images/{section}/{dt}-{slug}.webp"
+        hugo_image = f"/images/{section}/{img_base}.webp"
         log(f"Image copied: {img_dest.name}")
 
     timestamp = now_dt().strftime("%Y-%m-%dT%H:%M:%S-07:00")
@@ -368,6 +385,7 @@ description: "{description.replace('"', "'")}"
 
 def git_push(section: str, title: str):
     """Stage, commit, push the Hugo repo. Clears stale lock files."""
+    section = _canon_section(section)
     try:
         import time as _time
         lock_file = HUGO_ROOT / ".git" / "index.lock"
@@ -397,7 +415,15 @@ def git_push(section: str, title: str):
             return
         result = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
         if result.returncode != 0:
-            log(f"Push failed: {result.stderr[:200]}")
+            # Another daily writer pushed first (non-fast-forward). Rebase on top and retry
+            # once, so concurrent journal jobs don't strand each other's commits.
+            log(f"Push rejected, rebasing + retrying: {result.stderr[:120]}")
+            subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
+            result = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
+            if result.returncode != 0:
+                log(f"Push still failed after rebase: {result.stderr[:200]} — commit is safe, ships next run")
+            else:
+                log("Pushed to GitHub after rebase — deploy triggered")
         else:
             log("Pushed to GitHub — deploy triggered")
     except Exception as e:
@@ -406,6 +432,7 @@ def git_push(section: str, title: str):
 
 def notify_slack(section: str, title: str, preview: str):
     """Post a summary to nova-notifications."""
+    section = _canon_section(section)
     section_emojis = {
         "essays": ":pencil:", "opinions": ":speech_balloon:", "after-dark": ":night_with_stars:",
         "pilot": ":movie_camera:", "tech-today": ":computer:", "research": ":microscope:",

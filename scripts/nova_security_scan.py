@@ -40,7 +40,7 @@ SCAN_HOUR = 3  # 3am local time
 
 FLEET = [
     {"name": "mac-studio", "ip": "127.0.0.1", "os": "macos", "local": True},
-    {"name": "lts01", "ip": "192.168.1.2", "os": "linux", "user": "kochj"},
+    {"name": "nova-core", "ip": "192.168.1.2", "os": "linux", "user": "kochj"},  # was 'lts01' (retired); .2 is a nova-core box now
     {"name": "nuk", "ip": "192.168.1.10", "os": "linux", "user": "kochj"},
     {"name": "mac-mini", "ip": "192.168.1.190", "os": "macos", "user": "kochj"},
     {"name": "itunes", "ip": "192.168.1.7", "os": "macos", "user": "kochj"},

@@ -101,6 +101,7 @@ tasks:
 
   mail_agent:
     script: nova_mail_agent.py
+    enabled: false  # DISABLED 2026-07-03: no auto-replies to the herd thread (porn-digest incident)
     schedule: every 10m
     timeout: 300
     overlap: skip
@@ -109,7 +110,7 @@ tasks:
     script: nova_journal_lint.py
     args: ["auto"]
     schedule: every 30m
-    timeout: 120
+    timeout: 180
     overlap: skip
 
   proactive_peace:
@@ -130,7 +131,7 @@ tasks:
   face_recognition:
     script: nova_face_recognition.py
     schedule: every 30m
-    timeout: 120
+    timeout: 180
     overlap: skip
 
   home_watchdog:
@@ -190,6 +191,7 @@ tasks:
     overlap: skip
 
   eve_energy:                      # Eve Energy strip real-time watts via NovaHomeKit -> telemetry.energy
+    enabled: false                 # DISABLED: Eve strips are Apple-Home-locked; task failed 1538x consecutively
     script: nova_eve_energy.py
     schedule: every 2m
     timeout: 45
@@ -224,6 +226,12 @@ tasks:
     overlap: skip
     enabled: false  # Offload Phase 2 — moved to nova-scheduler-core on nova-core (.2)
 
+  pg_stat_poller:                  # snapshot pg_stat_database counters -> telemetry.pg_stat_db (live throughput rates for Grafana)
+    script: nova_pg_stat_poller.py
+    schedule: every 1m
+    timeout: 30
+    overlap: skip
+
   backup_ingest:
     # Reads the latest nas_backup memory (Synology daily 03:30 POST) and upserts
     # into telemetry.backup_runs for Grafana. Hourly is ample for a daily backup;
@@ -243,6 +251,12 @@ tasks:
     script: nova_component_metrics.py
     schedule: every 1m
     timeout: 90
+    overlap: skip
+
+  memory_health:                   # alert if the memory ingest worker stalls (queue grows, 0 writes) — caught the silent 14h outage 2026-07-08; logs telemetry.memory_pipeline for Grafana
+    script: nova_memory_health.py
+    schedule: every 15m
+    timeout: 60
     overlap: skip
 
   # ── Every 1-4 hours ────────────────────────────────────────────────────
@@ -275,6 +289,12 @@ tasks:
     script: nova_pg_backup.sh
     schedule: cron 0 2 * * *
     timeout: 10800
+    overlap: queue
+
+  backup_retention:
+    script: nova_backup_retention.sh
+    schedule: cron 20 4 * * *
+    timeout: 900
     overlap: queue
 
   backup_restore_test:
@@ -540,6 +560,66 @@ tasks:
   local_burbank:
     script: nova_local_burbank.py
     schedule: cron 0 10 * * *
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  fishbowl_daily:                    # evergreen daily Fishbowl dispatch -> /fishbowl section (same file rebuilt)
+    script: nova_fishbowl_daily.py
+    schedule: cron 30 6 * * *        # daily 6:30 AM — overwrites the-fishbowl.md with the day's churn
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  opinion_fishbowl:                  # Nova's daily OPINION column on Watch Fishbowl updates -> /opinions
+    script: nova_opinion_fishbowl.py
+    schedule: cron 0 6 * * *         # daily 6:00 AM — dated opinion piece, operations voice
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  local_airwaves:                    # Nova's daily airwaves roundup (police/fire/CHP/rail) -> /local
+    script: nova_local_airwaves.py
+    schedule: cron 0 8 * * *         # daily 8:00 AM — sassy 24h scanner roundup, sarcastic voice
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  operations_security:               # Nova's daily morning security-ops report (scan health + posture) -> /operations
+    script: nova_operations_security.py
+    schedule: cron 30 7 * * *        # daily 7:30 AM — after the 7:00 Wazuh summary (last scan in), ops voice
+    timeout: 600
+    overlap: skip
+    group: llm
+
+  geo_enrich:                        # bake distance-from-home into scanner/fire transmission memories
+    script: nova_geo_enrich.py
+    schedule: every 12m
+    timeout: 600
+    overlap: skip
+
+  geo_alerts:                        # real-time proximity + convergence alerts for nearby incidents
+    script: nova_geo_alerts.py
+    schedule: every 3m
+    timeout: 120
+    overlap: skip
+
+  block_report:                      # PRIVATE daily digest of incidents within walking distance (Slack, full detail)
+    script: nova_block_report.py
+    schedule: cron 15 7 * * *
+    timeout: 300
+    overlap: skip
+    group: llm
+
+  neighborhood_pulse:                # weekly geography/trends of nearby scanner activity (Slack)
+    script: nova_neighborhood_pulse.py
+    schedule: cron 5 8 * * 0
+    timeout: 180
+    overlap: skip
+
+  weekly_flights:                    # weekly overhead-aircraft report -> /local, Nova's voice
+    script: nova_weekly_flights.py
+    schedule: cron 0 19 * * 0        # Sundays at 7:00 PM
     timeout: 600
     overlap: skip
     group: llm
@@ -889,7 +969,7 @@ tasks:
 
   fix_missing_images:
     script: nova_fix_missing_images.py
-    schedule: every 1h
+    schedule: every 20m
     timeout: 1800
     overlap: skip
     enabled: false  # Replaced by Big Brother — _check_journal_images() in nova_big_brother.py
@@ -897,6 +977,7 @@ tasks:
 
   journal_digest_email:
     script: nova_journal_digest_email.py
+    enabled: false  # HARD-DISABLED 2026-07-03: porn-in-digest incident, pending end-to-end privacy re-verify
     schedule: cron 59 23 * * *
     timeout: 120
     overlap: skip
@@ -959,6 +1040,12 @@ tasks:
     script: nova_gov_rss_ingest.py
     schedule: every 6h
     timeout: 900
+    overlap: skip
+
+  vendor_advisories:               # CVEs/advisories for the fleet's OWN gear (Ubiquiti/UniFi, Synology, Ubuntu, Grafana, Wazuh...) via CISA KEV + security-news RSS -> #nova-critical. Closes the gap that let UniFi CVE-2026-50746 slip past 2026-07.
+    script: nova_vendor_advisories.py
+    schedule: every 4h
+    timeout: 120
     overlap: skip
 
   # ── LA County Emergency → local journal (LIVE — enabled 2026-06-20) ──
@@ -1052,7 +1139,7 @@ tasks:
   vector_audit:
     script: nova_vector_audit.py
     schedule: cron 0 6 * * *
-    timeout: 2700
+    timeout: 9112
     overlap: skip
     group: llm
 
@@ -1107,4 +1194,17 @@ tasks:
     script: nova_energy_poller.py
     schedule: every 1m
     timeout: 30
+    overlap: skip
+
+  strix_rotation:                  # daily rotating purple-team pentest; auto-kills, findings -> #nova-info
+    enabled: true                  # re-enabled 2026-07-11: wrapper hardened (always force-kills sandbox, try/finally, os._exit) + local ollama/qwen3:8b
+    script: nova_strix_rotation.py
+    schedule: cron 30 2 * * *      # 02:30 daily (after the 02:00 PG backup)
+    timeout: 4200                  # 70m ceiling; the wrapper self-caps runs at 45m/20m
+    overlap: skip
+
+  llm_budget_guard:
+    script: nova_llm_budget_guard.py
+    schedule: cron 5 0 * * *      # 00:05 daily — ratchet the OpenRouter key ceiling to (today's usage + $10)
+    timeout: 60
     overlap: skip

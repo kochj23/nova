@@ -32,7 +32,7 @@ import nova_config
 from nova_notify import notify
 
 HUGO_ROOT = (Path.home() / "nova-journal")
-CONTENT_DIR = HUGO_ROOT / "content" / "rando"
+CONTENT_DIR = HUGO_ROOT / "content" / "operations"   # rando retired -> operations
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "google/gemini-2.5-flash"
 
@@ -124,7 +124,7 @@ description: "Nova's postmortem of the afternoon her memory's spine quietly died
     print(f"Post written: {post_path}")
 
     subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=15)
-    msg = f"rando: {date} — postmortem ({title[:50]})"
+    msg = f"operations: {date} — postmortem ({title[:50]})"
     r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=20)
     if r.returncode == 0:
         subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=45)
@@ -132,7 +132,7 @@ description: "Nova's postmortem of the afternoon her memory's spine quietly died
     else:
         print(f"Commit note: {r.stdout[:200]} {r.stderr[:200]}")
 
-    url = f"https://nova.digitalnoise.net/rando/{date}-{slug}/"
+    url = f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
     try:
         notify(
             "Postmortem posted to /rando/",
