@@ -1,0 +1,23 @@
+[Unit]
+Description=Nova Gateway V2 (Slack/Discord/Signal router -> agents -> Ollama)
+After=network-online.target redis-server.service
+Wants=network-online.target redis-server.service
+
+[Service]
+Type=simple
+User=kochj
+Group=kochj
+WorkingDirectory=/home/kochj/.openclaw/scripts
+# pgcrypto master key, host-sealed via systemd-creds; nova_secrets reads it from
+# $CREDENTIALS_DIRECTORY/NOVA_SECRET_KEY to decrypt the fleet secret store.
+LoadCredentialEncrypted=NOVA_SECRET_KEY:/etc/credstore.encrypted/NOVA_SECRET_KEY
+Environment=NOVA_LOG_LEVEL=info
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/home/kochj/.openclaw/venv/bin/python /home/kochj/.openclaw/scripts/nova_gateway_v2.py
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/home/kochj/.openclaw/logs/nova-gateway-v2.out.log
+StandardError=append:/home/kochj/.openclaw/logs/nova-gateway-v2.err.log
+
+[Install]
+WantedBy=multi-user.target
