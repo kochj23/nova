@@ -94,6 +94,11 @@ SUBREDDITS = {
         "label": "TP Gentleman / watch-community fishbowl drama",
         "limit": 25,
     },
+    "WatchesCirclejerk": {
+        "source": "fishbowl",
+        "label": "Watches Circlejerk / watch-community fishbowl satire",
+        "limit": 25,
+    },
 }
 
 # ── State ─────────────────────────────────────────────────────────────────────

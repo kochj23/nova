@@ -86,7 +86,7 @@ def post_memory_context_to_thread(channel, thread_ts, memory_text):
     msg = (
         f":brain: *Memory Context* _(auto-retrieved by preprocessor)_\n"
         f"```\n{memory_text}\n```\n"
-        f"_Nova: use this data in your response. Do not say you can't find it._"
+        f"_Nova: use this if it's actually relevant. If it doesn't answer the question, say so honestly — don't force it or make anything up._"
     )
     try:
         payload = json.dumps({

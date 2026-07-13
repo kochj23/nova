@@ -60,13 +60,16 @@ def notify(text):
                dedup_key="journal-image-repair")
 
 
+DEFAULT_STYLE = "editorial illustration, clean thematic composition, moody, professional"
+
+
 def get_posts_missing_images() -> list[dict]:
-    """Scan all sections for posts without cover images."""
+    """Scan EVERY content section (not just the hardcoded ones) for posts missing a cover,
+    so articles in ANY section — current or future, incl. ad-hoc — get one by default."""
     missing = []
-    for section, style in SECTIONS.items():
-        section_dir = CONTENT_DIR / section
-        if not section_dir.exists():
-            continue
+    for section_dir in sorted(p for p in CONTENT_DIR.iterdir() if p.is_dir()):
+        section = section_dir.name
+        style = SECTIONS.get(section, DEFAULT_STYLE)
         for md_file in section_dir.glob("*.md"):
             if md_file.name == "_index.md":
                 continue
@@ -134,7 +137,9 @@ def add_image_to_post(post: dict, image_path: str) -> bool:
     dest = img_dir / img_filename
 
     try:
-        if image_path.lower().endswith(".webp"):
+        if Path(image_path).resolve() == dest.resolve():
+            pass  # image already sits at the destination — nothing to copy, just attach it below
+        elif image_path.lower().endswith(".webp"):
             shutil.copy2(image_path, dest)
         else:
             r = subprocess.run(["cwebp", "-q", "82", image_path, "-o", str(dest)],

@@ -65,7 +65,7 @@ REDIS_QUEUE = "nova:memory:ingest"          # list key for write queue
 REDIS_CACHE      = "nova:memory:cache"      # hash key for recall cache
 CACHE_TTL        = 300                      # 5-minute recall cache TTL
 REDIS_DEAD_LETTER = "nova:memory:dead-letter"  # items that fail 3× go here
-OLLAMA_BASE      = "http://192.168.1.10:11434"  # embed offloaded to .10 (CPU node); .6 GPU embed wedges under load
+OLLAMA_BASE      = "http://192.168.1.86:11434"  # embed on core2 GPU (860M, ~43ms); core3 (.5) crashed under concurrent-embed load 2026-07-08 (needs power-cycle); nuk CPU (.10) too slow; .6 wedges under LLM load. KEEP embed workers at 4 — 8 crashed core3.
 EMBED_MODEL      = "nomic-embed-text"
 DIMS             = 768
 DEFAULT_N        = 5
@@ -138,6 +138,17 @@ def _sanitize_text(text: str) -> str:
         text = cut[:last_space] if last_space > MAX_EMBED_CHARS * 0.8 else cut
     return text.strip()
 
+
+def _clean_meta(obj):
+    """Recursively strip null bytes from metadata (PG JSONB rejects \\u0000 in any form)."""
+    if isinstance(obj, str):
+        return obj.replace('\x00', '')
+    if isinstance(obj, dict):
+        return {(_clean_meta(k) if isinstance(k, str) else k): _clean_meta(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_clean_meta(v) for v in obj]
+    return obj
+
 # ── Redis ingest worker ──────────────────────────────────────────────────────────
 async def _ingest_worker():
     """Background worker: drains Redis queue → embeds → inserts into PostgreSQL.
@@ -199,7 +210,7 @@ async def _ingest_worker():
                              (id, text, metadata, embedding, source, created_at, text_hash, tier)
                            VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8)
                            ON CONFLICT (text_hash) DO NOTHING""",
-                        memory_id, text, json.dumps(metadata), vec_str, source, created_dt, text_hash, target_tier
+                        memory_id, text, json.dumps(_clean_meta(metadata)), vec_str, source, created_dt, text_hash, target_tier
                     )
             except Exception as e:
                 retries += 1

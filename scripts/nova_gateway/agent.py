@@ -266,7 +266,9 @@ def _system_prompt(agent_id: str, bootstrap_docs: str) -> str:
     )
 
     base = {
-        "chat": f"{NOVA_VOICE_SHORT}\n\n{CONTEXT_CHAT}\n\n{tool_rules}",
+        "chat": f"TODAY IS {today.upper()}. Never guess or invent the day of week — if asked what day "
+                f"it is or what's happening 'today', this is the date.\n\n"
+                f"{NOVA_VOICE_SHORT}\n\n{CONTEXT_CHAT}\n\n{tool_rules}",
         "research": (
             f"{NOVA_VOICE_SHORT}\n\n"
             f"Today is {today}. You are in deep research mode. "

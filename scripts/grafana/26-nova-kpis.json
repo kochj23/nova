@@ -1,0 +1,95 @@
+{
+  "uid": "nova-kpis",
+  "title": "Nova Platform KPIs",
+  "tags": ["nova", "kpi", "platform"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "timezone": "browser",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Gateway latency (ms)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 4, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ms", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 500 }, { "color": "red", "value": 1500 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT value FROM telemetry.nova_meta WHERE metric='gateway_latency_ms' ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Total memories",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 4, "x": 4, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT value FROM telemetry.nova_meta WHERE metric='memories_total' ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Memories today",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 4, "x": 8, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "blue", "value": null } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT value FROM telemetry.nova_meta WHERE metric='memories_today' ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Ollama VRAM (GB)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 4, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "decgbytes", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT value FROM telemetry.nova_meta WHERE metric='ollama_vram_gb' ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "stat", "title": "PG size (GB)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 4, "x": 16, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "decgbytes", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT value FROM telemetry.nova_meta WHERE metric='pg_size_gb' ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 6, "type": "stat", "title": "API cost today ($)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 4, "x": 20, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT value FROM telemetry.nova_meta WHERE metric='api_cost_today' ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Memories total (growth)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 5 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 15, "spanNulls": true }, "color": { "mode": "fixed", "fixedColor": "blue" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, value AS value, 'memories_total' AS metric FROM telemetry.nova_meta WHERE metric='memories_total' AND $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Gateway latency",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 5 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "fillOpacity": 15, "spanNulls": true }, "color": { "mode": "fixed", "fixedColor": "yellow" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, value AS value, 'gateway_latency_ms' AS metric FROM telemetry.nova_meta WHERE metric='gateway_latency_ms' AND $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Ingest rate (per hour)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 20, "spanNulls": true }, "color": { "mode": "fixed", "fixedColor": "green" } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, value AS value, 'ingest_rate_per_hour' AS metric FROM telemetry.nova_meta WHERE metric='ingest_rate_per_hour' AND $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 10, "type": "timeseries", "title": "PG size + disk used (GB)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "decgbytes", "custom": { "drawStyle": "line", "fillOpacity": 10, "spanNulls": true } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+          "rawSql": "SELECT ts AS time, value AS value, 'pg_size_gb' AS metric FROM telemetry.nova_meta WHERE metric='pg_size_gb' AND $__timeFilter(ts) ORDER BY ts", "refId": "A" },
+        { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+          "rawSql": "SELECT ts AS time, value AS value, 'disk_used_gb' AS metric FROM telemetry.nova_meta WHERE metric='disk_used_gb' AND $__timeFilter(ts) ORDER BY ts", "refId": "B" } ]
+    }
+  ]
+}

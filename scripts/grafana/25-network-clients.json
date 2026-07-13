@@ -1,0 +1,90 @@
+{
+  "uid": "network-clients",
+  "title": "Network Clients & WAN",
+  "tags": ["nova", "network", "wan", "unifi"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "timezone": "browser",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "WAN latency (ms)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ms", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 50 }, { "color": "red", "value": 150 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT latency_ms FROM telemetry.wan_quality WHERE latency_ms IS NOT NULL ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "WAN packet loss %",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "percent", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 5 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT packet_loss_pct FROM telemetry.wan_quality WHERE packet_loss_pct IS NOT NULL ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "WAN down (Mbps)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "Mbits", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 50 }, { "color": "green", "value": 200 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT down_mbps FROM telemetry.wan_quality WHERE down_mbps IS NOT NULL ORDER BY ts DESC LIMIT 1", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Active clients",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "short", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT count(DISTINCT client_mac) AS active_clients FROM telemetry.network WHERE ts >= now() - interval '5 minutes'", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "WAN latency & packet loss",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 5 },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 15, "spanNulls": true } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+          "rawSql": "SELECT ts AS time, latency_ms AS value, 'latency ms' AS metric FROM telemetry.wan_quality WHERE latency_ms IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "A" },
+        { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+          "rawSql": "SELECT ts AS time, packet_loss_pct AS value, 'packet loss %' AS metric FROM telemetry.wan_quality WHERE packet_loss_pct IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "B" } ]
+    },
+    {
+      "id": 6, "type": "timeseries", "title": "WAN throughput (Mbps)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 5 },
+      "fieldConfig": { "defaults": { "unit": "Mbits", "custom": { "drawStyle": "line", "fillOpacity": 20, "spanNulls": true } }, "overrides": [] },
+      "targets": [
+        { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+          "rawSql": "SELECT ts AS time, down_mbps AS value, 'down Mbps' AS metric FROM telemetry.wan_quality WHERE down_mbps IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "A" },
+        { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+          "rawSql": "SELECT ts AS time, up_mbps AS value, 'up Mbps' AS metric FROM telemetry.wan_quality WHERE up_mbps IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "B" } ]
+    },
+    {
+      "id": 7, "type": "table", "title": "Top clients by traffic (24h)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 10, "w": 12, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT client_name, ip, round((max(rx_bytes)+max(tx_bytes))/1e9, 2) AS gb, max(signal_dbm) AS signal_dbm FROM telemetry.network WHERE ts >= now() - interval '24 hours' GROUP BY client_name, ip ORDER BY gb DESC LIMIT 25", "refId": "A" } ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "WiFi signal (dBm) by client",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 10, "w": 12, "x": 12, "y": 14 },
+      "fieldConfig": { "defaults": { "unit": "dBm", "custom": { "drawStyle": "line", "fillOpacity": 5, "spanNulls": true } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, signal_dbm AS value, client_name AS metric FROM telemetry.network WHERE is_wired = false AND signal_dbm IS NOT NULL AND $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 9, "type": "table", "title": "Clients per AP",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 24 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT ap_name, count(DISTINCT client_mac) AS clients FROM telemetry.network WHERE ts >= now() - interval '5 minutes' GROUP BY ap_name ORDER BY clients DESC", "refId": "A" } ]
+    }
+  ]
+}

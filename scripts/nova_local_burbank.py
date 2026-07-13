@@ -114,18 +114,186 @@ def get_burbank_search(limit=30):
         return []
 
 
+def get_scanner_blotter(hours=18):
+    """Airwaves activity (police + fire + rail), AGGREGATED IN CODE into safe theme tallies.
+
+    Returns theme counts, aggregate distance-from-home (nearest run, how many within 3 mi), and
+    the closest INTERSECTIONS/cross-streets (never house numbers). Raw transcripts, victim/patient
+    descriptions, and specific residential street addresses never leave this function — so the
+    public article can convey how close activity was without republishing anyone's doorstep.
+    Covers LAPD (Northeast + North Hollywood), Verdugo Fire/EMS, and the Metrolink/UP rail corridor.
+    """
+    import psycopg2
+    try:
+        conn = psycopg2.connect(PG_DSN)
+        cur = conn.cursor()
+        cutoff = datetime.now() - timedelta(hours=hours)
+        cur.execute("SELECT source, text, metadata->'geo' FROM memories "
+                    "WHERE source IN ('scanner','fire','rail') AND created_at >= %s", (cutoff,))
+        rows = cur.fetchall()
+        conn.close()
+    except Exception:
+        return None
+
+    WALK_MI = 2.5   # "could walk to it" (~50 min) — these events get detailed, per-incident treatment
+    dom = {"scanner": "police", "fire": "fire", "rail": "rail"}
+    blobs = {"police": [], "fire": [], "rail": []}
+    dists = {"police": [], "fire": [], "rail": []}   # distance-from-home (aggregate)
+    near = {"police": {}, "fire": {}, "rail": {}}     # cross-street -> miles; intersections/streets only
+    close = {"police": [], "fire": [], "rail": []}    # walkable incidents: (text_lower, miles, safe_cross_street)
+    for source, text, geo in rows:
+        d = dom[source]
+        tl = (text or "").lower()
+        blobs[d].append(tl)
+        if geo:
+            nmi = geo.get("nearest_mi")
+            if nmi is not None:
+                dists[d].append(nmi)
+            safe_where = None
+            for loc in (geo.get("locations") or []):
+                addr, mi = loc.get("addr", ""), loc.get("mi")
+                # public-safe: keep intersections / named streets only. A leading house number
+                # means a specific residence — never surface those in the public article.
+                if addr and mi is not None and not addr[:1].isdigit():
+                    near[d][addr] = mi
+                    if safe_where is None:
+                        safe_where = addr
+            if nmi is not None and nmi <= WALK_MI:
+                close[d].append((tl, nmi, safe_where))
+
+    def themes_of(texts, patterns):
+        # strip the "[Channel Label ...]" prefix so label words (e.g. "Fire") don't inflate themes
+        blob = " ".join(re.sub(r"^\[[^\]]*\]\s*", "", t) for t in texts)
+        return {k: v for k, v in
+                ((name, len(re.findall(rx, blob))) for name, rx in patterns.items()) if v > 0}
+
+    PATTERNS = {
+        "police": {
+            "traffic stops": r"traffic stop",
+            "vehicle-related": r"\bvehicle\b|stolen|recovered",
+            "suspect stops/investigations": r"suspect",
+            "domestic incidents": r"domestic",
+            "pursuits/code-3": r"pursuit|code 3",
+        },
+        "fire": {
+            "medical/EMS": r"medical|breathing|chest pain|blood pressure|patient|unconscious|\bfall\b",
+            "structure/smoke": r"structure|smoke|flames|\bfire\b",
+            "traffic collision": r"collision|\bt\.?c\.?\b|traffic",
+            "rescue": r"rescue|extricat|trapped",
+            "alarm": r"alarm",
+        },
+        "rail": {
+            "signals/clear": r"signal|clear|approach|highball",
+            "crossings": r"crossing|\bgate\b",
+            "movements": r"track|siding|switch|northbound|southbound",
+            "maintenance": r"maintenance|track car|\bwork\b",
+        },
+    }
+    def categorize(tl, patterns):
+        for name, rx in patterns.items():
+            if re.search(rx, tl):
+                return name
+        return "activity"
+
+    out = {}
+    for d in ("police", "fire", "rail"):
+        if len(blobs[d]) >= 3:
+            entry = {"calls": len(blobs[d]), "themes": themes_of(blobs[d], PATTERNS[d])}
+            ds = sorted(dists[d])
+            if ds:
+                entry["dist"] = {"nearest": round(ds[0], 1),
+                                 "within_3mi": sum(1 for x in ds if x <= 3), "located": len(ds)}
+            if near[d]:
+                entry["near"] = sorted(near[d].items(), key=lambda kv: kv[1])[:4]  # closest cross-streets
+            if close[d]:
+                evs = sorted(close[d], key=lambda x: x[1])[:6]   # closest walkable incidents, detailed
+                entry["near_events"] = [{"cat": categorize(tl, PATTERNS[d]), "where": w, "mi": round(mi, 1)}
+                                        for tl, mi, w in evs]
+            out[d] = entry
+    return out or None
+
+
 # ── Article Generation ────────────────────────────────────────────────────────
 
-def generate_article(news_items):
+def generate_article(news_items, scanner_blotter=None):
+    # Score each news item by locality so the article weights detail toward Burbank/nearby (not
+    # Pasadena/DTLA). Same proximity principle as the scanner blotter, applied to ALL news.
+    try:
+        from nova_geo_distance import place_distance
+    except Exception:
+        place_distance = lambda t: None
+    # California-only: this is a LOCAL report — drop anything with no CA/SoCal signal (no Ohio news).
+    CA_SIGNAL = re.compile(
+        r"\b(california|calif\b|socal|southern california|los angeles|l\.?a\.? county|"
+        r"san fernando|san gabriel|orange county|ventura|santa clarita|antelope valley|"
+        r"inland empire|long beach|san diego|san francisco|sacramento|bay area)\b", re.I)
+
+    def is_california(t):
+        return bool(place_distance(t)) or bool(CA_SIGNAL.search(t or ""))
+
+    scored, dropped = [], 0
+    for item in news_items:
+        full = item.get("text", "")
+        if not is_california(full):
+            dropped += 1
+            continue
+        text = full[:500].replace("\n", " ").strip()
+        pd = place_distance(full)
+        scored.append({"text": text, "source": item.get("source", "unknown"),
+                       "place": pd[0] if pd else None, "mi": pd[1] if pd else None})
+    if dropped:
+        log(f"Dropped {dropped} non-California news items")
+    scored.sort(key=lambda x: (x["mi"] is None, x["mi"] if x["mi"] is not None else 999))  # nearest first
     news_block = ""
-    for i, item in enumerate(news_items, 1):
-        text = item["text"][:500].replace("\n", " ").strip()
-        source = item.get("source", "unknown")
-        news_block += f"\n{i}. [{source}] {text}\n"
+    for i, it in enumerate(scored, 1):
+        loc = f" [{it['place']}, ~{it['mi']} mi]" if it["mi"] is not None else " [locality unknown]"
+        news_block += f"\n{i}. [{it['source']}]{loc} {it['text']}\n"
+
+    scanner_block = ""
+    if scanner_blotter:
+        LABELS = {"police": "LAPD (Northeast + North Hollywood)",
+                  "fire": "Verdugo Fire/EMS (Burbank/Glendale)",
+                  "rail": "Metrolink/UP rail corridor"}
+        parts = []
+        for dom, label in LABELS.items():
+            b = scanner_blotter.get(dom)
+            if not b:
+                continue
+            tallies = ", ".join(f"{k} ({v})" for k, v in b["themes"].items()) or "assorted routine chatter"
+            extra = ""
+            if b.get("dist"):
+                dd = b["dist"]
+                extra += (f" | proximity: nearest run ~{dd['nearest']} mi, "
+                          f"{dd['within_3mi']}/{dd['located']} located calls within 3 mi")
+            if b.get("near"):
+                extra += " | nearby cross-streets: " + ", ".join(f"{a} (~{m} mi)" for a, m in b["near"])
+            if b.get("near_events"):
+                evs = "; ".join(e["cat"] + (f" near {e['where']}" if e.get("where") else "") + f" (~{e['mi']} mi)"
+                                for e in b["near_events"])
+                extra += f" | WALKABLE INCIDENTS (<=2.5 mi — give these the MOST detail): {evs}"
+            parts.append(f"{label}: {b['calls']} calls — {tallies}{extra}")
+        if parts:
+            scanner_block = (
+                f"\n\n[BURBANK AIRWAVES — last ~18h. " + "; ".join(parts) + ". "
+                f"WRITE A PROXIMITY-WEIGHTED blotter — detail scales with closeness: spend the MOST words on the "
+                f"WALKABLE INCIDENTS (<=2.5 mi, the reader's own backyard), giving each a vivid sentence or two "
+                f"(type + cross-street if provided + how close). Give mid-range activity (2.5-8 mi) a brief mention, "
+                f"and roll distant activity (>8 mi) into a single aggregate line (e.g. 'another busy night ~5-10 mi "
+                f"out toward downtown'). Cover ALL of it, but zoom in on what's near. You MAY name "
+                f"intersections/cross-streets and distances; you must NOT print any specific house/apartment "
+                f"street address or number, victim/patient names or descriptions, or the reader's home address. "
+                f"Wry and respectful.]\n"
+            )
 
     from nova_voice import system_prompt, CONTEXT_JOURNAL_LOCAL
     system = system_prompt(CONTEXT_JOURNAL_LOCAL + """
 ADDITIONAL RULES FOR BURBANK DISPATCH:
+- PRIORITIZE BY PROXIMITY (most important rule): every news item is tagged with its place + miles
+  from home. The reader cares FAR more about close things than far ones. LEAD with and give the most
+  detail to Burbank & adjacent items (<~4 mi — Burbank, Magnolia Park, Toluca Lake, North Hollywood,
+  Glendale). Give mid-range items (~5-8 mi) a lighter touch, and cover distant ones (Pasadena ~11 mi,
+  Downtown LA ~10 mi, Santa Clarita ~21 mi) briefly or fold them together — a sentence, not a section.
+  Detail scales with closeness. Items tagged [locality unknown] are usually local-ish; use judgment.
 - Cover 3-8 stories depending on what's interesting
 - For each story: give the facts, then your sarcastic take (2-4 sentences)
 - Include an intro that acknowledges the day/weather/vibe
@@ -139,10 +307,21 @@ ADDITIONAL RULES FOR BURBANK DISPATCH:
     from nova_weather_blurb import weather_forecast_context
     system += "\n\n" + weather_forecast_context()  # daily local report includes the forecast
 
+    # Verified code/term reference: if the blotter covers police/fire, pull authoritative
+    # definitions so any code Nova mentions (211, code 3, greater alarm…) is translated, not guessed.
+    if scanner_blotter:
+        try:
+            from nova_code_reference import code_reference_block
+            domains = [d for d in ("police", "fire") if scanner_blotter.get(d)]
+            if domains:
+                system += code_reference_block(scanner_block + " " + news_block, domains)
+        except Exception as e:
+            log(f"code-reference lookup skipped: {e}")
+
     user = f"""Here are today's local news items for Burbank and surrounding LA area:
 
 {news_block}
-
+{scanner_block}
 Write your daily Burbank dispatch. Today is {datetime.now().strftime('%A, %B %d, %Y')}."""
 
     return call_llm(system, user, max_tokens=6000)
@@ -253,8 +432,14 @@ description: "Nova's daily dispatch from Burbank — local news with maximum sar
     msg = f"local: {date} — Burbank dispatch ({title[:40]})"
     r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=15)
     if r.returncode == 0:
-        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
-        log("Pushed to GitHub")
+        # A slow/hung push must never crash the run — the commit is safe locally and
+        # the next successful push (any journal script) ships all unpushed commits.
+        try:
+            p = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=90)
+            log("Pushed to GitHub" if p.returncode == 0
+                else f"Push failed (rc={p.returncode}): {p.stderr[:160]} — commit safe, retries next run")
+        except subprocess.TimeoutExpired:
+            log("Push timed out — commit safe locally, retries next run")
     else:
         log(f"Commit issue: {r.stderr[:200]}")
 
@@ -276,12 +461,16 @@ def main():
 
     all_items = news + [{"text": m.get("text", ""), "source": m.get("source", ""), "created_at": ""} for m in search_results]
 
+    scanner = get_scanner_blotter()   # sanitized airwaves blotter: police+fire+rail, aggregate counts only
+    if scanner:
+        log("Airwaves blotter: " + ", ".join(f"{d}={b['calls']}" for d, b in scanner.items()))
+
     if len(all_items) < 3:
         log(f"Only {len(all_items)} news items — generating with what we have (may include Burbank observations)")
 
     log(f"Got {len(all_items)} news items")
 
-    article = generate_article(all_items if all_items else [{"text": "No local news today", "source": "none", "created_at": ""}])
+    article = generate_article(all_items if all_items else [{"text": "No local news today", "source": "none", "created_at": ""}], scanner_blotter=scanner)
     log(f"Article generated: {len(article)} chars")
 
     title = generate_title(article)

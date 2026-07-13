@@ -1,0 +1,76 @@
+{
+  "uid": "data-platform",
+  "title": "Data Platform Health",
+  "tags": ["nova", "postgres", "replication", "disk", "tls"],
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "1m",
+  "timezone": "browser",
+  "time": { "from": "now-24h", "to": "now" },
+  "panels": [
+    {
+      "id": 1, "type": "stat", "title": "Max replica lag (ms)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "ms", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1000 }, { "color": "red", "value": 5000 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT MAX(replay_lag_ms) AS value FROM telemetry.replication_health WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.replication_health)", "refId": "A" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Replicas streaming",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
+      "fieldConfig": { "defaults": { "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT COUNT(*) AS value FROM telemetry.replication_health WHERE state='streaming' AND ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.replication_health)", "refId": "A" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Soonest disk full (days)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "d", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 7 }, { "color": "green", "value": 30 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT MIN(days_until_full) AS value FROM telemetry.disk_forecast WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.disk_forecast)", "refId": "A" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Soonest cert expiry (days)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "d", "color": { "mode": "thresholds" }, "thresholds": { "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 14 }, { "color": "green", "value": 30 } ] } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT MIN(days_until_expiry) AS value FROM telemetry.cert_expiry WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.cert_expiry)", "refId": "A" } ]
+    },
+    {
+      "id": 5, "type": "timeseries", "title": "Replication lag (ms)",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 24, "x": 0, "y": 5 },
+      "fieldConfig": { "defaults": { "unit": "ms", "custom": { "drawStyle": "line", "fillOpacity": 15, "spanNulls": true } }, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "time_series",
+        "rawSql": "SELECT ts AS time, replay_lag_ms AS value, application_name AS metric FROM telemetry.replication_health WHERE $__timeFilter(ts) ORDER BY ts", "refId": "A" } ]
+    },
+    {
+      "id": 6, "type": "table", "title": "Replica status",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT application_name, client_addr, state, sync_state, replay_lag_ms FROM telemetry.replication_health WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.replication_health) ORDER BY replay_lag_ms DESC", "refId": "A" } ]
+    },
+    {
+      "id": 7, "type": "table", "title": "Disk fill forecast",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 22 },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT host, volume, ROUND(used_pct, 1) AS \"Used %\", ROUND(days_until_full, 1) AS \"Days to full\" FROM telemetry.disk_forecast WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.disk_forecast) ORDER BY days_until_full ASC LIMIT 30", "refId": "A" } ]
+    },
+    {
+      "id": 8, "type": "table", "title": "TLS cert expiry",
+      "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 22 },
+      "fieldConfig": { "defaults": {}, "overrides": [ { "matcher": { "id": "byName", "options": "Days left" }, "properties": [ { "id": "custom.cellOptions", "value": { "type": "color-background" } }, { "id": "color", "value": { "mode": "thresholds" } }, { "id": "thresholds", "value": { "mode": "absolute", "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 14 }, { "color": "green", "value": 30 } ] } } ] } ] },
+      "targets": [ { "datasource": { "type": "grafana-postgresql-datasource", "uid": "nova-ops-pg" }, "format": "table",
+        "rawSql": "SELECT endpoint, host, days_until_expiry AS \"Days left\" FROM telemetry.cert_expiry WHERE ts >= (SELECT MAX(ts) - INTERVAL '5 minutes' FROM telemetry.cert_expiry) ORDER BY days_until_expiry ASC", "refId": "A" } ]
+    }
+  ]
+}

@@ -164,6 +164,40 @@ async def run_slack(ctx: GatewayContext):
             backoff = min(backoff * 2, 60)
 
 
+# ── Deterministic action routing (make Nova DO tasks instead of confabulating) ──
+import re as _re
+
+_ACTION_VERB = _re.compile(
+    r'\b(write|create|publish|post|make|generate|draft|compose|build|'
+    r'restart|reboot|start|stop|deploy|run|execute|fix|patch|update|upgrade|install|'
+    r'add|remove|delete|set|change|configure|schedule|send|email|rename|move|copy|'
+    r'check|scan|test|verify|pull|fetch|download|kill|enable|disable|clean|render)\b',
+    _re.I)
+_LEAD_FILLER = _re.compile(
+    r'^(hey|ok|okay|yo|so|and|also|nova|please|can you|could you|would you|will you|'
+    r"i want you to|i need you to|i'd like you to|go ahead and|when you can|for me)[ ,:]*",
+    _re.I)
+
+
+def _is_action_request(text: str) -> bool:
+    """True if the message is a 'do something' task, not just chat. Biased toward
+    routing — a confabulated 'done' is worse than a slower real answer."""
+    core = (text or "").strip()
+    if len(core) < 8:
+        return False
+    for _ in range(5):                       # strip stacked fillers: "nova, please can you ..."
+        stripped = _LEAD_FILLER.sub("", core).strip()
+        if stripped == core:
+            break
+        core = stripped
+    return bool(_ACTION_VERB.match(core) or _ACTION_VERB.search(core[:50]))
+
+
+def _action_ack(text: str) -> str:
+    return ("Ugh, actual *work*. Fine — handing this to Claude Code so it gets *done* "
+            "instead of me just telling you it's done. Real result posts here shortly.")
+
+
 async def _slack_handle_event(ctx: GatewayContext, event: dict, bot_user_id: str, bot_token: str):
     """Process a single Slack event from Socket Mode."""
     import time
@@ -219,6 +253,60 @@ async def _slack_handle_event(ctx: GatewayContext, event: dict, bot_user_id: str
                                     "timestamp": time.time()}),
                     )
                     log.info(f"[{trace_id}] Slack #nova-claude -> to_claude_code (real Claude Code)")
+                    return
+
+                # Spatial proximity Q&A: "anything near me?", "closest thing on the scanner?" —
+                # answered directly from the distance/bearing-enriched scanner memories (no LLM
+                # round-trip, no confabulation). Only Jordan; non-spatial text returns None and
+                # falls through to the action router / chat below.
+                if event.get("user") == "U049EPC2W":
+                    try:
+                        import os as _os, sys as _sys
+                        _sd = _os.path.expanduser("~/.openclaw/scripts")
+                        if _sd not in _sys.path:
+                            _sys.path.insert(0, _sd)
+                        from nova_spatial_query import answer as _spatial_answer
+                        _sa = _spatial_answer(text)
+                    except Exception as _e:
+                        _sa = None
+                        log.warning(f"spatial Q&A failed: {_e}")
+                    if _sa:
+                        await slack_post_message(ctx, bot_token, channel, _sa, thread_ts=thread_ts)
+                        log.info(f"[{trace_id}] Slack spatial Q&A answered directly")
+                        return
+
+                    # Change/status grounding: "what changed today?", "look in the ops DB" —
+                    # answered from claude_actions + git + memory so the chat model can't
+                    # confabulate "nothing happened." (sys.path already set above.)
+                    try:
+                        from nova_status_query import answer as _status_answer
+                        # voices the facts via an LLM — offload so it never blocks the event loop
+                        _st = await asyncio.get_event_loop().run_in_executor(None, _status_answer, text)
+                    except Exception as _e:
+                        _st = None
+                        log.warning(f"status Q&A failed: {_e}")
+                    if _st:
+                        await slack_post_message(ctx, bot_token, channel, _st, thread_ts=thread_ts)
+                        log.info(f"[{trace_id}] Slack status Q&A answered directly")
+                        return
+
+                # Deterministic action routing (#action-router): a "do something" request in
+                # any listened channel goes to the REAL Claude Code executor, which does the
+                # work and posts the real result back to THIS channel (origin_channel metadata).
+                # This is the fix for Nova confabulating "done" on tasks the Ollama agent can't do.
+                # SECURITY: only Jordan (U049EPC2W) may trigger the cloud executor — a channel
+                # guest cannot route arbitrary tasks to Claude Code. Others fall through to chat.
+                if _is_action_request(text) and event.get("user") == "U049EPC2W":
+                    pool = await get_pg(ctx)
+                    await pool.execute(
+                        """INSERT INTO claude_messages (direction, sender, message, metadata)
+                           VALUES ('to_claude_code', $1, $2, $3::jsonb)""",
+                        event.get("user", "slack"), text,
+                        json.dumps({"origin_channel": channel, "origin_thread": thread_ts,
+                                    "channel": "slack-action-router", "timestamp": time.time()}),
+                    )
+                    log.info(f"[{trace_id}] Slack action -> to_claude_code (real executor): {text[:50]}")
+                    await slack_post_message(ctx, bot_token, channel, _action_ack(text), thread_ts=thread_ts)
                     return
 
                 log.info(f"[{trace_id}] Slack: routing to agent — session={sid}")

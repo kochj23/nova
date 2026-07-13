@@ -154,3 +154,9 @@ config/journal_emergency_geocache.json
 
 # Python virtualenvs (incl. nova_make/adc, created 2026-06-26)
 venvs/
+backup-staging/
+run/
+state/
+reterminal/
+extensions/
+.wan_speedtest_last

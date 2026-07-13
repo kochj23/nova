@@ -70,6 +70,11 @@ def is_skip_folder(path: Path) -> bool:
         name = part.replace(".mbox", "")
         if name in SKIP_FOLDERS:
             return True
+        # NEVER import the Work mailbox or anything under it — Disney corporate mail.
+        # Catches "Work" (and nested Work/* via this parent part) plus sibling year
+        # buckets "Work - 2018", "Work - 2022", etc. Standing rule; do not remove.
+        if name == "Work" or name.startswith("Work - ") or name.startswith("Work-"):
+            return True
     return False
 
 def parse_emlx(filepath: Path) -> dict | None:

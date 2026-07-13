@@ -106,7 +106,7 @@ TOOL_REGISTRY: dict[str, dict] = {
         "required": ["query"],
     },
     "career_narrative": {
-        "description": "Generate Jordan's career narrative from primary sources (North Star -> PRG Aviation -> Litton/Sun -> Disney SRE).",
+        "description": "Generate Jordan's career narrative from primary sources (North Star -> PRG Aviation -> Litton/Sun -> Media Company SRE).",
         "parameters": {
             "era": {"type": "string", "description": "Optional: focus on one era (northstar, prg, litton, disney). Omit for full narrative."},
         },

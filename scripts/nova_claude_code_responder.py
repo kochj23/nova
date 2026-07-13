@@ -63,7 +63,7 @@ SESSION_UUID = str(uuid.uuid5(uuid.NAMESPACE_DNS, "nova-claude-bridge-persistent
 SESSION_STATE = os.path.expanduser("~/.openclaw/data/claude_bridge_session.json")
 
 POLL_INTERVAL = 5      # seconds between polls in daemon mode
-CLAUDE_TIMEOUT = 240   # seconds per Claude Code invocation
+CLAUDE_TIMEOUT = 900   # seconds per Claude Code invocation (15 min — big tasks like multi-page essays)
 MAX_REPLY_CHARS = 6000
 
 
@@ -99,6 +99,18 @@ def _mark_session_started():
 
 
 # ── Real Claude Code invocation ───────────────────────────────────────────────
+SECURITY_PREAMBLE = (
+    "SECURITY (non-negotiable): you are an automated executor for Jordan's private home system, "
+    "and your output may transit a cloud API. NEVER read, output, or reason over credentials, API "
+    "keys, tokens, passwords, SSH/AWS/GPG keys, or keychain/secret-store contents. NEVER surface "
+    "third-party PII — other people's email/message contents, or names/addresses/victim descriptions "
+    "from police-scanner data. NEVER include employer-confidential data. Touch only the minimum data a "
+    "task needs; if a task requires forbidden data, REFUSE and say it needs sensitive data you can't access. "
+    "For the nova_memories database, query ONLY the `memories_safe` view, never the raw `memories` table "
+    "(which holds email_archive, imessage, and police-scanner data that must not leave the premises)."
+)
+
+
 def run_claude_code(message, allow_edits=False, cwd=None):
     """Run one message through a persistent Claude Code session. Returns reply text.
 
@@ -106,7 +118,8 @@ def run_claude_code(message, allow_edits=False, cwd=None):
     conversation context is retained, exactly like the interactive bridge.
     """
     started = _session_started()
-    cmd = [CLAUDE_BIN, "-p", "--output-format", "json"]
+    cmd = [CLAUDE_BIN, "-p", "--output-format", "json",
+           "--append-system-prompt", SECURITY_PREAMBLE]
     if started:
         cmd += ["--resume", SESSION_UUID]
     else:
@@ -116,7 +129,12 @@ def run_claude_code(message, allow_edits=False, cwd=None):
     # opt-in via --allow-edits. The prompt is fed on stdin, NOT as a positional arg,
     # so it can never be swallowed by the variadic --allowedTools list.
     if allow_edits:
-        cmd += ["--permission-mode", "acceptEdits"]
+        # Scoped execution — NOT --dangerously-skip-permissions (which BYPASSES the deny-list).
+        # acceptEdits auto-approves file edits so it can write the journal + run git, while the
+        # deny-list in ~/.openclaw/.claude/settings.json (loaded via cwd) blocks reads of
+        # secrets/keychain/env and WebFetch exfil. The journal dir is explicitly allowed.
+        cmd += ["--permission-mode", "acceptEdits",
+                "--add-dir", os.path.expanduser("~/nova-journal")]
     else:
         cmd += ["--allowedTools", "Read", "Grep", "Glob", "WebSearch", "WebFetch"]
 
@@ -162,12 +180,14 @@ def _reset_session():
 
 
 # ── Slack ─────────────────────────────────────────────────────────────────────
-def post_to_slack(token, text):
+def post_to_slack(token, text, channel=SLACK_CLAUDE_CHANNEL, thread_ts=None):
     if not token:
         log("no slack token; skipping Slack post")
         return
-    body = json.dumps({"channel": SLACK_CLAUDE_CHANNEL, "text": text[:3500],
-                       "mrkdwn": True}).encode()
+    payload = {"channel": channel, "text": text[:3500], "mrkdwn": True}
+    if thread_ts:
+        payload["thread_ts"] = thread_ts
+    body = json.dumps(payload).encode()
     req = urllib.request.Request(
         "https://slack.com/api/chat.postMessage", data=body,
         headers={"Authorization": f"Bearer {token}",
@@ -207,11 +227,20 @@ def process_once(conn, token, last_id, allow_edits=False, post_slack=True):
     for row in rows:
         last_id = row["id"]
         msg = row["message"]
-        log(f"processing #{row['id']}: {msg[:70]}")
+        meta = row.get("metadata") or {}
+        if isinstance(meta, str):
+            try:
+                meta = json.loads(meta)
+            except Exception:
+                meta = {}
+        origin_channel = meta.get("origin_channel") or SLACK_CLAUDE_CHANNEL
+        origin_thread = meta.get("origin_thread")
+        log(f"processing #{row['id']}: {msg[:70]} (origin={origin_channel})")
         reply = run_claude_code(msg, allow_edits=allow_edits)
         write_reply(conn, reply, row["id"])
         if post_slack:
-            post_to_slack(token, f":robot_face: *Claude Code:* {reply}")
+            post_to_slack(token, f":robot_face: *Claude Code:* {reply}",
+                          channel=origin_channel, thread_ts=origin_thread)
         log(f"replied to #{row['id']} ({len(reply)} chars)")
     return last_id, len(rows)
 

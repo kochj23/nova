@@ -395,6 +395,13 @@ LA COUNTY EMERGENCY RECAP RULES:
 - If it was a quiet day, say so and riff on it — a boring safe day is good news.""")
     system += "\n\n" + weather_forecast_context()  # daily local report includes the forecast
 
+    # Verified code/term reference so any police/fire/aviation code in the items is translated, not guessed.
+    try:
+        from nova_code_reference import code_reference_block
+        system += code_reference_block(block, ["police", "fire", "aviation"])
+    except Exception as e:
+        log(f"code-reference lookup skipped: {e}")
+
     user = f"""Today is {datetime.now().strftime('%A, %B %d, %Y')}. Here are the LA County
 public-safety items Nova ingested in the last 24 hours:
 {block}
@@ -480,6 +487,13 @@ BREAKING LA COUNTY EMERGENCY RULES:
   the foothills) when the feed names them.
 - 400-800 words. Do NOT include the title line as a header inside the body.
 - If details are thin or unconfirmed, say so plainly.""")
+
+    # Verified code/term reference so any police/fire/aviation code is translated, not guessed.
+    try:
+        from nova_code_reference import code_reference_block
+        system += code_reference_block(block, ["police", "fire", "aviation"])
+    except Exception as e:
+        log(f"code-reference lookup skipped: {e}")
 
     user = f"""Breaking LA County public-safety items just pulled from Nova's feeds
 ({datetime.now().strftime('%A, %B %d, %Y %I:%M %p PT')}):

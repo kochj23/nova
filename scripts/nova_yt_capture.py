@@ -1,0 +1,239 @@
+#!/usr/bin/env python3
+"""nova_yt_capture.py <video_id> <vector> [--live] — capture ONE YouTube video/stream
+into Nova's vector memory (verbatim): audio transcript + live chat/superchats.
+
+--live : record from the START with yt-dlp --live-from-start until the stream ends
+         (can run for hours), so it's saved even if deleted right after it ends.
+no flag: download the VOD + its chat replay.
+
+Then: extract audio -> mlx_whisper transcript, parse the live_chat JSON (incl. superchat
+amounts), and POST both to the memory service (source=<vector>). Verbatim — the only
+scrubbing is the memory service's own PII pass.
+
+Dispatched DETACHED by nova_yt_ingest_watch.py. Status tracked in nova_ops.yt_ingest_seen.
+Heavy files live under ~/.openclaw/cache/fishbowl_cap and are deleted after ingest.
+"""
+import json
+import re
+import subprocess
+import sys
+import urllib.request
+from pathlib import Path
+
+import psycopg2
+
+YT_DLP = "/opt/homebrew/bin/yt-dlp"
+FFMPEG = "/opt/homebrew/bin/ffmpeg"
+WHISPER = "/opt/homebrew/bin/mlx_whisper"
+WMODEL = "mlx-community/whisper-large-v3-turbo"
+MEMORY_URL = "http://192.168.1.6:18790/remember"
+DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+WORK = Path.home() / ".openclaw/cache/fishbowl_cap"
+CHUNK = 1500
+
+
+def log(m):
+    print(f"[yt-capture] {m}", flush=True)
+
+
+def slack(m):
+    try:
+        import nova_config
+        nova_config.post_both(m, slack_channel=nova_config.SLACK_INFO, discord_channel=None)
+    except Exception as e:
+        log(f"slack: {e}")
+
+
+def setstatus(vid, status):
+    try:
+        c = psycopg2.connect(DSN); c.autocommit = True
+        c.cursor().execute("UPDATE yt_ingest_seen SET status=%s WHERE video_id=%s", (status, vid))
+        c.close()
+    except Exception as e:
+        log(f"status update failed: {e}")
+
+
+def ytbase():
+    a = [YT_DLP, "--extractor-args", "youtube:player_client=web,default", "--no-playlist", "--no-warnings"]
+    cj = Path.home() / ".openclaw/cache/yt_cookies.txt"
+    a += ["--cookies", str(cj)] if cj.exists() else ["--cookies-from-browser", "chrome"]
+    return a
+
+
+def meta_of(vid):
+    try:
+        r = subprocess.run(ytbase() + ["--dump-json", "--no-download",
+                                       f"https://www.youtube.com/watch?v={vid}"],
+                           capture_output=True, text=True, timeout=120)
+        j = json.loads(r.stdout)
+        return (j.get("title") or "")[:200], (j.get("channel") or "")
+    except Exception:
+        return "", ""
+
+
+def download(url, live, stem):
+    WORK.mkdir(parents=True, exist_ok=True)
+    out = str(WORK / f"{stem}.%(ext)s")
+    cmd = ytbase() + ["-f", "bestaudio/best", "--write-subs", "--sub-langs", "live_chat", "-o", out]
+    if live:
+        cmd += ["--live-from-start", "--wait-for-video", "0"]
+    cmd += [url]
+    log(f"{'RECORDING LIVE (from start)' if live else 'downloading VOD'}: {url}")
+    subprocess.run(cmd, capture_output=True, text=True, timeout=12 * 3600)
+    audio = chat = None
+    for f in WORK.glob(f"{stem}.*"):
+        if f.name.endswith(".live_chat.json") or f.suffix == ".json":
+            chat = f
+        elif f.suffix.lower() in (".m4a", ".webm", ".opus", ".mp3", ".mp4", ".mkv", ".wav", ".aac", ".ogg"):
+            audio = f
+    return audio, chat
+
+
+def to_wav(audio, stem):
+    wav = WORK / f"{stem}.wav"
+    subprocess.run([FFMPEG, "-y", "-i", str(audio), "-vn", "-ac", "1", "-ar", "16000",
+                    "-acodec", "pcm_s16le", str(wav)], capture_output=True, timeout=4 * 3600)
+    return wav if wav.exists() and wav.stat().st_size > 1000 else None
+
+
+def _dedupe_loops(text, max_repeat=2):
+    """Collapse Whisper repetition-loop runs (a line/sentence repeated over and over —
+    "and we will be our hearts" x25) down to at most max_repeat, and drop a chunk
+    entirely if after collapsing it's still mostly one phrase (pure hallucination)."""
+    if not text:
+        return text
+    import re as _re
+    units = [u for u in _re.split(r"(?<=[.!?])\s+|\n+", text)]
+    out, run, last = [], 0, None
+    for u in units:
+        key = _re.sub(r"[^a-z0-9 ]", "", u.strip().lower())
+        if key and key == last:
+            run += 1
+            if run < max_repeat:
+                out.append(u)
+        else:
+            run = 0; last = key
+            out.append(u)
+    cleaned = " ".join(x.strip() for x in out if x.strip())
+    words = cleaned.lower().split()
+    if len(words) > 12 and len(set(words)) <= max(3, len(words) // 8):
+        return ""   # degenerate loop -> drop the chunk rather than store garbage
+    return cleaned
+
+
+def transcribe(wav, stem):
+    subprocess.run([WHISPER, str(wav), "--model", WMODEL, "--output-format", "txt",
+                    "--output-dir", str(WORK), "--output-name", stem, "--language", "en",
+                    # anti-hallucination: stop the model conditioning on its own looped output,
+                    # reject over-compressible (repetitive) segments, skip silent stretches.
+                    "--condition-on-previous-text", "False",
+                    "--compression-ratio-threshold", "2.4",
+                    "--hallucination-silence-threshold", "2"],
+                   capture_output=True, text=True, timeout=8 * 3600)
+    t = WORK / f"{stem}.txt"
+    raw = t.read_text(errors="ignore").strip() if t.exists() else ""
+    return _dedupe_loops(raw)
+
+
+def parse_chat(chatfile):
+    """Best-effort live_chat.json -> 'author: message' lines, superchats flagged."""
+    if not chatfile or not chatfile.exists():
+        return ""
+    lines = []
+    for ln in chatfile.read_text(errors="ignore").splitlines():
+        try:
+            d = json.loads(ln)
+        except Exception:
+            continue
+        actions = d.get("replayChatItemAction", {}).get("actions", [d]) if "replayChatItemAction" in d else [d]
+        for a in actions:
+            item = (a.get("addChatItemAction", {}) or {}).get("item", {})
+            r = item.get("liveChatTextMessageRenderer") or item.get("liveChatPaidMessageRenderer")
+            if not r:
+                continue
+            auth = (r.get("authorName", {}) or {}).get("simpleText", "?")
+            msg = "".join(run.get("text", "") for run in (r.get("message", {}) or {}).get("runs", []))
+            amt = (r.get("purchaseAmountText", {}) or {}).get("simpleText", "")
+            if amt:
+                lines.append(f"[SUPERCHAT {amt}] {auth}: {msg}".rstrip())
+            elif msg:
+                lines.append(f"{auth}: {msg}")
+    return "\n".join(lines)
+
+
+def chunk(text, size=CHUNK):
+    out, cur = [], ""
+    for p in re.split(r"\n{2,}", text):
+        p = p.strip()
+        if not p:
+            continue
+        while len(p) > size:
+            out.append(p[:size]); p = p[size:]
+        if len(cur) + len(p) > size:
+            if cur:
+                out.append(cur)
+            cur = p
+        else:
+            cur = (cur + "\n\n" + p) if cur else p
+    if cur:
+        out.append(cur)
+    return out
+
+
+def remember(text, meta):
+    payload = json.dumps({"text": text, "source": meta["vector"], "tier": "long_term",
+                          "metadata": {**meta, "privacy": "private"}}).encode()
+    req = urllib.request.Request(MEMORY_URL + "?async=1", data=payload,
+                                 headers={"Content-Type": "application/json"}, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=20):
+            return True
+    except Exception as e:
+        log(f"remember failed: {e}")
+        return False
+
+
+def main():
+    if len(sys.argv) < 3:
+        print("usage: nova_yt_capture.py <video_id> <vector> [--live]"); sys.exit(1)
+    vid, vector = sys.argv[1], sys.argv[2]
+    live = "--live" in sys.argv
+    url = f"https://www.youtube.com/watch?v={vid}"
+    setstatus(vid, "recording" if live else "downloading")
+    title, channel = meta_of(vid)
+    stem = re.sub(r"[^A-Za-z0-9_-]", "", vid)
+    audio, chatf = download(url, live, stem)
+    transcript = ""
+    if audio:
+        wav = to_wav(audio, stem)
+        if wav:
+            transcript = transcribe(wav, stem)
+    chat = parse_chat(chatf)
+    for f in WORK.glob(f"{stem}.*"):
+        try:
+            f.unlink()
+        except Exception:
+            pass
+    base = {"vector": vector, "type": "fishbowl_stream", "kind": "live" if live else "vod",
+            "video_id": vid, "title": title, "channel": channel, "url": url, "author": "fishbowl"}
+    hdr = f"[Fishbowl stream — {channel} — {title}]"
+    n = 0
+    for i, c in enumerate(chunk(transcript)):
+        if remember(f"{hdr} (transcript)\n{c}", {**base, "part": "transcript", "idx": i}):
+            n += 1
+    for i, c in enumerate(chunk(chat)):
+        if remember(f"{hdr} (live chat/superchats)\n{c}", {**base, "part": "chat", "idx": i}):
+            n += 1
+    setstatus(vid, "ingested" if n else "empty")
+    log(f"done {vid}: transcript={'y' if transcript else 'n'} chat={'y' if chat else 'n'} chunks={n}")
+    # post a sample of the actual memory to #nova-info (alongside progress)
+    if n:
+        ts = (transcript[:600] + "…") if len(transcript) > 600 else (transcript or "(no transcript)")
+        cs = "\n".join(chat.split("\n")[:4]) if chat else "(no chat captured)"
+        slack(f":memo: *Fishbowl memory ingested* — {channel} — {title[:90]} "
+              f"({'LIVE' if live else 'vod'}, {n} chunks -> source=fishbowl)\n"
+              f"*Transcript sample:*\n> {ts.strip()[:600]}\n*Chat/superchats sample:*\n> {cs[:500]}")
+
+
+if __name__ == "__main__":
+    main()

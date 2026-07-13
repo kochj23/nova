@@ -991,7 +991,7 @@ tasks:
   memory_quality:
     script: nova_memory_quality.py
     schedule: cron 0 3 * * 0
-    timeout: 300
+    timeout: 450
     overlap: skip
 
   proactive_brief:

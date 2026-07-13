@@ -91,7 +91,7 @@ CAREER_ERAS = {
         ),
     },
     "disney": {
-        "title": "The Walt Disney Company — SRE Leadership",
+        "title": "Major Media Company — SRE Leadership",
         "period": "2002 – Present",
         "vectors": ["sre_core", "sre_history", "sre_scaling", "sre_infrastructure"],
         "queries": [

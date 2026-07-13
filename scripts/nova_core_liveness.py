@@ -40,7 +40,7 @@ CAPACITY_STALE_S = 1800    # capacity_snapshots not written in 30m -> capacity p
 # Keystones we TCP-probe directly. (name, host, port, health_checks service_name|None)
 KEYSTONES = [
     ("PostgreSQL primary", "127.0.0.1", 5432, "postgresql"),
-    ("PgBouncer",          "127.0.0.1", 6432, None),            # not in health_checks -> TCP adds coverage
+    ("PgBouncer",          "127.0.0.1", 5432, None),            # pgbouncer listen_port=5432 (was wrongly 6432 -> false 'down' alerts)
     ("Redis",              "127.0.0.1", 6379, "redis"),
     ("Memory server",      "127.0.0.1", 18790, "memory_server"),
     ("Gateway",            "127.0.0.1", 18792, "gateway"),
