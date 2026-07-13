@@ -12,7 +12,7 @@
 # Additive only (no --delete). Per-job marker. Telemetry -> telemetry.backup_runs.
 set -u
 MODE="${1:-incremental}"
-PGURL="postgresql://kochj@192.168.1.6:5432/nova_ops"
+PGURL="postgresql://kochj@192.168.1.2:5432/nova_ops"
 LOG=/volume1/homes/kochj/nova_backup.log
 LOCK=/volume1/homes/kochj/.nova_nas_backup.lock
 stamp(){ date '+%Y-%m-%d %H:%M:%S'; }

@@ -30,7 +30,7 @@ import httpx
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-DB_DSN = "postgresql://kochj@192.168.1.6:5432/nova_memories"
+DB_DSN = "postgresql://kochj@192.168.1.2:5432/nova_memories"
 EMBED_URL = "http://192.168.1.6:18790/embed"
 TABLE = "memories"
 

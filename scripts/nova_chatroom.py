@@ -66,7 +66,7 @@ log = logging.getLogger("chatroom")
 
 PORT = 37480
 HOST = "0.0.0.0"
-PG_DSN = "postgresql://kochj@192.168.1.6:5432/nova_ops"
+PG_DSN = "postgresql://kochj@192.168.1.2:5432/nova_ops"
 NOVA_GATEWAY_HTTP = "http://127.0.0.1:18792"
 NOVA_OLLAMA_URL = "http://192.168.1.6:11434"
 NOVA_MEMORY_URL = "http://192.168.1.6:18790"

@@ -32,7 +32,7 @@ import nova_config
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-DB_DSN = "postgresql://kochj@192.168.1.6:5432/nova_ops"
+DB_DSN = "postgresql://kochj@192.168.1.2:5432/nova_ops"
 OLLAMA_URL = "http://192.168.1.6:11434/api/chat"
 OLLAMA_MODEL = "qwen3-coder:30b"
 MESSAGE_THRESHOLD = 20  # summarize after this many new messages

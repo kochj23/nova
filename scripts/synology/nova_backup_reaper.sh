@@ -10,7 +10,7 @@
 #     `--apply` removes ONLY rows a human marked status='approved'.
 #   - Slack warnings via the notification bus (telemetry.events): new orphans + ready-to-reap.
 set -u
-PGURL="postgresql://kochj@192.168.1.6:5432/nova_ops"
+PGURL="postgresql://kochj@192.168.1.2:5432/nova_ops"
 WINDOW=15
 LOG=/volume1/homes/kochj/nova_backup_reaper.log
 MODE="${1:-scan}"
