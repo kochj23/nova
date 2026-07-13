@@ -124,7 +124,9 @@ def keychain(service: str, account: str = "nova") -> str:
     try:
         import nova_secrets
         return nova_secrets.get_secret(service)
-    except Exception:
+    except (Exception, SystemExit):
+        # SystemExit: nova_secrets sys.exit()s when NOVA_SECRET_KEY is absent — a keyless
+        # node must fall through to env, not crash the gateway. (except Exception misses it.)
         pass
     return os.environ.get(service.replace("-", "_").upper(), "")
 
