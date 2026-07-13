@@ -107,9 +107,11 @@ def is_private_content(messages: list) -> bool:
 # ── Keychain helpers ─────────────────────────────────────────────────────────
 
 def keychain(service: str, account: str = "nova") -> str:
-    # macOS Keychain (Mac Studio .6); fall back to env for the Linux cluster nodes, which have
-    # no `security` binary. Env name mirrors nova_config: nova-slack-bot-token -> NOVA_SLACK_BOT_TOKEN.
-    # (#502 gateway portability — backward-compatible: .6 still reads the Keychain.)
+    # Portable resolution for the fleet (#502). Order:
+    #   1. macOS Keychain  — Mac Studio .6 (source of truth today)
+    #   2. fleet pgcrypto store (nova_secrets) — the Linux cluster nodes read here
+    #   3. env NOVA_<SERVICE> — last resort (mirrors nova_config)
+    # Backward-compatible: .6 still reads the Keychain first.
     try:
         r = subprocess.run(
             ["security", "find-generic-password", "-a", account, "-s", service, "-w"],
@@ -118,6 +120,11 @@ def keychain(service: str, account: str = "nova") -> str:
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip()
     except FileNotFoundError:
+        pass
+    try:
+        import nova_secrets
+        return nova_secrets.get_secret(service)
+    except Exception:
         pass
     return os.environ.get(service.replace("-", "_").upper(), "")
 
