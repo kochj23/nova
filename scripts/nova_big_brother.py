@@ -66,6 +66,14 @@ from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN, LOG_DEBUG
 # Escalation-tier engine extracted from this monolith (#511 step 1) — shared, behavior-preserving.
 from nova_bb_escalator import should_notify, _resolve_escalation, active_count, active_keys
 
+# Fault-isolation split (#511): one process per domain so a crash in one can't blind the other.
+#   all     -> full sweep (backward-compatible default; the legacy big-brother daemon)
+#   service -> service health + healing only (nova-service-monitor)
+#   system  -> system resources/subsystems only (nova-system-monitor)
+BB_DOMAIN = os.environ.get("BB_DOMAIN", "all").strip().lower()
+def _run_service() -> bool: return BB_DOMAIN in ("service", "all")
+def _run_system() -> bool:  return BB_DOMAIN in ("system", "all")
+
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 VERSION = "1.0.0"
@@ -3119,1003 +3127,1007 @@ def _full_sweep():
 
     protected_running = _is_protected_task_running()
 
-    # ── Flush pending restarts if protection lifted ──────────────────────────
-    if not protected_running and _pending_restart:
-        _flush_pending_restarts()
+    if _run_service():
+        # ── Flush pending restarts if protection lifted ──────────────────────────
+        if not protected_running and _pending_restart:
+            _flush_pending_restarts()
 
-    # ── Log file scan (proactive — catches errors before service checks) ─────
-    # Deduplicate per (svc, desc) within a single sweep — prevents a burst of
-    # identical log lines (e.g. 50 "dead-lettered item" entries) from producing
-    # 50 identical issue entries in one Slack message.
-    _log_issues_this_sweep: set = set()
-    for lf in LOG_FILES_TO_WATCH:
-        for sev, svc, desc, line_excerpt in _scan_log_file(lf):
-            dedup_key = f"{svc}:{desc}"
-            if dedup_key in _log_issues_this_sweep:
-                continue   # same pattern already appended this sweep
-            _log_issues_this_sweep.add(dedup_key)
-            issues.append(f"{svc}: {desc}")
-            log(f"Log error detected [{svc}] {desc}: {line_excerpt}", level=LOG_WARN,
-                source="big-brother")
-            # Auto-heal from log signals
-            if desc == "EPERM on workspace-state.json":
+        # ── Log file scan (proactive — catches errors before service checks) ─────
+        # Deduplicate per (svc, desc) within a single sweep — prevents a burst of
+        # identical log lines (e.g. 50 "dead-lettered item" entries) from producing
+        # 50 identical issue entries in one Slack message.
+        _log_issues_this_sweep: set = set()
+        for lf in LOG_FILES_TO_WATCH:
+            for sev, svc, desc, line_excerpt in _scan_log_file(lf):
+                dedup_key = f"{svc}:{desc}"
+                if dedup_key in _log_issues_this_sweep:
+                    continue   # same pattern already appended this sweep
+                _log_issues_this_sweep.add(dedup_key)
+                issues.append(f"{svc}: {desc}")
+                log(f"Log error detected [{svc}] {desc}: {line_excerpt}", level=LOG_WARN,
+                    source="big-brother")
+                # Auto-heal from log signals
+                if desc == "EPERM on workspace-state.json":
+                    uid = os.getuid()
+                    subprocess.run(
+                        ["launchctl", "kickstart", "-k", f"gui/{uid}/net.digitalnoise.nova-gateway-v2"],
+                        capture_output=True, timeout=15,
+                    )
+                    fixes.append("Kickstarted gateway (EPERM)")
+                    _record_event("critical", "Gateway EPERM workspace-state.json",
+                                  "Kickstarted gateway", "Gateway")
+
+                elif desc == "signal-cli lock conflict":
+                    subprocess.run(["pkill", "-f", "signal-cli"], capture_output=True)
+                    time.sleep(2)
+                    fixes.append("Killed stale signal-cli (lock conflict)")
+                    _record_event("warning", "signal-cli lock conflict", "Killed stale signal-cli", "Signal-cli")
+
+                elif desc == "openclaw.json invalid config keys":
+                    _fix_auth_profiles()
+                    fixes.append("Ran openclaw doctor --fix (bad config keys)")
+                    _record_event("critical", "openclaw.json invalid keys", "openclaw doctor --fix", "Gateway")
+
+                elif desc == "OpenRouter API key missing":
+                    _fix_auth_profiles()
+                    fixes.append("Ran openclaw doctor --fix (missing API key)")
+                    _record_event("critical", "OpenRouter API key missing", "openclaw doctor --fix", "Gateway")
+
+        # ── Service port checks ──────────────────────────────────────────────────
+        for name, host, port, label, critical, health_path in SERVICES:
+            # Skip port check if we just kicked this service — it may not be bound yet
+            if time.time() - _service_kickstart_at.get(name, 0) < SERVICE_STARTUP_GRACE:
+                log(f"[sweep] {name} in startup grace period — skipping port check",
+                    level=LOG_INFO, source="big-brother")
+                continue
+
+            # Adaptive frequency: skip if not enough time elapsed for this service
+            if not _should_check_now(name):
+                continue
+
+            up = _service_is_up(name, host, port, health_path)
+            _update_adaptive_interval(name, up)
+
+            # Score-history confirmation: don't act on single-blip failures
+            confirmed_down = _score_history_confirms_down(name, up)
+
+            with _lock:
+                prev = _service_status.get(name, {}).get("up", True)
+                _service_status[name] = {
+                    "up": up,
+                    "last_seen": _now_iso() if up else _service_status.get(name, {}).get("last_seen"),
+                    "restarts": _service_status.get(name, {}).get("restarts", 0),
+                    "last_error": None if up else f"Not responding on :{port}",
+                    "check_interval_s": _get_service_interval(name),
+                    "recent_checks": list(_service_score_history.get(name, [])),
+                }
+
+            if not confirmed_down:
+                if not up:
+                    log(f"[sweep] {name} check failed but not confirmed (score-history: "
+                        f"{list(_service_score_history.get(name, []))})",
+                        level=LOG_INFO, source="big-brother")
+                continue
+
+            # Heighten correlated services when one goes down
+            _heighten_correlated(name)
+
+            if not up:
+                if name in SILENCED_SERVICES:
+                    log(f"[sweep] {name} down but silenced — skipping alert", level=LOG_INFO, source="big-brother")
+                    continue
+                issues.append(f"{name} (:{port}) DOWN")
+
+                # Systemic failure brake — if too many services are down at once,
+                # it's infrastructure-level. Don't hammer restarts individually.
+                down_count = sum(1 for s in _service_status.values() if not s.get("up", True))
+                if down_count >= _SYSTEMIC_THRESHOLD:
+                    global _systemic_mode_until, _systemic_escalated
+                    now = time.time()
+                    if now < _systemic_mode_until:
+                        log(f"[sweep] {name} DOWN — systemic mode active ({down_count} services down), skipping restart",
+                            level=LOG_WARN, source="big-brother")
+                        _record_event("critical", f"{name} DOWN (systemic event)", "Skipped — multiple services down", name)
+                        continue
+                    else:
+                        _systemic_mode_until = now + _SYSTEMIC_COOLDOWN
+                        _systemic_escalated = False
+                        log(f"[sweep] SYSTEMIC EVENT: {down_count} services down simultaneously — entering 5min cooldown",
+                            level=LOG_ERROR, source="big-brother")
+                        _record_event("critical",
+                                      f"Systemic failure: {down_count} services down",
+                                      f"Backing off all restarts for {_SYSTEMIC_COOLDOWN}s — likely infrastructure issue",
+                                      "system")
+
+                    if not _systemic_escalated:
+                        _systemic_escalated = True
+                        down_names = [n for n, s in _service_status.items() if not s.get("up", True)]
+                        try:
+                            import psycopg2 as _pg2
+                            conn = _pg2.connect("host=localhost dbname=nova_ops user=kochj")
+                            cur = conn.cursor()
+                            # Dedup: only insert if no open SYSTEMIC alert in the last hour
+                            cur.execute("""
+                                SELECT 1 FROM claude_queue
+                                WHERE description LIKE 'SYSTEMIC:%'
+                                  AND status IN ('queued', 'in_progress')
+                                  AND created_at > NOW() - INTERVAL '1 hour'
+                                LIMIT 1
+                            """)
+                            if not cur.fetchone():
+                                cur.execute("""
+                                    INSERT INTO claude_queue (session_id, description, priority, context)
+                                    VALUES (
+                                        (SELECT session_id FROM claude_sessions ORDER BY started_at DESC LIMIT 1),
+                                        %s, 1, %s
+                                    )
+                                """, (
+                                    f"SYSTEMIC: {down_count} services down simultaneously — {', '.join(down_names[:5])}. Likely infrastructure issue, not individual bugs.",
+                                    json.dumps({"down_services": down_names, "trigger": "systemic_detection"}),
+                                ))
+                            conn.commit()
+                            conn.close()
+                        except Exception:
+                            pass
+                    continue
+
+                # Global or per-service maintenance brake — record but don't restart or alert
+                if maintenance_active or _is_service_in_maintenance(name):
+                    reason = "global maintenance" if maintenance_active else "per-service maintenance"
+                    log(f"[sweep] {name} DOWN but {reason} active — skipping restart",
+                        level=LOG_WARN, source="big-brother")
+                    _record_event("warning", f"{name} DOWN ({reason})", "Skipped restart — maintenance brake", name)
+                    continue
+
+                if not critical and name not in ("SwarmUI", "TinyChat"):
+                    _record_event("warning", f"{name} not responding on :{port}", "No action (non-critical)", name)
+                    continue
+
+                if protected_running and name not in ("Gateway v2", "Signal-cli"):
+                    _queue_restart(name)
+                    fixes.append(f"Queued restart of {name} (protected task running)")
+                    _record_event("warning", f"{name} DOWN", "Queued restart", name)
+                    continue
+
+                # Claude Code conflict avoidance — defer if script is being edited
+                if _is_service_being_edited(name):
+                    log(f"[sweep] {name} DOWN but Claude is editing — deferring restart",
+                        level=LOG_WARN, source="big-brother")
+                    _notify_claude_editing_conflict(name)
+                    _queue_restart(name)
+                    fixes.append(f"Deferred restart of {name} (Claude editing script)")
+                    _record_event("info", f"Restart deferred: {name}",
+                                  "Claude Code is editing the script", name)
+                    continue
+
+                def _kickstart(lbl: str, timeout: int = 15) -> bool:
+                    try:
+                        r = subprocess.run(
+                            ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{lbl}"],
+                            capture_output=True, timeout=timeout,
+                        )
+                        return r.returncode == 0
+                    except subprocess.TimeoutExpired:
+                        log(f"launchctl kickstart timed out for {lbl}", level=LOG_WARN, source="big-brother")
+                        return False
+                    except Exception as e:
+                        log(f"launchctl kickstart failed for {lbl}: {e}", level=LOG_ERROR, source="big-brother")
+                        return False
+
+                if name == "PostgreSQL":
+                    # Use pg_ctl which handles stale postmaster.pid from crashes
+                    pg_ctl = "/opt/homebrew/opt/postgresql@17/bin/pg_ctl"
+                    pg_data = "/opt/homebrew/var/postgresql@17"
+                    pg_log  = "/Volumes/MoreData/postgresql@17/homebrew-log/postgresql@17.log"
+                    env = {**os.environ, "LC_ALL": "en_US.UTF-8", "LANG": "en_US.UTF-8"}
+                    try:
+                        subprocess.run(
+                            [pg_ctl, "start", "-D", pg_data, "-l", pg_log, "-w"],
+                            capture_output=True, timeout=30, env=env,
+                        )
+                    except Exception:
+                        if label:
+                            _kickstart(label)
+                    fixes.append("Restarted PostgreSQL")
+                    _record_event("critical", "PostgreSQL DOWN", "Restarted via pg_ctl", "PostgreSQL")
+
+                elif name == "Redis":
+                    if label:
+                        _kickstart(label)
+                    fixes.append("Restarted Redis")
+                    _record_event("critical", "Redis DOWN", "Restarted via launchctl", "Redis")
+
+                elif name == "Memory Server" and label:
+                    # Dependency check: Memory Server needs PG and Redis healthy.
+                    # If either dependency is down, restarting Memory Server just causes
+                    # another crash-loop — suppress the restart and let the dependency
+                    # fix cascade naturally on the next sweep.
+                    pg_up    = _port_open("127.0.0.1", 5432)
+                    redis_up = _port_open("127.0.0.1", 6379)
+                    if not pg_up:
+                        log("Memory Server DOWN but PostgreSQL also down — skipping restart, waiting for PG",
+                            level=LOG_WARN, source="big-brother")
+                        _record_event("warning", "Memory Server DOWN (PG dependency also down)",
+                                      "Skipped restart — will retry after PG recovers", "Memory Server")
+                    elif not redis_up:
+                        log("Memory Server DOWN but Redis also down — skipping restart, waiting for Redis",
+                            level=LOG_WARN, source="big-brother")
+                        _record_event("warning", "Memory Server DOWN (Redis dependency also down)",
+                                      "Skipped restart — will retry after Redis recovers", "Memory Server")
+                    elif _check_crash_loop("Memory Server"):
+                        # Crash-loop cooldown active — already logged and alerted inside _check_crash_loop
+                        pass
+                    else:
+                        # Double-check port is truly free before kickstarting —
+                        # avoids EADDRINUSE (exit 256) when the process is mid-startup
+                        if _port_open(LAN_IP, 18790):
+                            log("Memory Server port is up — skipping kickstart (false alarm)",
+                                level=LOG_INFO, source="big-brother")
+                        else:
+                            _service_kickstart_at["Memory Server"] = time.time()
+                            _kickstart(label)
+                            fixes.append("Restarted Memory Server")
+                            _record_event("critical", "Memory Server DOWN", "Restarted via launchctl", "Memory Server")
+
+                elif name == "Scheduler":
+                    if not _check_scheduler_heartbeat():
+                        _kickstart("com.nova.scheduler")
+                        fixes.append("Restarted Scheduler (stale heartbeat)")
+                        _record_event("critical", "Scheduler stale heartbeat", "Kickstarted via launchctl", "Scheduler")
+
+                elif name == "Gateway v2" or name == "Signal-cli":
+                    if not _check_crash_loop("Gateway"):
+                        success = _restart_gateway()
+                        fix_msg = "Restarted Gateway" if success else "FAILED to restart Gateway"
+                        fixes.append(fix_msg)
+                        _record_event("critical", f"{name} DOWN",
+                                      fix_msg, "Gateway")
+
+                elif label:
+                    _kickstart(label)
+                    fixes.append(f"Restarted {name}")
+                    _record_event("warning", f"{name} DOWN", f"Restarted {name}", name)
+
+            else:
+                with _lock:
+                    issue_key = f"{name}_down"
+                    if issue_key in _alerted_issues:
+                        _alerted_issues.discard(issue_key)
+
+        # ── Notify Claude about critical service restarts ────────────────────────
+        # If we restarted any services that Claude might be depending on, publish
+        # a Redis notification so an active Claude session knows immediately.
+        if fixes:
+            _redis_notify_claude(
+                "service_restart",
+                f"Big Brother performed service actions: {'; '.join(fixes)}. "
+                f"Some services may have been temporarily unavailable.",
+                priority=2,
+            )
+
+        # ── Persistent service downtime escalation to Claude Queue ───────────────
+        # Track services that remain down across sweeps. If a service stays down
+        # for >15 minutes despite BB's heal attempts, escalate to claude_queue.
+        global _pg_down_since
+        now_ts = time.time()
+        _recovered_this_sweep = []   # services observed UP this sweep → auto-close incidents
+        for name, host, port, label, critical, health_path in SERVICES:
+            svc_up = _service_status.get(name, {}).get("up", True)
+            if not svc_up:
+                if name not in _service_down_since:
+                    _service_down_since[name] = now_ts
+                elif now_ts - _service_down_since[name] > SERVICE_ESCALATION_THRESHOLD:
+                    down_min = int((now_ts - _service_down_since[name]) / 60)
+                    _escalate_to_claude(
+                        f"INCIDENT: {name} — {name} has been down for {down_min}+ minutes after Big Brother's "
+                        f"auto-heal attempts. Port {port} on {host} not responding. "
+                        f"Check launchd label '{label or 'N/A'}' and service logs.",
+                        priority=1 if critical else 3
+                    )
+                    # Mark as escalated — don't re-escalate until service recovers and fails again
+                    _service_down_since[name] = float('inf')
+            else:
+                # Service recovered (or has been up) — clear downtime tracking.
+                # If it was previously tracked as down, this is a real recovery, so
+                # clear any cached "already-closed" markers so a *future* incident on
+                # this service can be closed again on its next recovery.
+                if name in _service_down_since:
+                    _closed_incident_keys.discard(f"queue:{name}")
+                _service_down_since.pop(name, None)
+                _recovered_this_sweep.append(name)
+
+        # ── Auto-close incidents for recovered services (#508) ───────────────────
+        # When a service that had an OPEN incident is UP again, mark that incident
+        # resolved so the queue/incident store stops piling up. Guarded — must never
+        # crash the sweep.
+        try:
+            n_closed = _auto_close_incidents(_recovered_this_sweep)
+            if n_closed:
+                log(f"[auto-close] resolved {n_closed} incident record(s) this sweep",
+                    level=LOG_WARN, source="big-brother")
+        except Exception as e:
+            log(f"[auto-close] unexpected error (ignored): {e}",
+                level=LOG_WARN, source="big-brother")
+
+        # ── PostgreSQL-specific escalation (>5 min unreachable) ──────────────────
+        pg_up = _port_open("127.0.0.1", 5432)
+        if not pg_up:
+            if _pg_down_since == 0.0:
+                _pg_down_since = now_ts
+            elif now_ts - _pg_down_since > PG_ESCALATION_THRESHOLD:
+                down_min = int((now_ts - _pg_down_since) / 60)
+                _escalate_to_claude(
+                    f"PostgreSQL unreachable for {down_min}+ minutes. Port 5432 not responding. "
+                    f"Nova memory system, session logging, and all DB-dependent services are impacted. "
+                    f"Check pg_ctl status, postmaster.pid, and /Volumes/MoreData/postgresql@17 volume mount.",
+                    priority=1
+                )
+                _pg_down_since = now_ts  # Reset so dedup handles repeat prevention
+        else:
+            _pg_down_since = 0.0
+
+        # ── Internet outage detection (runs before channel checks) ──────────────
+        _handle_internet_state(issues, fixes)
+
+        # ── Channel health (only if gateway is up and internet is up) ────────────
+        global _discord_timeout_count
+        gateway_up = _port_open("127.0.0.1", 18792)
+        if gateway_up:
+            channels = _check_gateway_log_channels()
+
+            # Discord timeout strike counting — don't restart on a single timeout
+            if channels.get("discord") == "timeout":
+                _discord_timeout_count += 1
+                if _discord_timeout_count >= DISCORD_STRIKE_THRESHOLD:
+                    log(f"Discord timeout strike {_discord_timeout_count} — treating as disconnect",
+                        level=LOG_WARN, source="big-brother")
+                    channels["discord"] = "disconnected"
+                    _discord_timeout_count = 0
+                else:
+                    log(f"Discord timeout strike {_discord_timeout_count}/{DISCORD_STRIKE_THRESHOLD} — not restarting yet",
+                        level=LOG_INFO, source="big-brother")
+                    channels["discord"] = "unknown"  # Don't count as disconnected
+            elif channels.get("discord") == "connected":
+                _discord_timeout_count = 0  # Reset on confirmed connection
+
+            disconnected = [ch for ch, st in channels.items() if st == "disconnected"]
+            # Discord has a known persistent @buape/carbon WebSocket bug — restarts don't fix it
+            # and cause Signal gaps + cascade failures. Only restart for Slack or Signal outages.
+            restartable_disconnects = [ch for ch in disconnected if ch != "discord"]
+            if disconnected:
+                # Suppress per-restart channel alerts when internet is down —
+                # the disconnect is caused by WAN loss, not a Nova config problem.
+                if _internet_down:
+                    log(f"Channel disconnects suppressed — internet is DOWN",
+                        level=LOG_INFO, source="big-brother")
+                elif maintenance_active:
+                    log(f"Channel disconnects suppressed — maintenance mode active",
+                        level=LOG_INFO, source="big-brother")
+                elif not restartable_disconnects:
+                    # Discord-only — log quietly, don't restart
+                    log(f"Discord disconnected (known @buape/carbon bug) — not restarting gateway",
+                        level=LOG_INFO, source="big-brother")
+                else:
+                    issues.append(f"Channels disconnected: {', '.join(restartable_disconnects)}")
+                    _record_event("critical",
+                                  f"Channels disconnected: {', '.join(restartable_disconnects)}",
+                                  "Restarting gateway",
+                                  "Gateway")
+                    if not protected_running and not _check_crash_loop("Gateway"):
+                        success = _restart_gateway()
+                        if success:
+                            fixes.append(f"Restarted gateway (channels: {', '.join(restartable_disconnects)})")
+                        else:
+                            fixes.append("FAILED to restart gateway for channel reconnect")
+
+            # EPERM check
+            if _check_gateway_eperm():
                 uid = os.getuid()
                 subprocess.run(
                     ["launchctl", "kickstart", "-k", f"gui/{uid}/net.digitalnoise.nova-gateway-v2"],
                     capture_output=True, timeout=15,
                 )
-                fixes.append("Kickstarted gateway (EPERM)")
-                _record_event("critical", "Gateway EPERM workspace-state.json",
-                              "Kickstarted gateway", "Gateway")
+                fixes.append("Kickstarted gateway (EPERM workspace-state.json)")
+                _record_event("critical", "Gateway EPERM", "Kickstarted gateway", "Gateway")
 
-            elif desc == "signal-cli lock conflict":
-                subprocess.run(["pkill", "-f", "signal-cli"], capture_output=True)
-                time.sleep(2)
-                fixes.append("Killed stale signal-cli (lock conflict)")
-                _record_event("warning", "signal-cli lock conflict", "Killed stale signal-cli", "Signal-cli")
+        # ── auth-profiles.json drift ─────────────────────────────────────────────
+        if _check_auth_profiles():
+            issues.append("auth-profiles.json wrong format")
+            _fix_auth_profiles()
+            fixes.append("Ran openclaw doctor --fix (auth-profiles format)")
+            _record_event("critical", "auth-profiles.json drift", "openclaw doctor --fix", "Gateway")
 
-            elif desc == "openclaw.json invalid config keys":
-                _fix_auth_profiles()
-                fixes.append("Ran openclaw doctor --fix (bad config keys)")
-                _record_event("critical", "openclaw.json invalid keys", "openclaw doctor --fix", "Gateway")
+        # ── Slack preprocessor TCC ───────────────────────────────────────────────
+        if _fix_slack_preprocessor_tcc():
+            fixes.append("Injected Slack token into preprocessor plist (TCC fix)")
+            _record_event("warning", "Slack preprocessor missing token",
+                          "Injected token into plist + reloaded", "Slack")
 
-            elif desc == "OpenRouter API key missing":
-                _fix_auth_profiles()
-                fixes.append("Ran openclaw doctor --fix (missing API key)")
-                _record_event("critical", "OpenRouter API key missing", "openclaw doctor --fix", "Gateway")
+        # ── Memory server functional check ───────────────────────────────────────
+        mem_up = _port_open(LAN_IP, 18790)
+        if mem_up and not _check_memory_server_recall():
+            issues.append("Memory server port up but recall failing (PG/Redis likely unhealthy)")
+            _record_event("warning", "Memory recall failing despite server up",
+                          "Check PostgreSQL + Redis", "Memory Server")
 
-    # ── Service port checks ──────────────────────────────────────────────────
-    for name, host, port, label, critical, health_path in SERVICES:
-        # Skip port check if we just kicked this service — it may not be bound yet
-        if time.time() - _service_kickstart_at.get(name, 0) < SERVICE_STARTUP_GRACE:
-            log(f"[sweep] {name} in startup grace period — skipping port check",
-                level=LOG_INFO, source="big-brother")
-            continue
+        if mem_up and not _check_redis_memory_cache():
+            issues.append("Redis cache not storing/retrieving keys")
+            _record_event("warning", "Redis functional check failed",
+                          "Check Redis config + net.digitalnoise.redis", "Redis")
 
-        # Adaptive frequency: skip if not enough time elapsed for this service
-        if not _should_check_now(name):
-            continue
+        # ── Subagent heartbeats ───────────────────────────────────────────────────
+        stale = _check_subagent_heartbeats()
+        for agent in stale:
+            issues.append(f"Subagent {agent} stale/missing")
+            _restart_subagent(agent)
+            fixes.append(f"Restarted subagent {agent}")
+            _record_event("warning", f"Subagent {agent} stale", f"Restarted via subagent_ctl.sh", agent)
 
-        up = _service_is_up(name, host, port, health_path)
-        _update_adaptive_interval(name, up)
+        # ── PostgreSQL idle cleanup ───────────────────────────────────────────────
+        if _port_open("127.0.0.1", 5432):
+            _cleanup_postgres_idle()
 
-        # Score-history confirmation: don't act on single-blip failures
-        confirmed_down = _score_history_confirms_down(name, up)
-
-        with _lock:
-            prev = _service_status.get(name, {}).get("up", True)
-            _service_status[name] = {
-                "up": up,
-                "last_seen": _now_iso() if up else _service_status.get(name, {}).get("last_seen"),
-                "restarts": _service_status.get(name, {}).get("restarts", 0),
-                "last_error": None if up else f"Not responding on :{port}",
-                "check_interval_s": _get_service_interval(name),
-                "recent_checks": list(_service_score_history.get(name, [])),
-            }
-
-        if not confirmed_down:
-            if not up:
-                log(f"[sweep] {name} check failed but not confirmed (score-history: "
-                    f"{list(_service_score_history.get(name, []))})",
-                    level=LOG_INFO, source="big-brother")
-            continue
-
-        # Heighten correlated services when one goes down
-        _heighten_correlated(name)
-
-        if not up:
-            if name in SILENCED_SERVICES:
-                log(f"[sweep] {name} down but silenced — skipping alert", level=LOG_INFO, source="big-brother")
-                continue
-            issues.append(f"{name} (:{port}) DOWN")
-
-            # Systemic failure brake — if too many services are down at once,
-            # it's infrastructure-level. Don't hammer restarts individually.
-            down_count = sum(1 for s in _service_status.values() if not s.get("up", True))
-            if down_count >= _SYSTEMIC_THRESHOLD:
-                global _systemic_mode_until, _systemic_escalated
-                now = time.time()
-                if now < _systemic_mode_until:
-                    log(f"[sweep] {name} DOWN — systemic mode active ({down_count} services down), skipping restart",
-                        level=LOG_WARN, source="big-brother")
-                    _record_event("critical", f"{name} DOWN (systemic event)", "Skipped — multiple services down", name)
-                    continue
-                else:
-                    _systemic_mode_until = now + _SYSTEMIC_COOLDOWN
-                    _systemic_escalated = False
-                    log(f"[sweep] SYSTEMIC EVENT: {down_count} services down simultaneously — entering 5min cooldown",
-                        level=LOG_ERROR, source="big-brother")
-                    _record_event("critical",
-                                  f"Systemic failure: {down_count} services down",
-                                  f"Backing off all restarts for {_SYSTEMIC_COOLDOWN}s — likely infrastructure issue",
-                                  "system")
-
-                if not _systemic_escalated:
-                    _systemic_escalated = True
-                    down_names = [n for n, s in _service_status.items() if not s.get("up", True)]
-                    try:
-                        import psycopg2 as _pg2
-                        conn = _pg2.connect("host=localhost dbname=nova_ops user=kochj")
-                        cur = conn.cursor()
-                        # Dedup: only insert if no open SYSTEMIC alert in the last hour
-                        cur.execute("""
-                            SELECT 1 FROM claude_queue
-                            WHERE description LIKE 'SYSTEMIC:%'
-                              AND status IN ('queued', 'in_progress')
-                              AND created_at > NOW() - INTERVAL '1 hour'
-                            LIMIT 1
-                        """)
-                        if not cur.fetchone():
-                            cur.execute("""
-                                INSERT INTO claude_queue (session_id, description, priority, context)
-                                VALUES (
-                                    (SELECT session_id FROM claude_sessions ORDER BY started_at DESC LIMIT 1),
-                                    %s, 1, %s
-                                )
-                            """, (
-                                f"SYSTEMIC: {down_count} services down simultaneously — {', '.join(down_names[:5])}. Likely infrastructure issue, not individual bugs.",
-                                json.dumps({"down_services": down_names, "trigger": "systemic_detection"}),
-                            ))
-                        conn.commit()
-                        conn.close()
-                    except Exception:
-                        pass
-                continue
-
-            # Global or per-service maintenance brake — record but don't restart or alert
-            if maintenance_active or _is_service_in_maintenance(name):
-                reason = "global maintenance" if maintenance_active else "per-service maintenance"
-                log(f"[sweep] {name} DOWN but {reason} active — skipping restart",
-                    level=LOG_WARN, source="big-brother")
-                _record_event("warning", f"{name} DOWN ({reason})", "Skipped restart — maintenance brake", name)
-                continue
-
-            if not critical and name not in ("SwarmUI", "TinyChat"):
-                _record_event("warning", f"{name} not responding on :{port}", "No action (non-critical)", name)
-                continue
-
-            if protected_running and name not in ("Gateway v2", "Signal-cli"):
-                _queue_restart(name)
-                fixes.append(f"Queued restart of {name} (protected task running)")
-                _record_event("warning", f"{name} DOWN", "Queued restart", name)
-                continue
-
-            # Claude Code conflict avoidance — defer if script is being edited
-            if _is_service_being_edited(name):
-                log(f"[sweep] {name} DOWN but Claude is editing — deferring restart",
-                    level=LOG_WARN, source="big-brother")
-                _notify_claude_editing_conflict(name)
-                _queue_restart(name)
-                fixes.append(f"Deferred restart of {name} (Claude editing script)")
-                _record_event("info", f"Restart deferred: {name}",
-                              "Claude Code is editing the script", name)
-                continue
-
-            def _kickstart(lbl: str, timeout: int = 15) -> bool:
-                try:
-                    r = subprocess.run(
-                        ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{lbl}"],
-                        capture_output=True, timeout=timeout,
-                    )
-                    return r.returncode == 0
-                except subprocess.TimeoutExpired:
-                    log(f"launchctl kickstart timed out for {lbl}", level=LOG_WARN, source="big-brother")
-                    return False
-                except Exception as e:
-                    log(f"launchctl kickstart failed for {lbl}: {e}", level=LOG_ERROR, source="big-brother")
-                    return False
-
-            if name == "PostgreSQL":
-                # Use pg_ctl which handles stale postmaster.pid from crashes
-                pg_ctl = "/opt/homebrew/opt/postgresql@17/bin/pg_ctl"
-                pg_data = "/opt/homebrew/var/postgresql@17"
-                pg_log  = "/Volumes/MoreData/postgresql@17/homebrew-log/postgresql@17.log"
-                env = {**os.environ, "LC_ALL": "en_US.UTF-8", "LANG": "en_US.UTF-8"}
-                try:
-                    subprocess.run(
-                        [pg_ctl, "start", "-D", pg_data, "-l", pg_log, "-w"],
-                        capture_output=True, timeout=30, env=env,
-                    )
-                except Exception:
-                    if label:
-                        _kickstart(label)
-                fixes.append("Restarted PostgreSQL")
-                _record_event("critical", "PostgreSQL DOWN", "Restarted via pg_ctl", "PostgreSQL")
-
-            elif name == "Redis":
-                if label:
-                    _kickstart(label)
-                fixes.append("Restarted Redis")
-                _record_event("critical", "Redis DOWN", "Restarted via launchctl", "Redis")
-
-            elif name == "Memory Server" and label:
-                # Dependency check: Memory Server needs PG and Redis healthy.
-                # If either dependency is down, restarting Memory Server just causes
-                # another crash-loop — suppress the restart and let the dependency
-                # fix cascade naturally on the next sweep.
-                pg_up    = _port_open("127.0.0.1", 5432)
-                redis_up = _port_open("127.0.0.1", 6379)
-                if not pg_up:
-                    log("Memory Server DOWN but PostgreSQL also down — skipping restart, waiting for PG",
-                        level=LOG_WARN, source="big-brother")
-                    _record_event("warning", "Memory Server DOWN (PG dependency also down)",
-                                  "Skipped restart — will retry after PG recovers", "Memory Server")
-                elif not redis_up:
-                    log("Memory Server DOWN but Redis also down — skipping restart, waiting for Redis",
-                        level=LOG_WARN, source="big-brother")
-                    _record_event("warning", "Memory Server DOWN (Redis dependency also down)",
-                                  "Skipped restart — will retry after Redis recovers", "Memory Server")
-                elif _check_crash_loop("Memory Server"):
-                    # Crash-loop cooldown active — already logged and alerted inside _check_crash_loop
-                    pass
-                else:
-                    # Double-check port is truly free before kickstarting —
-                    # avoids EADDRINUSE (exit 256) when the process is mid-startup
-                    if _port_open(LAN_IP, 18790):
-                        log("Memory Server port is up — skipping kickstart (false alarm)",
-                            level=LOG_INFO, source="big-brother")
-                    else:
-                        _service_kickstart_at["Memory Server"] = time.time()
-                        _kickstart(label)
-                        fixes.append("Restarted Memory Server")
-                        _record_event("critical", "Memory Server DOWN", "Restarted via launchctl", "Memory Server")
-
-            elif name == "Scheduler":
-                if not _check_scheduler_heartbeat():
-                    _kickstart("com.nova.scheduler")
-                    fixes.append("Restarted Scheduler (stale heartbeat)")
-                    _record_event("critical", "Scheduler stale heartbeat", "Kickstarted via launchctl", "Scheduler")
-
-            elif name == "Gateway v2" or name == "Signal-cli":
-                if not _check_crash_loop("Gateway"):
-                    success = _restart_gateway()
-                    fix_msg = "Restarted Gateway" if success else "FAILED to restart Gateway"
-                    fixes.append(fix_msg)
-                    _record_event("critical", f"{name} DOWN",
-                                  fix_msg, "Gateway")
-
-            elif label:
-                _kickstart(label)
-                fixes.append(f"Restarted {name}")
-                _record_event("warning", f"{name} DOWN", f"Restarted {name}", name)
-
-        else:
-            with _lock:
-                issue_key = f"{name}_down"
-                if issue_key in _alerted_issues:
-                    _alerted_issues.discard(issue_key)
-
-    # ── Notify Claude about critical service restarts ────────────────────────
-    # If we restarted any services that Claude might be depending on, publish
-    # a Redis notification so an active Claude session knows immediately.
-    if fixes:
-        _redis_notify_claude(
-            "service_restart",
-            f"Big Brother performed service actions: {'; '.join(fixes)}. "
-            f"Some services may have been temporarily unavailable.",
-            priority=2,
-        )
-
-    # ── Persistent service downtime escalation to Claude Queue ───────────────
-    # Track services that remain down across sweeps. If a service stays down
-    # for >15 minutes despite BB's heal attempts, escalate to claude_queue.
-    global _pg_down_since
-    now_ts = time.time()
-    _recovered_this_sweep = []   # services observed UP this sweep → auto-close incidents
-    for name, host, port, label, critical, health_path in SERVICES:
-        svc_up = _service_status.get(name, {}).get("up", True)
-        if not svc_up:
-            if name not in _service_down_since:
-                _service_down_since[name] = now_ts
-            elif now_ts - _service_down_since[name] > SERVICE_ESCALATION_THRESHOLD:
-                down_min = int((now_ts - _service_down_since[name]) / 60)
-                _escalate_to_claude(
-                    f"INCIDENT: {name} — {name} has been down for {down_min}+ minutes after Big Brother's "
-                    f"auto-heal attempts. Port {port} on {host} not responding. "
-                    f"Check launchd label '{label or 'N/A'}' and service logs.",
-                    priority=1 if critical else 3
-                )
-                # Mark as escalated — don't re-escalate until service recovers and fails again
-                _service_down_since[name] = float('inf')
-        else:
-            # Service recovered (or has been up) — clear downtime tracking.
-            # If it was previously tracked as down, this is a real recovery, so
-            # clear any cached "already-closed" markers so a *future* incident on
-            # this service can be closed again on its next recovery.
-            if name in _service_down_since:
-                _closed_incident_keys.discard(f"queue:{name}")
-            _service_down_since.pop(name, None)
-            _recovered_this_sweep.append(name)
-
-    # ── Auto-close incidents for recovered services (#508) ───────────────────
-    # When a service that had an OPEN incident is UP again, mark that incident
-    # resolved so the queue/incident store stops piling up. Guarded — must never
-    # crash the sweep.
-    try:
-        n_closed = _auto_close_incidents(_recovered_this_sweep)
-        if n_closed:
-            log(f"[auto-close] resolved {n_closed} incident record(s) this sweep",
-                level=LOG_WARN, source="big-brother")
-    except Exception as e:
-        log(f"[auto-close] unexpected error (ignored): {e}",
-            level=LOG_WARN, source="big-brother")
-
-    # ── PostgreSQL-specific escalation (>5 min unreachable) ──────────────────
-    pg_up = _port_open("127.0.0.1", 5432)
-    if not pg_up:
-        if _pg_down_since == 0.0:
-            _pg_down_since = now_ts
-        elif now_ts - _pg_down_since > PG_ESCALATION_THRESHOLD:
-            down_min = int((now_ts - _pg_down_since) / 60)
-            _escalate_to_claude(
-                f"PostgreSQL unreachable for {down_min}+ minutes. Port 5432 not responding. "
-                f"Nova memory system, session logging, and all DB-dependent services are impacted. "
-                f"Check pg_ctl status, postmaster.pid, and /Volumes/MoreData/postgresql@17 volume mount.",
-                priority=1
-            )
-            _pg_down_since = now_ts  # Reset so dedup handles repeat prevention
-    else:
-        _pg_down_since = 0.0
-
-    # ── Internet outage detection (runs before channel checks) ──────────────
-    _handle_internet_state(issues, fixes)
-
-    # ── Channel health (only if gateway is up and internet is up) ────────────
-    global _discord_timeout_count
-    gateway_up = _port_open("127.0.0.1", 18792)
-    if gateway_up:
-        channels = _check_gateway_log_channels()
-
-        # Discord timeout strike counting — don't restart on a single timeout
-        if channels.get("discord") == "timeout":
-            _discord_timeout_count += 1
-            if _discord_timeout_count >= DISCORD_STRIKE_THRESHOLD:
-                log(f"Discord timeout strike {_discord_timeout_count} — treating as disconnect",
-                    level=LOG_WARN, source="big-brother")
-                channels["discord"] = "disconnected"
-                _discord_timeout_count = 0
+        # ── Signal gap tracking ───────────────────────────────────────────────────
+        global _signal_down_since
+        signal_up = _port_open("127.0.0.1", 8080)
+        if not signal_up:
+            if _signal_down_since == 0.0:
+                _signal_down_since = time.time()
+                log("Signal-cli went down — starting gap timer", level=LOG_INFO, source="big-brother")
             else:
-                log(f"Discord timeout strike {_discord_timeout_count}/{DISCORD_STRIKE_THRESHOLD} — not restarting yet",
-                    level=LOG_INFO, source="big-brother")
-                channels["discord"] = "unknown"  # Don't count as disconnected
-        elif channels.get("discord") == "connected":
-            _discord_timeout_count = 0  # Reset on confirmed connection
-
-        disconnected = [ch for ch, st in channels.items() if st == "disconnected"]
-        # Discord has a known persistent @buape/carbon WebSocket bug — restarts don't fix it
-        # and cause Signal gaps + cascade failures. Only restart for Slack or Signal outages.
-        restartable_disconnects = [ch for ch in disconnected if ch != "discord"]
-        if disconnected:
-            # Suppress per-restart channel alerts when internet is down —
-            # the disconnect is caused by WAN loss, not a Nova config problem.
-            if _internet_down:
-                log(f"Channel disconnects suppressed — internet is DOWN",
-                    level=LOG_INFO, source="big-brother")
-            elif maintenance_active:
-                log(f"Channel disconnects suppressed — maintenance mode active",
-                    level=LOG_INFO, source="big-brother")
-            elif not restartable_disconnects:
-                # Discord-only — log quietly, don't restart
-                log(f"Discord disconnected (known @buape/carbon bug) — not restarting gateway",
-                    level=LOG_INFO, source="big-brother")
-            else:
-                issues.append(f"Channels disconnected: {', '.join(restartable_disconnects)}")
-                _record_event("critical",
-                              f"Channels disconnected: {', '.join(restartable_disconnects)}",
-                              "Restarting gateway",
-                              "Gateway")
-                if not protected_running and not _check_crash_loop("Gateway"):
-                    success = _restart_gateway()
-                    if success:
-                        fixes.append(f"Restarted gateway (channels: {', '.join(restartable_disconnects)})")
-                    else:
-                        fixes.append("FAILED to restart gateway for channel reconnect")
-
-        # EPERM check
-        if _check_gateway_eperm():
-            uid = os.getuid()
-            subprocess.run(
-                ["launchctl", "kickstart", "-k", f"gui/{uid}/net.digitalnoise.nova-gateway-v2"],
-                capture_output=True, timeout=15,
-            )
-            fixes.append("Kickstarted gateway (EPERM workspace-state.json)")
-            _record_event("critical", "Gateway EPERM", "Kickstarted gateway", "Gateway")
-
-    # ── auth-profiles.json drift ─────────────────────────────────────────────
-    if _check_auth_profiles():
-        issues.append("auth-profiles.json wrong format")
-        _fix_auth_profiles()
-        fixes.append("Ran openclaw doctor --fix (auth-profiles format)")
-        _record_event("critical", "auth-profiles.json drift", "openclaw doctor --fix", "Gateway")
-
-    # ── Slack preprocessor TCC ───────────────────────────────────────────────
-    if _fix_slack_preprocessor_tcc():
-        fixes.append("Injected Slack token into preprocessor plist (TCC fix)")
-        _record_event("warning", "Slack preprocessor missing token",
-                      "Injected token into plist + reloaded", "Slack")
-
-    # ── Memory server functional check ───────────────────────────────────────
-    mem_up = _port_open(LAN_IP, 18790)
-    if mem_up and not _check_memory_server_recall():
-        issues.append("Memory server port up but recall failing (PG/Redis likely unhealthy)")
-        _record_event("warning", "Memory recall failing despite server up",
-                      "Check PostgreSQL + Redis", "Memory Server")
-
-    if mem_up and not _check_redis_memory_cache():
-        issues.append("Redis cache not storing/retrieving keys")
-        _record_event("warning", "Redis functional check failed",
-                      "Check Redis config + net.digitalnoise.redis", "Redis")
-
-    # ── Subagent heartbeats ───────────────────────────────────────────────────
-    stale = _check_subagent_heartbeats()
-    for agent in stale:
-        issues.append(f"Subagent {agent} stale/missing")
-        _restart_subagent(agent)
-        fixes.append(f"Restarted subagent {agent}")
-        _record_event("warning", f"Subagent {agent} stale", f"Restarted via subagent_ctl.sh", agent)
-
-    # ── PostgreSQL idle cleanup ───────────────────────────────────────────────
-    if _port_open("127.0.0.1", 5432):
-        _cleanup_postgres_idle()
-
-    # ── Signal gap tracking ───────────────────────────────────────────────────
-    global _signal_down_since
-    signal_up = _port_open("127.0.0.1", 8080)
-    if not signal_up:
-        if _signal_down_since == 0.0:
-            _signal_down_since = time.time()
-            log("Signal-cli went down — starting gap timer", level=LOG_INFO, source="big-brother")
+                gap_s = int(time.time() - _signal_down_since)
+                if gap_s > 120:  # Only alert if down >2 min (normal respawn takes <60s)
+                    _record_event("warning",
+                                  f"Signal-cli unreachable for {gap_s}s — messages during this window lost",
+                                  "OpenClaw will auto-respawn; if >5min check signal-cli lock",
+                                  "Signal-cli")
         else:
-            gap_s = int(time.time() - _signal_down_since)
-            if gap_s > 120:  # Only alert if down >2 min (normal respawn takes <60s)
-                _record_event("warning",
-                              f"Signal-cli unreachable for {gap_s}s — messages during this window lost",
-                              "OpenClaw will auto-respawn; if >5min check signal-cli lock",
-                              "Signal-cli")
-    else:
-        if _signal_down_since > 0.0:
-            gap_s = int(time.time() - _signal_down_since)
-            if gap_s > 60:
-                _notify(f":signal_strength: Signal-cli recovered after {gap_s}s gap. Messages sent during that window may have been lost.")
-                log(f"Signal-cli recovered after {gap_s}s", level=LOG_INFO, source="big-brother")
-            _signal_down_since = 0.0
+            if _signal_down_since > 0.0:
+                gap_s = int(time.time() - _signal_down_since)
+                if gap_s > 60:
+                    _notify(f":signal_strength: Signal-cli recovered after {gap_s}s gap. Messages sent during that window may have been lost.")
+                    log(f"Signal-cli recovered after {gap_s}s", level=LOG_INFO, source="big-brother")
+                _signal_down_since = 0.0
 
-    # ── Gateway memory check ───────────────────────────────────────────────────
-    gw_pids = []
-    try:
-        result = subprocess.run(["pgrep", "-f", "nova_gateway_v2"], capture_output=True, text=True)
-        gw_pids = [int(p) for p in result.stdout.strip().split() if p]
-    except Exception:
-        pass
-    for pid in gw_pids:
+        # ── Gateway memory check ───────────────────────────────────────────────────
+        gw_pids = []
         try:
-            result = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)],
-                                    capture_output=True, text=True)
-            rss_kb = int(result.stdout.strip() or "0")
-            rss_gb = rss_kb / 1024 / 1024
-            if rss_gb > 2.0:
-                _record_event("warning",
-                              f"Gateway RSS {rss_gb:.1f} GB — possible memory leak",
-                              "Restart gateway during next quiet window",
-                              "Gateway")
-                log(f"Gateway RSS high: {rss_gb:.1f} GB (PID {pid})", level=LOG_WARN,
-                    source="big-brother")
+            result = subprocess.run(["pgrep", "-f", "nova_gateway_v2"], capture_output=True, text=True)
+            gw_pids = [int(p) for p in result.stdout.strip().split() if p]
         except Exception:
             pass
-
-    # ── Volume mount checks ──────────────────────────────────────────────────
-    for mount_path, desc in REQUIRED_MOUNTS:
-        p = Path(mount_path)
-        if not p.exists() or not p.is_mount():
-            issues.append(f"Volume NOT mounted: {mount_path} ({desc})")
-            _record_event("critical", f"Volume unmounted: {mount_path}",
-                          "Re-mount or check NAS/drive connection", "System")
-        else:
-            # Check we can actually read it (not just that it's mounted)
+        for pid in gw_pids:
             try:
-                list(p.iterdir())
-            except PermissionError:
-                issues.append(f"Volume mounted but unreadable: {mount_path}")
-                _record_event("warning", f"Volume unreadable: {mount_path}",
-                              "Check TCC/permissions", "System")
-                continue
-
-            # Check for noowners — APFS volumes remounted after crash/reboot
-            # often lose owner tracking. PostgreSQL requires ownership and will
-            # silently fail with "Operation not permitted" on every file open.
-            # diskutil info parses mount options; 'noowners' flag is the tell.
-            if "MoreData" in mount_path or "Data" in mount_path:
-                try:
-                    r = subprocess.run(
-                        ["diskutil", "info", mount_path],
-                        capture_output=True, text=True, timeout=5
-                    )
-                    if "Owners:                    Disabled" in r.stdout:
-                        issues.append(
-                            f":no_entry: Volume {mount_path} ownership DISABLED — "
-                            f"run: sudo diskutil enableOwnership {mount_path}"
-                        )
-                        _record_event(
-                            "critical",
-                            f"Volume {mount_path} noowners flag active",
-                            "Run: sudo diskutil enableOwnership " + mount_path,
-                            "System",
-                        )
-                        # Rate limit via the sweep's issue key system — no separate _maybe_notify
-                        # (the old inline call was firing every sweep, bypassing cooldowns)
-                except Exception:
-                    pass
-
-    # ── External LAN service checks ──────────────────────────────────────────
-    for name, host, port in EXTERNAL_CHECKS:
-        if not _port_open(host, port, timeout=5.0):
-            with _lock:
-                _external_fail_counts[name] = _external_fail_counts.get(name, 0) + 1
-                count = _external_fail_counts[name]
-            if count >= EXTERNAL_FAIL_THRESHOLD:
-                issues.append(f"{name} ({host}:{port}) unreachable")
-                _record_event("warning", f"{name} unreachable ({count} consecutive failures)",
-                              "Check device power and LAN connection", name)
-            else:
-                log(f"[sweep] {name} ({host}:{port}) check failed ({count}/{EXTERNAL_FAIL_THRESHOLD}) — not alerting yet",
-                    level=LOG_INFO, source="big-brother")
-        else:
-            with _lock:
-                if _external_fail_counts.get(name, 0) > 0:
-                    log(f"[sweep] {name} recovered after {_external_fail_counts[name]} failure(s)",
-                        level=LOG_INFO, source="big-brother")
-                _external_fail_counts[name] = 0
-
-    # ── Broken launchd services ──────────────────────────────────────────────
-    for label, name, can_restart, silenced in LAUNCHD_MONITORED:
-        try:
-            r = subprocess.run(
-                ["launchctl", "list", label],
-                capture_output=True, text=True, timeout=5
-            )
-            if r.returncode != 0:
-                continue  # service not loaded at all — skip
-            pid_m    = re.search(r'"PID"\s*=\s*(\d+)',         r.stdout)
-            exit_m   = re.search(r'"LastExitStatus"\s*=\s*(-?\d+)', r.stdout)
-            pid      = pid_m.group(1)  if pid_m  else None
-            exit_code = int(exit_m.group(1)) if exit_m else None
-            if pid is not None or exit_code in (None, 0):
-                continue  # running fine
-            if silenced:
-                log(f"[sweep] {name} ({label}) not running (exit {exit_code}) — silenced",
-                    level=LOG_INFO, source="big-brother")
-                continue
-            if can_restart:
-                # Claude Code conflict avoidance
-                if _is_service_being_edited(name):
-                    log(f"[sweep] {name} crashed but Claude is editing — deferring restart",
-                        level=LOG_WARN, source="big-brother")
-                    _notify_claude_editing_conflict(name)
-                    fixes.append(f"Deferred restart of {name} (Claude editing script)")
-                    _record_event("info", f"Restart deferred: {name}",
-                                  "Claude Code is editing the script", name)
-                else:
-                    try:
-                        subprocess.run(
-                            ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"],
-                            capture_output=True, timeout=15,
-                        )
-                        fixes.append(f"Kickstarted {name} ({label})")
-                        _record_event("warning", f"{name} crashed (exit {exit_code})",
-                                      f"Auto-kickstarted via launchctl", name)
-                    except subprocess.TimeoutExpired:
-                        issues.append(f"{name} crashed (exit {exit_code}) — kickstart timed out")
-                        _record_event("critical", f"{name} crashed, kickstart timed out",
-                                      "Restart manually", name)
-            else:
-                issues.append(f"{name} not running (exit {exit_code}) — needs manual fix")
-                _record_event("warning", f"{name} crashed (exit {exit_code})",
-                              "Cannot auto-restart — check underlying dependency", name)
-        except Exception:
-            pass
-
-    # ── Redis memory utilization ─────────────────────────────────────────────
-    try:
-        import redis as _redis
-        r = _redis.Redis(host=LAN_IP, port=6379, decode_responses=True)
-        info = r.info("memory")
-        used = info.get("used_memory", 0)
-        max_mem = info.get("maxmemory", 0)
-        if max_mem > 0:
-            pct = used / max_mem * 100
-            if pct > 85:
-                issues.append(f"Redis memory {pct:.0f}% full ({used//1e6:.0f}MB / {max_mem//1e6:.0f}MB)")
-                _record_event("warning", f"Redis at {pct:.0f}% capacity",
-                              "Check for cache bloat; allkeys-lru will evict if full", "Redis")
-    except Exception:
-        pass
-
-    # ── Ollama model warmup state ─────────────────────────────────────────────
-    try:
-        resp = urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=8)
-        ps_data = json.loads(resp.read())
-        loaded = [m["name"] for m in ps_data.get("models", [])]
-        needed = {"qwen3:30b-a3b", "qwen3-coder:30b"}  # qwen3-next:80b replaced by 30b-a3b interim
-        cold = needed - {m.split(":")[0] + ":" + m.split(":")[1] if ":" in m else m for m in loaded}
-        # Only warn during active hours — models unload when idle
-        if cold and not _is_quiet_hours():
-            log(f"[ollama] Cold models (next request will be slow): {cold}",
-                level=LOG_INFO, source="big-brother")
-    except Exception:
-        pass
-
-    # ── GPU contention detection (Metal deadlock prevention) ─────────────────
-    _check_gpu_contention(issues, fixes)
-
-    # ── Scheduler per-task failure detection + auto-remediation ──────────────
-    try:
-        resp = urllib.request.urlopen(f"http://{LAN_IP}:37460/tasks", timeout=5)
-        tasks = json.loads(resp.read())
-        task_items = tasks.items() if isinstance(tasks, dict) else [(t.get("name", "?"), t) for t in tasks]
-        for task_id, t in task_items:
-            if not t.get("enabled", True):
-                continue
-            fails = t.get("consecutive_failures", 0)
-            if fails < TIMEOUT_AUTOTUNE_MIN_FAILURES:
-                continue
-
-            script = t.get("script", "")
-            is_gpu_heavy = t.get("gpu_heavy", False)
-            issues.append(f"Scheduler task '{task_id}' failing: {fails} consecutive failures")
-
-            # Fetch the most recent failed run's error_tail for diagnosis
-            error_tail = ""
-            try:
-                rresp = urllib.request.urlopen(
-                    f"http://{LAN_IP}:37460/runs/{task_id}", timeout=5)
-                runs = json.loads(rresp.read())
-                for run in (runs if isinstance(runs, list) else []):
-                    if run.get("exit_code") != 0 and run.get("error_tail"):
-                        error_tail = run["error_tail"]
-                        break
+                result = subprocess.run(["ps", "-o", "rss=", "-p", str(pid)],
+                                        capture_output=True, text=True)
+                rss_kb = int(result.stdout.strip() or "0")
+                rss_gb = rss_kb / 1024 / 1024
+                if rss_gb > 2.0:
+                    _record_event("warning",
+                                  f"Gateway RSS {rss_gb:.1f} GB — possible memory leak",
+                                  "Restart gateway during next quiet window",
+                                  "Gateway")
+                    log(f"Gateway RSS high: {rss_gb:.1f} GB (PID {pid})", level=LOG_WARN,
+                        source="big-brother")
             except Exception:
                 pass
 
-            # ── Remediation 1: Timeout auto-tuning ─────────────────────────
-            if "Timed out after" in error_tail:
-                if _autotune_task_timeout(task_id, 0, issues, fixes, error_tail):
-                    continue  # Fixed — skip further remediation for this task
-
-            # ── Remediation 2: Image backend restart for gpu_heavy tasks ───
-            if is_gpu_heavy and error_tail:
-                if _restart_image_backend(task_id, issues, fixes):
-                    continue
-
-            # ── Remediation 3: Code bug escalation to Claude Code ──────────
-            if error_tail and any(p in error_tail for p in _CODE_BUG_PATTERNS):
-                if _escalate_code_bug(task_id, script, error_tail, issues):
-                    continue
-
-            # ── Fallback: alert only (no auto-fix available) ───────────────
-            _record_event("warning", f"Scheduler task '{task_id}' {fails} consecutive failures",
-                          "Check scheduler.log for error details", "Scheduler")
-            _redis_notify_claude(
-                "scheduler_failure",
-                f"Scheduler task '{task_id}' has {fails} consecutive failures. "
-                f"Error: {error_tail[:200] if error_tail else 'no error tail'}",
-                priority=2,
-            )
-    except Exception:
-        pass
-
-    # ── Log file size watchdog ────────────────────────────────────────────────
-    warn_size_mb = 100
-    for log_path in LOG_FILES_TO_WATCH:
-        try:
-            size_mb = log_path.stat().st_size / 1e6 if log_path.exists() else 0
-            if size_mb > warn_size_mb:
-                issues.append(f"Log file too large: {log_path.name} ({size_mb:.0f}MB)")
-                _record_event("warning", f"{log_path.name} is {size_mb:.0f}MB",
-                              "Run nova_log_rotate.py or truncate manually", "System")
-        except Exception:
-            pass
-
-    # ── Journal staleness monitor (every sweep, auto-triggers backfill if stale) ──
-    _check_journal_staleness(issues, fixes)
-
-    # ── Journal cover image repair (hourly, gated by JOURNAL_IMAGE_CHECK_INTERVAL) ──
-    _check_journal_images()
-
-    # ── Privacy / PII leak monitor ───────────────────────────────────────────
-    _check_privacy_routing(issues)
-
-    # ── Memory dead-letter queue ──────────────────────────────────────────────
-    # Only alert if count is above threshold AND either new or growing since last alert.
-    # A static stale queue (same N items for weeks) is not actionable noise.
-    global _dead_letter_last_count, _dead_letter_last_alerted
-    try:
-        resp = urllib.request.urlopen(f"http://{LAN_IP}:18790/stats", timeout=5)
-        stats = json.loads(resp.read())
-        dead = stats.get("dead_letter_count", 0)
-        now = time.time()
-        is_growing = dead > _dead_letter_last_count
-        cooldown_expired = now - _dead_letter_last_alerted > DEAD_LETTER_ALERT_COOLDOWN
-        if dead > DEAD_LETTER_THRESHOLD and (is_growing or cooldown_expired):
-            issues.append(f"Memory dead-letter queue: {dead} items (embedding failures)")
-            _record_event("warning", f"Memory dead-letter queue: {dead} items",
-                          "Run: nova_dead_letter_replay.py  Check Ollama embed model", "Memory Server")
-            _dead_letter_last_alerted = now
-            # Escalate to Claude Code if dead-lettering is heavy (>10 items in this sweep)
-            _escalate_to_claude(
-                f"Memory server dead-lettering heavily ({dead} items this sweep). "
-                f"Check PG connection and memory_server.log. May need embedding model "
-                f"reload or nova_dead_letter_replay.py run. "
-                f"Logs: ~/.openclaw/logs/memory-server-error.log",
-                priority=3
-            )
-        _dead_letter_last_count = dead
-    except Exception:
-        pass
-
-    # ── Scheduler failure rate ────────────────────────────────────────────────
-    try:
-        resp = urllib.request.urlopen(f"http://{LAN_IP}:37460/status", timeout=5)
-        sched = json.loads(resp.read())
-        total_runs = sched.get("total_runs", 0)
-        total_fail = sched.get("total_failures", 0)
-        if total_runs > 10 and total_fail / total_runs > 0.15:
-            issues.append(f"Scheduler failure rate high: {total_fail}/{total_runs} ({total_fail*100//total_runs}%)")
-            _record_event("warning", f"Scheduler failure rate: {total_fail}/{total_runs}",
-                          "Check ~/.openclaw/logs/scheduler.log for timed-out tasks", "Scheduler")
-    except Exception:
-        pass
-
-    # ── CPU/Memory headroom (resource exhaustion auto-remediation) ──────────
-    try:
-        import psycopg2 as _pg_cap
-        _cap_conn = _pg_cap.connect("host=localhost dbname=nova_ops user=kochj")
-        _cap_cur = _cap_conn.cursor()
-        _cap_cur.execute("""
-            SELECT device_name, cpu_headroom_pct, mem_headroom_pct
-            FROM capacity_snapshots
-            WHERE ts > NOW() - INTERVAL '90 seconds'
-            ORDER BY ts DESC
-        """)
-        recent = {}
-        for row in _cap_cur.fetchall():
-            if row[0] not in recent:
-                recent[row[0]] = {"cpu": row[1], "mem": row[2]}
-        _cap_conn.close()
-
-        # Appliances (UDM, NAS) run at low memory by design — don't alert on them
-        APPLIANCES = {"udm-pro", "synology-nas"}
-        PI_HOSTS = {"nuk"}
-        for host, metrics in recent.items():
-            if host in APPLIANCES:
-                continue
-            cpu = metrics.get("cpu")
-            mem = metrics.get("mem")
-            is_constrained = host in PI_HOSTS
-            cpu_crit = 20.0 if is_constrained else 5.0
-            cpu_warn = 30.0 if is_constrained else 15.0
-            mem_crit = 10.0 if is_constrained else 5.0
-
-            if cpu is not None and cpu <= cpu_crit:
-                issues.append(f"{host} CPU headroom critical: {cpu:.1f}%")
-                _record_event("critical", f"{host} CPU headroom {cpu:.1f}%",
-                              "Resource exhaustion — check for runaway processes", host)
-            elif cpu is not None and cpu <= cpu_warn:
-                _record_event("warning", f"{host} CPU headroom low: {cpu:.1f}%",
-                              "Approaching resource exhaustion", host)
-            if mem is not None and mem <= mem_crit:
-                issues.append(f"{host} memory headroom critical: {mem:.1f}%")
-                _record_event("critical", f"{host} memory headroom {mem:.1f}%",
-                              "Resource exhaustion — OOM risk", host)
-    except Exception:
-        pass
-
-    # ── Disk space ───────────────────────────────────────────────────────────
-    disk_warnings = _check_disk_space()
-    for dw in disk_warnings:
-        issues.append(f"Low disk: {dw}")
-        _record_event("warning", f"Low disk space: {dw}", "No auto-fix — manual cleanup needed", "System")
-
-    # Escalate disk space <5GB to Claude Queue (BB can't auto-clean)
-    _DISK_ESCALATE_GB = 5.0
-    for path, label in [("/Volumes/Data", "Data volume"), ("/Volumes/MoreData", "MoreData volume"),
-                        (str(Path.home()), "Main SSD")]:
-        try:
-            stat = os.statvfs(path)
-            free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
-            if free_gb < _DISK_ESCALATE_GB:
-                _escalate_to_claude(
-                    f"Disk space critical: {label} ({path}) has only {free_gb:.1f}GB free. "
-                    f"Services will start crashing from disk pressure. "
-                    f"Need manual cleanup — check Docker images, Xcode DerivedData, "
-                    f"old model files, log rotation.",
-                    priority=1
-                )
-        except Exception:
-            pass
-
-    # ── Critical disk: auto-engage maintenance mode to stop restart cascade ──
-    # When main SSD drops below 5GB, service crashes are caused by disk pressure,
-    # not actual service bugs. Engaging global maintenance mode stops Big Brother
-    # from spamming Slack with restart loops while the underlying cause is fixed.
-    try:
-        stat = os.statvfs(str(Path.home()))
-        home_free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
-        if home_free_gb < 5.0:
-            import redis as _rds
-            rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
-            if not rc.get("nova:maintenance:active"):
-                rc.setex("nova:maintenance:active", 3600, "1")  # 1h TTL
-                log(f"CRITICAL: main SSD only {home_free_gb:.1f}GB free — auto-engaged maintenance mode (1h)",
-                    level=LOG_ERROR, source="big-brother")
-                _notify(
-                    f":no_entry: *Disk critical: {home_free_gb:.1f}GB free on main SSD*\n"
-                    f"Auto-engaged maintenance mode for 1h to prevent restart cascade.\n"
-                    f"Service crashes are likely caused by disk pressure, not software bugs.\n"
-                    f"Free up space, then run: `bb-maintenance off`",
-                    is_critical=True,
-                )
-    except Exception:
-        pass
-
-    # ── Ollama auto-restart if port is down ──────────────────────────────────
-    if not _port_open("127.0.0.1", 11434):
-        try:
-            subprocess.run(["open", "-a", "Ollama"], capture_output=True, timeout=10)
-            fixes.append("Opened Ollama.app (was not running)")
-            _record_event("critical", "Ollama (:11434) DOWN", "Launched Ollama.app via `open -a`", "Ollama")
-        except Exception as exc:
-            _record_event("critical", "Ollama (:11434) DOWN", f"Failed to launch Ollama.app: {exc}", "Ollama")
-
-    # ── SwarmUI backend error detection ──────────────────────────────────────
-    try:
-        resp = urllib.request.urlopen(
-            "http://127.0.0.1:7801/API/GetStatus", timeout=6
-        )
-        swarm = json.loads(resp.read())
-        # SwarmUI returns {"status": "running"} or {"status": "error", "error": "..."}
-        if swarm.get("status") == "error":
-            err = swarm.get("error", "unknown error")
-            _maybe_notify(
-                "swarmui_backend_error",
-                f":warning: *SwarmUI backend error* — {err[:120]}\n"
-                f"Art Corner and image generation will fail until resolved.",
-                is_critical=False,
-            )
-            _record_event("warning", f"SwarmUI backend error: {err[:80]}",
-                          "Check SwarmUI logs; may need model reload", "SwarmUI")
-    except Exception:
-        pass
-
-    # ── Synology + UNAS state file staleness ─────────────────────────────────
-    _STATE_DIR = Path.home() / ".openclaw/workspace/state"
-    _NAS_STATES = [
-        (_STATE_DIR / "nova_synology_state.json", "Synology monitor", 7200),   # 2h
-        (_STATE_DIR / "nova_unas_status.json",    "UNAS Pro monitor",  600),   # 10m
-    ]
-    for state_path, label, max_age in _NAS_STATES:
-        try:
-            if state_path.exists():
-                age = time.time() - state_path.stat().st_mtime
-                if age > max_age:
-                    age_min = int(age // 60)
-                    issues.append(f"{label} state stale ({age_min}m since last update)")
-                    _record_event("warning", f"{label} state stale ({age_min}m)",
-                                  "Check scheduler — monitor may not be running", label)
+    if _run_system():
+        # ── Volume mount checks ──────────────────────────────────────────────────
+        for mount_path, desc in REQUIRED_MOUNTS:
+            p = Path(mount_path)
+            if not p.exists() or not p.is_mount():
+                issues.append(f"Volume NOT mounted: {mount_path} ({desc})")
+                _record_event("critical", f"Volume unmounted: {mount_path}",
+                              "Re-mount or check NAS/drive connection", "System")
             else:
-                issues.append(f"{label} state file missing — monitor not yet run")
-                _record_event("warning", f"{label} state file missing",
-                              "Run nova_synology_monitor.py or nova_unas_monitor.py manually", label)
+                # Check we can actually read it (not just that it's mounted)
+                try:
+                    list(p.iterdir())
+                except PermissionError:
+                    issues.append(f"Volume mounted but unreadable: {mount_path}")
+                    _record_event("warning", f"Volume unreadable: {mount_path}",
+                                  "Check TCC/permissions", "System")
+                    continue
+
+                # Check for noowners — APFS volumes remounted after crash/reboot
+                # often lose owner tracking. PostgreSQL requires ownership and will
+                # silently fail with "Operation not permitted" on every file open.
+                # diskutil info parses mount options; 'noowners' flag is the tell.
+                if "MoreData" in mount_path or "Data" in mount_path:
+                    try:
+                        r = subprocess.run(
+                            ["diskutil", "info", mount_path],
+                            capture_output=True, text=True, timeout=5
+                        )
+                        if "Owners:                    Disabled" in r.stdout:
+                            issues.append(
+                                f":no_entry: Volume {mount_path} ownership DISABLED — "
+                                f"run: sudo diskutil enableOwnership {mount_path}"
+                            )
+                            _record_event(
+                                "critical",
+                                f"Volume {mount_path} noowners flag active",
+                                "Run: sudo diskutil enableOwnership " + mount_path,
+                                "System",
+                            )
+                            # Rate limit via the sweep's issue key system — no separate _maybe_notify
+                            # (the old inline call was firing every sweep, bypassing cooldowns)
+                    except Exception:
+                        pass
+
+    if _run_service():
+        # ── External LAN service checks ──────────────────────────────────────────
+        for name, host, port in EXTERNAL_CHECKS:
+            if not _port_open(host, port, timeout=5.0):
+                with _lock:
+                    _external_fail_counts[name] = _external_fail_counts.get(name, 0) + 1
+                    count = _external_fail_counts[name]
+                if count >= EXTERNAL_FAIL_THRESHOLD:
+                    issues.append(f"{name} ({host}:{port}) unreachable")
+                    _record_event("warning", f"{name} unreachable ({count} consecutive failures)",
+                                  "Check device power and LAN connection", name)
+                else:
+                    log(f"[sweep] {name} ({host}:{port}) check failed ({count}/{EXTERNAL_FAIL_THRESHOLD}) — not alerting yet",
+                        level=LOG_INFO, source="big-brother")
+            else:
+                with _lock:
+                    if _external_fail_counts.get(name, 0) > 0:
+                        log(f"[sweep] {name} recovered after {_external_fail_counts[name]} failure(s)",
+                            level=LOG_INFO, source="big-brother")
+                    _external_fail_counts[name] = 0
+
+        # ── Broken launchd services ──────────────────────────────────────────────
+        for label, name, can_restart, silenced in LAUNCHD_MONITORED:
+            try:
+                r = subprocess.run(
+                    ["launchctl", "list", label],
+                    capture_output=True, text=True, timeout=5
+                )
+                if r.returncode != 0:
+                    continue  # service not loaded at all — skip
+                pid_m    = re.search(r'"PID"\s*=\s*(\d+)',         r.stdout)
+                exit_m   = re.search(r'"LastExitStatus"\s*=\s*(-?\d+)', r.stdout)
+                pid      = pid_m.group(1)  if pid_m  else None
+                exit_code = int(exit_m.group(1)) if exit_m else None
+                if pid is not None or exit_code in (None, 0):
+                    continue  # running fine
+                if silenced:
+                    log(f"[sweep] {name} ({label}) not running (exit {exit_code}) — silenced",
+                        level=LOG_INFO, source="big-brother")
+                    continue
+                if can_restart:
+                    # Claude Code conflict avoidance
+                    if _is_service_being_edited(name):
+                        log(f"[sweep] {name} crashed but Claude is editing — deferring restart",
+                            level=LOG_WARN, source="big-brother")
+                        _notify_claude_editing_conflict(name)
+                        fixes.append(f"Deferred restart of {name} (Claude editing script)")
+                        _record_event("info", f"Restart deferred: {name}",
+                                      "Claude Code is editing the script", name)
+                    else:
+                        try:
+                            subprocess.run(
+                                ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"],
+                                capture_output=True, timeout=15,
+                            )
+                            fixes.append(f"Kickstarted {name} ({label})")
+                            _record_event("warning", f"{name} crashed (exit {exit_code})",
+                                          f"Auto-kickstarted via launchctl", name)
+                        except subprocess.TimeoutExpired:
+                            issues.append(f"{name} crashed (exit {exit_code}) — kickstart timed out")
+                            _record_event("critical", f"{name} crashed, kickstart timed out",
+                                          "Restart manually", name)
+                else:
+                    issues.append(f"{name} not running (exit {exit_code}) — needs manual fix")
+                    _record_event("warning", f"{name} crashed (exit {exit_code})",
+                                  "Cannot auto-restart — check underlying dependency", name)
+            except Exception:
+                pass
+
+    if _run_system():
+        # ── Redis memory utilization ─────────────────────────────────────────────
+        try:
+            import redis as _redis
+            r = _redis.Redis(host=LAN_IP, port=6379, decode_responses=True)
+            info = r.info("memory")
+            used = info.get("used_memory", 0)
+            max_mem = info.get("maxmemory", 0)
+            if max_mem > 0:
+                pct = used / max_mem * 100
+                if pct > 85:
+                    issues.append(f"Redis memory {pct:.0f}% full ({used//1e6:.0f}MB / {max_mem//1e6:.0f}MB)")
+                    _record_event("warning", f"Redis at {pct:.0f}% capacity",
+                                  "Check for cache bloat; allkeys-lru will evict if full", "Redis")
         except Exception:
             pass
 
-    # ── External volume disk space (/Volumes/external, /Volumes/NAS) ─────────
-    for ext_vol, label in [("/Volumes/external", "External media (/Volumes/external)"),
-                            ("/Volumes/NAS", "NAS mount (/Volumes/NAS)")]:
+        # ── Ollama model warmup state ─────────────────────────────────────────────
         try:
-            st = os.statvfs(ext_vol)
-            free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
-            total_gb = (st.f_blocks * st.f_frsize) / (1024 ** 3)
-            used_pct = 100 * (1 - st.f_bavail / max(st.f_blocks, 1))
-            if used_pct > 90:
-                issues.append(f"{label}: {used_pct:.0f}% full ({free_gb:.0f}GB free)")
-                _record_event("warning", f"{label} {used_pct:.0f}% full",
-                              "Delete old recordings or expand storage", "Storage")
+            resp = urllib.request.urlopen("http://127.0.0.1:11434/api/ps", timeout=8)
+            ps_data = json.loads(resp.read())
+            loaded = [m["name"] for m in ps_data.get("models", [])]
+            needed = {"qwen3:30b-a3b", "qwen3-coder:30b"}  # qwen3-next:80b replaced by 30b-a3b interim
+            cold = needed - {m.split(":")[0] + ":" + m.split(":")[1] if ":" in m else m for m in loaded}
+            # Only warn during active hours — models unload when idle
+            if cold and not _is_quiet_hours():
+                log(f"[ollama] Cold models (next request will be slow): {cold}",
+                    level=LOG_INFO, source="big-brother")
         except Exception:
-            pass  # not mounted — volume mount check handles this
+            pass
 
-    # ── Scheduler script existence check ─────────────────────────────────────
-    # Catches the case where a script was deleted but its scheduler task remains.
-    try:
-        resp = urllib.request.urlopen(f"http://{LAN_IP}:37460/tasks", timeout=5)
-        tasks = json.loads(resp.read())
-        if isinstance(tasks, list):
-            for t in tasks:
+        # ── GPU contention detection (Metal deadlock prevention) ─────────────────
+        _check_gpu_contention(issues, fixes)
+
+        # ── Scheduler per-task failure detection + auto-remediation ──────────────
+        try:
+            resp = urllib.request.urlopen(f"http://{LAN_IP}:37460/tasks", timeout=5)
+            tasks = json.loads(resp.read())
+            task_items = tasks.items() if isinstance(tasks, dict) else [(t.get("name", "?"), t) for t in tasks]
+            for task_id, t in task_items:
+                if not t.get("enabled", True):
+                    continue
+                fails = t.get("consecutive_failures", 0)
+                if fails < TIMEOUT_AUTOTUNE_MIN_FAILURES:
+                    continue
+
                 script = t.get("script", "")
-                if not script:
+                is_gpu_heavy = t.get("gpu_heavy", False)
+                issues.append(f"Scheduler task '{task_id}' failing: {fails} consecutive failures")
+
+                # Fetch the most recent failed run's error_tail for diagnosis
+                error_tail = ""
+                try:
+                    rresp = urllib.request.urlopen(
+                        f"http://{LAN_IP}:37460/runs/{task_id}", timeout=5)
+                    runs = json.loads(rresp.read())
+                    for run in (runs if isinstance(runs, list) else []):
+                        if run.get("exit_code") != 0 and run.get("error_tail"):
+                            error_tail = run["error_tail"]
+                            break
+                except Exception:
+                    pass
+
+                # ── Remediation 1: Timeout auto-tuning ─────────────────────────
+                if "Timed out after" in error_tail:
+                    if _autotune_task_timeout(task_id, 0, issues, fixes, error_tail):
+                        continue  # Fixed — skip further remediation for this task
+
+                # ── Remediation 2: Image backend restart for gpu_heavy tasks ───
+                if is_gpu_heavy and error_tail:
+                    if _restart_image_backend(task_id, issues, fixes):
+                        continue
+
+                # ── Remediation 3: Code bug escalation to Claude Code ──────────
+                if error_tail and any(p in error_tail for p in _CODE_BUG_PATTERNS):
+                    if _escalate_code_bug(task_id, script, error_tail, issues):
+                        continue
+
+                # ── Fallback: alert only (no auto-fix available) ───────────────
+                _record_event("warning", f"Scheduler task '{task_id}' {fails} consecutive failures",
+                              "Check scheduler.log for error details", "Scheduler")
+                _redis_notify_claude(
+                    "scheduler_failure",
+                    f"Scheduler task '{task_id}' has {fails} consecutive failures. "
+                    f"Error: {error_tail[:200] if error_tail else 'no error tail'}",
+                    priority=2,
+                )
+        except Exception:
+            pass
+
+        # ── Log file size watchdog ────────────────────────────────────────────────
+        warn_size_mb = 100
+        for log_path in LOG_FILES_TO_WATCH:
+            try:
+                size_mb = log_path.stat().st_size / 1e6 if log_path.exists() else 0
+                if size_mb > warn_size_mb:
+                    issues.append(f"Log file too large: {log_path.name} ({size_mb:.0f}MB)")
+                    _record_event("warning", f"{log_path.name} is {size_mb:.0f}MB",
+                                  "Run nova_log_rotate.py or truncate manually", "System")
+            except Exception:
+                pass
+
+        # ── Journal staleness monitor (every sweep, auto-triggers backfill if stale) ──
+        _check_journal_staleness(issues, fixes)
+
+        # ── Journal cover image repair (hourly, gated by JOURNAL_IMAGE_CHECK_INTERVAL) ──
+        _check_journal_images()
+
+        # ── Privacy / PII leak monitor ───────────────────────────────────────────
+        _check_privacy_routing(issues)
+
+        # ── Memory dead-letter queue ──────────────────────────────────────────────
+        # Only alert if count is above threshold AND either new or growing since last alert.
+        # A static stale queue (same N items for weeks) is not actionable noise.
+        global _dead_letter_last_count, _dead_letter_last_alerted
+        try:
+            resp = urllib.request.urlopen(f"http://{LAN_IP}:18790/stats", timeout=5)
+            stats = json.loads(resp.read())
+            dead = stats.get("dead_letter_count", 0)
+            now = time.time()
+            is_growing = dead > _dead_letter_last_count
+            cooldown_expired = now - _dead_letter_last_alerted > DEAD_LETTER_ALERT_COOLDOWN
+            if dead > DEAD_LETTER_THRESHOLD and (is_growing or cooldown_expired):
+                issues.append(f"Memory dead-letter queue: {dead} items (embedding failures)")
+                _record_event("warning", f"Memory dead-letter queue: {dead} items",
+                              "Run: nova_dead_letter_replay.py  Check Ollama embed model", "Memory Server")
+                _dead_letter_last_alerted = now
+                # Escalate to Claude Code if dead-lettering is heavy (>10 items in this sweep)
+                _escalate_to_claude(
+                    f"Memory server dead-lettering heavily ({dead} items this sweep). "
+                    f"Check PG connection and memory_server.log. May need embedding model "
+                    f"reload or nova_dead_letter_replay.py run. "
+                    f"Logs: ~/.openclaw/logs/memory-server-error.log",
+                    priority=3
+                )
+            _dead_letter_last_count = dead
+        except Exception:
+            pass
+
+        # ── Scheduler failure rate ────────────────────────────────────────────────
+        try:
+            resp = urllib.request.urlopen(f"http://{LAN_IP}:37460/status", timeout=5)
+            sched = json.loads(resp.read())
+            total_runs = sched.get("total_runs", 0)
+            total_fail = sched.get("total_failures", 0)
+            if total_runs > 10 and total_fail / total_runs > 0.15:
+                issues.append(f"Scheduler failure rate high: {total_fail}/{total_runs} ({total_fail*100//total_runs}%)")
+                _record_event("warning", f"Scheduler failure rate: {total_fail}/{total_runs}",
+                              "Check ~/.openclaw/logs/scheduler.log for timed-out tasks", "Scheduler")
+        except Exception:
+            pass
+
+        # ── CPU/Memory headroom (resource exhaustion auto-remediation) ──────────
+        try:
+            import psycopg2 as _pg_cap
+            _cap_conn = _pg_cap.connect("host=localhost dbname=nova_ops user=kochj")
+            _cap_cur = _cap_conn.cursor()
+            _cap_cur.execute("""
+                SELECT device_name, cpu_headroom_pct, mem_headroom_pct
+                FROM capacity_snapshots
+                WHERE ts > NOW() - INTERVAL '90 seconds'
+                ORDER BY ts DESC
+            """)
+            recent = {}
+            for row in _cap_cur.fetchall():
+                if row[0] not in recent:
+                    recent[row[0]] = {"cpu": row[1], "mem": row[2]}
+            _cap_conn.close()
+
+            # Appliances (UDM, NAS) run at low memory by design — don't alert on them
+            APPLIANCES = {"udm-pro", "synology-nas"}
+            PI_HOSTS = {"nuk"}
+            for host, metrics in recent.items():
+                if host in APPLIANCES:
                     continue
-                script_path = SCRIPTS / script
-                if not script_path.exists():
-                    task_name = t.get("name", script)
-                    _maybe_notify(
-                        f"missing_script_{script}",
-                        f":x: *Scheduler script missing*: `{script}`\n"
-                        f"Task `{task_name}` will fail every run until restored.",
-                        is_critical=False,
+                cpu = metrics.get("cpu")
+                mem = metrics.get("mem")
+                is_constrained = host in PI_HOSTS
+                cpu_crit = 20.0 if is_constrained else 5.0
+                cpu_warn = 30.0 if is_constrained else 15.0
+                mem_crit = 10.0 if is_constrained else 5.0
+
+                if cpu is not None and cpu <= cpu_crit:
+                    issues.append(f"{host} CPU headroom critical: {cpu:.1f}%")
+                    _record_event("critical", f"{host} CPU headroom {cpu:.1f}%",
+                                  "Resource exhaustion — check for runaway processes", host)
+                elif cpu is not None and cpu <= cpu_warn:
+                    _record_event("warning", f"{host} CPU headroom low: {cpu:.1f}%",
+                                  "Approaching resource exhaustion", host)
+                if mem is not None and mem <= mem_crit:
+                    issues.append(f"{host} memory headroom critical: {mem:.1f}%")
+                    _record_event("critical", f"{host} memory headroom {mem:.1f}%",
+                                  "Resource exhaustion — OOM risk", host)
+        except Exception:
+            pass
+
+        # ── Disk space ───────────────────────────────────────────────────────────
+        disk_warnings = _check_disk_space()
+        for dw in disk_warnings:
+            issues.append(f"Low disk: {dw}")
+            _record_event("warning", f"Low disk space: {dw}", "No auto-fix — manual cleanup needed", "System")
+
+        # Escalate disk space <5GB to Claude Queue (BB can't auto-clean)
+        _DISK_ESCALATE_GB = 5.0
+        for path, label in [("/Volumes/Data", "Data volume"), ("/Volumes/MoreData", "MoreData volume"),
+                            (str(Path.home()), "Main SSD")]:
+            try:
+                stat = os.statvfs(path)
+                free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+                if free_gb < _DISK_ESCALATE_GB:
+                    _escalate_to_claude(
+                        f"Disk space critical: {label} ({path}) has only {free_gb:.1f}GB free. "
+                        f"Services will start crashing from disk pressure. "
+                        f"Need manual cleanup — check Docker images, Xcode DerivedData, "
+                        f"old model files, log rotation.",
+                        priority=1
                     )
-                    _record_event("warning", f"Scheduler script missing: {script}",
-                                  "Restore script or disable task in scheduler.yaml", "Scheduler")
-    except Exception:
-        pass
+            except Exception:
+                pass
 
-    # ── Kernel zone map usage (crash prevention — 2026-06-11 incident) ─────
-    # Monitors multiple zones for both absolute size and growth rate.
-    _ZONE_THRESHOLDS = {
-        "data.kalloc.1024": {"warn_mb": 6144, "crit_mb": 10240},
-        "data.kalloc.512": {"warn_mb": 2048, "crit_mb": 5120},
-        "data.kalloc.16384": {"warn_mb": 4096, "crit_mb": 8192},
-        "vm_map_entry": {"warn_mb": 1024, "crit_mb": 2048},
-    }
-    try:
-        zp = subprocess.run(["sudo", "-n", "zprint"], capture_output=True, text=True, timeout=10)
-        if zp.returncode == 0:
-            for line in zp.stdout.splitlines():
-                zone_name = None
-                for zn in _ZONE_THRESHOLDS:
-                    if line.startswith(zn + " "):
-                        zone_name = zn
-                        break
-                if not zone_name:
-                    continue
-
-                parts = line.split()
-                cur_size = parts[2] if len(parts) > 2 else "0K"
-                size_mb = float(cur_size.rstrip("KMG"))
-                if "G" in cur_size:
-                    size_mb *= 1024
-                elif "K" in cur_size:
-                    size_mb /= 1024
-
-                thresholds = _ZONE_THRESHOLDS[zone_name]
-                if size_mb > thresholds["crit_mb"]:
-                    issues.append(f"KERNEL ZONE ALERT: {zone_name} at {size_mb:.0f}MB (>{thresholds['crit_mb']}MB)")
-                    _record_event("critical",
-                                  f"Kernel zone {zone_name} at {size_mb:.0f}MB — approaching zone map exhaustion",
-                                  "Auto-killing Ollama to release Metal/GPU memory. See postmortem 2026-06-11.",
-                                  "System")
-                    # Auto-kill Ollama to prevent kernel panic (Metal driver leak)
-                    subprocess.run(["pkill", "-9", "ollama"], capture_output=True)
-                    subprocess.run(["pkill", "-9", "-f", "ollama_llama_server"], capture_output=True)
+        # ── Critical disk: auto-engage maintenance mode to stop restart cascade ──
+        # When main SSD drops below 5GB, service crashes are caused by disk pressure,
+        # not actual service bugs. Engaging global maintenance mode stops Big Brother
+        # from spamming Slack with restart loops while the underlying cause is fixed.
+        try:
+            stat = os.statvfs(str(Path.home()))
+            home_free_gb = (stat.f_bavail * stat.f_frsize) / (1024 ** 3)
+            if home_free_gb < 5.0:
+                import redis as _rds
+                rc = _rds.Redis(host="127.0.0.1", port=6379, decode_responses=True)
+                if not rc.get("nova:maintenance:active"):
+                    rc.setex("nova:maintenance:active", 3600, "1")  # 1h TTL
+                    log(f"CRITICAL: main SSD only {home_free_gb:.1f}GB free — auto-engaged maintenance mode (1h)",
+                        level=LOG_ERROR, source="big-brother")
                     _notify(
-                        f":rotating_light: *KERNEL ZONE ALERT*\n"
-                        f"`{zone_name}` is at {size_mb:.0f}MB (threshold: {thresholds['crit_mb']}MB)\n"
-                        f"Auto-killed Ollama to release Metal memory. Reboot if zone doesn't decrease.",
+                        f":no_entry: *Disk critical: {home_free_gb:.1f}GB free on main SSD*\n"
+                        f"Auto-engaged maintenance mode for 1h to prevent restart cascade.\n"
+                        f"Service crashes are likely caused by disk pressure, not software bugs.\n"
+                        f"Free up space, then run: `bb-maintenance off`",
                         is_critical=True,
                     )
-                elif size_mb > thresholds["warn_mb"]:
-                    _record_event("warning",
-                                  f"Kernel zone {zone_name} elevated: {size_mb:.0f}MB",
-                                  "Monitor for growth — may indicate kernel memory leak",
-                                  "System")
-    except Exception:
-        pass
+        except Exception:
+            pass
 
-    # ── Wazuh SIEM alert polling (every 5 min) ─────────────────────────────
-    _check_wazuh_alerts(issues)
+        # ── Ollama auto-restart if port is down ──────────────────────────────────
+        if not _port_open("127.0.0.1", 11434):
+            try:
+                subprocess.run(["open", "-a", "Ollama"], capture_output=True, timeout=10)
+                fixes.append("Opened Ollama.app (was not running)")
+                _record_event("critical", "Ollama (:11434) DOWN", "Launched Ollama.app via `open -a`", "Ollama")
+            except Exception as exc:
+                _record_event("critical", "Ollama (:11434) DOWN", f"Failed to launch Ollama.app: {exc}", "Ollama")
 
-    # ── Fresh-Eyes Canary Check (every 10 min, not every sweep) ────────────
-    # Ask a local LLM to review metrics for anomalies rules might miss.
-    try:
-        canary_result = _canary_check()
-        if canary_result:
-            issues.append(f"Canary: {canary_result[:200]}")
-            _record_event("info", f"Canary concern: {canary_result[:100]}",
-                          "LLM-detected anomaly — review recommended", "Canary")
-            send, suffix = should_notify("canary_concern", "info")
-            if send:
-                _notify(f"\U0001F426 *Canary check:* {canary_result[:300]}{suffix}")
-    except Exception as e:
-        log(f"[canary] Exception in canary check (non-fatal): {e}",
-            level=LOG_INFO, source="big-brother")
+        # ── SwarmUI backend error detection ──────────────────────────────────────
+        try:
+            resp = urllib.request.urlopen(
+                "http://127.0.0.1:7801/API/GetStatus", timeout=6
+            )
+            swarm = json.loads(resp.read())
+            # SwarmUI returns {"status": "running"} or {"status": "error", "error": "..."}
+            if swarm.get("status") == "error":
+                err = swarm.get("error", "unknown error")
+                _maybe_notify(
+                    "swarmui_backend_error",
+                    f":warning: *SwarmUI backend error* — {err[:120]}\n"
+                    f"Art Corner and image generation will fail until resolved.",
+                    is_critical=False,
+                )
+                _record_event("warning", f"SwarmUI backend error: {err[:80]}",
+                              "Check SwarmUI logs; may need model reload", "SwarmUI")
+        except Exception:
+            pass
+
+        # ── Synology + UNAS state file staleness ─────────────────────────────────
+        _STATE_DIR = Path.home() / ".openclaw/workspace/state"
+        _NAS_STATES = [
+            (_STATE_DIR / "nova_synology_state.json", "Synology monitor", 7200),   # 2h
+            (_STATE_DIR / "nova_unas_status.json",    "UNAS Pro monitor",  600),   # 10m
+        ]
+        for state_path, label, max_age in _NAS_STATES:
+            try:
+                if state_path.exists():
+                    age = time.time() - state_path.stat().st_mtime
+                    if age > max_age:
+                        age_min = int(age // 60)
+                        issues.append(f"{label} state stale ({age_min}m since last update)")
+                        _record_event("warning", f"{label} state stale ({age_min}m)",
+                                      "Check scheduler — monitor may not be running", label)
+                else:
+                    issues.append(f"{label} state file missing — monitor not yet run")
+                    _record_event("warning", f"{label} state file missing",
+                                  "Run nova_synology_monitor.py or nova_unas_monitor.py manually", label)
+            except Exception:
+                pass
+
+        # ── External volume disk space (/Volumes/external, /Volumes/NAS) ─────────
+        for ext_vol, label in [("/Volumes/external", "External media (/Volumes/external)"),
+                                ("/Volumes/NAS", "NAS mount (/Volumes/NAS)")]:
+            try:
+                st = os.statvfs(ext_vol)
+                free_gb = (st.f_bavail * st.f_frsize) / (1024 ** 3)
+                total_gb = (st.f_blocks * st.f_frsize) / (1024 ** 3)
+                used_pct = 100 * (1 - st.f_bavail / max(st.f_blocks, 1))
+                if used_pct > 90:
+                    issues.append(f"{label}: {used_pct:.0f}% full ({free_gb:.0f}GB free)")
+                    _record_event("warning", f"{label} {used_pct:.0f}% full",
+                                  "Delete old recordings or expand storage", "Storage")
+            except Exception:
+                pass  # not mounted — volume mount check handles this
+
+        # ── Scheduler script existence check ─────────────────────────────────────
+        # Catches the case where a script was deleted but its scheduler task remains.
+        try:
+            resp = urllib.request.urlopen(f"http://{LAN_IP}:37460/tasks", timeout=5)
+            tasks = json.loads(resp.read())
+            if isinstance(tasks, list):
+                for t in tasks:
+                    script = t.get("script", "")
+                    if not script:
+                        continue
+                    script_path = SCRIPTS / script
+                    if not script_path.exists():
+                        task_name = t.get("name", script)
+                        _maybe_notify(
+                            f"missing_script_{script}",
+                            f":x: *Scheduler script missing*: `{script}`\n"
+                            f"Task `{task_name}` will fail every run until restored.",
+                            is_critical=False,
+                        )
+                        _record_event("warning", f"Scheduler script missing: {script}",
+                                      "Restore script or disable task in scheduler.yaml", "Scheduler")
+        except Exception:
+            pass
+
+        # ── Kernel zone map usage (crash prevention — 2026-06-11 incident) ─────
+        # Monitors multiple zones for both absolute size and growth rate.
+        _ZONE_THRESHOLDS = {
+            "data.kalloc.1024": {"warn_mb": 6144, "crit_mb": 10240},
+            "data.kalloc.512": {"warn_mb": 2048, "crit_mb": 5120},
+            "data.kalloc.16384": {"warn_mb": 4096, "crit_mb": 8192},
+            "vm_map_entry": {"warn_mb": 1024, "crit_mb": 2048},
+        }
+        try:
+            zp = subprocess.run(["sudo", "-n", "zprint"], capture_output=True, text=True, timeout=10)
+            if zp.returncode == 0:
+                for line in zp.stdout.splitlines():
+                    zone_name = None
+                    for zn in _ZONE_THRESHOLDS:
+                        if line.startswith(zn + " "):
+                            zone_name = zn
+                            break
+                    if not zone_name:
+                        continue
+
+                    parts = line.split()
+                    cur_size = parts[2] if len(parts) > 2 else "0K"
+                    size_mb = float(cur_size.rstrip("KMG"))
+                    if "G" in cur_size:
+                        size_mb *= 1024
+                    elif "K" in cur_size:
+                        size_mb /= 1024
+
+                    thresholds = _ZONE_THRESHOLDS[zone_name]
+                    if size_mb > thresholds["crit_mb"]:
+                        issues.append(f"KERNEL ZONE ALERT: {zone_name} at {size_mb:.0f}MB (>{thresholds['crit_mb']}MB)")
+                        _record_event("critical",
+                                      f"Kernel zone {zone_name} at {size_mb:.0f}MB — approaching zone map exhaustion",
+                                      "Auto-killing Ollama to release Metal/GPU memory. See postmortem 2026-06-11.",
+                                      "System")
+                        # Auto-kill Ollama to prevent kernel panic (Metal driver leak)
+                        subprocess.run(["pkill", "-9", "ollama"], capture_output=True)
+                        subprocess.run(["pkill", "-9", "-f", "ollama_llama_server"], capture_output=True)
+                        _notify(
+                            f":rotating_light: *KERNEL ZONE ALERT*\n"
+                            f"`{zone_name}` is at {size_mb:.0f}MB (threshold: {thresholds['crit_mb']}MB)\n"
+                            f"Auto-killed Ollama to release Metal memory. Reboot if zone doesn't decrease.",
+                            is_critical=True,
+                        )
+                    elif size_mb > thresholds["warn_mb"]:
+                        _record_event("warning",
+                                      f"Kernel zone {zone_name} elevated: {size_mb:.0f}MB",
+                                      "Monitor for growth — may indicate kernel memory leak",
+                                      "System")
+        except Exception:
+            pass
+
+        # ── Wazuh SIEM alert polling (every 5 min) ─────────────────────────────
+        _check_wazuh_alerts(issues)
+
+        # ── Fresh-Eyes Canary Check (every 10 min, not every sweep) ────────────
+        # Ask a local LLM to review metrics for anomalies rules might miss.
+        try:
+            canary_result = _canary_check()
+            if canary_result:
+                issues.append(f"Canary: {canary_result[:200]}")
+                _record_event("info", f"Canary concern: {canary_result[:100]}",
+                              "LLM-detected anomaly — review recommended", "Canary")
+                send, suffix = should_notify("canary_concern", "info")
+                if send:
+                    _notify(f"\U0001F426 *Canary check:* {canary_result[:300]}{suffix}")
+        except Exception as e:
+            log(f"[canary] Exception in canary check (non-fatal): {e}",
+                level=LOG_INFO, source="big-brother")
 
     # ── Resolve cleared escalations ──────────────────────────────────────────
     # Check which tracked escalation issues are no longer present this sweep
@@ -4199,8 +4211,9 @@ def _full_sweep():
                 f"{len(fixes)} fixes", level=LOG_WARN, source="big-brother")
 
         # Clear stale issue keys for issues that have resolved (legacy system compat)
-        active_keys = {re.sub(r'\d+', 'N', i) for i in issues}
-        stale = [k for k in list(_issue_last_alerted) if k not in active_keys]
+        # (renamed from 'active_keys' to avoid shadowing the imported escalator accessor)
+        active_alert_keys = {re.sub(r'\d+', 'N', i) for i in issues}
+        stale = [k for k in list(_issue_last_alerted) if k not in active_alert_keys]
         for k in stale:
             del _issue_last_alerted[k]
 
@@ -4616,7 +4629,7 @@ def main():
     signal.signal(signal.SIGUSR1, _handle_sigusr1)
 
     _write_pid()
-    log(f"Big Brother v{VERSION} starting (PID {os.getpid()})", level=LOG_INFO, source="big-brother")
+    log(f"Big Brother v{VERSION} starting (PID {os.getpid()}, domain={BB_DOMAIN})", level=LOG_INFO, source="big-brother")
 
     # Restore metrics ring buffer from disk
     _load_metrics()
@@ -4630,9 +4643,12 @@ def main():
             except Exception:
                 pass
 
-    # Start background threads
-    threading.Thread(target=_api_server_thread, daemon=True, name="api").start()
-    threading.Thread(target=_log_watcher_thread, daemon=True, name="kqueue-watcher").start()
+    # Start background threads. The HTTP dashboard + kqueue log-watcher are owned by the
+    # service daemon (and the legacy all-in-one). The system daemon runs headless so it
+    # doesn't collide on API_PORT.
+    if _run_service():
+        threading.Thread(target=_api_server_thread, daemon=True, name="api").start()
+        threading.Thread(target=_log_watcher_thread, daemon=True, name="kqueue-watcher").start()
 
     # Initial sweep after 10s (let services settle)
     time.sleep(10)
@@ -4645,7 +4661,8 @@ def main():
         if now - last_sweep >= SWEEP_INTERVAL:
             last_sweep = now
             threading.Thread(target=_full_sweep, daemon=True, name="sweep").start()
-            threading.Thread(target=_data_liveness_checks, daemon=True, name="data-checks").start()
+            if _run_system():
+                threading.Thread(target=_data_liveness_checks, daemon=True, name="data-checks").start()
         if DIGEST_MODE:
             _flush_digest()
         time.sleep(1)
