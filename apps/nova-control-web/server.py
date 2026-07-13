@@ -65,7 +65,7 @@ _CLAUDE_PRICES: dict[str, tuple[float, float, float, float]] = {
 # present rather than silently zero.
 _CLAUDE_FALLBACK = _claude_rate(5.0, 25.0)
 
-PLEX_BASE = "http://192.168.1.2:32400"
+PLEX_BASE = "http://192.168.1.86:32400"
 PLEX_EXCLUDED_LIBS = {"23"}
 HDHR_BASE = "http://192.168.1.89"
 PLEX_PLAYING_STATE = Path.home() / ".openclaw" / "workspace" / "plex_playing.json"
@@ -79,7 +79,7 @@ SERVICE_PORTS = {
     "swarmui": {"port": 7801, "url": "http://127.0.0.1:7801"},
     "comfyui": {"port": 8188, "url": "http://127.0.0.1:8188"},
     "memory_server": {"port": 18790, "url": "http://192.168.1.6:18790"},
-    "plex": {"port": 32400, "url": PLEX_BASE, "host": "192.168.1.2"},
+    "plex": {"port": 32400, "url": PLEX_BASE, "host": "192.168.1.86"},
     "hdhr": {"port": 80, "url": HDHR_BASE, "host": "192.168.1.89"},
 }
 
@@ -2344,7 +2344,7 @@ async def collect_hdhr(session: aiohttp.ClientSession) -> dict:
 
 # --- Big Brother Dashboard + API Proxy ---
 
-BB_API = "http://192.168.1.6:37461"
+BB_API = "http://127.0.0.1:37461"
 
 
 @app.get("/journal")
@@ -2993,7 +2993,7 @@ async def collect_camera_activity() -> dict:
             bb_camera_info = {}
             try:
                 import urllib.request as _ur
-                with _ur.urlopen("http://192.168.1.6:37461/bb/status", timeout=2) as _r:
+                with _ur.urlopen("http://127.0.0.1:37461/bb/status", timeout=2) as _r:
                     bb = _json.loads(_r.read())
                 # BB might report camera service status
                 bb_camera_info = {"bb_hint": "protect service tracked by Big Brother"}
@@ -4782,7 +4782,7 @@ async def poll_loop():
         # Inject Big Brother summary (read from BB API — quick loopback call)
         try:
             import urllib.request as _ur2
-            with _ur2.urlopen("http://192.168.1.6:37461/bb/status", timeout=1) as _r:
+            with _ur2.urlopen("http://127.0.0.1:37461/bb/status", timeout=1) as _r:
                 _bb = _json.loads(_r.read())
             state["big_brother"] = {
                 "uptime_s":       _bb.get("uptime_s"),
