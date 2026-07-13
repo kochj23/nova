@@ -9,7 +9,10 @@
 
 wait_for_volume() {
     local path="$1"
-    local timeout="${2:-120}"
+    # 600s (was 120s): the external /Volumes/Data can auto-mount several minutes late on a cold
+    # boot. Services here all have launchd KeepAlive, so a patient wait lets them ride out a late
+    # mount instead of FATAL-looping. Root cause of the mlx/tinychat "volume unavailable" FATALs.
+    local timeout="${2:-600}"
     local elapsed=0
 
     # Ready = mount point is an actual mount AND its contents are listable
@@ -30,7 +33,7 @@ wait_for_volume() {
 
 wait_for_volumes() {
     # Convenience: wait for both canonical Nova data volumes.
-    local timeout="${1:-120}"
+    local timeout="${1:-600}"
     wait_for_volume "/Volumes/Data" "$timeout" || return 1
     wait_for_volume "/Volumes/MoreData" "$timeout" || return 1
     return 0
