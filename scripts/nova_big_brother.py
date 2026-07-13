@@ -63,6 +63,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN, LOG_DEBUG
+# Escalation-tier engine extracted from this monolith (#511 step 1) — shared, behavior-preserving.
+from nova_bb_escalator import should_notify, _resolve_escalation, active_count, active_keys
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -314,100 +316,6 @@ class HealthState:
 # Prevents notification spam by tracking per-issue escalation state with
 # cooldowns, auto-bumps, and suppression counts.
 
-_escalations: dict = {}  # key: issue_id -> {severity, first_seen, last_notified, notify_count, suppressed_count}
-
-ESCALATION_RULES = {
-    "info":     {"initial_cooldown": 300,  "max_notifications": 3,  "bump_after": 3600},   # 5min cooldown, bump to warning after 1h
-    "warning":  {"initial_cooldown": 600,  "max_notifications": 5,  "bump_after": 7200},   # 10min cooldown, bump to critical after 2h
-    "critical": {"initial_cooldown": 300,  "max_notifications": 10, "bump_after": None},   # 5min cooldown, no further bump
-}
-
-_SEVERITY_ORDER = ["info", "warning", "critical"]
-
-
-def _next_severity(current: str) -> str:
-    """Bump severity one level up. Returns same if already at max."""
-    idx = _SEVERITY_ORDER.index(current) if current in _SEVERITY_ORDER else 0
-    if idx < len(_SEVERITY_ORDER) - 1:
-        return _SEVERITY_ORDER[idx + 1]
-    return current
-
-
-def should_notify(issue_id: str, severity: str) -> tuple:
-    """Escalation-aware notification gate.
-
-    Returns (should_send: bool, modified_message_suffix: str).
-    Tracks state per issue_id. Handles cooldowns, auto-bumps, and resolution.
-    """
-    now = time.time()
-
-    with _lock:
-        if issue_id not in _escalations:
-            # First detection — notify immediately
-            _escalations[issue_id] = {
-                "severity": severity,
-                "first_seen": now,
-                "last_notified": now,
-                "notify_count": 1,
-                "suppressed_count": 0,
-            }
-            return (True, "")
-
-        state = _escalations[issue_id]
-        rules = ESCALATION_RULES.get(state["severity"], ESCALATION_RULES["warning"])
-
-        # Check if severity should auto-bump
-        if rules["bump_after"] is not None:
-            if now - state["first_seen"] > rules["bump_after"]:
-                old_sev = state["severity"]
-                state["severity"] = _next_severity(old_sev)
-                log(f"[escalation] {issue_id} bumped {old_sev} -> {state['severity']} "
-                    f"(ongoing {int((now - state['first_seen']) / 60)}m)",
-                    level=LOG_WARN, source="big-brother")
-                # Bump triggers immediate notification
-                state["last_notified"] = now
-                state["notify_count"] += 1
-                duration_m = int((now - state["first_seen"]) / 60)
-                suffix = f" [ESCALATED to {state['severity']} after {duration_m}m]"
-                return (True, suffix)
-
-        # Check cooldown
-        cooldown = rules["initial_cooldown"]
-        if now - state["last_notified"] < cooldown:
-            state["suppressed_count"] += 1
-            return (False, "")
-
-        # Check max notifications
-        if state["notify_count"] >= rules["max_notifications"]:
-            state["suppressed_count"] += 1
-            return (False, "")
-
-        # Cooldown expired and under max — notify with context
-        state["last_notified"] = now
-        state["notify_count"] += 1
-        duration_m = int((now - state["first_seen"]) / 60)
-        suppressed = state["suppressed_count"]
-        suffix = f" (ongoing {duration_m}m"
-        if suppressed > 0:
-            suffix += f", suppressed {suppressed} alerts"
-        suffix += ")"
-        return (True, suffix)
-
-
-def _resolve_escalation(issue_id: str) -> tuple:
-    """Mark an issue as resolved. Returns (was_tracked: bool, message_suffix: str).
-
-    Call this when a previously-detected issue clears.
-    """
-    with _lock:
-        if issue_id not in _escalations:
-            return (False, "")
-        state = _escalations.pop(issue_id)
-        duration_m = int((time.time() - state["first_seen"]) / 60)
-        suffix = f" RESOLVED after {duration_m}m"
-        return (True, suffix)
-
-
 def _data_liveness_checks():
     """Output-liveness checks (nova_data_checks): verify subsystems PRODUCE correct results,
     not just that a process is alive. Routes through the same escalation/digest machinery.
@@ -507,8 +415,7 @@ def _build_metrics_summary() -> str:
         lines.append("Gateway: unreachable or no health data")
 
     # Recent escalation count
-    with _lock:
-        active_escalations = len(_escalations)
+    active_escalations = active_count()
     if active_escalations > 0:
         lines.append(f"Active escalations: {active_escalations}")
 
@@ -4218,8 +4125,7 @@ def _full_sweep():
         stable_key = re.sub(r'\d+', 'N', issue)
         active_issue_keys.add(f"issue_{stable_key}")
 
-    with _lock:
-        tracked_keys = list(_escalations.keys())
+    tracked_keys = active_keys()
     for esc_key in tracked_keys:
         if esc_key.startswith("issue_") and esc_key not in active_issue_keys:
             was_tracked, resolve_suffix = _resolve_escalation(esc_key)
