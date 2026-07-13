@@ -147,6 +147,34 @@ def check_cert_transparency(state: dict) -> list:
 
 # ── DNS Record Monitor ────────────────────────────────────────────────────────
 
+import ipaddress
+
+# Cloudflare's published edge ranges. digitalnoise.net is Cloudflare-proxied, so its A/AAAA
+# records rotate among these anycast IPs routinely — that is NOT a security event. We only alert
+# when an A/AAAA record moves OUTSIDE Cloudflare (a possible hijack). Ranges: cloudflare.com/ips.
+_CLOUDFLARE_CIDRS = [ipaddress.ip_network(c) for c in (
+    "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22", "103.31.4.0/22", "141.101.64.0/18",
+    "108.162.192.0/18", "190.93.240.0/20", "188.114.96.0/20", "197.234.240.0/22", "198.41.128.0/17",
+    "162.158.0.0/15", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "131.0.72.0/22",
+    "2400:cb00::/32", "2606:4700::/32", "2803:f800::/32", "2405:b500::/32", "2405:8100::/32",
+    "2a06:98c0::/29", "2c0f:f248::/32",
+)]
+
+
+def _all_cloudflare(values: list) -> bool:
+    """True iff every value is an IP inside Cloudflare's published ranges (i.e. routine rotation)."""
+    if not values:
+        return False
+    for v in values:
+        try:
+            addr = ipaddress.ip_address(v.strip())
+        except ValueError:
+            return False
+        if not any(addr in net for net in _CLOUDFLARE_CIDRS):
+            return False
+    return True
+
+
 def check_dns_records(state: dict) -> list:
     """Check for unexpected DNS record changes."""
     alerts = []
@@ -173,6 +201,12 @@ def check_dns_records(state: dict) -> list:
             prev = prev_records[domain]
             for rtype, values in records.items():
                 if rtype in prev and prev[rtype] != values:
+                    # Cloudflare-proxied A/AAAA rotate anycast IPs routinely — not a security event.
+                    # Skip the alert when the record stays entirely within Cloudflare; still alert if a
+                    # record now points OUTSIDE Cloudflare (possible hijack) or is a non-A/AAAA change.
+                    if rtype in ("A", "AAAA") and _all_cloudflare(prev[rtype]) and _all_cloudflare(values):
+                        log(f"  DNS: {domain} {rtype} rotated within Cloudflare (benign): {prev[rtype]} → {values}")
+                        continue
                     trigger = f"DNS change detected: {domain} {rtype} record"
                     details = f"Previous: {prev[rtype]}\nCurrent: {values}"
                     alerts.append((trigger, details))
