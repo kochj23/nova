@@ -67,7 +67,7 @@ tasks:
     script: nova_chp_traffic.py
     schedule: every 5m
     args: ["--quiet"]
-    timeout: 90
+    timeout: 150
     overlap: skip
 
   sky_watcher:
