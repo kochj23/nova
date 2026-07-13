@@ -51,46 +51,36 @@ tell application "Mail"
                     try
                         set acctOutput to ""
                         set acctCount to 0
-                        set msgCount to count of messages of mailbox inboxName
-
-                        -- Walk backwards from newest, stop at maxCheck or cutoff
-                        set startIdx to msgCount
-                        set endIdx to msgCount - maxCheck + 1
-                        if endIdx < 1 then set endIdx to 1
-
-                        set i to startIdx
-                        repeat while i >= endIdx
+                        -- Filter by date directly. Mail does NOT guarantee message index order
+                        -- (not reliably oldest- or newest-first), so the old index-walk scanned the
+                        -- wrong end and bailed at the cutoff — reporting "no mail" with mail present.
+                        -- 'whose date received > cutoffDate' is order-independent and correct.
+                        set recentMsgs to (messages of mailbox inboxName whose date received > cutoffDate)
+                        repeat with m in recentMsgs
                             try
-                                set m to message i of mailbox inboxName
                                 set msgDate to date received of m
-                                if msgDate < cutoffDate then
-                                    -- Older than 24h — stop scanning (messages are ordered oldest-first)
-                                    set i to -1 -- force loop exit
-                                else
-                                    set msgFrom to sender of m
-                                    set msgSubject to subject of m
-                                    set msgRead to read status of m
+                                set msgFrom to sender of m
+                                set msgSubject to subject of m
+                                set msgRead to read status of m
 
-                                    set msgBody to ""
-                                    try
-                                        set msgBody to content of m
-                                        if length of msgBody > 400 then
-                                            set msgBody to text 1 thru 400 of msgBody & "..."
-                                        end if
-                                    end try
+                                set msgBody to ""
+                                try
+                                    set msgBody to content of m
+                                    if length of msgBody > 400 then
+                                        set msgBody to text 1 thru 400 of msgBody & "..."
+                                    end if
+                                end try
 
-                                    set readFlag to ""
-                                    if msgRead is false then set readFlag to " [UNREAD]"
+                                set readFlag to ""
+                                if msgRead is false then set readFlag to " [UNREAD]"
 
-                                    set acctOutput to acctOutput & "FROM: " & msgFrom & readFlag & return
-                                    set acctOutput to acctOutput & "SUBJECT: " & msgSubject & return
-                                    set acctOutput to acctOutput & "DATE: " & (msgDate as string) & return
-                                    set acctOutput to acctOutput & "BODY: " & msgBody & return
-                                    set acctOutput to acctOutput & "---" & return
-                                    set acctCount to acctCount + 1
-                                end if
+                                set acctOutput to acctOutput & "FROM: " & msgFrom & readFlag & return
+                                set acctOutput to acctOutput & "SUBJECT: " & msgSubject & return
+                                set acctOutput to acctOutput & "DATE: " & (msgDate as string) & return
+                                set acctOutput to acctOutput & "BODY: " & msgBody & return
+                                set acctOutput to acctOutput & "---" & return
+                                set acctCount to acctCount + 1
                             end try
-                            set i to i - 1
                         end repeat
 
                         if acctCount > 0 then
