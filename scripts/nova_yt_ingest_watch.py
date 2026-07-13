@@ -52,6 +52,10 @@ CHANNELS = [
     {"key": "paulpluta", "url": "https://www.youtube.com/@PaulPlutaPrestige/streams", "vector": "fishbowl"},
     {"key": "mortysdiner", "url": "https://www.youtube.com/@MortysDiner/streams", "vector": "fishbowl"},
     {"key": "theoriginaloc", "url": "https://www.youtube.com/@theoriginaloc/streams", "vector": "fishbowl"},
+    {"key": "tpgentleman", "url": "https://www.youtube.com/@Thetimepiecegentleman/streams", "vector": "fishbowl"},
+    {"key": "romansharf", "url": "https://www.youtube.com/@RomanSharf/streams", "vector": "fishbowl"},
+    {"key": "greymarketpod", "url": "https://www.youtube.com/@greymarketpod/streams", "vector": "fishbowl"},
+    {"key": "cramareels", "url": "https://www.youtube.com/@TheCramaReels/streams", "vector": "fishbowl"},
 ]
 
 

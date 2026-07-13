@@ -64,6 +64,14 @@ PEOPLE = [
      "channels": ["@Watchtrapper"]},
     {"name": "Watch Reporter", "aliases": ["watch reporter", "watchreporter"],
      "channels": ["@WatchReporter"]},
+    {"name": "TP Gentleman", "aliases": ["tp gentleman", "timepiece gentleman", "anthony farrer", "the timepiece gentleman"],
+     "channels": ["@Thetimepiecegentleman"]},
+    {"name": "Roman Sharf", "aliases": ["roman sharf", "luxury bazaar", "luxbazaar"],
+     "channels": ["@RomanSharf"]},
+    {"name": "Grey Market Podcast", "aliases": ["grey market podcast", "gray market podcast", "grey market pod"],
+     "channels": ["@greymarketpod"]},
+    {"name": "The Crama Reels", "aliases": ["crama reels", "the crama reels", "crama"],
+     "channels": ["@TheCramaReels"]},
 ]
 
 
