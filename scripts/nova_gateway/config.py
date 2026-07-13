@@ -1,4 +1,5 @@
 """
+import os
 nova_gateway.config — All constants, URLs, channel IDs, context limits, privacy blocklist,
 keychain helpers, and token loading.
 
@@ -106,11 +107,19 @@ def is_private_content(messages: list) -> bool:
 # ── Keychain helpers ─────────────────────────────────────────────────────────
 
 def keychain(service: str, account: str = "nova") -> str:
-    r = subprocess.run(
-        ["security", "find-generic-password", "-a", account, "-s", service, "-w"],
-        capture_output=True, text=True,
-    )
-    return r.stdout.strip() if r.returncode == 0 else ""
+    # macOS Keychain (Mac Studio .6); fall back to env for the Linux cluster nodes, which have
+    # no `security` binary. Env name mirrors nova_config: nova-slack-bot-token -> NOVA_SLACK_BOT_TOKEN.
+    # (#502 gateway portability — backward-compatible: .6 still reads the Keychain.)
+    try:
+        r = subprocess.run(
+            ["security", "find-generic-password", "-a", account, "-s", service, "-w"],
+            capture_output=True, text=True,
+        )
+        if r.returncode == 0 and r.stdout.strip():
+            return r.stdout.strip()
+    except FileNotFoundError:
+        pass
+    return os.environ.get(service.replace("-", "_").upper(), "")
 
 
 def load_tokens() -> dict:
