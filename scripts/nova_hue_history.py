@@ -22,16 +22,24 @@ DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
 
 
 def api_key():
+    # macOS Keychain first (when running on the Mac Studio .6).
     for s in ("nova-hue-api-key", "nova-hue-api-token"):
-        r = subprocess.run(["security", "find-generic-password", "-a", "nova", "-s", s, "-w"],
-                           capture_output=True, text=True)
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout.strip()
-        r = subprocess.run(["security", "find-generic-password", "-s", s, "-w"],
-                           capture_output=True, text=True)
-        if r.returncode == 0 and r.stdout.strip():
-            return r.stdout.strip()
-    raise RuntimeError("no Hue API key in keychain")
+        for args in (["-a", "nova", "-s", s, "-w"], ["-s", s, "-w"]):
+            try:
+                r = subprocess.run(["security", "find-generic-password", *args],
+                                   capture_output=True, text=True)
+            except FileNotFoundError:
+                r = None  # not macOS (Linux cluster node) — no `security` binary
+            if r and r.returncode == 0 and r.stdout.strip():
+                return r.stdout.strip()
+    # Portable fallback: the fleet PG secret store (lets this poller run on the Linux
+    # cluster nodes, which have no Keychain). #650 migration enabler.
+    try:
+        import nova_secrets
+        return nova_secrets.get_secret("nova-hue-api-key")
+    except Exception:
+        pass
+    raise RuntimeError("no Hue API key in Keychain or fleet secret store")
 
 
 def get(key, path):
