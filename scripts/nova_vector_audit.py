@@ -15,6 +15,7 @@ import json
 import os
 import random
 import re
+from collections import Counter
 import shutil
 import subprocess
 import sys
@@ -42,6 +43,16 @@ MEMORY_URL = "http://192.168.1.6:18790"
 SAMPLE_PER_VECTOR = 100
 MAX_VECTORS_PER_RUN = 999
 DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+
+# Video / spoken-word vectors whose transcripts naturally repeat words (dialogue, chants,
+# sports commentary, subtitles). The loose low-unique-ratio "repetitive" signal over-flags
+# them (a film can be 59% "repetitive" and be perfectly fine), so that signal is suppressed
+# for these — true degeneracy (one token dominating, or almost no distinct words) is STILL caught.
+TRANSCRIPT_VECTORS = frozenset({
+    "sci_fi", "war_film", "crime_drama", "action", "drama", "comedy", "documentary",
+    "game_show", "mystery", "horror", "television", "film_criticism", "blockbuster_films",
+    "sports", "personal_videos", "spalding_gray", "livetv_news", "livetv_dream_fuel",
+})
 
 
 def log(msg: str):
@@ -164,8 +175,12 @@ Return a JSON array with your verdict for each memory."""
 
 # ── Main Audit ───────────────────────────────────────────────────────────────
 
-def quality_check_batch(memories: list[dict]) -> dict:
-    """Check sampled memories for quality issues (not classification — content quality)."""
+def quality_check_batch(memories: list[dict], source: str = None) -> dict:
+    """Check sampled memories for quality issues (not classification — content quality).
+
+    source: the vector these memories came from — lets the repetitive check suppress its
+    loose signal on TRANSCRIPT_VECTORS (films/sports naturally repeat) while still catching
+    true degeneracy everywhere."""
     trash = {"repetitive": 0, "near_empty": 0, "garbled": 0, "low_signal": 0, "examples": []}
 
     for m in memories:
@@ -177,11 +192,19 @@ def quality_check_batch(memories: list[dict]) -> dict:
             trash["examples"].append({"id": m["id"], "issue": "near_empty", "preview": text[:60]})
             continue
 
-        # Repetitive (same phrase repeated)
+        # Repetitive — TRUE degeneracy (one token dominating >50%, or fewer than 5 distinct
+        # real words) is always junk (a "smart_detect ×20" loop or a number/symbol dump). The
+        # looser low-unique-ratio signal fires naturally on transcript vectors (dialogue,
+        # chants, sports commentary), so it's only applied OUTSIDE TRANSCRIPT_VECTORS — otherwise
+        # the audit cries wolf on every film.
         words = text.split()
         if len(words) > 10:
-            unique_ratio = len(set(words)) / len(words)
-            if unique_ratio < 0.3:
+            lw = [w.lower() for w in words]
+            unique_ratio = len(set(lw)) / len(lw)
+            top_freq = Counter(lw).most_common(1)[0][1] / len(lw)
+            distinct_real = len(set(re.findall(r"[a-z]{3,}", text.lower())))
+            truly_degenerate = top_freq > 0.5 or distinct_real < 5
+            if truly_degenerate or (unique_ratio < 0.3 and source not in TRANSCRIPT_VECTORS):
                 trash["repetitive"] += 1
                 trash["examples"].append({"id": m["id"], "issue": "repetitive", "preview": text[:60]})
                 continue
@@ -234,7 +257,7 @@ def run_audit() -> dict:
         log(f"  Auditing '{vector_name}' ({vector_count:,} memories, sampling {len(memories)})...")
 
         # Quality check (content quality — is this garbage?)
-        quality = quality_check_batch(memories)
+        quality = quality_check_batch(memories, source=vector_name)
         if quality["total_issues"] > 0:
             log(f"    QUALITY: {quality['total_issues']} issues "
                 f"(repetitive={quality['repetitive']}, empty={quality['near_empty']}, "
