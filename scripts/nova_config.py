@@ -25,20 +25,34 @@ def _keychain(service: str, account: str = "nova", required: bool = True) -> str
     If required=True (default), exits on failure.
     If required=False, returns empty string on failure (for cron-safe use).
     """
-    result = subprocess.run(
-        ["security", "find-generic-password", "-a", account, "-s", service, "-w"],
-        capture_output=True, text=True
-    )
-    if result.returncode != 0 or not result.stdout.strip():
-        msg = f"[nova_config] Keychain entry not found: service={service} account={account}"
-        if required:
-            print(msg, file=sys.stderr)
-            print(f"[nova_config] Run: security add-generic-password -a {account} -s {service} -w YOUR_VALUE", file=sys.stderr)
-            sys.exit(1)
-        else:
-            print(f"[nova_config] WARNING: {msg} (non-fatal, Keychain may be locked)", file=sys.stderr)
-            return ""
-    return result.stdout.strip()
+    # macOS Keychain first (Mac Studio .6). #650 portability: on the Linux cluster nodes
+    # (no `security` binary) fall back to the fleet pgcrypto store, then env.
+    try:
+        result = subprocess.run(
+            ["security", "find-generic-password", "-a", account, "-s", service, "-w"],
+            capture_output=True, text=True
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return result.stdout.strip()
+    except FileNotFoundError:
+        pass
+    try:
+        import nova_secrets
+        v = nova_secrets.get_secret(service)
+        if v:
+            return v
+    except (Exception, SystemExit):
+        pass  # SystemExit: nova_secrets exits when NOVA_SECRET_KEY absent — fall through
+    import os as _os
+    env_v = _os.environ.get(service.replace("-", "_").upper(), "")
+    if env_v and not env_v.startswith("${"):
+        return env_v
+    msg = f"[nova_config] secret not found (Keychain/fleet/env): service={service}"
+    if required:
+        print(msg, file=sys.stderr)
+        sys.exit(1)
+    print(f"[nova_config] WARNING: {msg} (non-fatal)", file=sys.stderr)
+    return ""
 
 
 # ── Slack ─────────────────────────────────────────────────────────────────────
