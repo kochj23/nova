@@ -159,9 +159,12 @@ def scrub_pii(text: str) -> str:
 # MEMORY FETCHING
 # ══════════════════════════════════════════════════════════════════════════════
 
-def recall_memories(query: str, n: int = 20, source: str = None) -> list[dict]:
-    """Semantic search against the memory server."""
-    params = {"q": query, "n": str(n)}
+def recall_memories(query: str, n: int = 20, source: str = None, include_private: bool = False) -> list[dict]:
+    """Semantic search against the memory server. This is the PUBLIC-journal helper, so
+    it excludes personal/work sources by default (include_private=False) — work docs,
+    email, texts, health, etc. never surface in a public post. Belt-and-suspenders with
+    filter_private_memories() below."""
+    params = {"q": query, "n": str(n), "include_private": "true" if include_private else "false"}
     if source:
         params["source"] = source
     url = f"{MEMORY_SERVER}/recall?{urllib.parse.urlencode(params)}"

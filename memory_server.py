@@ -83,6 +83,15 @@ PARTIAL_INDEX_SOURCES = frozenset({
     "imessage",
 })
 
+# Personal/work/private sources. Excluded from BROAD (sourceless) recall when the caller
+# passes include_private=false — e.g. public-journal article generation — so private/work
+# content (work server inventories, texts, email, health) never surfaces in public posts.
+# An explicit source=<one of these> still returns it (intentional, internal use).
+PRIVATE_SOURCES = [
+    "private_document", "email_archive", "email", "imessage",
+    "apple_health", "calendar", "cloud_governance", "family_contacts", "work_internal",
+]
+
 # ef_search tiers — set per query type via ?tier= param
 EF_SEARCH = {
     "fast":     40,    # casual chat, low-stakes — ~40ms
@@ -427,6 +436,7 @@ async def _do_recall(
     source: Optional[str] = None,
     min_score: float = 0.0,
     tier: str = "standard",
+    include_private: bool = True,
 ) -> dict:
     """Core recall logic shared by /recall and /recall_batch.
 
@@ -442,7 +452,7 @@ async def _do_recall(
     n = max(1, min(n, MAX_N))
     ef = EF_SEARCH.get(tier, EF_SEARCH["standard"])
 
-    cache_raw = f"{q}:{n}:{source or 'all'}:{tier}"
+    cache_raw = f"{q}:{n}:{source or 'all'}:{tier}:{'p1' if include_private else 'p0'}"
     cache_key = f"recall:{hashlib.md5(cache_raw.encode()).hexdigest()}"
     try:
         cached = await _redis.get(cache_key)
@@ -497,16 +507,21 @@ async def _do_recall(
                     vec_str, source, k
                 )
         else:
+            # Public-journal recall (include_private=false) excludes private/work sources
+            # so that content can never surface in a public post. Default keeps all sources.
+            priv_clause = "" if include_private else "AND source <> ALL($3::text[])"
+            args = [vec_str, k] if include_private else [vec_str, k, PRIVATE_SOURCES]
             async with conn.transaction():
                 await conn.execute(f"SET LOCAL hnsw.ef_search = {ef}")
                 rows = await conn.fetch(
-                    """SELECT id, text, metadata, source, created_at,
+                    f"""SELECT id, text, metadata, source, created_at,
                               1 - (embedding <=> $1::vector) AS score
                        FROM memories
                        WHERE tier NOT IN ('scratchpad', 'reference')
+                       {priv_clause}
                        ORDER BY embedding <=> $1::vector
                        LIMIT $2""",
-                    vec_str, k
+                    *args
                 )
 
     results = [_row_to_result(r, float(r["score"])) for r in rows
@@ -534,14 +549,16 @@ async def recall(
     source: Optional[str] = Query(None),
     min_score: float = Query(0.0),
     tier: str = Query("standard", pattern="^(fast|standard|deep)$"),
+    include_private: bool = Query(True),
 ):
     """Semantic search using HNSW cosine similarity with Redis caching.
 
     tier: 'fast' (~40ms), 'standard' (~150ms, default), 'deep' (~400ms)
+    include_private=false excludes personal/work sources (public-journal use).
     """
     if not q.strip():
         raise HTTPException(status_code=400, detail="q cannot be empty")
-    return await _do_recall(q, n, source, min_score, tier)
+    return await _do_recall(q, n, source, min_score, tier, include_private)
 
 
 @app.post("/recall_batch")
