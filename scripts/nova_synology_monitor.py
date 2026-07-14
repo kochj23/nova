@@ -77,20 +77,15 @@ def log(msg):
 # ── Credentials ─────────────────────────────────────────────────────────────
 
 def _get_credential(service):
-    """Load a credential from macOS Keychain."""
+    """Load a credential: macOS Keychain -> fleet pgcrypto store -> env (portable)."""
     try:
-        result = subprocess.run(
-            ["security", "find-generic-password", "-a", "nova",
-             "-s", service, "-w"],
-            capture_output=True, text=True
-        )
-        val = result.stdout.strip()
+        import nova_config
+        val = nova_config._keychain(service, required=False)
         if val:
             return val
     except Exception:
         pass
-    log(f"ERROR: Keychain entry '{service}' not found")
-    log(f"Run: security add-generic-password -a nova -s {service} -w YOUR_VALUE")
+    log(f"ERROR: credential '{service}' not found in Keychain/fleet store/env")
     return None
 
 

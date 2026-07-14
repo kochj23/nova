@@ -62,6 +62,7 @@ tasks:
 
   awn_air_quality:                 # Ambient AQIN indoor air quality (PM2.5/PM10/CO2) via AWN cloud
     script: nova_awn_poller.py
+    enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
     schedule: every 5m
     timeout: 60
     overlap: skip
@@ -148,6 +149,7 @@ tasks:
 
   synology_monitor:
     script: nova_synology_monitor.py
+    enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
     schedule: every 30m
     timeout: 60
     overlap: skip
@@ -189,6 +191,7 @@ tasks:
 
   unas_disk_health:                # UNAS disk temps/SMART/RAID via SSH (UniFi API can't see these)
     script: nova_unas_disk_health.py
+    enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
     schedule: every 5m
     timeout: 120
     overlap: skip
@@ -791,6 +794,7 @@ tasks:
 
   plex_playing:
     script: nova_plex.py
+    enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
     args: ["playing"]
     schedule: every 5m
     timeout: 90
@@ -798,6 +802,7 @@ tasks:
 
   plex_history:
     script: nova_plex.py
+    enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
     args: ["history"]
     schedule: cron 10 7 * * *
     timeout: 120
@@ -805,6 +810,7 @@ tasks:
 
   plex_mood:
     script: nova_plex.py
+    enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
     args: ["mood"]
     schedule: cron 15 7 * * *
     timeout: 60
@@ -812,6 +818,7 @@ tasks:
 
   plex_filmschool:
     script: nova_plex.py
+    enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
     args: ["filmschool"]
     schedule: cron 20 7 * * *
     timeout: 300
@@ -820,6 +827,7 @@ tasks:
 
   plex_velocity:
     script: nova_plex.py
+    enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
     args: ["velocity"]
     schedule: cron 0 1 * * *
     timeout: 60
@@ -843,6 +851,7 @@ tasks:
 
   plex_guest:
     script: nova_plex.py
+    enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
     args: ["guest"]
     schedule: every 5m
     timeout: 90
@@ -941,6 +950,7 @@ tasks:
 
   plex_stats:
     script: nova_plex.py
+    enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
     args: ["stats"]
     schedule: cron 0 18 * * 0
     timeout: 120
@@ -964,6 +974,7 @@ tasks:
 
   plex_sync:
     script: nova_plex.py
+    enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
     args: ["sync"]
     schedule: cron 0 4 * * 1
     timeout: 300

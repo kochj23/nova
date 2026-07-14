@@ -20,8 +20,8 @@ API_URL = "https://api.ambientweather.net/v1/devices"
 
 
 def _kc(service):
-    return subprocess.run(["security", "find-generic-password", "-s", service, "-w"],
-                          capture_output=True, text=True, timeout=10).stdout.strip()
+    import nova_config  # Keychain -> fleet store -> env (portable across the cluster)
+    return nova_config._keychain(service, required=False)
 
 
 def _f(d, *keys):
