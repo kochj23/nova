@@ -61,7 +61,7 @@ MIN_CHUNK_WORDS = 30            # discard chunks shorter than this
 TRASH_RATIO     = 0.6           # if >60% of chunks are garbage → skip whole video
 MAX_AUDIO_SECS  = 7200          # cap at 2h (most episodes ≤ 1h)
 MAX_WORKERS     = 48            # parallel workers — cranked for overnight burn-down
-MAX_FFMPEG      = 20            # concurrent ffmpeg extractions (M4 Ultra handles this)
+MAX_FFMPEG      = 20            # concurrent ffmpeg extractions (M3 Ultra handles this)
 MAX_RETRIES     = 3             # retry on transient API failures
 
 # State lock — multiple workers write to shared state dict
