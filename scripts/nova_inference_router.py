@@ -67,6 +67,7 @@ BANDIT = os.environ.get("NOVA_ROUTER_BANDIT", "") not in ("", "0", "false", "no"
 # class once its health probe confirms the model is present (Ollama) / up (MLX).
 N6, N190, N7, N2 = "192.168.1.6", "192.168.1.190", "192.168.1.7", "192.168.1.2"
 N10 = "192.168.1.10"   # nuk — no GPU, idle; serves CPU embeddings to offload the GPU nodes
+N5, N86 = "192.168.1.5", "192.168.1.86"   # nova-core3 (NPU), nova-core2 (ROCm) — fast-tier backups
 
 POOLS = {
     # code: qwen3:30b-a3b (fast MoE) on both big nodes. qwen3-coder:30b is broken
@@ -82,7 +83,11 @@ POOLS = {
     # fast / cheap chat — .7's light tier. llama3.2:3b (~25 tok/s on the M2 Pro);
     # qwen3:8b was a chronic 4 tok/s straggler there, dropped. (tinychat is a UI,
     # not an API — removed.)
-    "fast":         [(N7, 11434, "ollama", "llama3.2:3b")],
+    # fast / cheap chat. .7 is primary; .5 (NPU) + .86 (ROCm) are backups so a sustained
+    # burst spreads instead of collapsing .7 (load test 2026-07-14). All run llama3.2:3b.
+    "fast":         [(N7, 11434, "ollama", "llama3.2:3b"),
+                     (N5, 11434, "ollama", "llama3.2:3b"),
+                     (N86, 11434, "ollama", "llama3.2:3b")],
     # low-latency single-stream — MTPLX speculative decoding
     "mtplx":        [(N6, 5050, "mtplx", "mtplx-qwen36-27b-optimized-speed"),
                      (N190, 5050, "mtplx", "mtplx-qwen36-27b-optimized-speed")],
@@ -96,6 +101,12 @@ POOLS = {
     # watchdog alerts.)
     "embed":        [(N10, 11434, "ollama", "nomic-embed-text:latest")],
 }
+
+# Per-backend inflight ceiling. .7 (M2 Pro) collapses past ~2 concurrent (load test
+# 2026-07-14: fell to 6 tok/s, 114s p95, timeouts at conc 6) — cap it so the router
+# spreads the fast tier to .5/.86 instead of piling on. Others get a high default.
+MAX_INFLIGHT = {(N7, 11434): 2}
+_DEFAULT_INFLIGHT_CAP = 32
 
 # ── Backend health/load state ────────────────────────────────────────────────
 _lock = threading.Lock()
@@ -160,6 +171,8 @@ def _eligible(pool):
                 continue
             if kind == "ollama" and model not in st["models"]:
                 continue   # model not pulled here yet — skip until it lands
+            if st["inflight"] >= MAX_INFLIGHT.get((host, port), _DEFAULT_INFLIGHT_CAP):
+                continue   # at its concurrency ceiling — let another backend take it
             out.append((host, port, kind, model, st["inflight"],
                         st.get("gen_lat", 2.0),    # observed request latency (EWMA)
                         st.get("ok", 0), st.get("fail", 0)))
