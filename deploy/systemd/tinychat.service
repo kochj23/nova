@@ -1,5 +1,5 @@
 [Unit]
-Description=TinyChat — LLM chat UI (deepseek-r1:8b via .6 Ollama)
+Description=TinyChat — LLM chat UI (deepseek-r1:8b-en via .6 Ollama)
 After=network-online.target
 Wants=network-online.target
 
@@ -10,8 +10,8 @@ Group=kochj
 WorkingDirectory=/home/kochj/tinychat
 Environment=OPENAI_API_URL=http://192.168.1.6:11434/v1
 Environment=OPENAI_API_KEY=ollama
-Environment=DEFAULT_MODEL=deepseek-r1:8b
-Environment=AVAILABLE_MODELS=deepseek-r1:8b
+Environment=DEFAULT_MODEL=deepseek-r1:8b-en
+Environment=AVAILABLE_MODELS=deepseek-r1:8b-en
 Environment=PORT=8008
 Environment=RATE_LIMIT=30/minute
 Environment=ALLOWED_ORIGINS=*
