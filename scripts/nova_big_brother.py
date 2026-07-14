@@ -133,7 +133,9 @@ SERVICES = [
     ("Redis",         "127.0.0.1", 6379,  "net.digitalnoise.redis",               True,  None),
     ("Ollama",        "127.0.0.1", 11434, None,                                   True,  "/api/version"),
     ("Memory Server", "127.0.0.1", 18790, "net.digitalnoise.nova-memory-server",  True,  "/health"),
-    ("Gateway v2",    "127.0.0.1", 18792, "net.digitalnoise.nova-gateway-v2",     True,  "/health"),
+    # Gateway v2 MIGRATED to nova-core (.2) 2026-07-13 as a systemd unit with its own
+    # Restart=on-failure. Not .6's to watch — health port is loopback-bound on .2, and
+    # launchctl can't remediate a remote systemd service. .2's own watchdog owns it now.
     # OpenClaw intentionally stopped — silenced, kept for fallback reference only
     # ("Gateway (OC)",  "127.0.0.1", 18789, "ai.openclaw.gateway",                  False, "/health"),
     ("Scheduler",     "127.0.0.1", 37460, "com.nova.scheduler",                   True,  "/status"),
