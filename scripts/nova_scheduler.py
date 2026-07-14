@@ -40,10 +40,13 @@ import nova_ops_writer
 from nova_notify import notify
 from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN, LOG_DEBUG
 
-CONFIG_PATH = Path.home() / ".openclaw/config/scheduler.yaml"
-STATE_PATH = Path.home() / ".openclaw/config/scheduler_state.json"
-HEARTBEAT_FILE = Path.home() / ".openclaw/config/scheduler_heartbeat"
-SCRIPTS_DIR = Path.home() / ".openclaw/scripts"
+# Paths are env-overridable so a second scheduler (e.g. nova-scheduler-core on the
+# Linux cluster) can run its own task set/state without clobbering .6's. Defaults
+# preserve the original single-scheduler behavior on the Mac Studio.
+CONFIG_PATH = Path(os.environ.get("NOVA_SCHED_CONFIG") or Path.home() / ".openclaw/config/scheduler.yaml")
+STATE_PATH = Path(os.environ.get("NOVA_SCHED_STATE") or Path.home() / ".openclaw/config/scheduler_state.json")
+HEARTBEAT_FILE = Path(os.environ.get("NOVA_SCHED_HEARTBEAT") or Path.home() / ".openclaw/config/scheduler_heartbeat")
+SCRIPTS_DIR = Path(os.environ.get("NOVA_SCHED_SCRIPTS") or Path.home() / ".openclaw/scripts")
 
 # Host this scheduler runs on — surfaced in every task-failure alert title.
 SCHED_HOST = getattr(nova_config, "NOVA_HOST", "192.168.1.6")
