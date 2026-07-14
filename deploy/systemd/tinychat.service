@@ -1,0 +1,23 @@
+[Unit]
+Description=TinyChat — LLM chat UI (deepseek-r1:8b via .6 Ollama)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kochj
+Group=kochj
+WorkingDirectory=/home/kochj/tinychat
+Environment=OPENAI_API_URL=http://192.168.1.6:11434/v1
+Environment=OPENAI_API_KEY=ollama
+Environment=DEFAULT_MODEL=deepseek-r1:8b
+Environment=AVAILABLE_MODELS=deepseek-r1:8b
+Environment=PORT=8008
+Environment=RATE_LIMIT=30/minute
+Environment=ALLOWED_ORIGINS=*
+ExecStart=/home/kochj/tinychat/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8008
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
