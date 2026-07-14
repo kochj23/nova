@@ -33,12 +33,14 @@ tasks:
 
   protect_monitor:
     script: nova_protect_monitor.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 2m
     timeout: 120
     overlap: skip
 
   app_watchdog:
     script: nova_app_watchdog.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 5m
     timeout: 60
     overlap: skip
@@ -131,12 +133,14 @@ tasks:
 
   face_recognition:
     script: nova_face_recognition.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 30m
     timeout: 180
     overlap: skip
 
   home_watchdog:
     script: nova_home_watchdog.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 30m
     timeout: 60
     overlap: skip
@@ -149,6 +153,7 @@ tasks:
 
   unifi_monitor:
     script: nova_unifi_monitor.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 30m
     timeout: 60
     overlap: skip
@@ -169,12 +174,14 @@ tasks:
   # ── Observability collectors (Grafana data layer) ──────────────────────
   unifi_metrics:
     script: nova_unifi_metrics.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 2m
     timeout: 120
     overlap: skip
 
   storage_metrics:
     script: nova_storage_metrics.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 5m
     timeout: 90
     overlap: skip
@@ -201,6 +208,7 @@ tasks:
 
   ha_metrics:
     script: nova_ha_metrics.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     args: ["--once"]
     schedule: every 1m
     timeout: 50
@@ -229,6 +237,7 @@ tasks:
 
   pg_stat_poller:                  # snapshot pg_stat_database counters -> telemetry.pg_stat_db (live throughput rates for Grafana)
     script: nova_pg_stat_poller.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 1m
     timeout: 30
     overlap: skip
@@ -238,24 +247,28 @@ tasks:
     # into telemetry.backup_runs for Grafana. Hourly is ample for a daily backup;
     # idempotent UPSERT keyed on (ts, job) so re-runs are harmless.
     script: nova_backup_ingest.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 1h
     timeout: 60
     overlap: skip
 
   disk_forecast:
     script: nova_disk_forecast.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 1h
     timeout: 120
     overlap: skip
 
   component_metrics:
     script: nova_component_metrics.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 1m
     timeout: 90
     overlap: skip
 
   memory_health:                   # alert if the memory ingest worker stalls (queue grows, 0 writes) — caught the silent 14h outage 2026-07-08; logs telemetry.memory_pipeline for Grafana
     script: nova_memory_health.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 15m
     timeout: 60
     overlap: skip
@@ -294,6 +307,7 @@ tasks:
 
   backup_retention:
     script: nova_backup_retention.sh
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 20 4 * * *
     timeout: 900
     overlap: queue
@@ -306,6 +320,7 @@ tasks:
 
   weekly_security_review:          # Sun 08:00 fleet security posture (ports/promisc/updates/alert-loop)
     script: nova_weekly_security_review.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 8 * * 0
     timeout: 300
     overlap: skip
@@ -344,12 +359,14 @@ tasks:
 
   log_rotate:
     script: nova_log_rotate.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 30 3 * * *
     timeout: 120
     overlap: skip
 
   retention:
     script: nova_retention.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     args: ["--apply"]
     schedule: cron 30 4 * * *
     timeout: 1800
@@ -359,18 +376,21 @@ tasks:
 
   health_check:
     script: nova_health_check.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 45 6 * * *
     timeout: 120
     overlap: skip
 
   morning_brief:
     script: nova_morning_brief.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 7 * * *
     timeout: 300
     overlap: skip
 
   health_intelligence:
     script: nova_health_intelligence.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     args: ["--daily"]
     schedule: cron 0 8 * * *
     timeout: 300
@@ -379,6 +399,7 @@ tasks:
 
   health_intelligence_weekly:
     script: nova_health_intelligence.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     args: ["--weekly"]
     schedule: cron 0 10 * * 0
     timeout: 600
@@ -394,6 +415,7 @@ tasks:
 
   nas_sync_check:
     script: nova_nas_sync_check.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     args: ["--check"]
     schedule: cron 0 6 * * *
     timeout: 1800
@@ -410,18 +432,21 @@ tasks:
 
   dead_mans_switch:
     script: nova_dead_mans_switch.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 15 9 * * *
     timeout: 300
     overlap: skip
 
   sam_blog_ingest:
     script: nova_sam_blog_ingest.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 30 9 * * *
     timeout: 120
     overlap: skip
 
   mostlycopyandpaste_ingest:
     script: nova_mostlycopyandpaste_ingest.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 35 7 * * *
     timeout: 600
     overlap: skip
@@ -441,6 +466,7 @@ tasks:
 
   yt_liked_download:
     script: nova_yt_liked_download.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 1 * * 6
     timeout: 43200
     overlap: skip
@@ -465,6 +491,7 @@ tasks:
 
   security_watcher:
     script: nova_security_watcher.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 30m
     timeout: 120
     overlap: skip
@@ -478,12 +505,14 @@ tasks:
 
   security_patch_watch:
     script: nova_security_patch_watch.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 10 * * *
     timeout: 120
     overlap: skip
 
   security_surface_monitor:
     script: nova_security_surface_monitor.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 6 * * 0
     timeout: 300
     overlap: skip
@@ -504,6 +533,7 @@ tasks:
 
   context_bridge_am:
     script: nova_context_bridge.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 10 * * *
     timeout: 120
     overlap: skip
@@ -516,6 +546,7 @@ tasks:
 
   context_bridge_pm:
     script: nova_context_bridge.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 16 * * *
     timeout: 120
     overlap: skip
@@ -602,12 +633,14 @@ tasks:
 
   geo_enrich:                        # bake distance-from-home into scanner/fire transmission memories
     script: nova_geo_enrich.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 12m
     timeout: 600
     overlap: skip
 
   geo_alerts:                        # real-time proximity + convergence alerts for nearby incidents
     script: nova_geo_alerts.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 3m
     timeout: 120
     overlap: skip
@@ -621,6 +654,7 @@ tasks:
 
   neighborhood_pulse:                # weekly geography/trends of nearby scanner activity (Slack)
     script: nova_neighborhood_pulse.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 5 8 * * 0
     timeout: 180
     overlap: skip
@@ -707,24 +741,28 @@ tasks:
 
   nightly_report:
     script: nova_nightly_report.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 23 * * *
     timeout: 600
     overlap: skip
 
   nightly_synology:
     script: nova_nightly_synology.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 20 23 * * *
     timeout: 300
     overlap: skip
 
   nightly_protect:
     script: nova_nightly_protect.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 40 23 * * *
     timeout: 300
     overlap: skip
 
   bandwidth_report:
     script: nova_bandwidth_report.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 50 23 * * *
     timeout: 120
     overlap: skip
@@ -777,6 +815,7 @@ tasks:
 
   plex_recommend:
     script: nova_plex.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     args: ["recommend"]
     schedule: cron 0 19 * * 5
     timeout: 120
@@ -791,6 +830,7 @@ tasks:
 
   plex_rewatch:
     script: nova_plex.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     args: ["rewatch"]
     schedule: cron 0 10 * * 0
     timeout: 60
@@ -800,6 +840,7 @@ tasks:
 
   pg_maintain:
     script: nova_pg_maintain.sh
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 3 * * 0
     timeout: 7200
     overlap: queue
@@ -820,12 +861,14 @@ tasks:
 
   weekly_journal:
     script: nova_weekly_journal.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 17 * * 0
     timeout: 120
     overlap: skip
 
   self_audit:
     script: nova_self_audit.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 30 17 * * 0
     timeout: 60
     overlap: skip
@@ -839,6 +882,7 @@ tasks:
 
   weekly_reliability:
     script: nova_weekly_reliability.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 22 * * 0
     timeout: 120
     overlap: skip
@@ -888,6 +932,7 @@ tasks:
 
   plex_seasonal:
     script: nova_plex.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     args: ["seasonal"]
     schedule: cron 0 10 1 * *
     timeout: 60
@@ -998,12 +1043,14 @@ tasks:
 
   memory_quality:
     script: nova_memory_quality.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 3 * * 0
     timeout: 450
     overlap: skip
 
   proactive_brief:
     script: nova_proactive_brief.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 9,11,13,15,17 * * 1-5
     timeout: 120
     overlap: skip
@@ -1012,6 +1059,7 @@ tasks:
 
   watcher_engine:
     script: nova_watcher_engine.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 2m
     timeout: 120
     overlap: skip
@@ -1039,6 +1087,7 @@ tasks:
 
   sandbox_image_rebuild:
     script: nova_sandbox.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     args: ["--rebuild-image"]
     schedule: cron 0 4 * * 0
     timeout: 600
@@ -1046,12 +1095,14 @@ tasks:
 
   gov_rss_ingest:
     script: nova_gov_rss_ingest.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 6h
     timeout: 900
     overlap: skip
 
   vendor_advisories:               # CVEs/advisories for the fleet's OWN gear (Ubiquiti/UniFi, Synology, Ubuntu, Grafana, Wazuh...) via CISA KEV + security-news RSS -> #nova-critical. Closes the gap that let UniFi CVE-2026-50746 slip past 2026-07.
     script: nova_vendor_advisories.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 4h
     timeout: 120
     overlap: skip
@@ -1095,6 +1146,7 @@ tasks:
 
   analytics_flush:
     script: nova_analytics_flush.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 5m
     timeout: 30
     overlap: skip
@@ -1116,12 +1168,14 @@ tasks:
 
   claude_memory_sync:
     script: nova_claude_memory_sync.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 30 4 * * *
     timeout: 120
     overlap: skip
 
   syslog_daily_digest:
     script: nova_syslog_daily_digest.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 5 * * *
     timeout: 120
     overlap: skip
@@ -1160,24 +1214,28 @@ tasks:
 
   wazuh_daily_summary:
     script: nova_wazuh_daily_summary.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 7 * * *
     timeout: 120
     overlap: skip
 
   wazuh_blocklist_update:
     script: nova_wazuh_blocklist_update.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 4 * * 0
     timeout: 300
     overlap: skip
 
   experiment_tracker:
     script: nova_experiment_tracker.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 0 9 * * *
     timeout: 60
     overlap: skip
 
   crontab_audit:
     script: nova_crontab_audit.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 30 3 * * *
     timeout: 120
     overlap: skip
@@ -1213,6 +1271,7 @@ tasks:
 
   llm_budget_guard:
     script: nova_llm_budget_guard.py
+    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 5 0 * * *      # 00:05 daily — ratchet the OpenRouter key ceiling to (today's usage + $10)
     timeout: 60
     overlap: skip
