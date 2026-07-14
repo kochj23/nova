@@ -44,7 +44,7 @@ log = logging.getLogger("meta_poller")
 POLL_INTERVAL = 300  # 5 minutes
 MEMORY_STATS_URL = f"http://{nova_config.LAN_IP}:18790/stats"
 OLLAMA_PS_URL = "http://127.0.0.1:11434/api/ps"
-GATEWAY_HEALTH_URL = "http://127.0.0.1:18792/health"
+GATEWAY_HEALTH_URL = "http://192.168.1.2:18792/health"
 API_COSTS_JSON = Path(str(Path.home()) + "/.openclaw/workspace/state/api_costs.json")
 JOURNAL_CONTENT_DIR = (Path.home() / "nova-journal" / "content")
 

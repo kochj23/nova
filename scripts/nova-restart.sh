@@ -59,7 +59,7 @@ status_check() {
         local count=$(curl -sf --max-time 3 http://192.168.1.6:18790/health | python3 -c "import sys,json;print(json.load(sys.stdin)['count'])" 2>/dev/null)
         ok "Memory Server healthy ($count memories)"
     fi
-    if curl -sf --max-time 3 http://127.0.0.1:18792/health > /dev/null 2>&1; then
+    if curl -sf --max-time 3 http://192.168.1.2:18792/health > /dev/null 2>&1; then
         ok "Gateway healthy"
     fi
 
@@ -213,7 +213,7 @@ fi
 
 info "Step 6: Starting Gateway v2..."
 
-if curl -sf --max-time 3 http://127.0.0.1:18792/health > /dev/null 2>&1; then
+if curl -sf --max-time 3 http://192.168.1.2:18792/health > /dev/null 2>&1; then
     ok "Gateway already running"
 else
     pkill -f "nova_gateway_v2.py" 2>/dev/null || true
@@ -224,7 +224,7 @@ else
 
     # Gateway has a 10s signal-cli wait + startup time
     for i in $(seq 1 20); do
-        if curl -sf --max-time 3 http://127.0.0.1:18792/health > /dev/null 2>&1; then
+        if curl -sf --max-time 3 http://192.168.1.2:18792/health > /dev/null 2>&1; then
             ok "Gateway healthy"
             break
         fi

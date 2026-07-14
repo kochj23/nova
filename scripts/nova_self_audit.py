@@ -41,7 +41,7 @@ SCRIPTS_DIR = Path.home() / ".openclaw/scripts"
 SCHEDULER_YAML = Path.home() / ".openclaw/config/scheduler.yaml"
 
 EXPECTED_SERVICES = {
-    18792: {"name": "Nova Gateway v2", "path": "/health", "host": "127.0.0.1"},
+    18792: {"name": "Nova Gateway v2", "path": "/health", "host": "192.168.1.2"},
     18790: {"name": "Memory Server", "path": "/health", "host": "192.168.1.6"},
     11434: {"name": "Ollama", "path": "/", "host": "192.168.1.6"},
     37400: {"name": "NovaControl", "path": "/api/status", "host": "127.0.0.1"},

@@ -416,7 +416,7 @@ def _build_metrics_summary() -> str:
 
     # Gateway uptime
     try:
-        resp = urllib.request.urlopen("http://127.0.0.1:18792/health", timeout=3)
+        resp = urllib.request.urlopen("http://192.168.1.2:18792/health", timeout=3)
         gw = json.loads(resp.read())
         uptime_h = gw.get("uptime_s", 0) / 3600
         sessions = gw.get("sessions", 0)
@@ -1532,7 +1532,7 @@ def _restart_gateway() -> bool:
     # Wait up to 45s for gateway to come up, then 30s for channels to settle
     for _ in range(45):
         time.sleep(1)
-        if _port_open("127.0.0.1", 18792):
+        if _port_open("192.168.1.2", 18792):
             log("Gateway port up — waiting 30s for channels to settle",
                 level=LOG_INFO, source="big-brother")
             time.sleep(30)  # Let Slack/Discord/Signal connect before next channel check
@@ -3473,7 +3473,7 @@ def _full_sweep():
 
         # ── Channel health (only if gateway is up and internet is up) ────────────
         global _discord_timeout_count
-        gateway_up = _port_open("127.0.0.1", 18792)
+        gateway_up = _port_open("192.168.1.2", 18792)
         if gateway_up:
             channels = _check_gateway_log_channels()
 

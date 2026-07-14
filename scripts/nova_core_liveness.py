@@ -43,7 +43,7 @@ KEYSTONES = [
     ("PgBouncer",          "127.0.0.1", 5432, None),            # pgbouncer listen_port=5432 (was wrongly 6432 -> false 'down' alerts)
     ("Redis",              "127.0.0.1", 6379, "redis"),
     ("Memory server",      "127.0.0.1", 18790, "memory_server"),
-    ("Gateway",            "127.0.0.1", 18792, "gateway"),
+    ("Gateway",            "192.168.1.2", 18792, "gateway"),   # migrated off .6 -> nova-core .2 (2026-07-14)
     ("Scheduler",          "127.0.0.1", 37460, "scheduler"),
     ("Inference router",   "192.168.1.2", 37475, None),
 ]

@@ -33,7 +33,7 @@ REPORT_CHANNEL = nova_config.SLACK_BB  # #nova-bb — monitoring/alerts
 
 PG_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
 PKG_PATH = "/Volumes/Data/AI/python_packages"
-GATEWAY_HEALTH = "http://127.0.0.1:18792/health"
+GATEWAY_HEALTH = "http://192.168.1.2:18792/health"
 MLX_MODELS = "http://127.0.0.1:5050/v1/models"
 OLLAMA_TAGS = "http://127.0.0.1:11434/api/tags"
 

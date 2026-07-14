@@ -79,7 +79,7 @@ SERVICE_PORTS = {
     "Redis":         ("127.0.0.1", 6379),
     "Ollama":        ("127.0.0.1", 11434),
     "Memory Server": ("192.168.1.6", 18790),
-    "Gateway v2":    ("127.0.0.1", 18792),
+    "Gateway v2":    ("192.168.1.2", 18792),
     "Scheduler":     ("192.168.1.6", 37460),
     "MLX Server":    ("192.168.1.6", 5050),
     "SwarmUI":       ("127.0.0.1", 7801),
@@ -311,7 +311,7 @@ def _suggest_fix(service_name: str, issue_description: str) -> list:
     # Gateway / workspace
     if "gateway" in desc_lower or "workspace" in desc_lower or "eperm" in desc_lower:
         suggestions.append("Check workspace permissions: ls -la ~/.openclaw/workspace/")
-        suggestions.append("Check gateway health: curl http://127.0.0.1:18792/health")
+        suggestions.append("Check gateway health: curl http://192.168.1.2:18792/health")
         suggestions.append("Review auth-profiles.json format")
 
     # Generic fallback

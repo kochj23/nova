@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-GATEWAY_HTTP = "http://127.0.0.1:18792"
+GATEWAY_HTTP = "http://192.168.1.2:18792"
 SCHEDULER_HTTP = "http://127.0.0.1:37460"
 PG_DSN = "dbname=nova_ops host=127.0.0.1 port=5432 user=kochj"
 REDIS_HOST = "127.0.0.1"

@@ -81,7 +81,7 @@ log = logging.getLogger("component_metrics")
 
 COMPONENTS = [
     # ── Core brain (priority services, all expose HTTP health) ──
-    {"name": "gateway", "host": "127.0.0.1", "port": 18792, "health_path": "/health",
+    {"name": "gateway", "host": "192.168.1.2", "port": 18792, "health_path": "/health",
      "uptime_field": "uptime_s", "proc": "nova_gateway",
      # inference_latency only gets rows on actual inference; track age informationally
      # (no SLA -> a long idle gap is not a "silent failure", just low traffic)
