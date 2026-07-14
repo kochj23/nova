@@ -16,7 +16,7 @@ import urllib.request
 from pathlib import Path
 
 GENERATE_IMAGE_SH = Path.home() / ".openclaw/scripts/generate_image.sh"
-SWARMUI_URL = "http://127.0.0.1:7801"
+SWARMUI_URL = "http://192.168.1.6:7801"
 MAX_RETRIES = 2
 RETRY_DELAY = 10
 TIMEOUT = 300
