@@ -52,6 +52,7 @@ tasks:
 
   incident_lifecycle:              # auto-close resolved incidents + recurrence detection
     script: nova_incident_lifecycle.py
+    enabled: false  # migrated to .2 scheduler-core (Wave A 2026-07-14)
     schedule: every 10m
     args: ["--sweep"]
     timeout: 120
@@ -400,6 +401,7 @@ tasks:
 
   goal_check:
     script: nova_goal_check.py
+    enabled: false  # migrated to .2 scheduler-core (Wave A 2026-07-14)
     schedule: cron 5 7 * * *
     timeout: 120
     overlap: skip
