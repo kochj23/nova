@@ -303,6 +303,12 @@ tasks:
     timeout: 1800
     overlap: skip
 
+  weekly_security_review:          # Sun 08:00 fleet security posture (ports/promisc/updates/alert-loop)
+    script: nova_weekly_security_review.py
+    schedule: cron 0 8 * * 0
+    timeout: 300
+    overlap: skip
+
   config_drift:                    # running launchd config vs committed source-of-truth (#645)
     script: nova_config_drift.py
     schedule: cron 20 8 * * *
