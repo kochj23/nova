@@ -416,13 +416,13 @@ def git_push(section: str, title: str):
                 return
             log(f"Commit failed: {result.stderr[:200]}")
             return
-        result = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
+        result = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=180)
         if result.returncode != 0:
             # Another daily writer pushed first (non-fast-forward). Rebase on top and retry
             # once, so concurrent journal jobs don't strand each other's commits.
             log(f"Push rejected, rebasing + retrying: {result.stderr[:120]}")
-            subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
-            result = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
+            subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=180)
+            result = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=180)
             if result.returncode != 0:
                 log(f"Push still failed after rebase: {result.stderr[:200]} — commit is safe, ships next run")
             else:
