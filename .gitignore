@@ -160,3 +160,18 @@ state/
 reterminal/
 extensions/
 .wan_speedtest_last
+
+# RF discovery / IMSI-catcher tooling — operational scripts live only on nova-core2 (.86),
+# never synced to this repo (cellular-monitoring tooling + node topology kept off GitHub).
+scripts/nova_rf_discovery.py
+scripts/nova_rf_discovery_whisper.py
+scripts/nova_rf_discovery.sh
+scripts/nova_gsm_analyze.py
+scripts/nova_gsm_decode.sh
+scripts/nova_iq_capture.py
+scripts/nova_rspduo2_scan.py
+scripts/nrsp_sweep.py
+scripts/spec_probe.py
+scripts/nova-rf-discovery.service
+scripts/grgsm_docker/
+scripts/RF_DISCOVERY.md
