@@ -28,6 +28,13 @@ IDENTITY_RE = re.compile(r"\b(" + "|".join(_IDENT_TERMS) + r")\b", re.I)
 
 # (b) Watch Nicholas + any threat term -> alert (even if Jordan isn't named).
 NICK = ("watch nicholas", "watchnicholas", "nicholas watch", "watch nick")
+# Clickable links for the alert. YouTube's /live URL redirects to a channel's CURRENT
+# live stream when it's live, so "Watch Nicholas is on" links straight to the stream
+# (falls back to the /streams page if he isn't live at click time).
+NICK_LINKS = [
+    ("Watch Nicholas — LIVE", "https://www.youtube.com/@WatchNicholasLivestream1/live"),
+    ("alt channel", "https://www.youtube.com/@watchnicholasstreams/live"),
+]
 THREAT = ("dox", "doxx", "fired", "your job", "your employer", "your work", "end in tears",
           "coming after", "come after you", "expose you", "your family", "your address",
           "get you fired", "contact your", "real world", "and yours")
@@ -81,8 +88,11 @@ def main():
             continue
         alerts += 1
         snippet = " ".join((text or "").split())[:400]
+        links = ""
+        if any("nicholas" in r for r in reasons):
+            links = "\n" + " · ".join(f"<{u}|▶️ {label}>" for label, u in NICK_LINKS)
         msg = (f":rotating_light: *Fishbowl watch* — {', '.join(reasons)}\n"
-               f"_{ts}_\n> {snippet}")
+               f"_{ts}_\n> {snippet}{links}")
         try:
             nova_config.post_both(msg, slack_channel=ALERT_CHANNEL)
             nova_config.notify_local("Fishbowl watch", ", ".join(reasons), critical=True)
