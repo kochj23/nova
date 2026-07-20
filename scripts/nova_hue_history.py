@@ -17,8 +17,8 @@ import urllib.request
 
 import psycopg2
 
-BRIDGE = "192.168.1.195"
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+BRIDGE = "192.168.1.152"
+DSN = "host=192.168.1.138 dbname=nova_ops user=kochj"
 
 
 def api_key():

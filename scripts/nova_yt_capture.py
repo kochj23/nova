@@ -136,10 +136,16 @@ def transcribe(wav, stem):
 
 
 def parse_chat(chatfile):
-    """Best-effort live_chat.json -> 'author: message' lines, superchats flagged."""
+    """Best-effort live_chat.json -> 'author: message' lines, superchats flagged.
+
+    Also returns per-commenter tallies (channel_id, name, msg/superchat counts) so
+    the channel-discovery pipeline can see who's showing up in the chat — a display
+    name alone is useless for finding someone's channel, but authorExternalChannelId
+    resolves to an exact, clickable URL."""
     if not chatfile or not chatfile.exists():
-        return ""
+        return "", {}
     lines = []
+    commenters = {}   # channel_id -> {"name": str, "messages": int, "superchats": int, "superchat_total": float}
     for ln in chatfile.read_text(errors="ignore").splitlines():
         try:
             d = json.loads(ln)
@@ -152,13 +158,65 @@ def parse_chat(chatfile):
             if not r:
                 continue
             auth = (r.get("authorName", {}) or {}).get("simpleText", "?")
+            cid = r.get("authorExternalChannelId", "")
             msg = "".join(run.get("text", "") for run in (r.get("message", {}) or {}).get("runs", []))
             amt = (r.get("purchaseAmountText", {}) or {}).get("simpleText", "")
+            if cid:
+                c = commenters.setdefault(cid, {"name": auth, "messages": 0, "superchats": 0, "superchat_total": 0.0})
+                c["name"] = auth
+                if amt:
+                    c["superchats"] += 1
+                    m = re.search(r"[\d,]+\.?\d*", amt)
+                    if m:
+                        try:
+                            c["superchat_total"] += float(m.group().replace(",", ""))
+                        except ValueError:
+                            pass
+                else:
+                    c["messages"] += 1
             if amt:
                 lines.append(f"[SUPERCHAT {amt}] {auth}: {msg}".rstrip())
             elif msg:
                 lines.append(f"{auth}: {msg}")
-    return "\n".join(lines)
+    return "\n".join(lines), commenters
+
+
+def record_commenters(channel, video_id, commenters):
+    """Upsert per-stream commenter tallies into nova_ops.fishbowl_commenters —
+    the raw material for spotting active-but-untracked channels later."""
+    if not commenters:
+        return
+    try:
+        conn = psycopg2.connect(DSN); conn.autocommit = True
+        with conn.cursor() as cur:
+            cur.execute("""CREATE TABLE IF NOT EXISTS fishbowl_commenters (
+                channel_id text PRIMARY KEY,
+                display_name text,
+                first_seen timestamptz DEFAULT now(),
+                last_seen timestamptz DEFAULT now(),
+                message_count integer DEFAULT 0,
+                superchat_count integer DEFAULT 0,
+                superchat_total real DEFAULT 0,
+                source_channels text[] DEFAULT '{}',
+                reviewed boolean DEFAULT false)""")
+            for cid, c in commenters.items():
+                cur.execute("""
+                    INSERT INTO fishbowl_commenters
+                        (channel_id, display_name, message_count, superchat_count, superchat_total, source_channels)
+                    VALUES (%s, %s, %s, %s, %s, ARRAY[%s])
+                    ON CONFLICT (channel_id) DO UPDATE SET
+                        display_name = EXCLUDED.display_name,
+                        last_seen = now(),
+                        message_count = fishbowl_commenters.message_count + EXCLUDED.message_count,
+                        superchat_count = fishbowl_commenters.superchat_count + EXCLUDED.superchat_count,
+                        superchat_total = fishbowl_commenters.superchat_total + EXCLUDED.superchat_total,
+                        source_channels = CASE WHEN %s = ANY(fishbowl_commenters.source_channels)
+                                          THEN fishbowl_commenters.source_channels
+                                          ELSE fishbowl_commenters.source_channels || %s END
+                """, (cid, c["name"], c["messages"], c["superchats"], c["superchat_total"], channel, channel, channel))
+        conn.close()
+    except Exception as e:
+        log(f"commenter tally failed (non-fatal): {e}")
 
 
 def chunk(text, size=CHUNK):
@@ -208,7 +266,8 @@ def main():
         wav = to_wav(audio, stem)
         if wav:
             transcript = transcribe(wav, stem)
-    chat = parse_chat(chatf)
+    chat, commenters = parse_chat(chatf)
+    record_commenters(channel, vid, commenters)
     for f in WORK.glob(f"{stem}.*"):
         try:
             f.unlink()

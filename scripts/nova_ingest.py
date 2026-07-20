@@ -63,6 +63,13 @@ WHISPER_BIN   = "/opt/homebrew/bin/mlx_whisper"
 WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
 WHISPER_COST_PER_MIN = 0.006  # OpenAI Whisper: $0.006/minute ($0.36/hr)
 CHUNK_CHARS   = 1500
+# Frame-vision: after transcribing a video, index N sampled frames (VLM descriptions) into
+# Nova memory (source=frame_vision) so search is fused over what was SAID + SHOWN. 0 disables.
+FVS_INGEST_FRAMES = int(os.environ.get("FVS_INGEST_FRAMES", "24"))
+# Voice attribution on ingest: name each video's speakers against the enrolled voiceprint DB.
+# OFF by default (heavy — adds resemblyzer diarization per video — and only useful once voices
+# are enrolled). Enable with FVS_VOICE_ATTRIBUTE=1 after building up the voiceprint DB.
+FVS_VOICE_ATTRIBUTE = os.environ.get("FVS_VOICE_ATTRIBUTE", "1") == "1"
 CHUNK_WORDS   = 400
 MIN_WORDS     = 30
 RATE_LIMITS   = {"wikipedia": 3.0, "searxng": 1.0, "web": 4.0, "video": 30.0}
@@ -1607,6 +1614,26 @@ def run_discover(subject, vector, num_sites, per_site, state, dry_run,
                             done_hashes):
                     ct      += 1
                     ingested += 1
+
+        # Frame-vision index: sampled frames -> VLM descriptions -> Nova memory
+        # (source=frame_vision), fused with the transcript above. Never fatal to the ingest.
+        if not dl_only and out.exists() and FVS_INGEST_FRAMES > 0:
+            try:
+                from nova_frame_index import index_video as _fvs_index
+                nfr = _fvs_index(str(out), channel or subject, FVS_INGEST_FRAMES)
+                log(f"  frame-vision: indexed {nfr} frames from {title[:40]}")
+            except Exception as e:
+                log(f"  frame-vision index skipped: {e}", "WARN")
+
+        # Voice attribution: name this video's speakers against the enrolled voiceprint DB.
+        if not dl_only and out.exists() and FVS_VOICE_ATTRIBUTE:
+            try:
+                from nova_voice_db import attribute_video
+                names = attribute_video(str(out))
+                if names:
+                    log(f"  voices: {', '.join(names)}")
+            except Exception as e:
+                log(f"  voice attribution skipped: {e}", "WARN")
 
         items_done += 1
         state.update({

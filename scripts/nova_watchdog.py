@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-nova_watchdog.py — independent off-box fleet watchdog (runs on nuk / 192.168.1.10).
+nova_watchdog.py — independent off-box fleet watchdog (runs on nova-core5 / 192.168.1.10).
 
 The whole point: every other monitor (nova_prober, nova_notifier, big_brother) lives
 on mac-studio (.6). So when .6 itself wedges, the thing that *would* alert you dies
-with it. This watchdog runs on nuk, checks the fleet from the *outside*, and posts
+with it. This watchdog runs on nova-core5, checks the fleet from the *outside*, and posts
 straight to Slack with ZERO dependency on .6 — no PG, no notifier, no .6 services.
 Pure stdlib so it can't be taken down by a broken venv either.
 
@@ -56,10 +56,10 @@ CHECKS = [
     # Added after Plex was silently down 2026-06-22 with nothing alerting (#663).
     ("nova-core (.2) plex",       "http", "http://192.168.1.86:32400/identity"),
     ("mac-mini (.190) ollama",    "http", "http://192.168.1.190:11434/api/version"),
-    # nuk: so a SECOND watcher (on .2) catches nuk going down — the gap the
-    # 2026-06-22 power event exposed (nuk's own watchdog died with it).
-    ("nuk (.10) host",            "tcp",  ("192.168.1.10", 22)),
-    ("nuk (.10) pg-replica",      "tcp",  ("192.168.1.10", 5432)),
+    # nova-core5: so a SECOND watcher (on .2) catches it going down — the gap the
+    # 2026-06-22 power event exposed (its own watchdog died with it).
+    ("nova-core5 (.10) host",      "tcp",  ("192.168.1.10", 22)),
+    ("nova-core5 (.10) pg-replica","tcp",  ("192.168.1.10", 5432)),
     # storage tier — also went dark in that outage and nothing alerted.
     ("synology NAS (.11) smb",    "tcp",  ("192.168.1.11", 445)),
     ("UNAS backup (.69) smb",     "tcp",  ("192.168.1.69", 445)),

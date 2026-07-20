@@ -5,7 +5,7 @@ nova_hue.py — Full Philips Hue integration for Nova.
 HTTP API on port 37476, background sensor monitoring, text command interface,
 dashboard state writer, and simple automation rules.
 
-Bridge: 192.168.1.195
+Bridge: 192.168.1.152
 API key: macOS Keychain (nova-hue-api-key)
 
 Written by Jordan Koch.
@@ -31,7 +31,7 @@ import nova_config
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-HUE_BRIDGE = "192.168.1.195"
+HUE_BRIDGE = "192.168.1.152"
 HTTP_PORT = 37476
 SENSOR_POLL_INTERVAL = 30  # seconds
 STATE_WRITE_INTERVAL = 60  # seconds
@@ -225,7 +225,7 @@ def insert_observation(observer: str, category: str, subject: str,
     meta_json = json.dumps(metadata) if metadata else "{}"
     try:
         subprocess.run(
-            ["psql", "-h", "192.168.1.6", "-d", "nova_ops", "-U", "kochj", "-c",
+            ["psql", "-h", "192.168.1.138", "-d", "nova_ops", "-U", "kochj", "-c",
              f"INSERT INTO shared_observations (observer, category, subject, observation, severity, metadata) "
              f"VALUES ('nova_hue', '{category}', '{subject}', "
              f"$obs${observation}$obs$, '{severity}', '{meta_json}'::jsonb)"],

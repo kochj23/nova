@@ -25,8 +25,8 @@ STATE_FILE = Path.home() / ".openclaw/workspace/state/crontab_hashes.json"
 
 HOSTS = [
     {"name": "mac-studio", "ip": "127.0.0.1", "local": True},
-    {"name": "nuk", "ip": "192.168.1.10", "user": "kochj"},
-    {"name": "lts01", "ip": "192.168.1.2", "user": "kochj"},
+    {"name": "nova-core5", "ip": "192.168.1.10", "user": "kochj"},
+    {"name": "nova-core", "ip": "192.168.1.2", "user": "kochj"},
     {"name": "itunes", "ip": "192.168.1.7", "user": "kochj"},
 ]
 

@@ -9,7 +9,9 @@ Written by Jordan Koch.
 import asyncio
 import logging
 import re
+import sys
 import time
+from pathlib import Path
 
 from nova_gateway.config import (
     OLLAMA_URL, MLX_URL, LLAMACPP_URL, OPENROUTER,
@@ -17,6 +19,17 @@ from nova_gateway.config import (
 )
 
 log = logging.getLogger("nova_gateway_v2")
+
+# nova_lb lives in the shared scripts dir, not the nova_gateway package.
+sys.path.insert(0, str(Path.home() / ".openclaw" / "scripts"))
+try:
+    import nova_lb
+except Exception:
+    nova_lb = None
+    log.warning("ModelRouter: nova_lb unavailable — falling back to static single-host URLs")
+
+# Protocols nova_lb actually load-balances across multiple nodes for.
+_LB_PROTOCOLS = {"ollama", "mlx"}
 
 _THINK_RE = re.compile(r"^.*?</think>\s*", re.DOTALL)
 _THINK_BLOCK_RE = re.compile(r"<think>.*?</think>\s*", re.DOTALL)
@@ -65,6 +78,8 @@ class ModelRouter:
         self._active_backend: str = "unknown"
         # Track transitions for logging
         self._last_logged_backend: str = ""
+        # protocol name -> node name currently resolved for it (nova_lb-backed protocols)
+        self._last_picked_node: dict[str, str] = {}
 
     async def _check_health(self, name: str, base_url: str, health_path: str,
                             ctx=None) -> bool:
@@ -106,6 +121,23 @@ class ModelRouter:
         """Force re-check on next request (call after a mid-request failure)."""
         self._health_cache.pop(name, None)
 
+    def _resolve_backend(self, name: str, fallback_url: str) -> tuple[str, str | None]:
+        """For load-balanced protocols (ollama/mlx), ask nova_lb for the current
+        fastest healthy node instead of a hardcoded single host. Falls back to the
+        static config URL if nova_lb has nothing (unreachable, no healthy node,
+        or this protocol isn't multi-node). Returns (base_url, picked_node_name).
+        """
+        if name not in _LB_PROTOCOLS or nova_lb is None:
+            return fallback_url, None
+        try:
+            pick = nova_lb.pick_node_shared(protocol=name)
+        except Exception as e:
+            log.warning(f"ModelRouter: nova_lb pick failed for '{name}': {e}")
+            pick = None
+        if not pick:
+            return fallback_url, None
+        return f"http://{pick['ip']}:{pick['port']}", pick["name"]
+
     async def route(self, messages: list, system: str = "", max_tokens: int = 1024,
                     private: bool = False, tokens: dict = None,
                     model_override: str = "",
@@ -133,10 +165,21 @@ class ModelRouter:
         tokens = tokens or {}
         errors = []
 
-        for name, base_url, health_path, is_local in self.BACKENDS:
+        for name, static_base_url, health_path, is_local in self.BACKENDS:
             # Skip cloud backends for private queries
             if not is_local and private:
                 continue
+
+            # F5-style: for ollama/mlx, ask nova_lb for the CURRENT fastest healthy
+            # node instead of a hardcoded single host. This is the whole point of
+            # not depending on one box — a dead .6 no longer means dead inference.
+            base_url, picked_node = self._resolve_backend(name, static_base_url)
+            if picked_node and picked_node != self._last_picked_node.get(name):
+                log.info(f"ModelRouter: '{name}' now routing to node '{picked_node}' ({base_url})")
+                self._last_picked_node[name] = picked_node
+                # New node for this protocol — its health hasn't been checked yet,
+                # don't trust a cached "healthy" that was measured against the OLD host.
+                self.invalidate_health(name)
 
             # Privacy policy enforcement: hard block OpenRouter for sensitive content
             if name == "openrouter" and is_private_content(messages):

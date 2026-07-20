@@ -19,7 +19,7 @@ if _scripts_dir not in sys.path:
 import httpx
 
 from nova_gateway.config import (
-    VERSION, SLACK_NOTIFY_CHANNEL, load_tokens,
+    VERSION, SLACK_NOTIFY_CHANNEL, load_tokens, GW_STANDBY,
 )
 from nova_gateway.context import GatewayContext
 from nova_gateway.router import ModelRouter
@@ -106,18 +106,24 @@ async def main():
     # Start health API
     await health_server(ctx)
 
-    # Start all channels concurrently
-    tasks = [
-        asyncio.create_task(run_slack(ctx),          name="slack"),
-        asyncio.create_task(run_discord(ctx),        name="discord"),
-        asyncio.create_task(run_signal(ctx),         name="signal"),
-        asyncio.create_task(run_claude_channel(ctx), name="claude-code"),
-    ]
+    # Start all channels concurrently — unless this copy is a standby (Wave 3
+    # warm-standby / cutover staging), in which case skip live message
+    # channels entirely and only serve health + inference routing.
+    if GW_STANDBY:
+        tasks = []
+        log.warning("NOVA_GW_STANDBY=1 — running routing-only, no Slack/Discord/Signal/Claude channels")
+    else:
+        tasks = [
+            asyncio.create_task(run_slack(ctx),          name="slack"),
+            asyncio.create_task(run_discord(ctx),        name="discord"),
+            asyncio.create_task(run_signal(ctx),         name="signal"),
+            asyncio.create_task(run_claude_channel(ctx), name="claude-code"),
+        ]
+        log.info("All channel tasks launched — gateway running (incl. Claude Code bridge)")
 
-    log.info("All channel tasks launched — gateway running (incl. Claude Code bridge)")
-
-    # Post startup notification to Slack
-    await _post_startup_slack(ctx)
+    # Post startup notification to Slack (skip in standby — not the live copy)
+    if not GW_STANDBY:
+        await _post_startup_slack(ctx)
 
     # Wait for shutdown
     await ctx.shutdown.wait()

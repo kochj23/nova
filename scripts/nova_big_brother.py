@@ -3898,7 +3898,7 @@ def _full_sweep():
 
             # Appliances (UDM, NAS) run at low memory by design — don't alert on them
             APPLIANCES = {"udm-pro", "synology-nas"}
-            PI_HOSTS = {"nuk"}
+            PI_HOSTS = {"nova-core5"}
             for host, metrics in recent.items():
                 if host in APPLIANCES:
                     continue

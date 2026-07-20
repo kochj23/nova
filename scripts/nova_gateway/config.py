@@ -20,14 +20,22 @@ OLLAMA_URL   = "http://192.168.1.6:11434"
 MLX_URL      = "http://192.168.1.6:5050"
 LLAMACPP_URL = "http://192.168.1.6:11435"
 OPENROUTER   = "https://openrouter.ai/api/v1"
-SIGNAL_URL      = "http://127.0.0.1:8080"   # HTTP for send
-SIGNAL_TCP_HOST = "127.0.0.1"
+SIGNAL_URL      = "http://192.168.1.6:8080"   # HTTP for send — LAN so nova-core's gateway can reach the .6-resident signal-cli daemon too
+SIGNAL_TCP_HOST = "192.168.1.6"
 SIGNAL_TCP_PORT = 7583                      # TCP for streaming receive
 
 # ── Paths ────────────────────────────────────────────────────────────────────
 SCRIPTS_DIR  = Path.home() / ".openclaw/scripts"
 LOG_DIR      = Path.home() / ".openclaw/logs"
 STATE_DIR    = Path.home() / ".openclaw/workspace/state"
+
+# Set NOVA_GW_STANDBY=1 on any non-primary gateway copy (e.g. a warm-standby
+# instance during Wave 3 cutover) so it never dual-connects live message
+# channels alongside the real primary — Discord's Gateway delivers each event
+# to EVERY open session on a bot token (no de-dup like Slack Socket Mode has),
+# so two live copies means duplicate replies. Standby mode still runs the
+# health server + ModelRouter (useful as an inference-routing node).
+GW_STANDBY = os.environ.get("NOVA_GW_STANDBY", "0") == "1"
 
 # ── Signal numbers ───────────────────────────────────────────────────────────
 NOVA_SIGNAL  = "+1" + "3233645436"

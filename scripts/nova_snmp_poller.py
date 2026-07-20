@@ -88,7 +88,7 @@ DEVICES = [
     },
     {
         "ip": "192.168.1.10",
-        "name": "nuk",
+        "name": "nova-core5",
         "version": "v2c",
         "community_keychain": "nova-snmp-community",
         "port": 161,
@@ -139,7 +139,7 @@ DEVICE_INTERFACES = {
     "mac-studio": [0],          # primary interface
     "nova-core": [0],            # eth0
     "nova-core2": [0],           # eth0
-    "nuk": [0],                 # primary
+    "nova-core5": [0],                 # primary
     "mac-mini": [0],            # primary
     "sw-jordan-16p": [1],       # uplink port
     "sw-rack13-16p": [1],       # uplink port

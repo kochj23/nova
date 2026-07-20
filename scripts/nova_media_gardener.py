@@ -53,11 +53,14 @@ def propose():
     # Everything else (Movies, Documentary, Home Videos, Stand-Up, Other, Ripped
     # Movies, DVR) stays — per Jordan 2026-06-22. The Plex "TV Shows" *library* is
     # a dumping ground and is NOT a trustworthy signal; the folder path is.
+    # Second, independent gate per Jordan 2026-07-17: real TV shows/movies must
+    # never be prunable even if a `show` row gets mistagged policy='rolling_15' —
+    # source_type='youtube' is required in addition to the folder path.
     cur.execute(f"""
         SELECT m.file_path, m.show, m.processed_at
         FROM media_ingest_state m
         JOIN media_policy p ON p.show = m.show
-        WHERE p.policy = 'rolling_15' AND p.locked
+        WHERE p.policy = 'rolling_15' AND p.locked AND p.source_type = 'youtube'
           AND m.processed_at < now() - interval '{WINDOW_DAYS} days'
           AND m.file_path IS NOT NULL AND m.file_path <> ''
           AND m.file_path ~ '/videos/TVShows/'
@@ -111,6 +114,7 @@ def apply():
     for fp in approved:
         try:
             sz = os.path.getsize(fp); os.remove(fp); freed += sz; done += 1
+            print(f"[gardener] pruned ({done}/{len(approved)}) {sz/1e6:8.1f} MB  {fp}", flush=True)
             cur.execute("UPDATE media_prune_proposals SET status='pruned' WHERE file_path=%s", (fp,))
         except FileNotFoundError:
             cur.execute("UPDATE media_prune_proposals SET status='pruned' WHERE file_path=%s", (fp,))

@@ -21,7 +21,7 @@ import nova_config
 from nova_notify import notify
 
 HOSTS = [
-    {"name": "nuk", "ip": "192.168.1.10", "sudo": True},
+    {"name": "nova-core5", "ip": "192.168.1.10", "sudo": True},
 ]
 
 PROTECTED_CONTAINERS = {

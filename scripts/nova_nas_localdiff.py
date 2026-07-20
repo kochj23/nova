@@ -27,7 +27,7 @@ SYNO = "kochj@192.168.1.11"
 UNAS = "root@192.168.1.69"
 UROOT = "/volume/b37f2e84-517c-4a4f-92f0-4d642527ba17/.srv/.unifi-drive"
 DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
-TMP = "/private/tmp/claude-501/-Users-kochj/d28a4dfe-64e1-4cee-b77a-bf6ae36d3648/scratchpad"
+TMP = os.path.expanduser("~/.openclaw/workspace/state/nas_localdiff")
 
 # name, synology source, unas dest (local), synology CIFS dest mount (for the rsync)
 # NOTE: UniFi UNAS stores each share's contents under <share>/.data/ (owner
@@ -166,6 +166,15 @@ def main():
         nsrc = len(src_set)
         ndst = len(dst)
         orphans = [rel for rel in dst if rel not in src_set]  # on UNAS, gone from Synology
+        if orphans:
+            orphan_bytes = sum(int(dst[rel]) for rel in orphans)
+            rep = f"{TMP}/ld_orphans_{name}.lst"
+            with open(rep, "w") as f:
+                for rel in sorted(orphans, key=lambda r: -int(dst[r])):
+                    f.write(f"{dst[rel]}\t{rel}\n")
+            slack(f"• *{name}*: \U0001f5c2️ {len(orphans):,} UNAS-only files not on Synology "
+                  f"(~{orphan_bytes/1e9:.1f} GB) — suggested for deletion, see {rep} "
+                  f"(not deleted; requires NOVA_LOCALDIFF_PRUNE=1)")
         scan_s = int(time.time() - t0)
 
         # --- 1) push differing files (copy) ---

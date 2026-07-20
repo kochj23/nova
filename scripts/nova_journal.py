@@ -238,42 +238,31 @@ def fetch_memories_by_source(source: str, n: int = 25) -> list[dict]:
 def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku-4.5",
                     max_tokens: int = 4000, temperature: float = 0.7,
                     top_p: float = 0.9) -> str | None:
-    """Call OpenRouter. Returns response text or None on failure."""
-    api_key = nova_config.openrouter_api_key()
-    if not api_key:
-        log("ERROR: No OpenRouter API key")
-        return None
-
-    payload = json.dumps({
-        "model": model,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-        "top_p": top_p,
-    }).encode()
-
-    req = urllib.request.Request(
-        OPENROUTER_URL, data=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-            "HTTP-Referer": "https://nova.digitalnoise.net",
-            "X-Title": "Nova Journal",
-        },
-    )
-
+    """Call the local Claude Code CLI (Claude Max subscription — flat rate, no
+    per-token billing). ponytail: kept the name/signature so the ~15 call sites
+    across the fishbowl/journal scripts don't need touching; OpenRouter's credit
+    balance ran dry 2026-07-17. Rename if OpenRouter comes back into rotation.
+    max_tokens/temperature/top_p have no Claude Code CLI equivalent and are
+    accepted-but-ignored for signature compatibility.
+    """
+    cli_model = ("haiku" if "haiku" in model else
+                 "sonnet" if "sonnet" in model else
+                 "opus" if "opus" in model else model)
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            data = json.loads(resp.read())
-        text = data["choices"][0]["message"]["content"].strip()
-        usage = data.get("usage", {})
-        log(f"LLM [{model}] tokens in={usage.get('prompt_tokens','?')} out={usage.get('completion_tokens','?')}")
+        result = subprocess.run(
+            ["claude", "-p", "--model", cli_model, "--system-prompt", system, "--", user],
+            capture_output=True, text=True, timeout=180)
+        if result.returncode != 0:
+            log(f"Claude Code call failed ({cli_model}): {result.stderr.strip()[:300]}")
+            return None
+        text = result.stdout.strip()
+        if not text:
+            log(f"Claude Code call returned empty output ({cli_model})")
+            return None
+        log(f"LLM [{cli_model} via claude-code] chars out={len(text)}")
         return text
     except Exception as e:
-        log(f"OpenRouter call failed ({model}): {e}")
+        log(f"Claude Code call failed ({cli_model}): {e}")
         return None
 
 

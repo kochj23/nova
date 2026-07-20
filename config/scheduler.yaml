@@ -470,6 +470,12 @@ tasks:
     timeout: 43200
     overlap: skip
 
+  fishbowl_channel_discovery:         # surfaces new candidate channels from tracked streams' chat/superchats -> nova-info
+    script: nova_fishbowl_channel_discovery.py
+    schedule: cron 15 3 * * *
+    timeout: 900
+    overlap: skip
+
   yt_liked_download:
     script: nova_yt_liked_download.py
     enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)

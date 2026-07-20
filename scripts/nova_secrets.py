@@ -37,7 +37,7 @@ def _load(name):
         if os.path.exists(p):
             with open(p) as f:
                 return f.read().rstrip("\n")
-    v = os.environ.get(name)                               # Linux: EnvironmentFile (e.g. nuk)
+    v = os.environ.get(name)                               # Linux: EnvironmentFile (e.g. nova-core5)
     if v:
         return v
     return _keychain(name)                                 # macOS: Keychain

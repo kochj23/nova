@@ -197,6 +197,7 @@ def apply():
             cur.execute("UPDATE nas_dedup_proposals SET status='skipped_protected' WHERE path=%s", (p,)); continue
         try:
             os.remove(p); freed += (size or 0); done += 1
+            print(f"[dedup] deleted ({done}/{len(rows)}) {size/1e6:8.1f} MB  {p}", flush=True)
             cur.execute("UPDATE nas_dedup_proposals SET status='deleted' WHERE path=%s", (p,))
             cur.execute("DELETE FROM nas_files WHERE path=%s", (p,))
         except FileNotFoundError:

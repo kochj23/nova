@@ -96,6 +96,21 @@ scripts/Info.plist
 # Disabled voice (contains hardcoded user paths)
 scripts/_disabled_voice/
 
+# Voice clone reference/output audio — biometric-adjacent, not source
+scripts/voice_out/
+scripts/voice_refs/
+
+# Binary ML model weights — downloaded, not authored; don't bloat history
+models/*.pt
+models/*.onnx
+models/*.bin
+
+# Nested standalone repo (has its own .git) — not a submodule, don't swallow it
+skills/sam-faces/
+
+# Generated state cache
+.localdiff_srccount.json
+
 # Test/scratch scripts with hardcoded IPs
 scripts/test_api_connection.py
 

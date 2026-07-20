@@ -37,7 +37,9 @@ CONTENT_DIR = HUGO_ROOT / "content" / "operations"
 IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 # Classification reads RAW memory text from arbitrary vectors (may be private),
 # so it runs on LOCAL Ollama ONLY — raw memory samples never reach the cloud.
-OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+# Explicit inference host (.6's Ollama), NOT 127.0.0.1 — this job is scheduled on nova-core
+# (.2) post-migration, which has no local Ollama. 127.0.0.1 there returned empty every run.
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://192.168.1.6:11434/api/generate")
 OLLAMA_MODEL = "qwen3-coder:30b"
 MEMORY_URL = "http://192.168.1.6:18790"
 SAMPLE_PER_VECTOR = 100
@@ -422,7 +424,7 @@ def generate_title(article_preview: str) -> str:
     system = "Generate a single funny title for a 'memory filing audit' column written by a sarcastic AI librarian. Max 15 words. Output ONLY the title."
     user = f"Based on this preview, generate a title:\n\n{article_preview[:800]}"
     title = call_llm(system, user, max_tokens=50)
-    return title.strip().strip('"').strip("'").replace('"', '')
+    return title.strip().strip('"').strip("'").replace('"', '').replace('*', '').replace('#', '').strip()
 
 
 def publish(title: str, body: str, image_path: Path | None, stats: dict | None = None):
@@ -501,6 +503,21 @@ def main():
 
     title = generate_title(article)
     log(f"Title: {title}")
+
+    # Guard: call_llm returns "" when the inference backend is unreachable/timing out (as it
+    # did at 06:00 on 2026-07-15). Never publish an empty-title/empty-body post — that yields a
+    # broken /operations/<date>-/ article. Abort loudly instead so the failure is visible.
+    if len(article.strip()) < 200 or not title.strip():
+        log(f"ABORT: empty/short LLM output (article={len(article.strip())}c, "
+            f"title={'EMPTY' if not title.strip() else 'ok'}) — backend likely down; not publishing.")
+        try:
+            import nova_config
+            nova_config.post_both(":warning: Vector-audit article skipped — LLM backend returned "
+                                  "empty output (blank article/title). Nothing published.",
+                                  slack_channel=nova_config.SLACK_BB)
+        except Exception:
+            pass
+        return 1
 
     try:
         image_result = generate_image(

@@ -98,7 +98,7 @@ def query_local(prompt, system="You are a home security AI analyzing vision even
         return None
 
 
-def describe_image(image_path, prompt="Describe this security camera image in 1-2 sentences. Focus on people, vehicles, packages, and anything unusual."):
+def describe_image(image_path, prompt="Describe this security camera image in 1-2 sentences. Focus on people, vehicles, packages, and anything unusual.", model=None):
     """Use local vision model to describe a camera frame or snapshot."""
     import base64
     try:
@@ -106,7 +106,7 @@ def describe_image(image_path, prompt="Describe this security camera image in 1-
             img_b64 = base64.b64encode(f.read()).decode()
 
         payload = json.dumps({
-            "model": VISION_MODEL,
+            "model": model or VISION_MODEL,
             "prompt": prompt,
             "images": [img_b64],
             "stream": False,

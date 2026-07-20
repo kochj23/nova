@@ -47,7 +47,7 @@ HOST_CORES = {
     "synology-nas": 4,
     "nova-core": 4,
     "nova-core2": 16,
-    "nuk": 4,
+    "nova-core5": 4,
 }
 
 MACOS_HOSTS = {
@@ -64,14 +64,14 @@ DISK_MOUNT_FILTER = {
     "mac-mini": ["/", "/System/Volumes/Data"],
     "tv-movies-mini": ["/", "/System/Volumes/Data"],
     "synology-nas": ["/", "/volume1"],
-    "nuk": ["/"],
+    "nova-core5": ["/"],
     "nova-core": ["/"],
     "nova-core2": ["/"],
 }
 
 SSH_HOSTS = {
     "synology-nas": "192.168.1.11",
-    "nuk": "192.168.1.10",
+    "nova-core5": "192.168.1.10",
     "nova-core": "192.168.1.2",
     "nova-core2": "192.168.1.86",
 }
@@ -447,7 +447,7 @@ MONITORED_HOSTS = [
     {"name": "synology-nas", "ip": "192.168.1.11"},
     {"name": "nova-core", "ip": "192.168.1.2"},
     {"name": "nova-core2", "ip": "192.168.1.86"},
-    {"name": "nuk", "ip": "192.168.1.10"},
+    {"name": "nova-core5", "ip": "192.168.1.10"},
 ]
 
 

@@ -4,7 +4,7 @@ nova_preflight_check.py — Pre-flight validation before installing software on 
 
 Checks resource headroom, running services, and potential conflicts before
 allowing a new package/container to be deployed. Called by deployment scripts
-or manually via: python3 nova_preflight_check.py --host nuk --package openwebui
+or manually via: python3 nova_preflight_check.py --host nova-core5 --package openwebui
 
 Returns exit code 0 = safe to proceed, 1 = blocked.
 
@@ -24,9 +24,9 @@ DB_DSN = "host=localhost dbname=nova_ops user=kochj"
 
 HOSTS = {
     "mac-studio": {"ip": "192.168.1.6", "min_cpu": 20, "min_mem": 20, "min_disk": 15},
-    "nuk": {"ip": "192.168.1.10", "min_cpu": 30, "min_mem": 25, "min_disk": 20},
+    "nova-core5": {"ip": "192.168.1.10", "min_cpu": 30, "min_mem": 25, "min_disk": 20},
     "mac-mini": {"ip": "192.168.1.190", "min_cpu": 20, "min_mem": 20, "min_disk": 15},
-    "lts01": {"ip": "192.168.1.2", "min_cpu": 30, "min_mem": 25, "min_disk": 20},
+    "nova-core": {"ip": "192.168.1.2", "min_cpu": 30, "min_mem": 25, "min_disk": 20},
 }
 
 

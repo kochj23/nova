@@ -109,6 +109,25 @@ _worker_task: asyncio.Task | None = None
 _quality_stats = {"allowed": 0, "rejected": 0, "demoted_reference": 0, "filter_errors": 0}
 
 
+async def _record_discard(text: str, source: str, reason: str):
+    """Log a rejected memory to memory_discards — the same audit trail
+    nova_ingest.py's bulk pipeline already writes to. Best-effort: a failure
+    here must never block or fail the caller's request."""
+    try:
+        wc = len(text.split())
+        alpha = sum(c.isalpha() for c in text)
+        ratio = (alpha / len(text)) if text else 0.0
+        async with _pg_pool.acquire() as conn:
+            await conn.execute(
+                "INSERT INTO memory_discards (source, reason, word_count, alpha_ratio, text_hash, text_preview) "
+                "VALUES ($1, $2, $3, $4, $5, $6)",
+                source, reason, wc, round(ratio, 3),
+                hashlib.md5(text.encode()).hexdigest(), text[:200],
+            )
+    except Exception as e:
+        logger.warning(f"Discard audit write failed (non-fatal): {e}")
+
+
 def _classify_resilient(text: str, source: str) -> tuple[str, str]:
     """Run the quality filter, defaulting to ALLOW if the filter itself errors.
 
@@ -198,6 +217,7 @@ async def _ingest_worker():
                 if verdict == "reject":
                     _quality_stats["rejected"] += 1
                     logger.debug(f"Quality filter rejected async ({quality_reason}): {text[:60]}")
+                    await _record_discard(text, source, quality_reason)
                     continue
                 elif verdict == "reference":
                     _quality_stats["demoted_reference"] += 1
@@ -216,8 +236,8 @@ async def _ingest_worker():
                 async with _pg_pool.acquire() as conn:
                     await conn.execute(
                         """INSERT INTO memories
-                             (id, text, metadata, embedding, source, created_at, text_hash, tier)
-                           VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8)
+                             (id, text, metadata, embedding, source, raw_classification, created_at, text_hash, tier)
+                           VALUES ($1, $2, $3, $4::vector, $5, $5, $6, $7, $8)
                            ON CONFLICT (text_hash) DO NOTHING""",
                         memory_id, text, json.dumps(_clean_meta(metadata)), vec_str, source, created_dt, text_hash, target_tier
                     )
@@ -273,17 +293,32 @@ async def lifespan(app: FastAPI):
         await conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS memories (
-                id           TEXT PRIMARY KEY,
-                text         TEXT NOT NULL,
-                metadata     JSONB NOT NULL DEFAULT '{}',
-                embedding    vector(768),
-                source       TEXT NOT NULL DEFAULT 'unknown',
-                created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                id                 TEXT PRIMARY KEY,
+                text               TEXT NOT NULL,
+                metadata           JSONB NOT NULL DEFAULT '{}',
+                embedding          vector(768),
+                source             TEXT NOT NULL DEFAULT 'unknown',
+                raw_classification TEXT NOT NULL DEFAULT 'unknown',
+                created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                text_hash          TEXT,
+                tier               TEXT NOT NULL DEFAULT 'long_term',
+                tsv                TSVECTOR,
+                accessed_at        TIMESTAMPTZ DEFAULT NOW(),
+                access_count       INTEGER NOT NULL DEFAULT 0
+            )
+        """)
+        # Same table nova_ingest.py's bulk pipeline already writes to — reuse it
+        # rather than invent a second discard log with different columns.
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS memory_discards (
+                id           BIGSERIAL PRIMARY KEY,
+                ts           TIMESTAMPTZ DEFAULT NOW(),
+                source       TEXT,
+                reason       TEXT,
+                word_count   INTEGER,
+                alpha_ratio  REAL,
                 text_hash    TEXT,
-                tier         TEXT NOT NULL DEFAULT 'long_term',
-                tsv          TSVECTOR,
-                accessed_at  TIMESTAMPTZ DEFAULT NOW(),
-                access_count INTEGER NOT NULL DEFAULT 0
+                text_preview TEXT
             )
         """)
         # Fast check if table has rows (avoid full count on 1.6M row table)
@@ -390,6 +425,7 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
     if verdict == "reject":
         _quality_stats["rejected"] += 1
         logger.info(f"Quality filter rejected ({quality_reason}): {clean_text[:60]}")
+        await _record_discard(clean_text, req.source or "", quality_reason)
         return {"id": None, "status": "rejected", "reason": quality_reason}
     target_tier = "reference" if verdict == "reference" else "long_term"
     if verdict == "reference":
@@ -421,8 +457,8 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
     async with _pg_pool.acquire() as conn:
         await conn.execute(
             """INSERT INTO memories
-                 (id, text, metadata, embedding, source, created_at, text_hash, tier)
-               VALUES ($1, $2, $3, $4::vector, $5, $6, $7, $8)
+                 (id, text, metadata, embedding, source, raw_classification, created_at, text_hash, tier)
+               VALUES ($1, $2, $3, $4::vector, $5, $5, $6, $7, $8)
                ON CONFLICT (text_hash) DO NOTHING""",
             memory_id, clean_text, json.dumps(req.metadata),
             _vec_str(vector), req.source, created_dt, text_hash, target_tier,
