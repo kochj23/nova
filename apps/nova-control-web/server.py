@@ -497,6 +497,14 @@ async def service_detail(service: str):
             return JSONResponse(await collect_plex(app.state.http_session))
         elif service == "hdhr":
             return JSONResponse(await collect_hdhr(app.state.http_session))
+        elif service == "overhead_flights":
+            return JSONResponse(await collect_overhead_flights())
+        elif service == "home_environment":
+            return JSONResponse(await collect_home_environment())
+        elif service == "recent_events":
+            return JSONResponse(await collect_recent_events())
+        elif service == "repo_scout":
+            return JSONResponse(await collect_repo_scout())
         elif service == "deadman":
             sched = current_state.get("scheduler", {})
             dms = sched.get("tasks", {}).get("dead_mans_switch", {})
@@ -2299,6 +2307,146 @@ async def collect_plex(session: aiohttp.ClientSession) -> dict:
         return result
     except Exception as e:
         return _plex_cache or {"status": "error", "error": str(e), "active_streams": 0, "now_playing": [], "total_items": 0}
+
+
+_flights_cache: dict = {}
+_flights_ts: float = 0
+
+
+async def collect_overhead_flights() -> dict:
+    """Aircraft seen overhead in the last 5 minutes, for NovaTV's Skies & Home page."""
+    global _flights_cache, _flights_ts
+    now = time.time()
+    if now - _flights_ts < 15:
+        return _flights_cache
+    try:
+        conn = await asyncpg.connect(OPS_PG_DSN)
+        try:
+            rows = await conn.fetch(
+                "SELECT DISTINCT ON (hex) hex, callsign, registration, aircraft_type, type_name, "
+                "category, is_helicopter, alt_ft, gs_kt, track_deg, dist_nm, bearing_deg, compass, squawk, ts "
+                "FROM telemetry.overhead_flights WHERE ts > now() - interval '5 minutes' "
+                "ORDER BY hex, ts DESC LIMIT 20")
+        finally:
+            await conn.close()
+        aircraft = [{
+            "hex": r["hex"], "callsign": (r["callsign"] or "").strip(), "registration": r["registration"],
+            "type": r["aircraft_type"], "type_name": r["type_name"], "category": r["category"],
+            "is_helicopter": r["is_helicopter"], "alt_ft": r["alt_ft"], "gs_kt": r["gs_kt"],
+            "track_deg": r["track_deg"], "dist_nm": r["dist_nm"], "bearing_deg": r["bearing_deg"],
+            "compass": r["compass"], "squawk": r["squawk"],
+        } for r in rows]
+        result = {"status": "ok", "aircraft": aircraft, "count": len(aircraft)}
+        _flights_cache = result
+        _flights_ts = now
+        return result
+    except Exception as e:
+        return _flights_cache or {"status": "error", "error": str(e), "aircraft": [], "count": 0}
+
+
+_home_env_cache: dict = {}
+_home_env_ts: float = 0
+
+
+async def collect_home_environment() -> dict:
+    """Latest climate/battery/presence snapshot per room/device/person, for NovaTV's Skies & Home page."""
+    global _home_env_cache, _home_env_ts
+    now = time.time()
+    if now - _home_env_ts < 30:
+        return _home_env_cache
+    try:
+        conn = await asyncpg.connect(OPS_PG_DSN)
+        try:
+            climate_rows = await conn.fetch(
+                "SELECT DISTINCT ON (room) room, source, temp_f, humidity, light_lux, motion, ts "
+                "FROM telemetry.climate WHERE ts > now() - interval '30 minutes' ORDER BY room, ts DESC")
+            battery_rows = await conn.fetch(
+                "SELECT DISTINCT ON (device) device, room, level, low_battery, ts "
+                "FROM telemetry.battery WHERE ts > now() - interval '2 days' ORDER BY device, ts DESC")
+            presence_rows = await conn.fetch(
+                "SELECT DISTINCT ON (person) person, room, confidence, ts "
+                "FROM telemetry.presence WHERE ts > now() - interval '15 minutes' ORDER BY person, ts DESC")
+        finally:
+            await conn.close()
+        result = {
+            "status": "ok",
+            "climate": [{"room": r["room"], "source": r["source"], "temp_f": r["temp_f"],
+                         "humidity": r["humidity"], "light_lux": r["light_lux"], "motion": r["motion"]}
+                        for r in climate_rows],
+            "battery": [{"device": r["device"], "room": r["room"], "level": r["level"],
+                         "low_battery": r["low_battery"]} for r in battery_rows],
+            "presence": [{"person": r["person"], "room": r["room"], "confidence": r["confidence"]}
+                         for r in presence_rows],
+        }
+        _home_env_cache = result
+        _home_env_ts = now
+        return result
+    except Exception as e:
+        return _home_env_cache or {"status": "error", "error": str(e), "climate": [], "battery": [], "presence": []}
+
+
+_recent_events_cache: dict = {}
+_recent_events_ts: float = 0
+
+
+async def collect_recent_events() -> dict:
+    """Recent telemetry.events for NovaTV's live alert ticker (presence, overhead helicopters,
+    emergency squawks, low-battery, etc. — same bus nova_repo_scout.py and other notifiers write to)."""
+    global _recent_events_cache, _recent_events_ts
+    now = time.time()
+    if now - _recent_events_ts < 15:
+        return _recent_events_cache
+    try:
+        conn = await asyncpg.connect(OPS_PG_DSN)
+        try:
+            rows = await conn.fetch(
+                "SELECT ts, source, level, category, title, body FROM telemetry.events "
+                "ORDER BY ts DESC LIMIT 25")
+        finally:
+            await conn.close()
+        events = [{"ts": r["ts"].isoformat(), "source": r["source"], "level": r["level"],
+                   "category": r["category"], "title": r["title"], "body": r["body"]} for r in rows]
+        result = {"status": "ok", "events": events}
+        _recent_events_cache = result
+        _recent_events_ts = now
+        return result
+    except Exception as e:
+        return _recent_events_cache or {"status": "error", "error": str(e), "events": []}
+
+
+_repo_scout_cache: dict = {}
+_repo_scout_ts: float = 0
+
+
+async def collect_repo_scout() -> dict:
+    """Most recent repo_scout_log entry, for NovaTV's Repo-Scout-of-the-Day card."""
+    global _repo_scout_cache, _repo_scout_ts
+    now = time.time()
+    if now - _repo_scout_ts < 300:
+        return _repo_scout_cache
+    try:
+        conn = await asyncpg.connect(OPS_PG_DSN)
+        try:
+            exists = await conn.fetchval(
+                "SELECT EXISTS(SELECT 1 FROM information_schema.tables WHERE table_name='repo_scout_log')")
+            if not exists:
+                result = {"status": "no_data"}
+            else:
+                row = await conn.fetchrow(
+                    "SELECT full_name, url, stars, language, verdict, title, evaluated_at "
+                    "FROM repo_scout_log ORDER BY evaluated_at DESC LIMIT 1")
+                result = ({
+                    "status": "ok", "full_name": row["full_name"], "url": row["url"], "stars": row["stars"],
+                    "language": row["language"], "verdict": row["verdict"], "title": row["title"],
+                    "scouted_at": row["evaluated_at"].isoformat() if row["evaluated_at"] else None,
+                } if row else {"status": "no_data"})
+        finally:
+            await conn.close()
+        _repo_scout_cache = result
+        _repo_scout_ts = now
+        return result
+    except Exception as e:
+        return _repo_scout_cache or {"status": "error", "error": str(e)}
 
 
 async def collect_hdhr(session: aiohttp.ClientSession) -> dict:
@@ -4688,6 +4836,10 @@ async def poll_loop():
             collect_hue_state(),             # 35
             collect_lutron_state(),          # 36
             collect_openrouter_credits(),    # 37
+            collect_overhead_flights(),      # 38
+            collect_home_environment(),      # 39
+            collect_recent_events(),         # 40
+            collect_repo_scout(),            # 41
             return_exceptions=True,
         )
 
@@ -4758,6 +4910,10 @@ async def poll_loop():
             "hue": safe(35),
             "lutron": safe(36),
             "openrouter_credits": safe(37),
+            "overhead_flights": safe(38),
+            "home_environment": safe(39),
+            "recent_events": safe(40),
+            "repo_scout": safe(41),
             "traffic_flow": traffic,
             "poll_duration_ms": round((time.monotonic() - start) * 1000),
         }
