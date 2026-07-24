@@ -97,7 +97,7 @@ def get_local_news(hours=24, limit=50):
     cur = conn.cursor()
     cutoff = datetime.now() - timedelta(hours=hours)
     cur.execute("""
-        SELECT text, source, created_at
+        SELECT text, source, created_at, metadata
         FROM memories
         WHERE source IN ('local_burbank', 'local_news')
           AND created_at >= %s
@@ -107,20 +107,41 @@ def get_local_news(hours=24, limit=50):
     """, (cutoff, limit))
     rows = cur.fetchall()
     conn.close()
-    return [{"text": r[0], "source": r[1], "created_at": str(r[2])} for r in rows]
+    return [{"text": r[0], "source": r[1], "created_at": str(r[2]),
+             "metadata": r[3] if isinstance(r[3], dict) else (json.loads(r[3]) if r[3] else {})}
+            for r in rows]
 
 
-def get_burbank_search(limit=30):
-    """Semantic search for recent Burbank-related content across all sources."""
+def get_burbank_search(limit=30, hours=36):
+    """Semantic search for recent Burbank-related content across all sources.
+
+    Time-bounded (unlike the raw /recall call, which has no server-side time filter) --
+    semantic search otherwise happily resurfaces week-old items with no signal that
+    they're old, and the article ends up narrating last weekend's news as if it just
+    happened. hours is a bit looser than get_local_news's 24h since this is a backstop
+    search, not the primary feed.
+    """
     try:
         resp = urllib.request.urlopen(
             f"http://192.168.1.6:18790/recall?q=Burbank+California+local+news+today&n={limit}&source=local_burbank",
             timeout=10
         )
         data = json.loads(resp.read())
-        return data.get("memories", [])
+        memories = data.get("memories", [])
     except Exception:
         return []
+
+    cutoff = datetime.now().astimezone() - timedelta(hours=hours)
+    fresh = []
+    for m in memories:
+        ts = m.get("created_at")
+        try:
+            created = datetime.fromisoformat(ts)
+        except (TypeError, ValueError):
+            continue  # no timestamp -- can't verify it's recent, drop it rather than risk stale content
+        if created >= cutoff:
+            fresh.append(m)
+    return fresh
 
 
 def get_scanner_blotter(hours=18):
@@ -324,9 +345,159 @@ def get_wifi_ble_summary(hours=24):
            "ble_devices": ble_devices}
 
 
+def get_myburbank_arrests(news_items):
+    """For any myBurbank 'Police Log' item in today's news, fetch the full article page
+    (the RSS description is just boilerplate -- no actual arrest data) and LLM-extract the
+    individual arrests myBurbank already publishes by name: date, name, home city, arrest
+    location, time, charge(s). Returns a list of arrest dicts (possibly from multiple logs
+    if more than one dropped today), or [] if none found / fetch failed."""
+    seen_urls = set()
+    log_items = []
+    for it in news_items:
+        if "police log" not in it.get("text", "").lower():
+            continue
+        url = (it.get("metadata") or {}).get("url")
+        # the same police-log post commonly shows up in both get_local_news and
+        # get_burbank_search -- dedupe by URL or it gets scraped/extracted twice,
+        # silently doubling every arrest in the downstream charge tally.
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        log_items.append(it)
+    if not log_items:
+        return []
+
+    all_arrests = []
+    for it in log_items:
+        url = it["metadata"]["url"]
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 NovaBot/1.0"})
+            html = urllib.request.urlopen(req, timeout=20).read().decode("utf-8", errors="replace")
+        except Exception as e:
+            log(f"myBurbank fetch failed for {url}: {e}")
+            continue
+
+        # crude but sufficient: strip tags/scripts down to text, the article body is plain prose
+        text = re.sub(r"<(script|style)[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"&#8211;|&ndash;", "-", text)
+        text = re.sub(r"&\w+;", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+
+        system = (
+            "Extract every individual arrest from this Burbank police log article into a JSON array. "
+            'Each element: {"date": "...", "name": "...", "residence": "...", "location": "...", '
+            '"time": "...", "charges": "..."}. Use the exact wording from the article for each field. '
+            "If a field isn't stated, use an empty string. Output ONLY the JSON array, nothing else."
+        )
+        try:
+            raw = call_llm(system, text[:12000], max_tokens=3000)
+            # Models sometimes tack on a trailing note or repeat themselves after the array --
+            # raw_decode from the first '[' parses just the array and ignores anything after it,
+            # instead of choking on "Extra data" like json.loads(whole string) would.
+            start = raw.index("[")
+            arrests, _ = json.JSONDecoder().raw_decode(raw, start)
+            if isinstance(arrests, list):
+                log(f"myBurbank: extracted {len(arrests)} arrests from {it['metadata'].get('title', url)}")
+                all_arrests.extend(arrests)
+        except Exception as e:
+            log(f"myBurbank arrest extraction failed for {url}: {e}")
+
+    return all_arrests
+
+
+def get_bluetooth_patterns(days=21, min_days=3):
+    """Look for recurring unidentified BLE devices in telemetry.bluetooth history and
+    surface any real daily-time patterns -- not just today's raw count.
+
+    MAC addresses rotate (BLE privacy), so device_mac is useless as a stable identity.
+    device_name is far more stable in practice, but the poller's per-sighting vendor
+    classification is noisy (it's derived from the rotating MAC's OUI, so the SAME named
+    device flips between a real vendor and "unknown" from one sighting to the next).
+    So: group by device_name, and treat a name as an "unidentified" candidate if the
+    MAJORITY of its sightings were classified vendor=unknown, regardless of name format.
+
+    For each candidate, classify by how much of the day it's present:
+      - "resident" (median daily span > 12h) -- something stationary nearby, not a
+        neighbor walking past; interesting as "unidentified but always here", not a
+        time-of-day pattern.
+      - "transient" (median daily span <= 12h) on >= min_days distinct days -- check
+        whether its daily start time clusters tightly (stddev < 1.5h); that's the real
+        "shows up around the same time every day" signal.
+
+    Returns aggregate/descriptive info only -- never raw device_name/MAC (consistent
+    with get_wifi_ble_summary's no-per-device-identifiers-to-the-public rule)."""
+    import psycopg2
+    try:
+        conn = psycopg2.connect(NOVA_OPS_DSN)
+        cur = conn.cursor()
+        cur.execute("""
+            WITH named AS (
+                SELECT device_name,
+                       date(ts AT TIME ZONE 'America/Los_Angeles') AS day,
+                       extract(hour FROM ts AT TIME ZONE 'America/Los_Angeles') AS hr,
+                       (metadata->>'vendor' = 'unknown') AS unk
+                FROM telemetry.bluetooth
+                WHERE ts >= now() - (%s || ' days')::interval
+                  AND device_name IS NOT NULL AND device_name != ''
+            ),
+            per_device AS (
+                SELECT device_name,
+                       count(*) AS sightings,
+                       avg(unk::int) AS unknown_ratio
+                FROM named GROUP BY device_name
+                HAVING avg(unk::int) > 0.5
+            ),
+            per_day AS (
+                SELECT n.device_name, n.day, min(n.hr) AS start_hr, max(n.hr) - min(n.hr) AS span_hr
+                FROM named n JOIN per_device p USING (device_name)
+                GROUP BY n.device_name, n.day
+            )
+            SELECT device_name,
+                   count(*) AS distinct_days,
+                   percentile_cont(0.5) WITHIN GROUP (ORDER BY span_hr) AS median_span_hr,
+                   avg(start_hr) AS avg_start_hr,
+                   stddev(start_hr) AS stddev_start_hr
+            FROM per_day
+            GROUP BY device_name
+            HAVING count(*) >= %s
+            ORDER BY count(*) DESC
+        """, (days, min_days))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception as e:
+        log(f"bluetooth pattern query failed: {e}")
+        return None
+
+    if not rows:
+        return None
+
+    resident, transient_patterned, transient_random = 0, [], 0
+    for _, distinct_days, median_span, avg_start, stddev_start in rows:
+        if median_span is not None and median_span > 12:
+            resident += 1
+        elif stddev_start is not None and stddev_start < 1.5:
+            hr = int(avg_start)
+            ampm = "AM" if hr < 12 else "PM"
+            hr12 = hr % 12 or 12
+            transient_patterned.append({"distinct_days": distinct_days, "start": f"~{hr12} {ampm}"})
+        else:
+            transient_random += 1
+
+    transient_patterned.sort(key=lambda x: -x["distinct_days"])
+    return {
+        "candidates": len(rows),
+        "resident": resident,               # unidentified but present most of the day, every day
+        "transient_patterned": transient_patterned[:3],  # real time-of-day recurrence
+        "transient_random": transient_random,
+    }
+
+
 # ── Article Generation ────────────────────────────────────────────────────────
 
-def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=None):
+def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=None,
+                      arrests=None, ble_patterns=None):
     # Score each news item by locality so the article weights detail toward Burbank/nearby (not
     # Pasadena/DTLA). Same proximity principle as the scanner blotter, applied to ALL news.
     try:
@@ -342,6 +513,21 @@ def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=No
     def is_california(t):
         return bool(place_distance(t)) or bool(CA_SIGNAL.search(t or ""))
 
+    def age_str(created_at):
+        if not created_at:
+            return "age unknown"
+        try:
+            created = datetime.fromisoformat(created_at)
+            if created.tzinfo is None:
+                created = created.astimezone()
+            hrs = (datetime.now().astimezone() - created).total_seconds() / 3600
+        except (TypeError, ValueError):
+            return "age unknown"
+        if hrs < 20:
+            return "today"
+        days = round(hrs / 24)
+        return "yesterday" if days == 1 else f"{days} days ago"
+
     scored, dropped = [], 0
     for item in news_items:
         full = item.get("text", "")
@@ -351,6 +537,7 @@ def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=No
         text = full[:500].replace("\n", " ").strip()
         pd = place_distance(full)
         scored.append({"text": text, "source": item.get("source", "unknown"),
+                       "age": age_str(item.get("created_at")),
                        "place": pd[0] if pd else None, "mi": pd[1] if pd else None})
     if dropped:
         log(f"Dropped {dropped} non-California news items")
@@ -358,7 +545,7 @@ def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=No
     news_block = ""
     for i, it in enumerate(scored, 1):
         loc = f" [{it['place']}, ~{it['mi']} mi]" if it["mi"] is not None else " [locality unknown]"
-        news_block += f"\n{i}. [{it['source']}]{loc} {it['text']}\n"
+        news_block += f"\n{i}. [{it['source']}, {it['age']}]{loc} {it['text']}\n"
 
     scanner_block = ""
     if scanner_blotter:
@@ -422,16 +609,59 @@ def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=No
                 bits.append(f"{wifi_ble['open_aps']} of them broadcasting with no security at all")
         if wifi_ble.get("ble_devices") is not None:
             bits.append(f"{wifi_ble['ble_devices']} distinct Bluetooth LE devices heard")
-        if bits:
+        pattern_bits = []
+        if ble_patterns:
+            if ble_patterns["resident"]:
+                pattern_bits.append(f"{ble_patterns['resident']} unidentified device(s) that are "
+                                     f"basically always in range (present most of every day, day after day "
+                                     f"over the last few weeks) -- something stationary and unlabeled nearby, "
+                                     f"not a passerby")
+            for p in ble_patterns["transient_patterned"]:
+                pattern_bits.append(f"an unidentified device that shows up briefly on {p['distinct_days']} "
+                                     f"of the last ~21 days, consistently around {p['start']}")
+            if ble_patterns["transient_random"]:
+                pattern_bits.append(f"{ble_patterns['transient_random']} other recurring unidentified device(s) "
+                                     f"with no consistent time-of-day pattern")
+        if bits or pattern_bits:
             wifi_ble_block = (
-                f"\n\n[RF NEIGHBORHOOD — last 24h. {'; '.join(bits)}. Mention this only briefly "
-                f"(a sentence, maybe two) as neighborhood color -- this is not the headline. Never "
-                f"name a specific network name/BSSID/MAC, just the aggregate numbers.]\n"
+                f"\n\n[RF NEIGHBORHOOD — last 24h. {'; '.join(bits)}."
+                + (f" PATTERNS FOUND IN THE LAST ~3 WEEKS OF HISTORY: {'; '.join(pattern_bits)}. "
+                   f"This is worth a real paragraph, not just a passing line -- it's genuinely interesting "
+                   f"(a mystery device that's always here, or one that shows up like clockwork). Speculate "
+                   f"playfully about what it might be (a neighbor's smart device, a delivery route, a dog "
+                   f"walker's phone) but don't claim certainty." if pattern_bits else
+                   " Mention this only briefly (a sentence, maybe two) as neighborhood color.")
+                + " Never name a specific network name/BSSID/MAC, just the aggregate numbers/patterns.]\n"
             )
+
+    arrests_block = ""
+    if arrests:
+        lines = []
+        for a in arrests:
+            bits = [a.get("date", ""), a.get("name", ""), a.get("residence", "")]
+            loc_time = " ".join(x for x in [a.get("location", ""), a.get("time", "")] if x)
+            charges = a.get("charges", "")
+            lines.append(f"- {' — '.join(x for x in bits if x)}"
+                         f"{f' at {loc_time}' if loc_time else ''}"
+                         f"{f'. Charges: {charges}' if charges else ''}")
+        arrests_block = (
+            f"\n\n[BURBANK POLICE LOG — {len(arrests)} individual arrests from myBurbank's published log "
+            f"(full detail as myBurbank itself prints it -- names, home city, arrest location/time, charges):\n"
+            + "\n".join(lines) +
+            f"\n\nGive this its own real section. Cover it properly: don't just say '5 weekly logs dropped, "
+            f"here's a vibe' -- go through the actual arrests, tally up the charge TYPES (how many for what), "
+            f"and note anything that stands out (a cluster of the same charge, an unusual one, a notable "
+            f"location). You have the actual data now, use it -- no need to disclaim that you don't have "
+            f"specifics in front of you.]\n"
+        )
 
     from nova_voice import system_prompt, CONTEXT_JOURNAL_LOCAL
     system = system_prompt(CONTEXT_JOURNAL_LOCAL + """
 ADDITIONAL RULES FOR BURBANK DISPATCH:
+- Every news item is tagged with its age (today / yesterday / N days ago). Only present "today" items
+  as breaking/current. "Yesterday" or older items may still be worth covering (e.g. a slow-moving story,
+  a weekly police log) but say so explicitly ("from last weekend...", "in case you missed it Tuesday...")
+  -- never narrate a multi-day-old item as if it just happened.
 - PRIORITIZE BY PROXIMITY (most important rule): every news item is tagged with its place + miles
   from home. The reader cares FAR more about close things than far ones. LEAD with and give the most
   detail to Burbank & adjacent items (<~4 mi — Burbank, Magnolia Park, Toluca Lake, North Hollywood,
@@ -445,7 +675,8 @@ ADDITIONAL RULES FOR BURBANK DISPATCH:
 - Reference local landmarks, streets, neighborhoods (Magnolia Park, Media District, studios) when relevant
 - If there's crime news, be respectful of victims but wry about absurdity
 - If nothing happened: write about that too (Burbank being boring is itself material)
-- 1000-2000 words total
+- 2000-4000 words total -- go deeper on every section (more per-story detail, more of your take,
+  more color) rather than just covering more stories
 - Do NOT include a title (added separately)
 - If the news is thin, pad with observations about Burbank life, the weather, the eternal construction""")
     from nova_weather_blurb import weather_forecast_context
@@ -468,9 +699,10 @@ ADDITIONAL RULES FOR BURBANK DISPATCH:
 {scanner_block}
 {flights_block}
 {wifi_ble_block}
+{arrests_block}
 Write your daily Burbank dispatch. Today is {datetime.now().strftime('%A, %B %d, %Y')}."""
 
-    return call_llm(system, user, max_tokens=6000)
+    return call_llm(system, user, max_tokens=10000)
 
 
 def generate_title(article_preview):
@@ -572,12 +804,15 @@ description: "Nova's daily dispatch from Burbank — local news with maximum sar
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main():
-    log("Starting Burbank daily dispatch")
+    dry_run = "--dry-run" in sys.argv
+    log("Starting Burbank daily dispatch" + (" (DRY RUN)" if dry_run else ""))
 
     news = get_local_news(hours=24, limit=50)
     search_results = get_burbank_search(limit=20)
 
-    all_items = news + [{"text": m.get("text", ""), "source": m.get("source", ""), "created_at": ""} for m in search_results]
+    all_items = news + [{"text": m.get("text", ""), "source": m.get("source", ""),
+                          "created_at": m.get("created_at", ""), "metadata": m.get("metadata") or {}}
+                         for m in search_results]
 
     scanner = get_scanner_blotter()   # sanitized airwaves blotter: police+fire+rail, aggregate counts only
     if scanner:
@@ -593,13 +828,30 @@ def main():
         log(f"RF neighborhood: {wifi_ble.get('neighbor_aps')} neighbor APs, "
             f"{wifi_ble.get('ble_devices')} BLE devices")
 
+    ble_patterns = get_bluetooth_patterns()  # recurring unidentified BLE devices, aggregate only
+    if ble_patterns:
+        log(f"BLE patterns: {ble_patterns['candidates']} candidates, {ble_patterns['resident']} resident, "
+            f"{len(ble_patterns['transient_patterned'])} time-patterned, {ble_patterns['transient_random']} random")
+
+    arrests = get_myburbank_arrests(all_items)  # full per-arrest detail from any Police Log post today
+    if arrests:
+        log(f"myBurbank arrests: {len(arrests)} individual arrests extracted")
+
     if len(all_items) < 3:
         log(f"Only {len(all_items)} news items — generating with what we have (may include Burbank observations)")
 
     log(f"Got {len(all_items)} news items")
 
-    article = generate_article(all_items if all_items else [{"text": "No local news today", "source": "none", "created_at": ""}], scanner_blotter=scanner, flights=flights, wifi_ble=wifi_ble)
+    article = generate_article(
+        all_items if all_items else [{"text": "No local news today", "source": "none", "created_at": ""}],
+        scanner_blotter=scanner, flights=flights, wifi_ble=wifi_ble,
+        arrests=arrests, ble_patterns=ble_patterns)
     log(f"Article generated: {len(article)} chars")
+
+    if dry_run:
+        print("\n" + "=" * 80 + "\n" + article + "\n" + "=" * 80)
+        log("Dry run complete — nothing published")
+        return
 
     title = generate_title(article)
     log(f"Title: {title}")
