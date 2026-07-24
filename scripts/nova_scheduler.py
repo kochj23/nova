@@ -143,11 +143,18 @@ def next_cron_time(expr, after, tz_name="America/Los_Angeles"):
     dt = dt.replace(second=0, microsecond=0)
 
     for _ in range(525600):  # max 1 year of minutes
+        # cron day-of-week is Sunday=0..Saturday=6; Python's dt.weekday() is Monday=0..Sunday=6.
+        # Using dt.weekday() directly against a cron field shifts every weekday-constrained job
+        # one day early (a "* * 0" meant for Sunday actually fires Monday) -- harmless for tasks
+        # that just generate whatever's due, but silently kills any task with its own internal
+        # day-gate expecting the day cron claims to run it on (e.g. nova_meta_analysis.py's
+        # "first Sunday of the month" check, which the scheduler was invoking on Mondays).
+        cron_dow = (dt.weekday() + 1) % 7
         if (matches(fields[0], dt.minute, 59) and
             matches(fields[1], dt.hour, 23) and
             matches(fields[2], dt.day, 31) and
             matches(fields[3], dt.month, 12) and
-            matches(fields[4], dt.weekday(), 6)):
+            matches(fields[4], cron_dow, 6)):
             return dt.timestamp()
         dt += timedelta(minutes=1)
 
