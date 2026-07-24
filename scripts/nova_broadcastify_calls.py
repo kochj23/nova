@@ -18,6 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_secrets
+from nova_scanner_correct import correct
 
 API = "https://api.bcfy.io/calls/v1"
 MEM = os.environ.get("MEM_URL", "http://memory-server.digitalnoise.net:18790/remember")
@@ -68,8 +69,13 @@ def _transcribe(audio_bytes, suffix):
     tmp = Path("/tmp/bcfy_call" + suffix)
     tmp.write_bytes(audio_bytes)
     try:
+        # initial_prompt biases the decoder toward dispatch vocabulary at the SOURCE (before
+        # the LLM correction pass) — cheap accuracy win on unit numbers / codes / phonetics.
         segs, _ = _model.transcribe(str(tmp), language="en", vad_filter=True,
-                                    condition_on_previous_text=False, no_speech_threshold=0.6)
+                                    condition_on_previous_text=False, no_speech_threshold=0.6,
+                                    initial_prompt="Police and fire dispatch radio. Unit callsigns, "
+                                    "penal codes (187 211 415 10-4 code 3 11-99), phonetic alphabet, "
+                                    "cross streets, and vehicle plates.")
         good = [s.text.strip() for s in segs
                 if getattr(s, "no_speech_prob", 0.0) < 0.6 and getattr(s, "avg_logprob", -1.0) > -1.0]
         return " ".join(good).strip()
@@ -78,9 +84,10 @@ def _transcribe(audio_bytes, suffix):
         except OSError: pass
 
 
-def _remember(text, source, label, gid, ts):
+def _remember(text, source, label, gid, ts, correction_confidence=None):
     meta = {"kind": source, "channel": label, "source_feed": f"bcfy-calls/{gid}",
-            "receiver": "broadcastify-calls", "call_ts": ts, "location": "Burbank/Glendale (Verdugo dispatch)"}
+            "receiver": "broadcastify-calls", "call_ts": ts, "location": "Burbank/Glendale (Verdugo dispatch)",
+            "corrected": correction_confidence is not None, "correction_confidence": correction_confidence}
     data = json.dumps({"text": f"[{label}] {text}", "source": source, "metadata": meta}).encode()
     try:
         urllib.request.urlopen(urllib.request.Request(MEM + "?async=1", data=data,
@@ -121,8 +128,13 @@ def main():
                         newest = max(newest, c["ts"]); continue
                     text = _transcribe(audio, suffix)
                     if text and len(text) > MINLEN:
-                        _remember(text, source, label, gid, c["ts"])
-                        print(f"[{time.strftime('%H:%M:%S')}] {label} :: {text[:90]}", flush=True)
+                        # LLM auto-correct scanner jargon (unit#/penal codes/phonetics) before
+                        # storing — dispatch garble is predictable and mostly recoverable.
+                        # domain = the memory source (scanner/fire/rail). Best-effort: on any
+                        # failure correct() returns the raw text with confidence None.
+                        text, conf = correct(text, source)
+                        _remember(text, source, label, gid, c["ts"], correction_confidence=conf)
+                        print(f"[{time.strftime('%H:%M:%S')}] {label} (c={conf}) :: {text[:90]}", flush=True)
                 except Exception as e:
                     print(f"[bcfy-calls] {gid} call {c.get('ts')} err: {e}", flush=True)
                 newest = max(newest, c["ts"])
