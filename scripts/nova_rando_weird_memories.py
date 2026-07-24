@@ -70,7 +70,7 @@ IMAGES_DIR = HUGO_ROOT / "static/images/operations"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_rando_weird.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-haiku-4.5"
-PG_DSN = "dbname=nova_memories user=kochj"
+PG_DSN = "dbname=nova_memories user=kochj host=192.168.1.6"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 

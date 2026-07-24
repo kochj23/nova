@@ -23,11 +23,13 @@ def claude_generate(user: str, system: str | None = None,
     cmd = ["claude", "-p"]
     if model:
         cmd += ["--model", model]
-    cmd.append(prompt)
+    # Prompt goes over stdin, not argv -- a big prompt (e.g. fishbowl channel churn data)
+    # blows past the OS's execve() arg+env size limit as a CLI argument ("Argument list
+    # too long"), silently aborting the generation. stdin has no such limit.
     # launchd-safe: force HOME so `claude` finds its auth (~/.claude)
     env = {**os.environ, "HOME": os.path.expanduser("~")}
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout,
-                       stdin=subprocess.DEVNULL, env=env)
+    r = subprocess.run(cmd, input=prompt, capture_output=True, text=True, timeout=timeout,
+                       env=env)
     out = (r.stdout or "").strip()
     if not out:
         raise RuntimeError(f"claude -p empty/failed (rc={r.returncode}): {(r.stderr or '')[:200]}")
