@@ -28,7 +28,7 @@ import psycopg2.extras
 # Connects via the default Unix socket. If PostgreSQL is on a non-standard
 # socket dir, set PGHOST to the socket directory path.
 
-DSN = "dbname=nova_media"
+DSN = "dbname=nova_media user=kochj host=pg-primary.digitalnoise.net"
 
 
 @contextlib.contextmanager

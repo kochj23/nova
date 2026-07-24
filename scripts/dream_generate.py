@@ -228,7 +228,7 @@ def _pg_connect():
         return pg8000.connect(database="nova_memories")
     elif HAS_PG:
         import psycopg2
-        return psycopg2.connect("dbname=nova_memories")
+        return psycopg2.connect("dbname=nova_memories user=kochj host=pg-primary.digitalnoise.net")
     return None
 
 

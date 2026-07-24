@@ -187,6 +187,17 @@ tasks:
     timeout: 120
     overlap: skip
 
+  dns_sync:
+    # Nova-DNS: UniFi clients -> sticky PG names (dns_records) -> BIND zone on .2/.86.
+    # .6-bound: reads UniFi API key + TSIG secret from this Mac's Keychain.
+    # Was previously UNSCHEDULED — the zone only updated when someone ran it by hand,
+    # which is how the fleet's canonical names drifted (2026-07-24 "which IP is
+    # nova-core2" episode). Canonical fleet names live in dns_records with locked=true.
+    script: nova_dns_sync.py
+    schedule: every 1h
+    timeout: 120
+    overlap: skip
+
   storage_metrics:
     script: nova_storage_metrics.py
     enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)

@@ -106,7 +106,7 @@ MAX_NEW_PER_CHANNEL  = 5   # cap per channel per night — prevents a new 1000-e
 VIDEO_EXTS = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".m4v", ".wmv", ".flv"}
 
 # DB constants
-DSN = "dbname=nova_media"
+DSN = "dbname=nova_media user=kochj host=pg-primary.digitalnoise.net"
 
 # ── Graceful SIGTERM handling ─────────────────────────────────────────────────
 

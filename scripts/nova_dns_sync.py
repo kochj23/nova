@@ -27,17 +27,22 @@ import psycopg2
 DOMAIN = "digitalnoise.net"
 DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
 UNIFI = "https://192.168.1.1/proxy/network/api/s/default"
-BIND_PRIMARY = "192.168.1.138"
+BIND_PRIMARY = "192.168.1.2"   # nova-core wired; was .138 (same box's WIFI ip — fragile)
 TSIG_KEY_NAME = "nova-dns-key"
 
 # Static service aliases — re-point these on failover (one record, not a sed sweep).
 # NOTE: "ollama"/"cluster" deliberately excluded — owned by nova_lb.py (health-driven).
+# Corrected 2026-07-24: pg-primary pointed at .138 = nova-core = a pg17 REPLICA (real
+# primary is mac-studio .6, per cluster-active-active: "do NOT repoint to replica"),
+# and nova-gw pointed at .6 (gateway moved to .2 on 2026-07-13). Both were silently wrong.
 SERVICE_ALIASES = {
-    "pg-primary": "192.168.1.138",
-    "grafana":    "192.168.1.138",
-    "nova-gw":    "192.168.1.6",
-    "unas":       "192.168.1.69",
-    "nas":        "192.168.1.11",
+    "pg-primary":       "192.168.1.6",    # PG primary (mac-studio) — replicas on .2/.7/.10
+    "memory-server":    "192.168.1.6",    # :18790 vector memory API
+    "grafana":          "192.168.1.2",    # nova-core wired (was its wifi ip)
+    "inference-router": "192.168.1.2",    # :37475 fleet LLM proxy
+    "nova-gw":          "192.168.1.2",    # Gateway V2 :18792 (migrated off .6 2026-07-13)
+    "unas":             "192.168.1.69",
+    "nas":              "192.168.1.11",
 }
 
 # Real PUBLIC subdomains (Cloudflare Tunnel + GitHub Pages) that live under this same

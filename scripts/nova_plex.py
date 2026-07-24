@@ -56,6 +56,7 @@ LOG_FILE = "/tmp/nova-plex.log"
 VECTOR_URL = nova_config.VECTOR_URL
 
 TV_DIR = Path("/Volumes/external/videos/TVShows")
+YOUTUBE_DIR = Path("/Volumes/external/videos/youtube")
 MOVIE_DIR = Path("/Volumes/external/videos/Ripped Movies")
 
 PLAYING_FILE = WORKSPACE / "plex_playing.json"
@@ -468,7 +469,9 @@ def cmd_sync(args):
 
     disk_tv = set()
     if TV_DIR.exists():
-        disk_tv = {d.name.lower().strip() for d in TV_DIR.iterdir() if d.is_dir()}
+        disk_tv |= {d.name.lower().strip() for d in TV_DIR.iterdir() if d.is_dir()}
+    if YOUTUBE_DIR.exists():
+        disk_tv |= {d.name.lower().strip() for d in YOUTUBE_DIR.iterdir() if d.is_dir()}
     disk_movies = set()
     if MOVIE_DIR.exists():
         disk_movies = {d.name.lower().strip() for d in MOVIE_DIR.iterdir() if d.is_dir() or d.suffix in (".mkv", ".mp4", ".avi", ".m4v")}
@@ -701,7 +704,7 @@ def cmd_filmschool(args):
 
     try:
         import psycopg2
-        conn = psycopg2.connect("dbname=nova_memories")
+        conn = psycopg2.connect("dbname=nova_memories user=kochj host=pg-primary.digitalnoise.net")
         conn.set_session(readonly=True, autocommit=True)
         cur = conn.cursor()
     except Exception as e:

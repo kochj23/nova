@@ -34,7 +34,7 @@ LOG_FILE = Path.home() / ".openclaw/logs/nova_local_burbank.log"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 ARTICLE_MODEL = "anthropic/claude-haiku-4.5"
 IMAGE_MODEL = "openai/gpt-5-image"
-PG_DSN = "dbname=nova_memories user=kochj host=192.168.1.6"
+PG_DSN = "dbname=nova_memories user=kochj host=pg-primary.digitalnoise.net"
 NOVA_OPS_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
