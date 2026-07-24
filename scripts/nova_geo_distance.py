@@ -21,7 +21,7 @@ import urllib.request
 import psycopg2
 
 HOME_LAT, HOME_LON = 34.1679024, -118.3148472       # 508 S Glenwood Pl, Burbank CA 91506
-DSN = "host=localhost dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
 UA = "nova-geo/1.0 (home scanner enrichment; kochj)"
 # LA-county-ish viewbox (lon_w, lat_s, lon_e, lat_n) — bound geocoding so garble doesn't match Kansas

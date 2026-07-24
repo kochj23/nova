@@ -29,7 +29,7 @@ from nova_notify import notify as nova_notify
 BIRD_CACHE = Path.home() / "Library/Caches/CloudKit/com.apple.bird"
 THRESHOLD_GB = 50          # purge if bird cache exceeds this
 LOG = Path.home() / ".openclaw/logs/cloudkit_cache_watchdog.log"
-DB = "host=localhost dbname=nova_ops user=kochj"
+DB = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 
 def log(msg: str):

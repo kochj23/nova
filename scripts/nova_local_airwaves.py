@@ -15,7 +15,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_journal as nj
 import nova_voice
 
-MEM_DSN = "host=localhost dbname=nova_memories user=kochj"
+MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 
 # source -> (beat label, is it live yet)
 BEATS = [

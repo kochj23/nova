@@ -34,9 +34,9 @@ from nova_notify import notify
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-OPS_DSN = "postgresql://kochj@192.168.1.2:5432/nova_ops"
-MEMORIES_DSN = "postgresql://kochj@192.168.1.2:5432/nova_memories"
-MEMORY_SERVER = "http://192.168.1.6:18790"
+OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+MEMORIES_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
+MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
 STATE_DIR = Path.home() / ".openclaw" / "workspace" / "state"
 STATE_FILE = STATE_DIR / "proactive_brief_state.json"
 LOOKBACK_HOURS = 2

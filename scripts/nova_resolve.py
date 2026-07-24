@@ -18,7 +18,7 @@ import time
 import random
 import threading
 
-_PG_DSN = "dbname=nova_ops user=kochj host=127.0.0.1"
+_PG_DSN = "dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net"
 _CACHE_TTL = 30
 _cache = {}
 _cache_lock = threading.Lock()

@@ -36,7 +36,7 @@ CONFIG_PATHS = [
 
 DEFAULT_CONFIG = {
     "node_name": socket.gethostname().split(".")[0],
-    "pg_dsn": "dbname=nova_ops user=kochj host=192.168.1.6",
+    "pg_dsn": "dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net",
     "heartbeat_interval": 15,
     "port": 37470,
     "peer": None,

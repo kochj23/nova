@@ -38,7 +38,7 @@ import nova_config
 PID_FILE = Path("/tmp/nova_ingest_daemon.pid")
 POLL_INTERVAL = 60  # seconds
 INGEST_SCRIPT = Path.home() / ".openclaw/scripts/nova_ingest.py"
-DB_DSN = "postgresql://kochj@192.168.1.6:5432/nova_ops"
+DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 
 LOG_DIR = Path.home() / ".openclaw/logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)

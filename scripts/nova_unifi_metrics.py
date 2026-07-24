@@ -43,7 +43,7 @@ CONTROLLER_IP = "192.168.1.1"
 CONTROLLER_BASE = f"https://{CONTROLLER_IP}"
 SITE = "default"
 API_BASE = f"{CONTROLLER_BASE}/proxy/network/api/s/{SITE}"
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 NOW = datetime.now(timezone.utc)
 
@@ -63,10 +63,20 @@ def log(msg):
 
 
 def get_api_key():
-    """Load UniFi API key from macOS Keychain (cached)."""
+    """Load UniFi API key: nova_secrets (Linux/nova-core) first, macOS
+    Keychain fallback (so this still works if ever run on .6)."""
     global _API_KEY
     if _API_KEY is not None:
         return _API_KEY
+    try:
+        sys.path.insert(0, "/opt/nova")
+        import nova_secrets
+        key = nova_secrets.get_secret("nova-unifi-api-key")
+        if key:
+            _API_KEY = key
+            return key
+    except Exception as e:
+        log(f"nova_secrets lookup failed: {e}")
     try:
         result = subprocess.run(
             ["security", "find-generic-password", "-a", "nova",
@@ -79,7 +89,7 @@ def get_api_key():
             return key
     except Exception as e:
         log(f"Keychain lookup failed: {e}")
-    log("ERROR: UniFi API key not found in Keychain "
+    log("ERROR: UniFi API key not found in nova_secrets or Keychain "
         "(service=nova-unifi-api-key, account=nova)")
     return None
 

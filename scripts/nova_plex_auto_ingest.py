@@ -31,7 +31,7 @@ from nova_notify import notify as nova_notify
 
 from nova_resolve import resolve_url
 PLEX_URL = resolve_url("plex")
-MEMORY_URL = "http://192.168.1.6:18790/remember?async=1"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember?async=1"
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 MLX_WHISPER = "/opt/homebrew/bin/mlx_whisper"
 WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"

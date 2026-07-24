@@ -35,7 +35,7 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 ARTICLE_MODEL = "anthropic/claude-haiku-4.5"
 IMAGE_MODEL = "openai/gpt-5-image"
 PG_DSN = "dbname=nova_memories user=kochj host=pg-primary.digitalnoise.net"
-NOVA_OPS_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+NOVA_OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -123,7 +123,7 @@ def get_burbank_search(limit=30, hours=36):
     """
     try:
         resp = urllib.request.urlopen(
-            f"http://192.168.1.6:18790/recall?q=Burbank+California+local+news+today&n={limit}&source=local_burbank",
+            f"http://memory-server.digitalnoise.net:18790/recall?q=Burbank+California+local+news+today&n={limit}&source=local_burbank",
             timeout=10
         )
         data = json.loads(resp.read())
@@ -327,7 +327,7 @@ def get_wifi_ble_summary(hours=24):
         neighbor_aps = our_aps = open_aps = None
 
     try:
-        conn = psycopg2.connect("host=127.0.0.1 dbname=nova_ops user=kochj")
+        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
         cur = conn.cursor()
         cur.execute("""
             SELECT count(DISTINCT device_mac) FROM telemetry.bluetooth

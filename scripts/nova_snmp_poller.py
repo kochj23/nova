@@ -19,6 +19,7 @@ Written by Jordan Koch.
 import asyncio
 import json
 import os
+import re
 import signal
 import subprocess
 import sys
@@ -42,7 +43,7 @@ import nova_config
 VERSION = "1.1.0"
 HTTP_PORT = 37463
 BIND_ADDR = "0.0.0.0"
-DB_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_snmp_poller.log"
 
 FAST_INTERVAL = 60
@@ -114,11 +115,13 @@ DEVICES = [
     {"ip": "192.168.1.50",  "name": "sw-patio-16p",      "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.54",  "name": "sw-jordan-8p",      "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.59",  "name": "sw-kitchen-8p",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
-    {"ip": "192.168.1.78",  "name": "sw-rack13-16p",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.80",  "name": "sw-livingroom-8p",  "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.102", "name": "sw-garage-desk-8p", "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
-    {"ip": "192.168.1.122", "name": "sw-rack15-agg-8p",  "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.124", "name": "sw-dining-8p",      "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    # 2026-07-20: sw-rack13-16p (.78) and sw-rack15-agg-8p (.122) physically
+    # removed, replaced by this one 48-port aggregation switch (confirmed via
+    # live UniFi controller: 192.168.1.24, USW Pro 48 PoE, adopted+online).
+    {"ip": "192.168.1.24",  "name": "sw-rack-agg-48p",   "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.155", "name": "sw-jordan-poe-8p",  "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.174", "name": "sw-jordan-16p",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.193", "name": "sw-garage-8p-150w", "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
@@ -288,8 +291,8 @@ WALK_OIDS = {
 
 IFACE_FULL_WALK = {
     # UniFi switches — per-port traffic is the headline metric
-    "sw-patio-16p", "sw-jordan-8p", "sw-kitchen-8p", "sw-rack13-16p",
-    "sw-livingroom-8p", "sw-garage-desk-8p", "sw-rack15-agg-8p", "sw-dining-8p",
+    "sw-patio-16p", "sw-jordan-8p", "sw-kitchen-8p",
+    "sw-livingroom-8p", "sw-garage-desk-8p", "sw-rack-agg-48p", "sw-dining-8p",
     "sw-jordan-poe-8p", "sw-jordan-16p", "sw-garage-8p-150w",
     # UniFi APs — wired uplink + radio interfaces
     "ap-office-u6e", "ap-kitchen-u6e", "ap-garage-u6e",
@@ -498,6 +501,14 @@ def _parse_snmp_value(val):
             return float(m)
         except ValueError:
             return None
+    # Bare -Oqv timeticks format (no "Timeticks:"/parens at all): "D:HH:MM:SS.ss"
+    # e.g. "2:18:27:25.00". Convert back to raw ticks (hundredths of a second)
+    # so it's the same unit as the "Timeticks: (raw)" branch above.
+    m = re.match(r'^(\d+):(\d{1,2}):(\d{1,2}):(\d{1,2}(?:\.\d+)?)$', val)
+    if m:
+        d, h, mi, s = m.groups()
+        total_seconds = int(d) * 86400 + int(h) * 3600 + int(mi) * 60 + float(s)
+        return total_seconds * 100
     # Values with unit suffixes: "3339584 kB", "100 Mbps"
     parts = val.split()
     if parts:
@@ -1026,7 +1037,15 @@ async def handle_health(request):
     pool = await get_pool()
     try:
         async with pool.acquire() as conn:
-            count = await conn.fetchval("SELECT COUNT(*) FROM snmp_metrics")
+            # Approximate count from catalog stats, not a live COUNT(*) — this
+            # table is 60M+ rows, an exact count needs a full scan every call.
+            # Found 2026-07-21: this endpoint's COUNT(*)+MAX(timestamp) alone
+            # accounted for 31% of ALL database time fleet-wide, called on
+            # every health check. reltuples is updated by autovacuum/ANALYZE;
+            # close enough for a status display, not used for anything exact.
+            count = await conn.fetchval(
+                "SELECT reltuples::bigint FROM pg_class WHERE oid = 'snmp_metrics'::regclass"
+            )
             latest = await conn.fetchval(
                 "SELECT MAX(timestamp) FROM snmp_metrics"
             )

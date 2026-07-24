@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_yt_ingest_watch import CHANNELS
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 YTDLP = "/opt/homebrew/bin/yt-dlp"
 MIN_MESSAGES = 5
 MIN_SUPERCHATS = 1

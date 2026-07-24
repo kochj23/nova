@@ -31,7 +31,7 @@ except ImportError:
     def format_infra_brief(ctx): return ""
 
 
-VECTOR_MEM_URL = "http://192.168.1.6:18790/remember"
+VECTOR_MEM_URL = "http://memory-server.digitalnoise.net:18790/remember"
 
 
 def vector_remember(text: str, source: str = "nightly", metadata: dict = None):

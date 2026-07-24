@@ -27,7 +27,7 @@ from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-PG_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+PG_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 LOG_DIR = Path.home() / ".openclaw/logs"
 SCRIPTS_DIR = Path.home() / ".openclaw/scripts"
 BRIDGE_SESSION_ID = "claude-bridge-persistent"
@@ -293,7 +293,7 @@ def _suggest_fix(service_name: str, issue_description: str) -> list:
     if "dead-letter" in desc_lower or "embedding" in desc_lower:
         suggestions.append("Run dead letter replay: python3 ~/.openclaw/scripts/nova_dead_letter_replay.py")
         suggestions.append("Check Ollama embed model: curl http://127.0.0.1:11434/api/ps")
-        suggestions.append("Check Memory Server health: curl http://192.168.1.6:18790/health")
+        suggestions.append("Check Memory Server health: curl http://memory-server.digitalnoise.net:18790/health")
 
     # Signal
     if "signal" in desc_lower:

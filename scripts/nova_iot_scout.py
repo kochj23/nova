@@ -32,7 +32,7 @@ import psycopg2
 import nova_journal as nj
 import nova_voice
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # Her home-automation wheelhouse — the only lenses worth her attention. Each is a GitHub topic.
 THEMES = [

@@ -23,7 +23,7 @@ from pathlib import Path
 
 import psycopg2
 
-DSN = "host=localhost dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 VENV = Path.home() / "osint-venv/bin"
 
 

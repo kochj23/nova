@@ -20,7 +20,7 @@ gate problem can never mute a real alert or crash the notifier.
 import sys, json, argparse
 from datetime import datetime, timedelta, timezone
 
-_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 SERVICE, KEY = "nova", "maintenance_mode"
 
 # Categories whose Slack routing is muted while a window is active (event still logged).

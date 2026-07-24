@@ -40,7 +40,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_notify
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # ── MASTER SAFETY SWITCH ──────────────────────────────────────────────────────
 # False -> engine PROPOSES only and executes NOTHING (not even 'safe' steps).

@@ -29,7 +29,7 @@ try:
 except Exception:
     notify = None
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 ROOT = "/Volumes/NAS"
 PROTECTED_DIRS = {"GoogleDriveBackups", "Google-Drive-kochjpar",
                   "Shared Google Drives",   # work data + Google-synced

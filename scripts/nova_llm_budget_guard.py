@@ -49,7 +49,7 @@ def ceiling_for(day_state, today, usage):
 def load_state():
     try:
         import psycopg2
-        c = psycopg2.connect("host=localhost dbname=nova_ops user=kochj"); cur = c.cursor()
+        c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"); cur = c.cursor()
         cur.execute("SELECT value FROM service_config WHERE service='nova' AND key='llm_budget'")
         row = cur.fetchone(); c.close()
         return row[0] if row else {}
@@ -59,7 +59,7 @@ def load_state():
 
 def save_state(st):
     import psycopg2
-    c = psycopg2.connect("host=localhost dbname=nova_ops user=kochj"); cur = c.cursor()
+    c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"); cur = c.cursor()
     cur.execute("""INSERT INTO service_config (service,key,value) VALUES ('nova','llm_budget',%s)
                    ON CONFLICT (service,key) DO UPDATE SET value=EXCLUDED.value""", (json.dumps(st),))
     c.commit(); c.close()

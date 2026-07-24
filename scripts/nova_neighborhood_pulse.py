@@ -15,7 +15,7 @@ import psycopg2.extras
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_notify import notify
 
-MEM_DSN = "host=localhost dbname=nova_memories user=kochj"
+MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 COMPASS = {"N": "north", "NE": "northeast", "E": "east", "SE": "southeast",
            "S": "south", "SW": "southwest", "W": "west", "NW": "northwest"}
 

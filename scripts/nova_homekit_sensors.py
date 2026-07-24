@@ -20,7 +20,7 @@ from pathlib import Path
 import psycopg2
 
 HOMEKIT_URL = "http://127.0.0.1:37433/api/accessories"
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 SOURCE = "homekit"
 
 # HomeKit room name -> Nova canonical room. Anything unmapped is slugified.

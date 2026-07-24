@@ -27,7 +27,7 @@ from pathlib import Path
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-PG_DSN = "dbname=nova_ops host=127.0.0.1 port=5432 user=kochj"
+PG_DSN = "dbname=nova_ops host=pg-primary.digitalnoise.net port=5432 user=kochj"
 REDIS_HOST = "127.0.0.1"
 REDIS_PORT = 6379
 BRIDGE_SESSION_ID = "claude-bridge-persistent"

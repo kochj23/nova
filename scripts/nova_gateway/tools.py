@@ -753,7 +753,7 @@ async def _tool_ops_query(ctx: GatewayContext, params: dict) -> str:
     sql = _OPS_QUERIES[domain].format(limit=limit)
 
     try:
-        conn = psycopg2.connect("host=localhost dbname=nova_ops user=kochj")
+        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
         conn.set_session(readonly=True)
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute(sql)

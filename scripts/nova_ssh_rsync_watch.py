@@ -23,7 +23,7 @@ SYN = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "kochj@192.168.1
 UNAS = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", "root@192.168.1.69"]
 LOG = "/volume1/homes/kochj/nova_direct_rsync.log"
 UPATH = "/volume/b37f2e84-517c-4a4f-92f0-4d642527ba17/.srv/.unifi-drive/nas"
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 HEARTBEAT_S = 1800
 POLL_S = 120
 MAX_S = 14 * 3600

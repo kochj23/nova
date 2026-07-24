@@ -34,7 +34,7 @@ from nova_notify import notify
 import psycopg2
 import psycopg2.extras
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 POLL_INTERVAL = 30
 CONFIDENCE_THRESHOLD = 0.5
 PORT = 37472
@@ -73,7 +73,7 @@ def _annotate_grafana(text, tags):
             "time": int(time.time() * 1000),
         }).encode()
         req = urllib.request.Request(
-            "http://192.168.1.7:3000/api/annotations",
+            "http://192.168.1.2:3000/api/annotations",
             data=payload,
             headers={
                 "Content-Type": "application/json",
@@ -391,7 +391,7 @@ def seed_patterns():
             "pattern_name": "memory_server_restart",
             "trigger_condition": {"service_down": "memory-server", "port": 18790},
             "fix_action": {"type": "restart", "service": "net.digitalnoise.nova-memory-server",
-                          "health_check_url": "http://192.168.1.6:18790/health"},
+                          "health_check_url": "http://memory-server.digitalnoise.net:18790/health"},
             "confidence": 0.9,
             "created_by": "claude",
         },

@@ -17,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_journal as nj
 import nova_voice
 
-OPS_DSN = "host=localhost dbname=nova_ops user=kochj"
+OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 
 def q(cur, sql, args=None):
@@ -74,9 +74,9 @@ def main():
         "- Cover the scan RUNS: host rootkit/integrity scans (rkhunter, chkrootkit, aide) per machine, the Strix "
         "purple-team pentest, and Wazuh. Say which machines scanned and their status.\n"
         "- Call out anything REAL. DISMISS known false positives plainly: chkrootkit's 'basename'/'bindshell' noise. "
-        "NOTE: 192.168.1.2 = 'nova-core', the ACTIVE consolidated core (gateway/PG/scheduler migrated there 2026-07-14). "
-        "It is NOT the retired 'lts01' (that old host is gone); do NOT describe .2 or nova-core as retired, stale, or a "
-        "zombie — its scan results are live and real.\n"
+        "Do not describe nova-core as retired, stale, or a zombie — its scan results are live and real. "
+        "(See CURRENT FACTS below for what 192.168.1.2 actually is — that's shared across every script now, "
+        "not just this one.)\n"
         "- Then the overnight Wazuh event picture, any new vendor CVEs affecting our gear, open security-queue items, "
         "and remediations taken.\n"
         "- Honest and precise. Dry wit, not a thriller. If it was a clean night, a short clean report is the right report.\n"
@@ -111,6 +111,10 @@ def main():
         img = nj.generate_image(ip, width=1024, height=768, section="operations")
     except Exception as e:
         nj.log(f"[ops-security] image gen failed (non-fatal): {e}")
+
+    snap = nj.grafana_panel_image("nova-security", 8, "operations", "sec-ops-high-severity")
+    if snap:
+        body += f"\n\n---\n\n**Recent high-severity events at publish time:**\n\n![Recent high-severity events]({snap})"
 
     tags = ["operations", "security", "scans", "daily"]
     desc = "Nova's daily morning security-operations report — overnight scan health + posture across the fleet."

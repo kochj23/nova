@@ -43,7 +43,7 @@ def _protected(src: str) -> bool:
     dreams/art). Provenance wins over topical similarity for these."""
     return bool(src) and (nova_config.is_private_source(src) or src in INTERNAL_SOURCES)
 
-DSN = "host=localhost dbname=nova_memories user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 MIN_TARGET = 200       # only vectors with >= this many members are reassignment targets
 MARGIN = 0.05          # move only if clearly closer to another centroid (cosine margin)
 HOMELESS_SIM = 0.30    # best cosine sim below this => homeless (new-vector candidate)
@@ -51,7 +51,7 @@ NEW_VECTOR_MIN = 500   # only mint a new vector for a homeless cluster >= this s
 BATCH = 20000
 STATUS_EVERY = 100000
 HOMELESS_CAP = 300000  # bound memory for the homeless-embedding buffer
-VECTOR_URL = "http://192.168.1.6:18790"
+VECTOR_URL = "http://memory-server.digitalnoise.net:18790"
 OUT = Path.home() / ".openclaw/workspace/journal/operations"
 LOG = Path.home() / ".openclaw/logs/memory_reclassify.log"
 

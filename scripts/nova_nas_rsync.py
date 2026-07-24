@@ -30,7 +30,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_notify import notify
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 SYNOLOGY_IP = "192.168.1.11"
 SYNOLOGY_USER = "kochj"
 SSH_OPTS = "-o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"

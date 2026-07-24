@@ -32,7 +32,7 @@ except Exception:
     def notify(*a, **k):
         return False
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 INTERVAL_S = 120
 HEALTH_STALE_S = 600       # health_checks not written in 10m -> health writer dead
 CAPACITY_STALE_S = 1800    # capacity_snapshots not written in 30m -> capacity poller dead

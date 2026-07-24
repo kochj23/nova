@@ -36,7 +36,7 @@ import nova_config
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-OPS_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 REDIS_URL = "redis://192.168.1.6:6379"
 CORRELATED_STREAM = "nova:correlated:events"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_zone_correlator.log"

@@ -13,7 +13,7 @@ from unittest.mock import MagicMock, patch
 
 _nova_cfg = MagicMock()
 _nova_cfg.SLACK_NOTIFY = "#nova-notifications"
-_nova_cfg.VECTOR_URL = "http://192.168.1.6:18790/remember"
+_nova_cfg.VECTOR_URL = "http://memory-server.digitalnoise.net:18790/remember"
 sys.modules["nova_config"] = _nova_cfg
 
 _nova_logger = MagicMock()

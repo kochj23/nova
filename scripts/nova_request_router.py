@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import psycopg2
 import psycopg2.extras
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 PORT = 37473
 
 # ── Routing Rules ────────────────────────────────────────────────────────────

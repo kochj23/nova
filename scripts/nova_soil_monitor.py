@@ -19,7 +19,7 @@ import psycopg2
 sys.path.insert(0, os.path.expanduser("~/.openclaw/scripts"))
 import nova_notify
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 SOURCE = "nova-soil-monitor"
 
 # sensor -> (label, low_pct, crit_pct)

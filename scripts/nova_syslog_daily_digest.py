@@ -27,8 +27,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_notify import notify
 
-OPS_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
-MEMORY_URL = "http://192.168.1.6:18790/remember"
+OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
 LOG_FILE = Path.home() / ".openclaw/logs/syslog_daily_digest.log"
 
 

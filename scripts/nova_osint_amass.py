@@ -23,7 +23,7 @@ import psycopg2.extras
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_notify import notify
 
-DSN = "host=localhost dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 LOG_FILE = Path.home() / ".openclaw/logs/osint_amass.log"
 AMASS = str(Path.home() / "go/bin/amass")
 DOMAINS = ["digitalnoise.net", "nova.digitalnoise.net"]

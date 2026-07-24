@@ -60,9 +60,9 @@ def _timing(label: str, t0: float):
     _log.debug(f"Memory: {label} took {elapsed:.2f}s")
 
 
-RECALL_URL       = "http://192.168.1.6:18790/recall"
-RECALL_BATCH_URL = "http://192.168.1.6:18790/recall_batch"
-SEARCH_URL       = "http://192.168.1.6:18790/search"
+RECALL_URL       = "http://memory-server.digitalnoise.net:18790/recall"
+RECALL_BATCH_URL = "http://memory-server.digitalnoise.net:18790/recall_batch"
+SEARCH_URL       = "http://memory-server.digitalnoise.net:18790/search"
 RECALL_COUNT = 8
 SEARCH_COUNT = 5
 

@@ -19,13 +19,13 @@ from pathlib import Path
 import urllib.request
 import urllib.error
 
-SAM_FACES_DIR = "/Volumes/nas/nova/Nova/skills/sam-faces/sam_faces"
+SAM_FACES_DIR = str(Path.home() / ".openclaw/skills/sam-faces/sam_faces")
 
 WORKSPACE = Path.home() / ".openclaw/workspace"
 FACES_DIR = WORKSPACE / "faces"
 UNKNOWN_DIR = FACES_DIR / "unknown"
 CAMERA_FRAMES = WORKSPACE / "camera_frames"
-MEMORY_URL = "http://192.168.1.6:18790"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 SLACK_API = "https://slack.com/api"
 
 def log(msg):

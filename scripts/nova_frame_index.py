@@ -12,7 +12,7 @@ Usage: nova_frame_index.py <video> [--show "Name"] [--frames N]
 import os, sys, json, base64, subprocess, tempfile, urllib.request, argparse
 
 OLLAMA = "http://127.0.0.1:11434"
-MEMORY = "http://192.168.1.6:18790"
+MEMORY = "http://memory-server.digitalnoise.net:18790"
 VLM    = os.environ.get("FVS_VLM", "qwen2.5vl:3b")
 
 
@@ -31,10 +31,11 @@ def duration(video):
 
 def show_from_path(video):
     parts = os.path.abspath(video).split(os.sep)
-    if "TVShows" in parts:
-        i = parts.index("TVShows")
-        if i + 1 < len(parts):
-            return parts[i + 1]
+    for root in ("TVShows", "youtube"):
+        if root in parts:
+            i = parts.index(root)
+            if i + 1 < len(parts):
+                return parts[i + 1]
     return os.path.splitext(os.path.basename(video))[0]
 
 

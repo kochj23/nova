@@ -17,7 +17,7 @@ from contextlib import closing
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-PG_DSN = "host=localhost dbname=nova_ops user=kochj"
+PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 OLLAMA = "http://127.0.0.1:11434/api/chat"
 MODEL = "qwen3-vl:4b"
 

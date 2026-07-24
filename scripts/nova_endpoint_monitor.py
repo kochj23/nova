@@ -36,7 +36,7 @@ except ImportError as e:
 
 VERSION = "1.0.0"
 HTTP_PORT = 37469
-DB_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_endpoint_monitor.log"
 
 FIM_INTERVAL = 300         # 5 min

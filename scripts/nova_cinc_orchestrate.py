@@ -38,7 +38,7 @@ from nova_notify import notify as nova_notify
 CINC_BASE = Path("/Volumes/Data/AI/cinc")
 COOKBOOKS = CINC_BASE / "cookbooks"
 NODES_DIR = CINC_BASE / "nodes"
-DB_DSN = "dbname=nova_ops user=kochj host=127.0.0.1"
+DB_DSN = "dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net"
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=accept-new"]
 REMOTE_BASE = "/opt/nova-config"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_orchestrate.log"

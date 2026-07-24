@@ -18,8 +18,8 @@ import nova_config
 import nova_journal as nj
 import nova_voice
 
-MEM_DSN = "host=localhost dbname=nova_memories user=kochj"
-OPS_DSN = "host=localhost dbname=nova_ops user=kochj"
+MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # The cast. They all feud/ally with each other in the same scene — linked in `fishbowl`.
 PEOPLE = [
@@ -159,7 +159,7 @@ def remember_dossier(name, summary):
                           "tier": "long_term", "metadata": {"type": "person_summary", "person": name,
                                                             "author": "nova", "privacy": "private"}}).encode()
     try:
-        req = urllib.request.Request("http://192.168.1.6:18790/remember?async=1", data=payload,
+        req = urllib.request.Request("http://memory-server.digitalnoise.net:18790/remember?async=1", data=payload,
                                      headers={"Content-Type": "application/json"}, method="POST")
         urllib.request.urlopen(req, timeout=20)
     except Exception as e:

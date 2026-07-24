@@ -26,7 +26,7 @@ import nova_media_registry as registry
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-BASE_DIR       = Path("/Volumes/external/videos/TVShows")
+BASE_DIR       = Path("/Volumes/external/videos/youtube")
 VIDEO_ROOT     = Path("/Volumes/external/videos")   # full root for non-YT scan
 YT_DLP         = "/opt/homebrew/bin/yt-dlp"
 CHANNELS_CACHE  = Path.home() / ".openclaw/cache/yt_channels.json"

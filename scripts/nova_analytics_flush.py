@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from nova_logger import log, LOG_INFO, LOG_ERROR
 
 REDIS_URL = "redis://192.168.1.6:6379"
-PG_DSN = "host=192.168.1.6 dbname=nova_ops user=kochj"
+PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 STREAM_KEY = "analytics:events"
 BATCH_SIZE = 1000
 

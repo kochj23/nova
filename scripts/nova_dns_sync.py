@@ -32,12 +32,14 @@ TSIG_KEY_NAME = "nova-dns-key"
 
 # Static service aliases — re-point these on failover (one record, not a sed sweep).
 # NOTE: "ollama"/"cluster" deliberately excluded — owned by nova_lb.py (health-driven).
-# Corrected 2026-07-24: pg-primary pointed at .138 = nova-core = a pg17 REPLICA (real
-# primary is mac-studio .6, per cluster-active-active: "do NOT repoint to replica"),
-# and nova-gw pointed at .6 (gateway moved to .2 on 2026-07-13). Both were silently wrong.
+# Corrected 2026-07-24 (twice): first fix pointed pg-primary at .6 per the docs — but the
+# docs were stale. Verified live (inet_server_addr + pg_postmaster_start_time): the REAL
+# primary since the 2026-07-17 cold start is the pg17 docker container on nova-core .2;
+# .6:5432 is only a pgbouncer shim forwarding there (kept old localhost DSNs working),
+# and the only live replica is .10. The container named "pg17-replica" is the primary.
 SERVICE_ALIASES = {
-    "pg-primary":       "192.168.1.6",    # PG primary (mac-studio) — replicas on .2/.7/.10
-    "memory-server":    "192.168.1.6",    # :18790 vector memory API
+    "pg-primary":       "192.168.1.2",    # REAL PG primary (docker pg17 on nova-core)
+    "memory-server":    "192.168.1.2",    # :18790 — ALSO on nova-core now; .6:18790 is a socat shim -> .138
     "grafana":          "192.168.1.2",    # nova-core wired (was its wifi ip)
     "inference-router": "192.168.1.2",    # :37475 fleet LLM proxy
     "nova-gw":          "192.168.1.2",    # Gateway V2 :18792 (migrated off .6 2026-07-13)

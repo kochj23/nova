@@ -73,7 +73,7 @@ def insert_metric(conn, metric: str, value: float, metadata: dict = None):
 # ── Metric collectors ────────────────────────────────────────────────────────
 
 def collect_memories_total() -> tuple[float, dict | None]:
-    """GET http://192.168.1.6:18790/stats -> .count"""
+    """GET http://memory-server.digitalnoise.net:18790/stats -> .count"""
     try:
         req = urllib.request.Request(MEMORY_STATS_URL, method="GET")
         with urllib.request.urlopen(req, timeout=10) as resp:

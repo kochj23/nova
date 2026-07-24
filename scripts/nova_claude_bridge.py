@@ -35,7 +35,7 @@ from datetime import datetime, timezone
 
 GATEWAY_HTTP = "http://192.168.1.2:18792"
 SCHEDULER_HTTP = "http://127.0.0.1:37460"
-PG_DSN = "dbname=nova_ops host=127.0.0.1 port=5432 user=kochj"
+PG_DSN = "dbname=nova_ops host=pg-primary.digitalnoise.net port=5432 user=kochj"
 REDIS_HOST = "127.0.0.1"
 REDIS_PORT = 6379
 SCRATCHPAD_PREFIX = "nova:scratchpad:"

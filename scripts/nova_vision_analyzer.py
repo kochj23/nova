@@ -26,7 +26,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_notify import notify
 
-MEMORY_URL = "http://192.168.1.6:18790"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 MODEL = "qwen3-coder:30b"
 VISION_MODEL = "qwen3-vl:4b"

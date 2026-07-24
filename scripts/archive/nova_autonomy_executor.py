@@ -36,7 +36,7 @@ import psycopg2
 
 MODE = "shadow"  # "shadow" (log only, execute nothing) | "live" (gate + execute)
 
-PG_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 POLL_INTERVAL = 60          # seconds between evaluation cycles
 DIGEST_INTERVAL = 3600      # seconds between Slack shadow-digests
 ACTION_COOLDOWN = 1800      # per-action de-dupe window

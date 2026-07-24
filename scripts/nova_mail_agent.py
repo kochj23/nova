@@ -39,7 +39,7 @@ STATE_DIR    = Path.home() / ".openclaw/workspace/state"
 OLLAMA_URL   = "http://127.0.0.1:11434/api/generate"
 MODEL        = "deepseek-r1:8b"
 USE_TINYCHAT = False
-VECTOR_URL   = "http://192.168.1.6:18790/remember"
+VECTOR_URL   = "http://memory-server.digitalnoise.net:18790/remember"
 TODAY        = date.today().isoformat()
 NOW          = datetime.now()
 

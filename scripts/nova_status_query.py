@@ -16,8 +16,8 @@ import psycopg2
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-OPS_DSN = "host=localhost dbname=nova_ops user=kochj"
-MEM_DSN = "host=localhost dbname=nova_memories user=kochj"
+OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 
 _PATTS = [
     r"chang(e|es|ed).{0,30}(today|occurred|happened|made|ops)",

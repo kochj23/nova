@@ -18,8 +18,8 @@ import psycopg2.extras
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_notify import notify
 
-MEM_DSN = "host=localhost dbname=nova_memories user=kochj"
-OPS_DSN = "host=localhost dbname=nova_ops user=kochj"
+MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 STATE = "/tmp/nova_geo_alerts.last"
 ALERT_MI = 2.5        # a serious incident within this radius pings (walkable)
 CONV_MI = 2.5         # convergence radius

@@ -26,7 +26,7 @@ import nova_config
 SYNO = "kochj@192.168.1.11"
 UNAS = "root@192.168.1.69"
 UROOT = "/volume/b37f2e84-517c-4a4f-92f0-4d642527ba17/.srv/.unifi-drive"
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 TMP = os.path.expanduser("~/.openclaw/workspace/state/nas_localdiff")
 
 # name, synology source, unas dest (local), synology CIFS dest mount (for the rsync)

@@ -30,7 +30,7 @@ from nova_notify import notify
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-DB_DSN = f"postgresql://kochj@{nova_config.NOVA_HOST}:5432/nova_memories"
+DB_DSN = f"postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
 EMBED_URL = f"http://{nova_config.NOVA_HOST}:18790/embed"
 TOP_K = 20          # results from DB
 DISPLAY_K = 10      # results shown to user

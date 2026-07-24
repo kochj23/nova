@@ -266,6 +266,49 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
         return None
 
 
+def grafana_panel_image(dashboard_uid: str, panel_id: int, section: str, name: str,
+                        width: int = 1000, height: int = 500,
+                        time_range: str = "now-24h") -> str | None:
+    """Render a live Grafana panel to PNG and save it into the Hugo static images dir.
+    Returns the site-relative path (for markdown embedding) or None on failure.
+    Uses Grafana's anonymous Viewer role — no credentials needed (see /home/kochj/grafana/docker-compose.yml).
+    """
+    # theme=dark matches the blog's dark aesthetic explicitly (don't drift with the admin
+    # user's Grafana UI preference); scale=2 renders at 2x pixel density for crisp text on
+    # the blog — real numbers, just sharper, no image-model reinterpretation of the data.
+    url = resolve_url("grafana", f"/render/d-solo/{dashboard_uid}?panelId={panel_id}"
+                       f"&width={width}&height={height}&from={time_range}&to=now&tz=America%2FLos_Angeles"
+                       f"&theme=dark&scale=2")
+    try:
+        with urllib.request.urlopen(url, timeout=30) as resp:
+            png = resp.read()
+        if not png.startswith(b"\x89PNG"):
+            log(f"[grafana_panel_image] non-PNG response for {dashboard_uid}/{panel_id}")
+            return None
+    except Exception as e:
+        log(f"[grafana_panel_image] render failed for {dashboard_uid}/{panel_id}: {e}")
+        return None
+
+    images_dir = HUGO_ROOT / f"static/images/{_canon_section(section)}"
+    images_dir.mkdir(parents=True, exist_ok=True)
+    # static/images/**/*.png is gitignored repo-wide (deploy expects webp) -- convert
+    # immediately, same as every other cover/inline image path in this codebase, or the
+    # render silently never gets committed and ships as a broken image link.
+    tmp_png = images_dir / f".{today_str()}-{name}.tmp.png"
+    tmp_png.write_bytes(png)
+    dest = images_dir / f"{today_str()}-{name}.webp"
+    try:
+        subprocess.run(["cwebp", "-q", "82", str(tmp_png), "-o", str(dest)],
+                       capture_output=True, timeout=30, check=True)
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+        log(f"[grafana_panel_image] cwebp failed, falling back to raw png (won't survive git): {e}")
+        dest = images_dir / f"{today_str()}-{name}.png"
+        shutil.copy2(tmp_png, dest)
+    finally:
+        tmp_png.unlink(missing_ok=True)
+    return f"/images/{_canon_section(section)}/{dest.name}"
+
+
 def get_image_prompt(title: str, topic: str, section: str) -> str:
     """Use Haiku to generate a safe image prompt for the content."""
     system = (
@@ -443,8 +486,21 @@ def notify_slack(section: str, title: str, preview: str):
 # CONTENT PROFILE: ESSAY
 # ══════════════════════════════════════════════════════════════════════════════
 
-def topic_essay(state: dict) -> tuple[str, list[dict]]:
-    """Pick a random source and fetch memories for an essay."""
+def topic_essay(state: dict, retry_topic: str | None = None) -> tuple[str, list[dict]]:
+    """Pick a random source and fetch memories for an essay.
+
+    retry_topic: if set, stick with this SAME source and just re-sample its memories
+    (fetch_memories_by_source already does ORDER BY random(), so a second call is a
+    fresh draw) instead of rolling a brand new source. Used when the first draw's 25
+    memories turned out incoherent -- pivot within the same criteria before giving up
+    on the topic entirely."""
+    if retry_topic:
+        memories = fetch_memories_by_source(retry_topic, n=25)
+        if len(memories) >= 10:
+            return retry_topic, memories
+        # This source just doesn't have enough material for a second good draw --
+        # fall through to picking a fresh source instead.
+
     sources = get_available_sources(min_count=50)
     if not sources:
         raise RuntimeError("No sources available for essay")
@@ -1417,6 +1473,39 @@ def _append_attribution(body: str, memories: list[dict], topic: str, profile_nam
 # MAIN PIPELINE
 # ══════════════════════════════════════════════════════════════════════════════
 
+_REFUSAL_PATTERNS = [
+    r"\bi need to (stop you|pump the brakes|tell you why|be direct with you)\b",
+    r"\bthis (assignment|prompt|essay|topic) doesn'?t work\b",
+    r"\bbefore i start fabricating\b",
+    r"\bwhat do you actually want\b",
+    r"\bhere'?s what i can actually do\b",
+    r"\bi'?m going to stop you\b",
+    r"\bi'?m going to save us both some time\b",
+    r"\bi gotta be straight with you\b",
+    r"\bpolished turd\b",
+    r"\bgrab-?bag of\b.{0,40}\bexcerpts\b",
+    r"\bno unifying thesis\b",
+    r"^\s*\**option 1\**[:.]",
+]
+_REFUSAL_RE = re.compile("|".join(_REFUSAL_PATTERNS), re.I | re.M)
+
+# Structural tell, independent of wording: a real essay title is a title. A short
+# fragment ending in a colon ("What I can do:", "Here's what would actually work:")
+# is a list intro, which is what a refusal looks like when it pivots to offering
+# options instead of writing the thing that was asked for.
+_COLON_INTRO_TITLE_RE = re.compile(r"^.{0,40}:\s*$")
+
+
+def _looks_like_refusal(title: str, body: str) -> str | None:
+    """Returns the matched pattern if title+body reads like the model declining/asking
+    for clarification instead of producing the requested content, else None. Checked
+    against the opening of the body since refusals front-load the pushback."""
+    if title and _COLON_INTRO_TITLE_RE.match(title.strip()):
+        return f"colon-intro title: {title!r}"
+    m = _REFUSAL_RE.search((title or "") + "\n" + (body or "")[:800])
+    return m.group(0) if m else None
+
+
 def run_profile(profile_name: str) -> int:
     """Execute the full pipeline for a content profile. Returns 0 on success, 1 on failure."""
     if profile_name not in PROFILES:
@@ -1429,21 +1518,49 @@ def run_profile(profile_name: str) -> int:
 
     state = load_state()
 
-    # ── Step 1: Topic selection ───────────────────────────────────────────────
-    try:
-        topic, memories = profile["topic_fn"](state)
-        log(f"Topic: {topic[:80]}... ({len(memories)} memories)")
-    except Exception as e:
-        log(f"ABORT: Topic selection failed — {e}")
-        return 1
-
-    # ── Step 2: Content generation ────────────────────────────────────────────
-    try:
-        title, body = profile["generate_fn"](topic, memories)
-        log(f"Generated: \"{title}\" ({len(body)} chars)")
-    except Exception as e:
-        log(f"ABORT: Generation failed — {e}")
-        return 1
+    # ── Steps 1-2: Topic selection + content generation ───────────────────────
+    # When topic_fn hands the LLM incoherent source material (a source vector whose
+    # 25 random-sampled memories just don't relate to each other), it correctly
+    # declines and asks for clarification instead of faking an essay -- but that
+    # refusal text is well-formed prose that easily clears the "did it write >500
+    # chars" check, so without this guard it gets published verbatim as if it were
+    # the article.
+    #
+    # Retry strategy, cheapest/most-targeted first:
+    #   1. Normal draw.
+    #   2. SAME topic, re-sample its memories (fetch_memories_by_source draws with
+    #      ORDER BY random(), so a second call is a fresh slice of the same source --
+    #      pivot within the same criteria before abandoning the topic entirely).
+    #   3. Fresh topic entirely, as a last resort.
+    topic = None
+    for attempt in range(3):
+        try:
+            if attempt == 1 and topic:
+                try:
+                    topic, memories = profile["topic_fn"](state, retry_topic=topic)
+                except TypeError:
+                    # This profile's topic_fn doesn't support same-source resampling
+                    # (e.g. news/search-based profiles, where the "topic" is a single
+                    # headline and isn't the kind of thing that has incoherent draws)
+                    # -- skip straight to a fresh topic instead.
+                    topic, memories = profile["topic_fn"](state)
+            else:
+                topic, memories = profile["topic_fn"](state)
+            title, body = profile["generate_fn"](topic, memories)
+            log(f"Generated: \"{title}\" ({len(body)} chars)")
+        except Exception as e:
+            log(f"ABORT: Generation failed — {e}")
+            return 1
+        refusal = _looks_like_refusal(title, body)
+        if not refusal:
+            break
+        if attempt < 2:
+            log(f"Generation looks like a refusal, not content (matched: {refusal!r}) — "
+                f"retrying ({'same topic, fresh sample' if attempt == 0 else 'fresh topic'}).")
+        else:
+            log(f"Still looks like a refusal after {attempt + 1} attempts "
+                f"(matched: {refusal!r}) — aborting for today.")
+            return 1
 
     # ── Step 3: Image generation ──────────────────────────────────────────────
     image_path = None

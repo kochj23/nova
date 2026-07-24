@@ -41,7 +41,7 @@ except Exception:  # notify is best-effort
         return False
 
 HK_URL = "http://127.0.0.1:37433/api/accessories"
-DSN = "host=localhost dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 OUTLET_SERVICE_TYPE = "00000047-0000-1000-8000-0026BB765291"  # HMServiceTypeOutlet
 POLL_INTERVAL = 300
 

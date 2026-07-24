@@ -34,7 +34,7 @@ from nova_notify import notify
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-MEMORY_SERVER = "http://192.168.1.6:18790"
+MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-haiku-4.5"
 GENERATE_IMAGE_SH = Path.home() / ".openclaw/scripts/generate_image.sh"

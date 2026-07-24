@@ -26,7 +26,7 @@ from datetime import datetime
 import psycopg2
 import psycopg2.extras
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # Columns pulled straight from pg_stat_database (ts defaults to now()).
 COLUMNS = ["datname", "xact_commit", "xact_rollback", "tup_inserted",

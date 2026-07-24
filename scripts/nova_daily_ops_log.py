@@ -31,18 +31,17 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home()) + "/.openclaw/scripts")
 import nova_config
+import nova_journal
 from nova_notify import notify
 
 HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content" / "operations"   # rando retired -> operations
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-OPENROUTER_MODEL = "google/gemini-2.5-flash"
-DB = "host=localhost dbname=nova_ops user=kochj"
-MEMDB = "host=localhost dbname=nova_memories user=kochj"
+DB = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+MEMDB = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 LOG = Path.home() / ".openclaw/logs/daily_ops_log.log"
 GH_OWNER = "kochj23"
 # Memory server /remember endpoint (operations vector). Mirrors nova_config.VECTOR_URL.
-MEMORY_REMEMBER_URL = getattr(nova_config, "VECTOR_URL", "http://192.168.1.6:18790/remember")
+MEMORY_REMEMBER_URL = getattr(nova_config, "VECTOR_URL", "http://memory-server.digitalnoise.net:18790/remember")
 
 
 def log(msg: str):
@@ -77,28 +76,11 @@ def scalar(dsn: str, sql: str, default="0"):
     return rows[0][0] if rows and rows[0] else default
 
 
-def get_openrouter_key() -> str:
-    r = subprocess.run(
-        ["security", "find-generic-password", "-a", "nova", "-s", "nova-openrouter-api-key", "-w"],
-        capture_output=True, text=True)
-    return r.stdout.strip()
-
-
 def call_llm(system: str, user: str, max_tokens: int = 4000) -> str:
-    import urllib.request
-    payload = json.dumps({
-        "model": OPENROUTER_MODEL,
-        "messages": [{"role": "system", "content": system},
-                     {"role": "user", "content": user}],
-        "max_tokens": max_tokens, "temperature": 0.55,
-    }).encode()
-    req = urllib.request.Request(OPENROUTER_URL, data=payload, headers={
-        "Authorization": f"Bearer {get_openrouter_key()}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://nova.digitalnoise.net"})
-    with urllib.request.urlopen(req, timeout=90) as resp:
-        data = json.loads(resp.read())
-    return data["choices"][0]["message"]["content"]
+    """Delegate to the shared local Claude Code CLI path (see nova_journal.call_openrouter —
+    OpenRouter itself ran dry 2026-07-17; this also fixes nova-core, which has no working
+    route to Keychain-backed secrets at all, unlike this script's old direct OpenRouter call."""
+    return nova_journal.call_openrouter(system, user, max_tokens=max_tokens)
 
 
 # ── GitHub daily activity (last 24h) ─────────────────────────────────────────
@@ -600,6 +582,10 @@ def publish(title: str, body: str, brief_facts: str):
     slug = "ops-" + re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:55]
     CONTENT_DIR.mkdir(parents=True, exist_ok=True)
 
+    snap = nova_journal.grafana_panel_image("nova-hosts-fleet", 1, "operations", "daily-ops-cpu-load")
+    if snap:
+        body += f"\n\n---\n\n**CPU load across the fleet at publish time:**\n\n![CPU load by host]({snap})"
+
     hugo_image = make_cover(title, slug, date)
     cover_block = ""
     if hugo_image:
@@ -625,17 +611,30 @@ description: "Nova's daily operations log — the day's changes, deployments, an
     post_path.write_text(front_matter + body)
     log(f"Post written: {post_path.name}")
 
-    # Commit ONLY this post + its image (repo is huge; git add -A times out)
+    # Commit ONLY this post + its image(s) (repo is huge; git add -A times out)
     subprocess.run(["git", "add", str(post_path)], cwd=HUGO_ROOT, capture_output=True, timeout=20)
     if hugo_image:
         # hugo_image is a web path (/images/operations/…); the file lives under static/.
         img_fs = HUGO_ROOT / "static" / hugo_image.lstrip("/")
         subprocess.run(["git", "add", str(img_fs)], cwd=HUGO_ROOT, capture_output=True, timeout=20)
+    if snap:
+        snap_fs = HUGO_ROOT / "static" / snap.lstrip("/")
+        subprocess.run(["git", "add", str(snap_fs)], cwd=HUGO_ROOT, capture_output=True, timeout=20)
     msg = f"rando: {date} — daily ops log ({title[:45]})"
     r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=25)
     if r.returncode == 0:
-        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=60)
-        log("Pushed to GitHub — deploy triggered.")
+        r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
+        if r.returncode == 0:
+            log("Pushed to GitHub — deploy triggered.")
+        else:
+            # Another writer pushed first (non-fast-forward). Rebase on top and retry once.
+            log(f"Push rejected, rebasing + retrying: {r.stderr[:120]}")
+            subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, timeout=60)
+            r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
+            if r.returncode == 0:
+                log("Pushed to GitHub after rebase — deploy triggered.")
+            else:
+                log(f"Push still failed after rebase: {r.stderr[:200]} — commit is safe, ships next run")
     else:
         log(f"Commit note: {(r.stdout + r.stderr)[:150]}")
 

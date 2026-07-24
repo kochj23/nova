@@ -18,7 +18,7 @@ import psycopg2
 import psycopg2.extras
 import nova_config
 
-DSN = "host=localhost dbname=nova_memories user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 
 # Nova's own internal/operational/meta memories — these contain identifiers (Slack
 # workspace/user/channel IDs, IPs, service names), past dreams, work-pattern syntheses,

@@ -47,7 +47,7 @@ CLIENTS_URL = f"{CONTROLLER_BASE}/proxy/network/api/s/{SITE}/stat/sta"
 DEVICES_URL = f"{CONTROLLER_BASE}/proxy/network/api/s/{SITE}/stat/device"
 
 LOG_FILE = Path(str(Path.home()) + "/.openclaw/logs/unifi_poller.log")
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 

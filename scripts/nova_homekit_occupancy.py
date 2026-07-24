@@ -12,7 +12,7 @@ from pathlib import Path
 import urllib.request
 import time
 
-MEMORY_URL = "http://192.168.1.6:18790"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 WORKSPACE = Path.home() / ".openclaw/workspace"
 HOMEKIT_SCRIPT = Path.home() / ".openclaw/scripts/nova_homekit_query.sh"
 

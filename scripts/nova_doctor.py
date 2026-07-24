@@ -31,7 +31,7 @@ SLACK_TOKEN = nova_config.slack_bot_token()
 SLACK_API = nova_config.SLACK_API
 REPORT_CHANNEL = nova_config.SLACK_BB  # #nova-bb — monitoring/alerts
 
-PG_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 PKG_PATH = "/Volumes/Data/AI/python_packages"
 GATEWAY_HEALTH = "http://192.168.1.2:18792/health"
 MLX_MODELS = "http://127.0.0.1:5050/v1/models"

@@ -26,8 +26,8 @@ except ImportError:
     print("FATAL: psycopg2 not installed", file=sys.stderr)
     sys.exit(1)
 
-MEMORY_URL = "http://192.168.1.6:18790/remember"
-OPS_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
+OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 SOURCE = "claude_memory"
 LOG_FILE = Path.home() / ".openclaw/logs/claude_memory_sync.log"
 
@@ -66,7 +66,7 @@ def get_synced_hashes(conn):
     try:
         payload = json.dumps({"source": SOURCE, "n": 50000}).encode()
         req = urllib.request.Request(
-            "http://192.168.1.6:18790/recall?source=claude_memory&n=1&q=test",
+            "http://memory-server.digitalnoise.net:18790/recall?source=claude_memory&n=1&q=test",
             headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=10) as r:
             data = json.loads(r.read())
@@ -94,7 +94,7 @@ def main():
 
         # Check if this exact content is already in vector memory
         try:
-            check_url = f"http://192.168.1.6:18790/recall?q={urllib.parse.quote(name[:50])}&source={SOURCE}&n=1&min_score=0.95"
+            check_url = f"http://memory-server.digitalnoise.net:18790/recall?q={urllib.parse.quote(name[:50])}&source={SOURCE}&n=1&min_score=0.95"
             req = urllib.request.Request(check_url)
             with urllib.request.urlopen(req, timeout=5) as r:
                 data = json.loads(r.read())

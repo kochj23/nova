@@ -46,7 +46,7 @@ import pytest
 SCRIPTS_DIR = Path(__file__).resolve().parent.parent / "scripts"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
-PG_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+PG_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 TEST_SOURCE = "pytest-correlator"
 
 

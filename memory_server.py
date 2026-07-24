@@ -59,8 +59,9 @@ from pydantic import BaseModel
 logger = logging.getLogger("memory_server")
 
 # ── Config ─────────────────────────────────────────────────────────────────────
-PG_DSN      = "postgresql://kochj@127.0.0.1:5432/nova_memories?sslmode=disable"
-REDIS_URL   = "redis://127.0.0.1:6379"
+PG_DSN      = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories?sslmode=disable"
+import os as _os
+REDIS_URL   = f"redis://:{_os.environ.get('NOVA_REDIS_PASSWORD', '')}@127.0.0.1:6379"
 REDIS_QUEUE = "nova:memory:ingest"          # list key for write queue
 REDIS_CACHE      = "nova:memory:cache"      # hash key for recall cache
 CACHE_TTL        = 300                      # 5-minute recall cache TTL

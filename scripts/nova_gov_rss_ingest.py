@@ -779,7 +779,7 @@ FEEDS = [
     ("https://api.weather.gov/alerts/active.atom?zone=CAZ548", "la_public_safety", "NWS San Gabriel Valley/Foothills Alerts"),
 ]
 
-MEMORY_URL = "http://192.168.1.6:18790/remember?async=1"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember?async=1"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/gov_rss_seen.json"
 CHUNK_SIZE = 1500
 

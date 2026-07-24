@@ -35,7 +35,7 @@ CLI:
 import argparse
 import sys
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # An open incident whose newest member event is older than this is "over".
 DEFAULT_IDLE_MINUTES = 30

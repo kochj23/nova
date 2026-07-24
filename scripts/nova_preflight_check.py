@@ -20,7 +20,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 import psycopg2
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 HOSTS = {
     "mac-studio": {"ip": "192.168.1.6", "min_cpu": 20, "min_mem": 20, "min_disk": 15},

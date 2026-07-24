@@ -44,10 +44,10 @@ from bambu_printers import PRINTERS
 from nova_notify import notify  # Slack/Discord via PG telemetry.events
 
 SOURCE = "bambu"
-MEMORY_URL = "http://192.168.1.6:18790"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 DIGEST_EVERY_S = 300  # write a status digest to memory every 5 min
 SAMPLE_EVERY_S = 300  # write a telemetry row per printer to PG this often (Grafana)
-PG_DSN = "host=localhost dbname=nova_ops user=kochj"
+PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 BUSY_STATES = {"RUNNING", "PAUSE", "PREPARE", "SLICING", "RESUMING"}
 
 

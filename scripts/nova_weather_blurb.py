@@ -12,7 +12,7 @@ Written by Jordan Koch.
 """
 from datetime import datetime
 
-PG_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 _FIELDS = ["ts", "temp_f", "feels_like_f", "humidity", "wind_speed_mph",
            "wind_gust_mph", "wind_dir", "pressure_in", "uv_index",

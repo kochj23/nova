@@ -22,7 +22,7 @@ import os
 import sys
 import subprocess
 
-_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 _VALID_LEVELS = ("info", "warning", "critical")
 
 

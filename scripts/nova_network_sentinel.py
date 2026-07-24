@@ -396,7 +396,7 @@ def record_to_pg(findings: dict, host_count: int):
     """Write scan results to shared_observations for ops memory."""
     try:
         import psycopg2
-        conn = psycopg2.connect("host=localhost dbname=nova_ops user=kochj")
+        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
         conn.autocommit = True
         cur = conn.cursor()
 

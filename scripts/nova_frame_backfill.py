@@ -22,7 +22,7 @@ EXTS = (".mp4", ".mkv", ".ts", ".m4v", ".avi", ".mov", ".wmv")
 
 
 def already_indexed():
-    conn = psycopg2.connect("host=localhost dbname=nova_memories user=kochj")
+    conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj")
     with conn, conn.cursor() as cur:
         cur.execute("SELECT DISTINCT metadata->>'video' FROM memories WHERE source='frame_vision'")
         return {r[0] for r in cur.fetchall() if r[0]}

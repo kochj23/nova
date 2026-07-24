@@ -15,7 +15,7 @@ from pathlib import Path
 
 import psycopg2
 
-DSN = "host=localhost dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 PY = "/opt/homebrew/bin/python3"
 CAP = str(Path(__file__).parent / "nova_yt_capture.py")
 LOCK = 778901234  # advisory lock id (single-instance)

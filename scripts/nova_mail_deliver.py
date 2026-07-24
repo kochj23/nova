@@ -19,7 +19,7 @@ import nova_config
 from nova_notify import notify as nova_notify
 
 
-VECTOR_MEM_URL = "http://192.168.1.6:18790/remember"
+VECTOR_MEM_URL = "http://memory-server.digitalnoise.net:18790/remember"
 
 
 def vector_remember(text: str, metadata: dict = None):

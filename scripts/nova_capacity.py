@@ -34,7 +34,7 @@ import nova_config
 VERSION = "1.0.0"
 HTTP_PORT = 37464
 BIND_ADDR = "0.0.0.0"
-DB_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_capacity.log"
 SNAPSHOT_INTERVAL = 300
 RETENTION_DAYS = 90

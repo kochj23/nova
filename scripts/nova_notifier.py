@@ -22,7 +22,7 @@ import nova_config
 import nova_correlator
 import nova_remediation
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # Out-of-band relay: critical alerts also go over the Meshtastic mesh (LoRa),
 # so Little Mister can be reached even if home internet/WiFi is fully down.

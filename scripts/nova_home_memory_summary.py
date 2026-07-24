@@ -14,8 +14,8 @@ from datetime import datetime
 
 import psycopg2
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
-VECTOR_URL = "http://192.168.1.6:18790/remember"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+VECTOR_URL = "http://memory-server.digitalnoise.net:18790/remember"
 
 
 def q1(cur, sql, params=()):

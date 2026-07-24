@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_secrets
 
 API = "https://api.bcfy.io/calls/v1"
-MEM = os.environ.get("MEM_URL", "http://192.168.1.6:18790/remember")
+MEM = os.environ.get("MEM_URL", "http://memory-server.digitalnoise.net:18790/remember")
 STATE = Path.home() / ".openclaw/state/bcfy_calls_pos.json"
 POLL_SECS = int(os.environ.get("BCFY_POLL_SECS", "120"))  # archives lag ~15min; 2min poll is ample
 MINLEN = 8

@@ -19,7 +19,7 @@ import urllib.request
 import psycopg2
 
 SRC = "http://127.0.0.1:37433/api/accessories"
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 WATT = "e863f10c"      # real-time watts
 KWH = "e863f10d"       # cumulative kWh
 ON = "00000025"        # standard HAP On characteristic

@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+import nova_journal
 from nova_image_utils import generate_image
 from nova_notify import notify as nova_notify
 
@@ -46,8 +47,6 @@ HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content/operations"
 IMAGES_DIR = HUGO_ROOT / "static/images/operations"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_journal_security.log"
-OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
-MODEL = "anthropic/claude-haiku-4.5"
 # Internal Wazuh/firewall/IDS telemetry is summarized on-box (local Ollama)
 # before any cloud call. The raw ops_brief must never reach the cloud LLM.
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
@@ -83,33 +82,11 @@ def log(msg: str):
 
 # ── API Key ───────────────────────────────────────────────────────────────────
 
-def get_openrouter_key() -> str:
-    return nova_config.openrouter_api_key()
-
-
 def call_llm(system: str, user: str, max_tokens: int = 6000, temperature: float = 0.3) -> str:
-    api_key = get_openrouter_key()
-    body = json.dumps({
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-    }).encode()
-    req = urllib.request.Request(OPENROUTER_URL, data=body, headers={
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://nova.digitalnoise.net",
-        "X-Title": "Nova Security Journal",
-    })
-    resp = urllib.request.urlopen(req, timeout=300)
-    data = json.loads(resp.read())
-    text = data["choices"][0]["message"]["content"]
-    usage = data.get("usage", {})
-    log(f"LLM [{MODEL}] in={usage.get('prompt_tokens','?')} out={usage.get('completion_tokens','?')}")
-    return text
+    """Delegate to the shared local Claude Code CLI path (see nova_journal.call_openrouter —
+    OpenRouter itself ran dry 2026-07-17; this also fixes nova-core, which has no working
+    route to Keychain-backed secrets at all, unlike this script's old direct OpenRouter call."""
+    return nova_journal.call_openrouter(system, user, max_tokens=max_tokens, temperature=temperature)
 
 
 def _strip_internal_identifiers(text: str) -> str:
@@ -309,8 +286,18 @@ description: "{description.replace('"', "'")}"
         msg = f"security: {dt} — {title[:50]}"
         result = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
         if result.returncode == 0:
-            subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=60)
-            log("Pushed to GitHub")
+            result = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
+            if result.returncode == 0:
+                log("Pushed to GitHub")
+            else:
+                # Another writer pushed first (non-fast-forward). Rebase on top and retry once.
+                log(f"Push rejected, rebasing + retrying: {result.stderr[:120]}")
+                subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, timeout=60)
+                result = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
+                if result.returncode == 0:
+                    log("Pushed to GitHub after rebase")
+                else:
+                    log(f"Push still failed after rebase: {result.stderr[:200]} — commit is safe, ships next run")
         elif "nothing to commit" in result.stdout:
             log("Nothing to commit (already pushed)")
         else:
@@ -434,6 +421,10 @@ Write the PDB. If a section has no significant activity, mark it NOSIG and move 
         log(f"Image gen failed: {e}")
         img_path = None
 
+    snap = nova_journal.grafana_panel_image("security-posture", 5, "operations", "daily-briefing-posture")
+    if snap:
+        body += f"\n\n---\n\n**Our own posture, for context:**\n\n![Endpoint events by severity]({snap})"
+
     # Publish
     tags = ["daily-briefing", "pdb", "cyber", "military", "osint"]
     description = f"Daily security intelligence briefing — {time.strftime('%d %b %Y')}"
@@ -498,6 +489,10 @@ Write the breaking alert. Only include confirmed information. Flag uncertainty e
         )
     except Exception:
         img_path = None
+
+    snap = nova_journal.grafana_panel_image("nova-security", 8, "operations", "breaking-alert-posture")
+    if snap:
+        body += f"\n\n---\n\n**Recent high-severity events at publish time:**\n\n![Recent high-severity events]({snap})"
 
     import re as _re
     source_slug = _re.sub(r'[^a-z0-9]+', '-', trigger.lower()).strip('-')[:40]

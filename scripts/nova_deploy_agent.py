@@ -29,7 +29,7 @@ import psycopg2
 import psycopg2.extras
 from nova_notify import notify
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 POLL_INTERVAL = 5
 PORT = 37471
 
@@ -69,7 +69,7 @@ def _annotate_grafana(text, tags):
             "time": int(time.time() * 1000),
         }).encode()
         req = urllib.request.Request(
-            "http://192.168.1.7:3000/api/annotations",
+            "http://192.168.1.2:3000/api/annotations",
             data=payload,
             headers={
                 "Content-Type": "application/json",

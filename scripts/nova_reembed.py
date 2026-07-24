@@ -38,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_notify import notify
 
-PG_CONN = "host=127.0.0.1 dbname=nova_memories"
+PG_CONN = "host=pg-primary.digitalnoise.net dbname=nova_memories"
 OLLAMA_URL = "http://127.0.0.1:11434/api/embed"
 BATCH_SIZE = 100
 STATUS_INTERVAL = 300

@@ -24,7 +24,7 @@ SCHEDULER_BASE = "http://192.168.1.6:37460"
 GATEWAY_HEALTH = "http://127.0.0.1:18792/health"
 OLLAMA_PS = "http://127.0.0.1:11434/api/ps"
 REDIS_URL = "redis://192.168.1.6:6379"
-OPS_PG_DSN = "postgresql://192.168.1.2/nova_ops"
+OPS_PG_DSN = "postgresql://pg-primary.digitalnoise.net/nova_ops"
 SESSIONS_JSON_ARCHIVED = Path.home() / ".openclaw" / "agents" / "_archived_sessions" / "main_sessions" / "sessions.json"
 SESSIONS_JSON_ORIGINAL = Path.home() / ".openclaw" / "agents" / "main" / "sessions" / "sessions.json"
 SESSIONS_JSON = SESSIONS_JSON_ARCHIVED if SESSIONS_JSON_ARCHIVED.exists() else SESSIONS_JSON_ORIGINAL
@@ -78,7 +78,7 @@ SERVICE_PORTS = {
     "searxng": {"port": 8080, "url": "http://192.168.1.7:8080"},
     "swarmui": {"port": 7801, "url": "http://127.0.0.1:7801"},
     "comfyui": {"port": 8188, "url": "http://127.0.0.1:8188"},
-    "memory_server": {"port": 18790, "url": "http://192.168.1.6:18790"},
+    "memory_server": {"port": 18790, "url": "http://memory-server.digitalnoise.net:18790"},
     "plex": {"port": 32400, "url": PLEX_BASE, "host": "192.168.1.86"},
     "hdhr": {"port": 80, "url": HDHR_BASE, "host": "192.168.1.89"},
 }
@@ -1086,12 +1086,12 @@ async def _detail_memory_server():
     health = {}
     stats = {}
     try:
-        async with session.get("http://192.168.1.6:18790/health", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+        async with session.get("http://memory-server.digitalnoise.net:18790/health", timeout=aiohttp.ClientTimeout(total=3)) as resp:
             health = await resp.json()
     except Exception:
         pass
     try:
-        async with session.get("http://192.168.1.6:18790/stats", timeout=aiohttp.ClientTimeout(total=3)) as resp:
+        async with session.get("http://memory-server.digitalnoise.net:18790/stats", timeout=aiohttp.ClientTimeout(total=3)) as resp:
             stats = await resp.json()
     except Exception:
         pass

@@ -28,7 +28,7 @@ try:
 except ImportError:
     psycopg2 = None
 
-OPS_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 
 
 def _query(sql, params=None):

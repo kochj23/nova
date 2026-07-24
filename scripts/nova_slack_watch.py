@@ -235,12 +235,22 @@ def llm_assess(messages: list[dict]) -> dict | None:
     """
     _assert_local(OLLAMA_URL)
     lines = [f"[{m['channel']}] {_redact(m['text'])[:400]}" for m in messages]
+    try:
+        import nova_voice
+        facts = nova_voice.shared_context()
+    except Exception:
+        facts = ""
     prompt = (
         "You are Nova's operations sentinel. Below are the new messages from the "
         "last hour across Nova's Slack channels. Identify ONLY what is genuinely "
         "notable: errors, failures, outages, security concerns, or anything "
         "unusual/trending worth a human's attention. Ignore routine heartbeats, "
-        "normal info digests, calendar items, and successful runs.\n\n"
+        "normal info digests, calendar items, and successful runs. If the CURRENT "
+        "FACTS or RECENT ACTIVITY below (if present) show this is already a known, "
+        "tracked, still-open finding rather than something new, say so plainly in "
+        "\"why\" instead of treating it as a fresh discovery — do not invent a root "
+        "cause or dramatize beyond what the messages actually say.\n"
+        + facts + "\n\n"
         "Respond with STRICT JSON only:\n"
         '{"notable": true|false, "severity": "info|warning|critical", '
         '"headline": "one short line", "items": ['

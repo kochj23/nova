@@ -391,7 +391,7 @@ class ModelRouter:
                 prompt_tokens = sum(len(m.get("content", "").split()) for m in messages) * 1.3
             if completion_tokens is None:
                 completion_tokens = len(str(result).split()) * 1.3 if result else 0
-            conn = psycopg2.connect("dbname=nova_ops user=kochj host=127.0.0.1", connect_timeout=3)
+            conn = psycopg2.connect("dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net", connect_timeout=3)
             conn.autocommit = True
             cur = conn.cursor()
             cur.execute("""

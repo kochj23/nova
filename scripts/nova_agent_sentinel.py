@@ -97,7 +97,7 @@ class SecuritySentinel(SubAgent):
         # 1. Check gateway config for unexpected cloud models
         try:
             import psycopg2
-            _conn = psycopg2.connect("postgresql://kochj@127.0.0.1:5432/nova_ops")
+            _conn = psycopg2.connect("postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
             _cur = _conn.cursor()
             _cur.execute("SELECT content FROM nova_documents WHERE category='nova_config' AND name='openclaw.json'")
             _row = _cur.fetchone()

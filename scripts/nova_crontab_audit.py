@@ -20,7 +20,7 @@ import psycopg2
 import nova_config
 from nova_notify import notify
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/crontab_hashes.json"
 
 HOSTS = [

@@ -11,7 +11,7 @@ import sys
 import time
 import urllib.request
 
-MEMORY_URL = "http://192.168.1.6:18790/remember"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
 UA = "nova-fishbowl-backfill/1.0"
 SLEEP = 1.6
 PAGES_PER_SORT = 11

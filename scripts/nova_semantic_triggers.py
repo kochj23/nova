@@ -44,8 +44,8 @@ VERSION = "1.0.0"
 HTTP_PORT = 37472
 BIND_ADDR = "0.0.0.0"
 REDIS_URL = "redis://192.168.1.6:6379"
-MEMORY_URL = "http://192.168.1.6:18790"
-OPS_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
+OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_semantic_triggers.log"
 NEW_MEMORY_CHANNEL = "nova:memory:new"
 

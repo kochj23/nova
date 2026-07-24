@@ -36,7 +36,7 @@ LISTEN_PORT = 8087
 STATION_IP = "192.168.1.33"
 RECEIVER_IP = "192.168.1.6"
 LOG_PATH = str(Path.home()) + "/.openclaw/logs/weather_receiver.log"
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 

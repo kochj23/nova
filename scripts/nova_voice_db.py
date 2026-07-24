@@ -17,7 +17,7 @@ import psycopg2
 sys.path.insert(0, os.path.expanduser("~/.openclaw/scripts"))
 from nova_voice_fingerprint import windows, diarize, top_speakers
 
-DSN = "host=localhost dbname=nova_memories user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 
 
 def _vec(a):
@@ -93,7 +93,7 @@ def attribute_video(video, secs=240, threshold=0.75):
                                         "named": named, "unknown": unknown}}).encode()
         try:
             urllib.request.urlopen(urllib.request.Request(
-                "http://192.168.1.6:18790/remember?async=1", data=body,
+                "http://memory-server.digitalnoise.net:18790/remember?async=1", data=body,
                 headers={"Content-Type": "application/json"}), timeout=15)
         except Exception:
             pass

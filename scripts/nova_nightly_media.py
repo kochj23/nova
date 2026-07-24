@@ -93,7 +93,7 @@ WORK_DIR        = Path("/Volumes/Data/nova-nightly-media")
 LOG_FILE        = Path.home() / ".openclaw/logs/nova_nightly_media.log"
 SLACK_NOTIFY    = nova_config.SLACK_NOTIFY
 SLACK_CHAT      = nova_config.SLACK_CHAN
-RECALL_URL      = "http://192.168.1.6:18790/recall"
+RECALL_URL      = "http://memory-server.digitalnoise.net:18790/recall"
 
 CHUNK_WORDS         = 400
 MIN_CHUNK_WORDS     = 10

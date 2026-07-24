@@ -40,7 +40,7 @@ log = logging.getLogger(__name__)
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
-VECTOR_URL = nova_config.VECTOR_URL  # http://192.168.1.6:18790/remember
+VECTOR_URL = nova_config.VECTOR_URL  # http://memory-server.digitalnoise.net:18790/remember
 DELAY = 2  # seconds between HTTP requests (politeness)
 CHUNK_SIZE = 500  # words per chunk
 

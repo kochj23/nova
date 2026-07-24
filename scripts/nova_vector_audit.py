@@ -41,10 +41,10 @@ IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 # (.2) post-migration, which has no local Ollama. 127.0.0.1 there returned empty every run.
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://192.168.1.6:11434/api/generate")
 OLLAMA_MODEL = "qwen3-coder:30b"
-MEMORY_URL = "http://192.168.1.6:18790"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 SAMPLE_PER_VECTOR = 100
 MAX_VECTORS_PER_RUN = 999
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # Video / spoken-word vectors whose transcripts naturally repeat words (dialogue, chants,
 # sports commentary, subtitles). The loose low-unique-ratio "repetitive" signal over-flags

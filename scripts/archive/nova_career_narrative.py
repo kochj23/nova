@@ -35,7 +35,7 @@ import nova_config
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-MEMORY_SERVER = "http://192.168.1.6:18790"
+MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
 OLLAMA_URL = "http://192.168.1.6:11434/api/chat"
 OLLAMA_MODEL = "qwen3-coder:30b"
 CACHE_FILE = Path.home() / ".openclaw/workspace/state/career_narrative.json"

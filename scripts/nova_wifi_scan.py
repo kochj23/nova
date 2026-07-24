@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_notify import notify
 
-DSN = "host=localhost dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 CONTROLLER = "https://192.168.1.1"
 LOG_FILE = Path.home() / ".openclaw/logs/wifi_scan.log"
 

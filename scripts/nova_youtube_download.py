@@ -39,7 +39,7 @@ except ImportError:
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-BASE_DIR = Path("/Volumes/external/videos/TVShows")
+BASE_DIR = Path("/Volumes/external/videos/youtube")
 YT_DLP = "/opt/homebrew/bin/yt-dlp"
 DELAY_BETWEEN_VIDEOS = 32
 MAX_RESOLUTION = "720"

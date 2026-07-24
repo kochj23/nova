@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_yt_ingest_watch import CHANNELS, recent_ids, vid_live_status, PY, CAPTURE
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 N = int(sys.argv[1]) if len(sys.argv) > 1 and sys.argv[1].isdigit() else 10
 ONLY = next((a for a in sys.argv[1:] if not a.isdigit()), None)  # optional channel-key filter
 

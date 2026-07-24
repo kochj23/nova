@@ -27,7 +27,7 @@ import nova_config
 from nova_logger import log, LOG_INFO, LOG_WARN, LOG_ERROR
 from nova_notify import notify
 
-PG_DSN = "host=192.168.1.6 dbname=nova_ops user=kochj"
+PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # chat.digitalnoise.net is the public TinyChat route: it legitimately returns 404
 # at "/" and generates ~no analytics pageviews, so it would ALWAYS look "quiet".

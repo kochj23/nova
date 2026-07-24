@@ -30,7 +30,7 @@ except ImportError as e:
     sys.exit(1)
 
 VERSION = "1.0.0"
-DB_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 HA_URL = "http://127.0.0.1:8123"
 POLL_INTERVAL = 30
 LOG_FILE = Path.home() / ".openclaw/logs/nova_ha_poller.log"

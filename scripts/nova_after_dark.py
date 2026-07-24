@@ -52,7 +52,7 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "anthropic/claude-haiku-4.5"
 from nova_resolve import resolve_url
 SEARXNG_URL = resolve_url("searxng", "/search")
-MEMORY_SERVER = "http://192.168.1.6:18790"
+MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
 WIKI_API = "https://api.wikimedia.org/feed/v1/wikipedia/en/onthisday/all"
 
 LOG_FILE = Path.home() / ".openclaw/logs/nova_after_dark.log"

@@ -73,7 +73,7 @@ import psycopg2.extras
 # ---------------------------------------------------------------------------
 # Connection
 # ---------------------------------------------------------------------------
-PG_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # ---------------------------------------------------------------------------
 # RETENTION CONFIG  — tune these. Windows are in DAYS.

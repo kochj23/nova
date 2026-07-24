@@ -41,7 +41,7 @@ except ImportError as e:
 sys.path.insert(0, str(Path(__file__).parent))
 
 VERSION = "1.0.0"
-DB_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 HA_URL = "http://127.0.0.1:8123"
 OLLAMA_URL = "http://127.0.0.1:11434"
 HTTP_PORT = 37480

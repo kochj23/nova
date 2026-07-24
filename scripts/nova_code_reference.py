@@ -11,7 +11,7 @@ import json
 import urllib.parse
 import urllib.request
 
-RECALL = "http://192.168.1.6:18790/recall"
+RECALL = "http://memory-server.digitalnoise.net:18790/recall"
 DOMAIN_VECTOR = {"police": "police_codes", "fire": "fire_ops", "aviation": "aviation_ref"}
 
 

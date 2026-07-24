@@ -7,6 +7,11 @@ Shortcut that reads all HomeKit accessory states.
 
 Also serves GET /homekit/accessories to return the last-received data.
 
+POST /homekit/scene {"scene": "<name>"} logs a scene activation to
+nova_ops.home_scene_activations — one Shortcuts automation per scene
+("An Accessory Is Controlled" doesn't cover scenes; use "A Scene Is Set"
+per HomeKit scene, each just POSTing its own hardcoded scene name here).
+
 Written by Jordan Koch.
 """
 
@@ -18,6 +23,9 @@ from pathlib import Path
 from threading import Lock
 
 sys.path.insert(0, str(Path(__file__).parent))
+import psycopg2
+
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 PORT = 37432
 DATA_FILE = Path.home() / ".openclaw/workspace/state/homekit_accessories.json"
@@ -60,6 +68,25 @@ class Handler(BaseHTTPRequestHandler):
                 self._respond(200, {"status": "ok", "count": len(data)})
             except Exception as e:
                 log(f"Error: {e}")
+                self._respond(400, {"error": str(e)})
+        elif self.path == "/homekit/scene":
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
+            try:
+                data = json.loads(body)
+                scene = (data.get("scene") or "").strip()
+                if not scene:
+                    self._respond(400, {"error": "missing 'scene'"})
+                    return
+                conn = psycopg2.connect(DB_DSN)
+                conn.autocommit = True
+                cur = conn.cursor()
+                cur.execute("INSERT INTO home_scene_activations (scene_name) VALUES (%s)", (scene,))
+                conn.close()
+                log(f"Scene activated: {scene}")
+                self._respond(200, {"status": "ok", "scene": scene})
+            except Exception as e:
+                log(f"Scene error: {e}")
                 self._respond(400, {"error": str(e)})
         else:
             self._respond(404, {"error": "not found"})

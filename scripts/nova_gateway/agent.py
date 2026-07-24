@@ -315,7 +315,7 @@ async def _inject_memory(ctx: GatewayContext, question: str) -> str:
     if any(k in q for k in _TRAFFIC_INTENT):
         try:
             resp = await ctx.http.get(
-                "http://192.168.1.6:18790/recall",
+                "http://memory-server.digitalnoise.net:18790/recall",
                 params={"q": question, "n": 2, "source": "traffic_cams"}, timeout=5,
             )
             items = resp.json().get("results", resp.json().get("memories", []))
@@ -335,7 +335,7 @@ async def _inject_memory(ctx: GatewayContext, question: str) -> str:
     if any(k in q for k in _PRINTER_INTENT):
         try:
             resp = await ctx.http.get(
-                "http://192.168.1.6:18790/recall",
+                "http://memory-server.digitalnoise.net:18790/recall",
                 params={"q": question, "n": 1, "source": "bambu"}, timeout=5,
             )
             items = resp.json().get("results", resp.json().get("memories", []))

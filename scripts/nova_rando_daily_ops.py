@@ -47,7 +47,7 @@ IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "google/gemini-2.5-flash"
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 
 def log(msg: str):
@@ -235,7 +235,7 @@ def gather_ops_data() -> dict:
 
     # 10. Memory count
     try:
-        req = urllib.request.Request("http://192.168.1.6:18790/health", timeout=5)
+        req = urllib.request.Request("http://memory-server.digitalnoise.net:18790/health", timeout=5)
         with urllib.request.urlopen(req, timeout=10) as resp:
             health = json.loads(resp.read())
             data["memory_count"] = health.get("count", 0)
@@ -394,7 +394,7 @@ def gather_ops_data() -> dict:
 
     # 18. Memory ingestion stats for today
     try:
-        conn = psycopg2.connect("host=192.168.1.6 dbname=nova_memories user=kochj")
+        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj")
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT source, COUNT(*) as added
@@ -473,7 +473,25 @@ def generate_article(ops_data: dict) -> str:
     MACs, and person/device hostnames are scrubbed — before serialization.
     """
     safe_ops = _scrub_obj(ops_data)
-    data_block = json.dumps(safe_ops, indent=2, default=str)[:24000]
+
+    # Pull queue_completed out and present it first, in plain prose, clearly
+    # labeled -- it was previously just one of ~18 keys buried inside one giant
+    # JSON dump, and no amount of "prioritize this" instruction text overcame
+    # that; the model kept gravitating to whatever was most voluminous
+    # (claude_actions' hundreds of raw tool-call rows) instead. Structural
+    # placement beats a meta-instruction competing with a wall of JSON.
+    queue_items = safe_ops.get("queue_completed") or []
+    queue_block = ""
+    if queue_items:
+        lines = [f"{i}. {item.get('description', '')}" for i, item in enumerate(queue_items, 1)]
+        queue_block = (
+            "TODAY'S COMPLETED WORK (this is the real backbone of tonight's column -- "
+            "every single one of these needs real coverage, not just the first one or two):\n"
+            + "\n".join(lines) + "\n\n"
+        )
+
+    safe_ops_rest = {k: v for k, v in safe_ops.items() if k != "queue_completed"}
+    data_block = json.dumps(safe_ops_rest, indent=2, default=str)[:24000]
 
     from nova_voice import system_prompt, CONTEXT_JOURNAL_OPS
     system = system_prompt(CONTEXT_JOURNAL_OPS + """
@@ -490,7 +508,9 @@ ADDITIONAL CONTEXT FOR THIS COLUMN:
 
     user = f"""Here's everything that happened in my infrastructure in the last 24 hours. Write tonight's column.
 
-OPERATIONAL DATA:
+{queue_block}EVERYTHING ELSE (supporting color/detail -- claude_actions here is raw tool-call
+noise, hundreds of rows/day, use it only to add texture to a completed-work item above,
+never as the main subject of a section):
 {data_block}"""
 
     return call_llm(system, user, max_tokens=16000)

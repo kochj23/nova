@@ -22,7 +22,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 PORT = 37476
 BRIDGE_IP = "192.168.1.152"
 POLL_INTERVAL = 60
-PG_DSN = "dbname=nova_ops user=kochj host=192.168.1.138"
+PG_DSN = "dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net"
 
 _data_lock = Lock()
 _lights = {}

@@ -7,7 +7,7 @@ from datetime import datetime
 sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 import nova_config
 
-MEMORY_URL = "http://192.168.1.6:18790/remember"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
 count = 0
 failed = 0
 start_time = time.time()

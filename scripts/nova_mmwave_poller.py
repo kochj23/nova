@@ -36,7 +36,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent))
 
 VERSION = "3.0.0"
-DB_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 LISTEN_PORT = 8089
 LOG_FILE = Path.home() / ".openclaw/logs/nova_mmwave.log"
 POLL_INTERVAL = 10
@@ -76,7 +76,7 @@ _sync_pool = None
 
 def get_sync_conn():
     import psycopg2
-    return psycopg2.connect("host=localhost dbname=nova_ops user=kochj")
+    return psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
 
 
 def write_presence_sync(room, presence, confidence, zones=None, metadata=None):

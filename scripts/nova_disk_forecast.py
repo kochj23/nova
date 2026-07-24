@@ -39,7 +39,7 @@ from datetime import datetime, timezone
 import psycopg2
 import psycopg2.extras
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 NOW = datetime.now(timezone.utc)
 
 DEFAULT_TARGET_PCT = 95.0

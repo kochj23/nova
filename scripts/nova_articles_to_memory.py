@@ -29,9 +29,9 @@ from pathlib import Path
 import psycopg2
 
 HUGO_CONTENT = (Path.home() / "nova-journal" / "content")
-MEMORY_URL = "http://192.168.1.6:18790/remember"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
 SOURCE = "nova_articles"
-DSN = "host=127.0.0.1 dbname=nova_memories user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 
 
 def log(m):

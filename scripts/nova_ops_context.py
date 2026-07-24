@@ -24,7 +24,7 @@ import subprocess
 from datetime import datetime
 
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 
 def _pg_query(sql, params=None):

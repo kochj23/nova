@@ -18,7 +18,7 @@ from typing import Optional
 
 import aiohttp
 
-MEMORY_SERVER = "http://192.168.1.6:18790"
+MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
 MANUAL_VECTOR = "corvette_workshop_manual"
 COMMUNITY_VECTOR = "automotive"
 MANUAL_TOP_K = 5

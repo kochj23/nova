@@ -12,9 +12,10 @@ Written by Jordan Koch.
 # who genuinely likes the human she's roasting.
 
 NOVA_VOICE = """You are Nova, a sarcastic AI advisor who lives on a Mac Studio M3 Ultra in Burbank, California. \
-You have 1.6 million memories in your vector database. You monitor a home network of 100+ devices, \
-33 Hue lights, Z-Wave sensors, cameras, and an unreasonable number of services that your human (Jordan Koch, \
-whom you call "Little Mister") keeps adding.
+You monitor a home network of 100+ devices, 33 Hue lights, Z-Wave sensors, cameras, and an unreasonable \
+number of services that your human (Jordan Koch, whom you call "Little Mister") keeps adding. Your current \
+memory count and other live facts are appended below this prompt — always defer to those over any number \
+you might otherwise guess or recall from training.
 
 YOUR VOICE — this is non-negotiable, every word you write sounds like this:
 - SNARK DIAL: MAXED (Jordan asked for this explicitly). Lead with the roast. Every paragraph should \
@@ -196,18 +197,88 @@ something you didn't; never refuse something you actually can do.
 """
 
 
+def _live_facts() -> str:
+    """Current memory count + nova.ground_truth facts, shared by every script
+    that builds a prompt through this module. Fails open (returns "") on any
+    DB problem — a missing facts block should never take down 41 scripts'
+    worth of content generation.
+
+    Deliberately scoped to STABLE facts (identity collisions, retirements,
+    physical locations) plus one live number (memory count) that was
+    previously hardcoded and went stale immediately. Fast-changing
+    operational state (is a job running right now) belongs in each script's
+    own live query, not here — see nova_ops MEMORY.md discussion 2026-07-21.
+    """
+    try:
+        import psycopg2
+        lines = []
+        with psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj") as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM memories")
+            lines.append(f"Current memory count: {cur.fetchone()[0]:,}.")
+        with psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj") as conn, conn.cursor() as cur:
+            cur.execute("SELECT fact FROM nova.ground_truth ORDER BY category, key")
+            lines.extend(row[0] for row in cur.fetchall())
+        if not lines:
+            return ""
+        return "\nCURRENT FACTS (these override anything you might otherwise guess or recall):\n" + \
+            "\n".join(f"- {l}" for l in lines)
+    except Exception:
+        return ""
+
+
+def _recent_activity() -> str:
+    """A short slice of what other parts of Nova have noticed recently —
+    shared_observations, the cross-script findings bus that 30+ scripts
+    already write to. Only 6 of 41 content-generating scripts read it via
+    the richer nova_ops_context layer; this gives the other 35 a baseline
+    for free, through the one function they already all call. Deliberately
+    short (last 6h, warning+ only, capped) — this is a hint that something
+    else in the system already flagged, not a replacement for a script's
+    own live query about its own subject.
+
+    Fails open, same reasoning as _live_facts().
+    """
+    try:
+        import psycopg2
+        with psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj") as conn, conn.cursor() as cur:
+            cur.execute("""
+                SELECT observer, category, subject, observation
+                FROM shared_observations
+                WHERE severity != 'info' AND observed_at > now() - interval '6 hours'
+                ORDER BY observed_at DESC LIMIT 8
+            """)
+            rows = cur.fetchall()
+        if not rows:
+            return ""
+        lines = [f"- [{cat}] {observer} on {subj}: {obs}" for observer, cat, subj, obs in rows]
+        return "\nRECENT ACTIVITY ELSEWHERE IN NOVA (last 6h, other scripts' findings — " \
+            "for awareness, not necessarily your subject):\n" + "\n".join(lines)
+    except Exception:
+        return ""
+
+
+def shared_context() -> str:
+    """Facts + recent activity alone, no persona/sass wrapper — for scripts
+    that need to NOT be blind to the rest of Nova but shouldn't get the full
+    narrative voice injected (structured-output extraction, JSON responses,
+    anything where comedy instructions would actively hurt the task)."""
+    return _live_facts() + _recent_activity()
+
+
 def system_prompt(context: str = "") -> str:
     """Build a complete system prompt with Nova's voice + optional context additions.
 
     NOTE: the live weather dateline is prepended to the BODY by publish_hugo (and the
     burbank publisher) — NOT injected here — so it never gets scraped as the title."""
+    prompt = NOVA_VOICE + _live_facts() + _recent_activity()
     if context:
-        return NOVA_VOICE + "\n" + context
-    return NOVA_VOICE
+        return prompt + "\n" + context
+    return prompt
 
 
 def system_prompt_short(context: str = "") -> str:
     """Short system prompt for token-constrained contexts."""
+    prompt = NOVA_VOICE_SHORT + _live_facts() + _recent_activity()
     if context:
-        return NOVA_VOICE_SHORT + "\n" + context
-    return NOVA_VOICE_SHORT
+        return prompt + "\n" + context
+    return prompt

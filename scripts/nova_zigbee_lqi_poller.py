@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 import psycopg2
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 MQTT = ["mosquitto_sub", "-h", "127.0.0.1", "-p", "1883"]
 
 

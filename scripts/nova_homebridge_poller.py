@@ -16,7 +16,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import psycopg2
 import psycopg2.extras
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 HB_URL = "http://192.168.1.10:8581"
 HB_USER = "admin"
 HB_PASS = "admin"

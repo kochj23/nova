@@ -79,7 +79,7 @@ def read_via_shortcuts_output():
 
     try:
         import psycopg2
-        conn = psycopg2.connect("host=localhost dbname=nova_ops user=kochj")
+        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
         cur = conn.cursor()
         # Get latest BLE readings that might include temperature data from HomePods
         cur.execute("""

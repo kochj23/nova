@@ -24,7 +24,7 @@ import psycopg2
 import psycopg2.extras
 
 VERSION = "1.0.0"
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 FRAME_DIR = Path.home() / ".openclaw/workspace/camera_frames"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_camera_presence.log"
 POLL_INTERVAL = 60
@@ -65,7 +65,7 @@ def get_model():
     global _model
     if _model is None:
         from ultralytics import YOLO
-        _model = YOLO("/Volumes/nas/nova/Nova/models/yolov8n.pt")
+        _model = YOLO(str(Path.home() / ".openclaw/models/yolov8n.pt"))
         log("YOLOv8-nano model loaded")
     return _model
 

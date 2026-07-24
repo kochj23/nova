@@ -16,7 +16,7 @@ from pathlib import Path
 import psycopg2
 import nova_config
 
-DSN = "host=localhost dbname=nova_memories user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 STATE = Path.home() / ".openclaw" / "state" / "fishbowl_watch.json"
 ALERT_CHANNEL = nova_config.SLACK_BB   # #nova-critical
 
@@ -32,8 +32,9 @@ NICK = ("watch nicholas", "watchnicholas", "nicholas watch", "watch nick")
 # live stream when it's live, so "Watch Nicholas is on" links straight to the stream
 # (falls back to the /streams page if he isn't live at click time).
 NICK_LINKS = [
-    ("Watch Nicholas — LIVE", "https://www.youtube.com/@WatchNicholasLivestream1/live"),
-    ("alt channel", "https://www.youtube.com/@watchnicholasstreams/live"),
+    # Corrected 2026-07-21 -- the old @WatchNicholasLivestream1/@watchnicholasstreams
+    # handles both 404 (dead/renamed); real channel confirmed live via yt-dlp probe.
+    ("Watch Nicholas — LIVE", "https://www.youtube.com/@watchnicholaslive/live"),
 ]
 THREAT = ("dox", "doxx", "fired", "your job", "your employer", "your work", "end in tears",
           "coming after", "come after you", "expose you", "your family", "your address",

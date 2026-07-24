@@ -24,7 +24,7 @@ try:
 except Exception:
     notify = None
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 # 91506 (Burbank) centroid + a radius that covers the zip.
 LAT, LON, ZIP_RADIUS_NM = 34.169, -118.325, 3.0
 ALT_CEILING_FT = 10000          # only low/overhead traffic (Jordan's pick)

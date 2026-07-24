@@ -62,7 +62,7 @@ class TestHotReloadSecurity:
         """service_config table should not contain plaintext API keys."""
         try:
             import psycopg2
-            conn = psycopg2.connect(f"postgresql://kochj@{LAN_IP}:5432/nova_ops")
+            conn = psycopg2.connect(f"postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
             cur = conn.cursor()
             cur.execute("SELECT service, key, value::text FROM service_config")
             rows = cur.fetchall()
@@ -133,7 +133,7 @@ class TestHotReloadRetry:
         """If service_config has malformed JSON, reload should fail gracefully, not crash gateway."""
         try:
             import psycopg2
-            conn = psycopg2.connect(f"postgresql://kochj@{LAN_IP}:5432/nova_ops")
+            conn = psycopg2.connect(f"postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
             cur = conn.cursor()
             # Insert a bad config row
             cur.execute("""
@@ -184,7 +184,7 @@ class TestHotReloadUnit:
         """service_config table should have the expected columns."""
         try:
             import psycopg2
-            conn = psycopg2.connect(f"postgresql://kochj@{LAN_IP}:5432/nova_ops")
+            conn = psycopg2.connect(f"postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
             cur = conn.cursor()
             cur.execute("""
                 SELECT column_name, data_type
@@ -207,7 +207,7 @@ class TestHotReloadUnit:
         """All expected gateway config keys should be present in DB."""
         try:
             import psycopg2
-            conn = psycopg2.connect(f"postgresql://kochj@{LAN_IP}:5432/nova_ops")
+            conn = psycopg2.connect(f"postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
             cur = conn.cursor()
             cur.execute("SELECT key FROM service_config WHERE service = 'gateway'")
             keys = {row[0] for row in cur.fetchall()}
@@ -222,7 +222,7 @@ class TestHotReloadUnit:
         """backends config should have all 4 provider URLs."""
         try:
             import psycopg2
-            conn = psycopg2.connect(f"postgresql://kochj@{LAN_IP}:5432/nova_ops")
+            conn = psycopg2.connect(f"postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
             cur = conn.cursor()
             cur.execute("SELECT value FROM service_config WHERE service = 'gateway' AND key = 'backends'")
             row = cur.fetchone()
@@ -241,7 +241,7 @@ class TestHotReloadUnit:
         """Local backend URLs should use LAN IP, not 127.0.0.1."""
         try:
             import psycopg2
-            conn = psycopg2.connect(f"postgresql://kochj@{LAN_IP}:5432/nova_ops")
+            conn = psycopg2.connect(f"postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
             cur = conn.cursor()
             cur.execute("SELECT value FROM service_config WHERE service = 'gateway' AND key = 'backends'")
             row = cur.fetchone()
@@ -313,7 +313,7 @@ class TestHotReloadFunctional:
         """Changing health_ttl in DB and reloading should be reflected."""
         try:
             import psycopg2
-            conn = psycopg2.connect(f"postgresql://kochj@{LAN_IP}:5432/nova_ops")
+            conn = psycopg2.connect(f"postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
             cur = conn.cursor()
 
             # Get current value

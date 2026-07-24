@@ -52,7 +52,7 @@ except ImportError:
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-DB_DSN = "postgresql://kochj@192.168.1.2:5432/nova_memories"
+DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
 CENTROID_SAMPLE_SIZE = 100
 MISFIT_PERCENTILE = 5       # bottom 5% are misfits
 RECLASSIFY_THRESHOLD = 0.1  # must be >0.1 better to reclassify

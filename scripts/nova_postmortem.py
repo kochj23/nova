@@ -16,6 +16,7 @@ Written by Jordan Koch.
 
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -28,6 +29,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 from nova_image_utils import generate_image
+from nova_journal import grafana_panel_image
 
 try:
     from nova_ops_context import get_full_context, format_security_brief, format_infra_brief
@@ -43,7 +45,7 @@ IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 # editorial generation runs on LOCAL Ollama ONLY — none of this leaves the box.
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 OLLAMA_MODEL = "qwen3-coder:30b"
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 
 def log(msg):
@@ -162,7 +164,8 @@ Write a proper incident retrospective in Nova's signature sarcastic style. Inclu
     # Generate title from article
     title_prompt = f"Generate a short, sarcastic title (max 10 words) for this postmortem:\n\n{article[:500]}"
     title = call_llm("Generate only a title, no quotes, no markdown.", title_prompt, max_tokens=50)
-    title = (title or "Incident Postmortem").strip().strip('"\'#') or "Incident Postmortem"
+    title = (title or "Incident Postmortem").strip().strip('"\'#')
+    title = re.sub(r'^\*{1,2}(.*?)\*{1,2}$', r'\1', title).strip() or "Incident Postmortem"
 
     # Generate cover image
     image_prompt = (
@@ -173,7 +176,6 @@ Write a proper incident retrospective in Nova's signature sarcastic style. Inclu
     image_path = generate_image(image_prompt, section="operations")
 
     # Publish
-    import re
     dt = datetime.now().strftime("%Y-%m-%d")
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
     filename = f"{dt}-{slug}.md"
@@ -184,10 +186,17 @@ Write a proper incident retrospective in Nova's signature sarcastic style. Inclu
     hugo_image = ""
     if image_path and Path(image_path).exists():
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
-        img_dest = IMAGES_DIR / f"{dt}-{slug}.png"
-        shutil.copy2(image_path, img_dest)
-        # URL must match IMAGES_DIR write path (static/images/operations)
-        hugo_image = f"/images/operations/{dt}-{slug}.png"
+        # Raw PNGs are gitignored repo-wide (static/images/**/*.png) — the deploy
+        # pipeline's CI-side PNG->WebP step only sees files that got committed, so
+        # referencing a .png here ships a permanently broken cover image. Convert
+        # to .webp locally before committing, same as every other publish path.
+        img_dest = IMAGES_DIR / f"{dt}-{slug}.webp"
+        try:
+            subprocess.run(["cwebp", "-q", "82", "-resize", "1200", "0", str(image_path), "-o", str(img_dest)],
+                           capture_output=True, timeout=30, check=True)
+        except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
+            shutil.copy2(image_path, img_dest)
+        hugo_image = f"/images/operations/{dt}-{slug}.webp"
 
     front_matter = f"""---
 title: "{title.replace('"', '')}"
@@ -209,6 +218,11 @@ cover:
         body += f"![{title}]({hugo_image})\n\n"
     body += article
 
+    # Live fleet-health snapshot at publish time — a real Grafana panel render, not a description of one.
+    snapshot = grafana_panel_image("fleet-health", 7, "operations", "fleet-health-snapshot")
+    if snapshot:
+        body += f"\n\n---\n\n**Fleet health at publish time:**\n\n![Current fleet health]({snapshot})"
+
     CONTENT_DIR.mkdir(parents=True, exist_ok=True)
     output = CONTENT_DIR / filename
     output.write_text(front_matter + body)
@@ -219,8 +233,18 @@ cover:
         subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=15)
         subprocess.run(["git", "commit", "-m", f"postmortem: {title}"],
                        cwd=HUGO_ROOT, capture_output=True, timeout=15)
-        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
-        log("Pushed to GitHub")
+        r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            log("Pushed to GitHub")
+        else:
+            # Another writer pushed first (non-fast-forward). Rebase on top and retry once.
+            log(f"Push rejected, rebasing + retrying: {r.stderr[:120]}")
+            subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
+            r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
+            if r.returncode == 0:
+                log("Pushed to GitHub after rebase")
+            else:
+                log(f"Push still failed after rebase: {r.stderr[:200]} — commit is safe, ships next run")
     except Exception as e:
         log(f"Git push failed: {e}")
 

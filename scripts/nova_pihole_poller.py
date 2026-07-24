@@ -18,7 +18,7 @@ POLL_INTERVAL = 60  # seconds
 # DSN is env-overridable so the poller is portable: on .6 'localhost' = the PG
 # primary; when migrated to a peer (e.g. .2) set NOVA_PG_DSN to the .6 primary so
 # writes never hit a read-only replica. (#694)
-PG_DSN = os.environ.get("NOVA_PG_DSN", "dbname=nova_ops user=kochj host=localhost")
+PG_DSN = os.environ.get("NOVA_PG_DSN", "dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net")
 
 _running = True
 

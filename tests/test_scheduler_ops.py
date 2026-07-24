@@ -75,7 +75,7 @@ class TestFrame(unittest.IsolatedAsyncioTestCase):
         """nova_ops DB must be reachable via direct psycopg2."""
         try:
             import psycopg2
-            conn = psycopg2.connect("dbname=nova_ops user=kochj host=localhost port=5432")
+            conn = psycopg2.connect("dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net port=5432")
             cur = conn.cursor()
             cur.execute("SELECT 1")
             self.assertEqual(cur.fetchone()[0], 1)
@@ -85,7 +85,7 @@ class TestFrame(unittest.IsolatedAsyncioTestCase):
 
     def test_scheduler_runs_table_exists(self):
         import psycopg2
-        conn = psycopg2.connect("dbname=nova_ops user=kochj host=localhost port=5432")
+        conn = psycopg2.connect("dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net port=5432")
         cur = conn.cursor()
         cur.execute(
             "SELECT COUNT(*) FROM information_schema.tables "
@@ -96,7 +96,7 @@ class TestFrame(unittest.IsolatedAsyncioTestCase):
 
     def test_scheduler_task_stats_view_exists(self):
         import psycopg2
-        conn = psycopg2.connect("dbname=nova_ops user=kochj host=localhost port=5432")
+        conn = psycopg2.connect("dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net port=5432")
         cur = conn.cursor()
         cur.execute(
             "SELECT COUNT(*) FROM information_schema.views "
@@ -294,7 +294,7 @@ class TestSecurity(unittest.TestCase):
     def test_no_pii_fields_in_scheduler_runs_schema(self):
         """scheduler_runs table must not have columns for email, name, IP, health data."""
         import psycopg2
-        conn = psycopg2.connect("dbname=nova_ops user=kochj host=localhost port=5432")
+        conn = psycopg2.connect("dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net port=5432")
         cur = conn.cursor()
         cur.execute(
             "SELECT column_name FROM information_schema.columns "
@@ -352,7 +352,7 @@ class TestPerformance(unittest.IsolatedAsyncioTestCase):
     async def test_real_db_write_latency(self):
         """A real INSERT + UPDATE round-trip to nova_ops must complete in <500ms."""
         import asyncpg
-        conn = await asyncpg.connect("postgresql://kochj@localhost:5432/nova_ops")
+        conn = await asyncpg.connect("postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
         run_id = str(uuid.uuid4())
         now_ms = int(time.time() * 1000)
 
@@ -379,7 +379,7 @@ class TestPerformance(unittest.IsolatedAsyncioTestCase):
     async def test_scheduler_stats_view_query_time(self):
         """The scheduler_task_stats view must respond in <1s even with data."""
         import asyncpg
-        conn = await asyncpg.connect("postgresql://kochj@localhost:5432/nova_ops")
+        conn = await asyncpg.connect("postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
         start = time.monotonic()
         await conn.fetch("SELECT * FROM scheduler_task_stats LIMIT 100")
         elapsed_ms = (time.monotonic() - start) * 1000
@@ -395,7 +395,7 @@ class TestIntegration(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         import asyncpg
-        self.conn = await asyncpg.connect("postgresql://kochj@localhost:5432/nova_ops")
+        self.conn = await asyncpg.connect("postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
         self.test_run_ids = []
 
     async def asyncTearDown(self):
@@ -515,7 +515,7 @@ class TestFunctional(unittest.IsolatedAsyncioTestCase):
 
     async def asyncSetUp(self):
         import asyncpg
-        self.conn = await asyncpg.connect("postgresql://kochj@localhost:5432/nova_ops")
+        self.conn = await asyncpg.connect("postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
         self.test_run_ids = []
 
     async def asyncTearDown(self):

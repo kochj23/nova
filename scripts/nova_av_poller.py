@@ -81,7 +81,7 @@ POLL_STANDBY_SEC = 300
 
 # ── Database ─────────────────────────────────────────────────────────────────
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 
 def get_db():

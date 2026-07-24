@@ -17,7 +17,7 @@ from pathlib import Path
 
 import psycopg2
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 YTDLP = "/opt/homebrew/bin/yt-dlp"
 PY = "/opt/homebrew/bin/python3"
 INGEST = str(Path(__file__).parent / "nova_ingest.py")

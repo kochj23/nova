@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 
 import psycopg2
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 WINDOW_DAYS = 15
 AVG_EP_BYTES = 350_000_000   # ~350 MB fallback when the file isn't stat-able (mount down)
 
@@ -63,7 +63,7 @@ def propose():
         WHERE p.policy = 'rolling_15' AND p.locked AND p.source_type = 'youtube'
           AND m.processed_at < now() - interval '{WINDOW_DAYS} days'
           AND m.file_path IS NOT NULL AND m.file_path <> ''
-          AND m.file_path ~ '/videos/TVShows/'
+          AND m.file_path ~ '/videos/youtube/'
           -- NEVER prune Plex DVR content: in-progress/unmatched recordings live in
           -- the `.grab/` grabber dir, and OTA recordings are .ts transport streams
           -- (YouTube downloads are .mp4/.mkv/.webm). Belt-and-suspenders vs #663.

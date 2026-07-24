@@ -49,13 +49,13 @@ from nova_notify import notify  # noqa: E402
 # ---------------------------------------------------------------------------
 # Config — all the real endpoints this stack must actually be able to do.
 # ---------------------------------------------------------------------------
-OPS_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
-MEM_DSN = "host=192.168.1.6 dbname=nova_memories user=kochj"
+OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 
 OLLAMA = "http://127.0.0.1:11434"
 EMBED_MODEL = "nomic-embed-text"
 
-MEMORY_REMEMBER_URL = "http://192.168.1.6:18790/remember"
+MEMORY_REMEMBER_URL = "http://memory-server.digitalnoise.net:18790/remember"
 
 HTTP_TIMEOUT = 12       # seconds per HTTP probe (short — a hang IS a failure)
 PG_CONNECT_TIMEOUT = 8

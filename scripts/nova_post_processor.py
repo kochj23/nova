@@ -34,10 +34,10 @@ import nova_config
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-OPS_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
-MEMORIES_DSN = "postgresql://kochj@127.0.0.1:5432/nova_memories"
+OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+MEMORIES_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
 REDIS_URL = "redis://192.168.1.6:6379"
-MEMORY_URL = "http://192.168.1.6:18790"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_post_processor.log"
 RESULTS_KEY_PREFIX = "nova:postprocess:results"
 

@@ -35,7 +35,7 @@ import nova_config
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-MEMORY_URL    = "http://192.168.1.6:18790/remember?async=1"
+MEMORY_URL    = "http://memory-server.digitalnoise.net:18790/remember?async=1"
 TARGET_CHUNKS = 10_000          # collective across all shows
 CHUNK_SIZE    = 1_500
 DELAY_MIN     = 3.0

@@ -43,7 +43,7 @@ except ImportError:
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-DB_DSN = "postgresql://kochj@192.168.1.2:5432/nova_memories"
+DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
 BATCH_SIZE = 5000
 LOG_EVERY = 10_000
 

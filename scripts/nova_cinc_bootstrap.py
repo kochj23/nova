@@ -35,7 +35,7 @@ CINC_BASE = Path("/Volumes/Data/AI/cinc")
 COOKBOOKS = CINC_BASE / "cookbooks"
 SOLO_RB = CINC_BASE / "solo.rb"
 NODES_DIR = CINC_BASE / "nodes"
-DB_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 SSH_USER = "kochj"
 CINC_INSTALL_URL = "https://omnitruck.cinc.sh/install.sh"
 

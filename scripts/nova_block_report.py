@@ -16,7 +16,7 @@ import nova_voice
 from nova_code_reference import code_reference_block
 from nova_notify import notify
 
-MEM_DSN = "host=localhost dbname=nova_memories user=kochj"
+MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 RADIUS_MI = 2.5
 
 

@@ -16,7 +16,7 @@ import urllib.request
 
 import psycopg2
 
-conn = psycopg2.connect("host=127.0.0.1 dbname=nova_ops user=kochj")
+conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
 cur = conn.cursor()
 cur.execute("SELECT DISTINCT show FROM media_prune_proposals WHERE status='proposed' ORDER BY show")
 shows = [r[0] for r in cur.fetchall()]

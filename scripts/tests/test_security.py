@@ -1021,7 +1021,7 @@ class TestNetworkSecurity:
         """Vector memory URL should point to loopback or the trusted-LAN memory host.
 
         Approved exception (Jordan, 2026-07-01): the vector/memory server is a shared
-        fleet service on 192.168.1.6:18790, not per-host loopback. The guard remains so
+        fleet service on memory-server.digitalnoise.net:18790, not per-host loopback. The guard remains so
         a NEW binding to a public/wildcard address still fails.
         """
         content = (SCRIPTS_DIR / "nova_config.py").read_text()

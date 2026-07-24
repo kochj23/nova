@@ -32,7 +32,7 @@ except ImportError:
 SCRIPTS      = Path.home() / ".openclaw" / "scripts"
 WORKSPACE    = Path.home() / ".openclaw" / "workspace"
 MEMORY_DIR   = WORKSPACE / "memory"
-VECTOR_URL   = "http://192.168.1.6:18790/remember"
+VECTOR_URL   = "http://memory-server.digitalnoise.net:18790/remember"
 TODAY        = date.today().isoformat()
 NOW          = datetime.now()
 SUMMARY_FILE = WORKSPACE / "state" / "nova_mail_fetch.txt"
@@ -263,7 +263,7 @@ def get_system_health():
     """Quick check: memory server up, key apps running."""
     issues = []
     try:
-        r = urllib.request.urlopen("http://192.168.1.6:18790/health", timeout=3)
+        r = urllib.request.urlopen("http://memory-server.digitalnoise.net:18790/health", timeout=3)
         data = json.loads(r.read())
         mem_count = data.get("count", 0)
     except Exception:

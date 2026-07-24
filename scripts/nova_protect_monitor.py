@@ -42,7 +42,7 @@ except ImportError:
 
 PROTECT_HOST = "192.168.1.9"
 PROTECT_USER = "nova"
-VECTOR_URL = "http://192.168.1.6:18790/remember"
+VECTOR_URL = "http://memory-server.digitalnoise.net:18790/remember"
 SLACK_NOTIFY = nova_config.SLACK_PHOTOS
 SLACK_CHAT = nova_config.SLACK_PHOTOS
 STATE_FILE = Path.home() / ".openclaw/workspace/state/protect_monitor_state.json"
@@ -432,7 +432,7 @@ def _feed_vehicle_presence(cam_name, raw_smart_types):
 
     try:
         import psycopg2
-        conn = psycopg2.connect("host=localhost dbname=nova_ops user=kochj")
+        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
         conn.autocommit = True
         with conn.cursor() as cur:
             cur.execute("""

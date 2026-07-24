@@ -15,7 +15,7 @@ import urllib.request
 
 import psycopg2
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 API_URL = "https://api.ambientweather.net/v1/devices"
 
 

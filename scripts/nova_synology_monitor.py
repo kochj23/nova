@@ -1307,8 +1307,19 @@ def full_check(session):
     log(f"Volumes: {vol_summary}")
     log(f"Problems: {len(problems)}")
 
-    # Post to Slack ONLY if there are problems — with per-category dedup
-    # Temperature alerts suppressed for 2h once fired to avoid every-30min spam.
+    # Post to Slack ONLY if there are problems — with per-category dedup.
+    # Categories here change slowly (capacity/RAID status don't shift in 30
+    # min) — without a cooldown these re-fire every single run and drown
+    # in channel noise. Anything not listed keeps the old always-alert
+    # behavior. Found 2026-07-20: volume/storage/raid had no cooldown at
+    # all, so a real 91.9%-full/ATTENTION condition was (very likely)
+    # re-posting every 30 minutes uninterrupted.
+    COOLDOWN_SECS = {
+        "temperature": 7200,    # 2 hours
+        "volume": 21600,        # 6 hours — capacity doesn't change fast
+        "storage": 21600,
+        "raid": 21600,
+    }
     if problems:
         # Load dedup state
         dedup_file = STATE_DIR / "synology_alert_dedup.json"
@@ -1317,16 +1328,16 @@ def full_check(session):
         except Exception:
             dedup = {}
 
-        TEMP_COOLDOWN_SECS = 7200   # 2 hours between temperature alerts
         now_ts = time.time()
 
         # Filter out problems that are still in cooldown
         def in_cooldown(p):
             cat = p.get("category", "")
-            if cat == "temperature":
-                last = dedup.get("temperature", 0)
-                return (now_ts - last) < TEMP_COOLDOWN_SECS
-            return False
+            cooldown = COOLDOWN_SECS.get(cat)
+            if cooldown is None:
+                return False
+            last = dedup.get(cat, 0)
+            return (now_ts - last) < cooldown
 
         alertable = [p for p in problems if not in_cooldown(p)]
 

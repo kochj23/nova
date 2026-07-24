@@ -14,7 +14,7 @@ import time
 import urllib.request
 from pathlib import Path
 
-MEMORY_SERVER = "http://192.168.1.6:18790"
+MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
 SOURCE = "dream_books"
 BATCH_DELAY = 0.5
 

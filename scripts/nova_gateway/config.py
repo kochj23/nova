@@ -15,7 +15,7 @@ from pathlib import Path
 VERSION = "2.4.0"
 
 # ── URLs & Endpoints ─────────────────────────────────────────────────────────
-PG_DSN       = "postgresql://kochj@192.168.1.2:5432/nova_ops"
+PG_DSN       = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 OLLAMA_URL   = "http://192.168.1.6:11434"
 MLX_URL      = "http://192.168.1.6:5050"
 LLAMACPP_URL = "http://192.168.1.6:11435"

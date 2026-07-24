@@ -14,7 +14,7 @@ import psycopg2.extras
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-MEM_DSN = "host=localhost dbname=nova_memories user=kochj"
+MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 
 SPATIAL = re.compile(
     r"(near ?by|near me|around me|closest|how (close|far)|within\s+[\d.]+\s*(mile|mi|block)s?|"

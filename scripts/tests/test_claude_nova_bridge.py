@@ -32,7 +32,7 @@ BRIDGE_SCRIPT = Path.home() / ".openclaw/scripts/nova_claude_bridge.py"
 @pytest.fixture
 def pg_conn():
     import psycopg2
-    conn = psycopg2.connect("postgresql://kochj@127.0.0.1:5432/nova_ops")
+    conn = psycopg2.connect("postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
     yield conn
     conn.rollback()
     conn.close()

@@ -32,14 +32,14 @@ import nova_media_registry as registry
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-FW_DIR        = Path("/Volumes/external/videos/TVShows/Forgotten Weapons")
+FW_DIR        = Path("/Volumes/external/videos/youtube/Forgotten Weapons")
 VIDEO_EXTS    = {".mp4", ".mkv", ".avi", ".mov", ".ts", ".m4v"}
 STATE_FILE    = Path.home() / ".openclaw/workspace/state/fw_ingest_state.json"
 WORK_DIR      = Path("/Volumes/Data/nova-livetv/fw-ingest")
 LOG_FILE      = Path.home() / ".openclaw/logs/nova_fw_ingest.log"
 
-MEMORY_URL    = "http://192.168.1.6:18790/remember"
-RECALL_URL    = "http://192.168.1.6:18790/recall"
+MEMORY_URL    = "http://memory-server.digitalnoise.net:18790/remember"
+RECALL_URL    = "http://memory-server.digitalnoise.net:18790/recall"
 SLACK_CHANNEL = nova_config.SLACK_NOTIFY
 
 WHISPER_BIN   = "/opt/homebrew/bin/mlx_whisper"

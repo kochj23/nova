@@ -33,8 +33,24 @@ sys.path.insert(0, str(Path(__file__).parent))
 import psycopg2
 import psycopg2.extras
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 WAZUH_URL = "https://192.168.1.2:9200"   # Wazuh Indexer (single-node docker on nova-core)
+
+# (host, rule_description) pairs that are confirmed environmental noise, not
+# incidents — verified 2026-07-20. nova-core's Docker bridge networks (Wazuh's
+# own stack among others) put member veth interfaces into promiscuous mode as
+# a normal part of container create/restart, same as macOS Thunderbolt
+# Bridge — that's how L2 bridging works, not a compromise. This fired 13+
+# times since 2026-07-02 with zero corroborating signal, each spawning a
+# fresh "incident" and a fabricated postmortem article that invented an
+# unrelated root cause (containerd/Kubernetes — this fleet doesn't run k8s)
+# every time, because nothing here remembered it had already seen this.
+# ponytail: exact-match mute list, not a rule-ID/regex engine — add entries
+# here as new chronic false positives get confirmed; build the general case
+# only if this list actually grows unwieldy.
+MUTED_FINDINGS = {
+    ("nova-core", "Auditd: Device enables promiscuous mode."),
+}
 
 
 def _wazuh_creds() -> str:
@@ -49,7 +65,7 @@ def _wazuh_creds() -> str:
 
 
 WAZUH_CREDS = _wazuh_creds()
-MEMORY_SERVER = "http://192.168.1.6:18790"
+MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
 POLL_WINDOW_MINUTES = 3
 HIGH_SEVERITY_THRESHOLD = 10
 INCIDENT_CORRELATION_WINDOW_S = 300
@@ -189,6 +205,18 @@ def correlate_events():
         if len(agent_events) < 1:
             continue
 
+        muted = [e for e in agent_events if (agent, e["rule_description"]) in MUTED_FINDINGS]
+        if muted:
+            muted_ids = [e["id"] for e in muted]
+            cur.execute(
+                "UPDATE security_events SET correlated = TRUE WHERE id = ANY(%s);",
+                (muted_ids,),
+            )
+            log(f"Muted {len(muted)} known-benign event(s) on {agent} (confirmed environmental noise)")
+            agent_events = [e for e in agent_events if e["id"] not in muted_ids]
+        if not agent_events:
+            continue
+
         # Create or update incident
         title = f"Security event on {agent}: {agent_events[0]['rule_description']}"
         if len(agent_events) > 1:
@@ -196,19 +224,42 @@ def correlate_events():
 
         severity = "critical" if any(e["rule_level"] >= 12 for e in agent_events) else "warning"
 
-        cur.execute("""
-            INSERT INTO incidents (title, severity, affected_services, events)
-            VALUES (%s, %s, %s, %s)
-            RETURNING id;
-        """, (
-            title,
-            severity,
-            [agent],
-            json.dumps([{"event_id": e["id"], "desc": e["rule_description"],
-                         "level": e["rule_level"], "ts": e["ts"].isoformat()}
-                        for e in agent_events]),
-        ))
-        incident_id = cur.fetchone()["id"]
+        new_event_rows = [{"event_id": e["id"], "desc": e["rule_description"],
+                            "level": e["rule_level"], "ts": e["ts"].isoformat()}
+                           for e in agent_events]
+
+        # Dedup: if an incident with this exact title is already open, this is
+        # the same known, still-unresolved finding recurring — attach the new
+        # occurrences to it instead of opening a fresh duplicate. Found 2026-07-21:
+        # CVE-2026-58469-affects-wget opened 5 separate incidents across 6 days on
+        # the same hosts because nothing ever checked for an existing open one.
+        cur.execute(
+            "SELECT id, events FROM incidents WHERE title = %s AND status = 'open' "
+            "ORDER BY started_at DESC LIMIT 1;",
+            (title,),
+        )
+        existing = cur.fetchone()
+
+        if existing:
+            incident_id = existing["id"]
+            merged_events = (existing["events"] or []) + new_event_rows
+            cur.execute(
+                "UPDATE incidents SET events = %s WHERE id = %s;",
+                (json.dumps(merged_events), incident_id),
+            )
+            log(f"Attached {len(new_event_rows)} event(s) to already-open incident: {title}")
+        else:
+            cur.execute("""
+                INSERT INTO incidents (title, severity, affected_services, events)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id;
+            """, (
+                title,
+                severity,
+                [agent],
+                json.dumps(new_event_rows),
+            ))
+            incident_id = cur.fetchone()["id"]
 
         # Mark events as correlated
         event_ids = [e["id"] for e in agent_events]
@@ -217,18 +268,21 @@ def correlate_events():
             WHERE id = ANY(%s);
         """, (incident_id, event_ids))
 
-        # Write Grafana annotation
-        cur.execute("""
-            INSERT INTO grafana_annotations (ts, title, text, tags, source)
-            VALUES (%s, %s, %s, %s, 'wazuh');
-        """, (
-            agent_events[0]["ts"],
-            f"🚨 {title}",
-            "\n".join(f"L{e['rule_level']}: {e['rule_description']}" for e in agent_events[:5]),
-            ["security", "incident", severity, agent],
-        ))
-
-        log(f"Created incident: {title} (severity={severity})")
+        # Only annotate Grafana / log a "created" line for genuinely new
+        # incidents — an attach to an already-open one already got its
+        # annotation the first time; repeating it every recurrence is the
+        # same noise this dedup exists to stop.
+        if not existing:
+            cur.execute("""
+                INSERT INTO grafana_annotations (ts, title, text, tags, source)
+                VALUES (%s, %s, %s, %s, 'wazuh');
+            """, (
+                agent_events[0]["ts"],
+                f"🚨 {title}",
+                "\n".join(f"L{e['rule_level']}: {e['rule_description']}" for e in agent_events[:5]),
+                ["security", "incident", severity, agent],
+            ))
+            log(f"Created incident: {title} (severity={severity})")
 
     conn.commit()
     conn.close()

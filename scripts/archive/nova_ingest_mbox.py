@@ -19,7 +19,7 @@ from pathlib import Path
 import urllib.request
 import urllib.error
 
-VECTOR_URL = "http://192.168.1.6:18790/remember"
+VECTOR_URL = "http://memory-server.digitalnoise.net:18790/remember"
 
 def log(msg: str):
     print(f"[{datetime.now().isoformat()}] {msg}")

@@ -23,7 +23,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import psycopg2
 from nova_notify import notify
 
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_nas_sync.json"
 
 SYNOLOGY_IP = "192.168.1.11"

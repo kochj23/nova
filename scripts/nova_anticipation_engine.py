@@ -48,9 +48,9 @@ def log(msg):
 
 PRESENCE_URL = "http://127.0.0.1:37465/occupancy"
 CALENDAR_URL = "http://127.0.0.1:37400/api/oneonone/meetings"
-MEMORY_URL = "http://192.168.1.6:18790"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-PG_DSN = "postgresql://kochj@localhost:5432/nova_ops"
+PG_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 
 EVAL_INTERVAL = 60  # seconds between evaluation cycles
 DELIVERY_COOLDOWN = 1800  # 30 min between proactive messages on same topic

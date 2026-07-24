@@ -35,7 +35,7 @@ from nova_notify import notify
 
 WORK_DIR        = Path("/Volumes/Data/nova-livetv/tv-retry")
 LOG_FILE        = Path.home() / ".openclaw/logs/nova_tv_retry.log"
-MEMORY_URL      = "http://192.168.1.6:18790/remember"
+MEMORY_URL      = "http://memory-server.digitalnoise.net:18790/remember"
 FFMPEG_BIN      = "/opt/homebrew/bin/ffmpeg"
 FFPROBE_BIN     = "/opt/homebrew/bin/ffprobe"
 

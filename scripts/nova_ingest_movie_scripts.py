@@ -28,7 +28,7 @@ VECTOR = "movie_scripts"
 ALL_SCRIPTS = "https://imsdb.com/all-scripts.html"
 UA = "Mozilla/5.0 (nova-ingest movie-scripts)"
 INGEST = str(Path(__file__).parent / "nova_ingest.py")
-DSN = "host=localhost dbname=nova_memories user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 
 # IMDb Top ~100 (canonical greats). Matching to IMSDb naturally filters to those
 # with an available script — not every title will be present.

@@ -29,7 +29,7 @@ import meshtastic.serial_interface
 
 PORT = 37478
 DEVICE = "/dev/cu.usbmodem31201"
-DSN = "host=localhost dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 LOG_FILE = Path.home() / ".openclaw/logs/meshtastic_bridge.log"
 
 _lock = Lock()

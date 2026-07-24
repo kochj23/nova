@@ -52,7 +52,7 @@ import psycopg2
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
-DB_DSN = "postgresql://kochj@127.0.0.1:5432/nova_ops"
+DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 LOCAL_IPS = {"127.0.0.1", "localhost", "192.168.1.6", "::1"}
 HOSTNAME = socket.gethostname()
 PROBE_TIMEOUT = 4.0

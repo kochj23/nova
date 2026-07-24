@@ -70,7 +70,17 @@ def log(msg):
 
 
 def get_api_key():
-    """Load API key from macOS Keychain."""
+    """Load UniFi API key: nova_secrets (Linux/nova-core) first, macOS
+    Keychain fallback (so this still works if ever run on .6)."""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, "/opt/nova")
+        import nova_secrets
+        key = nova_secrets.get_secret("nova-unifi-api-key")
+        if key:
+            return key
+    except Exception:
+        pass
     try:
         result = subprocess.run(
             ["security", "find-generic-password", "-a", "nova",
@@ -82,7 +92,7 @@ def get_api_key():
             return key
     except Exception:
         pass
-    log("ERROR: UniFi API key not found in Keychain")
+    log("ERROR: UniFi API key not found in nova_secrets or Keychain")
     log("Run: security add-generic-password -a nova -s nova-unifi-api-key -w YOUR_KEY")
     return None
 

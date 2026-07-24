@@ -33,7 +33,7 @@ VECTOR = "pharmacology"
 BASE_URL = "https://www.erowid.org"
 STATE_FILE = Path.home() / ".openclaw/cache/erowid_ingest_state.json"
 LOG_FILE = Path.home() / ".openclaw/logs/erowid_ingest.log"
-MEMORY_SERVER = "http://192.168.1.6:18790"
+MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
 SLACK_CHANNEL = nova_config.SLACK_NOTIFY
 
 DELAY_BETWEEN_PAGES = 2.0  # polite crawl delay (seconds)

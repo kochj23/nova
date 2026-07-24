@@ -29,7 +29,7 @@ except ImportError:
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-DB_DSN = "postgresql://kochj@192.168.1.6:5432/nova_memories"
+DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
 
 # ── Source → ltree Taxonomy ───────────────────────────────────────────────────
 # Keys are source values, values are ltree paths (dot-separated)

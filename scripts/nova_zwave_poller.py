@@ -11,7 +11,7 @@ import paho.mqtt.client as mqtt
 MQTT_HOST = "127.0.0.1"
 MQTT_PORT = 1883
 MQTT_TOPIC = "zwave/+/+/+/+"
-DB_DSN = "host=localhost dbname=nova_ops user=kochj"
+DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 
 def get_conn():

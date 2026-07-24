@@ -52,7 +52,7 @@ import uuid
 import psycopg2
 import psycopg2.extras
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 SLACK_CLAUDE_CHANNEL = "C0B3RSRR0DD"  # #nova-claude
 SLACK_TOKEN_KEYCHAIN = "nova-slack-bot-token"
 CLAUDE_BIN = "/opt/homebrew/bin/claude"

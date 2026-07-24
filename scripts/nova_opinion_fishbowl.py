@@ -16,8 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_journal as nj
 import nova_voice
 
-MEM_DSN = "host=localhost dbname=nova_memories user=kochj"
-OPS_DSN = "host=localhost dbname=nova_ops user=kochj"
+MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 
 def main():

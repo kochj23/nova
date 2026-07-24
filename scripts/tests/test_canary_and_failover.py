@@ -180,7 +180,7 @@ class TestZombieRunDetection:
         """No scheduler_runs should be 'running' for more than 24h (except long ingest jobs)."""
         try:
             import psycopg2
-            conn = psycopg2.connect("postgresql://kochj@127.0.0.1:5432/nova_ops")
+            conn = psycopg2.connect("postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
             cur = conn.cursor()
             cur.execute("""
                 SELECT task_id, to_timestamp(started_at/1000) as started
@@ -200,7 +200,7 @@ class TestZombieRunDetection:
         try:
             import psycopg2
             import subprocess
-            conn = psycopg2.connect("postgresql://kochj@127.0.0.1:5432/nova_ops")
+            conn = psycopg2.connect("postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
             cur = conn.cursor()
             cur.execute("""
                 SELECT run_id FROM scheduler_runs

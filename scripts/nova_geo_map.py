@@ -13,7 +13,7 @@ from pathlib import Path
 import psycopg2
 import psycopg2.extras
 
-MEM_DSN = "host=localhost dbname=nova_memories user=kochj"
+MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 OUT = Path(sys.argv[sys.argv.index("-o") + 1]) if "-o" in sys.argv else \
     Path("/private/tmp/claude-501/-Users-kochj/3070c430-736e-4d28-bd8b-cf2a2b7be3ae/scratchpad/nova_radar.html")
 HOURS = 24

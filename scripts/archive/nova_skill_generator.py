@@ -95,8 +95,8 @@ The script should:
 Available APIs:
 - nova_config.post_both(msg, slack_channel=nova_config.SLACK_NOTIFY) — post to Slack
 - urllib.request for HTTP calls
-- Memory server: http://192.168.1.6:18790/recall?q=QUERY&n=5
-- Memory server: http://192.168.1.6:18790/remember (POST {text, source, metadata})
+- Memory server: http://memory-server.digitalnoise.net:18790/recall?q=QUERY&n=5
+- Memory server: http://memory-server.digitalnoise.net:18790/remember (POST {text, source, metadata})
 - Scheduler: http://127.0.0.1:37460/run/TASK_ID (trigger a task)
 
 Output THREE things separated by ---SEPARATOR---:

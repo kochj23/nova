@@ -21,12 +21,14 @@ Usage:
   nova_ingest.py discover "adult content" --sites 2 --per-site 3 --download-dir /Volumes/Data/private --yes
   nova_ingest.py url "https://example.com/article"
   nova_ingest.py file /path/to/doc.txt --source my_source
+  nova_ingest.py recording /Volumes/external/videos/TVShows/Jeopardy --source jeopardy
+  nova_ingest.py recording /path/to/one_episode.mp4 --source my_source
   nova_ingest.py --resume       # continue last interrupted job
   nova_ingest.py --restart      # restart last job, retry failures
   nova_ingest.py --status       # show current job state
   nova_ingest.py --list-vectors # show all memory source names
 
-Video output: /Volumes/external/videos/TVShows/<Channel>/Season 01/S01E{N} - <Title>.mp4
+Video output: /Volumes/external/videos/youtube/<Channel>/Season 01/S01E{N} - <Title>.mp4
 
 Written by Jordan Koch.
 """
@@ -47,14 +49,14 @@ from nova_notify import notify as _bus_notify
 # ---------------------------------------------------------------------------
 
 VERSION       = "1.3.0"
-MEMORY_URL    = "http://192.168.1.6:18790/remember"
+MEMORY_URL    = "http://memory-server.digitalnoise.net:18790/remember"
 from nova_resolve import resolve_url
 SEARXNG_URL = resolve_url("searxng", "/search")
 SLACK_CHANNEL = nova_config.SLACK_NOTIFY
 STATE_DIR     = Path.home() / ".openclaw/workspace/state/ingest"
 LOG_FILE      = Path.home() / ".openclaw/logs/nova_ingest.log"
 WORK_DIR      = Path("/Volumes/Data/nova-ingest-work")
-VIDEO_BASE    = Path("/Volumes/external/videos/TVShows")
+VIDEO_BASE    = Path("/Volumes/external/videos/youtube")
 MUSIC_DIR     = Path("/Volumes/external/music/YouTube")
 COOKIES_FILE  = Path.home() / ".openclaw/cache/yt_cookies.txt"
 YT_DLP        = "/opt/homebrew/bin/yt-dlp"
@@ -275,7 +277,7 @@ def auto_select_vector(topic, sample, existing):
             log(f"Auto-selected vector: '{best}' (score={scores[best]:.1f})")
             return best
     try:
-        url = "http://192.168.1.6:18790/recall?q=" + urllib.parse.quote(topic) + "&n=5"
+        url = "http://memory-server.digitalnoise.net:18790/recall?q=" + urllib.parse.quote(topic) + "&n=5"
         with urllib.request.urlopen(url, timeout=8) as r:
             results = json.loads(r.read())
             sources = [m.get("source", "") for m in results if m.get("source")]
@@ -368,7 +370,7 @@ def flush_discards():
     try:
         if _discard_conn is None:
             import psycopg2
-            _discard_conn = psycopg2.connect("host=localhost dbname=nova_memories user=kochj")
+            _discard_conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj")
             with _discard_conn, _discard_conn.cursor() as cur:
                 cur.execute("""CREATE TABLE IF NOT EXISTS memory_discards (
                     id BIGSERIAL PRIMARY KEY, ts timestamptz DEFAULT now(),
@@ -599,7 +601,7 @@ def chunk_words(text, n=CHUNK_WORDS):
 
 def random_mem(vector):
     try:
-        url = ("http://192.168.1.6:18790/random?source="
+        url = ("http://memory-server.digitalnoise.net:18790/random?source="
                + urllib.parse.quote(vector) + "&n=1")
         with urllib.request.urlopen(url, timeout=5) as r:
             data  = json.loads(r.read())
@@ -1692,6 +1694,85 @@ def run_url(url, vector, state, dry_run, silent=False):
             msg += f"\n  :thought_balloon: _{mem[:180].replace(chr(10), ' ')}..._"
         notify(msg)
 
+VIDEO_EXTS = {".mp4", ".mkv", ".ts", ".m4v", ".mov", ".avi"}
+
+
+def run_recording(path, vector, state, dry_run, local_only=False):
+    """Transcribe+ingest already-local video file(s) — OTA/DVR recordings living in
+    the TVShows library (or any other local video). No download step: audio is pulled
+    straight from the file already on disk. Mirrors run_video's transcribe/chunk/remember
+    tail, minus the yt-dlp fetch."""
+    jid         = state["job_id"]
+    done_paths  = set(state.get("done_urls", []))
+    done_hashes = set(state.get("done_hashes", []))
+    ct          = state.get("chunks_total", 0)
+    items_done  = state.get("items_done", 0)
+    failed      = 0
+
+    WORK_DIR.mkdir(parents=True, exist_ok=True)
+    p = Path(path).expanduser()
+    if not p.exists():
+        log(f"Path not found: {path}", "ERROR")
+        return
+    files = sorted([p] if p.is_file() else
+                    [f for f in p.rglob("*") if f.suffix.lower() in VIDEO_EXTS])
+    if not files:
+        log(f"No video files found under: {path}", "ERROR")
+        return
+
+    pending = [f for f in files if str(f) not in done_paths]
+    state["items_total"] = len(files)
+    save_state(jid, state)
+
+    log(f"Recording: '{path}' -> vector '{vector}' -- {len(pending)}/{len(files)} pending")
+    notify(f":vhs: *Recording Ingest Started*\n"
+           f"  Path: `{path}`\n  Vector: `{vector}`\n"
+           f"  {len(pending)} pending / {len(files)} total")
+
+    for f in pending:
+        if ct >= state.get("target", 10**9) or _shutdown:
+            break
+        log(f"  {f.name[:70]}")
+
+        wav = WORK_DIR / f"{hashlib.md5(str(f).encode()).hexdigest()[:12]}.wav"
+        ingested = 0
+        if not dry_run:
+            if _audio(f, wav):
+                transcript = _transcribe_dispatch(wav, wav.stem, WORK_DIR, local_only=local_only)
+                wav.unlink(missing_ok=True)
+                if transcript:
+                    transcript = clean_text(transcript)
+                    for chunk in chunk_words(transcript):
+                        if is_garbage(chunk):
+                            continue
+                        if remember(chunk, vector,
+                                    {"path": str(f), "show": f.parent.parent.name,
+                                     "type": "video_transcript", "platform": "ota_recording"},
+                                    done_hashes, dry_run):
+                            ct       += 1
+                            ingested += 1
+            else:
+                failed += 1
+                log(f"  audio extract failed: {f.name[:70]}", "WARN")
+
+        done_paths.add(str(f))
+        items_done += 1
+        state.update({
+            "done_urls":    list(done_paths)[-5000:],
+            "done_hashes":  list(done_hashes)[-20000:],
+            "chunks_total": ct,
+            "items_done":   items_done,
+        })
+        save_state(jid, state)
+
+        remaining = [x for x in pending if str(x) not in done_paths]
+        nxt       = remaining[0].name[:60] if remaining else None
+        notify_item(f.name[:60], vector, ingested, failed, items_done, len(files), nxt,
+                    random_mem(vector) if not dry_run and ingested > 0 else None)
+
+    _finish(jid, path, vector, ct, state.get("target", 0), items_done, failed, dry_run)
+
+
 def run_file(path, vector, state, dry_run):
     dh = set(state.get("done_hashes", []))
     p  = Path(path)
@@ -1821,6 +1902,13 @@ MODES
 
   file       PATH          Ingest a local text/markdown file.
 
+  recording  PATH          Transcribe+ingest already-local video file(s) -- no
+                           download step. PATH may be a single file or a
+                           directory (scanned recursively for mp4/mkv/ts/m4v/
+                           mov/avi). For OTA/DVR recordings living in the
+                           TVShows library (the "youtube" mode/library is for
+                           actual YouTube content -- see BASE_DIR).
+
 OPTIONS
 -------
   --channel NAME       Channel name for video mode (used in file paths)
@@ -1858,7 +1946,7 @@ VECTOR AUTO-SELECTION
 VIDEO OUTPUT PATHS
 ------------------
   Default (ingest mode):
-    /Volumes/external/videos/TVShows/<Channel>/Season 01/S01E0001 - <Title>.mp4
+    /Volumes/external/videos/youtube/<Channel>/Season 01/S01E0001 - <Title>.mp4
     Episodes numbered by upload date (oldest = E0001).
 
   With --download-dir /path:
@@ -1928,7 +2016,7 @@ def main():
         add_help=False,
     )
     p.add_argument("mode", nargs="?",
-                   choices=["wikipedia", "search", "video", "discover", "url", "file"])
+                   choices=["wikipedia", "search", "video", "discover", "url", "file", "recording"])
     p.add_argument("query",           nargs="?")
     p.add_argument("--channel",       help="Channel name for video mode")
     p.add_argument("--source",        help="Force vector/source name")
@@ -2057,6 +2145,10 @@ def main():
             import urllib.parse as _up
             path_slug = _up.unquote(topic.rstrip("/").split("/")[-1])
             topic = path_slug.replace("_", " ").replace("-", " ")
+        elif args.mode == "recording" and topic:
+            # A raw filesystem path makes a bad vector-selection query -- use the
+            # show/file's own name (basename) instead of the full path.
+            topic = Path(topic).name
         vector = auto_select_vector(topic, topic, existing)
     elif not vector:
         vector = "download_only"
@@ -2095,6 +2187,8 @@ def main():
             run_url(args.query, vector, state, args.dry_run)
         elif args.mode == "file":
             run_file(args.query, vector, state, args.dry_run)
+        elif args.mode == "recording":
+            run_recording(args.query, vector, state, args.dry_run, local_only=args.local_only)
     except Exception:
         job_status = "failed"
         raise

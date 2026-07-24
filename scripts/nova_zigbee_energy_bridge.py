@@ -17,7 +17,7 @@ import time
 import paho.mqtt.client as mqtt
 import psycopg2
 
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 MQTT_HOST, MQTT_PORT = "127.0.0.1", 1883
 MIN_INTERVAL_S = 15          # min seconds between inserts per device
 _conn = None

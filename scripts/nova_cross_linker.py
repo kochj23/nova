@@ -17,7 +17,7 @@ import urllib.parse
 from pathlib import Path
 from datetime import datetime
 
-MEMORY_SERVER = "http://192.168.1.6:18790"
+MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
 HUGO_ROOT = (Path.home() / "nova-journal")
 BASE_URL = "https://nova.digitalnoise.net"
 

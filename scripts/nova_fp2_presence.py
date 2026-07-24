@@ -23,7 +23,7 @@ import urllib.request
 import psycopg2
 
 NOVAHOMEKIT_URL = "http://127.0.0.1:37433/api/accessories"
-PG_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 POLL_INTERVAL = 10  # seconds
 OCCUPANCY_TYPE = "Occupancy Detected"  # HomeKit char UUID 00000071-...
 

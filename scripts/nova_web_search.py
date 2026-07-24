@@ -36,7 +36,7 @@ TIMEOUT = int(os.getenv("WEBSEARCH_TIMEOUT", "10"))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # PostgreSQL ops logging (best-effort; never breaks search)
-PG_DSN = os.getenv("NOVA_OPS_DSN", "host=127.0.0.1 dbname=nova_ops user=kochj")
+PG_DSN = os.getenv("NOVA_OPS_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
 
 
 def _log_search_pg(query: str, results: Optional[List[Dict]],

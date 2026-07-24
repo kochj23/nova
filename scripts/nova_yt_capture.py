@@ -26,8 +26,8 @@ YT_DLP = "/opt/homebrew/bin/yt-dlp"
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 WHISPER = "/opt/homebrew/bin/mlx_whisper"
 WMODEL = "mlx-community/whisper-large-v3-turbo"
-MEMORY_URL = "http://192.168.1.6:18790/remember"
-DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
+DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 WORK = Path.home() / ".openclaw/cache/fishbowl_cap"
 CHUNK = 1500
 

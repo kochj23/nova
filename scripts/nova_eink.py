@@ -192,7 +192,7 @@ def collect() -> Snapshot:
     import psycopg2
     s = Snapshot()
     try:
-        c = psycopg2.connect("host=127.0.0.1 dbname=nova_ops user=kochj connect_timeout=4")
+        c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj connect_timeout=4")
         c.autocommit = True
         cur = c.cursor()
     except Exception:
@@ -298,7 +298,7 @@ def collect() -> Snapshot:
 
     # memories + Nova's voice (separate DB)
     try:
-        m = psycopg2.connect("host=127.0.0.1 dbname=nova_memories user=kochj connect_timeout=4")
+        m = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj connect_timeout=4")
         m.autocommit = True
         mc = m.cursor()
         r = _q1(mc, "SELECT count(*) FROM memories")
