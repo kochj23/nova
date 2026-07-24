@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+import nova_journal
 from nova_image_utils import generate_image
 try:
     from nova_ops_context import get_full_context, format_security_brief, format_infra_brief
@@ -245,11 +246,17 @@ def gather_ops_data() -> dict:
     try:
         conn = psycopg2.connect(DB_DSN)
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        # ponytail: claude_actions auto-logs EVERY tool call (hundreds/day on a busy
+        # day), most with a blank description. "ORDER BY ts DESC LIMIT 50" alone
+        # was grabbing the tail end of raw tool-call noise on busy days, missing
+        # the actual day's work entirely -- filter to entries that actually say
+        # something first, so the limit operates on signal, not noise.
         cur.execute("""
             SELECT action_type, target, description, ts
             FROM claude_actions
             WHERE ts > now() - interval '24 hours'
-            ORDER BY ts DESC LIMIT 50
+              AND description IS NOT NULL AND description != ''
+            ORDER BY ts DESC LIMIT 200
         """)
         data["claude_actions"] = [dict(r) for r in cur.fetchall()]
         cur.execute("""
@@ -474,6 +481,7 @@ ADDITIONAL CONTEXT FOR THIS COLUMN:
 - You have access to: Philips Hue (33 lights, outdoor sensors), Lutron Caseta (switches/dimmers), SNMP metrics (CPU, memory, temp across 20 devices), security scans, camera motion events, UNAS/Synology NAS status, scheduler task runs, auto-fix heal events, deploy events, shared observations, Claude Code session work (queue items completed, actions taken), Big Brother alerts/heals, capacity alerts, weather station, BLE presence tracking, network client monitoring.
 - CRITICAL: The "claude_actions" and "queue_completed" sections show what Claude Code and you actually BUILT and FIXED today. Lead with this — it's the meat of the story.
 - LEAD with Claude Code work — deployments, fixes, new services. This is the headline.
+- queue_completed is the real backbone of "what got built today" -- each entry is a hand-written summary of one substantial finished piece of work. EVERY queue_completed item must get real coverage in the column, not just the first one or two. claude_actions is raw, high-volume tool-call noise (hundreds of rows/day, mostly file-edit timestamps) -- use it ONLY for supporting color (e.g. "took nine edits to get right") on top of a queue_completed item, never as the main driver of what the column is about. If claude_actions has more rows/more vivid detail than queue_completed, that is not a signal to focus there -- it just means today was a busy editing day on top of the real work queue_completed already describes.
 - MENTION specific queue items by name, specific numbers (actions count, queue items closed, memories added)
 - Reference weather, presence data, and capacity if notable
 - DON'T narrate routine, UNCHANGED status — it reads identically every day and Little Mister skips it. Do NOT report steady NAS/UNAS memory/RAM usage (only if it moved materially or is a problem). Same rule for any metric that reads the same as yesterday — skip it unless it changed or matters. Fresh material only.
@@ -498,6 +506,10 @@ def generate_title(article_preview: str) -> str:
 # ── Publishing ───────────────────────────────────────────────────────────────
 
 def publish(title: str, body: str, image_path: Path | None):
+    snap = nova_journal.grafana_panel_image("fleet-health", 7, "operations", "rando-ops-fleet-health")
+    if snap:
+        body += f"\n\n---\n\n**Fleet health at publish time:**\n\n![Current fleet health]({snap})"
+
     date = time.strftime("%Y-%m-%d")
     timestamp = time.strftime("%Y-%m-%dT20:00:00-07:00")
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
@@ -548,8 +560,18 @@ description: "Nova's daily ops report — what broke, what worked, and what she'
     msg = f"rando: {date} — daily ops ({title[:50]})"
     r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=15)
     if r.returncode == 0:
-        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
-        log("Pushed to GitHub")
+        r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
+        if r.returncode == 0:
+            log("Pushed to GitHub")
+        else:
+            # Another writer pushed first (non-fast-forward). Rebase on top and retry once.
+            log(f"Push rejected, rebasing + retrying: {r.stderr[:120]}")
+            subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
+            r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
+            if r.returncode == 0:
+                log("Pushed to GitHub after rebase")
+            else:
+                log(f"Push still failed after rebase: {r.stderr[:200]} — commit is safe, ships next run")
     else:
         log(f"Commit issue: {r.stderr[:100]}")
 

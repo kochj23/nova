@@ -35,6 +35,7 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 ARTICLE_MODEL = "anthropic/claude-haiku-4.5"
 IMAGE_MODEL = "openai/gpt-5-image"
 PG_DSN = "dbname=nova_memories user=kochj host=192.168.1.6"
+NOVA_OPS_DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -59,6 +60,14 @@ def get_openrouter_key():
 
 
 def call_llm(system, user, model=None, max_tokens=8000):
+    # Prefer Claude Code Max (flat-rate, matches nova_rando_daily_ops.py/nova_journal_security.py)
+    # -- OpenRouter's credit balance ran dry 2026-07-17, so the direct-API path below
+    # has been failing (401) on every run since, silently killing this article for 10+ days.
+    try:
+        import nova_claude_code
+        return nova_claude_code.claude_generate(user, system=system)
+    except Exception as e:
+        log(f"claude_generate failed, falling back to OpenRouter: {e}")
     api_key = get_openrouter_key()
     body = json.dumps({
         "model": model or ARTICLE_MODEL,
@@ -213,9 +222,111 @@ def get_scanner_blotter(hours=18):
     return out or None
 
 
+def get_overhead_flights(hours=24):
+    """What flew over 91506 today, aggregated from nova_flights_poller.py's live feed
+    (telemetry.overhead_flights). Same aggregate-first shape as get_scanner_blotter:
+    counts for the ordinary traffic, named detail only for what's actually notable
+    (helicopters, low passes, emergency squawks) -- no need to narrate every airliner
+    that crossed 8000ft three miles out."""
+    import psycopg2
+    try:
+        conn = psycopg2.connect(NOVA_OPS_DSN)
+        cur = conn.cursor()
+        cutoff = datetime.now() - timedelta(hours=hours)
+        # DISTINCT ON hex: the poller logs a fresh row every ~30s an aircraft is in
+        # view, so a single helicopter circling for 20 minutes would otherwise look
+        # like 40 different sightings. One row per aircraft -- its closest approach.
+        cur.execute("""
+            SELECT DISTINCT ON (hex)
+                   hex, type_name, operator, registration, callsign, is_helicopter, alt_ft,
+                   dist_nm, compass, squawk, ts
+            FROM telemetry.overhead_flights
+            WHERE ts >= %s
+            ORDER BY hex, dist_nm ASC NULLS LAST
+        """, (cutoff,))
+        rows = cur.fetchall()
+        cur.close()
+        conn.close()
+    except Exception:
+        return None
+    if not rows:
+        return None
+
+    EMERGENCY_SQUAWKS = {"7500", "7600", "7700"}
+    total = len(rows)  # distinct aircraft (hex), not poll-cycle rows
+    helicopters = [r for r in rows if r[5]]
+    emergencies = [r for r in rows if r[9] in EMERGENCY_SQUAWKS]
+    low_passes = [r for r in rows if r[6] is not None and r[6] < 4000 and r[7] is not None and r[7] < 1.5]
+
+    def describe(r):
+        _, type_name, operator, reg, callsign, _, alt, dist, comp, _, ts = r
+        who = type_name + (f" ({operator})" if operator else "")
+        ident = reg or callsign or ""
+        where = f"{int(alt)} ft, {round(dist, 1)} mi {comp}" if alt is not None and dist is not None else ""
+        return f"{who}{f' [{ident}]' if ident else ''} — {where} at {ts.strftime('%-I:%M %p')}"
+
+    # priority order emergencies > low passes > helicopters, deduped by hex (a
+    # helicopter making a low pass would otherwise appear in two categories)
+    seen, notable = set(), []
+    for r in emergencies + low_passes + helicopters:
+        if r[0] not in seen:
+            seen.add(r[0])
+            notable.append(describe(r))
+        if len(notable) >= 8:
+            break
+
+    return {
+        "total": total,
+        "helicopter_count": len(helicopters),
+        "notable": notable,
+        "emergency_count": len(emergencies),
+    }
+
+
+def get_wifi_ble_summary(hours=24):
+    """Aggregate WiFi AP and BLE device sightings for the last N hours -- counts
+    and notable changes only, never raw BSSIDs/MACs or exact addresses in what
+    gets sent to the cloud LLM (that scrubbing happens in _scrub_obj downstream,
+    but this function itself only returns aggregate numbers, nothing per-device)."""
+    import psycopg2
+    try:
+        conn = psycopg2.connect(NOVA_OPS_DSN)
+        cur = conn.cursor()
+        cutoff_hours = hours
+        cur.execute("""
+            SELECT count(DISTINCT bssid) FILTER (WHERE NOT is_ours),
+                   count(DISTINCT bssid) FILTER (WHERE is_ours),
+                   count(DISTINCT bssid) FILTER (WHERE NOT is_ours AND security ILIKE '%%open%%')
+            FROM wifi_aps WHERE ts >= now() - interval '%s hours'
+        """, (cutoff_hours,))
+        neighbor_aps, our_aps, open_aps = cur.fetchone()
+        cur.close()
+        conn.close()
+    except Exception:
+        neighbor_aps = our_aps = open_aps = None
+
+    try:
+        conn = psycopg2.connect("host=127.0.0.1 dbname=nova_ops user=kochj")
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT count(DISTINCT device_mac) FROM telemetry.bluetooth
+            WHERE ts >= now() - interval '%s hours'
+        """, (cutoff_hours,))
+        ble_devices = cur.fetchone()[0]
+        cur.close()
+        conn.close()
+    except Exception:
+        ble_devices = None
+
+    if neighbor_aps is None and ble_devices is None:
+        return None
+    return {"neighbor_aps": neighbor_aps, "our_aps": our_aps, "open_aps": open_aps,
+           "ble_devices": ble_devices}
+
+
 # ── Article Generation ────────────────────────────────────────────────────────
 
-def generate_article(news_items, scanner_blotter=None):
+def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=None):
     # Score each news item by locality so the article weights detail toward Burbank/nearby (not
     # Pasadena/DTLA). Same proximity principle as the scanner blotter, applied to ALL news.
     try:
@@ -285,6 +396,39 @@ def generate_article(news_items, scanner_blotter=None):
                 f"Wry and respectful.]\n"
             )
 
+    flights_block = ""
+    if flights:
+        bits = [f"{flights['total']} aircraft tracked overhead"]
+        if flights["helicopter_count"]:
+            bits.append(f"{flights['helicopter_count']} helicopter(s)")
+        if flights["emergency_count"]:
+            bits.append(f"{flights['emergency_count']} EMERGENCY SQUAWK event(s)")
+        notable = "; ".join(flights["notable"]) or "nothing beyond routine airline traffic"
+        flights_block = (
+            f"\n\n[OVERHEAD TRAFFIC — last 24h, zip 91506. {', '.join(bits)}. "
+            f"Notable sightings (helicopters/low passes/emergency squawks, most notable first): {notable}. "
+            f"Mention this only briefly (a sentence or two, maybe a paragraph if an emergency squawk or an "
+            f"interesting helicopter operator showed up) -- this is color, not the headline, unless something "
+            f"genuinely unusual happened (an emergency squawk is always worth a real mention).]\n"
+        )
+
+    wifi_ble_block = ""
+    if wifi_ble:
+        bits = []
+        if wifi_ble.get("neighbor_aps") is not None:
+            bits.append(f"{wifi_ble['neighbor_aps']} distinct neighboring WiFi networks seen "
+                       f"(plus {wifi_ble.get('our_aps', 0)} of our own)")
+            if wifi_ble.get("open_aps"):
+                bits.append(f"{wifi_ble['open_aps']} of them broadcasting with no security at all")
+        if wifi_ble.get("ble_devices") is not None:
+            bits.append(f"{wifi_ble['ble_devices']} distinct Bluetooth LE devices heard")
+        if bits:
+            wifi_ble_block = (
+                f"\n\n[RF NEIGHBORHOOD — last 24h. {'; '.join(bits)}. Mention this only briefly "
+                f"(a sentence, maybe two) as neighborhood color -- this is not the headline. Never "
+                f"name a specific network name/BSSID/MAC, just the aggregate numbers.]\n"
+            )
+
     from nova_voice import system_prompt, CONTEXT_JOURNAL_LOCAL
     system = system_prompt(CONTEXT_JOURNAL_LOCAL + """
 ADDITIONAL RULES FOR BURBANK DISPATCH:
@@ -322,6 +466,8 @@ ADDITIONAL RULES FOR BURBANK DISPATCH:
 
 {news_block}
 {scanner_block}
+{flights_block}
+{wifi_ble_block}
 Write your daily Burbank dispatch. Today is {datetime.now().strftime('%A, %B %d, %Y')}."""
 
     return call_llm(system, user, max_tokens=6000)
@@ -336,48 +482,20 @@ def generate_title(article_preview):
 # ── Image Generation ──────────────────────────────────────────────────────────
 
 def generate_image(article_preview):
+    # ponytail: was a bespoke direct-OpenRouter call (image-model, base64 decode by
+    # hand) that had been failing 401 the same 10+ days as call_llm's old path.
+    # nova_image_utils.generate_image already does this correctly with a working
+    # ComfyUI fallback -- same shared helper journal_security/rando_daily_ops use.
     prompt_system = "Based on this local news article about Burbank CA, generate a short image prompt (max 60 words) for an illustration. It should capture the vibe of suburban Burbank — palm trees, studios, strip malls, mountains in the background. Stylized, slightly satirical. Output ONLY the prompt."
     img_prompt = call_llm(prompt_system, article_preview[:2000], max_tokens=80).strip()
     log(f"Image prompt: {img_prompt[:80]}...")
-
-    api_key = get_openrouter_key()
-    payload = json.dumps({
-        "model": IMAGE_MODEL,
-        "modalities": ["image", "text"],
-        "messages": [{"role": "user", "content": f"Generate an image: {img_prompt}"}],
-    }).encode()
-
-    req = urllib.request.Request(OPENROUTER_URL, data=payload, headers={
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://nova.digitalnoise.net",
-        "X-Title": "Nova Local Image",
-    })
-
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            data = json.loads(resp.read())
-        message = data["choices"][0]["message"]
-        for img in message.get("images", []):
-            img_url = img.get("image_url", {}).get("url", "") if isinstance(img, dict) else img
-            if isinstance(img_url, str) and img_url.startswith("data:image"):
-                b64 = img_url.split(",", 1)[1]
-                out = Path.home() / f".openclaw/workspace/local_{int(time.time())}.png"
-                out.write_bytes(base64.b64decode(b64))
-                return out
-        content = message.get("content", "")
-        if isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict) and part.get("type") == "image_url":
-                    img_url = part.get("image_url", {}).get("url", "")
-                    if img_url.startswith("data:image"):
-                        b64 = img_url.split(",", 1)[1]
-                        out = Path.home() / f".openclaw/workspace/local_{int(time.time())}.png"
-                        out.write_bytes(base64.b64decode(b64))
-                        return out
+        from nova_image_utils import generate_image as _gen_image
+        result = _gen_image(img_prompt, section="local_burbank")
+        return Path(result) if result else None
     except Exception as e:
         log(f"Image generation failed: {e}")
-    return None
+        return None
 
 
 # ── Publishing ────────────────────────────────────────────────────────────────
@@ -465,12 +583,22 @@ def main():
     if scanner:
         log("Airwaves blotter: " + ", ".join(f"{d}={b['calls']}" for d, b in scanner.items()))
 
+    flights = get_overhead_flights()  # what flew over 91506 today, aggregate + notable sightings only
+    if flights:
+        log(f"Overhead flights: {flights['total']} tracked, "
+            f"{flights['helicopter_count']} helicopter(s), {flights['emergency_count']} emergency squawk(s)")
+
+    wifi_ble = get_wifi_ble_summary()  # aggregate WiFi/BLE counts only, never per-device
+    if wifi_ble:
+        log(f"RF neighborhood: {wifi_ble.get('neighbor_aps')} neighbor APs, "
+            f"{wifi_ble.get('ble_devices')} BLE devices")
+
     if len(all_items) < 3:
         log(f"Only {len(all_items)} news items — generating with what we have (may include Burbank observations)")
 
     log(f"Got {len(all_items)} news items")
 
-    article = generate_article(all_items if all_items else [{"text": "No local news today", "source": "none", "created_at": ""}], scanner_blotter=scanner)
+    article = generate_article(all_items if all_items else [{"text": "No local news today", "source": "none", "created_at": ""}], scanner_blotter=scanner, flights=flights, wifi_ble=wifi_ble)
     log(f"Article generated: {len(article)} chars")
 
     title = generate_title(article)

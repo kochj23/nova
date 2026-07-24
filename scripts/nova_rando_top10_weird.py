@@ -97,6 +97,13 @@ def get_openrouter_key() -> str:
 
 
 def call_llm(system: str, user: str, model: str = None, max_tokens: int = 8000) -> str:
+    # Prefer Claude Code Max (flat-rate) -- OpenRouter's credit balance ran dry
+    # 2026-07-17, so the direct-API path below 401s on every call since.
+    try:
+        import nova_claude_code
+        return nova_claude_code.claude_generate(user, system=system)
+    except Exception:
+        pass
     import urllib.request
     api_key = get_openrouter_key()
     body = json.dumps({
@@ -205,77 +212,20 @@ def generate_title(article_preview: str) -> str:
     return title.strip().strip('"').strip("'").replace('"', "'")
 
 
-# ── Image Generation via OpenRouter ──────────────────────────────────────────
+# ── Image Generation ─────────────────────────────────────────────────────────
+# ponytail: was a bespoke direct-OpenRouter image-model call (had been 401ing
+# since the 2026-07-17 credit-balance lapse, same as call_llm above).
+# nova_image_utils.generate_image already does this correctly with a working
+# ComfyUI fallback -- same shared helper the other article generators use.
 
 def generate_image_openrouter(article_preview: str) -> Path | None:
-    import urllib.request
-
     prompt_system = "Based on this article about weird AI memories, generate a single short image prompt (max 80 words) for an illustration. The image should be surreal, funny, and capture the chaos of the article. Output ONLY the prompt, nothing else."
     img_prompt = call_llm(prompt_system, article_preview[:2000], max_tokens=100).strip()
     log(f"Image prompt: {img_prompt[:100]}...")
-
-    api_key = get_openrouter_key()
-    payload = json.dumps({
-        "model": IMAGE_MODEL,
-        "modalities": ["image", "text"],
-        "messages": [
-            {"role": "user", "content": f"Generate an image: {img_prompt}"}
-        ],
-    }).encode()
-
-    req = urllib.request.Request(OPENROUTER_URL, data=payload, headers={
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-        "HTTP-Referer": "https://nova.digitalnoise.net",
-        "X-Title": "Nova Rando Top 10 Image",
-    })
-
     try:
-        with urllib.request.urlopen(req, timeout=180) as resp:
-            data = json.loads(resp.read())
-
-        choices = data.get("choices", [])
-        if not choices:
-            log("Image: no choices in response")
-            return None
-
-        message = choices[0].get("message", {})
-
-        # Check images[] array
-        for img in message.get("images", []):
-            img_url = ""
-            if isinstance(img, dict):
-                img_url = img.get("image_url", {}).get("url", "") or img.get("url", "")
-            elif isinstance(img, str):
-                img_url = img
-            if img_url.startswith("data:image"):
-                b64 = img_url.split(",", 1)[1]
-                out = Path.home() / f".openclaw/workspace/rando_top10_{int(time.time())}.png"
-                out.write_bytes(base64.b64decode(b64))
-                log(f"Image saved (base64): {out.name}")
-                return out
-            elif img_url.startswith("http"):
-                out = Path.home() / f".openclaw/workspace/rando_top10_{int(time.time())}.png"
-                urllib.request.urlretrieve(img_url, str(out))
-                log(f"Image downloaded: {out.name}")
-                return out
-
-        # Check content array
-        content = message.get("content", "")
-        if isinstance(content, list):
-            for part in content:
-                if isinstance(part, dict) and part.get("type") == "image_url":
-                    img_url = part.get("image_url", {}).get("url", "")
-                    if img_url.startswith("data:image"):
-                        b64 = img_url.split(",", 1)[1]
-                        out = Path.home() / f".openclaw/workspace/rando_top10_{int(time.time())}.png"
-                        out.write_bytes(base64.b64decode(b64))
-                        log(f"Image saved (content): {out.name}")
-                        return out
-
-        log(f"Image: no image in response (keys: {list(message.keys())})")
-        return None
-
+        from nova_image_utils import generate_image
+        result = generate_image(img_prompt, section="rando_top10_weird")
+        return Path(result) if result else None
     except Exception as e:
         log(f"Image generation failed: {e}")
         return None

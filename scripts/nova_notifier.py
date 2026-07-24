@@ -12,6 +12,7 @@ related events into one incident. One audit trail, one routing policy.
 Routing policy lives in ROUTE() below — changing where a category goes is one line.
 """
 import argparse
+import json
 import sys
 import time
 from pathlib import Path
@@ -22,6 +23,23 @@ import nova_correlator
 import nova_remediation
 
 DSN = "host=127.0.0.1 dbname=nova_ops user=kochj"
+
+# Out-of-band relay: critical alerts also go over the Meshtastic mesh (LoRa),
+# so Little Mister can be reached even if home internet/WiFi is fully down.
+# Best-effort -- bridge/radio being unreachable must never block Slack delivery.
+MESH_BRIDGE_URL = "http://192.168.1.92:37478/send"
+
+
+def _mesh_relay(title: str, body: str | None) -> None:
+    import urllib.request
+    text = title if not body else f"{title}: {body}"
+    payload = json.dumps({"text": text[:200]}).encode()
+    req = urllib.request.Request(MESH_BRIDGE_URL, data=payload,
+                                 headers={"Content-Type": "application/json"})
+    try:
+        urllib.request.urlopen(req, timeout=5)
+    except Exception as e:
+        print(f"  mesh relay failed (non-fatal): {e}", file=sys.stderr)
 
 # ── Routing policy ──────────────────────────────────────────────────────────
 # Category overrides win over level. Everything else falls back to level.
@@ -159,6 +177,8 @@ def drain(verbose=False, only_source=None) -> int:
                     msg = _fmt(ev)
                 try:
                     nova_config.post_both(msg, slack_channel=channel)
+                    if ev["level"] == "critical":
+                        _mesh_relay(ev["title"], ev.get("body"))
                     cur.execute(
                         "UPDATE telemetry.events SET status='sent', channel=%s, sent_at=now() "
                         "WHERE id=%s", (channel, ev["id"]))

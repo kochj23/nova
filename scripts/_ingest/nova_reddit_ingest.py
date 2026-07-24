@@ -11,10 +11,13 @@ Runs via launchd every 4 hours. Deduplicates by post ID.
 Written by Jordan Koch.
 """
 
+import html
 import json
+import re
 import sys
 import time
 import urllib.request
+import xml.etree.ElementTree as ET
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -125,35 +128,67 @@ def save_state(state):
 
 # ── Fetch helpers ─────────────────────────────────────────────────────────────
 
+# Reddit locked down the unauthenticated .json API (returns 403 with no OAuth app).
+# The Atom/.rss endpoints still work unauthenticated -- same public content, just a
+# different wire format -- but they have their OWN, easy-to-trip rate limit, so
+# callers must space requests out (see the sleep()s in ingest_subreddit()).
+_ATOM_NS = {"a": "http://www.w3.org/2005/Atom"}
+
+
+def _strip_html(text):
+    text = re.sub(r"<!--.*?-->", "", text or "", flags=re.S)
+    text = re.sub(r"<[^>]+>", " ", text)
+    return html.unescape(re.sub(r"\s+", " ", text)).strip()
+
+
 def fetch_subreddit(subreddit, config):
-    """Fetch posts from a subreddit with full selftext."""
+    """Fetch posts from a subreddit via the Atom feed (the .json API 403s without
+    an OAuth app -- this is unauthenticated but still real, current content)."""
     limit = config.get("limit", 10)
-    url = f"https://www.reddit.com/r/{subreddit}/hot.json?limit={limit}"
+    url = f"https://www.reddit.com/r/{subreddit}/new/.rss?limit={limit}"
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-        return data.get("data", {}).get("children", [])
+            root = ET.fromstring(resp.read())
+        posts = []
+        for entry in root.findall("a:entry", _ATOM_NS):
+            entry_id = (entry.findtext("a:id", "", _ATOM_NS) or "").strip()
+            post_id = entry_id.rsplit("_", 1)[-1] if "_" in entry_id else entry_id
+            link_el = entry.find("a:link", _ATOM_NS)
+            content = _strip_html(entry.findtext("a:content", "", _ATOM_NS))
+            author = (entry.findtext("a:author/a:name", "", _ATOM_NS) or "").lstrip("/u")
+            posts.append({
+                "id": post_id,
+                "title": (entry.findtext("a:title", "", _ATOM_NS) or "").strip(),
+                # Atom has no separate selftext field -- content IS the post body
+                # for text posts (empty/short for link posts, which is fine).
+                "selftext": content,
+                "author": author or "unknown",
+                "permalink": link_el.get("href", "") if link_el is not None else "",
+                # Not exposed by the Atom feed at all -- score/num_comments/flair/
+                # stickied are JSON-API-only fields. Downstream treats their absence
+                # as "unknown," not an error.
+            })
+        return posts
     except Exception as e:
         log(f"Error fetching r/{subreddit}: {e}", level=LOG_ERROR, source="reddit_ingest")
         return []
 
+
 def fetch_comments(subreddit, post_id):
-    """Fetch top comments for a post."""
-    url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}.json?limit=5&sort=best"
+    """Fetch top comments for a post via its Atom feed (entry 0 is the post itself)."""
+    url = f"https://www.reddit.com/r/{subreddit}/comments/{post_id}/.rss?limit=6"
     comments = []
     try:
         req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
         with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read())
-        if len(data) > 1:
-            for child in data[1].get("data", {}).get("children", []):
-                cd = child.get("data", {})
-                body = cd.get("body", "").strip()
-                author = cd.get("author", "unknown")
-                score = cd.get("score", 0)
-                if body and body != "[deleted]" and len(body) > 10:
-                    comments.append(f"  u/{author} (score:{score}): {body}")
+            root = ET.fromstring(resp.read())
+        entries = root.findall("a:entry", _ATOM_NS)[1:]  # skip the post itself
+        for entry in entries:
+            author = (entry.findtext("a:author/a:name", "", _ATOM_NS) or "").lstrip("/u")
+            body = _strip_html(entry.findtext("a:content", "", _ATOM_NS))
+            if body and body not in ("[deleted]", "[removed]") and len(body) > 10:
+                comments.append(f"  u/{author or 'unknown'}: {body}")
     except Exception as e:
         log(f"Error fetching comments for {post_id}: {e}", level=LOG_WARN, source="reddit_ingest")
     return comments[:5]
@@ -186,27 +221,26 @@ def ingest_subreddit(subreddit, config, state):
     today_posts = []
     count = 0
 
-    for child in posts:
-        pd = child.get("data", {})
+    for pd in posts:
         post_id = pd.get("id", "")
-        if not post_id or post_id in ingested or pd.get("stickied"):
+        if not post_id or post_id in ingested:
             continue
 
         title    = pd.get("title", "").strip()
         selftext = pd.get("selftext", "").strip()
-        flair    = pd.get("link_flair_text", "")
-        score    = pd.get("score", 0)
-        num_comments = pd.get("num_comments", 0)
         author   = pd.get("author", "unknown")
         permalink = pd.get("permalink", "")
+        # flair/score/num_comments/stickied aren't in the Atom feed (JSON-API-only
+        # fields) -- the .json endpoint 403s without an OAuth app, so this is the
+        # tradeoff for staying unauthenticated. Pinned posts just get ingested once
+        # and then dedup via seen_ids like everything else, so no real harm.
 
         parts = [f"Reddit r/{subreddit}: {title}"]
-        if flair:
-            parts.append(f"Flair: {flair}")
-        parts.append(f"Score: {score}, Comments: {num_comments}, Author: u/{author}")
+        parts.append(f"Author: u/{author}")
         if selftext and selftext not in ("[removed]", "[deleted]"):
             parts.append(selftext[:1000])
 
+        time.sleep(3)  # space out the comments request -- Atom endpoints rate-limit fast
         comments = fetch_comments(subreddit, post_id)
         if comments:
             parts.append("Top comments:")
@@ -218,7 +252,6 @@ def ingest_subreddit(subreddit, config, state):
             "type": "reddit_post",
             "subreddit": subreddit,
             "post_id": post_id,
-            "flair": flair,
             "source": config.get("source", "reddit"),
             "sub": subreddit,
             "date": TODAY,

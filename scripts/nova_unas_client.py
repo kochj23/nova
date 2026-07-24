@@ -42,16 +42,11 @@ _session_token: str | None = None
 # ── Keychain ─────────────────────────────────────────────────────────────────
 
 def _load_api_key() -> str | None:
-    """Load UNAS API key from macOS Keychain."""
+    """Load UNAS API key: macOS Keychain, or the fleet pgcrypto secret store on
+    Linux hosts (nova_config._keychain already implements this fallback chain)."""
     try:
-        result = subprocess.run(
-            ["security", "find-generic-password",
-             "-a", KEYCHAIN_ACCOUNT,
-             "-s", KEYCHAIN_SERVICE,
-             "-w"],
-            capture_output=True, text=True
-        )
-        key = result.stdout.strip()
+        import nova_config
+        key = nova_config._keychain(KEYCHAIN_SERVICE, account=KEYCHAIN_ACCOUNT, required=False)
         if key:
             return key
     except Exception:

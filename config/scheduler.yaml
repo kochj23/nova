@@ -33,7 +33,6 @@ tasks:
 
   protect_monitor:
     script: nova_protect_monitor.py
-    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 2m
     timeout: 120
     overlap: skip
@@ -135,7 +134,6 @@ tasks:
 
   face_recognition:
     script: nova_face_recognition.py
-    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 30m
     timeout: 180
     overlap: skip
@@ -145,6 +143,12 @@ tasks:
     enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: every 30m
     timeout: 60
+    overlap: skip
+
+  nas_mount_watchdog:                # keeps /Volumes/nas alive — was ad-hoc/no-remount, silently degraded backups/rsync/Plex ingest on drop
+    script: nova_nas_mount_watchdog.py
+    schedule: every 5m
+    timeout: 45
     overlap: skip
 
   synology_monitor:
@@ -162,6 +166,7 @@ tasks:
     overlap: skip
 
   unas_monitor:
+    enabled: false  # migrated to nova-core 2026-07-23, verified working
     script: nova_unas_monitor.py
     schedule: every 5m
     timeout: 60
@@ -394,6 +399,27 @@ tasks:
     timeout: 300
     overlap: skip
 
+  ble_churn_report:
+    enabled: false  # migrated to nova-core 2026-07-23, verified working
+    script: nova_ble_churn_report.py
+    schedule: cron 15 7 * * *
+    timeout: 60
+    overlap: skip
+
+  scene_daily_report:
+    enabled: false  # migrated to nova-core 2026-07-23, verified working
+    script: nova_scene_daily_report.py
+    schedule: cron 20 7 * * *
+    timeout: 60
+    overlap: skip
+
+  karr_daily_report:
+    enabled: false  # migrated to nova-core 2026-07-23, verified working
+    script: nova_karr_daily_report.py
+    schedule: cron 25 7 * * *
+    timeout: 60
+    overlap: skip
+
   health_intelligence:
     script: nova_health_intelligence.py
     enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
@@ -471,6 +497,7 @@ tasks:
     overlap: skip
 
   fishbowl_channel_discovery:         # surfaces new candidate channels from tracked streams' chat/superchats -> nova-info
+    enabled: false  # migrated to nova-core 2026-07-23, verified working
     script: nova_fishbowl_channel_discovery.py
     schedule: cron 15 3 * * *
     timeout: 900
@@ -490,7 +517,7 @@ tasks:
     schedule: cron 0 1 * * 0
     timeout: 28800
     overlap: skip
-    enabled: true
+    enabled: false  # migrated to nova-core 2026-07-23, verified working
 
   # ── Daily: daytime (enrichment, reflection) ────────────────────────────
 
@@ -546,6 +573,19 @@ tasks:
     timeout: 300
     overlap: skip
 
+  daily_threat_assessment:                # inbound-email threat scan + rollup of fishbowl/airwaves/security reports -> #nova-info
+    script: nova_daily_threat_assessment.py
+    schedule: cron 0 10 * * *              # 10am -- trails fishbowl_daily/operations_security/local_airwaves so rollup links resolve
+    timeout: 600
+    overlap: skip
+
+  fellowship_daily:                       # the fleet as the Fellowship of the Ring, grounded in real daily status -> operations
+    enabled: false  # migrated to nova-core 2026-07-23, verified working
+    script: nova_fellowship_daily.py
+    schedule: cron 0 9 * * *
+    timeout: 300
+    overlap: skip
+
   context_bridge_am:
     script: nova_context_bridge.py
     enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
@@ -554,6 +594,7 @@ tasks:
     overlap: skip
 
   this_day:
+    enabled: false  # migrated to nova-core 2026-07-23, verified working
     script: nova_this_day.py
     schedule: cron 0 15 * * *
     timeout: 180
@@ -608,6 +649,7 @@ tasks:
     group: llm
 
   rando_top10_weird:
+    enabled: false  # migrated to nova-core 2026-07-23, verified working (fixed call_llm/image-gen 401s during migration)
     script: nova_rando_top10_weird.py
     schedule: cron 0 6 * * 1,3,5
     timeout: 600
@@ -1205,6 +1247,7 @@ tasks:
   # ── Syslog ──────────────────────────────────────────────────────────────
 
   syslog_purge:
+    enabled: false  # migrated to nova-core 2026-07-23, verified working
     script: nova_syslog_purge.sh
     schedule: cron 0 3 * * *
     timeout: 120
@@ -1291,6 +1334,7 @@ tasks:
     # and needs passwordless sudo crontab there. Stays on .6.
 
   cinc_daily:
+    enabled: false  # migrated to nova-core 2026-07-23, verified working
     script: nova_cinc_daily.py
     schedule: cron 0 3 * * *
     timeout: 1800
