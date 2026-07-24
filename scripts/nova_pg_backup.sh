@@ -60,8 +60,13 @@ backup_one() {
     # statement_timeout=0: the server default cancels the COPY of the largest
     # telemetry partition (unifi_metrics_YYYYMM) mid-dump — killed the nova_ops
     # backup every night. A backup must never be time-limited by the server.
+    # --exclude-table lb_pool_status: ephemeral LB runtime state, rewritten every
+    # probe cycle by nova_lb.py whose ensure-schema ALTERs take ACCESS EXCLUSIVE —
+    # that lock kills a parallel dump mid-run ("could not obtain lock"). The table
+    # is recreated by nova_lb on startup; zero backup value.
     PGOPTIONS="-c statement_timeout=0" \
     pg_dump -U "$DB_USER" -d "$DB" --no-owner --no-privileges -Fd -j 4 \
+        --exclude-table='public.lb_pool_status' \
         -f "$LOCAL_DIR/$DUMP_DIR" 2>>"$LOG_FILE"
     local rc=$?
     if [ $rc -ne 0 ]; then
