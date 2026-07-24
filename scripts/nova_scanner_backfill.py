@@ -34,8 +34,8 @@ import nova_config
 
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 SOURCES = ("scanner", "fire", "rail")
-BATCH = 400            # rows fetched per round
-WORKERS = 5            # concurrent router calls — fast pool is 3 nodes, one shared w/ SDR; stay gentle
+BATCH = 120            # rows per round — small so progress commits often & a kill loses little
+WORKERS = 6            # concurrent router calls — fast pool is 3 nodes, one shared w/ SDR; stay gentle
 PREFIX = re.compile(r"^(\[[^\]]*\]\s*)(.*)$", re.DOTALL)
 LOG = Path.home() / ".openclaw/logs/scanner_backfill.log"
 
