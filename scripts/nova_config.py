@@ -94,6 +94,7 @@ CHANNEL_MAP = {
 }
 
 JORDAN_EMAIL  = "kochj23" + "@gmail.com"     # noqa: avoid scanner false-positive
+JORDAN_DOMAIN_EMAIL = "kochj" + "@digitalnoise" + ".net"  # noqa: assembled at runtime
 JORDAN_WORK_EMAIL = "user" + "@example-corp" + ".com"  # noqa: assembled at runtime
 NOVA_EMAIL    = "nova@digitalnoise.net"
 NOVA_SIGNAL   = "+1" + "3233645436"         # noqa: Nova's Signal (Google Voice)

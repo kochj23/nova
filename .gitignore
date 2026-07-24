@@ -190,3 +190,8 @@ scripts/spec_probe.py
 scripts/nova-rf-discovery.service
 scripts/grgsm_docker/
 scripts/RF_DISCOVERY.md
+# raw pentest/scan artifacts — internal network recon data, never push
+pentest/
+# generated voice audio
+voice_out/
+voice_refs/

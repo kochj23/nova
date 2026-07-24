@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login — Nova Control</title>
+  <link rel="stylesheet" href="/static/css/dashboard.css">
+  <style>
+    .login-container {
+      display: flex; justify-content: center; align-items: center;
+      min-height: calc(100vh - 80px); padding: 20px;
+    }
+    .login-box {
+      background: var(--bg-card); border: 1px solid var(--border-glow);
+      border-radius: 8px; padding: 32px 40px; width: 100%; max-width: 360px;
+    }
+    .login-title { font-size: 18px; font-weight: 700; color: var(--accent-cyan); text-align: center; margin-bottom: 24px; }
+    .login-field { margin-bottom: 16px; }
+    .login-label { font-size: 11px; color: var(--text-dim); letter-spacing: 0.05em; margin-bottom: 4px; display: block; }
+    .login-input {
+      width: 100%; padding: 8px 12px; font-size: 13px; background: rgba(0,0,0,0.3);
+      border: 1px solid var(--border-glow); border-radius: 4px; color: var(--text-primary);
+      font-family: var(--font-mono); box-sizing: border-box;
+    }
+    .login-input:focus { outline: none; border-color: var(--accent-cyan); }
+    .login-btn {
+      width: 100%; padding: 10px; font-size: 13px; font-weight: 600;
+      border: 1px solid var(--accent-cyan); background: rgba(0,255,200,0.1);
+      color: var(--accent-cyan); border-radius: 4px; cursor: pointer;
+      margin-top: 8px;
+    }
+    .login-btn:hover { background: rgba(0,255,200,0.2); }
+    .login-error { color: var(--accent-red); font-size: 12px; text-align: center; margin-top: 12px; display: none; }
+    .login-success { color: var(--accent-green); font-size: 12px; text-align: center; margin-top: 12px; display: none; }
+    .login-note { font-size: 10px; color: var(--text-dim); text-align: center; margin-top: 16px; }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="header-left">
+      <h1>NOVA CONTROL</h1>
+      <span class="header-subtitle">authentication</span>
+    </div>
+    <div class="header-right">
+      <a href="/" style="font-size:11px;color:var(--text-dim);text-decoration:none;padding:3px 10px;border:1px solid var(--border-glow);border-radius:3px;">Dashboard</a>
+    </div>
+  </header>
+
+  <div class="login-container">
+    <div class="login-box">
+      <div class="login-title">Sign In</div>
+      <form id="login-form" onsubmit="doLogin(event)">
+        <div class="login-field">
+          <label class="login-label">USERNAME</label>
+          <input class="login-input" id="username" type="text" autocomplete="username" required>
+        </div>
+        <div class="login-field">
+          <label class="login-label">PASSWORD</label>
+          <input class="login-input" id="password" type="password" autocomplete="current-password" required>
+        </div>
+        <button class="login-btn" type="submit">Sign In</button>
+      </form>
+      <div class="login-error" id="login-error"></div>
+      <div class="login-success" id="login-success"></div>
+      <div class="login-note">Nova Control RBAC. Contact admin for access.</div>
+    </div>
+  </div>
+
+  <script>
+    async function doLogin(e) {
+      e.preventDefault();
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+      const errEl = document.getElementById('login-error');
+      const successEl = document.getElementById('login-success');
+      errEl.style.display = 'none';
+      successEl.style.display = 'none';
+
+      try {
+        const res = await fetch('/api/auth/login', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({username, password})
+        });
+        const data = await res.json();
+        if (data.error) {
+          errEl.textContent = data.error;
+          errEl.style.display = 'block';
+          return;
+        }
+        localStorage.setItem('nova_token', data.token);
+        localStorage.setItem('nova_user', JSON.stringify({username: data.username, role: data.role}));
+        successEl.textContent = `Welcome, ${data.username} (${data.role})`;
+        successEl.style.display = 'block';
+        setTimeout(() => {
+          if (data.role === 'admin') {
+            window.location.href = '/admin';
+          } else {
+            window.location.href = '/';
+          }
+        }, 1000);
+      } catch (err) {
+        errEl.textContent = 'Connection failed';
+        errEl.style.display = 'block';
+      }
+    }
+
+    // If already logged in, redirect
+    (async function() {
+      const token = localStorage.getItem('nova_token');
+      if (token) {
+        const res = await fetch('/api/auth/me', {headers: {'Authorization': 'Bearer ' + token}});
+        const data = await res.json();
+        if (data.authenticated) {
+          window.location.href = data.role === 'admin' ? '/admin' : '/';
+        }
+      }
+    })();
+  </script>
+<script src="/nav-bar.js"></script>
+</body>
+</html>

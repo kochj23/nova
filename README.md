@@ -55,6 +55,83 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 
 ## Infrastructure & Security (June–July 2026)
 
+### Location Transparency — Fleet DNS, Shared Scripts, and the Topology Truth (2026-07-24)
+
+The "which IP is nova-core2 again?" era is over. Triggered by a two-week silent article
+outage (a script's DSN had no `host=`, so it broke the moment its cron migrated to a
+different box), the fleet got the NDS treatment: **nothing addresses a service by IP
+anymore — everything resolves names.**
+
+- **Canonical fleet DNS** — the existing BIND primary/secondary pair (nova-core →
+  nova-core2, TSIG dynamic updates) had rotted into auto-synced IoT junk names because
+  `nova_dns_sync.py` was never scheduled. Now: `nova-core` through `nova-core5` are
+  locked in the sticky PG map (`dns_records.locked=true`, immune to UniFi renames),
+  the sync runs hourly, and bare names work everywhere (`ssh nova-core2`).
+- **Service aliases** — `pg-primary`, `memory-server`, `grafana`, `inference-router`,
+  `nova-gw` are re-pointable A records. Failover = repoint one DNS record, not a sed
+  sweep across 400 scripts.
+- **The topology truth** — while sweeping, live verification (`inet_server_addr()`)
+  exposed that the docs described a dead world: **the PG cutover to nova-core already
+  happened during the 2026-07-17 cold start.** The real primary is the pg17 docker
+  container on nova-core (container name "pg17-replica" — it isn't one); `.6:5432` is
+  a pgbouncer shim forwarding there, the Mac has no native PG at all, and only nuk
+  still streams as a replica. Same for the memory server: it serves from nova-core;
+  `.6:18790` is a socat forward. Both aliases now point at the truth.
+- **The sweep** — 352 files converted from hardcoded DSNs/IPs to service names, every
+  file AST-verified. Bootstrap-critical machinery (dns_sync, lb, pg_failover,
+  replication monitor, secrets, watchdogs) deliberately keeps raw IPs — the layers
+  that fix DNS can't depend on DNS. Queue #501 (blocked since June on "~100 hardcoded
+  DSNs") closed.
+- **Shared scripts mount** — the same day's earlier fix: `~/.openclaw/scripts` on
+  nova-core/core2/nuk is now a symlink to `/nova/scripts` (Synology SMB), published
+  by a git post-commit hook from the Mac. No node can silently run stale code again.
+- **Scheduler cron bug** — `next_cron_time()` matched cron day-of-week fields
+  (Sunday=0) against Python's `weekday()` (Monday=0): every weekday-constrained job
+  fleet-wide fired one day early, and the monthly meta-analysis never ran at all (its
+  internal "first Sunday" gate was never true on the Mondays it was invoked). Fixed.
+
+```mermaid
+graph LR
+    subgraph "Resolution layer (BIND: primary .2, secondary .86)"
+        DNS["digitalnoise.net zone\ncanonical hosts (locked)\n+ service aliases\nsynced hourly from UniFi + PG"]
+    end
+
+    subgraph "Scripts (352 converted)"
+        S["host=pg-primary.digitalnoise.net\nmemory-server.digitalnoise.net:18790"]
+    end
+
+    subgraph "nova-core (.2) — the real data plane"
+        PG["pg17 docker :5432\nPRIMARY (since 2026-07-17)\nnova_ops · nova_memories · nova_media"]
+        MEM["Memory Server :18790\n1.78M vectors"]
+    end
+
+    subgraph "mac-studio (.6) — legacy shims, retiring"
+        Bouncer["pgbouncer :5432\n→ .2"]
+        Socat["socat :18790\n→ .2 (wifi)"]
+    end
+
+    Replica["nuk (.10)\nstreaming replica"]
+
+    S --> DNS
+    DNS -->|"pg-primary → .2"| PG
+    DNS -->|"memory-server → .2"| MEM
+    Bouncer -.->|"unconverted stragglers"| PG
+    Socat -.-> MEM
+    PG --> Replica
+
+    style PG fill:#1a3a5c,color:#fff
+    style DNS fill:#2d4a2d,color:#fff
+    style Bouncer fill:#5c3a1a,color:#fff
+    style Socat fill:#5c3a1a,color:#fff
+```
+
+Also that day: the daily Burbank article grew charge-tallied myBurbank arrest logs,
+age-tagged news (no more last-weekend stories narrated as breaking), and BLE
+pattern-mining (16 unidentified always-present devices near the house); three
+article pipelines that had silently died came back (argv-overflow in the shared
+`claude -p` helper — prompts now go via stdin — and the no-host DSN); and the
+`/nova` mount table turned out to be aspirational on two of four nodes (repaired).
+
 ### Six-Tuner SIGINT Buildout, OSINT Tooling, and WiFi/BLE Tracking (2026-07-23)
 
 A second RSPduo came online on **nova-core3** (previously an inference-only box), cloning
@@ -381,7 +458,7 @@ graph TD
         MemFirst["nova_memory_first.py\ninjected before every response"]
     end
 
-    subgraph "nova_ops PostgreSQL — 192.168.1.6:5432"
+    subgraph "nova_ops PostgreSQL — pg-primary.digitalnoise.net (nova-core .2, docker pg17)"
         AgentDocs["agent_docs\nIDENTITY · SOUL · USER\nMEMORY · AGENTS\n(bootstrap source)"]
         GWSessions["gateway_sessions\n+ gateway_query_log\nevery turn persisted"]
         SchedRuns["scheduler_runs\n13,856 runs logged\n98.9% success"]
@@ -389,7 +466,7 @@ graph TD
         Dashboard["dashboard_*\nmetrics history"]
     end
 
-    subgraph "nova_memories PostgreSQL — 192.168.1.6:5432"
+    subgraph "nova_memories PostgreSQL — pg-primary.digitalnoise.net (nova-core .2, docker pg17)"
         Memories["memories table\n1,224,900 vectors\nHNSW index\npgvector 0.8.2"]
     end
 
@@ -698,7 +775,7 @@ All services bind to `192.168.1.6` (LAN-accessible). Exceptions bind to `127.0.0
 | Scheduler API | 37460 | 0.0.0.0 | /runs /stats /tasks |
 | Big Brother API | 37461 | 192.168.1.6 | /bb/status /bb/events /bb/gpu |
 | **Chatroom** | **37480** | **0.0.0.0** | **3-way real-time chat (Jordan/Nova/Claude Code)** |
-| PostgreSQL | 5432 | 192.168.1.6 | nova_memories + nova_ops |
+| PostgreSQL | 5432 | pg-primary.digitalnoise.net → nova-core .2 (pgbouncer shim on .6 for stragglers) | nova_memories + nova_ops |
 | PgBouncer | 6432 | 192.168.1.6 | Connection pool |
 | Redis | 6379 | 192.168.1.6 | Queue + cache + maintenance flags |
 | Ollama | 11434 | 0.0.0.0 | qwen3:30b-a3b, deepseek-r1:8b, qwen3-vl:4b |
@@ -1208,7 +1285,7 @@ graph LR
 
 | Technology | Role | Port |
 |-----------|------|------|
-| PostgreSQL 17 | Primary data store (nova_memories + nova_ops) | :5432 |
+| PostgreSQL 17 | Primary data store (nova_memories + nova_ops) — docker on nova-core .2, resolve via pg-primary.digitalnoise.net | :5432 |
 | pgvector 0.8.2 | Vector similarity search, HNSW indexing | (PG extension) |
 | Redis 7 | Queue, cache, maintenance flags | :6379 |
 | PgBouncer | Connection pooling | :6432 |
