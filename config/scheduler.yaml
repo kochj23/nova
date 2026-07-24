@@ -298,13 +298,8 @@ tasks:
     overlap: skip
     gpu_heavy: true
 
-  reddit_ingest:
-    script: nova_ingest.py
-    args: ["search", "reddit discussion community", "--source", "reddit", "--target", "500"]
-    schedule: every 4h
-    timeout: 3600
-    overlap: skip
-    enabled: false  # Archived nova_reddit_ingest.py — re-enable with proper subreddit queries
+  # reddit_ingest moved to nova-core scheduler-core.yaml 2026-07-23 (nova_reddit_rss_ingest.py,
+  # RSS-based, own flock/rotation — network-fetch task, no reason to live on .6)
 
   # ── Daily: overnight (heavy compute, staggered) ────────────────────────
 
