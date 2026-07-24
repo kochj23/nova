@@ -57,6 +57,10 @@ backup_one() {
     local DUMP_DIR="${DB}_${TIMESTAMP}"
     local start=$(date +%s)
     log "Dumping $DB (directory format, 4 parallel jobs)..."
+    # statement_timeout=0: the server default cancels the COPY of the largest
+    # telemetry partition (unifi_metrics_YYYYMM) mid-dump — killed the nova_ops
+    # backup every night. A backup must never be time-limited by the server.
+    PGOPTIONS="-c statement_timeout=0" \
     pg_dump -U "$DB_USER" -d "$DB" --no-owner --no-privileges -Fd -j 4 \
         -f "$LOCAL_DIR/$DUMP_DIR" 2>>"$LOG_FILE"
     local rc=$?
