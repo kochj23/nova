@@ -55,6 +55,61 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 
 ## Infrastructure & Security (June–July 2026)
 
+### Six-Tuner SIGINT Buildout, OSINT Tooling, and WiFi/BLE Tracking (2026-07-23)
+
+A second RSPduo came online on **nova-core3** (previously an inference-only box), cloning
+the full SDRplay/dsd-fme stack binary-for-binary from nova-core2 (same OS/arch — no
+reinstall needed). A live 4-antenna SNR sweep across both RSPduo units, now on separate
+hosts, definitively proved they're two genuinely distinct physical units (different
+serials) — resolving a mystery from an earlier antenna-troubleshooting session — and
+revealed the antenna move had flipped which tuner is best for UHF/P25 on nova-core2
+(the live LAPD North Hollywood decode was corrected to the now-better tuner).
+
+All **six SIGINT tuners** now carry a real assigned mission, none idle:
+
+| Tuner | Mission |
+|---|---|
+| RTL-SDR stick (nova-core2) | LAPD Northeast P25 |
+| Garage RSP-ST (networked) | Broad opportunistic band-plan sweep — aviation, NOAA, ham, rail |
+| nova-core2 Tuner 2 | LAPD North Hollywood P25 (484.9625) |
+| nova-core2 Tuner 1 | NOAA Weather Radio (162.550), continuous |
+| nova-core3 Tuner 1 | Bob Hope/Hollywood Burbank Airport tower (118.700), continuous |
+| nova-core3 Tuner 2 (best measured antenna) | 147.435 "World Famous" SoCal ham repeater, continuous |
+
+The two nova-core3 channels run **genuinely simultaneously** via the RSPduo's Dual-Tuner
+mode (`nova_fm_capture.py` — a fixed-dwell FM capture + Whisper transcription pipeline,
+built after discovering the RSPduo driver silently ignores requested sample rates and
+snaps to its own supported rate; the script queries the actual rate and derives correct
+decimation from it rather than trusting the request).
+
+**OSINT tooling** added to nova-core: Amass + theHarvester (weekly passive subdomain/host
+enum), HaveIBeenPwned (daily breach check, needs a paid key), a Nuclei sweep that
+automatically vuln-scans whatever Amass/theHarvester discover each week (scoped to a
+curated safe-tag template set — the full default set blew past a 300s budget), a weekly
+auto-published OSINT digest article, and a unified on-demand lookup CLI (Sherlock, GHunt,
+ExifTool, recon-ng, SpiderFoot, PhoneInfoga). CyberChef self-hosted for interactive use.
+IntelOwl, Maltego CE, BloodHound, CloudFox, BBOT, and Evilginx3 were evaluated and
+deliberately not adopted (redundant, no automation surface, or no legitimate use case).
+
+**Day-over-day WiFi AP tracking** (`nova_wifi_scan.py`) reads the UniFi controller's own
+passive RF neighbor-scan (no new scanning hardware) every 15 minutes — signal strength,
+security type, channel — and flags new APs and security downgrades. Feeds the local
+Burbank dispatch alongside the already-tracked BLE device history (`telemetry.bluetooth`).
+
+A **Heltec LoRa mesh node** (Meshtastic) came online, bridged via `nova_meshtastic_bridge.py`
+running on a Mac mini; `nova_notifier` now relays every CRITICAL-severity alert out over
+LoRa mesh as an out-of-band channel that survives a full home-internet outage.
+
+Continued the **`.6`-to-fleet migration**: an orphaned duplicate Nova Gateway (traffic had
+already cut over to nova-core, nobody decommissioned the `.6` copy) was found and stopped;
+16 more scheduled tasks were migrated off `.6` and live-verified on nova-core, surfacing
+and fixing real bugs along the way (dead OpenRouter API calls silently 401ing since a
+2026-07-17 credit lapse — the daily Burbank dispatch had been broken for 10 straight days
+unnoticed; a hardcoded local-Postgres-socket connection that only works on `.6`; a
+macOS-only Keychain call with no Linux fleet-secret-store fallback). ~27 tasks correctly
+stayed on `.6` for real platform reasons (iMessage, Mail.app AppleScript automation, local
+media drives, direct Ollama probes) rather than force a bad migration.
+
 ### Fleet Audit, Bug Sweep & Test Hardening (2026-07-01)
 
 A full adversarially-verified audit of every `nova_*` script + the control repos (dead code, optimizations, correctness, and 7-category test coverage), then a fixed → deleted → optimized → tested pass:
