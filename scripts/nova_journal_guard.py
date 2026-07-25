@@ -71,12 +71,17 @@ def is_publishable(title: str, body: str) -> tuple[bool, str]:
     if words < 60:
         return (False, f"too short to be an article ({words} words)")
 
+    # Body markers only count in the OPENING. A refusal LEADS with it ("I can't write this —
+    # you handed me a grocery list of Wikipedia excerpts"); a legit essay that merely quotes
+    # the phrase, or a weekly digest that summarizes a refusal, has it buried later. Skip a
+    # short weather/dateline prefix the publisher prepends, then scan the first stretch.
+    opening = bl[:700]
     for rx in _REFUSAL_BODY:
-        if re.search(rx, bl):
-            return (False, f"body reads as a refusal/clarifying-question (matched /{rx}/)")
+        if re.search(rx, opening):
+            return (False, f"opening reads as a refusal/clarifying-question (matched /{rx}/)")
     for rx in _META:
-        if re.search(rx, bl, re.MULTILINE):
-            return (False, f"body contains template/system leakage (matched /{rx}/)")
+        if re.search(rx, opening, re.MULTILINE):
+            return (False, f"opening contains template/system leakage (matched /{rx}/)")
 
     return (True, "ok")
 
