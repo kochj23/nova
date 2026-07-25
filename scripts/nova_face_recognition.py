@@ -42,6 +42,7 @@ TODAY = date.today().isoformat()
 
 WORKSPACE = Path.home() / ".openclaw/workspace"
 UNKNOWN_DIR = WORKSPACE / "faces" / "unknown"
+KNOWN_DIR = WORKSPACE / "faces" / "known"      # crops of NAMED detections, so Slack alerts show the face
 CAMERA_FRAMES = WORKSPACE / "camera_frames"
 STATE_FILE = WORKSPACE / "state" / "nova_face_state.json"
 
@@ -66,6 +67,17 @@ EXTERIOR_CAMERAS = [
 ]
 
 TOLERANCE = 0.55
+# Minimum match confidence (%) required to actually PUT A NAME on a face. Below this,
+# the match is too weak to trust and is reported as an "unknown person" (with photo)
+# instead of a false identity. Added 2026-07-25 after weak 47-54% matches confidently
+# labeled a month-absent visitor ("Dave Bloom") and a DECEASED person ("Kathleen Koch").
+# Calibration: identify() gives confidence = 1 - face_distance. The base TOLERANCE 0.55
+# accepts matches down to 45% confidence — far too loose. Every observed false positive
+# was <=54%; a genuine solid match sits ~65%+. 65 clears the noise with margin while still
+# naming real matches. Asymmetry favors strictness: a missed name just becomes "unknown +
+# photo" (you still see who it is), whereas a false name is alarming. Tune via the % shown
+# in each alert; raise toward 75 if false names persist, lower toward 60 if real ones get missed.
+MIN_NAME_CONFIDENCE = 65
 PERSON_COOLDOWN = 1800  # 30 min
 UNKNOWN_COOLDOWN = 600  # 10 min
 
@@ -375,33 +387,50 @@ def scan_cameras():
             log(f"{camera_name}: {result['face_count']} face(s) detected")
 
             for face in result.get("faces", []):
-                if not face.get("unknown"):
+                conf = int(face.get("confidence", 0) * 100)
+                bb = face.get("bounding_box")
+                # A face counts as NAMED only if the model matched it AND we're confident
+                # enough to trust the name. A weak match (below MIN_NAME_CONFIDENCE) is
+                # demoted to "unknown" so we never announce a false identity.
+                named = (not face.get("unknown")) and conf >= MIN_NAME_CONFIDENCE
+
+                if named:
                     name = face["name"]
-                    conf = int(face["confidence"] * 100)
                     key = f"known_{name}"
                     last = state.get("last_seen", {}).get(key, 0)
                     if (now_ts - last) > PERSON_COOLDOWN:
+                        # save a crop so the Slack alert can SHOW the face (previously text-only)
+                        crop_path = None
+                        if bb:
+                            KNOWN_DIR.mkdir(parents=True, exist_ok=True)
+                            cp = KNOWN_DIR / f"known_{name.replace(' ','_')}_{frame_path.stem}_{bb['top']}_{bb['left']}.jpg"
+                            crop_path = make_context_crop(str(frame_path), bb, str(cp))
                         detections.append({
                             "type": "known",
                             "name": name,
                             "camera": camera_name,
                             "confidence": conf,
+                            "crop_path": crop_path,
                         })
                         state.setdefault("last_seen", {})[key] = now_ts
                 else:
                     last = state.get("unknown_alerts", {}).get(camera_name, 0)
-                    if (now_ts - last) > UNKNOWN_COOLDOWN:
-                        bb = face["bounding_box"]
+                    if (now_ts - last) > UNKNOWN_COOLDOWN and bb:
                         crop_path = UNKNOWN_DIR / f"unknown_{frame_path.stem}_{bb['top']}_{bb['left']}.jpg"
                         # Build a padded, min-size crop from the full frame so
                         # distant faces are actually viewable in Slack.
                         saved_crop = make_context_crop(str(frame_path), bb, str(crop_path))
-                        detections.append({
+                        det = {
                             "type": "unknown",
                             "camera": camera_name,
                             "crop_path": saved_crop,
                             "frame_path": str(frame_path),
-                        })
+                        }
+                        # If this WAS a name match but too weak to trust, note it (transparency:
+                        # "unknown, weak 56% match to X" — helps you eyeball the photo).
+                        if not face.get("unknown"):
+                            det["weak_match"] = f"{face.get('name','?')} {conf}%"
+                        detections.append(det)
                         state.setdefault("unknown_alerts", {})[camera_name] = now_ts
 
         except Exception as e:
@@ -432,15 +461,35 @@ def post_detections(detections):
                 {"date": TODAY, "type": "face_known", "person": d["name"], "camera": d["camera"]}
             )
 
+        # crop per name, so each alert can carry the actual photo
+        crop_by_name = {d["name"]: d.get("crop_path") for d in known if d.get("crop_path")}
+
+        def _post_with_face(name, text):
+            cp = crop_by_name.get(name)
+            if cp and Path(cp).exists():
+                slack_upload_image(cp, text)   # photo so you can verify it's really them
+            else:
+                slack_post(text)
+
         if arrivals:
             for name in arrivals:
-                slack_post(f":house_with_garden: *{name} arrived home* — {NOW.strftime('%I:%M %p')}")
+                _post_with_face(name, f":house_with_garden: *{name} arrived home* — {NOW.strftime('%I:%M %p')}")
                 vector_remember(
                     f"{name} arrived home on {TODAY} at {NOW.strftime('%H:%M')}",
                     {"date": TODAY, "type": "presence_arrived", "person": name}
                 )
         else:
-            slack_post(":bust_in_silhouette: *Face Detection*\n" + "\n".join(f"  {l}" for l in lines))
+            text = ":bust_in_silhouette: *Face Detection*\n" + "\n".join(f"  {l}" for l in lines)
+            # one detection -> upload the face with the caption; several -> text then each photo
+            named_crops = [d["crop_path"] for d in known if d.get("crop_path") and Path(d["crop_path"]).exists()]
+            if len(named_crops) == 1:
+                slack_upload_image(named_crops[0], text)
+            elif named_crops:
+                slack_post(text)
+                for cp in named_crops:
+                    slack_upload_image(cp, "")
+            else:
+                slack_post(text)
 
     if unknown:
         for d in unknown:
@@ -456,7 +505,8 @@ def post_detections(detections):
                 continue
 
             desc_line = f"\n  _Scene: {scene_desc}_" if scene_desc else ""
-            msg = f":question: *Unknown person* at {d['camera']} — {NOW.strftime('%I:%M %p')}. Who is this?{desc_line}"
+            weak_line = f"\n  _(weak {d['weak_match']} match — not trusted; verify from photo)_" if d.get("weak_match") else ""
+            msg = f":question: *Unknown person* at {d['camera']} — {NOW.strftime('%I:%M %p')}. Who is this?{weak_line}{desc_line}"
 
             if d.get("crop_path") and Path(d["crop_path"]).exists():
                 slack_upload_image(d["crop_path"], msg)
