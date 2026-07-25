@@ -215,6 +215,28 @@ def search_news(query: str, n: int = 5) -> list[dict]:
         return []
 
 
+def fetch_article_text(url: str, timeout: int = 15) -> str:
+    """Fetch a news article page and strip it to plain text (best-effort).
+
+    This is the retrieve step of retrieve-then-generate: the pipeline gets the SOURCE TEXT
+    itself and hands it to the LLM, instead of giving it a bare headline and expecting it to
+    browse (it can't — call_llm is plain text-gen with no web tools, which is exactly why it
+    used to reply 'I need the URL to fetch the article'). Returns '' on any failure.
+    """
+    if not url:
+        return ""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 NovaBot/1.0"})
+        html = urllib.request.urlopen(req, timeout=timeout).read().decode("utf-8", errors="replace")
+        text = re.sub(r"<(script|style|nav|header|footer)[^>]*>.*?</\1>", " ", html, flags=re.DOTALL | re.IGNORECASE)
+        text = re.sub(r"<[^>]+>", " ", text)
+        text = re.sub(r"&#?\w+;", " ", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        return text[:4000]
+    except Exception:
+        return ""
+
+
 # ── Publishing ────────────────────────────────────────────────────────────────
 
 def publish_hugo(title: str, body: str, tags: list[str], description: str,
@@ -455,6 +477,21 @@ def generate_breaking_alert(trigger: str, details: str):
     context_memories = recall_memories(trigger, n=15, source="intelligence")
     context_block = "\n".join(f"- {m.get('text', '')[:200]}" for m in context_memories[:10])
 
+    # RETRIEVE the actual source article when the details are thin (just a headline). The LLM
+    # can't browse, so we fetch it here and hand it the text — otherwise it replies "I need
+    # the URL" (root cause of the 2026-07-25 stub). Search the headline -> fetch the top hit.
+    source_block = ""
+    if len(details or "") < 400:
+        hits = search_news(trigger, n=3)
+        for h in hits:
+            body_txt = fetch_article_text(h.get("url", ""))
+            if len(body_txt) > 300:
+                source_block = f"\nSOURCE ARTICLE ({h.get('url')}):\n{body_txt}"
+                break
+        if not source_block and hits:   # fall back to search snippets if fetch failed
+            source_block = "\nSEARCH RESULTS (headlines + snippets):\n" + \
+                "\n".join(f"- {h['title']}: {h.get('content', '')} [{h.get('url')}]" for h in hits)
+
     system = """You write BREAKING security alerts in PDB style. Rules:
 
 FORMAT:
@@ -470,6 +507,12 @@ STYLE:
 - ~300-600 words maximum
 - No preamble, no sign-off
 
+CRITICAL: This is a one-shot generation. You will receive NO further input. NEVER ask the
+operator for anything — not a URL, not clarification, not "can you provide". Write ONLY from
+the material below. If it's insufficient to confirm the event, write a short "DEVELOPING —
+monitoring" note from what IS available and flag it as unconfirmed. Your entire output must be
+a publishable alert; a request for input is never acceptable.
+
 OUTPUT: Title line + body."""
 
     user = f"""BREAKING security event. Generate an alert.
@@ -478,11 +521,13 @@ TRIGGER: {trigger}
 
 DETAILS PROVIDED:
 {details}
+{source_block}
 
 RELATED CONTEXT FROM NOVA'S MEMORY:
 {context_block}
 
-Write the breaking alert. Only include confirmed information. Flag uncertainty explicitly."""
+Write the breaking alert from the material above (you cannot fetch anything — it's all here).
+Only include confirmed information; flag uncertainty explicitly. Never ask for a URL or input."""
 
     result = call_llm(system, user, max_tokens=2000, temperature=0.2)
     if not result or len(result) < 100:
