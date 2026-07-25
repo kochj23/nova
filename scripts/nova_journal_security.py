@@ -219,6 +219,18 @@ def search_news(query: str, n: int = 5) -> list[dict]:
 
 def publish_hugo(title: str, body: str, tags: list[str], description: str,
                  image_path: str | None = None, is_breaking: bool = False) -> str:
+    # Publish gate: block refusals / "I need the URL" clarifying-questions / stubs. This is
+    # the pipeline that published the 2026-07-25 "I'm ready to fetch... need the URL" stub.
+    from nova_journal_guard import is_publishable
+    ok, reason = is_publishable(title, body)
+    if not ok:
+        log(f"[guard] BLOCKED security publish '{title[:60]}': {reason}")
+        try:
+            nova_config.post_both(f":no_entry: Suppressed a non-publishable security brief — {reason}\n  _{title[:90]}_",
+                                  slack_channel=getattr(nova_config, "SLACK_INFO", None))
+        except Exception:
+            pass
+        return ""
     dt = time.strftime("%Y-%m-%d")
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
     filename = f"{dt}-{slug}.md"

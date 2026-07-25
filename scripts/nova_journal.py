@@ -347,6 +347,18 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
     stable_slug: if set, the post uses a FIXED filename ("<slug>.md", no date prefix) so
     repeated runs overwrite the same evergreen article instead of creating a new dated post.
     """
+    # Publish gate: never let a refusal / clarifying-question / placeholder reach the site.
+    from nova_journal_guard import is_publishable
+    ok, reason = is_publishable(title, body)
+    if not ok:
+        log(f"[guard] BLOCKED publish '{title[:60]}' ({section}): {reason}")
+        try:
+            import nova_config
+            nova_config.post_both(f":no_entry: Suppressed a non-publishable *{section}* article — {reason}\n  _{title[:90]}_",
+                                  slack_channel=getattr(nova_config, "SLACK_INFO", None))
+        except Exception:
+            pass
+        return False
     section = _canon_section(section)
     try:  # prepend the live backyard-weather dateline to the BODY (never the title)
         from nova_weather_blurb import weather_dateline_line

@@ -208,6 +208,16 @@ def generate_title(article_preview: str) -> str:
 # ── Publishing ────────────────────────────────────────────────────────────────
 
 def publish(title: str, body: str, image_path: Path | None):
+    from nova_journal_guard import is_publishable
+    ok, reason = is_publishable(title, body)
+    if not ok:
+        log(f"[guard] BLOCKED publish '{title[:60]}': {reason}")
+        try:
+            nova_config.post_both(f":no_entry: Suppressed a non-publishable rando article — {reason}\n  _{title[:90]}_",
+                                  slack_channel=getattr(nova_config, "SLACK_INFO", None))
+        except Exception:
+            pass
+        return
     date = time.strftime("%Y-%m-%d")
     timestamp = time.strftime("%Y-%m-%dT21:30:00-07:00")
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
