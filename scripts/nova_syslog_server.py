@@ -73,6 +73,24 @@ LATERAL_EXCLUDE_SOURCES = {
     "192.168.1.89",   # Silicondust HDHomeRun
 }
 
+# Nova's own fleet nodes. Traffic BETWEEN two of these (intra-fleet) is the cluster's
+# normal plumbing — BIND zone transfers, active/active inference router, mesh heartbeats,
+# scheduler, service-registry probes, liveness checks — which trivially hits 5+ ports in
+# 60s and used to trip the lateral-movement heuristic (2026-07-25: a benign .86->.138
+# health chatter got auto-published as a "BREAKING lateral movement" article). Excluded
+# only when BOTH ends are fleet nodes, so a fleet node scanning an EXTERNAL host, or an
+# unknown host scanning the fleet, STILL alerts.
+FLEET_NODES = {
+    "192.168.1.2", "192.168.1.138",   # nova-core (wired / wifi)
+    "192.168.1.6",                    # mac-studio
+    "192.168.1.7",                    # tv-movies-mini
+    "192.168.1.10",                   # nuk / nova-core5
+    "192.168.1.86",                   # nova-core2
+    "192.168.1.5", "192.168.1.88",    # nova-core3 (wired / wifi)
+    "192.168.1.250",                  # nova-core4
+    "192.168.1.92", "192.168.1.190",  # mac-mini (current / prior)
+}
+
 # Source ports that indicate normal service responses, not scan probes
 LATERAL_EXCLUDE_SPORT = {1900, 8888, 5004, 65001}
 
@@ -394,6 +412,7 @@ def detect_anomaly(event: dict) -> dict | None:
         src_port = int(port_m2.group(1)) if port_m2 else 0
         if (src != dst
                 and src not in LATERAL_EXCLUDE_SOURCES
+                and not (src in FLEET_NODES and dst in FLEET_NODES)   # intra-fleet plumbing, not an attack
                 and not LATERAL_RST_RE.search(msg)
                 and src_port not in LATERAL_EXCLUDE_SPORT):
             key = f"{src}->{dst}"

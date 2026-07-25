@@ -17,6 +17,7 @@ Written by Jordan Koch (via Claude).
 """
 
 import asyncio
+import hashlib
 import json
 import logging
 import os
@@ -131,10 +132,10 @@ def insert_bluetooth(rows):
     with conn.cursor() as cur:
         psycopg2.extras.execute_values(
             cur,
-            """INSERT INTO telemetry.bluetooth (ts, device_mac, device_name, rssi, battery_pct, device_type, is_connected, metadata)
+            """INSERT INTO telemetry.bluetooth (ts, device_mac, device_name, rssi, battery_pct, device_type, is_connected, metadata, fingerprint)
                VALUES %s""",
             rows,
-            template="(NOW(), %s, %s, %s, %s, %s, %s, %s)",
+            template="(NOW(), %s, %s, %s, %s, %s, %s, %s, %s)",
         )
 
 
@@ -290,6 +291,30 @@ def classify_manufacturer(manufacturer_data: dict) -> tuple[str, str]:
     return (vendor, category)
 
 
+def compute_ble_fingerprint(name, service_uuids, company_ids, tx_power):
+    """A stable device identity that survives BLE MAC/UUID rotation.
+
+    MAC randomization is a software identifier swap; it does NOT touch these advertising
+    fields, which a device keeps constant across rotations:
+      - local name (most stable when present)
+      - the SET of advertised service UUIDs (per model/firmware)
+      - the manufacturer company IDs (the vendor's assigned ID — NOT the payload bytes,
+        which rotate, e.g. Apple Continuity counters)
+      - tx power level (semi-stable)
+    Track/dedupe on this instead of device_mac. A bare randomizing phone (no name, no
+    service UUIDs, generic company 0x004C) collapses to a weak shared fingerprint — that
+    population genuinely needs RF/PHY capture (Ubertooth/SDR) to separate; software can't.
+    Returns None when there's nothing stable to hash (avoid a meaningless all-empty key).
+    """
+    uuids = ",".join(sorted(str(u).lower() for u in (service_uuids or [])))
+    cids = ",".join(sorted(f"{c:#06x}" for c in (company_ids or [])))
+    nm = (name or "").strip().lower()
+    if not (nm or uuids or cids):
+        return None
+    parts = f"{nm}|{uuids}|{cids}|{tx_power if tx_power is not None else ''}"
+    return hashlib.sha1(parts.encode()).hexdigest()[:16]
+
+
 async def scan_ble() -> list[dict]:
     """Perform an active BLE scan using bleak."""
     if BleakScanner is None:
@@ -304,7 +329,13 @@ async def scan_ble() -> list[dict]:
                 continue
             rssi = adv.rssi if adv is not None else None
             name = d.name or ""
-            vendor, mfr_category = classify_manufacturer(getattr(adv, "manufacturer_data", None) or {})
+            mfr = getattr(adv, "manufacturer_data", None) or {}
+            vendor, mfr_category = classify_manufacturer(mfr)
+            # Advertising fields that survive MAC/UUID rotation -> the stable fingerprint.
+            service_uuids = list(getattr(adv, "service_uuids", None) or [])
+            company_ids = list(mfr.keys())
+            tx_power = getattr(adv, "tx_power", None)
+            fingerprint = compute_ble_fingerprint(name, service_uuids, company_ids, tx_power)
 
             device_type = "ble_device"
             known = KNOWN_DEVICES.get(mac)
@@ -322,7 +353,11 @@ async def scan_ble() -> list[dict]:
                 "battery": None,
                 "type": device_type,
                 "connected": False,
-                "metadata": {"vendor": vendor, "mfr_category": mfr_category},
+                "fingerprint": fingerprint,
+                "metadata": {"vendor": vendor, "mfr_category": mfr_category,
+                             "service_uuids": service_uuids,
+                             "company_ids": [f"{c:#06x}" for c in company_ids],
+                             "tx_power": tx_power, "fingerprint": fingerprint},
             })
     except Exception as e:
         log.warning(f"BLE scan error: {e}")
@@ -582,6 +617,7 @@ async def poll_cycle():
             d["mac"], d.get("name"), d.get("rssi"), d.get("battery"),
             d.get("type", "unknown"), d.get("connected", False),
             json.dumps(d.get("metadata")) if d.get("metadata") else None,
+            d.get("fingerprint"),
         ))
 
     try:
