@@ -90,8 +90,12 @@ def call_llm(system: str, user: str, max_tokens: int = 4000) -> str:
 
 
 def psql(sql: str) -> str:
+    # -h pinned to the real primary: with no host, this hit whatever local default the
+    # running node had -> after the 2026-07-17 PG move to nova-core it returned 0 rows on
+    # some nodes, and the audit then hallucinated a whole "zero vectors" article from nothing.
+    # (A bare psql subprocess, so the 2026-07-24 host= DSN sweep didn't touch it.)
     r = subprocess.run(
-        ["psql", "-U", "kochj", "-d", "nova_memories", "-tA", "-c", sql],
+        ["psql", "-h", "pg-primary.digitalnoise.net", "-U", "kochj", "-d", "nova_memories", "-tA", "-c", sql],
         capture_output=True, text=True, timeout=30)
     return r.stdout.strip()
 
@@ -236,7 +240,16 @@ def run_audit() -> dict:
 
     all_vectors = get_all_vectors()
     vector_names = [v[0] for v in all_vectors]
-    log(f"Total vectors: {len(all_vectors)}, total memories: {sum(c for _, c in all_vectors):,}")
+    total_mem = sum(c for _, c in all_vectors)
+    log(f"Total vectors: {len(all_vectors)}, total memories: {total_mem:,}")
+
+    # Empty-audit guard: if the DB query came back with (almost) nothing, the audit has no
+    # real data — DON'T fabricate an article about it (that's how "Zero Vectors, Infinite
+    # Regrets" got published with invented example memories). A healthy store has 1.7M+.
+    if total_mem < 1000:
+        log(f"ABORT: only {total_mem} memories visible — DB unreachable/empty, refusing to "
+            f"publish a hallucinated audit. Check pg-primary connectivity.")
+        return {"aborted": True, "reason": f"only {total_mem} memories visible"}
 
     # Pick vectors to audit (random selection weighted toward larger ones)
     candidates = [v for v in all_vectors if v[1] >= 50]  # skip tiny vectors
@@ -497,6 +510,18 @@ def main():
     log("Good morning. Time to audit 1.6 million memories. Again.")
 
     stats = run_audit()
+
+    # Empty-audit guard (DB unreachable/empty -> no real data): skip, don't hallucinate.
+    if stats.get("aborted"):
+        log(f"ABORT: {stats.get('reason')} — not publishing.")
+        try:
+            import nova_config
+            nova_config.post_both(f":warning: Vector-audit skipped — {stats.get('reason')}. "
+                                  "Nothing published (would have been fabricated).",
+                                  slack_channel=getattr(nova_config, "SLACK_BB", None))
+        except Exception:
+            pass
+        return 1
 
     article = generate_article(stats)
     log(f"Article generated: {len(article)} chars")
