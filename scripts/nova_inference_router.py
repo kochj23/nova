@@ -65,7 +65,7 @@ BANDIT = os.environ.get("NOVA_ROUTER_BANDIT", "") not in ("", "0", "false", "no"
 # kind: "ollama" (:11434), "mtplx"/"mlx" (OpenAI on :5050), "tinychat" (:8000).
 # Models are PER-NODE and need not match across nodes. A backend only serves a
 # class once its health probe confirms the model is present (Ollama) / up (MLX).
-N6, N190, N7, N2 = "192.168.1.6", "192.168.1.190", "192.168.1.7", "192.168.1.2"
+N6, N190, N7, N2 = "192.168.1.6", "192.168.1.101", "192.168.1.7", "192.168.1.2"
 N10 = "192.168.1.10"   # nova-core5 — no GPU, idle; serves CPU embeddings to offload the GPU nodes
 N5, N86 = "192.168.1.5", "192.168.1.86"   # nova-core3 (NPU), nova-core2 (ROCm) — fast-tier backups
 
