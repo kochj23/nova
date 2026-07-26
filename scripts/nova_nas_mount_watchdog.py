@@ -31,7 +31,15 @@ def keychain(service):
     r = subprocess.run(
         ["security", "find-generic-password", "-a", "nova", "-s", service, "-w"],
         capture_output=True, text=True, timeout=10)
-    return r.stdout.strip()
+    if r.stdout.strip():
+        return r.stdout.strip()
+    # Keychain is unreadable from the scheduler's daemon context — fall back to
+    # the fleet secret store (PG pgcrypto) so the watchdog works unattended.
+    try:
+        import nova_secrets
+        return nova_secrets.get_secret(service) or ""
+    except Exception:
+        return ""
 
 
 def main():

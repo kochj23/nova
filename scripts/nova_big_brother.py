@@ -132,7 +132,9 @@ SERVICES = [
     ("DB primary (.2 Beelink)", "192.168.1.2", 5432, None,                        True,  None),
     ("Redis",         "127.0.0.1", 6379,  "net.digitalnoise.redis",               True,  None),
     ("Ollama",        "127.0.0.1", 11434, None,                                   True,  "/api/version"),
-    ("Memory Server", "127.0.0.1", 18790, "net.digitalnoise.nova-memory-server",  True,  "/health"),
+    # Memory server lives on nova-core (.2); local :18790 is a socat shim. HTTP check
+    # only — no launchd label, the old local job is retired and kickstart just times out.
+    ("Memory Server", "127.0.0.1", 18790, None,  True,  "/health"),
     # Gateway v2 MIGRATED to nova-core (.2) 2026-07-13 as a systemd unit with its own
     # Restart=on-failure. Not .6's to watch — health port is loopback-bound on .2, and
     # launchctl can't remediate a remote systemd service. .2's own watchdog owns it now.
@@ -147,7 +149,7 @@ SERVICES = [
     ("OpenWebUI",     "192.168.1.6", 3000,  "net.digitalnoise.openwebui",           False, None),
     ("SearXNG",       "192.168.1.2", 8080, None,                                   False, None),
     # ── Channels ─────────────────────────────────────────────────────────────
-    ("Signal-cli",    "127.0.0.1", 8080,  None,                                   False, None),
+    ("Signal-cli",    "192.168.1.6", 8080,  None,                                   False, None),  # binds LAN IP, not loopback
     # ── Nova apps ────────────────────────────────────────────────────────────
     # NovaControl is a desktop Swift app — not a persistent service, don't monitor
     ("NovaControl Web","127.0.0.1", 37450, "net.digitalnoise.nova-control-web",    False, None),
@@ -171,7 +173,7 @@ SILENCED_SERVICES = {}
 LAUNCHD_MONITORED = [
     ("com.nova.healthkit",                  "HealthKit Export",    False, True),   # needs app container, can't auto-fix
     ("com.digitalnoise.nova.general-monitor","General Monitor",    True,  False),
-    ("net.digitalnoise.nova-memory-server", "Memory Server",       True,  False),  # also in SERVICES — belt+suspenders
+    # nova-memory-server launchd entry removed — server migrated to nova-core (.2); local job retired
 ]
 
 # External services — just connectivity checks, no restart capability

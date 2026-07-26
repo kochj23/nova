@@ -22,6 +22,9 @@ wait_for_volume() {
     while ! { /sbin/mount | /usr/bin/grep -q " on ${path} (" && /bin/ls "${path}" >/dev/null 2>&1; }; do
         if [ "$elapsed" -ge "$timeout" ]; then
             echo "[wait-for-volume] TIMEOUT: ${path} not mounted/readable after ${timeout}s" >&2
+            # Say WHICH condition failed — mount-table entry vs readability (TCC?)
+            /sbin/mount | /usr/bin/grep " on ${path} (" >&2 || echo "[wait-for-volume] diag: no mount-table entry for ${path}" >&2
+            /bin/ls "${path}" >/dev/null 2>&1 && echo "[wait-for-volume] diag: ls OK" >&2 || echo "[wait-for-volume] diag: ls FAILED (errno $?) — TCC/permissions?" >&2
             return 1
         fi
         /bin/sleep 3
