@@ -109,6 +109,17 @@ def _discover_hue_bridge() -> Optional[str]:
     Try mDNS first (Philips hue bridge advertises _hue._tcp),
     then scan common IPs in the .20-.50 range.
     """
+    # Known bridge first — same pinned IP nova_hue_history.py uses successfully.
+    # (Cloud discovery is flaky and the .20-.50 scan below misses .152 entirely.)
+    known = "192.168.1.152"
+    try:
+        req = urllib.request.Request(f"http://{known}/api/config")
+        with urllib.request.urlopen(req, timeout=3) as resp:
+            if json.loads(resp.read().decode()).get("bridgeid"):
+                return known
+    except Exception:
+        pass
+
     # Try mDNS discovery endpoint
     meethue = _http_get("https://discovery.meethue.com", timeout=5)
     if meethue and isinstance(meethue, list) and len(meethue) > 0:
