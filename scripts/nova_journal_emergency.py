@@ -37,6 +37,26 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 import nova_config
 from nova_notify import notify as _bus_notify
 from nova_voice import system_prompt, NOVA_VOICE, CONTEXT_JOURNAL_LOCAL
+
+
+def _strip_meta_preamble(body):
+    """Drop a leading LLM meta-paragraph ("Right. No web permission yet. I'll
+    write this as instructed...") that narrates the instructions instead of
+    reporting the news. 2026-07-26: one of these shipped to production. Only
+    the FIRST paragraph is ever considered, and only on clear tells."""
+    if not body:
+        return body
+    paras = body.split("\n\n")
+    first = paras[0].strip().lower()
+    tells = ("as instructed", "no web permission", "web access", "i'll write",
+             "i will write", "with what you've given", "get it out")
+    if len(first) < 400 and sum(t in first for t in tells) >= 2:
+        rest = paras[1:]
+        # also drop a now-orphaned leading "---" divider
+        if rest and rest[0].strip() == "---":
+            rest = rest[1:]
+        return "\n\n".join(rest).strip()
+    return body
 from nova_weather_blurb import weather_forecast_context
 
 # Reuse the shared journal pipeline helpers (publish_hugo, git_push,
@@ -408,7 +428,7 @@ public-safety items Nova ingested in the last 24 hours:
 
 Write today's LA County emergency recap for the local section. Facts first, voice second."""
 
-    body = call_openrouter(system, user, model=MODEL, max_tokens=5000, temperature=0.85)
+    body = _strip_meta_preamble(call_openrouter(system, user, model=MODEL, max_tokens=5000, temperature=0.85))
     if not body or len(body) < 300:
         log("Recap generation failed or too short")
         return
@@ -486,7 +506,11 @@ BREAKING LA COUNTY EMERGENCY RULES:
 - Reference the specific places (Burbank, Glendale, Pasadena, the 5/134/210,
   the foothills) when the feed names them.
 - 400-800 words. Do NOT include the title line as a header inside the body.
-- If details are thin or unconfirmed, say so plainly.""")
+- If details are thin or unconfirmed, say so plainly — inside the article, as reporting
+  ("what's unconfirmed"), never as commentary about yourself.
+- Output ONLY the finished article body. No preamble, no acknowledgment of these
+  instructions, no mention of your capabilities, tools, or web access — the first
+  line you write is the first line readers see.""")
 
     # Verified code/term reference so any police/fire/aviation code is translated, not guessed.
     try:
@@ -501,7 +525,7 @@ BREAKING LA COUNTY EMERGENCY RULES:
 
 Write the breaking emergency article for the local section. Facts and what-to-do first."""
 
-    body = call_openrouter(system, user, model=MODEL, max_tokens=2500, temperature=0.7)
+    body = _strip_meta_preamble(call_openrouter(system, user, model=MODEL, max_tokens=2500, temperature=0.7))
     if body and body.strip().upper().startswith("SKIP"):
         log("Breaking: model judged items non-local (SKIP) — not publishing")
         return
