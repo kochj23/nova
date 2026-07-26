@@ -170,6 +170,39 @@ def describe_scene(image_path):
         return None
 
 
+def looks_like_person(image_path):
+    """Vision-gate for unknown-person alerts: dlib happily finds 'faces' in
+    street-light glare at night (2026-07-26, the Dave Bloom lamp incident) and
+    printed faces on tins (2026-06-23). One local vision call kills the whole
+    not-a-human alert class. Fail-open on errors — an extra alert beats a
+    silently missed person."""
+    import base64
+    try:
+        with open(image_path, "rb") as f:
+            img_b64 = base64.b64encode(f.read()).decode()
+        payload = json.dumps({
+            "model": VISION_MODEL,
+            "prompt": ("Does this image contain a real, physically present human person or human face? "
+                       "Bright lights, lens glare, lamps, headlights, animals, objects, and printed/pictured "
+                       "faces on labels, posters, or screens do NOT count. Answer only YES or NO."),
+            "images": [img_b64],
+            "stream": False,
+            # qwen3-vl thinks before answering; a small budget gets eaten by
+            # thinking tokens and returns an empty response (= fail-open).
+            "options": {"temperature": 0.0, "num_predict": 512},
+        }).encode()
+        req = urllib.request.Request(OLLAMA_URL, data=payload,
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=90) as resp:
+            ans = json.loads(resp.read()).get("response", "").strip().upper()
+        if not ans:
+            return True  # empty/thinking-only response — fail open
+        return "NO" not in ans.split()[-1:][0]
+    except Exception as e:
+        log(f"Vision person-gate failed (fail-open): {e}")
+        return True
+
+
 def _load_sam_faces():
     """Import sam-faces identify module as a package."""
     sam_parent = str(SAM_FACES_DIR.parent)
@@ -420,6 +453,10 @@ def scan_cameras():
                         # Build a padded, min-size crop from the full frame so
                         # distant faces are actually viewable in Slack.
                         saved_crop = make_context_crop(str(frame_path), bb, str(crop_path))
+                        # Street lights are not people, no matter how confident dlib feels.
+                        if not looks_like_person(saved_crop or str(frame_path)):
+                            log(f"{camera_name}: unknown-face detection rejected by vision gate (glare/blob/print)")
+                            continue
                         det = {
                             "type": "unknown",
                             "camera": camera_name,
