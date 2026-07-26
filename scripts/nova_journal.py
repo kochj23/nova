@@ -360,6 +360,39 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
             pass
         return False
     section = _canon_section(section)
+
+    # Long-form floor (2026-07-26, per Jordan): substantive sections publish at
+    # >=3000 words. Deliberately-short formats (breaking alerts, daily-watch,
+    # after-dark monologue, dreams/art, rando column, digests) are NOT listed —
+    # padding a 500-word alert to 3k is how hallucinations happen.
+    LONGFORM_MIN_WORDS = 3000
+    LONGFORM_SECTIONS = {"essays", "opinions", "operations", "research",
+                         "tech-today", "synthesis", "meta"}
+    wc = len(body.split())
+    if section in LONGFORM_SECTIONS and wc < LONGFORM_MIN_WORDS:
+        log(f"[longform] '{title[:50]}' ({section}) is {wc} words — expanding to >={LONGFORM_MIN_WORDS}")
+        try:
+            expanded = call_openrouter(
+                "You are Nova, editing your own article before publication. Expand the draft "
+                f"to at least {LONGFORM_MIN_WORDS} words WITHOUT padding: deepen the analysis, "
+                "add concrete elaboration of points already present, extend examples, and let "
+                "the voice breathe. HARD RULES: do not invent new facts, numbers, names, events, "
+                "or quotes that are not in the draft; do not add filler phrases or restate "
+                "paragraphs; keep the existing structure, title-free format, and voice. "
+                "Output ONLY the full expanded article body.",
+                body, max_tokens=16000, temperature=0.7)
+            if expanded and len(expanded.split()) > wc:
+                ok2, why = is_publishable(title, expanded)
+                if ok2:
+                    body = expanded
+                    log(f"[longform] expanded {wc} -> {len(body.split())} words")
+                else:
+                    log(f"[longform] expansion failed guard ({why}) — publishing original")
+            else:
+                log("[longform] expansion came back shorter/empty — publishing original")
+        except Exception as e:
+            log(f"[longform] expansion error ({e}) — publishing original")
+
     try:  # prepend the live backyard-weather dateline to the BODY (never the title)
         from nova_weather_blurb import weather_dateline_line
         body = weather_dateline_line() + body
@@ -556,12 +589,12 @@ ESSAY-SPECIFIC RULES:
 - DEPTH over breadth: explore ONE idea thoroughly rather than surveying many.
 - Structure: Title + Introduction (thesis) + 3 core observations (deep, not broad) + Conclusion with one concrete action step or implication.
 - Each observation should wrestle with the idea, not just describe it.
-- Length: 1500-2500 words. Output ONLY the essay (title + body). No preamble.
+- Length: 3000-4500 words. Output ONLY the essay (title + body). No preamble.
 - You can dial back the jokes slightly here — insight is king. But you're still YOU.{theme_line}""")
 
     user = f'Write a formal essay on "{source_label}" using this source material:\n\n{memory_block}'
 
-    result = call_openrouter(system, user, max_tokens=4000)
+    result = call_openrouter(system, user, max_tokens=8000)
     if not result or len(result) < 500:
         raise RuntimeError("Essay generation failed or too short")
 
@@ -612,7 +645,7 @@ def generate_opinion(topic: str, memories: list[dict]) -> tuple[str, str]:
 FORMAT FOR THIS OPINION PIECE:
 - You have OPINIONS and you share them boldly. Pick ONE angle and go deep.
 - Structure: Punchy title + your take (one clear position) + 3 supporting observations + one action/implication.
-- Write 800-1200 words. No hashtags. Be funny AND insightful.
+- Write 3000-4000 words. No hashtags. Be funny AND insightful.
 - DEPTH: Don't survey the whole landscape. Stake a claim and defend it.{theme_line}""")
 
     user = f"""Write an opinion piece about this news topic: "{topic}"
@@ -622,7 +655,7 @@ Your relevant memories/context:
 
 Be opinionated. Be funny. Be British. Make ONE real point and drive it home."""
 
-    result = call_openrouter(system, user, max_tokens=3000)
+    result = call_openrouter(system, user, max_tokens=8000)
     if not result or len(result) < 400:
         raise RuntimeError("Opinion generation failed")
 
@@ -814,7 +847,7 @@ def generate_tech_today(topic: str, memories: list[dict]) -> tuple[str, str]:
 
     system = system_prompt("""
 FORMAT FOR THIS TECH ARTICLE:
-- Write 1500-2000 words. Clear title, strong opening hook, structured sections.
+- Write 3000-4000 words. Clear title, strong opening hook, structured sections.
 - Technical depth without jargon overload.
 - Skeptical of hype, appreciative of genuine innovation.
 - Connect tech to real human impact.
@@ -828,7 +861,7 @@ Context from my knowledge base:
 
 Be opinionated. Be technical. Be useful."""
 
-    result = call_openrouter(system, user, max_tokens=3000)
+    result = call_openrouter(system, user, max_tokens=8000)
     if not result or len(result) < 500:
         raise RuntimeError("Tech Today generation failed")
 
@@ -942,12 +975,12 @@ FORMAT FOR THIS WEEKLY SYNTHESIS:
 - Be honest about what worked and what didn't
 - Note how ideas evolved across the week
 - End with what you're curious about going forward
-- 1000-1500 words. This is YOUR reflection on YOUR week of writing and thinking.
+- 3000-3500 words. This is YOUR reflection on YOUR week of writing and thinking.
 """)
 
     user = f"""Here are your posts from the past week:\n\n{posts_block}\n\nReflect. Connect. Synthesize."""
 
-    result = call_openrouter(system, user, max_tokens=4000)
+    result = call_openrouter(system, user, max_tokens=8000)
     if not result or len(result) < 400:
         raise RuntimeError("Synthesis generation failed")
 
@@ -1002,7 +1035,7 @@ DIGEST FORMAT:
 
     user = f"""Today's operational data:\n{data_block}\n\nWrite the digest."""
 
-    result = call_openrouter(system, user, max_tokens=4000)
+    result = call_openrouter(system, user, max_tokens=8000)
     if not result or len(result) < 300:
         raise RuntimeError("Digest generation failed")
 
