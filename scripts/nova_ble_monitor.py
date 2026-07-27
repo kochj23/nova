@@ -16,6 +16,11 @@ Also polls system_profiler SPBluetoothDataType for connected device battery/RSSI
 Written by Jordan Koch (via Claude).
 """
 
+from __future__ import annotations  # ponytail: 3.8 compat — nuk/.10 runs py3.8 and
+# nova_ble_phy_collector imports compute_ble_fingerprint from here. The identity MUST be
+# computed by the same code on every observer or nothing correlates, so the import stays
+# and the annotations go lazy instead.
+
 import asyncio
 import hashlib
 import json
