@@ -145,6 +145,20 @@ tasks:
     timeout: 60
     overlap: skip
 
+  negative_space:                    # alerts on correlations that SHOULD have happened and didn't
+    script: nova_negative_space.py
+    args: ["--alert"]
+    schedule: every 30m
+    timeout: 120
+    overlap: skip
+
+  identity_graph:                    # cross-modal co-occurrence graph (ble/wifi/person/face/zone)
+    script: nova_identity_graph.py
+    args: ["--days", "7"]
+    schedule: daily at 04:40
+    timeout: 1800
+    overlap: skip
+
   tracker_watch:                     # unwanted Find My tracker detection (separated tags persisting near the house)
     script: nova_tracker_watch.py
     args: ["--hours", "24", "--min-hours-present", "6", "--alert"]
