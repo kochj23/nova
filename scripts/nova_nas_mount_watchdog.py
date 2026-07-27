@@ -14,6 +14,10 @@ import sys
 import urllib.parse
 
 MOUNT_POINT = "/Volumes/nas"
+# 2026-07-26: /Volumes/external silently dropped mid-session and broke the video
+# ingest (PermissionError on a path that simply was not there). The watchdog only
+# ever watched /Volumes/nas, so nothing noticed. Watch every share we depend on.
+MOUNT_POINTS = {"/Volumes/nas": "nas", "/Volumes/external": "external"}
 NAS_IP = "192.168.1.11"
 SHARE = "nas"
 
@@ -43,6 +47,13 @@ def keychain(service):
 
 
 def main():
+    rc = 0
+    for mp, share in MOUNT_POINTS.items():
+        rc |= _ensure(mp, share)
+    return rc
+
+
+def _ensure(MOUNT_POINT, SHARE):
     if is_mounted(MOUNT_POINT):
         return 0
 
