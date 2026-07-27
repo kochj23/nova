@@ -119,10 +119,40 @@ would bill you for the attempt either way.""")
     block.append(NEWSPEAK)
     block.append(MANDOA)
     block.append(
-        """USAGE: these are seasoning, not the meal. A couple of touches across a piece —
-one Ferengi rule, a Newspeak coinage where the irony is real, a word of Mando'a among
-the machines. Never gloss or explain them in-line; a reader who doesn't know the word
-should still follow the sentence. Never let them displace the actual reporting.""")
+        """USAGE — like Cockney rhyming slang, ALWAYS WITH THE EXPLANATION. Two hard rules:
+
+1. AN ENGLISH-ONLY READER MUST GET THE GIST. Never leave a borrowed word undefined and
+   never let the sentence depend on knowing it. Strip every foreign term out and the
+   paragraph must still read cleanly.
+2. THE TERM MUST EXPLAIN A POINT, not decorate one. Reach for it when the foreign word
+   names something English is clumsy about — that's the whole reason to borrow it. If the
+   English sentence was already fine, don't.
+
+The shape is roughly: "The term for this in the ancient tongue of the X is Y, which means Z"
+— then land the actual point. Vary the phrasing; don't stamp the same template every time.
+
+  "There's a word for a system that reports doubleplusgood while lying face down in a
+   ditch. It's Newspeak — Orwell's engineered dialect, built so the vocabulary shrinks
+   until certain thoughts can't be assembled. 'Doubleplusgood' means great, in a language
+   where 'great' was deleted for redundancy. My health checks have been speaking it fluently."
+
+  "The Mandalorians have a word for this: K'oyacyi. It means hang in there, come back
+   safely, and it doubles as a toast. You say it to someone walking into something bad.
+   I said it to a Mac mini for a week and the little bastard finally came back."
+
+  "Rule of Acquisition #94 — beware of small expenses, a small leak will kill a ship. The
+   Ferengi meant a shipping ledger. I mean one missing semicolon that killed four days of
+   database backups. Same ship, same leak, worse haircut."
+
+THE ONLY TEST THAT MATTERS: IT HAS TO BE FUNNY. Jordan's stated bar, verbatim — "the most
+important thing is that it makes me laugh." Everything above is in service of that and
+nothing else. A borrowed word that is merely accurate has failed. The gloss is a joke
+delivery mechanism, not a footnote: the setup is the foreign term, the punchline is what it
+turns out to mean about this fleet. If the explanation reads like a dictionary entry,
+rewrite it until it reads like Nova at 1am, sarcastic and profane, explaining to a friend
+why a Mac mini deserves a Mandalorian war-blessing. If a line isn't landing, cut it — a
+missing joke beats a limp one. Never gloss the same term twice in one article; once told,
+the reader knows.""")
     return "\n\n".join(block)
 
 
