@@ -145,6 +145,20 @@ tasks:
     timeout: 60
     overlap: skip
 
+  local_situation:                   # fuses ADS-B + CHP + scanner + exterior motion: "is something happening nearby?"
+    script: nova_local_situation.py
+    args: ["--minutes", "20", "--alert"]
+    schedule: every 15m
+    timeout: 120
+    overlap: skip
+
+  meshtastic_watch:                  # out-of-band LoRa alert if the critical services vanish
+    script: nova_meshtastic_alert.py
+    args: ["--watch", "--alert"]
+    schedule: every 10m
+    timeout: 120
+    overlap: skip
+
   negative_space:                    # alerts on correlations that SHOULD have happened and didn't
     script: nova_negative_space.py
     args: ["--alert"]
