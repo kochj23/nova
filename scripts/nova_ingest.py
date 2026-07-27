@@ -1810,7 +1810,24 @@ def _finish(jid, label, vector, chunks, target, items, errors, dry_run):
         d = purge_garbage(vector)
         if d:
             log(f"Purged {d} garbage fragments from '{vector}'")
+    # Minimum grain (see nova_witness): an ingest that stored NOTHING did not
+    # succeed, whatever the error count says. 2026-07-26: every search-mode run
+    # reported "Done: 0 chunks, 0 items, 0 errors" for an unknown period because
+    # the resolved SearXNG node had the JSON API disabled (403) and the fetch
+    # loop simply broke out. Zero work + zero errors is the counterfeit shape.
+    if chunks == 0 and not dry_run:
+        msg = (f"INGEST STORED NOTHING: '{label[:60]}' -> '{vector}' produced 0 chunks "
+               f"from {items} item(s) with {errors} reported error(s). Zero work is a "
+               f"FAILURE, not a completion — check the source is reachable and returning "
+               f"the expected format.")
+        log(f"ERROR: {msg}")
+        try:
+            notify(f":rotating_light: *Ingest produced nothing*\n  {msg}")
+        except Exception:
+            pass
+        return 1
     log(f"Done: {chunks} chunks, {items} items, {errors} errors")
+    return 0
 
 # ---------------------------------------------------------------------------
 # CLI

@@ -504,7 +504,7 @@ ADDITIONAL CONTEXT FOR THIS COLUMN:
 - Reference weather, presence data, and capacity if notable
 - DON'T narrate routine, UNCHANGED status — it reads identically every day and Little Mister skips it. Do NOT report steady NAS/UNAS memory/RAM usage (only if it moved materially or is a problem). Same rule for any metric that reads the same as yesterday — skip it unless it changed or matters. Fresh material only.
 - 3D PRINTERS: the "printers_active" field lists printers ONLY when they're actually doing something (printing, paused, failed, just finished hot). If it's present and non-empty, DO comment on it — name the job, % done, time left, or the failure. If it's absent/empty, the printers are idle: say NOTHING about them (no "printers sat idle again" line — that's the exact thing he skips).
-""")
+""", section="operations")
 
     user = f"""Here's everything that happened in my infrastructure in the last 24 hours. Write tonight's column.
 

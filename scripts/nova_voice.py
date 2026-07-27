@@ -265,12 +265,22 @@ def shared_context() -> str:
     return _live_facts() + _recent_activity()
 
 
-def system_prompt(context: str = "") -> str:
+def system_prompt(context: str = "", section: str = "", topic: str = "") -> str:
     """Build a complete system prompt with Nova's voice + optional context additions.
 
     NOTE: the live weather dateline is prepended to the BODY by publish_hugo (and the
-    burbank publisher) — NOT injected here — so it never gets scraped as the title."""
+    burbank publisher) — NOT injected here — so it never gets scraped as the title.
+
+    section/topic (optional) enable the borrowed-tongues seasoning — a topic-matched
+    Ferengi Rule of Acquisition plus Newspeak/Mando'a flavour. Omitted automatically
+    for public-safety sections; see nova_lexicon.seasoning().
+    """
     prompt = NOVA_VOICE + _live_facts() + _recent_activity()
+    try:
+        from nova_lexicon import seasoning
+        prompt += seasoning(section, topic or context[:300])
+    except Exception:
+        pass  # flavour is never allowed to break publishing
     if context:
         return prompt + "\n" + context
     return prompt

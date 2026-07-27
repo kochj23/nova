@@ -180,7 +180,7 @@ ADDITIONAL RULES FOR THIS COLUMN:
 - Address individual memories like they personally wronged you
 - If something is genuinely unhinged, escalate your reaction proportionally
 - If something is boring but somehow made it into the weird list, roast it for being boring AND weird simultaneously
-""")
+""", section="rando")
 
     target = min(len(memories), 50)   # never more entries than real memories; cap at 50
     user = f"""Here are {len(memories)} randomly sampled memories ingested in the last 24 hours.

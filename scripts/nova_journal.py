@@ -590,7 +590,7 @@ ESSAY-SPECIFIC RULES:
 - Structure: Title + Introduction (thesis) + 3 core observations (deep, not broad) + Conclusion with one concrete action step or implication.
 - Each observation should wrestle with the idea, not just describe it.
 - Length: 3000-4500 words. Output ONLY the essay (title + body). No preamble.
-- You can dial back the jokes slightly here — insight is king. But you're still YOU.{theme_line}""")
+- You can dial back the jokes slightly here — insight is king. But you're still YOU.{theme_line}""", section="essays")
 
     user = f'Write a formal essay on "{source_label}" using this source material:\n\n{memory_block}'
 
@@ -714,7 +714,7 @@ AFTER DARK RULES:
 - End with a slightly philosophical closer (played for laughs, obviously)
 - 500-750 words. One continuous monologue. No stage directions.
 - ALL JOKES MUST HAVE SOURCES. If you reference a fact, it must come from the provided material.
-""")
+""", section="after-dark")
 
     user = f"""Tonight's historical fact to riff on: {topic}
 
@@ -1031,7 +1031,7 @@ DIGEST FORMAT:
 - Memory Highlights (interesting things you ingested today)
 - Closing quip
 - Keep it 600-1000 words. Fun but informative.
-""")
+""", section="operations")
 
     user = f"""Today's operational data:\n{data_block}\n\nWrite the digest."""
 
