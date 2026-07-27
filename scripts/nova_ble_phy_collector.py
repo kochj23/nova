@@ -57,8 +57,76 @@ def log(m):
 RE_HDR = re.compile(r"systime=(\d+)\s+freq=(\d+)\s+addr=\w+\s+delta_t=[\d.]+\s+ms\s+rssi=(-?\d+)")
 RE_ADVA = re.compile(r"AdvA:\s+([0-9a-fA-F:]{17})\s*(\(random\)|\(public\))?")
 RE_CHAN = re.compile(r"Channel Index:\s*(\d+)")
-RE_NAME = re.compile(r"Type (?:08|09) \(.*?Name\)\s*\n\s*(.+)")
-RE_COMPANY = re.compile(r"Type ff \(Manufacturer.*?\)\s*\n\s*Company:\s*(.+)", re.S)
+
+
+
+# ── AdvData TLV decoding ──────────────────────────────────────────────────────
+# BLE advertising data is a packed chain of [Length][Type][Value...] elements. The
+# host-stack observer gets these already parsed by bleak; this observer only has raw
+# bytes, so it must decode them into the IDENTICAL shapes or the fingerprints cannot
+# match (measured 2026-07-27: 1 shared fingerprint fleet-wide before this existed).
+#
+# bleak reports service UUIDs as lowercase full 128-bit strings, so 16- and 32-bit
+# UUIDs must be expanded against the Bluetooth Base UUID. Multi-byte values in the
+# advertisement are LITTLE-ENDIAN, including the 128-bit UUIDs (reversed byte order).
+_BASE_UUID = "-0000-1000-8000-00805f9b34fb"
+
+AD_UUID16 = (0x02, 0x03)      # incomplete / complete list of 16-bit service UUIDs
+AD_UUID32 = (0x04, 0x05)
+AD_UUID128 = (0x06, 0x07)
+AD_NAME = (0x08, 0x09)        # shortened / complete local name
+AD_TXPOWER = 0x0A
+AD_MANUFACTURER = 0xFF
+
+
+def _uuid16(b):
+    return f"0000{int.from_bytes(b, 'little'):04x}{_BASE_UUID}"
+
+
+def _uuid32(b):
+    return f"{int.from_bytes(b, 'little'):08x}{_BASE_UUID}"
+
+
+def _uuid128(b):
+    h = b[::-1].hex()          # little-endian on the wire
+    return f"{h[0:8]}-{h[8:12]}-{h[12:16]}-{h[16:20]}-{h[20:32]}"
+
+
+def decode_advdata(raw: bytes):
+    """Walk the TLV chain. Returns (name, service_uuids, company_ids, tx_power)
+    shaped exactly like bleak's AdvertisementData so both observers hash the same
+    inputs. Malformed/truncated tails stop the walk instead of raising — radio
+    captures are lossy and a bad packet must not kill the collector."""
+    name, uuids, companies, tx = None, [], [], None
+    i, n = 0, len(raw)
+    while i < n:
+        ln = raw[i]
+        if ln == 0 or i + ln >= n + 1 or i + 1 >= n:
+            break
+        typ = raw[i + 1]
+        val = raw[i + 2:i + 1 + ln]
+        if typ in AD_UUID16:
+            uuids += [_uuid16(val[j:j + 2]) for j in range(0, len(val) - 1, 2)]
+        elif typ in AD_UUID32:
+            uuids += [_uuid32(val[j:j + 4]) for j in range(0, len(val) - 3, 4)]
+        elif typ in AD_UUID128:
+            uuids += [_uuid128(val[j:j + 16]) for j in range(0, len(val) - 15, 16)]
+        elif typ in AD_NAME and val:
+            try:
+                # A lossy radio capture yields garbage bytes inside "names". Strip every
+                # control character, not just leading/trailing NULs: Postgres rejects NUL
+                # in string literals outright and killed the collector mid-insert.
+                raw_name = val.decode("utf-8", "ignore")
+                cleaned = "".join(ch for ch in raw_name if ch.isprintable()).strip()
+                name = cleaned or name
+            except Exception:
+                pass
+        elif typ == AD_TXPOWER and val:
+            tx = int.from_bytes(val[:1], "little", signed=True)
+        elif typ == AD_MANUFACTURER and len(val) >= 2:
+            companies.append(int.from_bytes(val[:2], "little"))
+        i += ln + 1
+    return name, sorted(set(uuids)), sorted(set(companies)), tx
 
 
 def parse_packets(stream):
@@ -89,37 +157,21 @@ def parse_packets(stream):
 
 
 def enrich(pkt):
-    """Pull the stable advertising fields the fingerprint needs out of the decode block."""
+    """Decode the advertisement into bleak-shaped fields, then fingerprint it."""
     blob = "\n".join(pkt.get("raw", []))
-    name = None
-    m = re.search(r"Type 0[89] \([^)]*\)\s*\n\s*([^\n]+)", blob)
+    m = re.search(r"AdvData:\s*((?:[0-9a-fA-F]{2}\s+)+)", blob)
+    adv = b""
     if m:
-        cand = m.group(1).strip()
-        if cand and not cand.startswith("Type "):
-            name = cand
-    company_ids = []
-    for cm in re.finditer(r"Company:\s*([^\n(]+)\(?(0x[0-9a-fA-F]{4})?", blob):
-        hexid = cm.group(2)
-        if hexid:
-            company_ids.append(int(hexid, 16))
-    if not company_ids:
-        # Fall back to the raw manufacturer-data header: "ff <lo> <hi>" is little-endian.
-        fm = re.search(r"\bff\s+([0-9a-f]{2})\s+([0-9a-f]{2})\b", blob, re.I)
-        if fm:
-            company_ids.append(int(fm.group(2) + fm.group(1), 16))
-    # KNOWN LIMITATION (measured 2026-07-27): do NOT scrape UUIDs with a loose regex. The
-    # first attempt matched any 4-hex token whenever "UUID" appeared later in the block,
-    # producing noise — and because the host stack feeds compute_ble_fingerprint() full
-    # 128-bit UUID strings while this fed it 4-char fragments, the two observers computed
-    # DIFFERENT identities for the same device: cross-observer correlation measured 1 shared
-    # fingerprint. Passing [] is honest; correlating properly needs real AdvData TLV decoding
-    # (parse the length/type/value chain and expand 16-bit UUIDs to full form), which is
-    # queued rather than faked here.
-    uuids = []
+        try:
+            adv = bytes.fromhex(m.group(1).replace(" ", "").replace("\n", ""))
+        except ValueError:
+            adv = b""
+    name, uuids, company_ids, tx_power = decode_advdata(adv)
     pkt["name"] = name
-    pkt["company_ids"] = sorted(set(company_ids))
-    pkt["uuids"] = sorted(set(u.lower() for u in uuids))
-    pkt["fingerprint"] = compute_ble_fingerprint(name, pkt["uuids"], pkt["company_ids"], None)
+    pkt["uuids"] = uuids
+    pkt["company_ids"] = company_ids
+    pkt["tx_power"] = tx_power
+    pkt["fingerprint"] = compute_ble_fingerprint(name, uuids, company_ids, tx_power)
     return pkt
 
 
@@ -165,7 +217,8 @@ def main():
                 pkt["mac"], pkt.get("name"), pkt.get("rssi"), None, "ble_phy", False,
                 psycopg2.extras.Json({"channel": pkt.get("channel"), "freq": pkt.get("freq"),
                                       "addr_type": pkt.get("addr_type"),
-                                      "company_ids": pkt["company_ids"], "source": "ubertooth"}),
+                                      "company_ids": pkt["company_ids"], "tx_power": pkt.get("tx_power"),
+                                      "source": "ubertooth"}),
                 pkt.get("fingerprint"), OBSERVER))
 
             if now - last_flush >= FLUSH_SECONDS and pending:
