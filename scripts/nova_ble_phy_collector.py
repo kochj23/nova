@@ -131,6 +131,44 @@ def decode_advdata(raw: bytes):
     return name, sorted(set(uuids)), sorted(set(companies)), tx
 
 
+
+# ── Apple Find My / tracker classification ───────────────────────────────────
+# Apple manufacturer data (company 0x004C) carries a subtype byte. 0x12 is the Find My
+# network — AirTags, AirPods, and third-party Find My accessories. Its LENGTH is the
+# signal that matters for tracker safety:
+#   len 0x02  -> SHORT form. The tag is paired and its owner's device is nearby.
+#   len 0x19  -> LONG form, carrying a rotating EC public key. The tag is SEPARATED from
+#                its owner and is broadcasting for passing iPhones to relay its location.
+# A separated tag that keeps appearing near one person, across days, is the unwanted-tracker
+# case Apple's own Item Safety Alerts look for. We cannot tell WHICH tag is whose — the keys
+# rotate and are derived from a secret only the owner's iCloud account holds — but "separated
+# and persistent near us" is exactly the question worth asking, and it needs no Find My API.
+APPLE_CID = 0x004C
+APPLE_SUBTYPES = {0x02: "ibeacon", 0x05: "airdrop", 0x07: "proximity_pairing",
+                  0x09: "airplay", 0x0C: "handoff", 0x10: "nearby", 0x12: "findmy"}
+
+
+def classify_apple(adv: bytes):
+    """Return (subtype_name, findmy_state) for Apple manufacturer data, else (None, None).
+    findmy_state is 'owner_nearby' | 'separated' | None."""
+    i = 0
+    while i < len(adv):
+        ln = adv[i]
+        if ln == 0 or i + ln >= len(adv) + 1 or i + 1 >= len(adv):
+            break
+        if adv[i + 1] == 0xFF:
+            v = adv[i + 2:i + 1 + ln]
+            if len(v) >= 3 and int.from_bytes(v[:2], "little") == APPLE_CID:
+                sub = v[2]
+                name = APPLE_SUBTYPES.get(sub)
+                if sub == 0x12:
+                    plen = v[3] if len(v) > 3 else 0
+                    return name, ("separated" if plen >= 0x18 else "owner_nearby")
+                return name, None
+        i += ln + 1
+    return None, None
+
+
 def parse_packets(stream):
     """Yield one dict per decoded advertisement. Tolerates partial/garbled blocks —
     a radio capture is lossy by nature and a malformed packet must not kill the run."""
@@ -169,10 +207,13 @@ def enrich(pkt):
         except ValueError:
             adv = b""
     name, uuids, company_ids, tx_power = decode_advdata(adv)
+    apple_sub, findmy_state = classify_apple(adv)
     pkt["name"] = name
     pkt["uuids"] = uuids
     pkt["company_ids"] = company_ids
     pkt["tx_power"] = tx_power
+    pkt["apple_subtype"] = apple_sub
+    pkt["findmy_state"] = findmy_state
     pkt["fingerprint"] = compute_ble_fingerprint(name, uuids, company_ids, tx_power)
     return pkt
 
@@ -215,6 +256,10 @@ def main():
                 if pkt.get("name"):
                     w["names"][pkt["name"]] += 1
                 w["companies"][tuple(pkt["company_ids"])] += 1
+                if pkt.get("findmy_state"):
+                    w.setdefault("findmy", Counter())[pkt["findmy_state"]] += 1
+                if pkt.get("apple_subtype"):
+                    w.setdefault("apple", Counter())[pkt["apple_subtype"]] += 1
                 w["uuids"][tuple(pkt["uuids"])] += 1
                 if pkt.get("rssi") is not None:
                     w["rssi"].append(pkt["rssi"])
@@ -240,6 +285,10 @@ def main():
                         "company_ids": [f"{c:#06x}" for c in companies],
                         "service_uuids": uuids,
                         "packets": w["n"], "consensus": agree,
+                        "apple_subtype": (w.get("apple") or Counter()).most_common(1)[0][0]
+                                          if w.get("apple") else None,
+                        "findmy_state": (w.get("findmy") or Counter()).most_common(1)[0][0]
+                                         if w.get("findmy") else None,
                         "single_packet": w["n"] == 1,
                         "xfp": compute_cross_observer_fingerprint(uuids, companies)}),
                     compute_ble_fingerprint(name, uuids, companies, None), OBSERVER))

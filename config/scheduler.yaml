@@ -145,6 +145,20 @@ tasks:
     timeout: 60
     overlap: skip
 
+  tracker_watch:                     # unwanted Find My tracker detection (separated tags persisting near the house)
+    script: nova_tracker_watch.py
+    args: ["--hours", "24", "--min-hours-present", "6", "--alert"]
+    schedule: every 2h
+    timeout: 120
+    overlap: skip
+
+  identity_link:                     # proposes device->person ownership from co-presence (phi)
+    script: nova_identity_link.py
+    args: ["--days", "7"]
+    schedule: daily at 04:15
+    timeout: 600
+    overlap: skip
+
   wifi_presence:                     # resolves WiFi clients to NAMED people — presence had 8 signals and 1 real name
     script: nova_wifi_presence.py
     schedule: every 2m
