@@ -1,10 +1,12 @@
 # Nova
 
-Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unified memory) in Burbank.
+Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unified memory) in Burbank, across a nine-machine fleet.
 
 > *"Like a star being born."* — Nova, on choosing her name
 
-**Status:** OpenClaw node.js binary fully retired and uninstalled. Nova runs on pure Python infrastructure we own, control, and can modify without touching a third-party binary — now a **self-organizing mesh** across the fleet with capacity-aware load balancing and a single authoritative service registry.
+**Status:** OpenClaw node.js binary fully retired. Nova runs on pure Python infrastructure we own, control, and can modify — a **self-organizing mesh** across the fleet with capacity-aware load balancing and a single authoritative service registry.
+
+As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* discipline: health checks must produce evidence, and no check is trusted to clear health until it has been made to fail on purpose. See [Witness Discipline](#witness-discipline--minimum-grain--proven-red).
 
 ---
 
@@ -12,18 +14,23 @@ Jordan Koch's local AI familiar. Running on a Mac Studio M4 Ultra (512 GB unifie
 
 | Metric | Value |
 |--------|-------|
-| Scripts | 380 Python/Shell (nova_* namespace) |
+| Scripts | 526 Python/Shell (`nova_*` namespace) |
+| Fleet | 9 machines — 5 Linux (nova-core .2/.86/.88/.10/.250) + 4 Macs (.6 Studio, .101 mini, .7 tv-mini) |
+| Storage failover | `nova_storage_failover.py` — 2-min timer, reads real content (not the mount table), fails over Synology→UNAS and back, refreshes scripts from GitHub |
+| Resilience node | nova-core4 (.250) — warm Gateway standby + cold standbys, local code, host-sealed secrets |
+| Witness registry | `telemetry.witness_proven_red` — a check clears health only with recent proven-red |
+| BLE observers | multi-radio; every sighting tagged with the radio that saw it (`telemetry.bluetooth.observer`) |
 | Scheduler tasks | 156 unique |
-| Scheduler runs logged | 81,901 (98.9% success rate) |
-| Vector memories | 1,689,142 unique (deduplicated, HNSW-indexed, 20GB) |
+| Scheduler runs logged | 658,279 (94.7% success) |
+| Vector memories | 1,806,065 (deduplicated, pgvector HNSW, 768-dim nomic-embed) |
 | Tests | ~9,550 (pytest) — smoke covers all 353 scripts; dedicated suites on the highest-risk services |
-| Memory sources | 217+ domains |
+| Memory sources | 198 domains |
 | Gateway | Nova Gateway v2.4.0 (pure Python asyncio, hot-reloadable config) |
 | Channels | Slack + Discord + Signal + Web Chatroom + Claude Code bridge |
 | Agents | 4 (Chat, Research, Home, Main) |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Databases | PostgreSQL 17 + pgvector (`nova_memories` + `nova_ops`) + Redis |
-| Ops DB tables | 52+ tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, chatroom, snmp_metrics, syslog_events, capacity_snapshots, deploy_requests |
+| Ops DB tables | 127 tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, telemetry.*, witness_proven_red, ferengi_rules |
 | Hot-reload | Gateway: `POST :18792/reload` or `SIGHUP`. Scheduler: `SIGHUP` reloads tasks. |
 | Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
 | Chatroom | Real-time multi-party chat on port 37480, Nova has full memory access, external via CF tunnel + service token auth |
@@ -1353,12 +1360,13 @@ graph LR
 
 | Component | Spec | Role |
 |-----------|------|------|
-| Mac Studio M4 Ultra | 512GB unified memory, 32-core CPU, 80-core GPU | Primary compute |
+| Mac Studio M3 Ultra | 512GB unified memory, 32-core CPU, 80-core GPU | Inference + macOS-bound services |
 | Main SSD | 926GB APFS | OS, binaries, cache |
 | `/Volumes/Data` | 3.6TB | AI models, Xcode, Nova workspace, binaries |
 | `/Volumes/MoreData` | 3.6TB | PostgreSQL data (27GB), MLX models |
-| Synology RS1221+ | RAID, 192.168.1.11 | NAS: video storage, Plex library |
-| Synology (Plex) | 192.168.1.10:32400 | Plex Media Server |
+| Synology RS1221+ | RAID, 192.168.1.11, switch port 7 | NAS: video, Plex library, `/nova` share |
+| Plex Media Server | nova-core, 192.168.1.2:32400 | Moved off .86 2026-07; media via NAS bind mounts |
+| UNAS Pro 8 | 192.168.1.69, 51TB | Secondary storage + `/nova` failover target |
 | HDHomeRun QUATRO | 224 OTA channels, 4 tuners, 192.168.1.89 | Live TV + DVR |
 | 15 UniFi Protect cameras | Face recognition, 5-layer event filtering | Security |
 | UniFi Dream Machine | 192.168.1.1 | Network |
@@ -1492,6 +1500,108 @@ flowchart LR
 - **Data safety:** inference is **loopback-only** (a non-127.0.0.1 endpoint is refused outright — never falls forward to a cloud API); every message is redacted of token/key/password shapes before it reaches the model; messages truncated to 400 chars
 - **Progress-only + dedup:** strict `ts >` watermark per channel so a message is never re-assessed; a per-digest `dedup_key` blocks re-alerting an identical recurring incident; skips its own posts via the `🔭 Hourly Watch` marker
 - **No quiet hours** — fires 24/7; the offline heuristic guarantees it still flags real trouble when every LLM is down · safety suite `test_nova_slack_watch.py`
+
+## Storage Failover & Anti-Drift
+
+`/nova` is the fleet's shared filesystem — scripts, models, media. It is served by the Synology,
+with the UNAS as an automatic fallback. `nova_storage_failover.py` runs from a 2-minute systemd
+timer on `.2`, `.10` and `.86`:
+
+- **If the Synology is not mounted → mount it.**
+- **If the Synology is down → fail over to the UNAS**, and keep serving.
+- **When the Synology returns → fail back automatically.**
+
+Two design decisions are load-bearing, both learned from a real outage on 2026-07-27:
+
+**The health check reads real content, not the mount table.** A dead CIFS connection leaves its
+mount-table entry in place while every read returns `EHOSTDOWN`. Asking "is it mounted?" answered
+*yes* about a corpse for hours. The agent lists an actual directory instead.
+
+**GitHub is the source of truth; the share is a distribution artifact.** After any failover the
+scripts are refreshed *from git*, never from whatever the failover target happened to hold — the
+UNAS was ten days stale when it was needed. Access is a per-node read-only SSH deploy key, and git
+drops from root to the owning user because root has no GitHub key and should not get one.
+
+```mermaid
+flowchart TD
+    T[systemd timer · every 2 min] --> H{Can I list<br/>/nova/scripts?}
+    H -->|yes, on Synology| OK[No-op · healthy]
+    H -->|yes, on UNAS| B{Synology<br/>reachable?}
+    B -->|yes| FB[Fail BACK to Synology<br/>+ refresh from GitHub]
+    B -->|no| HOLD[Keep serving from UNAS]
+    H -->|no| C[Clear stale mount<br/>umount -f then -l]
+    C --> P{Synology<br/>reachable?}
+    P -->|yes| MP[Mount Synology<br/>+ refresh from GitHub]
+    P -->|no| MU[Mount UNAS<br/>+ refresh from GitHub<br/>+ alert]
+    MU --> V{Readable?}
+    MP --> V
+    V -->|no| DOWN[ALERT · no storage target]
+```
+
+---
+
+## Witness Discipline — Minimum Grain & Proven-Red
+
+Originating from a herd correspondence on 2026-07-26, this is the fleet's answer to the failure
+class that self-reporting cannot catch. Failures sort into three bins:
+
+| Bin | Example | Catchable by self-report? |
+|-----|---------|---------------------------|
+| **Legible absence** | a mount reports it is empty | yes — honest, self-healing |
+| **Contentless scream** | a service restarts 536 times | yes — loud, but says nothing about *what* |
+| **The counterfeit** | reports success while dead | **no** — passes every internal gate |
+
+Real counterfeits found in this fleet: an API dead nine days behind a green status endpoint; a
+watchdog "succeeding" by bailing in 0.1s; a media library listing 1,270 items whose files were
+unreachable; every search-ingest silently returning zero for weeks; a node passing health checks
+while unreachable by the only machine that needed it.
+
+Two rules, implemented in `nova_witness.py`:
+
+- **Minimum grain** — a pass with no evidence body, or returned faster than physics allows, did not
+  check anything. It is downgraded to a failure. *No body → did not check.*
+- **Proven-red** — a witness is trusted only after a fault was injected and it was **watched to
+  catch it**, then the fault removed and green observed again (the round trip is the attribution
+  proof). Date-stamped in `telemetry.witness_proven_red`, and it **expires**: a stale scar drops the
+  witness to yellow — signal only, cannot clear health.
+
+> **Self-report may diagnose absence; only a witness with minimum grain and a recent proven-red may
+> clear health.**
+
+Consumer-side checking follows from this: do not ask a node whether it is healthy — ask whatever
+depends on it. `nova_prober.probe_inference_vantage` compares the inference router's view against
+the prober's and fails on a *vantage gap*.
+
+```mermaid
+flowchart LR
+    subgraph Check
+        A[Run check] --> B{Evidence body?<br/>Plausible latency?}
+        B -->|no| F[COUNTERFEIT<br/>record as FAILURE]
+        B -->|yes| C{Witness has<br/>recent proven-red?}
+    end
+    C -->|never bitten| R[RED · decoration]
+    C -->|scar stale| Y[YELLOW · signal only]
+    C -->|fresh| G[GREEN · may clear health]
+```
+
+---
+
+## Borrowed Tongues
+
+Nova's articles draw on three fictional languages, used the way Cockney rhyming slang is used —
+deployed, then glossed in the same breath, so an English-only reader gets every joke:
+
+- **Ferengi Rules of Acquisition** — all 280 in `public.ferengi_rules`, selected by Postgres
+  full-text *relevance* to the article's subject rather than at random.
+- **Newspeak** (Orwell) — for the specific irony it was engineered for: language that shrinks until
+  certain thoughts cannot be assembled. Apt for infrastructure that lies about its own state.
+- **Mando'a** (Mandalorian) — terse and practical, for ops work and the machines that survive it.
+
+Implemented in `nova_lexicon.py`, opted in **per section** through a strict allowlist
+(operations / essays / after-dark / rando). Breaking public-safety articles are deliberately
+excluded — an evacuation notice is not a bit.
+
+---
 
 ## Security
 
