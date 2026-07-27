@@ -22,6 +22,7 @@ import json
 import logging
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -53,36 +54,7 @@ STATE_FILE = Path.home() / ".openclaw/workspace/state/ble_known_devices.json"
 SCAN_INTERVAL = 30
 BLE_SCAN_DURATION = 10
 
-# Known devices — MAC → (name, type, owner)
-KNOWN_DEVICES = {
-    "28:EA:2D:19:4E:E3": ("Jordan's iPhone", "phone", "jordan"),
-    "14:C8:8B:C6:F7:55": ("kochj's AirPods", "headphones", "jordan"),
-    "90:9C:4A:EA:DA:AA": ("kochj's AirPods Max", "headphones", "jordan"),
-    "F0:04:E1:DF:AC:88": ("kochj's AirPods Pro", "headphones", "jordan"),
-    "1C:1D:D3:81:0C:42": ("kochj's Magic Keyboard", "peripheral", "jordan"),
-    "EC:2C:E2:EF:5E:7E": ("Magic Trackpad 2", "peripheral", "jordan"),
-    "DC:07:DF:4B:6B:21": ("Jordan's Mac mini", "computer", "jordan"),
-    "FB:82:AD:79:D6:05": ("Apple TV (TV-Movies)", "appletv", "home"),
-    "6C:4A:85:21:32:BA": ("Apple TV (unknown)", "appletv", "home"),
-}
 
-# HomePods — MAC → room name (used for triangulation)
-HOMEPOD_ROOMS = {
-    "D4:90:9C:E5:6A:57": "back_door",
-    "40:ED:CF:A5:06:63": "dylans_room",
-    "C4:F7:C1:39:D2:89": "dylans_room",
-    "F0:B3:EC:78:CD:0C": "garage",
-    "58:D3:49:4F:00:64": "garage",
-    "F4:34:F0:2F:D6:40": "guest_bathroom",
-    "64:D2:C4:BA:44:AF": "kitchen",
-    "F0:B3:EC:1F:53:67": "living_room",
-    "40:ED:CF:BC:29:CF": "master_bedroom",
-    "8C:26:AA:DA:6F:37": "master_bedroom",
-    "58:D3:49:2B:C7:90": "master_bathroom",
-    "C4:F7:C1:55:6D:25": "office",
-    "D4:90:9C:E7:0A:3F": "office",
-    "58:D3:49:28:8A:48": "outside",
-}
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -124,18 +96,50 @@ def get_db():
     return _conn
 
 
+# Known devices and HomePod room map now live in telemetry.ble_device_map, NOT here.
+# 23 personal MAC addresses were hardcoded in this file: that is PII in git (the
+# pre-push scanner blocks it, correctly) and it broke the fleet's all-state-in-PG
+# rule. Edit the table, not the source. Falls back to empty dicts so a DB outage
+# degrades scanning to "unnamed devices" rather than crashing the monitor.
+def _load_device_map():
+    known, rooms = {}, {}
+    try:
+        conn = get_db()
+        with conn.cursor() as cur:
+            cur.execute("SELECT device_mac, device_name, device_type, owner, room, is_homepod "
+                        "FROM telemetry.ble_device_map")
+            for mac, name, typ, owner, room, is_hp in cur.fetchall():
+                if is_hp and room:
+                    rooms[mac] = room
+                if name:
+                    known[mac] = (name, typ or "unknown", owner or "unknown")
+    except Exception as e:
+        log.warning(f"BLE device map unavailable ({e}) — running with no known-device names")
+    return known, rooms
+
+
+KNOWN_DEVICES, HOMEPOD_ROOMS = _load_device_map()
+
+
+# Which radio saw it. Multiple nodes scan the same air, so every row has to say
+# who observed it or the dataset silently becomes a blend of vantage points and
+# the per-observer RSSI spread — the whole positioning signal — is unrecoverable.
+# Defaults to this host's short name; override with NOVA_BLE_OBSERVER.
+OBSERVER = os.environ.get("NOVA_BLE_OBSERVER") or socket.gethostname().split(".")[0].lower()
+
+
 def insert_bluetooth(rows):
-    """Insert BLE scan results into telemetry.bluetooth."""
+    """Insert BLE scan results into telemetry.bluetooth, tagged with this observer."""
     if not rows:
         return
     conn = get_db()
     with conn.cursor() as cur:
         psycopg2.extras.execute_values(
             cur,
-            """INSERT INTO telemetry.bluetooth (ts, device_mac, device_name, rssi, battery_pct, device_type, is_connected, metadata, fingerprint)
+            """INSERT INTO telemetry.bluetooth (ts, device_mac, device_name, rssi, battery_pct, device_type, is_connected, metadata, fingerprint, observer)
                VALUES %s""",
             rows,
-            template="(NOW(), %s, %s, %s, %s, %s, %s, %s, %s)",
+            template=f"(NOW(), %s, %s, %s, %s, %s, %s, %s, %s, '{OBSERVER}')",
         )
 
 
@@ -377,8 +381,12 @@ def estimate_presence(devices: list[dict]):
     iphone = None
     homepod_rssi = {}
 
+    # Jordan's phone identified from the PG device map (type='phone', owner='jordan')
+    # rather than a MAC literal in source — see _load_device_map().
+    phone_macs = {m for m, (n, t, o) in KNOWN_DEVICES.items() if t == "phone" and o == "jordan"}
+
     for d in devices:
-        if d["mac"] == "28:EA:2D:19:4E:E3":
+        if d["mac"] in phone_macs:
             iphone = d
         if d["mac"] in HOMEPOD_ROOMS and d.get("rssi") is not None:
             room = HOMEPOD_ROOMS[d["mac"]]
