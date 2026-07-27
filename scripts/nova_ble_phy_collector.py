@@ -20,6 +20,7 @@ import re
 import signal
 import socket
 import subprocess
+from collections import Counter, defaultdict
 import sys
 import time
 from pathlib import Path
@@ -29,7 +30,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import psycopg2
 import psycopg2.extras
 
-from nova_ble_monitor import compute_ble_fingerprint   # identity MUST match exactly
+from nova_ble_monitor import (compute_ble_fingerprint,          # identity MUST match exactly
+                              compute_cross_observer_fingerprint)
 
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 OBSERVER = os.environ.get("NOVA_BLE_OBSERVER") or f"{socket.gethostname().split('.')[0].lower()}-phy"
@@ -189,76 +191,84 @@ def main():
     cmd = ["stdbuf", "-oL", UBERTOOTH, "-n"] if Path("/usr/bin/stdbuf").exists() else [UBERTOOTH, "-n"]
     proc = subprocess.Popen(cmd, stdout=subprocess.PIPE,
                             stderr=subprocess.DEVNULL, text=True, bufsize=1)
-    pending, last_seen, last_flush, total = [], {}, time.time(), 0
-    anon = {"count": 0, "rssi": []}   # unfingerprintable one-shots, rolled up per flush
+    # CONSENSUS BUFFER: a radio capture contains bit-errors that decode into plausible but
+    # WRONG values — the same HomePod decoded as Apple in 18 packets and as garbage in 2,
+    # and each garbage decode minted a phantom identity. There is no CRC to filter on
+    # (promiscuous mode marks everything "valid"), so instead every MAC's packets are
+    # gathered over a window and the MODAL field values win. Noise cannot outvote signal.
+    window = defaultdict(lambda: {"names": Counter(), "companies": Counter(),
+                                  "uuids": Counter(), "rssi": [], "channel": None, "n": 0})
+    last_flush, total, anon = time.time(), 0, {"count": 0, "rssi": []}
     try:
         for pkt in parse_packets(iter(proc.stdout.readline, '')):
             if _shutdown:
                 break
             pkt = enrich(pkt)
             now = time.time()
-            # Dedupe on IDENTITY, not address. A rotating random address is seen once and
-            # never again, so keying on the MAC dedupes nothing: the first live run produced
-            # 2,031 rows with 2,031 distinct addresses in 80s (~2.2M rows/day from one radio,
-            # which would double the entire BLE dataset twice a day).
-            fp = pkt.get("fingerprint")
-            if not fp:
-                # No stable advertising fields = an anonymous one-shot we cannot identify
-                # even in principle. Counted in an aggregate below rather than stored
-                # individually; storing millions of never-repeated addresses buys nothing.
+            if not (pkt["company_ids"] or pkt["uuids"] or pkt.get("name")):
                 anon["count"] += 1
                 if pkt.get("rssi") is not None:
                     anon["rssi"].append(pkt["rssi"])
-                continue
-            if now - last_seen.get(fp, 0) < DEDUPE_SECONDS:
-                continue
-            last_seen[fp] = now
-            pending.append((
-                pkt["mac"], pkt.get("name"), pkt.get("rssi"), None, "ble_phy", False,
-                psycopg2.extras.Json({"channel": pkt.get("channel"), "freq": pkt.get("freq"),
-                                      "addr_type": pkt.get("addr_type"),
-                                      # Store company IDs as hex STRINGS and include
-                                      # service_uuids — the host-stack observer writes
-                                      # {"company_ids": ["0x004c"], "service_uuids": [...]}, and
-                                      # any recompute-from-metadata hashes the stored text. Writing
-                                      # ints here made the same vendor hash as "6216" on one
-                                      # observer and "0x1848" on the other.
-                                      "company_ids": [f"{c:#06x}" for c in pkt["company_ids"]],
-                                      "service_uuids": pkt.get("uuids", []),
-                                      "tx_power": pkt.get("tx_power"),
-                                      "source": "ubertooth"}),
-                pkt.get("fingerprint"), OBSERVER))
+            else:
+                w = window[pkt["mac"]]
+                w["n"] += 1
+                if pkt.get("name"):
+                    w["names"][pkt["name"]] += 1
+                w["companies"][tuple(pkt["company_ids"])] += 1
+                w["uuids"][tuple(pkt["uuids"])] += 1
+                if pkt.get("rssi") is not None:
+                    w["rssi"].append(pkt["rssi"])
+                if pkt.get("channel") is not None:
+                    w["channel"] = pkt["channel"]
 
-            if now - last_flush >= FLUSH_SECONDS and pending:
+            if now - last_flush < FLUSH_SECONDS:
+                continue
+
+            rows = []
+            for mac, w in window.items():
+                # Modal value wins. A single-packet MAC is kept but flagged, since one
+                # observation cannot outvote anything and may still be a bit-error.
+                name = w["names"].most_common(1)[0][0] if w["names"] else None
+                companies = list(w["companies"].most_common(1)[0][0])
+                uuids = list(w["uuids"].most_common(1)[0][0])
+                agree = w["companies"].most_common(1)[0][1]
+                rssi = max(w["rssi"]) if w["rssi"] else None
+                rows.append((
+                    mac, name, rssi, None, "ble_phy", False,
+                    psycopg2.extras.Json({
+                        "channel": w["channel"], "source": "ubertooth",
+                        "company_ids": [f"{c:#06x}" for c in companies],
+                        "service_uuids": uuids,
+                        "packets": w["n"], "consensus": agree,
+                        "single_packet": w["n"] == 1,
+                        "xfp": compute_cross_observer_fingerprint(uuids, companies)}),
+                    compute_ble_fingerprint(name, uuids, companies, None), OBSERVER))
+
+            if rows:
                 with conn.cursor() as cur:
                     psycopg2.extras.execute_values(
                         cur,
                         "INSERT INTO telemetry.bluetooth (ts, device_mac, device_name, rssi, "
                         "battery_pct, device_type, is_connected, metadata, fingerprint, observer) "
                         "VALUES %s",
-                        pending,
+                        rows,
                         template="(NOW(), %s, %s, %s, %s, %s, %s, %s, %s, %s)")
-                total += len(pending)
-                if anon["count"]:
-                    med = sorted(anon["rssi"])[len(anon["rssi"]) // 2] if anon["rssi"] else None
-                    with conn.cursor() as cur:
-                        cur.execute(
-                            "INSERT INTO telemetry.bluetooth (ts, device_mac, device_name, rssi, "
-                            "device_type, metadata, observer) VALUES (NOW(), %s, %s, %s, %s, %s, %s)",
-                            ("--:--:--:--:--:--", f"anonymous x{anon['count']}", med,
-                             "ble_phy_anon",
-                             psycopg2.extras.Json({"source": "ubertooth", "rollup": True,
-                                                   "count": anon["count"],
-                                                   "window_s": FLUSH_SECONDS}),
-                             OBSERVER))
-                log(f"flushed {len(pending)} identified (total {total}, {len(last_seen)} fingerprints) "
-                    f"+ {anon['count']} anonymous rolled up")
-                pending, last_flush = [], now
-                anon = {"count": 0, "rssi": []}
-                # keep the dedupe map from growing without bound on a busy street
-                if len(last_seen) > 20000:
-                    cutoff = now - DEDUPE_SECONDS
-                    last_seen = {k: v for k, v in last_seen.items() if v > cutoff}
+                total += len(rows)
+            if anon["count"]:
+                med = sorted(anon["rssi"])[len(anon["rssi"]) // 2] if anon["rssi"] else None
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO telemetry.bluetooth (ts, device_mac, device_name, rssi, "
+                        "device_type, metadata, observer) VALUES (NOW(), %s, %s, %s, %s, %s, %s)",
+                        ("--:--:--:--:--:--", f"anonymous x{anon['count']}", med, "ble_phy_anon",
+                         psycopg2.extras.Json({"source": "ubertooth", "rollup": True,
+                                               "count": anon["count"], "window_s": FLUSH_SECONDS}),
+                         OBSERVER))
+            log(f"flushed {len(rows)} consensus devices (total {total}) "
+                f"+ {anon['count']} anonymous rolled up")
+            window.clear()
+            anon = {"count": 0, "rssi": []}
+            last_flush = now
     finally:
         proc.terminate()
         conn.close()

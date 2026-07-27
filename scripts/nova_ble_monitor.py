@@ -290,6 +290,26 @@ BLE_COMPANY_CATEGORIES = {
 }
 
 
+def compute_cross_observer_fingerprint(service_uuids, company_ids):
+    """A deliberately WEAKER identity that survives crossing platforms.
+
+    compute_ble_fingerprint() includes the device name, which is correct within one
+    observer and fatal across two: CoreBluetooth reports a cached/resolved name that the
+    radio never sees on the wire (measured 2026-07-27 — 83 MACs seen by both observers,
+    0 matching fingerprints). This key uses only what BOTH a host stack and a raw radio
+    can observe.
+
+    Returns None when there is nothing to hash. Weaker on purpose: several devices from
+    one vendor with no service UUIDs WILL collide, so treat an xfp match as "same model
+    and vendor", and combine it with RSSI/timing before claiming "same physical device".
+    """
+    uuids = ",".join(sorted(str(u).lower() for u in (service_uuids or [])))
+    cids = ",".join(sorted(f"{c:#06x}" for c in (company_ids or [])))
+    if not (uuids or cids):
+        return None
+    return hashlib.sha1(f"{uuids}|{cids}".encode()).hexdigest()[:16]
+
+
 def classify_manufacturer(manufacturer_data: dict) -> tuple[str, str]:
     """manufacturer_data: {company_id: bytes} from bleak's AdvertisementData.
     Returns (vendor_label, category) -- both 'unknown' if no data or no match."""
@@ -351,6 +371,7 @@ async def scan_ble() -> list[dict]:
             company_ids = list(mfr.keys())
             tx_power = getattr(adv, "tx_power", None)
             fingerprint = compute_ble_fingerprint(name, service_uuids, company_ids, tx_power)
+            xfp = compute_cross_observer_fingerprint(service_uuids, company_ids)
 
             device_type = "ble_device"
             known = KNOWN_DEVICES.get(mac)
@@ -372,7 +393,11 @@ async def scan_ble() -> list[dict]:
                 "metadata": {"vendor": vendor, "mfr_category": mfr_category,
                              "service_uuids": service_uuids,
                              "company_ids": [f"{c:#06x}" for c in company_ids],
-                             "tx_power": tx_power, "fingerprint": fingerprint},
+                             "tx_power": tx_power, "fingerprint": fingerprint,
+                             # xfp = the cross-observer key. JOIN on this between observers,
+                             # not on `fingerprint` (which includes the CoreBluetooth cached
+                             # name the radio can never see).
+                             "xfp": xfp},
             })
     except Exception as e:
         log.warning(f"BLE scan error: {e}")
