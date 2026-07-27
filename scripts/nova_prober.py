@@ -230,7 +230,54 @@ def probe_cloudflared():
         return False, f"tunnel check failed: {type(e).__name__}: {e}"
 
 
+def probe_inference_vantage():
+    """CONSUMER-SIDE check: don't ask a node if it's healthy — ask the thing
+    that depends on it whether it's getting answers.
+
+    core3 (2026-07-26) passed every health check for weeks while the inference
+    router could not reach it at all: its own ufw allowed only .6, so the check
+    ran from the one vantage point that worked. A node saying "I'm fine" is not
+    evidence; the consumer proving it gets served is.
+
+    Fails on a VANTAGE GAP: a backend this prober can reach directly but the
+    router — the actual consumer — cannot. A node that's down from BOTH
+    vantage points is just down, and belongs to the ordinary liveness check.
+    """
+    router = "http://192.168.1.2:37475/pool/status"
+    try:
+        with urllib.request.urlopen(router, timeout=8) as r:
+            pool = json.loads(r.read()).get("backends", {})
+    except Exception as e:
+        return False, f"cannot reach inference router (the consumer): {type(e).__name__}: {e}"
+    if not pool:
+        return False, "router returned an empty backend list — nothing to witness"
+
+    gaps, agreed_down = [], []
+    for addr, info in pool.items():
+        if info.get("healthy"):
+            continue
+        host, _, port = addr.partition(":")
+        try:  # second opinion from THIS vantage point
+            url = f"http://{host}:{port}/" + ("v1/models" if port == "5050" else "api/version")
+            with urllib.request.urlopen(url, timeout=4) as r:
+                reachable_here = r.status == 200
+        except Exception:
+            reachable_here = False
+        (gaps if reachable_here else agreed_down).append(addr)
+
+    healthy = sum(1 for i in pool.values() if i.get("healthy"))
+    if gaps:
+        return False, (f"VANTAGE GAP: {', '.join(gaps)} reachable from the prober but NOT "
+                       f"from the inference router that depends on them — check firewall/routing "
+                       f"(this is the core3 failure mode). {healthy}/{len(pool)} backends healthy.")
+    note = f"; {len(agreed_down)} down from both vantages ({', '.join(agreed_down)})" if agreed_down else ""
+    return True, f"consumer and prober agree on all {len(pool)} backends; {healthy} healthy{note}"
+
+
 PROBES = [
+    {"name": "inference_vantage", "fn": probe_inference_vantage,
+     "level_on_fail": "warning", "category": "probe",
+     "host": "192.168.1.2"},
     {"name": "cloudflared_tunnel", "fn": probe_cloudflared,
      "level_on_fail": "critical", "category": "tunnel",
      "host": "Office-M4-2"},
@@ -283,6 +330,16 @@ def run_probe(conn, spec, quiet=False):
     except Exception as e:                 # a probe must never crash the sweep
         ok, detail = False, f"probe raised {type(e).__name__}: {e}"
     latency_ms = int((time.time() - t0) * 1000)
+
+    # Minimum grain: a pass with no evidence body, or one returned faster than
+    # physics allows, did not actually check anything — it produced an absence
+    # wearing a green hat. Downgrade it to a failure rather than banking a
+    # counterfeit green. (herd thread 2026-07-26; see nova_witness.)
+    try:
+        from nova_witness import check_grain
+        ok, detail = check_grain(ok, detail, latency_ms)
+    except ImportError:
+        pass
 
     try:
         _record(conn, name, ok, latency_ms, detail)
