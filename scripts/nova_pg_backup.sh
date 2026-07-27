@@ -14,10 +14,25 @@ set -uo pipefail
 # ── Config ───────────────────────────────────────────────────────────────────
 DB_USER="kochj"
 LOCAL_DIR="$HOME/.openclaw/backup-staging/postgres"   # transient internal staging (was /Volumes/Data — off the FDA-blocked volume); deleted after NAS copy
-NAS_DIR="/Volumes/nas/backups/postgres"
+# Off-box destination: prefer the Synology, fall back to the UNAS. On 2026-07-27 the
+# Synology died and this path simply vanished, so a backup would have had nowhere to go
+# even once the dumps were fixed. A backup with no off-box copy is a local file.
+for _cand in /Volumes/nas/backups/postgres /Volumes/nas-1/backups/postgres; do
+    _base="${_cand%/backups/postgres}"
+    if mountpoint -q "$_base" 2>/dev/null || [ -d "$_base" ] && ls "$_base" >/dev/null 2>&1; then
+        NAS_DIR="$_cand"; mkdir -p "$NAS_DIR" 2>/dev/null; break
+    fi
+done
+NAS_DIR="${NAS_DIR:-/Volumes/nas/backups/postgres}"
 RETENTION_DAYS=7    # 7 nightly dumps is plenty; the streaming replicas are the real HA
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 LOG_FILE="$HOME/.openclaw/logs/nova_pg_backup.log"
+# Connect to the REAL primary, never the local pgbouncer shim. pgbouncer rejects
+# startup parameters ("unsupported startup parameter in options: statement_timeout"),
+# so the statement_timeout=0 added on 07-24 silently made EVERY dump fail from 07-24
+# onward — 4 of 4 databases, zero bytes, while the job still looked like it ran.
+export PGHOST="${PGHOST:-pg-primary.digitalnoise.net}"
+export PGPORT="${PGPORT:-5432}"
 export PATH="/opt/homebrew/opt/postgresql@17/bin:/opt/homebrew/bin:$PATH"
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -69,6 +84,13 @@ backup_one() {
         --exclude-table='public.lb_pool_status' \
         -f "$LOCAL_DIR/$DUMP_DIR" 2>>"$LOG_FILE"
     local rc=$?
+    # Zero bytes is not a backup. pg_dump can exit 0 having written nothing, and an empty
+    # directory looked exactly like a healthy one every night for three days.
+    local BYTES=$(du -sk "$LOCAL_DIR/$DUMP_DIR" 2>/dev/null | awk '{print $1}')
+    if [ "$rc" -eq 0 ] && { [ -z "$BYTES" ] || [ "$BYTES" -lt 16 ]; }; then
+        log "ERROR: pg_dump $DB produced ${BYTES:-0}KB — empty dump is a FAILURE, not success"
+        rc=1
+    fi
     if [ $rc -ne 0 ]; then
         log "ERROR: pg_dump $DB failed (exit $rc)"
         RESULTS+=("✗ $DB — DUMP FAILED (exit $rc)"); FAILED=$((FAILED+1)); return 1
