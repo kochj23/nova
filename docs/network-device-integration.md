@@ -396,13 +396,13 @@ clients = s.get("https://192.168.1.1/proxy/network/api/s/default/stat/sta").json
 ```python
 # Get bandwidth usage for a specific client by MAC
 clients = s.get("https://192.168.1.1/proxy/network/api/s/default/stat/sta").json()["data"]
-target = next((c for c in clients if c["mac"] == "aa:bb:cc:dd:ee:ff"), None)
+target = next((c for c in clients if c["mac"] == CLIENT_MAC), None)
 print(f"TX: {target['tx_bytes']/(1024**3):.1f} GB, RX: {target['rx_bytes']/(1024**3):.1f} GB") if target else None
 ```
 
 ```python
 # Block a client device
-s.post("https://192.168.1.1/proxy/network/api/s/default/cmd/stamgr", json={"cmd": "block-sta", "mac": "aa:bb:cc:dd:ee:ff"})
+s.post("https://192.168.1.1/proxy/network/api/s/default/cmd/stamgr", json={"cmd": "block-sta", "mac": CLIENT_MAC})
 ```
 
 ### Known Quirks/Limitations
