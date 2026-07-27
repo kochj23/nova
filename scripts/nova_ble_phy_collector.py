@@ -217,7 +217,15 @@ def main():
                 pkt["mac"], pkt.get("name"), pkt.get("rssi"), None, "ble_phy", False,
                 psycopg2.extras.Json({"channel": pkt.get("channel"), "freq": pkt.get("freq"),
                                       "addr_type": pkt.get("addr_type"),
-                                      "company_ids": pkt["company_ids"], "tx_power": pkt.get("tx_power"),
+                                      # Store company IDs as hex STRINGS and include
+                                      # service_uuids — the host-stack observer writes
+                                      # {"company_ids": ["0x004c"], "service_uuids": [...]}, and
+                                      # any recompute-from-metadata hashes the stored text. Writing
+                                      # ints here made the same vendor hash as "6216" on one
+                                      # observer and "0x1848" on the other.
+                                      "company_ids": [f"{c:#06x}" for c in pkt["company_ids"]],
+                                      "service_uuids": pkt.get("uuids", []),
+                                      "tx_power": pkt.get("tx_power"),
                                       "source": "ubertooth"}),
                 pkt.get("fingerprint"), OBSERVER))
 

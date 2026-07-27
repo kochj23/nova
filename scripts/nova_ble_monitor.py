@@ -320,7 +320,13 @@ def compute_ble_fingerprint(name, service_uuids, company_ids, tx_power):
     nm = (name or "").strip().lower()
     if not (nm or uuids or cids):
         return None
-    parts = f"{nm}|{uuids}|{cids}|{tx_power if tx_power is not None else ''}"
+    # tx_power is DELIBERATELY EXCLUDED (2026-07-27). It is the least stable advertising
+    # field and, worse, it is observed ASYMMETRICALLY: the Ubertooth reads it straight off
+    # the wire while CoreBluetooth/bleak often reports None for the same device. Including
+    # it gave one physical device two identities depending on which radio saw it, which is
+    # exactly what the fingerprint exists to prevent. Measured: dropping it is what moves
+    # cross-observer correlation. The parameter is kept for call-site compatibility.
+    parts = f"{nm}|{uuids}|{cids}"
     return hashlib.sha1(parts.encode()).hexdigest()[:16]
 
 
