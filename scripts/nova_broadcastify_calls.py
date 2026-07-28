@@ -25,6 +25,10 @@ MEM = os.environ.get("MEM_URL", "http://memory-server.digitalnoise.net:18790/rem
 STATE = Path.home() / ".openclaw/state/bcfy_calls_pos.json"
 POLL_SECS = int(os.environ.get("BCFY_POLL_SECS", "120"))  # archives lag ~15min; 2min poll is ample
 MINLEN = 8
+# Widest archive window we will ever request. The API returns HTTP 500 on very wide ranges,
+# so this also bounds how far a stale cursor can drag us back. Deliberately larger than one
+# poll interval so a brief restart loses nothing.
+MAX_LOOKBACK = int(os.environ.get("BCFY_MAX_LOOKBACK", "3600"))
 
 # groupId -> (source, label). Verdugo Fire (Burbank/Glendale) dispatch on ICI (sid 7095).
 # source must be one of the blotter's ('scanner','fire','rail','chp'); add more groups here.
@@ -113,6 +117,19 @@ def main():
             # first run: last 20 min; after: strictly AFTER last-seen ts (archives lag
             # ~15min). +1 avoids re-retrieving (re-billing) the boundary call each poll.
             start = (pos[gid] + 1) if gid in pos else (now - 1200)
+            # A stale cursor is a POISON PILL without this clamp. The API 500s on a very wide
+            # window, the 500 means pos[gid] never advances, and the window therefore widens
+            # forever — the failure permanently prevents its own recovery. That is exactly what
+            # happened on .86: the cursor stopped on 2026-07-16, and for twelve days the service
+            # sat "active (running)" under systemd, asking for a twelve-day window, being
+            # refused, and logging nothing that looked like an outage. Meanwhile the journal
+            # kept publishing "local" articles built from a different city's radio.
+            if start < now - MAX_LOOKBACK:
+                gap_h = (now - MAX_LOOKBACK - start) / 3600.0
+                print(f"[bcfy-calls] {gid} cursor {gap_h/24:.1f}d stale — clamping to "
+                      f"{MAX_LOOKBACK // 60}min. {gap_h:.1f}h of calls SKIPPED, not recoverable.",
+                      flush=True)
+                start = now - MAX_LOOKBACK
             try:
                 calls = _archives(gid, start, now)
             except Exception as e:

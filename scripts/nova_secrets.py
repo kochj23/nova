@@ -56,12 +56,21 @@ def _connect(admin=False):
     import psycopg2
     # Services READ via the least-privilege nova_secrets role (SELECT only).
     # Admin ops (set/delete/rotate) use a superuser DSN — never the service role.
+    # Default to the primary BY NAME, not 127.0.0.1. The old localhost default silently died
+    # when the DB moved off .6 in the DNS cutover: on .6 port 5432 is now a retired pgbouncer
+    # shim that answers and then rejects with 'trust authentication failed'. Every consumer of
+    # this module lost its credentials on 2026-07-16 and none of them said so — the Burbank PD
+    # and Verdugo Fire scanner feeds simply stopped producing while the journal kept publishing
+    # from a different city's radio. Resolving by name is also correct ON .2, where the name
+    # points at the local machine anyway.
     if admin:
         dsn = os.environ.get("NOVA_SECRETS_ADMIN_DSN",
-                             "host=127.0.0.1 port=5432 dbname=nova_ops user=kochj sslmode=prefer")
+                             "host=pg-primary.digitalnoise.net port=5432 dbname=nova_ops "
+                             "user=kochj sslmode=prefer")
     else:
         dsn = os.environ.get("NOVA_SECRETS_DSN",
-                             "host=127.0.0.1 port=5432 dbname=nova_ops user=nova_secrets sslmode=prefer")
+                             "host=pg-primary.digitalnoise.net port=5432 dbname=nova_ops "
+                             "user=nova_secrets sslmode=prefer")
     # DB password only if pg_hba requires it; local/LAN trust needs none.
     # (Protection is the master key, which is NOT in the DB — not the DB role.)
     pw = _optional_env("NOVA_SECRETS_ADMIN_PASS" if admin else "NOVA_SECRETS_DB_PASS")
