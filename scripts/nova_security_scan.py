@@ -197,6 +197,33 @@ CHKROOTKIT_FALSE_POSITIVES = [
     "PACKET_SNIFFER",
 ]
 
+# Verified false positives, each with the evidence that cleared it (2026-07-28). These are
+# NARROW on purpose — a blanket "ignore INFECTED" would hide the thing the scanner exists for.
+#
+# 1. nova-core (.2) runs RUST-COREUTILS (uutils), not GNU coreutils. chkrootkit's checks are
+#    string comparisons against GNU binaries, so every reimplemented utility reads as trojaned.
+#    Cleared by `dpkg -V rust-coreutils`: basename, date, dirname, env all VERIFIED unmodified.
+#    Only the "Checking `name'... INFECTED" shape is suppressed, and only for these utilities.
+_UUTILS_FP = re.compile(r"^Checking\s+[`'](" + "|".join([
+    "basename", "date", "dirname", "echo", "env", "ls", "ps", "top", "netstat", "pwd",
+    "find", "grep", "sed", "cut", "head", "tail", "du", "df", "who", "w",
+]) + r")['`]?\s*\.*\s*INFECTED\s*$", re.I)
+
+
+def _is_uutils_false_positive(line, host_name=""):
+    """chkrootkit flags Rust coreutils as trojaned GNU binaries. Verified via dpkg."""
+    return bool(_UUTILS_FP.match(line.strip()))
+
+
+def _is_xor_ddos_false_positive(line, ioc_present=False):
+    """chkrootkit's Linux.Xor.DDoS test fires on ANY executable in /tmp.
+
+    On nova-core5 the sole match was our own /tmp/nova_storage_failover.py, while every real
+    indicator was absent: /etc/cron.hourly/udev.sh, /lib/libudev.so, /etc/init.d/hello.sh.
+    Suppressed ONLY when the genuine IOC is absent — if udev.sh ever appears, this fires again.
+    """
+    return "Xor.DDoS" in line and not ioc_present
+
 
 # A scan that did not run is not a clean scan. Every parser below decides "clean" by finding
 # no bad lines, so ANY output containing no bad lines reads as healthy — including
@@ -311,9 +338,18 @@ def parse_chkrootkit(output, host_name="unknown"):
     if not ran:
         return "error", [{"type": "did_not_run", "detail": why, "verdict": "ERROR"}]
     findings = []
+    # The real Xor.DDoS indicator, checked once per scan rather than inferred from the message.
+    ioc = "cron.hourly/udev.sh" in output or "/lib/libudev.so" in output
     for line in output.splitlines():
-        if "INFECTED" in line and not _is_false_positive_chkrootkit(line):
-            findings.append({"type": "rootkit", "detail": line.strip(), "verdict": "FAIL"})
+        if "INFECTED" not in line:
+            continue
+        if _is_false_positive_chkrootkit(line):
+            continue
+        if _is_uutils_false_positive(line, host_name):
+            continue
+        if _is_xor_ddos_false_positive(line, ioc):
+            continue
+        findings.append({"type": "rootkit", "detail": line.strip(), "verdict": "FAIL"})
 
     if not findings:
         return "clean", []
