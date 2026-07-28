@@ -86,9 +86,24 @@ backup_one() {
     local rc=$?
     # Zero bytes is not a backup. pg_dump can exit 0 having written nothing, and an empty
     # directory looked exactly like a healthy one every night for three days.
+    #
+    # But the floor has to match what the database actually holds. A flat 16KB minimum failed
+    # `nova` every single night from 2026-07-24: that DB is a retired shell with ZERO tables,
+    # so its correct dump really is ~4KB. Guarding against an empty dump must not mean guarding
+    # against an empty database. Table count is exact (unlike n_live_tup, which is a stats
+    # estimate and reads 0 on a populated DB whose stats were never collected).
+    local NTABLES=$(psql -U "$DB_USER" -d "$DB" -tAc \
+        "SELECT count(*) FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+         WHERE c.relkind IN ('r','p') AND n.nspname NOT IN ('pg_catalog','information_schema')" \
+        2>/dev/null)
+    local MIN_KB=16
+    if [ "${NTABLES:-1}" -eq 0 ] 2>/dev/null; then
+        MIN_KB=1        # schema-only dump of an empty database; anything at all proves it ran
+    fi
     local BYTES=$(du -sk "$LOCAL_DIR/$DUMP_DIR" 2>/dev/null | awk '{print $1}')
-    if [ "$rc" -eq 0 ] && { [ -z "$BYTES" ] || [ "$BYTES" -lt 16 ]; }; then
-        log "ERROR: pg_dump $DB produced ${BYTES:-0}KB — empty dump is a FAILURE, not success"
+    if [ "$rc" -eq 0 ] && { [ -z "$BYTES" ] || [ "$BYTES" -lt "$MIN_KB" ]; }; then
+        log "ERROR: pg_dump $DB produced ${BYTES:-0}KB, below the ${MIN_KB}KB floor for a DB with"
+        log "       ${NTABLES:-?} table(s) — empty dump is a FAILURE, not success"
         rc=1
     fi
     if [ $rc -ne 0 ]; then
