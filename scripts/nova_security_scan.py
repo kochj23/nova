@@ -14,6 +14,7 @@ HTTP API (port 37474):
 Written by Jordan Koch.
 """
 
+import re
 import json
 import subprocess
 import sys
@@ -42,8 +43,18 @@ FLEET = [
     {"name": "mac-studio", "ip": "127.0.0.1", "os": "macos", "local": True},
     {"name": "nova-core", "ip": "192.168.1.2", "os": "linux", "user": "kochj"},  # was 'lts01' (retired); .2 is a nova-core box now
     {"name": "nova-core5", "ip": "192.168.1.10", "os": "linux", "user": "kochj"},
-    {"name": "mac-mini", "ip": "192.168.1.190", "os": "macos", "user": "kochj"},
+    # .190 was scanned for at least a week after the host moved; ssh failed every night with
+    # "Host is down" and the parser recorded it as CLEAN. Confirmed against the UniFi controller
+    # 2026-07-28: nothing answers at .190 and .101 is the only unaccounted-for Mac mini.
+    # It is on WIFI with a RANDOMIZED PRIVATE MAC, which is why the address moved in the first
+    # place and why it will move again — this entry needs a DHCP reservation to stay true.
+    {"name": "mac-mini", "ip": "192.168.1.101", "os": "macos", "user": "kochj"},
     {"name": "itunes", "ip": "192.168.1.7", "os": "macos", "user": "kochj"},
+    # Added 2026-07-28: these were never in the rotation despite having rkhunter, chkrootkit
+    # and aide already installed. Three Linux nodes, unscanned, while the dashboard read green.
+    {"name": "nova-core2", "ip": "192.168.1.86", "os": "linux", "user": "kochj"},
+    {"name": "nova-core3", "ip": "192.168.1.88", "os": "linux", "user": "kochj"},
+    {"name": "nova-core6", "ip": "192.168.1.252", "os": "macos", "user": "kochj"},
 ]
 
 # Tools per OS
@@ -184,6 +195,49 @@ CHKROOTKIT_FALSE_POSITIVES = [
 ]
 
 
+# A scan that did not run is not a clean scan. Every parser below decides "clean" by finding
+# no bad lines, so ANY output containing no bad lines reads as healthy — including
+# "sudo: rkhunter: command not found" (34 chars) and "ssh: connect to host 192.168.1.190
+# port 22: Host is down". On 2026-07-28 that meant three of six hosts had reported clean
+# rootkit scans for a week without a scanner ever executing, and one of them was a dead IP.
+#
+# Measured on 7 days of stored results: real chkrootkit output is >10,000 chars and real
+# rkhunter averages ~16,000. Everything that never ran is 34. The floor is set well below
+# the real minimum so a terse-but-genuine scan is never discarded.
+_DID_NOT_RUN = re.compile(
+    r"command not found|no such file or directory|not installed|host is down|"
+    r"connection refused|permission denied|could not resolve|connection timed out|"
+    r"operation timed out|no route to host", re.I)
+_MIN_SCAN_OUTPUT = 300
+
+
+# Absence of failure is not proof of completion. On 2026-07-28, fixing the sudo PATH made
+# rkhunter execute on mac-studio and then die on "Invalid BINDIR configuration option" — 653
+# chars, no failure keyword, no "Warning:" line, and therefore still parsed as CLEAN. So each
+# scanner must show a marker it only emits once the scan has actually finished its work.
+_COMPLETED = {
+    "rkhunter":   re.compile(r"System checks summary|File properties checks|Checking system commands", re.I),
+    "chkrootkit": re.compile(r"ROOTDIR is|Checking [`']", re.I),
+    "aide":       re.compile(r"AIDE found|All files match|Summary|End timestamp", re.I),
+}
+
+
+def scan_actually_ran(output, tool=None):
+    """(ran, reason). Absence of evidence is not evidence of a clean host."""
+    text = (output or "").strip()
+    if not text:
+        return False, "scanner produced no output at all"
+    if _DID_NOT_RUN.search(text):
+        return False, f"scanner never executed: {text.splitlines()[0][:120]}"
+    if len(text) < _MIN_SCAN_OUTPUT:
+        return False, f"output too short to be a real scan ({len(text)} chars): {text[:90]}"
+    marker = _COMPLETED.get(tool)
+    if marker and not marker.search(text):
+        return False, (f"{tool} started but never completed — no completion marker in "
+                       f"{len(text)} chars: {text.splitlines()[0][:100]}")
+    return True, ""
+
+
 def _is_whitelisted_rkhunter(warning_line):
     """Check if an rkhunter warning is a known false positive."""
     for pattern in RKHUNTER_WHITELIST:
@@ -225,6 +279,9 @@ def _get_baseline_warnings(host_name, tool):
 
 def parse_rkhunter(output, host_name="unknown"):
     """Parse rkhunter output — binary yes/no verdicts only."""
+    ran, why = scan_actually_ran(output, "rkhunter")
+    if not ran:
+        return "error", [{"type": "did_not_run", "detail": why, "verdict": "ERROR"}]
     all_warnings = []
     real_findings = []
     baseline = _get_baseline_warnings(host_name, "rkhunter")
@@ -247,6 +304,9 @@ def parse_rkhunter(output, host_name="unknown"):
 
 def parse_chkrootkit(output, host_name="unknown"):
     """Parse chkrootkit — only flag definitive INFECTED results."""
+    ran, why = scan_actually_ran(output, "chkrootkit")
+    if not ran:
+        return "error", [{"type": "did_not_run", "detail": why, "verdict": "ERROR"}]
     findings = []
     for line in output.splitlines():
         if "INFECTED" in line and not _is_false_positive_chkrootkit(line):
@@ -260,6 +320,9 @@ def parse_chkrootkit(output, host_name="unknown"):
 
 def parse_aide(output, host_name="unknown"):
     """Parse aide — only flag changes NOT caused by recent deploys."""
+    ran, why = scan_actually_ran(output, "aide")
+    if not ran:
+        return "error", [{"type": "did_not_run", "detail": why, "verdict": "ERROR"}]
     added = removed = changed = 0
     changed_files = []
 
@@ -320,15 +383,20 @@ PARSERS = {
 }
 
 COMMANDS = {
-    "rkhunter": "sudo rkhunter --check --skip-keypress --no-colors 2>&1",
-    "chkrootkit": "sudo chkrootkit 2>&1",
+    # `sudo` resets PATH via secure_path, which excludes /opt/homebrew/bin — so on mac-studio,
+    # where rkhunter IS installed, `sudo rkhunter` still reported "command not found" and the
+    # parser called that clean. Resolve the absolute path in the caller's PATH first.
+    "rkhunter": 'sudo "$(command -v rkhunter)" --check --skip-keypress --no-colors 2>&1',
+    "chkrootkit": 'sudo "$(command -v chkrootkit)" 2>&1',
     "aide": "sudo aide --check --config=/etc/aide/aide.conf 2>&1",
 }
 
 TIMEOUTS = {
     "rkhunter": 600,
     "chkrootkit": 300,
-    "aide": 600,
+    # 1200, not 600: aide on .2 hit exactly 600s and errored on EVERY run in the last 7 days.
+    # A timeout that always fires is not a limit, it is a scheduled failure.
+    "aide": 1200,
 }
 
 
