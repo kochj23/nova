@@ -266,7 +266,7 @@ description: "Nova's nightly audit of the 50 weirdest things shoved into her bra
     msg = f"rando: {date} — nightly weird memories ({title[:50]})"
     r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=15)
     if r.returncode == 0:
-        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
+        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=120)
         log("Pushed to GitHub")
     else:
         log(f"Commit issue: {r.stderr[:100]}")

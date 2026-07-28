@@ -45,6 +45,16 @@ SERVICE_ALIASES = {
     "nova-gw":          "192.168.1.2",    # Gateway V2 :18792 (migrated off .6 2026-07-13)
     "unas":             "192.168.1.69",
     "nas":              "192.168.1.11",
+    # Added 2026-07-28. Every one of these was being referenced by raw IP somewhere, which is
+    # why a single Mac mini moving cost edits in five files plus two remote copies today.
+    "plex":             "192.168.1.2",    # :32400 — moved off .86 (queue #1348)
+    "mlx":              "192.168.1.6",    # :5050 nginx MLX load balancer
+    "nova-core6":       "192.168.1.252",  # joined 2026-07-27, never had a record
+    # mac-mini resolved to .92 — an address that has never existed. It is a STATIC .251 now,
+    # deliberately outside the DHCP pool (.20-.200) so it stops wandering. Listing it here
+    # makes this file authoritative over the sticky UniFi-derived client name.
+    "mac-mini":         "192.168.1.251",
+    "itunes":           "192.168.1.7",    # tv-movies mini; UniFi calls it "Office-M2"
 }
 
 # Real PUBLIC subdomains (Cloudflare Tunnel + GitHub Pages) that live under this same

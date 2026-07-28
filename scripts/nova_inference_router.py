@@ -65,7 +65,9 @@ BANDIT = os.environ.get("NOVA_ROUTER_BANDIT", "") not in ("", "0", "false", "no"
 # kind: "ollama" (:11434), "mtplx"/"mlx" (OpenAI on :5050), "tinychat" (:8000).
 # Models are PER-NODE and need not match across nodes. A backend only serves a
 # class once its health probe confirms the model is present (Ollama) / up (MLX).
-N6, N190, N7, N2 = "192.168.1.6", "192.168.1.101", "192.168.1.7", "192.168.1.2"
+# NMINI was called NMINI, then pointed at .101, and is now .251 — a static OUTSIDE the
+# DHCP pool (.20-.200) so it stops moving. Named for the box, not the address.
+N6, NMINI, N7, N2 = "192.168.1.6", "192.168.1.251", "192.168.1.7", "192.168.1.2"
 N10 = "192.168.1.10"   # nova-core5 — no GPU, idle; serves CPU embeddings to offload the GPU nodes
 N5, N86 = "192.168.1.5", "192.168.1.86"   # nova-core3 (NPU), nova-core2 (ROCm) — fast-tier backups
 
@@ -73,11 +75,11 @@ POOLS = {
     # code: qwen3:30b-a3b (fast MoE) on both big nodes. qwen3-coder:30b is broken
     # (loads but hangs generation, 2026-06-23) — routed around until re-pulled.
     "code":         [(N6, 11434, "ollama", "qwen3:30b-a3b"),
-                     (N190, 11434, "ollama", "qwen3:30b-a3b")],
+                     (NMINI, 11434, "ollama", "qwen3:30b-a3b")],
     # quality general chat — the two fast 30B nodes only (kept .7 OUT so a 3B
     # never answers a quality-chat request; .7 serves the 'fast' tier instead)
     "conversation": [(N6, 11434, "ollama", "qwen3:30b-a3b"),
-                     (N190, 11434, "ollama", "qwen3:30b-a3b")],
+                     (NMINI, 11434, "ollama", "qwen3:30b-a3b")],
     # Nova's persona voice
     "nova":         [(N6, 11434, "ollama", "nova:latest")],
     # fast / cheap chat — .7's light tier. llama3.2:3b (~25 tok/s on the M2 Pro);
@@ -90,7 +92,7 @@ POOLS = {
                      (N86, 11434, "ollama", "llama3.2:3b")],
     # low-latency single-stream — MTPLX speculative decoding
     "mtplx":        [(N6, 5050, "mtplx", "mtplx-qwen36-27b-optimized-speed"),
-                     (N190, 5050, "mtplx", "mtplx-qwen36-27b-optimized-speed")],
+                     (NMINI, 5050, "mtplx", "mtplx-qwen36-27b-optimized-speed")],
     # reasoning — deepseek-r1 on .6
     "reasoner":     [(N6, 11434, "ollama", "deepseek-r1:8b")],
     # vision

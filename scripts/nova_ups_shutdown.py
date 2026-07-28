@@ -42,7 +42,7 @@ LOG = Path.home() / ".openclaw/logs/ups_shutdown.log"
 # trigger 'mains' = the moment utility power is lost.
 # trigger <int>   = rack UPS battery percentage at or below which the wave fires.
 WAVES = [
-    ("bedroom-macs", ["192.168.1.252", "192.168.1.250", "192.168.1.101"], "mains"),
+    ("bedroom-macs", ["192.168.1.252", "192.168.1.250", "192.168.1.251"], "mains"),
     ("rack-leaf-compute", ["192.168.1.7", "192.168.1.88", "192.168.1.86", "192.168.1.10"], 35),
     # .2 goes AFTER the leaves and BEFORE storage: it holds the Postgres primary, the
     # gateway and Plex, and it must flush and stop while its disks still exist.
@@ -66,6 +66,12 @@ HOST_AUTH = {
 }
 DEFAULT_AUTH = (None, "sudo -n shutdown -h now")   # every Mac and Linux node, plus the Synology
 
+# DELIBERATELY RAW IPs, unlike the rest of the fleet's tooling.
+# Both nameservers (.2 and .86) are on this shutdown list. The moment wave 'rack-primary'
+# powers off .2, DNS for the whole house is gone — and the storage and NVR waves still have
+# to run after that. A name-addressed orchestrator would resolve fine right up until it
+# succeeded at its job, then fail to find the machines it had not finished shutting down.
+# Names everywhere else; numbers here.
 SAMPLES_TO_CONFIRM = 3      # consecutive on-battery reads before acting
 SAMPLE_GAP = 10             # seconds between confirmation samples
 

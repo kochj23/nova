@@ -281,7 +281,7 @@ description: "Nova's top 10 weirdest memories ingested in the last 12 hours."
     msg = f"rando: {date} top 10 weirdest memories ({title[:40]})"
     r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=15)
     if r.returncode == 0:
-        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
+        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=120)
         log("Pushed to GitHub")
     else:
         log(f"Commit issue: {r.stderr[:200]}")

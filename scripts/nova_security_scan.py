@@ -39,22 +39,25 @@ DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 HTTP_PORT = 37474
 SCAN_HOUR = 3  # 3am local time
 
+# Addressed by NAME, not IP. A single Mac mini moving (.190 -> .101 -> .251) cost edits in
+# five files and two remote copies on 2026-07-28, and the stale entry here spent a week
+# reporting a dead address as CLEAN. DNS is the one place that has to be right.
 FLEET = [
     {"name": "mac-studio", "ip": "127.0.0.1", "os": "macos", "local": True},
-    {"name": "nova-core", "ip": "192.168.1.2", "os": "linux", "user": "kochj"},  # was 'lts01' (retired); .2 is a nova-core box now
-    {"name": "nova-core5", "ip": "192.168.1.10", "os": "linux", "user": "kochj"},
+    {"name": "nova-core", "ip": "nova-core.digitalnoise.net", "os": "linux", "user": "kochj"},  # was 'lts01' (retired); .2 is a nova-core box now
+    {"name": "nova-core5", "ip": "nova-core5.digitalnoise.net", "os": "linux", "user": "kochj"},
     # .190 was scanned for at least a week after the host moved; ssh failed every night with
     # "Host is down" and the parser recorded it as CLEAN. Confirmed against the UniFi controller
     # 2026-07-28: nothing answers at .190 and .101 is the only unaccounted-for Mac mini.
     # It is on WIFI with a RANDOMIZED PRIVATE MAC, which is why the address moved in the first
     # place and why it will move again — this entry needs a DHCP reservation to stay true.
-    {"name": "mac-mini", "ip": "192.168.1.101", "os": "macos", "user": "kochj"},
-    {"name": "itunes", "ip": "192.168.1.7", "os": "macos", "user": "kochj"},
+    {"name": "mac-mini", "ip": "mac-mini.digitalnoise.net", "os": "macos", "user": "kochj"},
+    {"name": "itunes", "ip": "itunes.digitalnoise.net", "os": "macos", "user": "kochj"},
     # Added 2026-07-28: these were never in the rotation despite having rkhunter, chkrootkit
     # and aide already installed. Three Linux nodes, unscanned, while the dashboard read green.
-    {"name": "nova-core2", "ip": "192.168.1.86", "os": "linux", "user": "kochj"},
-    {"name": "nova-core3", "ip": "192.168.1.88", "os": "linux", "user": "kochj"},
-    {"name": "nova-core6", "ip": "192.168.1.252", "os": "macos", "user": "kochj"},
+    {"name": "nova-core2", "ip": "nova-core2.digitalnoise.net", "os": "linux", "user": "kochj"},
+    {"name": "nova-core3", "ip": "nova-core3.digitalnoise.net", "os": "linux", "user": "kochj"},
+    {"name": "nova-core6", "ip": "nova-core6.digitalnoise.net", "os": "macos", "user": "kochj"},
 ]
 
 # Tools per OS
