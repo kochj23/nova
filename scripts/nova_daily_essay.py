@@ -616,27 +616,61 @@ def post_to_slack(essay: str, title: str, source: str):
     nova_config.post_both(msg, slack_channel="C0ATAF7NZG9")
 
 
+def _pick_takes_exclude():
+    """pick_subject predates this loop; only pass exclude= if it accepts it."""
+    import inspect
+    try:
+        return "exclude" in inspect.signature(pick_subject).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 def main():
     log("Starting daily essay generation...")
     state = load_state()
 
-    source = pick_subject(state)
-    if not source:
-        log("ABORT: Could not pick a subject")
-        return
+    # LOOP UNTIL A TOPIC HAS MEAT ON THE BONES (2026-07-27).
+    # A vector's NAME is not a promise about its CONTENTS. 'wiki_cryptography' had 50+
+    # memories and every quality gate passed, but the material had drifted into patent law,
+    # healthcare breaches and optical disc malware — so the model refused, and the refusal
+    # got published as the essay. Having enough memories is not the same as having enough
+    # to say. Try another subject instead of shipping a complaint.
+    MAX_TOPIC_ATTEMPTS = 5
+    from nova_journal_guard import is_publishable
 
-    source_label = source.replace("_", " ").title()
-    log(f"Subject selected: {source_label} (source: {source})")
+    essay = source = source_label = None
+    tried = []
+    for attempt in range(1, MAX_TOPIC_ATTEMPTS + 1):
+        cand = pick_subject(state, exclude=tried) if _pick_takes_exclude() else pick_subject(state)
+        if not cand or cand in tried:
+            log(f"attempt {attempt}: no fresh subject available")
+            break
+        tried.append(cand)
+        label = cand.replace("_", " ").title()
+        log(f"attempt {attempt}/{MAX_TOPIC_ATTEMPTS}: subject '{label}' (source: {cand})")
 
-    memories = fetch_memories(source)
-    if len(memories) < 10:
-        log(f"ABORT: Only {len(memories)} memories for {source}, need at least 10")
-        return
+        mems = fetch_memories(cand)
+        if len(mems) < 10:
+            log(f"  only {len(mems)} memories — too thin, trying another subject")
+            continue
 
-    log(f"Fetched {len(memories)} memories, generating essay...")
-    essay = generate_essay(source, memories)
+        candidate = generate_essay(cand, mems)
+        if not candidate:
+            log("  generation failed — trying another subject")
+            continue
+
+        # The guard is the arbiter: if what came back is a refusal rather than an essay,
+        # the topic had no meat. Discard the topic, not just the output.
+        ok, why = is_publishable(extract_title(candidate), candidate)
+        if not ok:
+            log(f"  REJECTED ({why}) — topic has no meat, looping to another subject")
+            continue
+
+        essay, source, source_label = candidate, cand, label
+        break
+
     if not essay:
-        log("ABORT: Essay generation failed")
+        log(f"ABORT: no subject yielded a publishable essay after {len(tried)} attempt(s): {tried}")
         return
 
     title = extract_title(essay)
