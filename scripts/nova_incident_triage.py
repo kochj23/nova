@@ -86,7 +86,9 @@ SERVICE_PORTS = {
     "ComfyUI":       ("127.0.0.1", 8188),
     "TinyChat":      ("192.168.1.6", 8000),
     "OpenWebUI":     ("192.168.1.6", 3000),
-    "SearXNG":       ("127.0.0.1", 8888),
+    # 8080, not 8888: SearXNG has never listened on 8888, so this check reported a permanent
+    # false outage. Corrected 2026-07-28. It also does not run on .6 — it is on .86 and .2.
+    "SearXNG":       ("192.168.1.86", 8080),
     "Signal-cli":    ("127.0.0.1", 8080),
     "NovaControl":   ("127.0.0.1", 37400),
 }

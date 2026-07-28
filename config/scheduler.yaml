@@ -118,6 +118,16 @@ tasks:
     timeout: 2400
     overlap: skip
 
+  index_integrity:
+    script: nova_index_integrity.py
+    args: ["--quiet"]
+    # Daily. A corrupt index raises no errors — it silently stops enforcing uniqueness and
+    # returns incomplete results while every health check stays green. On 2026-07-28, 15 corrupt
+    # indexes went unnoticed for over a day and surfaced only because a restore was attempted.
+    schedule: cron 40 4 * * *
+    timeout: 1800
+    overlap: skip
+
   journal_lint:
     script: nova_journal_lint.py
     enabled: false  # Wave B -> .2 (2026-07-14)
