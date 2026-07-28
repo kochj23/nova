@@ -131,7 +131,13 @@ def preflight():
     for label, hosts, trig in WAVES:
         for h in hosts:
             target, cmd = ssh_target(h)
-            probe = "sudo -n true" if cmd.startswith("sudo") else "true"
+            # Probe the ACTUAL command, not just the login. On 2026-07-28 a `true` probe
+            # reported a host unreachable when it was fine, and a bare login probe would
+            # equally have passed a host whose shutdown binary does not exist. Prove both.
+            binary = cmd.split()[1] if cmd.startswith("sudo") else cmd.split()[0]
+            probe = f"command -v {binary} >/dev/null"
+            if cmd.startswith("sudo"):
+                probe = f"sudo -n true && {probe}"
             r = run(["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
                      "-o", "StrictHostKeyChecking=no", target, probe], timeout=20)
             ok = r.returncode == 0
