@@ -109,6 +109,15 @@ tasks:
     timeout: 300
     overlap: skip
 
+  article_watchdog:
+    script: nova_article_watchdog.py
+    args: ["--fix"]
+    # Hourly, not daily: a miss found at 03:00 can still be repaired before anyone reads it.
+    # Every job it covers carries a >=30min grace, so a run mid-generation stays quiet.
+    schedule: every 1h
+    timeout: 2400
+    overlap: skip
+
   journal_lint:
     script: nova_journal_lint.py
     enabled: false  # Wave B -> .2 (2026-07-14)

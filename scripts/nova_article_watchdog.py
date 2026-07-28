@@ -79,6 +79,11 @@ def expected_today(now):
         tasks = [dict(v, name=k) for k, v in tasks.items()]
     out = []
     for t in tasks:
+        # NOTE: do NOT skip on `enabled: false`. On .6 that flag means "migrated to .2 in the
+        # Wave B split", not "not running" — journal_security, local_burbank, local_airwaves and
+        # fishbowl_daily are all enabled:false here and all published today from the other node.
+        # The article is expected regardless of which machine produces it, and this watchdog
+        # judges the published result, not the local config.
         script = str(t.get("script", ""))
         m = re.match(r"cron (\d+) (\d+) \S+ \S+ (\S+)", str(t.get("schedule", "")))
         if not m:
