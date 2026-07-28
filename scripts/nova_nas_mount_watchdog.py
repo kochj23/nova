@@ -9,6 +9,7 @@ when the nightly PG backup fell back to local-only because the mount was down at
 
 Scheduled every 5 min via scheduler.yaml. Idempotent — a no-op when already mounted.
 """
+import os
 import subprocess
 import sys
 import urllib.parse
@@ -54,6 +55,17 @@ def main():
 
 
 def _ensure(MOUNT_POINT, SHARE):
+    # MINIMUM GRAIN, and the reason matters: on 2026-07-27 this watchdog UNMOUNTED a
+    # perfectly healthy /Volumes/external. is_mounted() gave a false negative, the recovery
+    # path ran `umount -f` on a live mount, macOS then removed the /Volumes entry, and the
+    # remount failed with "could not find mount point". A watchdog that can destroy what it
+    # watches is worse than no watchdog. So: trust a successful READ over the mount table,
+    # and never unmount something we can still read.
+    try:
+        if os.listdir(MOUNT_POINT):
+            return 0
+    except OSError:
+        pass
     if is_mounted(MOUNT_POINT):
         return 0
 
