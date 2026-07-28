@@ -91,3 +91,55 @@ if __name__ == "__main__":
         txt, conf = correct(raw, dom)
         print(f"[{dom}] conf={conf}\n  raw: {raw}\n  fix: {txt}\n")
     print("OK" if True else "FAIL"); sys.exit(0)
+
+
+# ── quality gate ───────────────────────────────────────────────────────────────
+# Whisper does not fail loudly on unintelligible radio. Fed vocoded P25 or an
+# Icecast stream's silence, it emits fluent, confident, grammatical English that
+# has nothing to do with the audio — "Hello, my friend. Did you receive?" Because
+# the output LOOKS like a transcript, nothing downstream ever flagged it, and
+# 33,223 such rows accumulated in nova_memories by 2026-07-28.
+#
+# Measured over the full corpus on that date, same model and host, differing only
+# in audio architecture: per-call Calls-API audio carried dispatch vocabulary in
+# 96% of transmissions (n=1,593); the mixed Icecast stream in 33% (n=48,970).
+# That gap is the discriminator.
+import re as _re
+
+_DISPATCH = _re.compile(
+    r"\b(engine|truck|squad|quad|battalion|unit|units|medic|ambulance|bls|als|"
+    r"code\s*\d|copy|responding|en\s?route|enroute|on\s?scene|clear|dispatch|"
+    r"\d{1,2}-\d{1,2}\b|10-\d{1,2}\b|11-\d{2}\b|4\d{2}\b|187\b|211\b|415\b)", _re.I)
+# Whisper's stock hallucinations on silence: YouTube-caption boilerplate and
+# conversational filler that never occurs in radio dispatch.
+_TELLS = _re.compile(
+    r"\b(thanks? for watching|please subscribe|like and subscribe|"
+    r"see you (next time|in the next)|my friend|i don't want to say)\b", _re.I)
+
+
+def is_probably_real_dispatch(text: str) -> bool:
+    """True if `text` looks like genuine radio traffic rather than a hallucination.
+
+    Deliberately biased toward REJECTION: a dropped real transmission costs one
+    line of scanner chatter, while a stored hallucination is indistinguishable
+    from fact forever and poisons every semantic search that comes near it.
+    """
+    if not text or len(text.strip()) < 12:
+        return False
+    if _TELLS.search(text):
+        return False
+    return bool(_DISPATCH.search(text))
+
+
+if __name__ == "__main__":
+    # Self-check against known-shape samples (real strings observed 2026-07-28).
+    real = ["Engine 22 from VLS-27 confirming approach from Cyprus.",
+            "Engine 72, wires down, front of 1113, West Haman Avenue",
+            "2-4-39, 2-4-39, are you clear?"]
+    junk = ["Hello, my friend. Did you receive?", "Rise of that",
+            "I don't want to say anything, brother.", "Thanks for watching!", ""]
+    for t in real:
+        assert is_probably_real_dispatch(t), f"FALSE NEGATIVE: {t!r}"
+    for t in junk:
+        assert not is_probably_real_dispatch(t), f"FALSE POSITIVE: {t!r}"
+    print(f"self-check OK: {len(real)} real kept, {len(junk)} junk rejected")
