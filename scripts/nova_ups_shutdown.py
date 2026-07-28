@@ -115,6 +115,28 @@ def rack_percent():
     return float(m.group(1)) if m else None
 
 
+def ssh_retry(target, remote_cmd, tries=3, timeout=30):
+    """SSH with retries. A transient blip is not a decision.
+
+    Observed 2026-07-28: .252 failed one probe on a 6s connect timeout, then answered 6/6 at
+    ~200ms. Without retries that blip at outage time means the box never gets the shutdown and
+    hard-crashes anyway — the single failure mode this whole script exists to prevent.
+    """
+    r = None
+    for attempt in range(tries):
+        r = run(["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
+                 "-o", "StrictHostKeyChecking=no", target, remote_cmd], timeout=timeout)
+        # Retry on ANYTHING non-zero. 255 is ambiguous — it is both "the host powered off
+        # mid-command" (success) and "could not connect at all" (failure). Treating it as
+        # success here would give an unreachable host exactly one attempt, which is the case
+        # retries exist for. Let the caller interpret 255; wait_down() is the real witness.
+        if r.returncode == 0:
+            return r, attempt + 1
+        if attempt < tries - 1:
+            time.sleep(2)
+    return r, tries
+
+
 def ssh_target(host):
     user, cmd = HOST_AUTH.get(host, DEFAULT_AUTH)
     return (f"{user}@{host}" if user else host), cmd
@@ -134,13 +156,17 @@ def preflight():
             # Probe the ACTUAL command, not just the login. On 2026-07-28 a `true` probe
             # reported a host unreachable when it was fine, and a bare login probe would
             # equally have passed a host whose shutdown binary does not exist. Prove both.
-            binary = cmd.split()[1] if cmd.startswith("sudo") else cmd.split()[0]
+            parts = cmd.split()
+            if parts[0] == "sudo":                      # skip sudo AND its flags (-n)
+                parts = [x for x in parts[1:] if not x.startswith("-")]
+            binary = parts[0]
             probe = f"command -v {binary} >/dev/null"
             if cmd.startswith("sudo"):
                 probe = f"sudo -n true && {probe}"
-            r = run(["ssh", "-o", "ConnectTimeout=6", "-o", "BatchMode=yes",
-                     "-o", "StrictHostKeyChecking=no", target, probe], timeout=20)
+            r, tries = ssh_retry(target, probe, timeout=20)
             ok = r.returncode == 0
+            if ok and tries > 1:
+                log(f"           (took {tries} attempts — transient, worth watching)")
             armed, unarmed = (armed + ok), (unarmed + (not ok))
             log(f"  [{'ARMED ' if ok else 'NOT ARMED'}] {target:24} wave={label}")
             if not ok:
@@ -154,11 +180,17 @@ def shutdown_host(host, dry_run):
     if dry_run:
         log(f"    DRY-RUN would shut down {target} via `{cmd}`")
         return True
-    r = run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes",
-             "-o", "StrictHostKeyChecking=no", target, cmd], timeout=30)
-    # A host that powers off mid-command kills the connection: exit 255 is SUCCESS here.
-    ok = r.returncode in (0, 255)
-    log(f"    {target}: {'shutdown issued' if ok else 'FAILED rc=' + str(r.returncode)}")
+    reachable = run(["ping", "-c", "1", "-W", "1", host], timeout=6).returncode == 0
+    r, tries = ssh_retry(target, cmd)
+    # 255 after a host that WAS reachable = it died mid-command, which is what we wanted.
+    # 255 from a host that never answered ping = we never commanded anything. Say so, rather
+    # than letting wait_down() later "confirm" an unreachable box as gracefully shut down.
+    ok = r.returncode == 0 or (r.returncode == 255 and reachable)
+    if not reachable:
+        log(f"    {target}: was ALREADY UNREACHABLE before shutdown — not commanded")
+        return False
+    log(f"    {target}: {'shutdown issued' if ok else 'FAILED rc=' + str(r.returncode)}"
+        f"{' after ' + str(tries) + ' attempts' if tries > 1 else ''}")
     return ok
 
 
