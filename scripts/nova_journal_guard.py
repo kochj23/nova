@@ -39,6 +39,24 @@ _REFUSAL_BODY = [
     r"i'?m not going to (guess|invent|fabricate|write)",
     r"i can'?t write (this|a formal)",
     r"i'?ll infer the .{0,20}pattern",
+    # 2026-07-27: a refusal shipped as an ESSAY. Its phrasing missed every pattern above by
+    # inches — "I've got a problem here" (we only had "you've got"), and "pile of bullshit"
+    # (our pile-of pattern demanded the word "wikipedia" after it). The genre is stable; the
+    # wording is infinite, so match the SHAPE too, not just more phrasings.
+    r"i'?ve got a problem",
+    r"i'?m going to surface (it|this)",
+    r"instead of writing you",
+    r"you asked (me )?for a (formal )?(essay|article|piece)",
+    r"the (source )?material you (gave|provided|handed)",
+    r"(pile|load|heap) of (bullshit|nonsense|garbage)",
+    r"none of (this|that|these) (is|are) about",
+]
+
+# STRUCTURAL tell: a real essay does not open by addressing its commissioner about the brief.
+# Second-person address to Little Mister PLUS a reference to what was asked, inside the
+# opening, is a refusal regardless of how it is phrased.
+_REFUSAL_SHAPE = [
+    (r"little mister", r"you asked|you gave me|you provided|the material|the brief"),
 ]
 # Template/system leakage that should never be in published output.
 _META = [r"\[system instructions\]", r"^#?\s*title:\s*$", r"\bas an ai language model\b",
@@ -47,6 +65,7 @@ _META = [r"\[system instructions\]", r"^#?\s*title:\s*$", r"\bas an ai language 
 # Titles that are themselves the tell (meta / placeholder / refusal openings).
 _BAD_TITLE_EXACT = {"introduction", "untitled", "", "title"}
 _BAD_TITLE_PREFIX = ("i'm ready", "i need", "i can't", "i cannot", "want me to", "you've got",
+                     "i've got", "i have a problem", "i'm going to surface",
                      "did you mean", "a typo for", "can you provide", "hold up", "hold the fuck",
                      "i'm going to stop you", "i need to stop you", "let me know", "i'll infer",
                      "understood", "sure,", "okay,", "here's what i need")
@@ -70,6 +89,11 @@ def is_publishable(title: str, body: str) -> tuple[bool, str]:
     words = len(re.findall(r"\w+", b))
     if words < 60:
         return (False, f"too short to be an article ({words} words)")
+
+    _open = (body or "")[:700].lower()
+    for a, b in _REFUSAL_SHAPE:
+        if re.search(a, _open) and re.search(b, _open):
+            return (False, "refusal shape: opening addresses the commissioner about the brief")
 
     # Body markers only count in the OPENING. A refusal LEADS with it ("I can't write this —
     # you handed me a grocery list of Wikipedia excerpts"); a legit essay that merely quotes
