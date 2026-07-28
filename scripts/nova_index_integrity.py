@@ -51,13 +51,22 @@ def sweep(db, max_mb, full):
         WHERE c.relam = (SELECT oid FROM pg_am WHERE amname='btree')
           AND (i.indisunique OR i.indisprimary)
           AND i.indisvalid AND i.indisready
+          -- matviews included on purpose: telemetry.energy_hourly is a matview whose unique
+          -- index broke a restore while every table-level check reported clean.
+          AND c.relkind = 'i' 
           AND n.nspname NOT IN ('pg_catalog','information_schema')
           {size_filter}
         ORDER BY pg_relation_size(c.oid)""")
     idxs = cur.fetchall()
     for qualified, name in idxs:
         try:
-            cur.execute("SELECT bt_index_check(%s::regclass)", (qualified,))
+            # heapallindexed=true is the whole point. Plain bt_index_check only validates the
+            # index's INTERNAL structure; it cannot see rows that exist in the table and are
+            # missing from the index. That is precisely the damage here: on 2026-07-28 every
+            # repaired index passed the structural check while telemetry.energy_hourly still
+            # broke a restore, because the heap held keys the index had never recorded. A
+            # structure-only check would have declared this database clean and been wrong.
+            cur.execute("SELECT bt_index_check(%s::regclass, heapallindexed => true)", (qualified,))
         except Exception as e:
             out.append((name, str(e).strip().splitlines()[0][:140]))
     c.close()

@@ -60,8 +60,14 @@ FLEET = [
     {"name": "nova-core6", "ip": "nova-core6.digitalnoise.net", "os": "macos", "user": "kochj"},
 ]
 
-# Tools per OS
-TOOLS_MACOS = ["rkhunter"]
+# Tools per OS.
+# macOS is UNSUPPORTED for rootkit scanning, deliberately (Jordan, 2026-07-28). rkhunter and
+# chkrootkit are Linux-oriented: they are not installed on .7/.251/.252, and on .6 — where
+# Homebrew does provide them — rkhunter dies on "Invalid BINDIR configuration option". Reporting
+# an honest "unsupported" beats the previous behaviour, which was to run nothing and record
+# CLEAN. If macOS host integrity matters later, the right tool is a FIM watching
+# LaunchDaemons/authorized_keys (nova_endpoint_monitor already does this per-host), not rkhunter.
+TOOLS_MACOS = []
 TOOLS_LINUX = ["rkhunter", "chkrootkit", "aide"]
 
 # ── State ─────────────────────────────────────────────────────────────────────
