@@ -15,10 +15,15 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Metric | Value |
 |--------|-------|
 | Scripts | 526 Python/Shell (`nova_*` namespace) |
-| Fleet | 9 machines — 5 Linux (nova-core .2/.86/.88/.10/.250) + 4 Macs (.6 Studio, .101 mini, .7 tv-mini) |
+| Fleet | 10 machines — 5 Linux (nova-core .2/.86/.88/.10/.250) + 5 Macs (.6 Studio, .101 mini, .7 tv-mini, **.252 nova-core6**) |
+| Inference pool | 9/9 backends healthy — Ollama across .6/.101/.7/.5/.86/.10/**.252**, MLX behind an nginx LB |
 | Storage failover | `nova_storage_failover.py` — 2-min timer, reads real content (not the mount table), fails over Synology→UNAS and back, refreshes scripts from GitHub |
 | Resilience node | nova-core4 (.250) — warm Gateway standby + cold standbys, local code, host-sealed secrets |
 | Witness registry | `telemetry.witness_proven_red` — a check clears health only with recent proven-red |
+| Presence | 9 methods incl. `wifi_rssi` — resolves WiFi clients to NAMED people via `telemetry.device_owner` |
+| Identity graph | `telemetry.identity_graph_edge` — cross-modal phi co-occurrence over BLE/WiFi/person/face/zone |
+| Tracker safety | Find My subtype 0x12 parsing — distinguishes `owner_nearby` from `separated` trackers |
+| Out-of-band | Meshtastic LoRa alerting — survives NAS/DB/gateway/DNS/internet all being down |
 | BLE observers | multi-radio; every sighting tagged with the radio that saw it (`telemetry.bluetooth.observer`) |
 | Scheduler tasks | 156 unique |
 | Scheduler runs logged | 658,279 (94.7% success) |
@@ -1500,6 +1505,90 @@ flowchart LR
 - **Data safety:** inference is **loopback-only** (a non-127.0.0.1 endpoint is refused outright — never falls forward to a cloud API); every message is redacted of token/key/password shapes before it reaches the model; messages truncated to 400 chars
 - **Progress-only + dedup:** strict `ts >` watermark per channel so a message is never re-assessed; a per-digest `dedup_key` blocks re-alerting an identical recurring incident; skips its own posts via the `🔭 Hourly Watch` marker
 - **No quiet hours** — fires 24/7; the offline heuristic guarantees it still flags real trouble when every LLM is down · safety suite `test_nova_slack_watch.py`
+
+## nova-core6 (.252) — Inference Node
+
+Mac mini M1 (`Macmini9,1`), 8-core, **16GB** unified memory, macOS 15.7.8. Joined 2026-07-27.
+Mission is inference and nothing else; 16GB rules out the 30B MoE models, so it serves the
+**fast tier** alongside .7/.5/.86.
+
+| Item | Detail |
+|------|--------|
+| Ollama | `~/bin/ollama` (user-space, no Homebrew) + LaunchAgent `net.digitalnoise.ollama`, `OLLAMA_HOST=0.0.0.0`, RunAtLoad + KeepAlive |
+| Load balancer | Registered in the inference router on **both** `.2` and `.10` — verified from the consumer, 9/9 healthy |
+| Shell | oh-my-zsh + Powerlevel10k, `.p10k.zsh` mirrored from `.6` |
+| Shared FS | `/Volumes/nova` → `//192.168.1.69/nas` (UNAS; the `/nova` failover target) |
+| FileVault | **Off** — correct for a headless node; avoids the `.7` pre-boot lockout |
+| Networking | **Manual static IP**, no DHCP reservation. DNS was blank on arrival — set to the BIND pair `.2` + `.86` |
+
+Gotchas found during onboarding, recorded so the next node is faster: macOS ships **no `git`**
+(Xcode CLT must be installed first, which silently blocks oh-my-zsh); Apple's bundled `pip3`
+rejects `--break-system-packages`, so Homebrew is a prerequisite for MLX; and a static IP with
+an empty DNS field produces a machine that pings fine and cannot resolve anything.
+
+---
+
+## Sensor Fusion
+
+The house observes people through incompatible lenses — cameras know faces, BLE knows
+fingerprints, UniFi knows client MACs, vehicle-vision knows cars — and nothing joined them.
+Presence fused eight signals while its `person` column held one real name and seven
+placeholders.
+
+| Component | What it does |
+|-----------|--------------|
+| `nova_wifi_presence.py` | Resolves WiFi clients to named people (`telemetry.device_owner`), AP → room, signal → confidence. Every 2 min. |
+| `nova_identity_graph.py` | Cross-modal co-occurrence graph scored with **phi**, so always-on fixtures cannot fake a match. Nightly. |
+| `nova_identity_link.py` | Proposes device→person ownership from co-presence. **Proposes only** — a wrong link yields confidently wrong presence forever. |
+| `nova_negative_space.py` | Alerts on the **absence** of expected correlations. Every 30 min. |
+| `nova_tracker_watch.py` | Unwanted Find My tracker detection: separated tags persisting near the house. Every 2h. |
+| `nova_local_situation.py` | Fuses ADS-B + CHP + scanner + exterior motion. Every 15 min. |
+| `nova_ble_phy_collector.py` | Ubertooth PHY-layer BLE on `.10` — reads the raw radio past what the host stack surfaces. |
+| `nova_meshtastic_alert.py` | LoRa out-of-band alerting. `--self-test` proves the radio transmits. |
+
+**The rule running through all of it:** presence of an unknown is the base rate — six thousand
+strange BLE devices pass the house weekly. The signal is *absence*, and every threshold is
+calibrated against the background rather than against zero. One signal is a self-report;
+several independent ones agreeing is a witnessed fact.
+
+```mermaid
+flowchart LR
+    subgraph Observers
+        W[UniFi WiFi<br/>client + AP + RSSI]
+        B[BLE host stack<br/>.6 bleak]
+        P[BLE PHY<br/>.10 Ubertooth]
+        C[Cameras<br/>face + vehicle]
+        M[mmWave]
+    end
+    W --> ID[telemetry.device_owner<br/>mac -> person]
+    B --> G[identity_graph_edge<br/>phi co-occurrence]
+    P --> G
+    C --> G
+    ID --> PR[telemetry.presence<br/>named people]
+    M --> PR
+    PR --> G
+    G --> NS[negative-space alerting<br/>missing correlations]
+    P --> TR[tracker watch<br/>separated Find My tags]
+    NS --> A[#nova-info]
+    TR --> A
+    A -.->|when the fleet itself is down| LORA[Meshtastic LoRa]
+```
+
+---
+
+## Backups — Read This Before Trusting Them
+
+On 2026-07-27 an audit found **every nightly dump had failed silently since 07-24**: four of
+four databases, empty directories, `statement_timeout=0` rejected by pgbouncer while the job
+still looked like it ran. Newest usable dump was 22 days old; the last restore test 26 days.
+
+Now: dumps connect **straight to the primary** (never the pooler), a dump under 16KB is a
+**failure regardless of exit code**, and the off-box destination **fails over** Synology → UNAS.
+
+> A backup nobody has restored is a hypothesis. `backup_restore_test` is the only thing that
+> converts it into a fact — check when it last ran before believing any of this.
+
+---
 
 ## Storage Failover & Anti-Drift
 
