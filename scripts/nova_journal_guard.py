@@ -60,7 +60,20 @@ _REFUSAL_SHAPE = [
 ]
 # Template/system leakage that should never be in published output.
 _META = [r"\[system instructions\]", r"^#?\s*title:\s*$", r"\bas an ai language model\b",
-         r"i don'?t have (real-?time )?access"]
+         r"i don'?t have (real-?time )?access",
+         # 2026-07-29: the LONGFORM expansion pass in nova_journal.publish_hugo asks the model
+         # to grow a short draft to 3000 words. It answered by narrating the edit before doing
+         # it — "I'll provide the expanded article directly below. I've deepened the analysis of
+         # each section ... while maintaining the existing structure" — and that preamble shipped
+         # as the opinion column's first paragraph. Not a refusal, so nothing above caught it;
+         # it's the same genre though (model addressing the operator about the task), so it
+         # belongs here. Real Nova prose never announces its own revision process.
+         r"i'?ll provide the (expanded|revised|full|complete|rewritten)",
+         r"here'?s the (expanded|revised|rewritten|full) (article|version|draft|piece)",
+         r"below is the (expanded|revised|rewritten) (article|version|draft|piece)",
+         r"i'?ve (deepened|expanded|extended) the (analysis|article|draft|piece)",
+         r"while (maintaining|keeping) the (existing|original) (structure|voice|tone)",
+         r"without (adding|inventing) any (new )?(facts|filler|names)"]
 
 # Titles that are themselves the tell (meta / placeholder / refusal openings).
 _BAD_TITLE_EXACT = {"introduction", "untitled", "", "title"}

@@ -59,6 +59,10 @@ ARTICLE_SCRIPTS = {
     "nova_rando_daily_ops.py":         ("operations", ("slug", "")),
     "nova_journal_emergency.py":       ("operations", ("slug", "")),
     "nova_fishbowl_daily.py":          ("fishbowl",   ("stable", "the-fishbowl")),
+    # Was missing until 2026-07-29, so this job's 8-day outage (execve E2BIG, see
+    # nova_journal.call_openrouter) was invisible here — the same watchdog gap that hid
+    # nova_rando_daily_ops.py. 'watch-community' is the tag only this job emits into opinions.
+    "nova_opinion_fishbowl.py":        ("opinions",   ("tag", "watch-community")),
     "nova_after_dark.py":              ("after-dark", ("slug", "")),
     "nova_art_corner.py":              ("art",        ("slug", "")),
 }
