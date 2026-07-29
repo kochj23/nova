@@ -53,10 +53,36 @@ ARTICLE_SCRIPTS = {
     "nova_journal_security.py":        ("operations", ("slug", "security-intelligence-briefing")),
     "nova_weekly_ops_report.py":       ("operations", ("slug", "")),
     "nova_daily_ops_log.py":           ("operations", ("slug", "")),
+    # Added after the 2026-07-28 18:00 run: this job WAS publishing, but its front matter was
+    # dated two hours ahead so Hugo hid the article and the site 404ed. The watchdog missed it
+    # entirely because the script was never in this map — a gap in the watchdog, not the job.
+    "nova_rando_daily_ops.py":         ("operations", ("slug", "")),
+    "nova_journal_emergency.py":       ("operations", ("slug", "")),
     "nova_fishbowl_daily.py":          ("fishbowl",   ("stable", "the-fishbowl")),
     "nova_after_dark.py":              ("after-dark", ("slug", "")),
     "nova_art_corner.py":              ("art",        ("slug", "")),
 }
+
+
+# The scheduler passes a PROFILE key ("opinion"), which is not always the directory name
+# ("opinions"). Read nova_journal's own mapping instead of duplicating it — a second copy of
+# that table is exactly how the watchdog ends up disagreeing with the generator it watches.
+_SECTION_CACHE = {}
+
+
+def _journal_section(profile: str) -> str:
+    if not profile:
+        return ""
+    if not _SECTION_CACHE:
+        try:
+            src = (Path(__file__).parent / "nova_journal.py").read_text(errors="ignore")
+            for key, body in re.findall(r'"([a-z-]+)":\s*\{(.*?)\}', src, re.S):
+                m = re.search(r'"section":\s*"([a-z-]+)"', body)
+                if m:
+                    _SECTION_CACHE[key] = m.group(1)
+        except OSError:
+            pass
+    return _SECTION_CACHE.get(profile, profile)
 
 
 def log(m):
@@ -90,7 +116,7 @@ def expected_today(now):
             continue                       # interval jobs have no single "due" moment
         if script == "nova_journal.py":
             args = t.get("args") or []
-            section = (args[0] if args else "").strip()
+            section = _journal_section(args[0].strip() if args else "")
             matcher = ("slug", "")
         else:
             section, matcher = ARTICLE_SCRIPTS.get(script, ("", None))
@@ -148,6 +174,18 @@ def published(section, day, matcher=("slug", "")):
             hits = dated
     if not hits:
         return False, "no article file for today"
+    # A future-dated post is published but INVISIBLE: Hugo skips future content by default, so the
+    # file exists, git is clean, every producer-side check passes — and the URL 404s. Seen 2026-07-28
+    # when a generator hardcoded 20:00 after its schedule moved to 18:00.
+    for h in hits:
+        m = re.search(r"^date:\s*(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})", h.read_text(errors="ignore")[:600], re.M)
+        if m:
+            try:
+                when = dt.datetime.fromisoformat(m.group(1))
+            except ValueError:
+                continue
+            if when > dt.datetime.now() + dt.timedelta(minutes=5):
+                return False, f"{h.name} is FUTURE-DATED ({m.group(1)}) — Hugo will not publish it yet"
     r = run(["git", "log", "origin/main..HEAD", "--oneline"], cwd=HUGO, timeout=30)
     if r.returncode == 0 and r.stdout.strip():
         return False, f"written but NOT PUSHED ({len(r.stdout.strip().splitlines())} commit(s) local)"

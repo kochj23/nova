@@ -2,7 +2,7 @@
 """
 nova_rando_daily_ops.py — Nightly "Day in the Life of My Infrastructure" Rando article.
 
-Runs at 20:00 daily. Pulls from ALL operational sources Nova now has access to:
+Runs at 18:00 daily (cron 0 18). Pulls from ALL operational sources Nova now has access to:
 HomeKit, Hue lights, Lutron switches, SNMP metrics, syslog events, security scans,
 scheduler runs, Big Brother heals, camera motion events, UNAS/Synology state,
 shared observations, deploy events, weather, and anything else that happened today.
@@ -531,7 +531,11 @@ def publish(title: str, body: str, image_path: Path | None):
         body += f"\n\n---\n\n**Fleet health at publish time:**\n\n![Current fleet health]({snap})"
 
     date = time.strftime("%Y-%m-%d")
-    timestamp = time.strftime("%Y-%m-%dT20:00:00-07:00")
+    # Use the ACTUAL publish time, not a hardcoded 20:00. The task was moved to cron 0 18,
+    # but this string was left behind — so every night the front matter was dated two hours
+    # in the future and Hugo (which skips future-dated content by default) hid the article
+    # until the next build after 20:00. It published fine; it was just invisible meanwhile.
+    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S-07:00")
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
 
     CONTENT_DIR.mkdir(parents=True, exist_ok=True)
