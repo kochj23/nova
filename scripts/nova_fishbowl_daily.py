@@ -23,9 +23,17 @@ STABLE_SLUG = "the-fishbowl"          # evergreen: same file overwritten every r
 
 def main():
     ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
+    # The whole roster is unbounded — guest discovery adds every one-off caller it hears
+    # (27 cast vs 274 guests as of 2026-07-29), and dumping all of them made the prompt
+    # grow without limit. Take the standing cast plus the most-covered guests, which is
+    # what "the cast" in the prompt actually means. Same shape as
+    # nova_opinion_fishbowl_roster.py, which already did this correctly.
     oc.execute("SELECT name, channels, summary FROM fishbowl_people "
-               "WHERE summary IS NOT NULL ORDER BY n_mem DESC NULLS LAST")
+               "WHERE kind='cast' AND summary IS NOT NULL ORDER BY n_mem DESC NULLS LAST")
     dossiers = oc.fetchall()
+    oc.execute("SELECT name, channels, summary FROM fishbowl_people "
+               "WHERE kind='guest' AND summary IS NOT NULL ORDER BY n_mem DESC NULLS LAST LIMIT 15")
+    dossiers += oc.fetchall()
 
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
     # freshest transcripts first — this is what makes it a DAILY dispatch, not a static intro

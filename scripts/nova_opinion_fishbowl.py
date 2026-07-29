@@ -22,9 +22,15 @@ OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 def main():
     ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
+    # Bounded roster: standing cast + the most-covered guests. The full table grows
+    # without limit (guest discovery logs every one-off caller), which is what pushed
+    # this prompt past the kernel's per-arg limit. See nova_fishbowl_daily.py.
     oc.execute("SELECT name, channels, summary FROM fishbowl_people "
-               "WHERE summary IS NOT NULL ORDER BY n_mem DESC NULLS LAST")
+               "WHERE kind='cast' AND summary IS NOT NULL ORDER BY n_mem DESC NULLS LAST")
     dossiers = oc.fetchall()
+    oc.execute("SELECT name, channels, summary FROM fishbowl_people "
+               "WHERE kind='guest' AND summary IS NOT NULL ORDER BY n_mem DESC NULLS LAST LIMIT 15")
+    dossiers += oc.fetchall()
 
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
     # ONLY the last ~24-48h — this column is about what's NEW, not the backlog.

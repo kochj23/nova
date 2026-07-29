@@ -244,14 +244,30 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
     balance ran dry 2026-07-17. Rename if OpenRouter comes back into rotation.
     max_tokens/temperature/top_p have no Claude Code CLI equivalent and are
     accepted-but-ignored for signature compatibility.
+
+    The user prompt goes in on STDIN, never argv. Linux caps a *single* execve()
+    argument at MAX_ARG_STRLEN (32 pages = 131072 bytes) independently of the much
+    larger ARG_MAX, so any call site whose assembled context crosses 128 KiB used to
+    die with `[Errno 7] Argument list too long: 'claude'` before the model was ever
+    reached. That killed fishbowl_daily + opinion_fishbowl every morning from
+    2026-07-22 (their cast-dossier block had grown to ~470 KiB). stdin has no such
+    limit, and fixing it here covers all ~15 call sites at once.
     """
     cli_model = ("haiku" if "haiku" in model else
                  "sonnet" if "sonnet" in model else
                  "opus" if "opus" in model else model)
+    # The system prompt is still argv (it's Nova's voice, ~7 KiB, and the CLI has no
+    # stdin equivalent). Fail LOUDLY with the real reason if a caller ever grows it
+    # past the kernel's per-arg ceiling rather than emitting a cryptic errno.
+    if len(system.encode()) > 120_000:
+        log(f"Claude Code call refused ({cli_model}): system prompt "
+            f"{len(system.encode())} bytes exceeds the 128 KiB execve per-arg limit — "
+            f"move the bulk into the user prompt (stdin)")
+        return None
     try:
         result = subprocess.run(
-            ["claude", "-p", "--model", cli_model, "--system-prompt", system, "--", user],
-            capture_output=True, text=True, timeout=180)
+            ["claude", "-p", "--model", cli_model, "--system-prompt", system],
+            input=user, capture_output=True, text=True, timeout=300)
         if result.returncode != 0:
             log(f"Claude Code call failed ({cli_model}): {result.stderr.strip()[:300]}")
             return None
