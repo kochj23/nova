@@ -14,9 +14,9 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 | Metric | Value |
 |--------|-------|
-| Scripts | 526 Python/Shell (`nova_*` namespace) |
-| Fleet | 10 machines — 5 Linux (nova-core .2/.86/.88/.10/.250) + 5 Macs (.6 Studio, .101 mini, .7 tv-mini, **.252 nova-core6**) |
-| Inference pool | 9/9 backends healthy — Ollama across .6/.101/.7/.5/.86/.10/**.252**, MLX behind an nginx LB |
+| Scripts | 537 Python/Shell (`nova_*` namespace) |
+| Fleet | 10 machines — 5 Linux (nova-core .2/.86/.88/.10/.250) + 5 Macs (.6 Studio, **.251 mini**, .7 tv-mini, .252 nova-core6). Addressed **by DNS name**, not IP. |
+| Inference pool | 9/9 backends healthy — Ollama across .6/**.251**/.7/.5/.86/.10/.252, MLX behind an nginx LB |
 | Storage failover | `nova_storage_failover.py` — 2-min timer, reads real content (not the mount table), fails over Synology→UNAS and back, refreshes scripts from GitHub |
 | Resilience node | nova-core4 (.250) — warm Gateway standby + cold standbys, local code, host-sealed secrets |
 | Witness registry | `telemetry.witness_proven_red` — a check clears health only with recent proven-red |
@@ -25,17 +25,21 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Tracker safety | Find My subtype 0x12 parsing — distinguishes `owner_nearby` from `separated` trackers |
 | Out-of-band | Meshtastic LoRa alerting — survives NAS/DB/gateway/DNS/internet all being down |
 | BLE observers | multi-radio; every sighting tagged with the radio that saw it (`telemetry.bluetooth.observer`) |
-| Scheduler tasks | 156 unique |
-| Scheduler runs logged | 658,279 (94.7% success) |
-| Vector memories | 1,806,065 (deduplicated, pgvector HNSW, 768-dim nomic-embed) |
+| Scheduler tasks | 180 unique |
+| Scheduler runs logged | 724,479 (95.0% success) |
+| Vector memories | 1,827,043 (deduplicated, pgvector HNSW, 768-dim nomic-embed) |
 | Tests | ~9,550 (pytest) — smoke covers all 353 scripts; dedicated suites on the highest-risk services |
-| Memory sources | 198 domains |
+| Memory sources | 200 domains |
 | Gateway | Nova Gateway v2.4.0 (pure Python asyncio, hot-reloadable config) |
 | Channels | Slack + Discord + Signal + Web Chatroom + Claude Code bridge |
 | Agents | 4 (Chat, Research, Home, Main) |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Databases | PostgreSQL 17 + pgvector (`nova_memories` + `nova_ops`) + Redis |
-| Ops DB tables | 127 tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, telemetry.*, witness_proven_red, ferengi_rules |
+| Ops DB tables | 205 tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, telemetry.*, witness_proven_red, ferengi_rules |
+| Graceful shutdown | `nova_ups_shutdown.py` — Studio reads the rack UPS over USB and powers the fleet down in dependency order at 35% battery |
+| Article watchdog | `nova_article_watchdog.py` — hourly; checks the **published** article, not the job's exit code |
+| Index integrity | `nova_index_integrity.py` — daily `amcheck` with `heapallindexed` across all four databases |
+| Memory server auth | Token on the destructive routes (`/forget`, `/forget_all`); reads/writes log unauthenticated callers during migration |
 | Hot-reload | Gateway: `POST :18792/reload` or `SIGHUP`. Scheduler: `SIGHUP` reloads tasks. |
 | Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
 | Chatroom | Real-time multi-party chat on port 37480, Nova has full memory access, external via CF tunnel + service token auth |
@@ -68,6 +72,17 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 ## Infrastructure & Security (June–July 2026)
 
 ### Location Transparency — Fleet DNS, Shared Scripts, and the Topology Truth (2026-07-24)
+
+> **Update 2026-07-28.** A Mac mini moved `.190 → .101 → .251` and each move cost edits in several
+> files plus two remote copies, while a stale entry in the security scanner spent a week reporting a
+> dead address as CLEAN. Root cause: it sat *inside* the DHCP pool (`.20-.200`) on wifi with a
+> randomised MAC. It is now a device-side static outside the pool, and new service aliases exist for
+> `plex`, `mlx`, `nova-core6`, `itunes` and `mac-mini` (which had resolved to `.92`, an address that
+> never existed).
+>
+> **Gotcha for anyone continuing the sweep:** ssh host keys are pinned by IP. Converting a script to
+> names without adding the names to `known_hosts` fails every connection with
+> `Host key verification failed`.
 
 The "which IP is nova-core2 again?" era is over. Triggered by a two-week silent article
 outage (a script's DSN had no `host=`, so it broke the moment its cron migrated to a
@@ -1585,8 +1600,15 @@ still looked like it ran. Newest usable dump was 22 days old; the last restore t
 Now: dumps connect **straight to the primary** (never the pooler), a dump under 16KB is a
 **failure regardless of exit code**, and the off-box destination **fails over** Synology → UNAS.
 
-> A backup nobody has restored is a hypothesis. `backup_restore_test` is the only thing that
-> converts it into a fact — check when it last ran before believing any of this.
+> A backup nobody has restored is a hypothesis. On 2026-07-28 the first restore since 07-01 was
+> attempted and **failed** — which is how the index corruption above was discovered. After the
+> repair: `pg_restore exit=0`, zero errors, 209 tables. It is a fact now, and
+> `nova_index_integrity` runs daily so it stays one.
+>
+> The empty-dump floor is now **scaled to the database's user-table count**: a flat 16KB minimum
+> failed the `nova` database every night, because it is a retired shell with zero tables whose
+> correct dump really is ~4KB. Guarding against an empty dump must not mean guarding against an
+> empty database.
 
 ---
 
@@ -1626,6 +1648,116 @@ flowchart TD
     MP --> V
     V -->|no| DOWN[ALERT · no storage target]
 ```
+
+---
+
+## Graceful Shutdown — The Fleet Powers Itself Down
+
+On 2026-07-27 the power died, every machine hard-crashed, and the Postgres primary came back with
+a **hole in its WAL** — the replica refused to reconnect and needed an 84GB rebuild. Disabling
+sleep fleet-wide (correct, it was causing phantom SSH failures) removed the accidental protection
+sleep had provided, so the fleet now runs at full draw until the batteries die.
+
+`nova_ups_shutdown.py` runs on the Studio every 60s. The key topology fact: the UPS the Studio
+sees over USB **is the rack UPS** — its data cable comes from the rack unit while its power comes
+from a lighter UPS. The orchestrator reads the battery it is deciding about without sharing that
+battery's fate.
+
+```mermaid
+flowchart TD
+    UPS[Rack UPS<br/>USB data to Studio] -->|pmset -g ps| W[nova_ups_shutdown<br/>every 60s on .6]
+    W -->|mains lost, 3 samples| M{confirmed?}
+    M -->|no| STAND[stand down]
+    M -->|yes| W1[Wave 1 IMMEDIATE<br/>.252 .250 .251<br/>bedroom UPS, unmonitored]
+    W1 --> B{rack battery<br/>&lt;= 35%?}
+    B -->|no| WAIT[wait for next run]
+    B -->|yes| W2[Wave 2 leaf compute<br/>.7 .88 .86 .10]
+    W2 --> W3[Wave 3 PRIMARY .2<br/>PG + gateway + Plex<br/>must flush before storage]
+    W3 --> W4[Wave 4 storage<br/>Synology .11 + UNAS .69]
+    W4 --> W5[Wave 5 NVR .9]
+    W5 --> LEFT[switch .24 + UDM .1 ghost-ride<br/>network outlives the shutdown]
+```
+
+Each wave **waits for confirmed power-off** rather than sleeping a fixed interval: `shutdown -h now`
+returns the instant it is accepted, not when the machine is off, so a fixed sleep would cut storage
+out from under a primary still flushing WAL.
+
+This script **deliberately uses raw IPs** while the rest of the fleet moved to DNS names — both
+nameservers are on its own shutdown list, so the moment it powers off `.2` the DNS it would depend
+on is gone, with storage and NVR waves still to run.
+
+`--preflight` proves every target is reachable *and* that its shutdown binary exists; `--dry-run
+--force --simulate-percent` exercises the whole firing sequence without touching anything.
+
+---
+
+## Article Watchdog — Judging the Result, Not the Job
+
+Articles went missing while **every scheduler job reported success**. That is the point: "the job
+did not run" is never the failure. The real ones are a job timing out mid-publish, the publish
+guard correctly blocking a refusal with nothing replacing it, an article committed but never
+pushed, or a job exiting 0 having produced nothing. All four are indistinguishable from the
+producer's side.
+
+```mermaid
+flowchart LR
+    S[scheduler.yaml<br/>cron + section] --> E[expected today<br/>+30min grace]
+    E --> C{article on the site?}
+    C -->|per-job matcher<br/>stable slug / tag / slug| OK[OK]
+    C -->|missing| D[diagnose]
+    D --> D1[scheduler_runs<br/>timeout? exit code?]
+    D --> D2[guard log<br/>refusal blocked?]
+    D --> D3[git<br/>committed but unpushed?]
+    D1 & D2 & D3 --> F[auto-fix<br/>commit + push stranded work]
+    F --> R{now published?}
+    R -->|no| G[re-run the REAL generator]
+    G --> V[verify again]
+```
+
+Two design choices carry the weight. **Per-job matchers**, not per-section: three jobs publish into
+`local` every day, so "is there any article in local today" marks all three healthy the moment one
+runs — hiding exactly the failure this exists to catch. And it **regenerates by re-running the real
+generator**, never by writing an article itself: the generator owns the voice, the image, the guard
+and the publish path, and a second unguarded publish route is how a refusal reached the site.
+
+First run found `fishbowl_daily` silently dead for four days and two articles committed but never
+pushed.
+
+---
+
+## Index Integrity — When the Database Lies Quietly
+
+An overdue restore test failed on two unique constraints over duplicate rows. Those duplicates
+should have been impossible — the constraints exist and are enforced — so the **indexes** were
+corrupt. `amcheck` found **14 corrupt indexes in `nova_ops` and 1 in `nova_media`**, including
+`claude_memories_name_key`. Cause: the 2026-07-27 unclean shutdown, the same event that holed the
+WAL.
+
+**Nothing detected it for over a day.** A corrupt index raises no errors — it silently stops
+enforcing uniqueness and returns incomplete results while every health check reports green.
+
+```mermaid
+flowchart TD
+    C[nova_index_integrity.py<br/>daily 04:40] --> A{bt_index_check<br/>heapallindexed=true}
+    A -->|pass| G[green]
+    A -->|fail| RED[alert #nova-info]
+    subgraph "why heapallindexed matters"
+      S1[structure-only check<br/>validates the index internally] -.->|cannot see| S2[table rows MISSING<br/>from the index]
+    end
+    RED --> FIX[seq-scan for real duplicates<br/>SET enable_indexscan=off]
+    FIX --> DEDUP[export to NAS, remove]
+    DEDUP --> RE[REINDEX CONCURRENTLY]
+```
+
+The checker initially had **the same blind spot that hid the original damage**: plain
+`bt_index_check` only validates an index's internal structure and cannot see table rows missing
+from the index. After repairing all 15, every index passed structurally while a restore *still*
+failed — so the check now uses `heapallindexed => true`.
+
+The third failure turned out not to be corruption at all but a **schema defect**: the
+`energy_hourly` matview grouped by `(hour, device_id, device_name)` while its unique index covered
+only `(hour, device_id)`. One device carrying two names emitted colliding rows, the refresh failed,
+and that is why the energy dashboard had been empty.
 
 ---
 
@@ -1693,6 +1825,25 @@ excluded — an evacuation notice is not a bit.
 ---
 
 ## Security
+
+**Memory server authentication (2026-07-28).** The vector memory server had no authentication of
+any kind. `.2:18790` is firewalled to `.6` only — but the socat shim on `.6:18790` is reachable
+from the whole LAN and forwarded here unauthenticated, so anything on the network could write
+memories and, worse, call `DELETE /forget_all?source=...` to erase them.
+
+Enforcement is **staged on purpose**: 114 scripts call `:18790`, so flipping mandatory auth on
+every route would break the fleet in one move. Destructive routes enforce now (3 callers), while
+reads and writes log the unauthenticated caller.
+
+| Route | Now |
+|-------|-----|
+| `DELETE /forget`, `/forget_all` | **401 without a token** |
+| `POST /remember` | allowed, logged |
+| `GET /recall`, `/search`, `/health` | allowed, unchanged |
+
+Token lives in the fleet pgcrypto store (`nova-memory-server-token`), delivered via
+`/etc/nova/memory-server.env` (0600 root) and a systemd drop-in. Compared with
+`hmac.compare_digest`.
 
 - All credentials in macOS Keychain — never in source, env vars in plists, or flat files
 - Three-layer pre-push scanning (pre-commit hook + Claude Code PreToolUse + global pre-push)
