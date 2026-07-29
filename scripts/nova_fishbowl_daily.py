@@ -112,8 +112,13 @@ def main():
 
     tags = ["fishbowl", "watch-community", "drama", "daily"]
     desc = "Nova's running daily dispatch from The Fishbowl — the watch-community livestream drama scene she tracks."
-    nj.publish_hugo(title, body, "fishbowl", tags, desc, image_path=img, emoji="🐠",
-                    stable_slug=STABLE_SLUG)
+    # See nova_opinion_fishbowl.py: a guard rejection must fail the run, not be logged as
+    # a publish. Extra bite here — the evergreen slug means a silent no-op leaves YESTERDAY's
+    # article in place, so the site looks current while the job has actually been dead.
+    if not nj.publish_hugo(title, body, "fishbowl", tags, desc, image_path=img, emoji="🐠",
+                           stable_slug=STABLE_SLUG):
+        nj.log(f"[fishbowl-daily] NOT PUBLISHED — quality guard rejected: {title}")
+        return 1
     nj.git_push("fishbowl", title)
     nj.notify_slack("fishbowl", f"🐠 {title}", "Nova's daily Fishbowl dispatch updated.")
     nj.log(f"[fishbowl-daily] PUBLISHED (evergreen): {title}")

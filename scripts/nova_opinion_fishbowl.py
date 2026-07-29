@@ -103,7 +103,14 @@ def main():
 
     tags = ["opinion", "fishbowl", "watch-community", "daily"]
     desc = "Nova's daily opinion column on the latest churn in the Watch Fishbowl."
-    nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🗣️")  # dated post
+    # publish_hugo returns False when the quality guard rejects the draft. Ignoring that
+    # return meant this job logged "PUBLISHED" and exited 0 having written nothing —
+    # indistinguishable from a real success in scheduler_runs, which is precisely how a
+    # dead article job hides. Report the failure so the run is marked failed and retried.
+    if not nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🗣️"):
+        nj.log(f"[opinion-fishbowl] NOT PUBLISHED — quality guard rejected: {title}")
+        nj.git_push("opinions", title)   # still ship any pending deletions/cleanup
+        return 1
     nj.git_push("opinions", title)
     nj.notify_slack("opinions", f"🗣️ {title}", "Nova's daily Fishbowl opinion column.")
     nj.log(f"[opinion-fishbowl] PUBLISHED: {title}")
