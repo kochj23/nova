@@ -45,6 +45,17 @@ _num() { echo "$1" | sed 's/[^0-9]//g'; }
 sync_share() {
   name="$1"; src="$2"; dst="$3"
   echo "[$STAMP] === $name: $src/ -> $dst/ ===" >> "$LOG"
+  # GUARD (added 2026-07-30 after the 391GB local-orphan incident): $dst is the UNAS
+  # CIFS mountpoint. If that mount is DOWN, rsyncing here silently writes to the
+  # Synology's LOCAL disk instead of the UNAS — a silent mirror failure that also
+  # burns local space. Refuse to run the share unless $dst is a live CIFS mount.
+  if ! grep -q " ${dst} cifs " /proc/mounts; then
+    echo "[$STAMP] $name ABORT: $dst is NOT a live CIFS mount to the UNAS — refusing to write to local disk" >> "$LOG"
+    SUMMARY="${SUMMARY}[${name}: ABORTED — UNAS mount down, wrote nothing] "
+    OVERALL_RC=32
+    TOT_ERRORS=$(( TOT_ERRORS + 1 ))
+    return
+  fi
   t0=$(date +%s)
   out=$("$RSYNC" "${FLAGS[@]}" "$src/" "$dst/" 2>&1); rc=$?
   dur=$(( $(date +%s) - t0 ))
