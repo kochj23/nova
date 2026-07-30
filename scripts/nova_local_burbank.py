@@ -310,6 +310,7 @@ def get_wifi_ble_summary(hours=24):
     gets sent to the cloud LLM (that scrubbing happens in _scrub_obj downstream,
     but this function itself only returns aggregate numbers, nothing per-device)."""
     import psycopg2
+    open_ap_names = []
     try:
         conn = psycopg2.connect(NOVA_OPS_DSN)
         cur = conn.cursor()
@@ -321,10 +322,21 @@ def get_wifi_ble_summary(hours=24):
             FROM wifi_aps WHERE ts >= now() - interval '%s hours'
         """, (cutoff_hours,))
         neighbor_aps, our_aps, open_aps = cur.fetchone()
+        # NAME the open neighbor networks (Jordan 2026-07-30): an open SSID is already
+        # broadcasting itself to anyone with a phone, so listing it isn't a leak — and it
+        # might get an owner to fix it. Our own SSIDs and secured neighbors stay unnamed.
+        cur.execute("""
+            SELECT DISTINCT ssid FROM wifi_aps
+            WHERE ts >= now() - interval '%s hours' AND NOT is_ours
+              AND security ILIKE '%%open%%' AND ssid IS NOT NULL AND btrim(ssid) <> ''
+            ORDER BY ssid LIMIT 25
+        """, (cutoff_hours,))
+        open_ap_names = [r[0] for r in cur.fetchall()]
         cur.close()
         conn.close()
     except Exception:
         neighbor_aps = our_aps = open_aps = None
+        open_ap_names = []
 
     try:
         conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
@@ -342,7 +354,43 @@ def get_wifi_ble_summary(hours=24):
     if neighbor_aps is None and ble_devices is None:
         return None
     return {"neighbor_aps": neighbor_aps, "our_aps": our_aps, "open_aps": open_aps,
-           "ble_devices": ble_devices}
+           "open_ap_names": open_ap_names, "ble_devices": ble_devices}
+
+
+def get_lora_summary(hours=24):
+    """LoRa / Meshtastic mesh heard over the air in the last N hours.
+
+    Data comes from telemetry.mesh_nodes (nova_mesh_churn_report snapshots the T114's
+    NodeDB). This is the local long-range radio mesh — SoCalMesh infrastructure, ham
+    operators, solar nodes — all of it public LoRa broadcast, so naming nodes is fine.
+    Aggregate + a few notable named nodes; nothing sensitive."""
+    import psycopg2
+    try:
+        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT count(DISTINCT node_id),
+                   count(DISTINCT node_id) FILTER (WHERE hops_away = 0 OR hops_away IS NULL),
+                   min(hops_away) FILTER (WHERE hops_away > 0)
+            FROM telemetry.mesh_nodes WHERE last_heard >= now() - interval '%s hours'
+        """, (hours,))
+        total, direct, closest_hops = cur.fetchone()
+        # A handful of the named nodes heard, strongest signal first — the flavor of
+        # who's on the local mesh (SoCalMesh sites, callsigns, quirky node names).
+        cur.execute("""
+            SELECT DISTINCT ON (long_name) long_name, hops_away
+            FROM telemetry.mesh_nodes
+            WHERE last_heard >= now() - interval '%s hours'
+              AND long_name IS NOT NULL AND btrim(long_name) <> ''
+            ORDER BY long_name, snr DESC NULLS LAST LIMIT 12
+        """, (hours,))
+        notable = [(r[0], r[1]) for r in cur.fetchall()]
+        cur.close(); conn.close()
+    except Exception:
+        return None
+    if not total:
+        return None
+    return {"total": total, "direct": direct, "closest_hops": closest_hops, "notable": notable}
 
 
 def get_myburbank_arrests(news_items):
@@ -497,7 +545,7 @@ def get_bluetooth_patterns(days=21, min_days=3):
 # ── Article Generation ────────────────────────────────────────────────────────
 
 def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=None,
-                      arrests=None, ble_patterns=None):
+                      arrests=None, ble_patterns=None, lora=None):
     # Score each news item by locality so the article weights detail toward Burbank/nearby (not
     # Pasadena/DTLA). Same proximity principle as the scanner blotter, applied to ALL news.
     try:
@@ -606,7 +654,15 @@ def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=No
             bits.append(f"{wifi_ble['neighbor_aps']} distinct neighboring WiFi networks seen "
                        f"(plus {wifi_ble.get('our_aps', 0)} of our own)")
             if wifi_ble.get("open_aps"):
-                bits.append(f"{wifi_ble['open_aps']} of them broadcasting with no security at all")
+                names = wifi_ble.get("open_ap_names") or []
+                if names:
+                    name_list = ", ".join(f'"{n}"' for n in names)
+                    bits.append(f"{wifi_ble['open_aps']} of them broadcasting with no security at all — "
+                                f"by name: {name_list} (these SSIDs advertise themselves openly to anyone "
+                                f"nearby, so naming them here changes nothing except maybe nudging an owner "
+                                f"to lock it down — feel free to riff on the ones with funny/telling names)")
+                else:
+                    bits.append(f"{wifi_ble['open_aps']} of them broadcasting with no security at all")
         if wifi_ble.get("ble_devices") is not None:
             bits.append(f"{wifi_ble['ble_devices']} distinct Bluetooth LE devices heard")
         pattern_bits = []
@@ -631,8 +687,29 @@ def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=No
                    f"playfully about what it might be (a neighbor's smart device, a delivery route, a dog "
                    f"walker's phone) but don't claim certainty." if pattern_bits else
                    " Mention this only briefly (a sentence, maybe two) as neighborhood color.")
-                + " Never name a specific network name/BSSID/MAC, just the aggregate numbers/patterns.]\n"
+                + " Do NOT name secured networks, and never print a BSSID or MAC. The OPEN networks"
+                + " listed by name above ARE fine to name (they broadcast openly to anyone with a phone) —"
+                + " include those names, and it's fair game to riff on the funny/telling ones.]\n"
             )
+
+    lora_block = ""
+    if lora:
+        notable = lora.get("notable") or []
+        node_bits = ", ".join(
+            f'"{n}"' + (f" ({h} hop{"s" if h != 1 else ""})" if h else "")
+            for n, h in notable)
+        closest = lora.get("closest_hops")
+        lora_block = (
+            f"\n\n[LORA MESH — last 24h. Nova's Meshtastic node ('Rancho Adjacent', a Heltec T114) "
+            f"heard {lora['total']} distinct node(s) on the local long-range radio mesh"
+            + (f", the nearest ~{closest} hop(s) out" if closest else "")
+            + (f". A sampling of who was on the air: {node_bits}." if node_bits else ".")
+            + " This is the SoCal LoRa mesh — SoCalMesh.org infrastructure, ham operators, solar "
+            "test nodes, oddball hobbyist handles — all public LoRa broadcast, so naming nodes is "
+            "fine. Give it a short, genuinely-interested paragraph: this is Burbank's invisible "
+            "long-range radio neighborhood, the kind of thing that keeps working when the internet "
+            "doesn't. Note anything with a callsign or a funny node name.]\n"
+        )
 
     arrests_block = ""
     if arrests:
@@ -699,6 +776,7 @@ ADDITIONAL RULES FOR BURBANK DISPATCH:
 {scanner_block}
 {flights_block}
 {wifi_ble_block}
+{lora_block}
 {arrests_block}
 Write your daily Burbank dispatch. Today is {datetime.now().strftime('%A, %B %d, %Y')}."""
 
@@ -852,10 +930,14 @@ def main():
 
     log(f"Got {len(all_items)} news items")
 
+    lora = get_lora_summary()  # LoRa/Meshtastic mesh heard over the air (telemetry.mesh_nodes)
+    if lora:
+        log(f"LoRa mesh: {lora['total']} node(s) heard, closest ~{lora.get('closest_hops')} hop(s)")
+
     article = generate_article(
         all_items if all_items else [{"text": "No local news today", "source": "none", "created_at": ""}],
         scanner_blotter=scanner, flights=flights, wifi_ble=wifi_ble,
-        arrests=arrests, ble_patterns=ble_patterns)
+        arrests=arrests, ble_patterns=ble_patterns, lora=lora)
     log(f"Article generated: {len(article)} chars")
 
     if dry_run:
