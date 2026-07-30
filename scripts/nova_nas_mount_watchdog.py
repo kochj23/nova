@@ -47,7 +47,32 @@ def keychain(service):
         return ""
 
 
+def _nas_reachable():
+    """Does the NAS answer ICMP at all? Distinguishes a fixable mount problem from
+    a NAS that is entirely down."""
+    r = subprocess.run(["ping", "-c", "1", "-t", "2", NAS_IP], capture_output=True)
+    return r.returncode == 0
+
+
 def main():
+    # If the NAS itself is unreachable, no remount can succeed — this is a NAS-down
+    # condition, not a mount the watchdog can fix. Alert ONCE (deduped, wide window)
+    # and exit 0, so a multi-hour hard outage doesn't emit a scheduler failure every
+    # run (that was the 64-consecutive-failure alert storm on 2026-07-30, while the
+    # Synology was hung link-up but IP-dead — recoverable only by a power-cycle).
+    if not _nas_reachable():
+        log(f"NAS {NAS_IP} unreachable (ICMP) — nothing to remount; alerting (deduped)")
+        try:
+            from nova_notify import notify
+            notify(f"NAS {NAS_IP} unreachable — SMB mounts can't recover until it's back",
+                   body="ICMP down: the box is not answering at all (may be hung link-up / needs a "
+                        "power-cycle). Mounts will auto-recover when it returns.",
+                   level="warning", category="storage", source="nova_nas_mount_watchdog.py",
+                   dedup_key="nas-unreachable",
+                   meta={"host": "synology-nas", "dedup_window_s": 21600})
+        except Exception:
+            pass
+        return 0
     rc = 0
     for mp, share in MOUNT_POINTS.items():
         rc |= _ensure(mp, share)
