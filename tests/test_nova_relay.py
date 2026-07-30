@@ -281,7 +281,22 @@ class TestSecurityAuth(_RelayCase):
                 headers={"X-Relay-Local-Secret": "topsecretvalue"},
                 peer="192.168.1.50"))
         self.assertIsNone(ident)
-        self.assertIn("Cf-Access-Jwt-Assertion", err)
+        # In pre-Access testing mode a non-loopback peer is rejected (message wording
+        # changed with the 2026-07-30 fix; the security property — rejected — is what matters).
+        self.assertTrue(err)
+
+    def test_access_configured_disables_loopback_secret_bypass(self):
+        """Finding-2 fix: once Access (aud) is configured, a valid local secret with
+        NO JWT is rejected — cloudflared makes tunnel traffic look like 127.0.0.1, so
+        the secret path must not substitute for an Access identity in production."""
+        with patch.object(_mod, "config",
+                          lambda: {"team_domain": "t.cloudflareaccess.com", "aud": "abc123"}), \
+             patch.object(_mod, "_keychain", lambda s: "topsecretvalue"):
+            ident, err = identify(FakeHandler(
+                headers={"X-Relay-Local-Secret": "topsecretvalue"},
+                peer="127.0.0.1"))
+        self.assertIsNone(ident)
+        self.assertIn("JWT required", err)
 
     def test_jwt_without_access_config_is_rejected(self):
         ident, err = identify(FakeHandler(

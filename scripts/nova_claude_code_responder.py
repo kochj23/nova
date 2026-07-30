@@ -111,24 +111,42 @@ SECURITY_PREAMBLE = (
 )
 
 
-def run_claude_code(message, allow_edits=False, cwd=None):
-    """Run one message through a persistent Claude Code session. Returns reply text.
+def run_claude_code(message, allow_edits=False, cwd=None, external=False):
+    """Run one message through a Claude Code session. Returns reply text.
 
-    First call seeds the session with --session-id; subsequent calls --resume it so
-    conversation context is retained, exactly like the interactive bridge.
+    Trust tiers (security review 2026-07-30):
+      * external=True  — untrusted, from nova_relay. FRESH isolated session per call
+        (no shared context), and tools limited to Read/Grep/Glob with NO network-egress
+        tool (WebFetch/WebSearch removed). Rationale: with no egress tool, anything the
+        turn learns can only leave via the REPLY, which nova_relay.scrub_outbound filters
+        — closing the "Read a secret, WebFetch it to attacker" exfil path that bypassed
+        the scrubber entirely. And a fresh session means an external turn can never plant
+        context that a later privileged (allow_edits) turn would resume.
+      * allow_edits=True — Jordan's own privileged use (Slack/LAN). acceptEdits + journal.
+      * else — Jordan's read-only use. Keeps WebFetch/WebSearch (his replies don't cross
+        to a monitored device and he is not an exfil threat).
+    Internal (non-external) turns keep the persistent session for conversational context.
     """
-    started = _session_started()
     cmd = [CLAUDE_BIN, "-p", "--output-format", "json",
            "--append-system-prompt", SECURITY_PREAMBLE]
-    if started:
-        cmd += ["--resume", SESSION_UUID]
+
+    if external:
+        # Isolated, single-use session — never resumed, never shared across trust tiers.
+        cmd += ["--session-id", str(uuid.uuid4())]
     else:
-        cmd += ["--session-id", SESSION_UUID]
+        started = _session_started()
+        if started:
+            cmd += ["--resume", SESSION_UUID]
+        else:
+            cmd += ["--session-id", SESSION_UUID]
 
     # Conservative default: read-only (no file edits). Editing requires explicit
     # opt-in via --allow-edits. The prompt is fed on stdin, NOT as a positional arg,
     # so it can never be swallowed by the variadic --allowedTools list.
-    if allow_edits:
+    if external:
+        # Untrusted: read/search the local tree, but NO egress tool and no Bash.
+        cmd += ["--allowedTools", "Read", "Grep", "Glob"]
+    elif allow_edits:
         # Scoped execution — NOT --dangerously-skip-permissions (which BYPASSES the deny-list).
         # acceptEdits auto-approves file edits so it can write the journal + run git, while the
         # deny-list in ~/.openclaw/.claude/settings.json (loaded via cwd) blocks reads of
@@ -148,14 +166,18 @@ def run_claude_code(message, allow_edits=False, cwd=None):
     except FileNotFoundError:
         return f"(claude CLI not found at {CLAUDE_BIN})"
 
-    if not started and proc.returncode == 0:
+    # Only the persistent (internal) session tracks a "started" marker; external
+    # runs use a fresh single-use session and never persist state.
+    if not external and not started and proc.returncode == 0:
         _mark_session_started()
 
     out = proc.stdout.strip()
     if not out:
         err = proc.stderr.strip()[:400]
-        # If --resume failed (e.g. session expired), reset and let next call re-seed.
-        if "resume" in err.lower() or "session" in err.lower():
+        # If --resume failed (e.g. session expired), reset the PERSISTENT session so
+        # the next internal call re-seeds. External runs have no persistent state to
+        # reset (and must not clobber the internal session's marker).
+        if not external and ("resume" in err.lower() or "session" in err.lower()):
             _reset_session()
         return f"(Claude Code produced no output; rc={proc.returncode} err={err})"
 
@@ -244,9 +266,10 @@ def process_once(conn, token, last_id, allow_edits=False, post_slack=True):
         msg_external = bool(meta.get("external")) or str(meta.get("origin", "")).startswith("external/")
         effective_edits = allow_edits and not msg_external
         if msg_external:
-            log(f"  #{row['id']} is EXTERNAL (origin={meta.get('origin')}) — forcing read-only tools")
+            log(f"  #{row['id']} is EXTERNAL (origin={meta.get('origin')}) — isolated session, "
+                f"read-only tools, no egress")
         log(f"processing #{row['id']}: {msg[:70]} (origin={origin_channel})")
-        reply = run_claude_code(msg, allow_edits=effective_edits)
+        reply = run_claude_code(msg, allow_edits=effective_edits, external=msg_external)
         write_reply(conn, reply, row["id"])
         if post_slack:
             post_to_slack(token, f":robot_face: *Claude Code:* {reply}",

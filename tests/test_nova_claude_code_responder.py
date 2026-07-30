@@ -520,6 +520,13 @@ class TestFunctional(unittest.TestCase):
         self.assertIn("--allowedTools", argv)
         self.assertNotIn("--permission-mode", argv)
         self.assertNotIn("Bash", argv)
+        # External (2026-07-30 hardening): NO network-egress tool, so a read secret
+        # can only leave via the reply channel where scrub_outbound filters it.
+        self.assertNotIn("WebFetch", argv)
+        self.assertNotIn("WebSearch", argv)
+        # External runs use a fresh single-use session, never the shared persistent one.
+        self.assertNotIn("--resume", argv)
+        self.assertNotIn(_mod.SESSION_UUID, argv)
         # and the reply still gets written back for the relay to poll
         inserts = [(s, p) for s, p in conn.executed
                    if "INSERT INTO claude_messages" in s]
@@ -548,6 +555,8 @@ class TestFunctional(unittest.TestCase):
         self.assertIn("--allowedTools", argv)
         self.assertNotIn("--dangerously-skip-permissions", argv)
         self.assertNotIn("--permission-mode", argv)
+        self.assertNotIn("WebFetch", argv)   # no egress even under an injection attempt
+        self.assertNotIn("Bash", argv)
 
     def test_mixed_batch_caps_only_the_external_message(self):
         conn = FakeConn([_row(rid=3, metadata={}),

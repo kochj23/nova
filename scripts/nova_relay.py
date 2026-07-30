@@ -155,13 +155,25 @@ def _jwks(team_domain):
 
 
 def identify(handler):
-    """Return (identity, error). Identity is a short friendly device name."""
+    """Return (identity, error). Identity is a short friendly device name.
+
+    PRODUCTION vs TESTING is decided by whether Access is configured (`aud` set):
+      * aud configured  -> the ONLY accepted auth is a Cloudflare-Access JWT verified
+        here. The X-Relay-Local-Secret path is DISABLED. This is the fix for the
+        cloudflared-collapses-client-IP-to-loopback bypass (security review 2026-07-30):
+        cloudflared dials the origin from 127.0.0.1, so a peer==loopback check cannot
+        distinguish genuine local traffic from tunnel traffic. Once published, a shared
+        secret must never substitute for an Access identity.
+      * aud NOT configured -> pre-publish testing only. The relay is not on the tunnel
+        yet, so 127.0.0.1 really is local; accept the loopback + shared-secret path.
+    """
     cfg = config()
+    access_configured = bool(cfg.get("team_domain") and cfg.get("aud"))
     tok = handler.headers.get("Cf-Access-Jwt-Assertion")
     if tok:
-        team, aud = cfg.get("team_domain"), cfg.get("aud")
-        if not team or not aud:
+        if not access_configured:
             return None, "relay not configured for Access (team_domain/aud missing)"
+        team, aud = cfg["team_domain"], cfg["aud"]
         try:
             import jwt
             from jwt import PyJWKClient
@@ -173,7 +185,14 @@ def identify(handler):
         # Service tokens carry common_name; human SSO carries email.
         who = claims.get("common_name") or claims.get("email") or claims.get("sub") or "unknown"
         return cfg.get("devices", {}).get(who, who)[:64], None
-    # Loopback + shared secret (pre-Access testing only).
+
+    # No JWT presented.
+    if access_configured:
+        # Published/production: JWT is mandatory. The loopback-secret path is OFF so
+        # tunnel traffic (which arrives as 127.0.0.1) can never bypass Access.
+        return None, "Cloudflare-Access JWT required (loopback-secret disabled once Access is configured)"
+
+    # Pre-Access testing: genuine loopback + shared secret only.
     peer = handler.client_address[0]
     if peer in ("127.0.0.1", "::1"):
         secret = _keychain("nova-relay-local-secret")
@@ -181,7 +200,7 @@ def identify(handler):
         if secret and given and _consteq(given, secret):
             return "local-test", None
         return None, "loopback requires a valid X-Relay-Local-Secret"
-    return None, "no Cf-Access-Jwt-Assertion (requests must arrive via Cloudflare Access)"
+    return None, "relay is in pre-Access testing mode and only accepts loopback callers"
 
 
 def _consteq(a, b):
