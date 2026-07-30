@@ -162,10 +162,17 @@ def get_health():
             "num_adopted": subsys.get("num_adopted", 0),
             "num_ap": subsys.get("num_ap", 0),
             "num_sw": subsys.get("num_sw", 0),
-            "num_sta": subsys.get("num_sta", 0),
+            # UniFi OS 5.1.x / Network 9.x dropped per-subsystem `num_sta` for wlan/lan
+            # (only `wan` still carries it) and split the count into num_user/guest/iot.
+            # Fall back to that sum so WLAN/LAN report real client counts, not 0.
+            "num_sta": subsys.get("num_sta") if subsys.get("num_sta") is not None
+                       else (subsys.get("num_user", 0) + subsys.get("num_guest", 0) + subsys.get("num_iot", 0)),
             "tx_bytes": subsys.get("tx_bytes-r", 0),
             "rx_bytes": subsys.get("rx_bytes-r", 0),
-            "latency": subsys.get("latency", 0),
+            # `wan` no longer has a top-level `latency`; the real figure lives under
+            # uptime_stats.WAN.latency_average. `www` still has `latency` directly.
+            "latency": subsys.get("latency") if subsys.get("latency") is not None
+                       else (subsys.get("uptime_stats", {}) or {}).get("WAN", {}).get("latency_average", 0),
             "uptime": subsys.get("uptime", 0),
             "drops": subsys.get("drops", 0),
             "xput_down": subsys.get("xput_down", 0),
@@ -332,7 +339,12 @@ def format_health_report(health, devices, clients, problems):
         lines.append(f"  WLAN: {wlan.get('status', '?')} ({wlan.get('num_sta', '?')} clients)")
         lines.append(f"  LAN: {lan.get('status', '?')}")
 
-    lines.append(f"  Devices: {len(devices)} | Clients: {len(clients)}")
+    # Total client count: prefer the authoritative figure from the health call
+    # (wan.num_sta = total stations) over len(clients). stat/sta occasionally returns
+    # a near-empty list from the .2 scheduler context (the "Clients: 1" bug); the
+    # health total is reliable on every host.
+    total_clients = (health or {}).get("wan", {}).get("num_sta") or len(clients)
+    lines.append(f"  Devices: {len(devices)} | Clients: {total_clients}")
 
     if problems:
         lines.append("")
