@@ -288,6 +288,7 @@ async def build_snapshot(device_name, device_ip):
     cpu_headroom = max(0, 100.0 * (1.0 - load5 / cores))
 
     mem_total, mem_used, mem_free = None, None, None
+    swap_headroom = None   # % of swap still free; None = unknown/macOS (don't gate on it)
     if device_name in MACOS_HOSTS:
         host_info = MACOS_HOSTS[device_name]
         if host_info["local"]:
@@ -299,16 +300,31 @@ async def build_snapshot(device_name, device_ip):
             mem_row = await conn.fetchrow("""
                 SELECT
                     (SELECT metric_value FROM snmp_metrics WHERE device_name=$1 AND metric_name='mem_total_real' ORDER BY timestamp DESC LIMIT 1) as total,
-                    (SELECT metric_value FROM snmp_metrics WHERE device_name=$1 AND metric_name='mem_avail_real' ORDER BY timestamp DESC LIMIT 1) as avail
+                    (SELECT metric_value FROM snmp_metrics WHERE device_name=$1 AND metric_name='mem_avail_real' ORDER BY timestamp DESC LIMIT 1) as avail,
+                    (SELECT metric_value FROM snmp_metrics WHERE device_name=$1 AND metric_name='mem_total_swap' ORDER BY timestamp DESC LIMIT 1) as swap_total,
+                    (SELECT metric_value FROM snmp_metrics WHERE device_name=$1 AND metric_name='mem_avail_swap' ORDER BY timestamp DESC LIMIT 1) as swap_avail
             """, device_name)
         if mem_row and mem_row["total"] and mem_row["total"] > 0:
             mem_total = mem_row["total"] / 1024.0
             mem_free = (mem_row["avail"] or 0) / 1024.0
             mem_used = mem_total - mem_free
+            # Net-SNMP's mem_avail_real is MemFree — it EXCLUDES reclaimable buffers/cache,
+            # so a Postgres/cache-heavy box reads ~1-3% "free" while the kernel's real
+            # MemAvailable is fine. Swap is the honest pressure signal: a box only actually
+            # struggles when it's exhausting swap. Gate the memory alert on that so cache
+            # doesn't cry wolf (nova-core5 flapped "critical 1%" all of 2026-07-30 with
+            # swap untouched), while a genuinely swap-full box (nova-core did) still alerts.
+            if mem_row["swap_total"] and mem_row["swap_total"] > 0:
+                swap_headroom = 100.0 * ((mem_row["swap_avail"] or 0) / mem_row["swap_total"])
+            else:
+                swap_headroom = 100.0   # no swap configured — don't manufacture pressure
 
     mem_headroom = None
     if mem_total and mem_total > 0:
         mem_headroom = 100.0 * (mem_free / mem_total)
+    # For Linux SNMP hosts, only let low free-memory escalate when swap is ALSO under
+    # pressure (>60% used); otherwise the low "free" is just cache and the box is healthy.
+    _swap_pressured = swap_headroom is not None and swap_headroom <= 40
 
     disks = []
     if device_name in MACOS_HOSTS:
@@ -333,10 +349,15 @@ async def build_snapshot(device_name, device_ip):
     disk_worst = max((d["percent"] for d in disks), default=0)
 
     status = "ok"
-    mem_matters = device_name not in MEM_CACHE_HOSTS
-    if cpu_headroom < 20 or (mem_matters and mem_headroom is not None and mem_headroom < 15) or disk_worst > 85:
+    # mem_matters: a host whose "free" memory is meaningfully low. For Linux SNMP hosts
+    # that additionally requires swap pressure (see swap_headroom above), so reclaimable
+    # cache never trips the alert. macOS hosts (swap_headroom is None) keep the old check.
+    _mem_lowfree = mem_headroom is not None and device_name not in MEM_CACHE_HOSTS
+    _linux = swap_headroom is not None
+    mem_matters = _mem_lowfree and (_swap_pressured or not _linux)
+    if cpu_headroom < 20 or (mem_matters and mem_headroom < 15) or disk_worst > 85:
         status = "warn"
-    if cpu_headroom < 10 or (mem_matters and mem_headroom is not None and mem_headroom < 5) or disk_worst > 92:
+    if cpu_headroom < 10 or (mem_matters and mem_headroom < 5) or disk_worst > 92:
         status = "crit"
 
     snapshot = {
