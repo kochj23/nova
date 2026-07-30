@@ -1354,7 +1354,12 @@ def generate_dream(topic: str, memories: list[dict]) -> tuple[str, str]:
     setting = parts[2] if len(parts) > 2 else "somewhere that keeps changing"
     form = parts[3] if len(parts) > 3 else "One continuous first-person narrative."
 
-    memory_block = "\n".join(f"- {m.get('text', '')[:150]}" for m in memories[:25])
+    # Use ALL of tonight's gathered memories (was capped at 25), numbered so the dream
+    # can thread many of them rather than fixating on one or two.
+    mems = [m for m in memories if (m.get("text") or "").strip()]
+    memory_block = "\n".join(f"{i}. {m.get('text', '')[:200].strip()}"
+                             for i, m in enumerate(mems, 1))
+    n_mem = len(mems)
 
     # A randomized title instruction so titles stop converging on
     # "🌙 Dream Journal Entry" every single time.
@@ -1378,6 +1383,11 @@ SEED SETTING (use it as a starting point, then let it mutate): {setting}
 NARRATIVE FORM (obey this structure — it changes every night): {form}
 
 DREAM RULES:
+- WEAVE THE WHOLE POOL: tonight you have {n_mem} memory fragments below. Thread as many of
+  them as can cohere through the dream — each surfacing as a TRANSFORMED image, object,
+  phrase, figure, or setting, never literal. A dream is associative, so density is right:
+  don't fixate on one or two fragments and drop the rest. Aim for many of the {n_mem} to
+  leave a trace somewhere in the dream.
 - Draw from the memory fragments but TRANSFORM them — nothing literal, everything oblique.
 - The dreamer (you) should not be aware she's dreaming. No meta-commentary.
 - Ground it in ONE or TWO concrete sensory channels chosen for THIS dream (don't reach for the same senses every time — pick from: temperature, weight, sound, smell, motion, light, texture — and commit).
@@ -1393,7 +1403,7 @@ TITLE: On the FIRST line, give a title that is {title_style}. Do NOT title it "D
 
 Begin directly. No preamble.""")
 
-    user = f"""Fragments from today's waking mind (transform these, don't transcribe them):
+    user = f"""All {n_mem} fragments from today's waking mind (weave as many as cohere, transform them, don't transcribe):
 {memory_block}
 
 Dream now — and make it nothing like the last one."""
@@ -1456,21 +1466,33 @@ def generate_art(topic: str, memories: list[dict]) -> tuple[str, str]:
     style_name = parts[0]
     style_directive = parts[1] if len(parts) > 1 else ""
     theme = parts[2] if len(parts) > 2 else ""
-    memory_block = "\n".join(f"- {m.get('text', '')[:150]}" for m in memories[:15])
+    # Use ALL of today's memories (was capped at 15) with a larger per-memory budget, and
+    # number them so the model can weave several together rather than latch onto one.
+    mems = [m for m in memories if (m.get("text") or "").strip()]
+    memory_block = "\n".join(f"{i}. {m.get('text', '')[:220].strip()}"
+                             for i, m in enumerate(mems, 1))
+    n_mem = len(mems)
 
     system = system_prompt(f"""
 FORMAT: ART CORNER — generating work in {style_name} style.
 
 OUTPUT FORMAT (exactly):
 CONCEPT: [one sentence describing the scene/subject]
-PROMPT: [detailed image generation prompt, 50-80 words, incorporating the style: {style_directive}]
+PROMPT: [detailed image generation prompt, 60-90 words, incorporating the style: {style_directive}]
 TITLE: [artistic title for the piece]
 STATEMENT: [150-250 word artist's statement explaining the piece, its inspiration, and technique — in YOUR voice]
 
-Draw inspiration from the memories but create something visually striking and original.
-The prompt must be highly specific and painterly/photographic — no abstract platitudes.""")
+SYNTHESIS RULE (important): the image must draw on the FULL SET of {n_mem} memories below,
+not one or two of them. Find the connective visual thread across as many of them as can
+cohere, and compose a single layered scene in which several distinct memories appear as
+concrete visual elements — objects, motifs, figures, background details, colour cues. Aim
+for a rich, dense composition where a viewer who knew the memories could point to multiple
+of them in the frame. Do NOT illustrate a single memory and ignore the rest. In the
+STATEMENT, name the specific memories that became specific elements of the picture, so the
+words and the image agree.
+The PROMPT must be highly specific and painterly/photographic — no abstract platitudes.""")
 
-    user = f"""Today's style: {style_name}\nInspiration memories:\n{memory_block}\n\nCreate."""
+    user = f"""Today's style: {style_name}\nAll {n_mem} inspiration memories (weave as many as cohere into one layered image):\n{memory_block}\n\nCreate."""
 
     result = call_openrouter(system, user, max_tokens=2000)
     if not result:
