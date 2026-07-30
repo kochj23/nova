@@ -30,6 +30,21 @@ FLAGS=(-rlt --stats --human-readable --no-perms --no-owner --no-group
        --exclude='#recycle' --exclude='@eaDir' --exclude='#snapshot' --exclude='.DS_Store'
        --exclude='GoogleDriveBackups/Pics/Pictures/.com-apple-bird-noname-*')
 
+UNAS_CREDS=/root/.unascreds
+# Self-heal: bring the UNAS CIFS mount up if it dropped (e.g. after a reboot) BEFORE
+# we try to write. The mountpoint is chattr +i (immutable) when unmounted, so even if
+# this fails, the sync_share guard + the immutable dir make a local-disk fill
+# impossible — this just restores the mirror automatically instead of waiting for a
+# manual remount. (2026-07-30, with the immutable-mountpoint + guard defense.)
+ensure_mount() {
+  local unc="$1" mp="$2"
+  grep -q " ${mp} cifs " /proc/mounts && return 0
+  mount -t cifs "$unc" "$mp" -o "credentials=${UNAS_CREDS},iocharset=utf8,vers=3.0" 2>/dev/null
+  grep -q " ${mp} cifs " /proc/mounts
+}
+ensure_mount //192.168.1.69/nas      /volume1/docker/nas
+ensure_mount //192.168.1.69/External /volume1/docker/external
+
 SUMMARY=""
 OVERALL_RC=0
 # Machine-readable totals accumulated across shares (for telemetry.backup_runs).
