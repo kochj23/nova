@@ -107,6 +107,23 @@ def measure(e):
             code = r.stdout.strip()
             ok = code.startswith("2") or code.startswith("3")
             return (0.0 if ok else None), (1 if ok else 0), f"HTTP {code}"
+
+        if kind == "http_contains":
+            # target: "<url>||<substring>", where {today} expands to YYYY-MM-DD.
+            # Checks the PUBLISHED artifact, which is the only thing that proves an
+            # article actually reached readers. A directory mtime cannot: it stays
+            # fresh from yesterday's file and hides a missed morning for 26h — which
+            # is exactly how 2026-07-30's ops articles went unnoticed while stranded
+            # on a detached HEAD.
+            url, _, needle = target.partition("||")
+            needle = needle.replace("{today}", datetime.now().date().isoformat())
+            r = subprocess.run(["curl", "-sL", "-m", "20", url],
+                               capture_output=True, text=True, timeout=40)
+            if r.returncode != 0:
+                return None, 0, f"fetch failed rc={r.returncode}"
+            hits = r.stdout.count(needle)
+            return (0.0 if hits else None), hits, (
+                f"found '{needle}'" if hits else f"'{needle}' NOT on page")
     except Exception as ex:
         return None, 0, f"check error: {str(ex).strip()[:90]}"
     return None, 0, f"unknown kind {kind}"

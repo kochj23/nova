@@ -479,11 +479,118 @@ description: "{description.replace('"', "'")}"
     return True
 
 
+# Files every host regenerates in full each day (rolling "latest state" documents).
+# They conflict on every concurrent write, and a textual merge of them is meaningless —
+# the newer regeneration always wins. Auto-resolved so a routine collision can never
+# wedge the repo. (2026-07-30: a conflict here stalled a rebase and 8 articles were
+# then committed onto a detached HEAD, silently, over ~3 hours.)
+ROLLING_PATHS = (
+    "content/fishbowl/the-fishbowl.md",
+    "static/images/fishbowl/the-fishbowl.webp",
+)
+
+
+def _git(args, timeout=60):
+    return subprocess.run(["git", *args], cwd=HUGO_ROOT, capture_output=True,
+                          text=True, timeout=timeout)
+
+
+def _repo_wedged() -> str:
+    """Return a reason string if the repo is mid-operation or detached, else ''."""
+    g = HUGO_ROOT / ".git"
+    if (g / "rebase-merge").exists() or (g / "rebase-apply").exists():
+        return "rebase in progress"
+    if (g / "MERGE_HEAD").exists():
+        return "merge in progress"
+    if (g / "CHERRY_PICK_HEAD").exists():
+        return "cherry-pick in progress"
+    if _git(["symbolic-ref", "-q", "HEAD"]).returncode != 0:
+        return "detached HEAD"
+    return ""
+
+
+def _unwedge(reason: str) -> bool:
+    """Recover a wedged repo WITHOUT ever discarding commits.
+
+    Any commits sitting on the detached HEAD are first pinned to a rescue branch,
+    then the in-flight operation is aborted and we return to the branch. Publishing
+    can continue immediately; the stranded commits are reported for integration.
+    """
+    log(f"REPO WEDGED ({reason}) — repairing before publish")
+    head = _git(["rev-parse", "HEAD"]).stdout.strip()[:12]
+    rescue = f"rescue-{today_str()}-{head}"
+    _git(["branch", rescue, "HEAD"])          # no-op if it already exists
+    for abort in (["rebase", "--abort"], ["merge", "--abort"], ["cherry-pick", "--abort"]):
+        _git(abort)
+    if _git(["symbolic-ref", "-q", "HEAD"]).returncode != 0:
+        _git(["checkout", "main"])
+    still = _repo_wedged()
+    stranded = _git(["rev-list", "--count", f"origin/main..{rescue}"]).stdout.strip() or "?"
+    try:
+        from nova_notify import notify
+        notify(
+            "Journal repo was wedged — publishing had silently stopped",
+            body=(f"Reason: {reason}. Recovered on {NODE_NAME if 'NODE_NAME' in globals() else 'this host'}.\n"
+                  f"{stranded} commit(s) were stranded and are pinned to branch `{rescue}` "
+                  f"(nothing discarded) — they need integrating into main.\n"
+                  f"Repo state now: {still or 'clean, on branch'}"),
+            level="warning", category="journal", source="nova_journal.py",
+            dedup_key="journal-repo-wedged",
+        )
+    except Exception:
+        pass
+    return not still
+
+
+def _resolve_rolling_conflicts() -> bool:
+    """Auto-resolve conflicts limited to ROLLING_PATHS, keeping OUR fresh regeneration.
+
+    Returns False if there was nothing to resolve or a real article conflicted — either
+    way the caller must not assume a rebase is now finishable.
+
+    NOTE ON --theirs: this runs during `git pull --rebase`, which replays OUR local
+    commits on top of upstream. That inverts the labels — "ours" is the upstream/origin
+    side and "theirs" is the local commit being replayed. Keeping our newly generated
+    file therefore means --theirs. Using --ours here silently published origin's older
+    copy and threw away the article this run just wrote.
+    """
+    conflicted = sorted({p for p in
+                         _git(["diff", "--name-only", "--diff-filter=U"]).stdout.split() if p})
+    if not conflicted:
+        return False
+    unexpected = [p for p in conflicted if p not in ROLLING_PATHS]
+    if unexpected:
+        log(f"Conflicts outside rolling files, not auto-resolving: {unexpected[:5]}")
+        return False
+    for p in conflicted:
+        if _git(["checkout", "--theirs", "--", p]).returncode != 0:
+            log(f"Could not take our regenerated copy of {p}")
+            return False
+        _git(["add", p])
+    # Belt and braces: never let a marker reach the site.
+    for p in conflicted:
+        fp = HUGO_ROOT / p
+        try:
+            if fp.suffix in (".md", ".txt") and "<<<<<<<" in fp.read_text(errors="ignore"):
+                log(f"Conflict markers still present in {p} after resolve — bailing out")
+                return False
+        except OSError:
+            pass
+    log(f"Auto-resolved {len(conflicted)} rolling-file conflict(s), keeping our newer copy")
+    return True
+
+
 def git_push(section: str, title: str):
     """Stage, commit, push the Hugo repo. Clears stale lock files."""
     section = _canon_section(section)
     try:
         import time as _time
+        # A wedged repo makes `git add -A` stage conflict markers and commit them onto
+        # nowhere. Always check FIRST — this is the guard whose absence cost 8 articles.
+        wedged = _repo_wedged()
+        if wedged and not _unwedge(wedged):
+            log("Repo still wedged after repair attempt — refusing to commit")
+            return
         lock_file = HUGO_ROOT / ".git" / "index.lock"
         if lock_file.exists():
             lock_age = _time.time() - lock_file.stat().st_mtime
@@ -509,15 +616,42 @@ def git_push(section: str, title: str):
                 return
             log(f"Commit failed: {result.stderr[:200]}")
             return
-        result = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=180)
+        result = _git(["push"], timeout=180)
         if result.returncode != 0:
             # Another daily writer pushed first (non-fast-forward). Rebase on top and retry
             # once, so concurrent journal jobs don't strand each other's commits.
             log(f"Push rejected, rebasing + retrying: {result.stderr[:120]}")
-            subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=180)
-            result = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=180)
+            pull = _git(["pull", "--rebase"], timeout=180)
+            if pull.returncode != 0:
+                # The rebase STOPPED — historically this was ignored, which left the repo
+                # mid-rebase for every later job to commit into. Resolve the routine case
+                # (rolling files) and finish; otherwise back all the way out.
+                if _resolve_rolling_conflicts():
+                    cont = subprocess.run(["git", "rebase", "--continue"], cwd=HUGO_ROOT,
+                                          capture_output=True, text=True, timeout=120,
+                                          env={**os.environ, "GIT_EDITOR": "true"})
+                    if cont.returncode != 0:
+                        log(f"rebase --continue failed: {cont.stderr[:200]}")
+                        _unwedge("rebase --continue failed")
+                        return
+                else:
+                    _unwedge("pull --rebase conflict needing a human")
+                    return
+            result = _git(["push"], timeout=180)
             if result.returncode != 0:
-                log(f"Push still failed after rebase: {result.stderr[:200]} — commit is safe, ships next run")
+                # Do NOT claim the commit is safe — it is only safe if the repo is sane.
+                msg = f"Push still failed after rebase: {result.stderr[:200]}"
+                log(msg)
+                try:
+                    from nova_notify import notify
+                    ahead = _git(["rev-list", "--count", "origin/main..HEAD"]).stdout.strip() or "?"
+                    notify("Journal push failing — articles are not reaching the site",
+                           body=f"{msg}\n{ahead} commit(s) unpushed. Repo state: "
+                                f"{_repo_wedged() or 'clean'}",
+                           level="warning", category="journal", source="nova_journal.py",
+                           dedup_key="journal-push-failing")
+                except Exception:
+                    pass
             else:
                 log("Pushed to GitHub after rebase — deploy triggered")
         else:
