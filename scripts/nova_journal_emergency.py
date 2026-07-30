@@ -497,6 +497,15 @@ BREAKING LA COUNTY EMERGENCY RULES:
   Southern California. If the items are about anywhere else (other countries/states,
   Northern California), there is NO breaking local emergency — respond with exactly the
   single word SKIP and nothing else. Never write a breaking post about an out-of-area event.
+- EMERGENCY GATE (hard rule): the item must be an ACTIVE emergency requiring immediate
+  public action RIGHT NOW — an evacuation order, an active/spreading fire, a flood, an NWS
+  Warning in effect, a major incident in progress. Policy, political, funding, lawsuit,
+  utility-cost, recap, anniversary, aftermath, or "officials are planning/considering/
+  helping" stories are NOT breaking emergencies, no matter how many emergency-sounding
+  words they contain (keyword + geofence let them through — that is exactly what this gate
+  is here to catch). If NONE of the items is an active emergency, respond with exactly the
+  single word SKIP and nothing else. Do NOT publish your reasoning about whether it
+  qualifies: either it is an active emergency you report straight, or you SKIP silently.
 - Something genuinely notable just happened in LA County (evac order, active
   fire/flood, NWS Warning, major incident). This goes out NOW.
 - Lead with the USEFUL, STRAIGHT facts: what, where, who's affected, what to do
@@ -527,7 +536,18 @@ Write the breaking emergency article for the local section. Facts and what-to-do
 
     body = _strip_meta_preamble(call_openrouter(system, user, model=MODEL, max_tokens=2500, temperature=0.7))
     if body and body.strip().upper().startswith("SKIP"):
-        log("Breaking: model judged items non-local (SKIP) — not publishing")
+        log("Breaking: model returned SKIP (geography or emergency gate) — not publishing")
+        return
+    # Belt-and-suspenders: even when the model narrates its gate reasoning instead of
+    # emitting a clean SKIP, do not publish that reasoning as an article. This is the
+    # exact failure that shipped the 2026-07-30 "the geography gate passes... emergency
+    # gate fails" piece — the model's verdict must be a suppression, never prose.
+    _gate_reasoning = re.compile(
+        r"(geography|emergency) gate\b|not an active emergency|doesn'?t (meet|fit|qualify|pass)|"
+        r"fails the (emergency|breaking) (gate|criteria|test)|isn'?t (a )?breaking",
+        re.IGNORECASE)
+    if body and _gate_reasoning.search(body[:700]):
+        log("Breaking: opening reads as gate-evaluation/non-emergency reasoning — suppressed")
         return
     if not body or len(body) < 150:
         log("Breaking generation failed or too short")
