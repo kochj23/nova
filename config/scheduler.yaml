@@ -39,7 +39,9 @@ tasks:
 
   app_watchdog:
     script: nova_app_watchdog.py
-    enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
+    # re-enabled on .6 2026-07-29: macOS-only task (open -a restarts, local :11434/374xx
+    # checks) — was wrongly offloaded to .2 scheduler-core in Wave A (2026-07-14), where
+    # no local Ollama exists -> week of flapping "App Watchdog Alert (host studio)" incidents.
     schedule: every 5m
     timeout: 60
     overlap: skip
@@ -1438,5 +1440,22 @@ tasks:
     script: nova_llm_budget_guard.py
     enabled: false  # Wave A -> .2 scheduler-core (2026-07-14)
     schedule: cron 5 0 * * *      # 00:05 daily — ratchet the OpenRouter key ceiling to (today's usage + $10)
+    timeout: 60
+    overlap: skip
+
+  # Meshtastic node tracking (2026-07-29) — runs on .6, NOT nova-core: the
+  # collector reaches the mesh bridge via mDNS (jordans-mac-mini.local),
+  # which resolves natively on macOS.
+  mesh_churn_collect:
+    script: nova_mesh_churn_report.py
+    schedule: every 30m
+    args: ["--collect"]
+    timeout: 60
+    overlap: skip
+
+  mesh_churn_report:
+    script: nova_mesh_churn_report.py
+    schedule: cron 18 7 * * *
+    args: ["--report"]
     timeout: 60
     overlap: skip

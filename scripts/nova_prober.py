@@ -356,16 +356,28 @@ def run_probe(conn, spec, quiet=False):
     where = f" @ {host}" if host else ""
 
     # State-change alerting: quiet on steady success.
-    if not ok and prev is not False:
-        # newly failing (or first run already broken)
-        notify(f"PROBE FAIL: {name}{where}", body=detail,
-               level=spec["level_on_fail"], category=spec["category"],
-               source="nova_prober.py", dedup_key=f"probe-{name}", meta=meta)
-    elif ok and prev is False:
-        # recovered
-        notify(f"PROBE RECOVERED: {name}{where}", body=detail,
-               level="info", category=spec["category"],
-               source="nova_prober.py", dedup_key=f"probe-{name}", meta=meta)
+    # FAIL and RECOVERED use DISTINCT dedup keys: with a shared key, a flapping
+    # probe's RECOVERED post consumed the dedup slot and the next real FAIL was
+    # silently suppressed (observed on inference_vantage, 2026-07-29). FAILs get
+    # a 6h window so a flapper pages at most 4x/day; recoveries keep the default.
+    # A notification-bus outage must never abort the rest of the sweep: an
+    # unguarded notify() here meant one bad emit hid the whole health picture,
+    # because every probe after it never ran or recorded.
+    try:
+        if not ok and prev is not False:
+            # newly failing (or first run already broken)
+            notify(f"PROBE FAIL: {name}{where}", body=detail,
+                   level=spec["level_on_fail"], category=spec["category"],
+                   source="nova_prober.py", dedup_key=f"probe-{name}-fail",
+                   meta={**meta, "dedup_window_s": 21600})
+        elif ok and prev is False:
+            # recovered
+            notify(f"PROBE RECOVERED: {name}{where}", body=detail,
+                   level="info", category=spec["category"],
+                   source="nova_prober.py", dedup_key=f"probe-{name}-recovered", meta=meta)
+    except Exception as e:
+        print(f"  [WARN] notify failed for {name} (probe result still recorded): "
+              f"{type(e).__name__}: {e}", file=sys.stderr)
 
     if not quiet:
         flag = "OK " if ok else "FAIL"

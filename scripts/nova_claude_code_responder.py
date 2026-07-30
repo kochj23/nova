@@ -235,8 +235,18 @@ def process_once(conn, token, last_id, allow_edits=False, post_slack=True):
                 meta = {}
         origin_channel = meta.get("origin_channel") or SLACK_CLAUDE_CHANNEL
         origin_thread = meta.get("origin_thread")
+        # RING ENFORCEMENT (2026-07-29): a request that arrived from outside the LAN
+        # via nova_relay is capped at ring 1 — read-only tools — no matter how this
+        # daemon was launched. Structural, not advisory: allow_edits=False restricts
+        # the CLI to Read/Grep/Glob/WebSearch/WebFetch, so no external caller can
+        # mutate anything even if the message text tries to talk its way into it.
+        # Ring 2/3 work must go through claude_queue for Jordan's approval.
+        msg_external = bool(meta.get("external")) or str(meta.get("origin", "")).startswith("external/")
+        effective_edits = allow_edits and not msg_external
+        if msg_external:
+            log(f"  #{row['id']} is EXTERNAL (origin={meta.get('origin')}) — forcing read-only tools")
         log(f"processing #{row['id']}: {msg[:70]} (origin={origin_channel})")
-        reply = run_claude_code(msg, allow_edits=allow_edits)
+        reply = run_claude_code(msg, allow_edits=effective_edits)
         write_reply(conn, reply, row["id"])
         if post_slack:
             post_to_slack(token, f":robot_face: *Claude Code:* {reply}",

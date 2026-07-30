@@ -67,7 +67,11 @@ def get_nodes():
 def collect_inventory(node):
     """Collect package list from a node."""
     name = node["node_name"]
-    host = str(node["node_ip"])
+    # node_ip is an inet column, so psycopg2 hands back "192.168.1.2/32". Passing that straight
+    # to ssh makes EVERY connection fail, and the checks below read rc!=0 as "service down" —
+    # which is why the 2026-07-29 report claimed sshd was down on five hosts that were, at that
+    # moment, serving the very SSH sessions used to investigate it.
+    host = str(node["node_ip"]).split("/")[0]
     user = node["ssh_user"]
     os_family = node["os_family"]
 
@@ -133,7 +137,11 @@ def collect_inventory(node):
 def apply_updates(node):
     """Apply OS/package updates to a node."""
     name = node["node_name"]
-    host = str(node["node_ip"])
+    # node_ip is an inet column, so psycopg2 hands back "192.168.1.2/32". Passing that straight
+    # to ssh makes EVERY connection fail, and the checks below read rc!=0 as "service down" —
+    # which is why the 2026-07-29 report claimed sshd was down on five hosts that were, at that
+    # moment, serving the very SSH sessions used to investigate it.
+    host = str(node["node_ip"]).split("/")[0]
     user = node["ssh_user"]
     os_family = node["os_family"]
 
@@ -252,13 +260,26 @@ def run_converge(node):
 def detect_drift(node):
     """Check for configuration drift on a node."""
     name = node["node_name"]
-    host = str(node["node_ip"])
+    # node_ip is an inet column, so psycopg2 hands back "192.168.1.2/32". Passing that straight
+    # to ssh makes EVERY connection fail, and the checks below read rc!=0 as "service down" —
+    # which is why the 2026-07-29 report claimed sshd was down on five hosts that were, at that
+    # moment, serving the very SSH sessions used to investigate it.
+    host = str(node["node_ip"]).split("/")[0]
     user = node["ssh_user"]
     os_family = node["os_family"]
 
     drift_items = []
 
-    if os_family == "linux":
+    # Reachability first. Without this, an unreachable host does not report as unreachable — it
+    # reports as every individual service being down, which is a fabricated diagnosis dressed up
+    # as several. One honest "cannot reach" beats three confident wrong answers.
+    rc_probe, _, err_probe = ssh_cmd(host, user, "true", timeout=20)
+    reachable = (rc_probe == 0)
+    if not reachable:
+        drift_items.append({"type": "node_unreachable",
+                            "detail": (err_probe or "ssh failed").strip()[:120]})
+
+    if reachable and os_family == "linux":
         # Check if key services are running
         services = ["wazuh-agent", "sshd"]
         for svc in services:
@@ -271,10 +292,13 @@ def detect_drift(node):
         if rc != 0:
             drift_items.append({"type": "package_missing", "package": "rkhunter"})
 
-    elif os_family == "macos":
+    elif reachable and os_family == "macos":
         # Nova services only run on mac-studio (the primary Nova host)
         if name == "mac-studio":
-            services_to_check = ["net.digitalnoise.nova-memory-server", "com.nova.scheduler"]
+            # nova-memory-server MOVED to .2 in the Wave 3 migration (2026-07-19) and is a
+            # systemd unit there now — looking for it in the Studio's launchctl will always
+            # "fail". Only the scheduler genuinely still lives here.
+            services_to_check = ["com.nova.scheduler"]
         else:
             services_to_check = []
         for svc in services_to_check:

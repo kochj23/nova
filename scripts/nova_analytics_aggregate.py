@@ -354,13 +354,15 @@ def fire_alerts(conn, alerts):
                 f"Site: {site}\n"
                 f"Detail: {json.dumps(alert.get('detail', {}), default=_json_default)}"
             )
+        # 24h dedup window: "Site Quiet" is an ongoing condition — the hourly run
+        # re-fired it every hour forever under the notifier's default 1h window.
         notify(
             title,
             body=body,
             level=level,
             category="analytics",
             dedup_key=f"analytics-{alert['type']}-{site}",
-            meta={"host": "studio", "site": site},
+            meta={"host": "studio", "site": site, "dedup_window_s": 86400},
         )
 
     conn.commit()

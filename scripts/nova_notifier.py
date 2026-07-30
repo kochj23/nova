@@ -27,7 +27,11 @@ DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 # Out-of-band relay: critical alerts also go over the Meshtastic mesh (LoRa),
 # so Little Mister can be reached even if home internet/WiFi is fully down.
 # Best-effort -- bridge/radio being unreachable must never block Slack delivery.
-MESH_BRIDGE_URL = "http://192.168.1.92:37478/send"
+# Bridge runs on Jordans-Mac-mini (Heltec T114 on USB). mDNS name, not IP:
+# the mini's DHCP lease moved .92 -> .251 on 2026-07-27 and the hardcoded IP
+# silently killed the relay for ~2 days. .local resolves peer-to-peer on the
+# LAN with no DNS server needed, so it also works when internet is down.
+MESH_BRIDGE_URL = "http://jordans-mac-mini.local:37478/send"
 
 
 def _mesh_relay(title: str, body: str | None) -> None:
@@ -42,22 +46,32 @@ def _mesh_relay(title: str, body: str | None) -> None:
         print(f"  mesh relay failed (non-fatal): {e}", file=sys.stderr)
 
 # ── Routing policy ──────────────────────────────────────────────────────────
-# Category overrides win over level. Everything else falls back to level.
+# Three-tier scheme (2026-07-29): route by intent, not by source.
+#   #nova-alerts — actionable, state-change only (warning/critical)
+#   #nova-digest — rollups (info-level events in DIGEST_CATEGORIES)
+#   #nova-feed   — ambient firehose, muted (everything else at info)
 CHANNEL = {
-    "info":     nova_config.SLACK_INFO,     # #nova-info
-    "warning":  nova_config.SLACK_NOTIFY,   # #nova-warning
-    "critical": nova_config.SLACK_BB,       # #nova-critical
+    "info":     nova_config.SLACK_FEED,     # #nova-feed
+    "warning":  nova_config.SLACK_ALERTS,   # #nova-alerts
+    "critical": nova_config.SLACK_ALERTS,   # #nova-alerts (+ mesh relay below)
 }
-# Force specific categories somewhere regardless of the level the emitter set.
+# Hard overrides: these categories go here regardless of level.
 CATEGORY_OVERRIDE = {
-    "security_news": nova_config.SLACK_INFO,   # CVE/threat NEWS is FYI, not your-network
-    "claude_code":   nova_config.SLACK_INFO,   # Claude Code activity is FYI
-    "calendar":      nova_config.SLACK_INFO,
-    "strix":         nova_config.SLACK_INFO,   # Strix pentest run-status feed -> #nova-info (survives the maintenance mute)
+    "security_news": nova_config.SLACK_FEED,   # CVE/threat NEWS is FYI, not your-network
+    "claude_code":   nova_config.SLACK_FEED,   # Claude Code activity is FYI
 }
+# Info-level events in these categories are rollups -> #nova-digest.
+# (Only applies to level=info: a warning/critical in any of these still alerts.)
+DIGEST_CATEGORIES = frozenset({
+    "calendar", "telemetry", "syslog", "block_report", "network", "home",
+    "analytics", "morning_brief", "finance", "tv", "security", "digest",
+    "news", "garden", "backup",
+})
 
 # Dedup/rate-limit: a repeat of the same dedup_key within this window is folded
 # into the prior sent alert (count bumped) instead of re-posted.
+# Emitters can widen the window per-event via meta {"dedup_window_s": 86400}
+# (an hourly job with a 1h window re-fires forever — see nova_analytics_aggregate).
 DEDUP_WINDOW_S = 3600
 
 
@@ -76,7 +90,20 @@ except Exception:
 def _route(level: str, category: str | None) -> str:
     if category and category in CATEGORY_OVERRIDE:
         return CATEGORY_OVERRIDE[category]
-    return CHANNEL.get(level, nova_config.SLACK_INFO)
+    if level == "info" and category in DIGEST_CATEGORIES:
+        return nova_config.SLACK_DIGEST
+    return CHANNEL.get(level, nova_config.SLACK_FEED)
+
+
+def _dedup_window(ev: dict) -> int:
+    """Per-event dedup window: meta {"dedup_window_s": N}, else the default."""
+    try:
+        meta = ev.get("meta") or {}
+        if isinstance(meta, str):
+            meta = json.loads(meta)
+        return int(meta.get("dedup_window_s") or DEDUP_WINDOW_S)
+    except Exception:
+        return DEDUP_WINDOW_S
 
 
 def _fmt(ev: dict) -> str:
@@ -134,12 +161,17 @@ def drain(verbose=False, only_source=None) -> int:
                     cur.execute(
                         "SELECT id FROM telemetry.events WHERE dedup_key=%s AND status='sent' "
                         "AND sent_at > now() - make_interval(secs => %s) ORDER BY sent_at DESC LIMIT 1",
-                        (ev["dedup_key"], DEDUP_WINDOW_S))
+                        (ev["dedup_key"], _dedup_window(ev)))
                     prior = cur.fetchone()
                     if prior:
                         cur.execute(
-                            "UPDATE telemetry.events SET status='suppressed', collapsed_into=%s "
-                            "WHERE id=%s", (prior["id"], ev["id"]))
+                            # Carry the prior event's incident_id so a persisting condition
+                            # keeps its incident's member clock fresh — otherwise the
+                            # lifecycle auto-close (30m idle) fires while dedup (60m) still
+                            # swallows repeats, producing open/close churn every ~40m.
+                            "UPDATE telemetry.events SET status='suppressed', collapsed_into=%s, "
+                            "incident_id=(SELECT incident_id FROM telemetry.events WHERE id=%s) "
+                            "WHERE id=%s", (prior["id"], prior["id"], ev["id"]))
                         cur.execute(
                             "UPDATE telemetry.events SET dispatch_count = dispatch_count + 1 "
                             "WHERE id=%s", (prior["id"],))

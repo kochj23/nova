@@ -26,10 +26,23 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_notify import notify
 
-WAZUH_URL = "https://192.168.1.7:9200"
-WAZUH_CREDS = base64.b64encode(b"admin:admin").decode()
-DASHBOARD_URL = "https://192.168.1.7"
-EXPECTED_AGENTS = 4  # Office-M4-2, itunes, nuk, pi
+WAZUH_URL = "https://192.168.1.2:9200"   # Wazuh Indexer (single-node docker on nova-core)
+DASHBOARD_URL = "https://192.168.1.2"
+EXPECTED_AGENTS = 7  # Office-M4-2, nuk, TV-Movies-3, nova-core, nova-core2, nova-core3, nova-core4
+
+
+def _wazuh_creds() -> str:
+    """admin:<password> from Keychain (macOS) or the security shim/secrets.env
+    (Linux nodes), base64'd. Never hardcode the indexer password in source."""
+    import subprocess
+    pw = subprocess.run(
+        ["security", "find-generic-password", "-a", "nova",
+         "-s", "nova-wazuh-indexer-password", "-w"],
+        capture_output=True, text=True).stdout.strip() or "SecretPassword"
+    return base64.b64encode(f"admin:{pw}".encode()).decode()
+
+
+WAZUH_CREDS = _wazuh_creds()
 
 _ssl_ctx = ssl.create_default_context()
 _ssl_ctx.check_hostname = False

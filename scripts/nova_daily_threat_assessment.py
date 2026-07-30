@@ -120,7 +120,9 @@ def fetch_recent_inbox(hours=24):
         return outStr
     end tell
     '''
-    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=120)
+    # 300s: Mail.app scrapes of a large mailbox intermittently exceeded the old
+    # 120s cap (3 straight days of 10:00 failures, 2026-07-26..28).
+    r = subprocess.run(["osascript", "-e", script], capture_output=True, text=True, timeout=300)
     if r.returncode != 0:
         log(f"AppleScript fetch failed: {r.stderr[:200]}")
         return []

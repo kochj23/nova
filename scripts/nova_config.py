@@ -75,7 +75,11 @@ def slack_bot_token() -> str:
 
 SLACK_API     = "https://slack.com/api"
 SLACK_CHAN     = "C0AMNQ5GX70"   # #nova-chat (interactive conversations with Jordan)
-SLACK_INFO    = "C0BC4SNUTQR"   # #nova-info (pure FYI: calendar, what's-on, FBI-RSS, digests, Claude Code activity)
+# Three-tier notification scheme (2026-07-29): route by intent, not by source.
+SLACK_ALERTS  = "C0BMK83BLFJ"   # #nova-alerts (actionable, state-change only — something broke/recovered/needs a human)
+SLACK_DIGEST  = "C0BLJLKQMMZ"   # #nova-digest (rollups: calendar, telemetry, syslog daily, block report, finance)
+SLACK_FEED    = "C0BLNUEM9JS"   # #nova-feed (ambient firehose: media, flights, presence, journal, Claude Code — muted)
+SLACK_INFO    = SLACK_FEED      # DEPRECATED alias — #nova-info (C0BC4SNUTQR) retired 2026-07-29; stragglers land in #nova-feed
 SLACK_NOTIFY  = "C0ATAF7NZG9"   # #nova-warning (warnings — was #nova-notifications, renamed 2026-06-21)
 SLACK_BB      = "C0B3G7J6N07"   # #nova-critical (critical alerts — was #nova-bb, renamed 2026-06-21)
 SLACK_EMAIL   = "C0B0B3B3U1J"   # #nova-email (automated email notifications)
@@ -91,6 +95,9 @@ CHANNEL_MAP = {
     SLACK_NOTIFY: DISCORD_NOTIFY,
     SLACK_EMAIL: DISCORD_NOTIFY,
     SLACK_PHOTOS: DISCORD_NOTIFY,
+    SLACK_ALERTS: DISCORD_NOTIFY,
+    SLACK_DIGEST: "",   # "" = Slack only, no Discord mirror
+    SLACK_FEED: "",     # the firehose must never spam Discord
 }
 
 JORDAN_EMAIL  = "kochj23" + "@gmail.com"     # noqa: avoid scanner false-positive
@@ -372,5 +379,6 @@ def post_both(message: str, slack_channel: str = SLACK_CHAN, discord_channel: st
                     print(f"[nova_config] Slack post failed: {resp.get('error')}", file=sys.stderr)
         except Exception as e:
             print(f"[nova_config] Slack post failed: {e}", file=sys.stderr)
-    # Discord
-    post_discord(message, discord_channel)
+    # Discord — CHANNEL_MAP value of "" means Slack-only (feed/digest tiers)
+    if discord_channel:
+        post_discord(message, discord_channel)

@@ -34,9 +34,13 @@ notifier = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(notifier)
 
 # Real Slack channel ids that the routing policy resolves to (from nova_config).
-SLACK_INFO = notifier.nova_config.SLACK_INFO      # #nova-info
-SLACK_NOTIFY = notifier.nova_config.SLACK_NOTIFY  # #nova-warning
-SLACK_BB = notifier.nova_config.SLACK_BB          # #nova-critical
+SLACK_INFO = notifier.nova_config.SLACK_INFO      # deprecated alias -> #nova-feed
+SLACK_NOTIFY = notifier.nova_config.SLACK_NOTIFY  # #nova-warning (legacy, no longer routed to)
+SLACK_BB = notifier.nova_config.SLACK_BB          # #nova-critical (legacy, no longer routed to)
+# Three-tier scheme (2026-07-29): route by intent, not by level alone.
+SLACK_ALERTS = notifier.nova_config.SLACK_ALERTS  # #nova-alerts
+SLACK_DIGEST = notifier.nova_config.SLACK_DIGEST  # #nova-digest
+SLACK_FEED = notifier.nova_config.SLACK_FEED      # #nova-feed
 
 DSN = notifier.DSN
 TEST_SOURCE = "pytest-notifier"  # unique marker — teardown verifies zero leftovers
@@ -173,9 +177,17 @@ class TestSecurity(unittest.TestCase):
         self.assertIn("connect_timeout=5", src,
                       "_connect must set an explicit bounded connect_timeout")
 
-    def test_dsn_is_local_only(self):
-        """DB must point at localhost — never a remote prod host."""
-        self.assertIn("127.0.0.1", notifier.DSN)
+    def test_dsn_is_internal_only(self):
+        """DB must stay on the LAN — loopback or an internal fleet host, never public.
+
+        (Premise updated: PG moved off this box to nova-core, so the DSN is
+        pg-primary.digitalnoise.net -> 192.168.1.2. The security requirement is
+        unchanged: the notifier must never reach a database over the internet.)
+        """
+        internal = ("127.0.0.1", "localhost", ".digitalnoise.net", "192.168.1.")
+        self.assertTrue(any(tok in notifier.DSN for tok in internal),
+                        f"DSN must be an internal host, got: {notifier.DSN}")
+        self.assertNotIn("sslmode=disable", notifier.DSN.lower().replace(" ", ""))
         self.assertIn("dbname=nova_ops", notifier.DSN)
 
 
@@ -184,39 +196,47 @@ class TestSecurity(unittest.TestCase):
 # ===========================================================================
 
 class TestRouting(unittest.TestCase):
+    """Three-tier routing (2026-07-29): warning/critical -> #nova-alerts,
+    info in a rollup category -> #nova-digest, other info -> #nova-feed."""
 
-    def test_info_routes_to_slack_info(self):
-        self.assertEqual(notifier._route("info", None), SLACK_INFO)
+    def test_plain_info_routes_to_feed(self):
+        self.assertEqual(notifier._route("info", None), SLACK_FEED)
 
-    def test_warning_routes_to_slack_notify(self):
-        self.assertEqual(notifier._route("warning", None), SLACK_NOTIFY)
+    def test_warning_routes_to_alerts(self):
+        self.assertEqual(notifier._route("warning", None), SLACK_ALERTS)
 
-    def test_critical_routes_to_slack_bb(self):
-        self.assertEqual(notifier._route("critical", None), SLACK_BB)
+    def test_critical_routes_to_alerts(self):
+        self.assertEqual(notifier._route("critical", None), SLACK_ALERTS)
 
-    def test_unknown_level_falls_back_to_info(self):
-        self.assertEqual(notifier._route("debug", None), SLACK_INFO)
-        self.assertEqual(notifier._route("", None), SLACK_INFO)
+    def test_unknown_level_falls_back_to_feed(self):
+        self.assertEqual(notifier._route("debug", None), SLACK_FEED)
+        self.assertEqual(notifier._route("", None), SLACK_FEED)
 
-    def test_category_override_security_news_to_info(self):
+    def test_info_in_digest_category_routes_to_digest(self):
+        for cat in ("calendar", "telemetry", "syslog", "analytics"):
+            self.assertEqual(notifier._route("info", cat), SLACK_DIGEST, cat)
+
+    def test_warning_in_digest_category_still_alerts(self):
+        """A digest category must NOT swallow a real warning/critical."""
+        for cat in ("calendar", "telemetry", "network", "security"):
+            self.assertEqual(notifier._route("warning", cat), SLACK_ALERTS, cat)
+            self.assertEqual(notifier._route("critical", cat), SLACK_ALERTS, cat)
+
+    def test_category_override_security_news_to_feed(self):
         # Even a 'critical' security_news item is FYI, not your-network.
-        self.assertEqual(notifier._route("critical", "security_news"), SLACK_INFO)
+        self.assertEqual(notifier._route("critical", "security_news"), SLACK_FEED)
 
-    def test_category_override_claude_code_to_info(self):
-        self.assertEqual(notifier._route("warning", "claude_code"), SLACK_INFO)
-
-    def test_category_override_calendar_to_info(self):
-        self.assertEqual(notifier._route("critical", "calendar"), SLACK_INFO)
+    def test_category_override_claude_code_to_feed(self):
+        self.assertEqual(notifier._route("warning", "claude_code"), SLACK_FEED)
 
     def test_unknown_category_falls_through_to_level(self):
-        # A category with no override uses the level routing.
-        self.assertEqual(notifier._route("critical", "disk_full"), SLACK_BB)
-        self.assertEqual(notifier._route("warning", "disk_full"), SLACK_NOTIFY)
+        self.assertEqual(notifier._route("critical", "disk_full"), SLACK_ALERTS)
+        self.assertEqual(notifier._route("warning", "disk_full"), SLACK_ALERTS)
+        self.assertEqual(notifier._route("info", "disk_full"), SLACK_FEED)
 
     def test_override_wins_over_level(self):
-        # The override map must take precedence regardless of level.
         for lvl in ("info", "warning", "critical"):
-            self.assertEqual(notifier._route(lvl, "calendar"), SLACK_INFO)
+            self.assertEqual(notifier._route(lvl, "security_news"), SLACK_FEED)
 
 
 class TestFormat(unittest.TestCase):
@@ -262,35 +282,36 @@ class TestFormat(unittest.TestCase):
 
 @pytest.mark.integration
 class TestDrainRouting:
-    """drain() routing: info->SLACK_INFO, warning->SLACK_NOTIFY, critical->SLACK_BB."""
+    """drain() routing (three-tier, 2026-07-29): plain info->#nova-feed,
+    warning/critical->#nova-alerts."""
 
-    def test_info_delivered_to_slack_info(self, db):
+    def test_info_delivered_to_feed(self, db):
         eid = db.insert(level="info", title="info event")
         sent = notifier.drain(only_source="pytest-notifier")
         assert sent == 1
         db.post_both.assert_called_once()
         _, kwargs = db.post_both.call_args
-        assert kwargs["slack_channel"] == SLACK_INFO
+        assert kwargs["slack_channel"] == SLACK_FEED
         row = db.row(eid)
         assert row["status"] == "sent"
-        assert row["channel"] == SLACK_INFO
+        assert row["channel"] == SLACK_FEED
         assert row["sent_at"] is not None
 
-    def test_warning_delivered_to_slack_notify(self, db):
+    def test_warning_delivered_to_alerts(self, db):
         eid = db.insert(level="warning", title="warn event")
         sent = notifier.drain(only_source="pytest-notifier")
         assert sent == 1
         _, kwargs = db.post_both.call_args
-        assert kwargs["slack_channel"] == SLACK_NOTIFY
-        assert db.row(eid)["channel"] == SLACK_NOTIFY
+        assert kwargs["slack_channel"] == SLACK_ALERTS
+        assert db.row(eid)["channel"] == SLACK_ALERTS
 
-    def test_critical_delivered_to_slack_bb(self, db):
+    def test_critical_delivered_to_alerts(self, db):
         eid = db.insert(level="critical", title="crit event")
         sent = notifier.drain(only_source="pytest-notifier")
         assert sent == 1
         _, kwargs = db.post_both.call_args
-        assert kwargs["slack_channel"] == SLACK_BB
-        assert db.row(eid)["channel"] == SLACK_BB
+        assert kwargs["slack_channel"] == SLACK_ALERTS
+        assert db.row(eid)["channel"] == SLACK_ALERTS
 
     def test_category_override_routes_critical_security_news_to_info(self, db):
         eid = db.insert(level="critical", category="security_news",
@@ -299,8 +320,8 @@ class TestDrainRouting:
         assert sent == 1
         _, kwargs = db.post_both.call_args
         # Override beats the critical level: goes to #nova-info.
-        assert kwargs["slack_channel"] == SLACK_INFO
-        assert db.row(eid)["channel"] == SLACK_INFO
+        assert kwargs["slack_channel"] == SLACK_FEED
+        assert db.row(eid)["channel"] == SLACK_FEED
 
     def test_message_body_passed_to_post_both(self, db):
         db.insert(level="warning", title="Pump failure", body="details here")
@@ -312,7 +333,7 @@ class TestDrainRouting:
     def test_only_new_events_processed(self, db):
         # An already-sent row must not be re-delivered.
         db.insert(level="info", title="already sent", status="sent",
-                  channel=SLACK_INFO)
+                  channel=SLACK_FEED)
         new_id = db.insert(level="info", title="fresh")
         sent = notifier.drain(only_source="pytest-notifier")
         assert sent == 1
@@ -593,8 +614,19 @@ class TestFrame(unittest.TestCase):
             self.assertIn(lvl, notifier.CHANNEL)
 
     def test_category_override_map_present(self):
-        for cat in ("security_news", "claude_code", "calendar"):
+        for cat in ("security_news", "claude_code"):
             self.assertIn(cat, notifier.CATEGORY_OVERRIDE)
+
+    def test_calendar_moved_from_override_to_digest(self):
+        """Three-tier rework (2026-07-29): calendar is a DIGEST category, not a hard
+        override. The old override forced calendar to one channel at every level,
+        which meant a calendar warning could never alert."""
+        self.assertNotIn("calendar", notifier.CATEGORY_OVERRIDE)
+        self.assertIn("calendar", notifier.DIGEST_CATEGORIES)
+
+    def test_digest_categories_is_a_frozenset(self):
+        self.assertIsInstance(notifier.DIGEST_CATEGORIES, frozenset)
+        self.assertGreater(len(notifier.DIGEST_CATEGORIES), 0)
 
     def test_dedup_window_is_positive(self):
         self.assertIsInstance(notifier.DEDUP_WINDOW_S, int)

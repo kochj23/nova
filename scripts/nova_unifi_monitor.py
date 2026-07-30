@@ -197,14 +197,34 @@ def get_dpi():
 
 # ── Analysis ─────────────────────────────────────────────────────────────────
 
+# Devices Jordan keeps intentionally powered off — their disconnected state is
+# not a problem, and it must not page. (Kitchen U6: powered off 2026-07-29
+# during the WAN1 flap storm; its "disconnection" drove weeks of recurring
+# "UniFi Network Health" incidents that were really just this known state.)
+INTENTIONALLY_OFFLINE = {"Kitchen U6 Enterprise"}
+
+
 def find_problems(health, devices, clients):
     """Analyze network for problems."""
     problems = []
+
+    # Disconnected devices that are NOT intentionally off — used both for the
+    # device alerts and to decide whether a wlan "warning" is real.
+    unexpected_down = [
+        d.get("name", d.get("model", "Unknown"))
+        for d in devices
+        if d.get("state", 0) != 1
+        and d.get("name", d.get("model", "Unknown")) not in INTENTIONALLY_OFFLINE
+    ]
 
     # Health subsystem problems
     if health:
         for name, info in health.items():
             if info["status"] != "ok":
+                # A wlan "warning" caused solely by intentionally-off APs is
+                # the known state, not a problem.
+                if name == "wlan" and info["status"] == "warning" and not unexpected_down:
+                    continue
                 problems.append({
                     "severity": "high",
                     "category": "health",
@@ -222,6 +242,8 @@ def find_problems(health, devices, clients):
         name = dev.get("name", dev.get("model", "Unknown"))
         state = dev.get("state", 0)
         if state != 1:  # 1 = connected/adopted
+            if name in INTENTIONALLY_OFFLINE:
+                continue  # known/deliberate — skip ALL checks for this device
             problems.append({
                 "severity": "high",
                 "category": "device",
@@ -607,6 +629,89 @@ def wan_show_history():
             start = o.get("start", "?")
             end = o.get("end", "ongoing")
             print(f"  {start} → {end}")
+
+
+# ── 2b. WAN event-log polling ───────────────────────────────────────────────
+# The 30-min stat/health sampling never lands inside a short outage window —
+# it reported "WAN: ok" through 41 WAN1 failures on 2026-07-22..29. The
+# controller's v2 system-log records every failover/failure/recovery event;
+# poll it with a timestamp cursor so nothing is missed between runs.
+
+WAN_EVENTS_CURSOR = STATE_DIR / "wan_events_cursor.json"
+UDM_V2 = f"{UDM_HOST}/proxy/network/v2/api/site/default"
+
+# Which events are alert-worthy (vs. informational recovery/quality noise).
+WAN_EVENT_LABELS = {
+    "NETWORK_WAN_FAILED_TEMPORARY":              ("warning", "WAN failed (temporary)"),
+    "NETWORK_WAN_FAILED_MULTIPLE_TIMES":         ("warning", "WAN failed multiple times in 24h"),
+    "NETWORK_FAILED_OVER_TO_BACKUP_WAN":         ("warning", "Failed over to backup WAN"),
+    "NETWORK_FAILED_OVER_TO_BACKUP_WAN_TEMPORARY": ("warning", "Temporary failover to backup WAN"),
+    "ISP_PACKET_LOSS":                           ("warning", "ISP packet loss"),
+    "ISP_HIGH_LATENCY":                          ("info",    "ISP high latency"),
+    "NETWORK_WAN_RESTORED":                      ("info",    "WAN restored"),
+}
+
+
+def api_post_v2(endpoint, payload):
+    """POST to the UDM v2 API (same X-API-Key auth as v1)."""
+    api_key = get_api_key()
+    if not api_key:
+        return None
+    req = urllib.request.Request(
+        f"{UDM_V2}/{endpoint}",
+        data=json.dumps(payload).encode(),
+        headers={"X-API-Key": api_key, "Content-Type": "application/json"},
+        method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=10, context=SSL_CTX) as r:
+            return json.loads(r.read())
+    except Exception as e:
+        log(f"v2 API error ({endpoint}): {e}")
+    return None
+
+
+def wan_events():
+    """Poll INTERNET_AND_WAN system-log for events since the last cursor."""
+    resp = api_post_v2("system-log/all",
+                       {"categories": ["INTERNET_AND_WAN"],
+                        "pageNumber": 0, "pageSize": 100})
+    if not resp:
+        return
+    events = resp.get("data", [])
+
+    state = _load_json(WAN_EVENTS_CURSOR)
+    cursor = state.get("last_ts_ms", 0)
+    if cursor == 0:
+        # First run: baseline only — don't replay days of history.
+        newest = max((e.get("timestamp", 0) for e in events), default=0)
+        _save_json(WAN_EVENTS_CURSOR, {"last_ts_ms": newest})
+        log(f"wan-events: baselined cursor at {newest} ({len(events)} historical events skipped)")
+        return
+
+    new = sorted((e for e in events if e.get("timestamp", 0) > cursor),
+                 key=lambda e: e.get("timestamp", 0))
+    if not new:
+        log("wan-events: no new WAN events")
+        return
+
+    lines, worst = [], "info"
+    for e in new:
+        level, label = WAN_EVENT_LABELS.get(e.get("event"), ("info", e.get("event", "?")))
+        if level == "warning":
+            worst = "warning"
+        params = e.get("parameters", {})
+        wan_id = (params.get("WAN_ID") or {}).get("name", "?")
+        isp = (params.get("ISP_NAME") or {}).get("name", "")
+        ts = datetime.fromtimestamp(e.get("timestamp", 0) / 1000).strftime("%H:%M:%S")
+        lines.append(f"  {ts} — {wan_id}{' (' + isp + ')' if isp else ''}: {label}")
+
+    msg = f"*WAN Events — {len(new)} new*\n" + "\n".join(lines[:20])
+    if len(new) > 20:
+        msg += f"\n  … and {len(new) - 20} more"
+    slack_post(msg, level=worst, category="network", dedup_key="unifi-wan-events")
+    log(f"wan-events: {len(new)} new events posted (level={worst})")
+
+    _save_json(WAN_EVENTS_CURSOR, {"last_ts_ms": new[-1]["timestamp"]})
 
 
 # ── 3. Bandwidth hog detection ─────────────────────────────────────────────
@@ -1365,6 +1470,7 @@ if __name__ == "__main__":
     parser.add_argument("--rogue", action="store_true", help="Detect unknown/rogue devices")
     parser.add_argument("--rogue-learn", action="store_true", help="Learn all current clients as known")
     parser.add_argument("--wan-history", action="store_true", help="Show WAN uptime/outage history")
+    parser.add_argument("--wan-events", action="store_true", help="Poll controller WAN event log, alert on new events")
     parser.add_argument("--wifi-optimize", action="store_true", help="WiFi optimization analysis")
     parser.add_argument("--presence", action="store_true", help="Who's home (family presence)")
     parser.add_argument("--firmware", action="store_true", help="Firmware version check")
@@ -1411,6 +1517,8 @@ if __name__ == "__main__":
         rogue_learn()
     elif args.wan_history:
         wan_show_history()
+    elif args.wan_events:
+        wan_events()
     elif args.wifi_optimize:
         wifi_optimize()
     elif args.presence:

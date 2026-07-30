@@ -464,13 +464,19 @@ def main():
     parts = digest.split("\n", 1)
     digest_title = parts[0].strip().strip("*").strip()
     digest_body = parts[1].strip() if len(parts) > 1 and parts[1].strip() else None
+    # Content-hash in the dedup key + 24h window: post once per day, and again
+    # only when the agenda actually changes (a cancel/add mints a new hash).
+    # The old date-only key + 1h notifier window let the half-hourly run repost
+    # the identical agenda ~9x/night (observed 2026-07-29).
+    import hashlib
+    digest_hash = hashlib.md5(digest.encode()).hexdigest()[:10]
     notify(
         digest_title,
         body=digest_body,
         level="info",
         category="calendar",
-        dedup_key=f"calendar-digest-{TODAY}",
-        meta={"host": "mac-studio"},
+        dedup_key=f"calendar-digest-{TODAY}-{digest_hash}",
+        meta={"host": "mac-studio", "dedup_window_s": 86400},
     )
 
     # Store in vector memory

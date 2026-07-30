@@ -275,15 +275,25 @@ def gather_ops_data() -> dict:
         conn = psycopg2.connect(DB_DSN)
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
-            SELECT description, outcome, priority, completed_at
+            -- context carries the actual narrative (root cause, evidence, what was verified);
+            -- description is often a one-line title. Selecting description alone on 2026-07-28
+            -- produced a column that never mentioned the 15 corrupt indexes, because that whole
+            -- story lives in context. Truncated so 60 items stay inside a sane prompt budget.
+            SELECT description, outcome, priority, completed_at, status,
+                   left(regexp_replace(coalesce(context,''), E'[\n\r]+', ' ', 'g'), 500) AS context
             FROM claude_queue
-            WHERE status IN ('done', 'completed') AND completed_at::date = CURRENT_DATE
-            ORDER BY completed_at DESC LIMIT 30
+            -- Items get closed as resolved/cancelled/superseded as well as done/completed.
+            -- Asking only for the first two returned ZERO on 2026-07-28, a day with 90 closures,
+            -- which is why that night's column had nothing to say about the actual work.
+            WHERE status IN ('done','completed','resolved','cancelled','superseded')
+              AND completed_at::date = CURRENT_DATE
+            ORDER BY priority NULLS LAST, completed_at DESC LIMIT 60
         """)
         data["queue_completed"] = [dict(r) for r in cur.fetchall()]
         cur.execute("""
             SELECT COUNT(*) as total FROM claude_queue
-            WHERE status IN ('done', 'completed') AND completed_at::date = CURRENT_DATE
+            WHERE status IN ('done','completed','resolved','cancelled','superseded')
+              AND completed_at::date = CURRENT_DATE
         """)
         data["queue_completed_count"] = cur.fetchone()["total"]
         cur.execute("""
@@ -483,7 +493,15 @@ def generate_article(ops_data: dict) -> str:
     queue_items = safe_ops.get("queue_completed") or []
     queue_block = ""
     if queue_items:
-        lines = [f"{i}. {item.get('description', '')}" for i, item in enumerate(queue_items, 1)]
+        # Render context too, not just the title. The SELECT was widened to fetch it and this
+        # line silently dropped it — so on 2026-07-28 the column never mentioned the 15 corrupt
+        # indexes, the first clean restore since July, or the memory-server auth, because every
+        # one of those stories lives in context while description is a one-line label.
+        lines = []
+        for i, item in enumerate(queue_items, 1):
+            desc = (item.get("description") or "").strip()
+            ctx = (item.get("context") or "").strip()
+            lines.append(f"{i}. {desc}" + (f"\n   DETAIL: {ctx}" if ctx else ""))
         queue_block = (
             "TODAY'S COMPLETED WORK (this is the real backbone of tonight's column -- "
             "every single one of these needs real coverage, not just the first one or two):\n"

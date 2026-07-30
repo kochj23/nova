@@ -1,0 +1,9 @@
+{
+  "_comment": "nova_relay config. Fill team_domain + aud from the Cloudflare Access application, then restart net.digitalnoise.nova-relay. Until aud is set, ONLY loopback callers with X-Relay-Local-Secret are accepted — every Cloudflare-borne request is refused, so publishing the hostname early fails closed.",
+  "team_domain": "",
+  "aud": "",
+  "devices": {
+    "_comment": "map Access service-token common_name (or SSO email) -> short friendly device label used in audit rows",
+    "example-token.access": "work-laptop"
+  }
+}

@@ -93,6 +93,34 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        if self.path == "/nodes":
+            # Read-only dump of the radio's NodeDB — every node it has heard.
+            # The NodeDB lives in the radio's own flash, so it survives bridge
+            # restarts and accumulates 24/7 regardless of what we log.
+            with _lock:
+                if _iface is None:
+                    return self._json(503, {"error": "not connected"})
+                try:
+                    nodes = []
+                    for nid, n in (getattr(_iface, "nodes", None) or {}).items():
+                        user = n.get("user", {}) or {}
+                        pos = n.get("position", {}) or {}
+                        metrics = n.get("deviceMetrics", {}) or {}
+                        nodes.append({
+                            "id": nid,
+                            "longName": user.get("longName"),
+                            "shortName": user.get("shortName"),
+                            "hwModel": user.get("hwModel"),
+                            "snr": n.get("snr"),
+                            "hopsAway": n.get("hopsAway"),
+                            "lastHeard": n.get("lastHeard"),
+                            "batteryLevel": metrics.get("batteryLevel"),
+                            "latitude": pos.get("latitude"),
+                            "longitude": pos.get("longitude"),
+                        })
+                    return self._json(200, {"count": len(nodes), "nodes": nodes})
+                except Exception as e:
+                    return self._json(500, {"error": str(e)})
         if self.path != "/status":
             return self._json(404, {"error": "not found"})
         with _lock:
