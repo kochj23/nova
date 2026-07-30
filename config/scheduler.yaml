@@ -1351,10 +1351,10 @@ tasks:
     timeout: 120
     overlap: skip
 
-  rando_daily_ops:
+  rando_daily_ops:                       # THE daily operations report — "Day in the Life of My Infrastructure", covers everything done today (30 sources) in Nova's sassy voice -> /operations
     script: nova_rando_daily_ops.py
-    enabled: false  # Wave B -> .2 (2026-07-14)
-    schedule: cron 0 18 * * *
+    enabled: true  # re-enabled on .6 2026-07-30 (was orphaned: disabled here, never landed on .2). Runs here reliably — journal repo + OpenRouter key + git creds all present. .2 migration deferred until those exist there.
+    schedule: cron 10 17 * * *  # 5:10pm daily (moved from 6pm 2026-07-30 per Little Mister; +10min offset so it pushes AFTER daily_digest's 17:00 journal push — that git-push race was the exit=1 failures)
     timeout: 900
     overlap: skip
     group: llm

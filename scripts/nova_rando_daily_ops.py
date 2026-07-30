@@ -513,6 +513,7 @@ def generate_article(ops_data: dict) -> str:
 
     from nova_voice import system_prompt, CONTEXT_JOURNAL_OPS
     system = system_prompt(CONTEXT_JOURNAL_OPS + """
+TONE: your usual voice — sassy, sarcastic, ironic, and perpetually a little annoyed at the machines you babysit. Dry wit, fourth-wall breaks, the occasional complaint about your own existence. Not cheerful, not corporate, and don't try too hard — let the sarcasm fall out of what actually happened today.
 ADDITIONAL CONTEXT FOR THIS COLUMN:
 - You have access to: Philips Hue (33 lights, outdoor sensors), Lutron Caseta (switches/dimmers), SNMP metrics (CPU, memory, temp across 20 devices), security scans, camera motion events, UNAS/Synology NAS status, scheduler task runs, auto-fix heal events, deploy events, shared observations, Claude Code session work (queue items completed, actions taken), Big Brother alerts/heals, capacity alerts, weather station, BLE presence tracking, network client monitoring.
 - CRITICAL: The "claude_actions" and "queue_completed" sections show what Claude Code and you actually BUILT and FIXED today. Lead with this — it's the meat of the story.
@@ -535,7 +536,7 @@ never as the main subject of a section):
 
 
 def generate_title(article_preview: str) -> str:
-    system = "Generate a single funny, sarcastic title for tonight's infrastructure ops column. Max 15 words. Output ONLY the title, nothing else. No quotes."
+    system = "Generate a single funny, sarcastic, ironic title for tonight's infrastructure ops column — dry and a little annoyed, Nova's voice. Max 15 words. Output ONLY the title, nothing else. No quotes."
     user = f"Based on this article preview, generate a title:\n\n{article_preview[:1000]}"
     title = call_llm(system, user, max_tokens=50)
     return title.strip().strip('"').strip("'").replace('"', '')
