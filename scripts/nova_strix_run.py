@@ -97,12 +97,20 @@ def main():
 
     # Route through the Nova inference fabric (2026-07-11): point at the active/active router on
     # .2 (NOT a single node) with a model CLASS, so Strix is load-balanced across the heavy GPU
-    # nodes (Mac / .190 / core3-qwen3:14b) and fails over if one dies. Local + free.
+    # nodes and fails over if one dies. Local + free — keeps our own-network pentest topology
+    # and findings off any cloud vendor.
+    #
+    # Use litellm's OPENAI-compatible provider against the router's /v1 endpoint, NOT the
+    # ollama/ provider (2026-07-30): the bundled litellm builds the ollama URL as
+    # {base}/v1/api/generate, a path the router does not serve, so warm-up 404'd every night
+    # since 07-28 and litellm masked it as the misleading "backend .6:11434: Not Found". The
+    # router's /v1/chat/completions handles the model CLASS directly (verified: conversation
+    # -> qwen3:30b-a3b). Any OpenAI key value is accepted; the router does not check it.
     # To revert to metered cloud: STRIX_LLM='openrouter/anthropic/claude-sonnet-4.6' + OpenRouter key.
     logf = f"/tmp/strix_{a.label}.log"
-    ssh(f"cd ~; export STRIX_LLM='ollama/conversation'; "
-        f"export OLLAMA_API_BASE='{nova_router.base()}'; "
-        f"export LLM_API_KEY='ollama'; "
+    ssh(f"cd ~; export STRIX_LLM='openai/conversation'; "
+        f"export OPENAI_API_BASE='{nova_router.base()}/v1'; "
+        f"export OPENAI_API_KEY='nova-router'; "
         f"nohup {STRIX} -n -m {mode} {tflags} --instruction '{instr}' > {logf} 2>&1 & echo go")
 
     # discover the run dir from stdout
