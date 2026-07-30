@@ -140,8 +140,32 @@ def rsync_files(name, src, cifs_dst, tosync_file):
     return int(m.group(1)) if m else 99
 
 
+def synology_resyncing():
+    """Is the Synology RAID mid-resync/recovery? The reconcile adds scan+rsync load,
+    so we skip during a rebuild (the nightly self-defers; the resync-done watcher
+    fires us once it clears). Override with NOVA_LOCALDIFF_FORCE=1."""
+    r = subprocess.run(["ssh", "-o", "BatchMode=yes", SYNO, "cat /proc/mdstat"],
+                       capture_output=True, text=True, timeout=30)
+    return bool(re.search(r"(resync|recovery)\s*=", r.stdout))
+
+
+def ensure_mounts():
+    """Self-heal: bring the Synology's CIFS mounts of the UNAS back up if they dropped
+    (e.g. after a reboot) before we rsync into them. The mountpoints are chattr +i, so
+    even if this fails, a write can't fill local disk — this just restores the mirror.
+    See memory: unas-mirror-cifs-mount-and-immutable-fix."""
+    cmd = ('for m in nas:nas external:External; do mp=/volume1/docker/${m%%:*}; '
+           'unc=//192.168.1.69/${m#*:}; grep -q " $mp cifs " /proc/mounts || '
+           'sudo -n mount -t cifs "$unc" "$mp" -o credentials=/root/.unascreds,iocharset=utf8,vers=3.0 2>/dev/null; done')
+    subprocess.run(["ssh", "-o", "BatchMode=yes", SYNO, cmd], timeout=60)
+
+
 def main():
     os.makedirs(TMP, exist_ok=True)
+    if synology_resyncing() and os.environ.get("NOVA_LOCALDIFF_FORCE") != "1":
+        print("synology RAID resyncing — deferring reconcile (set NOVA_LOCALDIFF_FORCE=1 to override)", flush=True)
+        return 0
+    ensure_mounts()
     slack(":rocket: *Local-find reconcile started* (Synology↔UNAS, both sides scanned locally — no CIFS crawl). "
           "Reporting per-share results here.")
     only = sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] in ("nas", "external") else None

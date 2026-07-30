@@ -221,6 +221,12 @@ tasks:
     overlap: skip
     enabled: false  # Superseded 2026-07-30 by nova_mac_share_mount.py (LaunchAgent net.digitalnoise.nova-mac-share-mount) — same remount behavior PLUS UNAS read-only failover, run uniformly on .6/.7/.251. Two mount-managers would fight during a failover.
 
+  nas_localdiff:                       # nightly Synology->UNAS reconcile (keeps the replica tight ahead of the UNAS-primary cutover). Self-defers while the Synology RAID is resyncing and self-heals the CIFS mount. Runs after the 03:30 Synology backup.
+    script: nova_nas_localdiff.py
+    schedule: cron 0 5 * * *
+    timeout: 5400
+    overlap: skip
+
   synology_monitor:
     script: nova_synology_monitor.py
     enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
