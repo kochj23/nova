@@ -49,10 +49,10 @@ MANAGED = [
      "secondary_unc": "//192.168.1.69/nas"},
     {"mount": "/external", "primary_unc": "//192.168.1.11/external",
      "secondary_unc": "//192.168.1.69/External"},
-    # NFS primary, but the same /volume1/external data is reachable read-only via
-    # the UNAS CIFS 'External' share — good enough for read failover.
-    {"mount": "/mnt/nas-external", "primary_unc": f"{SYNOLOGY}:/volume1/external",
-     "secondary_unc": "//192.168.1.69/External", "nfs_primary": True},
+    # NOTE: the old NFS mount /mnt/nas-external (192.168.1.11:/volume1/external) was
+    # retired 2026-07-30 — it exposed the same /volume1/external data as /external
+    # (CIFS) above, had zero consumers (no repo/cron/systemd refs, no open handles),
+    # and both fail over to the same UNAS 'External' share. Collapsed to just /external.
 ]
 RO_OPTS = "credentials=%s,ro,uid=kochj,gid=kochj,iocharset=utf8,vers=3.0,_netdev" % UNAS_CREDS
 
