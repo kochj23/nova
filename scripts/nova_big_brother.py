@@ -152,7 +152,9 @@ SERVICES = [
     ("Signal-cli",    "192.168.1.6", 8080,  None,                                   False, None),  # binds LAN IP, not loopback
     # ── Nova apps ────────────────────────────────────────────────────────────
     # NovaControl is a desktop Swift app — not a persistent service, don't monitor
-    ("NovaControl Web","127.0.0.1", 37450, "net.digitalnoise.nova-control-web",    False, None),
+    # NovaControl Web (:37450, the gauge dashboard) RETIRED 2026-07-30 — de-registered
+    # so BB stops flapping "DOWN" + healing it every minute. Internal API (:37400,
+    # net.digitalnoise.nova-control-app) is a separate service and stays.
     ("Nova Syslog",   "127.0.0.1", 37462, "net.digitalnoise.nova-syslog",         False, "/health"),
     # ── External / LAN (monitored but not auto-restarted) ────────────────────
     ("Plex",          PLEX_IP,     32400, None,                                   False, "/web"),
@@ -2318,7 +2320,8 @@ JOURNAL_SECTIONS = {
     "dreams":     ("daily_journal",  26),
     "essays":     ("journal_essay",  26),
     "opinions":   ("daily_opinion",  26),
-    "after-dark": ("after_dark",     26),
+    # after-dark RETIRED 2026-07-30 — removed so BB stops flagging it stale AND, more
+    # importantly, never backfill-regenerates the content we just retired.
     "tech-today": ("tech_today",     26),
     "research":   ("research_paper", 50),
     "digests":    ("daily_digest",   26),

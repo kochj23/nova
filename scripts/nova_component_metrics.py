@@ -145,8 +145,6 @@ COMPONENTS = [
      "proc": "nova_syslog"},
 
     # ── Web / control surfaces ──
-    {"name": "novacontrol_web", "host": "127.0.0.1", "port": 37450, "health_path": "/",
-     "proc": "nova_control_web"},
     {"name": "novahomekit", "host": "127.0.0.1", "port": 37433, "health_path": "/api/status",
      "proc": "homekit"},
     {"name": "capacity", "host": "127.0.0.1", "port": 37468, "health_path": None,
