@@ -516,6 +516,13 @@ def _unwedge(reason: str) -> bool:
     then the in-flight operation is aborted and we return to the branch. Publishing
     can continue immediately; the stranded commits are reported for integration.
     """
+    # Only ever act on a genuinely wedged repo. git_push also calls this when
+    # `pull --rebase` fails for a NON-conflict reason (network down, unstaged
+    # changes); without this guard every transient blip minted a rescue branch
+    # and fired a warning, accumulating junk refs over months.
+    if not _repo_wedged():
+        log(f"{reason} — but repo is not wedged; nothing to repair")
+        return True
     log(f"REPO WEDGED ({reason}) — repairing before publish")
     head = _git(["rev-parse", "HEAD"]).stdout.strip()[:12]
     rescue = f"rescue-{today_str()}-{head}"
@@ -554,8 +561,12 @@ def _resolve_rolling_conflicts() -> bool:
     file therefore means --theirs. Using --ours here silently published origin's older
     copy and threw away the article this run just wrote.
     """
+    # -z / NUL-split: a path containing a space would otherwise be mangled into two
+    # bogus paths. That failed safe (neither matches ROLLING_PATHS, so it refused),
+    # but exactness is free here.
     conflicted = sorted({p for p in
-                         _git(["diff", "--name-only", "--diff-filter=U"]).stdout.split() if p})
+                         _git(["diff", "--name-only", "--diff-filter=U", "-z"]).stdout.split("\0")
+                         if p})
     if not conflicted:
         return False
     unexpected = [p for p in conflicted if p not in ROLLING_PATHS]

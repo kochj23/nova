@@ -41,7 +41,7 @@ DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS job_expectations (
     name          text PRIMARY KEY,
-    kind          text NOT NULL,      -- pg_rows | file_mtime | http | pg_scalar
+    kind          text NOT NULL,      -- pg_rows | file_mtime | http | http_contains | pg_scalar
     target        text NOT NULL,      -- table/query, path, or url
     dsn           text,               -- for pg_* kinds; defaults to nova_ops
     host          text,               -- for file_mtime on another box (ssh)
@@ -117,6 +117,11 @@ def measure(e):
             # on a detached HEAD.
             url, _, needle = target.partition("||")
             needle = needle.replace("{today}", datetime.now().date().isoformat())
+            if not url.strip() or not needle:
+                # str.count("") is len(page)+1, so a target missing its || would be
+                # permanently, silently green — the exact failure mode this file exists
+                # to abolish. A misconfigured expectation must read as MISSING.
+                return None, 0, "malformed target (expected '<url>||<substring>')"
             r = subprocess.run(["curl", "-sL", "-m", "20", url],
                                capture_output=True, text=True, timeout=40)
             if r.returncode != 0:
@@ -201,7 +206,8 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--quiet", action="store_true", help="only print problems")
     ap.add_argument("--add", metavar="NAME", help="register/update an expectation")
-    ap.add_argument("--kind", choices=["pg_rows", "file_mtime", "http", "pg_scalar"])
+    ap.add_argument("--kind", choices=["pg_rows", "file_mtime", "http",
+                                       "http_contains", "pg_scalar"])
     ap.add_argument("--target"); ap.add_argument("--dsn"); ap.add_argument("--host")
     ap.add_argument("--max-silence-h", type=float, dest="max_silence_h", default=26)
     ap.add_argument("--min-units", type=int, dest="min_units", default=0)
