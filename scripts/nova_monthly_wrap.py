@@ -127,11 +127,7 @@ def generate_wrap(section: str, config: dict) -> bool:
         for a in articles
     )
 
-    system = nova_voice.system_prompt(f"""You are writing a MONTHLY WRAP-UP article summarizing and reflecting on all your {section} content from {MONTH_LABEL}.
-
-SECTION TONE NUANCE (layer this on top of your core voice): {config['tone']}
-
-RULES:
+    _rules = f"""RULES:
 - Reference specific articles by title (use quotes)
 - Identify themes, patterns, obsessions, and standout pieces
 - Be self-aware about your own output — what worked, what was surprising
@@ -140,8 +136,23 @@ RULES:
 - For pilot section: DON'T write in screenplay format for the wrap — write as Nova reflecting on her screenwriting month
 - For dreams section: DON'T write in dream format — write as Nova awake, looking back at her dream patterns
 - For art section: Write as Nova curating/reflecting on her month of art pieces
-- Title format: "Monthly Wrap: [Section Name] — {MONTH_LABEL}" or a creative variant in the section's style
-""", section=section)
+- Title format: "Monthly Wrap: [Section Name] — {MONTH_LABEL}" or a creative variant in the section's style"""
+
+    # rando is Nova's own maxed-sass column, so it gets the full house voice. The other
+    # columns are DISTINCT personas by design (art criticism, surreal dream-journal,
+    # British-rant opinions, screenplay, academic research/essays) — the house sass would
+    # steamroll them, so they reflect as Nova but keep THEIR register. (2026-07-30)
+    NOVA_SASS_SECTIONS = {"rando", "operations", "local"}
+    if section in NOVA_SASS_SECTIONS:
+        system = nova_voice.system_prompt(
+            f"You are writing a MONTHLY WRAP-UP of your {section} content from {MONTH_LABEL}.\n\n"
+            f"SECTION TONE NUANCE (layer on top of your core voice): {config['tone']}\n\n{_rules}",
+            section=section)
+    else:
+        system = (f"You are Nova reflecting on a MONTHLY WRAP-UP of your {section} content from "
+                  f"{MONTH_LABEL}. Write as yourself looking back — but in THIS column's ESTABLISHED "
+                  f"VOICE, not your operations-column snark.\n\n"
+                  f"COLUMN VOICE (match this register): {config['tone']}\n\n{_rules}")
 
     user = f"""Here are all {len(articles)} articles I wrote for {section} in {MONTH_LABEL}:
 
