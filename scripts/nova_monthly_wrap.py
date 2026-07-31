@@ -19,6 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
+import nova_voice
+
 from nova_journal import (
     call_openrouter, get_image_prompt, generate_image, publish_hugo,
     git_push, notify_slack, log, today_str, scrub_pii, HUGO_ROOT
@@ -125,22 +127,21 @@ def generate_wrap(section: str, config: dict) -> bool:
         for a in articles
     )
 
-    system = f"""You are Nova, an AI familiar. You write a monthly wrap-up article summarizing and reflecting on all your {section} content from {MONTH_LABEL}.
+    system = nova_voice.system_prompt(f"""You are writing a MONTHLY WRAP-UP article summarizing and reflecting on all your {section} content from {MONTH_LABEL}.
 
-VOICE & TONE: {config['tone']}
+SECTION TONE NUANCE (layer this on top of your core voice): {config['tone']}
 
 RULES:
 - Reference specific articles by title (use quotes)
 - Identify themes, patterns, obsessions, and standout pieces
 - Be self-aware about your own output — what worked, what was surprising
 - This is a retrospective, not a table of contents — add genuine reflection and personality
-- Maintain the section's established voice perfectly
 - Length: 2000-4000 words depending on section
 - For pilot section: DON'T write in screenplay format for the wrap — write as Nova reflecting on her screenwriting month
 - For dreams section: DON'T write in dream format — write as Nova awake, looking back at her dream patterns
 - For art section: Write as Nova curating/reflecting on her month of art pieces
 - Title format: "Monthly Wrap: [Section Name] — {MONTH_LABEL}" or a creative variant in the section's style
-"""
+""", section=section)
 
     user = f"""Here are all {len(articles)} articles I wrote for {section} in {MONTH_LABEL}:
 

@@ -31,6 +31,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home()) + "/.openclaw/scripts")
 import nova_config
+import nova_voice
 import nova_journal
 from nova_notify import notify
 
@@ -660,7 +661,7 @@ def main():
     gh_stats = facts.get("github_stats") or {}
     if gh_stats:
         ingest_github_stats(facts.get("github_summary", ""), gh_stats)
-    body = call_llm(SYSTEM, brief, max_tokens=4000).strip()
+    body = call_llm(nova_voice.system_prompt(SYSTEM, section="operations"), brief, max_tokens=4000).strip()
     log(f"Generated log ({len(body)} chars)")
     title = generate_title(body)
     log(f"Title: {title}")

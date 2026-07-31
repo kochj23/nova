@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
 import nova_journal
+import nova_voice
 from nova_image_utils import generate_image
 from nova_notify import notify as nova_notify
 
@@ -395,23 +396,15 @@ def generate_daily_briefing():
     if local_news:
         news_block += "\nLOCAL (LA/SoCal):\n" + "\n".join(f"- {n['title']}: {n['content'][:150]}" for n in local_news)
 
-    system = """You write Presidential Daily Brief-style security intelligence summaries. Rules:
-
-FORMAT:
-- Start with a one-line BLUF (Bottom Line Up Front) — the single most important thing
-- Then 3-5 sections: CYBER, MILITARY/GEOPOLITICAL, PHYSICAL/LOCAL, NUCLEAR/WMD (if applicable), ASSESSMENT
-- Each section: 3-7 bullet points maximum
-- Each bullet: one fact, one source attribution in brackets, one confidence level if uncertain
-- End with KEY JUDGMENTS (2-3 sentences of analytical assessment)
-
-STYLE:
-- Terse. No filler words. No adjectives unless they convey information.
-- "[HIGH CONFIDENCE]", "[MODERATE CONFIDENCE]", "[LOW CONFIDENCE]" where applicable
-- Source attribution: [CISA], [NCSC-UK], [Krebs], [SANS], [Unit42], etc.
-- "NOSIG" (no significant activity) for quiet sections — don't fabricate threats
-- Dates in DD MMM format (02 JUN)
-- Times in 24h Zulu (1400Z) where relevant
-- No editorializing, no recommendations unless specifically about immediate action required
+    system = nova_voice.system_prompt(nova_voice.CONTEXT_JOURNAL_SECURITY + """
+STRUCTURE (it's a briefing — keep the bones, lose the stiffness; facts sacred, attitude yours):
+- Open with a one-line BLUF (Bottom Line Up Front): the single most important thing, in your voice.
+- Then 3-5 sections: CYBER, MILITARY/GEOPOLITICAL, PHYSICAL/LOCAL, NUCLEAR/WMD (only if applicable), ASSESSMENT. 3-7 points each.
+- Attribute every fact in brackets — [CISA], [NCSC-UK], [Krebs], [SANS], [Unit42], etc. Never invent a source or a threat.
+- Flag confidence where it matters: [HIGH CONFIDENCE] / [MODERATE CONFIDENCE] / [LOW CONFIDENCE].
+- Quiet section? Mark it NOSIG and move on — don't fabricate drama to fill space (make a dry joke about the quiet instead).
+- Dates in DD MMM (02 JUN); 24h Zulu (1400Z) where relevant. End with KEY JUDGMENTS: 2-3 sentences of real analysis.
+- ~1000-2000 words. Title line (no markdown header), then body. No preamble.
 
 CONTENT PRIORITIES (for the reader — a senior SRE/infrastructure engineer in Los Angeles):
 1. Actively-exploited vulnerabilities affecting production infrastructure
@@ -421,8 +414,7 @@ CONTENT PRIORITIES (for the reader — a senior SRE/infrastructure engineer in L
 5. Physical security events in Southern California
 6. Supply chain attacks, dependency compromises
 7. Nuclear/WMD developments (IAEA reports, test activity)
-
-OUTPUT: Title line (no markdown header) + body. No preamble. ~1000-2000 words."""
+""", section="security")
 
     user = f"""Write today's security intelligence briefing ({time.strftime('%d %b %Y')}).
 

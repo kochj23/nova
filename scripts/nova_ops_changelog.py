@@ -9,6 +9,10 @@ cover in place, pushes, and drops the link in Slack.
 import subprocess
 from pathlib import Path
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent))
+import nova_voice
+
 import nova_weekly_ops_report as wk
 import nova_weekly_ops_wrap as wrap
 
@@ -149,7 +153,7 @@ def main():
           "migration, then the new airwave feeds + scanners + pynrsp, what CHANGED, and what got FIXED."
     )
     wk.log(f"[changelog] brief assembled ({len(brief)} chars)")
-    body = wk.call_llm(SYSTEM, brief, max_tokens=6500).strip()
+    body = wk.call_llm(nova_voice.system_prompt(SYSTEM, section="operations"), brief, max_tokens=6500).strip()
     if not body or len(body) < 400:
         wk.log("[changelog] generation failed/short — aborting"); return
     title = gen_title(body)
