@@ -247,6 +247,12 @@ tasks:
     timeout: 60
     overlap: skip
 
+  alert_patterns:                    # daily 8:30am — alert PATTERN analysis over a rolling 14 days (chronic signatures + week-over-week trend, incidents, red/blue/purple, network changes). FULL detail -> Slack #nova-alerts; SANITIZED high-level narrative -> public /operations column.
+    script: nova_alert_patterns.py
+    schedule: cron 30 8 * * *
+    timeout: 600
+    overlap: skip
+
   unas_monitor:
     enabled: false  # migrated to nova-core 2026-07-23, verified working
     script: nova_unas_monitor.py
