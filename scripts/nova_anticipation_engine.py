@@ -315,17 +315,50 @@ def check_meeting_prep() -> list:
     return observations
 
 
-def check_desk_duration() -> list:
-    """Suggest breaks after extended desk time."""
+IDLE_RESET_SECS = 900  # 15 min away from the keyboard breaks the "continuous desk" run
+
+
+def _mac_idle_seconds():
+    """Seconds since the last keyboard/mouse input on this workstation (the engine
+    runs on .6, where Jordan actually sits). None if unavailable. Far more honest than
+    BLE presence, which tracks the PHONE — it reported 'office since 4:21am' while
+    Jordan was asleep in the bedroom, because his phone was parked on the desk."""
+    try:
+        import re
+        out = subprocess.run(["ioreg", "-c", "IOHIDSystem"],
+                             capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', out)
+        if m:
+            return int(m.group(1)) / 1_000_000_000.0  # nanoseconds -> seconds
+    except Exception:
+        pass
+    return None
+
+
+def get_desk_active_minutes(state) -> float:
+    """Minutes Jordan has been CONTINUOUSLY active at the workstation, from real input
+    activity. A gap of IDLE_RESET_SECS+ (he stepped away) resets the run; brief pauses
+    don't. This is what 'at your desk' should have meant all along — a phone parked on
+    the desk can't fake it, and it resets the moment he actually gets up."""
+    idle = _mac_idle_seconds()
+    now = time.time()
+    if idle is None or idle >= IDLE_RESET_SECS:
+        state["desk_active_since"] = None          # away (or no signal) -> run broken
+        return 0.0
+    since = state.get("desk_active_since")
+    if not since:
+        since = now - idle                         # just returned -> start at last activity
+        state["desk_active_since"] = since
+    return max(0.0, (now - since) / 60.0)
+
+
+def check_desk_duration(state) -> list:
+    """Stretch-break nudge after extended CONTINUOUS active desk time — measured from
+    real keyboard/mouse input, not BLE phone location. Re-nag is throttled to 3h by
+    TOPIC_COOLDOWN_OVERRIDES, so this only needs the 'is he genuinely still here' test."""
     observations = []
-    # A stretch-break nudge only makes sense during working hours. This also stops
-    # the 7-9am false fires that came from a phone left on the desk overnight.
-    if not (9 <= datetime.now().hour < 19):
-        return observations
-    duration = get_presence_duration()
-    # 4h+ of continuous desk time, but ignore implausibly long runs (>10h is almost
-    # certainly a parked phone, not someone who literally never stood up).
-    if 240 <= duration < 600:
+    duration = get_desk_active_minutes(state)
+    if duration >= 240:  # 4 hours of actually being at the keyboard
         observations.append({
             "type": "health",
             "priority": 3,
@@ -520,7 +553,7 @@ def evaluate():
     # Collect all observations
     observations = []
     observations.extend(check_meeting_prep())
-    observations.extend(check_desk_duration())
+    observations.extend(check_desk_duration(state))
     observations.extend(check_infrastructure())
     observations.extend(check_environment())
 
