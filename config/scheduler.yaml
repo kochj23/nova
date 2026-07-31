@@ -248,6 +248,13 @@ tasks:
     timeout: 60
     overlap: skip
 
+  unas_status_refresh:                 # .6 runs the daily-ops article, which reads the LOCAL nova_unas_status.json; the alerting monitor runs on nova-core, so .6's copy went stale (froze on the old "setup" state). --json refreshes the file and returns BEFORE any alert/memory, so no double-alerting. Keeps rando reading current, normalized UNAS state.
+    script: nova_unas_monitor.py
+    args: ["--json"]
+    schedule: every 30m
+    timeout: 60
+    overlap: skip
+
   homekit_outlets:                 # ingest HomeKit "Outlet In Use" signals (27 Eve sockets) + left-on alerts (#682)
     script: nova_homekit_outlets.py
     args: ["--alert"]
