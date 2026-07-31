@@ -149,8 +149,9 @@ def check_device(snapshot: dict) -> list[str]:
     """Returns list of problem strings for device state."""
     problems = []
     state = snapshot.get("device", {}).get("state", "")
-    # "setup" is expected for new devices — not an alert condition
-    if state not in ("", "setup", "configured", "active"):
+    # Benign states (incl. our normalized "production (local-managed)" label and the
+    # raw UniFi ones it replaces) are not alert conditions.
+    if state not in ("", "production (local-managed)", "setup", "configured", "active"):
         problems.append(f"UNAS device state: {state}")
     return problems
 
@@ -254,6 +255,18 @@ def main():
     except UNASError as exc:
         log(f"ERROR: {exc}")
         sys.exit(1)
+
+    # Normalize the benign UniFi device-state label for EVERY downstream consumer
+    # (status file, daily memory, display, and the ops articles that read them).
+    # On a healthy, local-managed UNAS, state "setup"/"configured"/"active" is NOT an
+    # in-progress setup wizard — the box is fully provisioned (isSetup:true) and in
+    # production; it only reads "setup" because it's local-only (not cloud-adopted).
+    # Nova kept reading the raw "setup" and writing "the UNAS is still in setup" in
+    # her columns. Relabel it here so she reports reality. (2026-07-30)
+    _dev = snapshot.get("device", {})
+    if _dev.get("state") in ("setup", "configured", "active"):
+        _dev["state_raw"] = _dev["state"]
+        _dev["state"] = "production (local-managed)"
 
     # Always persist status file (for NovaControl)
     _save_status(snapshot)
