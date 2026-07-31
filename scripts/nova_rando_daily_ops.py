@@ -532,6 +532,10 @@ noise, hundreds of rows/day, use it only to add texture to a completed-work item
 never as the main subject of a section):
 {data_block}"""
 
+    import nova_article_history
+    _h = nova_article_history.recent_articles_context("operations")
+    if _h:
+        user = user + "\n\n" + _h
     return call_llm(system, user, max_tokens=16000)
 
 

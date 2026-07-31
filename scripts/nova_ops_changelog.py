@@ -153,6 +153,10 @@ def main():
           "migration, then the new airwave feeds + scanners + pynrsp, what CHANGED, and what got FIXED."
     )
     wk.log(f"[changelog] brief assembled ({len(brief)} chars)")
+    import nova_article_history
+    _h = nova_article_history.recent_articles_context("operations")
+    if _h:
+        brief = brief + "\n\n" + _h
     body = wk.call_llm(nova_voice.system_prompt(SYSTEM, section="operations"), brief, max_tokens=6500).strip()
     if not body or len(body) < 400:
         wk.log("[changelog] generation failed/short — aborting"); return

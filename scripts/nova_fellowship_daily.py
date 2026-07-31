@@ -417,6 +417,10 @@ character. Don't invent incidents that aren't in the data. 600-1000 words, a few
 named sections/beats (not a full chapter-by-chapter epic), genuinely funny, a little
 affectionate underneath the mockery. No explicit sexual content.
 OUTPUT EXACTLY THIS SHAPE:\nTITLE: <short punchy title, no quotes>\n<blank line>\n<the body>""")
+    import nova_article_history
+    _h = nova_article_history.recent_articles_context("operations")
+    if _h:
+        material = material + "\n\n" + _h
     raw = call_llm(system, material, max_tokens=3000)
     if not raw:
         log("LLM produced nothing — aborting")

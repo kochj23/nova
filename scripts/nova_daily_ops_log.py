@@ -661,6 +661,10 @@ def main():
     gh_stats = facts.get("github_stats") or {}
     if gh_stats:
         ingest_github_stats(facts.get("github_summary", ""), gh_stats)
+    import nova_article_history
+    _h = nova_article_history.recent_articles_context("operations")
+    if _h:
+        brief = brief + "\n\n" + _h
     body = call_llm(nova_voice.system_prompt(SYSTEM, section="operations"), brief, max_tokens=4000).strip()
     log(f"Generated log ({len(body)} chars)")
     title = generate_title(body)

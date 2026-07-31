@@ -91,6 +91,10 @@ def main():
         f"--- OPEN SECURITY QUEUE ---\n{queue_block}\n\n"
         f"--- REMEDIATIONS (last 30h) ---\n{rem_block}\n\n"
         "Write today's morning security operations report.")
+    import nova_article_history
+    _h = nova_article_history.recent_articles_context("operations")
+    if _h:
+        user = user + "\n\n" + _h
     raw = nj.call_openrouter(system, user, max_tokens=2400, temperature=0.6)
     if not raw:
         nj.log("[ops-security] LLM produced nothing — aborting"); return 1

@@ -102,6 +102,10 @@ def main():
     system = nova_voice.system_prompt(ctx)
     user = (f"--- LAST 24H ON THE AIRWAVES (tally: {tally}) ---\n\n"
             + "\n\n".join(blocks) + "\n\nWrite today's airwaves roundup.")
+    import nova_article_history
+    _h = nova_article_history.recent_articles_context("local")
+    if _h:
+        user = user + "\n\n" + _h
     raw = nj.call_openrouter(system, user, max_tokens=2800, temperature=0.9)
     if not raw:
         nj.log("[local-airwaves] LLM produced nothing — aborting"); return 1

@@ -780,6 +780,10 @@ ADDITIONAL RULES FOR BURBANK DISPATCH:
 {arrests_block}
 Write your daily Burbank dispatch. Today is {datetime.now().strftime('%A, %B %d, %Y')}."""
 
+    import nova_article_history
+    _h = nova_article_history.recent_articles_context("local")
+    if _h:
+        user = user + "\n\n" + _h
     return call_llm(system, user, max_tokens=10000)
 
 

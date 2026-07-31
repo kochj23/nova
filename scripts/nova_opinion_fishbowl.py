@@ -72,6 +72,10 @@ def main():
     user = (f"--- PER-PERSON DOSSIERS (the cast) ---\n{dossier_block}\n\n"
             f"--- NEWEST FISHBOWL ACTIVITY (newest first) ---\n{sample_block}\n\n"
             f"Write today's opinion column.")
+    import nova_article_history
+    _h = nova_article_history.recent_articles_context("opinions")
+    if _h:
+        user = user + "\n\n" + _h
     raw = nj.call_openrouter(system, user, max_tokens=2600, temperature=0.9)
     if not raw:
         nj.log("[opinion-fishbowl] LLM produced nothing — aborting"); return 1

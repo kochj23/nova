@@ -78,6 +78,10 @@ def main():
             f"--- NOTABLE GUEST DOSSIERS ---\n{guest_block}\n\n"
             f"--- THIN-FILE ENTRIES (handle per the voice-calibration instructions above) ---\n{thin_block}\n\n"
             f"Write the channel-by-channel opinion column.")
+    import nova_article_history
+    _h = nova_article_history.recent_articles_context("opinions")
+    if _h:
+        user = user + "\n\n" + _h
     raw = nj.call_openrouter(system, user, max_tokens=6000, temperature=0.9)
     if not raw:
         nj.log("[opinion-fishbowl-roster] LLM produced nothing — aborting"); return 1
