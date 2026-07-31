@@ -591,9 +591,67 @@ def _resolve_rolling_conflicts() -> bool:
     return True
 
 
+# ── Fleet-wide journal-push serialization ────────────────────────────────────
+# The journal repo is written by many generators across .6 and .2. Without a lock
+# they race: non-fast-forward pushes, mid-rebase repos, and (worst) a writer that
+# sees another's index.lock and RETURNS without committing — stranding the article
+# untracked (the 2026-07-31 local-trends bug). Every host shares pg-primary, so a PG
+# advisory lock serializes ALL journal pushes fleet-wide; writers QUEUE for it rather
+# than dropping their commit. Degrades to best-effort (unlocked) if PG is unreachable.
+_PUSH_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+_PUSH_LOCK_KEY = 47110815  # arbitrary constant advisory-lock id for journal pushes
+
+
+def _acquire_push_lock(wait_s: int = 180):
+    """Block up to wait_s for the fleet-wide journal-push lock. Returns the holding
+    connection (keep open to hold the lock), or None on timeout/unavailable."""
+    import time as _t
+    try:
+        import psycopg2
+    except Exception:
+        return None
+    conn = None
+    try:
+        conn = psycopg2.connect(_PUSH_DSN, connect_timeout=10)
+        conn.autocommit = True
+        deadline = _t.time() + wait_s
+        while _t.time() < deadline:
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_try_advisory_lock(%s)", (_PUSH_LOCK_KEY,))
+                if cur.fetchone()[0]:
+                    return conn
+            _t.sleep(2)
+        conn.close()
+        log("journal push lock: timed out waiting — proceeding unlocked (best-effort)")
+        return None
+    except Exception as e:
+        log(f"journal push lock unavailable ({e}) — proceeding unlocked")
+        try:
+            if conn:
+                conn.close()
+        except Exception:
+            pass
+        return None
+
+
+def _release_push_lock(conn):
+    if not conn:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT pg_advisory_unlock(%s)", (_PUSH_LOCK_KEY,))
+    except Exception:
+        pass
+    try:
+        conn.close()
+    except Exception:
+        pass
+
+
 def git_push(section: str, title: str):
-    """Stage, commit, push the Hugo repo. Clears stale lock files."""
+    """Stage, commit, push the Hugo repo — serialized fleet-wide via a PG advisory lock."""
     section = _canon_section(section)
+    lock_conn = _acquire_push_lock()
     try:
         import time as _time
         # A wedged repo makes `git add -A` stage conflict markers and commit them onto
@@ -602,15 +660,16 @@ def git_push(section: str, title: str):
         if wedged and not _unwedge(wedged):
             log("Repo still wedged after repair attempt — refusing to commit")
             return
+        # We hold the fleet-wide push lock, so no other git_push is running — any
+        # index.lock is stale (a crashed git). Clear it rather than skip; skipping here
+        # is what left articles written-but-uncommitted (the untracked-file bug).
         lock_file = HUGO_ROOT / ".git" / "index.lock"
         if lock_file.exists():
-            lock_age = _time.time() - lock_file.stat().st_mtime
-            if lock_age > 300:
+            try:
                 lock_file.unlink()
-                log(f"Cleared stale git lock ({lock_age:.0f}s old)")
-            else:
-                log(f"Git lock exists ({lock_age:.0f}s old) — skipping push")
-                return
+                log("Cleared git index.lock (we hold the fleet-wide push lock)")
+            except Exception:
+                pass
 
         result = subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
@@ -669,6 +728,8 @@ def git_push(section: str, title: str):
             log("Pushed to GitHub — deploy triggered")
     except Exception as e:
         log(f"Git error: {e}")
+    finally:
+        _release_push_lock(lock_conn)
 
 
 def notify_slack(section: str, title: str, preview: str):
