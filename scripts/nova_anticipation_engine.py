@@ -53,7 +53,12 @@ OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 PG_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
 
 EVAL_INTERVAL = 60  # seconds between evaluation cycles
-DELIVERY_COOLDOWN = 1800  # 30 min between proactive messages on same topic
+DELIVERY_COOLDOWN = 1800  # 30 min default between proactive messages on same topic
+# Some topics must NOT re-nag at the default cadence. A stretch-break nudge every
+# 30 min is worse than useless — it fired 5x one morning off overnight phone-parking.
+TOPIC_COOLDOWN_OVERRIDES = {
+    "desk_duration": 3 * 3600,   # nudge to stretch at most once every 3 hours
+}
 MAX_DAILY_PROACTIVE = 12  # don't overwhelm
 
 STATE_FILE = Path.home() / ".openclaw/workspace/state/nova_anticipation_state.json"
@@ -215,22 +220,29 @@ def get_presence_duration() -> float:
         import psycopg2
         conn = psycopg2.connect(PG_DSN)
         cur = conn.cursor()
+        # Start of the CURRENT unbroken run in the current room. "Unbroken" resets on
+        # a room change OR any gap > 15 min in the presence stream (you left the desk,
+        # or the BLE tag went quiet overnight). The old query floored the start at
+        # now()-8h, so a phone parked on the desk overnight always read ~480 min
+        # ("479 straight") whether or not anyone was actually sitting there.
         cur.execute("""
-            SELECT MIN(ts) FROM telemetry.presence
-            WHERE person = 'jordan' AND method = 'ble_rssi'
-              AND ts > now() - interval '8 hours'
-              AND room = (
-                  SELECT room FROM telemetry.presence
-                  WHERE person = 'jordan'
-                  ORDER BY ts DESC LIMIT 1
-              )
+            WITH cur AS (
+                SELECT room FROM telemetry.presence
+                WHERE person = 'jordan' ORDER BY ts DESC LIMIT 1
+            ),
+            seq AS (
+                SELECT ts, room,
+                       ts - lag(ts) OVER (ORDER BY ts) AS gap
+                FROM telemetry.presence
+                WHERE person = 'jordan' AND method = 'ble_rssi'
+                  AND ts > now() - interval '18 hours'
+            )
+            SELECT MIN(ts) FROM seq
+            WHERE room = (SELECT room FROM cur)
               AND ts > COALESCE(
-                  (SELECT MAX(ts) FROM telemetry.presence
-                   WHERE person = 'jordan' AND room != (
-                       SELECT room FROM telemetry.presence
-                       WHERE person = 'jordan' ORDER BY ts DESC LIMIT 1
-                   ) AND ts > now() - interval '8 hours'),
-                  now() - interval '8 hours'
+                  (SELECT MAX(ts) FROM seq
+                   WHERE room <> (SELECT room FROM cur) OR gap > interval '15 minutes'),
+                  now() - interval '18 hours'
               )
         """)
         row = cur.fetchone()
@@ -306,9 +318,14 @@ def check_meeting_prep() -> list:
 def check_desk_duration() -> list:
     """Suggest breaks after extended desk time."""
     observations = []
+    # A stretch-break nudge only makes sense during working hours. This also stops
+    # the 7-9am false fires that came from a phone left on the desk overnight.
+    if not (9 <= datetime.now().hour < 19):
+        return observations
     duration = get_presence_duration()
-
-    if duration >= 240:  # 4 hours
+    # 4h+ of continuous desk time, but ignore implausibly long runs (>10h is almost
+    # certainly a parked phone, not someone who literally never stood up).
+    if 240 <= duration < 600:
         observations.append({
             "type": "health",
             "priority": 3,
@@ -400,7 +417,8 @@ def should_deliver(observation: dict, state: dict, activity: str) -> bool:
     cooldowns = state.get("topic_cooldowns", {})
     if topic in cooldowns:
         last_time = cooldowns[topic]
-        if time.time() - last_time < DELIVERY_COOLDOWN:
+        cooldown = TOPIC_COOLDOWN_OVERRIDES.get(topic, DELIVERY_COOLDOWN)
+        if time.time() - last_time < cooldown:
             return False
 
     return True
