@@ -241,6 +241,12 @@ tasks:
     timeout: 60
     overlap: skip
 
+  rogue_ap_sentinel:                 # catch OUR OWN gear broadcasting open/misconfigured WiFi (the Bose SoftAP incident 2026-07-31). Flags open/weak APs whose BSSID /40-matches a LAN device + UniFi is_rogue; alerts on CHANGE to #nova-alerts; feeds the alert-patterns report. Neighbor open APs ignored.
+    script: nova_rogue_ap_sentinel.py
+    schedule: every 15m
+    timeout: 60
+    overlap: skip
+
   unas_monitor:
     enabled: false  # migrated to nova-core 2026-07-23, verified working
     script: nova_unas_monitor.py
