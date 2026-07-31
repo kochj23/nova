@@ -420,10 +420,27 @@ def full_check():
     log(f"Health: {format_status(health)}")
     log(f"Devices: {len(devices)} | Clients: {len(clients)} | Problems: {len(problems)}")
 
-    # Post to Slack if there are problems
-    if problems:
+    # Alert ONLY when the problem set CHANGES. A persistent known issue (a switch
+    # stuck provisioning, an intentionally-off AP) must not re-page every 30-min run
+    # — that noise buries real events. Volatile numbers (latencies, counts) are
+    # stripped so the same issue with a jittering metric doesn't read as "new". (2026-07-30)
+    import re as _re
+    _curr = sorted({_re.sub(r"\d+", "#", p.get("message", "")) for p in problems})
+    _st = _load_json(STATE_FILE) or {}
+    _prev = _st.get("health_problems", [])
+    _new = [k for k in _curr if k not in _prev]
+    if problems and _new:
         report = format_health_report(health, devices, clients, problems)
         slack_post(report, level="warning", category="network", dedup_key="unifi-health")
+        log(f"health: {len(_new)} NEW problem(s) posted (of {len(problems)} total)")
+    elif problems:
+        log(f"health: {len(problems)} problem(s), unchanged — not re-alerting")
+    elif _prev:
+        slack_post("*UniFi Monitor* — all network problems cleared", level="info",
+                   category="network", dedup_key="unifi-health-clear")
+        log("health: all problems cleared")
+    _st["health_problems"] = _curr
+    _save_json(STATE_FILE, _st)
 
     # Store in memory
     wan = health.get("wan", {})
@@ -1446,10 +1463,27 @@ def full_check_v2():
     log(f"Health: {format_status(health)}")
     log(f"Devices: {len(devices)} | Clients: {len(clients)} | Problems: {len(problems)}")
 
-    # Post to Slack if there are problems
-    if problems:
+    # Alert ONLY when the problem set CHANGES. A persistent known issue (a switch
+    # stuck provisioning, an intentionally-off AP) must not re-page every 30-min run
+    # — that noise buries real events. Volatile numbers (latencies, counts) are
+    # stripped so the same issue with a jittering metric doesn't read as "new". (2026-07-30)
+    import re as _re
+    _curr = sorted({_re.sub(r"\d+", "#", p.get("message", "")) for p in problems})
+    _st = _load_json(STATE_FILE) or {}
+    _prev = _st.get("health_problems", [])
+    _new = [k for k in _curr if k not in _prev]
+    if problems and _new:
         report = format_health_report(health, devices, clients, problems)
         slack_post(report, level="warning", category="network", dedup_key="unifi-health")
+        log(f"health: {len(_new)} NEW problem(s) posted (of {len(problems)} total)")
+    elif problems:
+        log(f"health: {len(problems)} problem(s), unchanged — not re-alerting")
+    elif _prev:
+        slack_post("*UniFi Monitor* — all network problems cleared", level="info",
+                   category="network", dedup_key="unifi-health-clear")
+        log("health: all problems cleared")
+    _st["health_problems"] = _curr
+    _save_json(STATE_FILE, _st)
 
     # 2. WAN history logging
     wan_log()
