@@ -85,6 +85,7 @@ _token_expires = 0
 _prev_light_state = {}  # room -> bool (any light on)
 _prev_motion_state = {}
 _prev_media_state = {}  # room -> active/idle
+_prev_scene_state = {}  # scene entity_id -> last-seen activation timestamp (str)
 
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -382,6 +383,53 @@ async def write_device_tracker(states):
             """, f"GPS: {person} {event}")
 
 
+async def write_scene_activations(states):
+    """Log Siri / Apple-Home-direct scene activations to home_scene_activations.
+
+    HA scene.* entities set their `state` to the ISO timestamp of the last
+    activation. We track the last-seen timestamp per scene; when it advances
+    we insert a row. On first sight of a scene we record its timestamp without
+    inserting, so a stale/historical activation isn't logged on poller startup.
+    Idempotent across the long-running poll loop via _prev_scene_state.
+    """
+    global _prev_scene_state
+    pool = await get_pool()
+
+    for s in states:
+        eid = s["entity_id"]
+        if not eid.startswith("scene."):
+            continue
+
+        ts_state = s.get("state")
+        # HA reports "unknown"/"unavailable" for never-activated scenes.
+        if not ts_state or ts_state in ("unknown", "unavailable"):
+            continue
+
+        prev = _prev_scene_state.get(eid)
+        if prev == ts_state:
+            continue
+
+        _prev_scene_state[eid] = ts_state
+
+        # First time we've seen this scene this run: baseline, don't backfill.
+        if prev is None:
+            continue
+
+        # Timestamp advanced -> a new activation occurred.
+        attrs = s.get("attributes", {})
+        scene_name = attrs.get("friendly_name") or eid
+
+        try:
+            async with pool.acquire() as conn:
+                await conn.execute("""
+                    INSERT INTO public.home_scene_activations (ts, scene_name)
+                    VALUES (now(), $1)
+                """, scene_name)
+            log(f"Scene activated: {scene_name} (@ {ts_state})")
+        except Exception as e:
+            log(f"Failed to log scene activation for {scene_name}: {e}", "ERROR")
+
+
 async def poll_loop():
     await asyncio.sleep(5)
     log(f"HA poller started (interval={POLL_INTERVAL}s)")
@@ -402,6 +450,7 @@ async def poll_loop():
             await write_presence_from_media(room_media)
             await write_motion(motion)
             await write_device_tracker(states)
+            await write_scene_activations(states)
 
         except Exception as e:
             log(f"Poll error: {e}", "ERROR")

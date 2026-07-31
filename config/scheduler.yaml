@@ -657,7 +657,7 @@ tasks:
 
   security_weekly:
     script: nova_security_weekly.py
-    enabled: false  # Wave B -> .2 (2026-07-14)
+    enabled: true  # re-enabled on .6 2026-07-31: .2 migration stranded it — .2's nova-journal clone diverges from origin so the auto-push is rejected (announce-but-don't-publish). .6 publishes reliably (HTTPS creds + clean clone). .2 trigger disabled in scheduler-core.yaml.
     schedule: cron 0 16 * * 5
     timeout: 600
     overlap: skip
@@ -1143,7 +1143,7 @@ tasks:
 
   plex_sync:
     script: nova_plex.py
-    enabled: false  # -> .2 (portable secrets/SSH 2026-07-14)
+    enabled: false  # completed migration to .2 2026-07-31 — was stranded (never landed on .2, ran nowhere since 2026-07-14). Now enabled on .2 scheduler-core with its sibling plex_* jobs.
     args: ["sync"]
     schedule: cron 0 4 * * 1
     timeout: 300

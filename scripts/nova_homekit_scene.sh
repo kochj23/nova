@@ -13,6 +13,15 @@ set -euo pipefail
 SCENE_NAME="${1:-}"
 API_URL="http://127.0.0.1:37400"
 
+# Log a successful scene activation to Postgres. Guarded so a psql failure
+# (network, auth, etc.) can never break scene execution — only log on success.
+log_scene_activation() {
+    local name="$1"
+    psql -h pg-primary.digitalnoise.net -d nova_ops \
+        -c "INSERT INTO public.home_scene_activations (ts, scene_name) VALUES (now(), \$\$${name}\$\$)" \
+        >/dev/null 2>&1 || true
+}
+
 if [ -z "$SCENE_NAME" ]; then
     echo "Usage: nova_homekit_scene.sh <scene_name>"
     echo "       nova_homekit_scene.sh --list"
@@ -38,6 +47,7 @@ result=$(curl -s --connect-timeout 3 -X POST \
     "$API_URL/api/homekit/scenes/execute" 2>/dev/null) || true
 
 if echo "$result" | grep -q '"status" *: *"executed"'; then
+    log_scene_activation "$SCENE_NAME"
     echo "$result"
     exit 0
 fi
@@ -47,6 +57,7 @@ echo "API failed, trying Shortcuts CLI..." >&2
 echo "$SCENE_NAME" | shortcuts run "Execute HomeKit Scene" --input-type public.plain-text --output-type public.plain-text 2>/dev/null
 
 if [ $? -eq 0 ]; then
+    log_scene_activation "$SCENE_NAME"
     echo "{\"status\": \"executed\", \"scene\": \"$SCENE_NAME\", \"backend\": \"Shortcuts CLI\"}"
 else
     echo "{\"error\": \"Failed to execute scene '$SCENE_NAME'\"}" >&2

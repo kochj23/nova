@@ -204,7 +204,24 @@ description: "Weekly intelligence strategic rollup — {time.strftime('%d %b %Y'
     subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
     subprocess.run(["git", "commit", "-m", f"security: weekly rollup {dt}"],
                    cwd=HUGO_ROOT, capture_output=True, timeout=30)
-    subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=60)
+    # Robust push: if another host pushed since our last fetch, a plain `git push`
+    # is rejected (non-fast-forward). Previously that error was swallowed and the
+    # Slack notify below still fired -> "announce but don't publish". Integrate
+    # remote commits with a rebase and retry once; log a real error if it still fails.
+    pushed = False
+    for attempt in range(2):
+        push = subprocess.run(["git", "push"], cwd=HUGO_ROOT,
+                              capture_output=True, text=True, timeout=60)
+        if push.returncode == 0:
+            pushed = True
+            break
+        log(f"git push rejected (attempt {attempt + 1}): "
+            f"{(push.stderr or '').strip()[:200]} — rebasing on origin and retrying")
+        subprocess.run(["git", "pull", "--rebase", "--autostash"], cwd=HUGO_ROOT,
+                       capture_output=True, timeout=90)
+    if not pushed:
+        log("ERROR: git push still failing after rebase — "
+            "weekly committed locally but NOT published to origin")
 
     notify(
         "Nova Security — Week in Intelligence",

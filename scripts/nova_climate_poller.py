@@ -55,6 +55,30 @@ HUE_BRIDGE_SUBNET = "192.168.1"
 HUE_BRIDGE_RANGE = range(20, 51)  # .20 through .50
 SHORTCUTS_PROXY = "http://127.0.0.1:37432"
 
+# ── ZHA Aqara FP300 climate (via Home Assistant) ──────────────────────────────
+# The Zigbee radio moved from zigbee2mqtt to Home Assistant's ZHA integration.
+# These 6 Aqara FP300 presence sensors (model lumi.sensor_occupy.agl8) report
+# temp/humidity in ZHA; the retired nova_zigbee_poller.py / nova_zigbee_presence_bridge.py
+# used to read them off MQTT. We preserve the EXACT room labels + source values
+# those collectors wrote so existing reports/watchtower keep working:
+#   • source='zigbee'  -> room label carries the '_presence' suffix (all 6 rooms)
+#   • source='fp300'   -> clean room label, indoor rooms only (no garage)
+# Keyed by ZHA entity_id; IEEE (ground truth from the old zigbee2mqtt friendly_name
+# map) noted per row for traceability. ZHA already reports these in °F.
+HA_URL = "http://127.0.0.1:8123"
+
+ZHA_FP300 = {
+    # room:           (temperature entity_id,                               humidity entity_id,                                 IEEE)
+    "master_bedroom": ("sensor.aqara_lumi_sensor_occupy_agl8_temperature",   "sensor.aqara_lumi_sensor_occupy_agl8_humidity",   "0x54ef4410016ff02f"),
+    "dylans_room":    ("sensor.aqara_lumi_sensor_occupy_agl8_temperature_2", "sensor.aqara_lumi_sensor_occupy_agl8_humidity_2", "0x54ef4410016fc997"),
+    "office":         ("sensor.aqara_lumi_sensor_occupy_agl8_temperature_3", "sensor.aqara_lumi_sensor_occupy_agl8_humidity_3", "0x54ef441001702281"),
+    "living_room":    ("sensor.aqara_lumi_sensor_occupy_agl8_temperature_4", "sensor.aqara_lumi_sensor_occupy_agl8_humidity_4", "0x54ef4410016fc42c"),
+    "patio":          ("sensor.aqara_lumi_sensor_occupy_agl8_temperature_5", "sensor.aqara_lumi_sensor_occupy_agl8_humidity_5", "0x54ef4410016a818b"),
+    "garage":         ("sensor.aqara_lumi_sensor_occupy_agl8_temperature_6", "sensor.aqara_lumi_sensor_occupy_agl8_humidity_6", "0x54ef4410016b0fee"),
+}
+# The 'fp300' feed historically covered only these indoor rooms (never garage).
+ZHA_FP300_SOURCE_ROOMS = {"master_bedroom", "dylans_room", "office", "living_room", "patio"}
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 _shutdown = False
@@ -325,6 +349,89 @@ def poll_homepod_sensors() -> list[dict]:
     return readings
 
 
+# ── Source: ZHA Aqara FP300 climate via Home Assistant ───────────────────────
+
+def _get_ha_token() -> Optional[str]:
+    """Fetch a Home Assistant bearer token (cached by nova_ha_metrics)."""
+    try:
+        import nova_ha_metrics
+        return nova_ha_metrics.get_ha_token()
+    except Exception as e:
+        log.warning("Could not obtain HA token for ZHA polling: %s", e)
+        return None
+
+
+def poll_zha_climate(ha_token: Optional[str]) -> list[dict]:
+    """
+    Read the 6 Aqara FP300 temp/humidity sensors from Home Assistant's ZHA
+    integration and emit rows for BOTH legacy feeds, preserving the room labels
+    and source values the retired MQTT collectors used:
+      • source='zigbee' -> room + '_presence' (all 6 rooms; was nova_zigbee_poller)
+      • source='fp300'  -> clean room, indoor rooms only (was nova_zigbee_presence_bridge)
+    ZHA reports these sensors in °F already, so temp is passed through as temp_f.
+    """
+    readings = []
+    if not ha_token:
+        return readings
+
+    try:
+        req = urllib.request.Request(
+            f"{HA_URL}/api/states",
+            headers={"Authorization": f"Bearer {ha_token}"},
+        )
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            states = json.loads(resp.read().decode())
+    except Exception as e:
+        log.warning("ZHA/HA /api/states fetch failed: %s", e)
+        return readings
+
+    by_id = {s["entity_id"]: s for s in states if isinstance(s, dict)}
+
+    def _num(entity_id: str) -> Optional[float]:
+        s = by_id.get(entity_id)
+        if not s:
+            return None
+        v = s.get("state")
+        if v in (None, "", "unavailable", "unknown"):
+            return None
+        try:
+            return float(v)
+        except (TypeError, ValueError):
+            return None
+
+    for room, (temp_eid, hum_eid, ieee) in ZHA_FP300.items():
+        temp_f = _num(temp_eid)   # ZHA reports °F directly
+        humidity = _num(hum_eid)
+        if temp_f is None and humidity is None:
+            log.debug("ZHA room %s (%s) has no readings.", room, ieee)
+            continue
+
+        # Legacy 'zigbee' feed: same physical sensor, room label keeps '_presence'.
+        for metric, value in (("temp_f", temp_f), ("humidity", humidity)):
+            if value is not None:
+                readings.append({
+                    "room": f"{room}_presence",
+                    "metric": metric,
+                    "value": value,
+                    "source": "zigbee",
+                    "device_name": ieee,
+                })
+
+        # 'fp300' feed: clean room label, indoor rooms only.
+        if room in ZHA_FP300_SOURCE_ROOMS:
+            for metric, value in (("temp_f", temp_f), ("humidity", humidity)):
+                if value is not None:
+                    readings.append({
+                        "room": room,
+                        "metric": metric,
+                        "value": value,
+                        "source": "fp300",
+                        "device_name": ieee,
+                    })
+
+    return readings
+
+
 # ── Database: Insert Readings ────────────────────────────────────────────────
 
 def ensure_schema(conn):
@@ -385,6 +492,11 @@ def main():
         if not hue_bridge_ip:
             log.warning("Could not discover Hue Bridge. Will retry each poll cycle.")
 
+    # Home Assistant token for ZHA climate polling (cached; re-fetched if it fails)
+    ha_token = _get_ha_token()
+    if not ha_token:
+        log.warning("No HA token available. ZHA (zigbee/fp300) source disabled until obtainable.")
+
     # Connect to PostgreSQL
     try:
         conn = psycopg2.connect(DB_DSN)
@@ -436,6 +548,17 @@ def main():
                 log.info("HomePod sensors: %d readings collected.", len(homepod_readings))
         except Exception as e:
             log.warning("HomePod sensor polling error: %s", e)
+
+        # 4. ZHA Aqara FP300 climate via Home Assistant (zigbee + fp300 feeds)
+        try:
+            if not ha_token:
+                ha_token = _get_ha_token()
+            zha_readings = poll_zha_climate(ha_token)
+            all_readings.extend(zha_readings)
+            if zha_readings:
+                log.info("ZHA climate: %d readings collected.", len(zha_readings))
+        except Exception as e:
+            log.warning("ZHA climate polling error: %s", e)
 
         # Insert all readings
         if all_readings:
