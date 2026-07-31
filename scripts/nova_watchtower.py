@@ -51,6 +51,7 @@ FEEDS = [
     ("hue_light_state",    "SELECT max(polled_at) FROM public.hue_light_state", 20, "hue-bridge"),
     ("ha_sensors",         "SELECT max(ts) FROM telemetry.ha_sensors", 20, None),
     ("lora_mesh",          "SELECT max(last_heard) FROM telemetry.mesh_nodes", 360, None),  # last_heard, not ts (ts only advances on a brand-new node)
+    ("nas_backup",         "SELECT max(ts) FROM telemetry.backup_runs WHERE ok", 1560, "nas-backup"),  # a SUCCESSFUL nightly (ok=true) within 26h
 ]
 
 # Only these tiers are liveness-alerted (and only when wired + recently-online). smart_home
