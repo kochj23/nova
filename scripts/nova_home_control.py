@@ -630,6 +630,27 @@ class scenes:
     """Predefined multi-device scenes."""
 
     @staticmethod
+    def _log_scene(name: str) -> None:
+        """Best-effort log of a scene activation to public.home_scene_activations.
+
+        Wrapped in try/except so logging NEVER breaks scene execution. The
+        watchtower network monitor reads this table for scene-aware alert
+        suppression, so every scene method logs here.
+        """
+        try:
+            import psycopg2
+            dsn = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+            with psycopg2.connect(dsn) as conn:
+                with conn.cursor() as cur:
+                    cur.execute(
+                        "INSERT INTO public.home_scene_activations (ts, scene_name) "
+                        "VALUES (now(), %s)",
+                        (name,),
+                    )
+        except Exception:
+            pass
+
+    @staticmethod
     def _shortcuts_run(shortcut_name: str) -> bool:
         """Run a macOS Shortcut (for HomeKit light control)."""
         import subprocess
@@ -645,6 +666,7 @@ class scenes:
     @classmethod
     def movie_mode(cls) -> dict:
         """Movie mode: living room on, STRM BOX input, volume 40, lights dim."""
+        cls._log_scene("movie_mode")
         results = {}
         try:
             results["power"] = onkyo.power_on("living_room")
@@ -661,6 +683,7 @@ class scenes:
     @classmethod
     def music_everywhere(cls) -> dict:
         """Music everywhere: all Bose on, all Onkyo on, matching volumes."""
+        cls._log_scene("music_everywhere")
         results = {}
         # Bose soundbars
         try:
@@ -683,6 +706,7 @@ class scenes:
     @classmethod
     def goodnight(cls) -> dict:
         """Goodnight: all AV off, lights off."""
+        cls._log_scene("goodnight")
         results = {}
         # Bose off
         try:
@@ -709,6 +733,7 @@ class scenes:
     @classmethod
     def morning(cls) -> dict:
         """Morning: kitchen Bose on low, living room Onkyo news input."""
+        cls._log_scene("morning")
         results = {}
         # Kitchen Bose at low volume
         try:
@@ -729,6 +754,7 @@ class scenes:
     @classmethod
     def bedtime(cls) -> dict:
         """Bedtime: all AV off, bedroom lights dim warm, rest off."""
+        cls._log_scene("bedtime")
         results = {}
         try:
             results["bose_stop"] = bose.stop("all")
@@ -747,6 +773,7 @@ class scenes:
     @classmethod
     def party(cls) -> dict:
         """Party: all Bose on, music input, volume up, colorful lights."""
+        cls._log_scene("party")
         results = {}
         try:
             results["bose_play"] = bose.play("all")
@@ -768,6 +795,7 @@ class scenes:
     @classmethod
     def work(cls) -> dict:
         """Work: office lights bright, office Onkyo low background, rest quiet."""
+        cls._log_scene("work")
         results = {}
         try:
             results["office_power"] = onkyo.power_on("office")
@@ -782,6 +810,7 @@ class scenes:
     @classmethod
     def away(cls) -> dict:
         """Away: all AV off, all lights off, lock up."""
+        cls._log_scene("away")
         results = {}
         try:
             results["bose_stop"] = bose.stop("all")

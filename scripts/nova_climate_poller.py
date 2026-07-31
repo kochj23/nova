@@ -13,6 +13,7 @@ Gracefully skips unavailable sources.
 Written by Jordan Koch.
 """
 
+import os
 import sys
 sys.path.insert(0, os.path.expanduser("~/.openclaw/scripts"))
 

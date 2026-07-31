@@ -247,9 +247,21 @@ tasks:
     timeout: 60
     overlap: skip
 
+  watchtower:                        # watch EVERYTHING on the network: device liveness (learned-baseline, wired-only, active-ping-confirmed) + per-FEED dead-man's-switch (climate/hue/weather/air/mesh/ha_sensors) + scene-aware (smart-home judged by hue reachable/feeds, not presence). Root-cause-collapses a down coordinator into its stale feeds. Alert-on-change to #nova-alerts; records net_liveness time-series for the weekly Network-Health report. Built after the 2026-07-17 PoE Zigbee coordinator wedge sat dark 14 days unnoticed (pinged fine, feed dead). Distinct from nova_network_sentinel.py (NMAP/IDS).
+    script: nova_watchtower.py
+    schedule: every 5m
+    timeout: 120
+    overlap: skip
+
   alert_patterns:                    # WEEKLY Sunday 8:30am — alert PATTERN review over the past 2 weeks (chronic signatures + week-over-week trend, incidents, red/blue/purple, network changes). FULL detail -> Slack #nova-alerts; SANITIZED narrative -> public /operations. (Daily was overkill — the daily columns already avoid repetition via the 14-day self-history.)
     script: nova_alert_patterns.py
     schedule: cron 30 8 * * 0
+    timeout: 600
+    overlap: skip
+
+  network_health:                    # WEEKLY Sunday 8:40am — over-time reliability report card off the watchtower time-series (net_liveness/net_problems): per-device uptime, per-FEED reliability %, chronic offenders, longest outages, new/vanished devices. FULL -> Slack #nova-alerts; SANITIZED narrative -> public /operations. The "watch it over time like local/operations" counterpart to the real-time watchtower. Staggered after local_trends to avoid the journal push-race.
+    script: nova_network_health.py
+    schedule: cron 40 8 * * 0
     timeout: 600
     overlap: skip
 
