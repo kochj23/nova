@@ -247,9 +247,15 @@ tasks:
     timeout: 60
     overlap: skip
 
-  alert_patterns:                    # daily 8:30am — alert PATTERN analysis over a rolling 14 days (chronic signatures + week-over-week trend, incidents, red/blue/purple, network changes). FULL detail -> Slack #nova-alerts; SANITIZED high-level narrative -> public /operations column.
+  alert_patterns:                    # WEEKLY Sunday 8:30am — alert PATTERN review over the past 2 weeks (chronic signatures + week-over-week trend, incidents, red/blue/purple, network changes). FULL detail -> Slack #nova-alerts; SANITIZED narrative -> public /operations. (Daily was overkill — the daily columns already avoid repetition via the 14-day self-history.)
     script: nova_alert_patterns.py
-    schedule: cron 30 8 * * *
+    schedule: cron 30 8 * * 0
+    timeout: 600
+    overlap: skip
+
+  local_trends:                      # WEEKLY Sunday 8:35am — LOCAL trends review over the past 2 weeks (LoRa mesh growth/churn, RF neighborhood + rogue APs, overhead flights). One public /local article. Staggered 5 min after alert_patterns to avoid the journal push-race.
+    script: nova_local_trends.py
+    schedule: cron 35 8 * * 0
     timeout: 600
     overlap: skip
 

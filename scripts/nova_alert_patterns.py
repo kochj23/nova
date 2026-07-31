@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""nova_alert_patterns.py — daily "alert patterns" report (08:30).
+"""nova_alert_patterns.py — WEEKLY "alert patterns" review (Sundays 08:30).
 
 Not another firehose of individual alerts — this steps back and reports the PATTERNS
 over a rolling 14 days: what keeps firing (chronic vs noise), which incidents recur,
@@ -164,8 +164,8 @@ def _sanitized_brief(p) -> str:
 
 def generate_article(p):
     system = nova_voice.system_prompt(
-        "You are writing your DAILY ALERT-PATTERNS column for the public /operations page. This is "
-        "PATTERN ANALYSIS over a rolling two weeks — NOT a list of individual alerts. Read the "
+        "You are writing your WEEKLY ALERT-PATTERNS review for the public /operations page. This is "
+        "PATTERN ANALYSIS over the past two weeks — NOT a list of individual alerts. Read the "
         "aggregated brief, then tell the reader what the SHAPE of the noise is: what's chronically "
         "firing (and whether it's a real problem or just noise that should be tuned out), what's "
         "trending up or down, what the incident/security cadence looks like. Be honest and analytical "
