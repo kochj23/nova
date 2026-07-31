@@ -172,7 +172,7 @@ description: "Nova's weekly OSINT self-recon — what Amass, theHarvester, and H
         log(f"Commit issue: {r.stderr[:100]}")
 
     url = f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
-    nova_config.post_both(f"OSINT digest posted — {title}\n{url}", slack_channel=nova_config.SLACK_INFO)
+    nova_config.post_both(f"OSINT digest posted — {title}\n{url}", slack_channel=nova_config.SLACK_FEED)
     if severity_max == "critical":
         nova_notify("OSINT digest: new breach exposure found", body=f"{title}\n{url}",
                     level="critical", category="security", dedup_key=None)

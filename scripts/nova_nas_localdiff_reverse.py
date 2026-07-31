@@ -58,7 +58,7 @@ EXCL = re.compile(r"@eaDir|/#recycle|/#snapshot|\.DS_Store$|\.app/")
 
 def slack(msg):
     try:
-        nova_config.post_both(msg, slack_channel=nova_config.SLACK_INFO, discord_channel=None)
+        nova_config.post_both(msg, slack_channel=nova_config.SLACK_FEED, discord_channel=None)
     except Exception as e:
         print(f"slack failed: {e}", flush=True)
 

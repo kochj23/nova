@@ -143,7 +143,7 @@ def main():
         lines.append(f"• <{url}|{display}> — {stat} — seen on {', '.join(sources)} — {flag}")
         reviewed_ids.append(cid)
 
-    nova_config.post_both("\n".join(lines), slack_channel=nova_config.SLACK_INFO)
+    nova_config.post_both("\n".join(lines), slack_channel=nova_config.SLACK_NOTIFY)
     cur.execute("UPDATE fishbowl_commenters SET reviewed = true WHERE channel_id = ANY(%s)", (reviewed_ids,))
     log(f"posted {len(candidates)} candidates to nova-info, marked reviewed")
     cur.close(); conn.close()

@@ -250,7 +250,7 @@ def publish_hugo(title: str, body: str, tags: list[str], description: str,
         log(f"[guard] BLOCKED security publish '{title[:60]}': {reason}")
         try:
             nova_config.post_both(f":no_entry: Suppressed a non-publishable security brief — {reason}\n  _{title[:90]}_",
-                                  slack_channel=getattr(nova_config, "SLACK_INFO", None))
+                                  slack_channel=getattr(nova_config, "SLACK_NOTIFY", None))
         except Exception:
             pass
         return ""

@@ -6,7 +6,7 @@ import subprocess, datetime, sys
 import nova_config
 SDR_HOST = "192.168.1.86"
 DUR = sys.argv[1] if len(sys.argv) > 1 else "1800"
-SLACK = nova_config.SLACK_INFO  # #nova-info
+SLACK = nova_config.SLACK_FEED  # #nova-feed
 
 def sh(cmd, timeout):
     return subprocess.run(["ssh", "-o", "BatchMode=yes", SDR_HOST, cmd],

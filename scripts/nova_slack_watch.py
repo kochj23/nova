@@ -59,7 +59,7 @@ DB = "nova_ops"
 # own digests (they carry WATCH_MARKER) — that would be a feedback loop.
 WATCH_CHANNELS = {
     "#nova-chat":     nova_config.SLACK_CHAN,
-    "#nova-info":     nova_config.SLACK_INFO,
+    "#nova-info":     nova_config.SLACK_FEED,
     "#nova-warning":  nova_config.SLACK_NOTIFY,
     "#nova-critical": nova_config.SLACK_BB,
     "#nova-email":    nova_config.SLACK_EMAIL,

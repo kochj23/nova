@@ -399,7 +399,7 @@ def main():
         lines.append("\n*Also today:* " + " · ".join(other))
     lines.append("\n_Online-harassment alerts (Fishbowl) fire in real time separately — this is a rollup, not the only line of defense._")
 
-    nova_config.post_both("\n".join(lines), slack_channel=nova_config.SLACK_INFO)
+    nova_config.post_both("\n".join(lines), slack_channel=nova_config.SLACK_DIGEST)
     log(f"posted Slack digest: {len(new_msgs)} emails, {len(notable)} notable, "
         f"{len(identity_hits)} identity hits, {len(infra_hits)} infra hosts flagged")
     cur.close(); conn.close()

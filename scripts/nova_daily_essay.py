@@ -145,13 +145,42 @@ def pick_subject(state: dict) -> str | None:
 
 
 def fetch_memories(source: str, n: int = ESSAY_MEMORIES) -> list[dict]:
-    """Fetch random memories from the chosen source. Returns dicts with text + metadata."""
+    """Fetch a TOPICALLY COHERENT cluster of memories from the chosen source.
+
+    A source name is only a coarse bucket. 'world_history' holds everything from the
+    Crusades to Gaza to Tang-dynasty China; picking N rows at RANDOM handed the model
+    an unrelated grab-bag (a tennis venue next to trichloroethylene toxicity) that it
+    rightly refused to write a single essay about. Instead, pick one random seed
+    memory and return its N nearest neighbours by embedding — the random seed keeps
+    day-to-day variety while the neighbours keep the whole set on one subject.
+    Falls back to random selection if the source has no embeddings.
+    """
     import subprocess
-    result = subprocess.run(
-        ["psql", "-U", "kochj", "-d", "nova_memories", "-tA", "-F", "\x1f", "-c",
-         f"SELECT text, metadata, created_at, source FROM memories WHERE source = '{source}' AND tier != 'scratchpad' ORDER BY random() LIMIT {n};"],
-        capture_output=True, text=True, timeout=30
+    coherent_sql = (
+        "WITH seed AS ("
+        f"  SELECT embedding FROM memories "
+        f"  WHERE source = '{source}' AND tier != 'scratchpad' AND embedding IS NOT NULL "
+        f"  ORDER BY random() LIMIT 1) "
+        "SELECT m.text, m.metadata, m.created_at, m.source FROM memories m, seed "
+        f"WHERE m.source = '{source}' AND m.tier != 'scratchpad' AND m.embedding IS NOT NULL "
+        f"ORDER BY m.embedding <=> seed.embedding LIMIT {n};"
     )
+    random_sql = (
+        f"SELECT text, metadata, created_at, source FROM memories "
+        f"WHERE source = '{source}' AND tier != 'scratchpad' ORDER BY random() LIMIT {n};"
+    )
+
+    def _run(sql: str):
+        return subprocess.run(
+            ["psql", "-U", "kochj", "-d", "nova_memories", "-tA", "-F", "\x1f", "-c", sql],
+            capture_output=True, text=True, timeout=60
+        )
+
+    result = _run(coherent_sql)
+    if result.returncode != 0 or not result.stdout.strip():
+        if result.returncode != 0:
+            log(f"Coherent fetch failed ({result.stderr.strip()[:120]}) — falling back to random")
+        result = _run(random_sql)
     if result.returncode != 0:
         log(f"ERROR fetching memories: {result.stderr}")
         return []

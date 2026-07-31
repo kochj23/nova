@@ -134,7 +134,7 @@ def main():
     if failed:
         lines.append(f"*Failed* ({len(failed)}): " + ", ".join(f"{h}/{p}: {e}" for h, p, e in failed))
 
-    nova_config.post_both("\n".join(lines), slack_channel=nova_config.SLACK_INFO)
+    nova_config.post_both("\n".join(lines), slack_channel=nova_config.SLACK_NOTIFY)
     log(f"done: {len(patched)} patched, {len(reboot_pending)} reboot-pending, "
         f"{len(no_fix_yet)} no-fix-yet, {len(failed)} failed")
     cur.close(); conn.close()

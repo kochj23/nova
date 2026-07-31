@@ -70,7 +70,7 @@ def main():
     log(f"start — {remaining} transcripts to correct across {SOURCES}")
     nova_config.post_both(f":gear: Scanner backfill started — {remaining:,} transcripts to LLM-correct "
                           f"(scanner/fire/rail). Will report progress here.",
-                          slack_channel=nova_config.SLACK_INFO)
+                          slack_channel=nova_config.SLACK_FEED)
 
     while True:
         with conn.cursor() as cur:
@@ -104,7 +104,7 @@ def main():
             nova_config.post_both(
                 f":gear: Scanner backfill: {total_done:,}/{remaining:,} corrected "
                 f"({100*total_done/max(remaining,1):.0f}%), ~{eta_min:.0f} min left.",
-                slack_channel=nova_config.SLACK_INFO)
+                slack_channel=nova_config.SLACK_FEED)
             last_post = time.time()
 
     mins = (time.time() - t0) / 60
@@ -112,7 +112,7 @@ def main():
     nova_config.post_both(
         f":white_check_mark: Scanner backfill complete — {total_done:,} transcripts LLM-corrected "
         f"in {mins:.0f} min. New dispatch memories are corrected automatically going forward.",
-        slack_channel=nova_config.SLACK_INFO)
+        slack_channel=nova_config.SLACK_FEED)
     conn.close()
 
 

@@ -821,7 +821,7 @@ def publish(title, body, image_path):
         log(f"[guard] BLOCKED publish '{title[:60]}': {reason}")
         try:
             nova_config.post_both(f":no_entry: Suppressed a non-publishable Burbank dispatch — {reason}\n  _{title[:90]}_",
-                                  slack_channel=getattr(nova_config, "SLACK_INFO", None))
+                                  slack_channel=getattr(nova_config, "SLACK_NOTIFY", None))
         except Exception:
             pass
         return

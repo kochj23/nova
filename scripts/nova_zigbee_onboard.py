@@ -35,7 +35,7 @@ def log(m):
 
 def slack(msg):
     try:
-        nova_config.post_both(msg, slack_channel=nova_config.SLACK_INFO, discord_channel=None)
+        nova_config.post_both(msg, slack_channel=nova_config.SLACK_FEED, discord_channel=None)
         log("posted to #nova-info")
     except Exception as e:
         log(f"slack post failed: {e}")

@@ -106,7 +106,7 @@ def main():
     print(msg)
     try:
         import nova_config
-        nova_config.post_both(msg, slack_channel=nova_config.SLACK_INFO)
+        nova_config.post_both(msg, slack_channel=nova_config.SLACK_ALERTS)
     except Exception as e:
         print(f"(alert failed: {e})", file=sys.stderr)
     return 1

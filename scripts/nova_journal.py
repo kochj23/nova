@@ -371,7 +371,7 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
         try:
             import nova_config
             nova_config.post_both(f":no_entry: Suppressed a non-publishable *{section}* article — {reason}\n  _{title[:90]}_",
-                                  slack_channel=getattr(nova_config, "SLACK_INFO", None))
+                                  slack_channel=getattr(nova_config, "SLACK_NOTIFY", None))
         except Exception:
             pass
         return False

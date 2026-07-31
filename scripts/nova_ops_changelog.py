@@ -193,7 +193,7 @@ def main():
             f"nova-cores .2/.86/.5; the other Macs mac-mini .251 + tv-movies .7 + nova-core6 .252; nuk .10) and THE GREAT MIGRATION (Postgres primary "
             f"moved off .6 -> .2 with streaming replicas + VIP failover). Plus the new pynrsp GitHub project, the "
             f"airwave feeds (police 7/8, fire+Metrolink 7/9, CHP 7/11), and all the changed/fixed. Same URL, fresh cover.\n{URL}",
-            slack_channel=getattr(nova_config, "SLACK_INFO", None), discord_channel=None)
+            slack_channel=getattr(nova_config, "SLACK_FEED", None), discord_channel=None)
         wk.log("[changelog] slack link posted")
     except Exception as e:
         wk.log(f"[changelog] slack post failed: {e}")
