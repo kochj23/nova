@@ -18,6 +18,7 @@ import psycopg2.extras
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_journal as nj
 import nova_voice
+from nova_image_utils import generate_image
 try:
     import nova_rogue_ap_sentinel as sentinel
 except Exception:
@@ -48,6 +49,34 @@ def _delta(this, last):
         return "no prior-week baseline"  # e.g. LoRa mesh_nodes retains ~1wk; don't imply all are 'new'
     d = this - last
     return f"{'up' if d>0 else ('down' if d<0 else 'flat')} {abs(d)} ({'+' if d>=0 else ''}{round(100*d/last)}%)"
+
+
+MEMDB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+_AIRWAVE_LABEL = {"scanner": "police", "fire": "fire", "fire_ops": "fire",
+                  "rail": "rail", "chp": "CHP", "police_codes": "police-codes", "atc": "air-traffic"}
+
+
+def _airwaves_trend():
+    """Scanner-traffic volume by domain (police/fire/rail/CHP), this week vs last.
+    Lives in the separate nova_memories DB, not nova_ops."""
+    rows = []
+    try:
+        c = psycopg2.connect(MEMDB_DSN)
+        cur = c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        cur.execute("""
+            SELECT source,
+                   count(*) FILTER (WHERE created_at > now()-interval '7 days')  AS this_week,
+                   count(*) FILTER (WHERE created_at <= now()-interval '7 days') AS last_week
+            FROM memories
+            WHERE source IN ('scanner','fire','fire_ops','rail','chp','police_codes','atc')
+              AND created_at > now()-interval '14 days'
+            GROUP BY source ORDER BY 2 DESC
+        """)
+        rows = [dict(r) for r in cur.fetchall()]
+        c.close()
+    except Exception as e:
+        log(f"airwaves query failed: {e}")
+    return rows
 
 
 def gather_local_trends() -> dict:
@@ -84,14 +113,8 @@ def gather_local_trends() -> dict:
                count(*) FILTER (WHERE ts <= now()-interval '7 days') AS last_week
         FROM telemetry.events WHERE category='flights' AND ts > now()-interval '14 days'
     """, one=True)
-    # Airwaves (scanner/police/fire/rail) — best-effort via the local generator's own
-    # fetcher, which knows the separate memories store. Degrade silently if unavailable.
-    try:
-        import nova_local_burbank as lb
-        if hasattr(lb, "get_airwaves_summary"):
-            p["airwaves"] = lb.get_airwaves_summary()
-    except Exception:
-        pass
+    # Airwaves (scanner/police/fire/rail/CHP) — from the nova_memories DB.
+    p["airwaves"] = _airwaves_trend()
     return p
 
 
@@ -109,7 +132,22 @@ def _brief(p) -> str:
     L.append(f"Rogue/your-own open APs currently flagged: {len(rfl)}" + ("" if not rfl else " — " + "; ".join(f"{f['ssid']} ({f['kind']})" for f in rfl)) + ".")
     L.append(f"Overhead: {fl.get('this_week',0)} flight events tracked this week ({_delta(fl.get('this_week',0), fl.get('last_week',0))} vs last).")
     if p.get("airwaves"):
-        L.append(f"Airwaves: {p['airwaves']}")
+        # Aggregate by human label (fire + fire_ops -> fire) and describe the trend
+        # sanely — a feed that just came online shouldn't read as "+256200%".
+        agg = {}
+        for r in p["airwaves"]:
+            lab = _AIRWAVE_LABEL.get(r["source"], r["source"])
+            a = agg.setdefault(lab, {"tw": 0, "lw": 0})
+            a["tw"] += r["this_week"] or 0
+            a["lw"] += r["last_week"] or 0
+        parts = []
+        for lab, a in sorted(agg.items(), key=lambda kv: -kv[1]["tw"]):
+            if a["tw"] == 0 and a["lw"] == 0:
+                continue
+            trend = "newly active (feed ramped up)" if (a["lw"] < 100 <= a["tw"]) else _delta(a["tw"], a["lw"])
+            parts.append(f"{lab} {a['tw']} ({trend})")
+        if parts:
+            L.append("Airwaves — scanner traffic this week vs last: " + "; ".join(parts) + ".")
     return "\n".join(L)
 
 
@@ -117,7 +155,8 @@ def generate_article(p):
     system = nova_voice.system_prompt(
         "You are writing your WEEKLY LOCAL TRENDS review for the public /local page — Burbank / LA. "
         "This is TREND analysis over the past two weeks, NOT a single day's blotter: what's the shape "
-        "of the neighborhood? The LoRa mesh (is it growing, who joined), the RF neighborhood (new "
+        "of the neighborhood? The scanner AIRWAVES (police / fire / rail / CHP traffic volume and "
+        "whether it's up or down), the LoRa mesh (is it growing, who joined), the RF neighborhood (new "
         "networks, open/misconfigured APs — including our OWN gear when it misbehaves), and what's "
         "overhead. Read the brief and tell the reader the PATTERNS and what changed week-over-week — "
         "call out anything genuinely new or rising. 700-1100 words. Do NOT print a title or date line.",
@@ -145,11 +184,21 @@ def main():
     try:
         title, body = generate_article(p)
         log(f"article: {title} ({len(body)} chars)")
+        img = None
+        try:
+            img = generate_image(
+                "Moody aerial view of a Burbank/LA suburban neighborhood at dusk, overlaid with glowing "
+                "WiFi signal rings, a faint mesh network of connected dots, a police/fire radio tower, and "
+                "a couple of small planes overhead. Data-visualization aesthetic, cyberpunk-lite, teal and "
+                "amber, no text.", section="local")
+        except Exception as e:
+            log(f"image gen failed: {e}")
         nj.publish_hugo(title, body, "local",
-                        ["local", "trends", "burbank", "lora", "rf", "daily"],
-                        "Nova's rolling two-week read on the neighborhood — the mesh, the airwaves, and what's overhead.",
-                        emoji="📡")
-        log("published to /local")
+                        ["local", "trends", "burbank", "lora", "rf", "airwaves", "weekly"],
+                        "Nova's weekly read on the neighborhood — the airwaves, the mesh, the RF, and what's overhead.",
+                        image_path=img, emoji="📡")
+        nj.git_push("local", title)   # commit + push the article AND its image (was missing)
+        log(f"published to /local (image: {'yes' if img else 'none'})")
     except Exception as e:
         log(f"publish failed: {e}")
     log("done")

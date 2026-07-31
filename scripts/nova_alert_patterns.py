@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 import nova_journal as nj
 import nova_voice
+from nova_image_utils import generate_image
 try:
     import nova_rogue_ap_sentinel as sentinel
 except Exception:
@@ -195,11 +196,20 @@ def main():
     try:
         title, body = generate_article(p)
         log(f"article: {title} ({len(body)} chars)")
+        img = None
+        try:
+            img = generate_image(
+                "A tired AI operator at a wall of blinking alert dashboards, most alarms clearly false, "
+                "a few genuinely red, week-over-week trend lines glowing behind. Moody control-room "
+                "lighting, data-viz aesthetic, cyberpunk-lite, amber and red, no text.", section="operations")
+        except Exception as e:
+            log(f"image gen failed: {e}")
         nj.publish_hugo(title, body, "operations",
-                        ["ops", "alerts", "patterns", "security", "daily"],
-                        "Nova's daily read on what the alerts are actually saying — chronic noise vs real signal.",
-                        emoji="🚨")
-        log("published sanitized article to /operations")
+                        ["ops", "alerts", "patterns", "security", "weekly"],
+                        "Nova's weekly read on what the alerts are actually saying — chronic noise vs real signal.",
+                        image_path=img, emoji="🚨")
+        nj.git_push("operations", title)   # commit + push the article AND its image (was missing)
+        log(f"published sanitized article to /operations (image: {'yes' if img else 'none'})")
     except Exception as e:
         log(f"article publish failed: {e}")
     log("done")
