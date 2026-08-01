@@ -253,6 +253,12 @@ tasks:
     timeout: 120
     overlap: skip
 
+  partition_ensure:                  # DAILY: pre-create the next 3 months of monthly telemetry partitions for every monthly-partitioned table. Prevents the 2026-08-01 storm (missing _202608 partitions -> all inserts failed at 00:00 Aug 1 -> a dozen "sensor is broken" negative-space alerts + soil/storage gaps). Idempotent; alerts on-change ONLY when it actually had to create one (i.e. pre-creation lapsed).
+    script: nova_partition_ensure.py
+    schedule: cron 30 3 * * *
+    timeout: 120
+    overlap: skip
+
   alert_patterns:                    # WEEKLY Sunday 8:30am — alert PATTERN review over the past 2 weeks (chronic signatures + week-over-week trend, incidents, red/blue/purple, network changes). FULL detail -> Slack #nova-alerts; SANITIZED narrative -> public /operations. (Daily was overkill — the daily columns already avoid repetition via the 14-day self-history.)
     script: nova_alert_patterns.py
     schedule: cron 30 8 * * 0
