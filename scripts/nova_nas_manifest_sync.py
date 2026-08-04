@@ -62,8 +62,8 @@ RUNS_TABLE = "telemetry.backup_runs"
 # name, Synology local source, UNAS dest sub-path under the unifi-drive root,
 # local mount on .6 used as the rsync dest.
 SHARES = [
-    {"name": "nas",      "src": "/volume1/nas",      "dest_sub": "nas/.data",      "mount": "/Volumes/nas-1"},
-    {"name": "external", "src": "/volume1/external", "dest_sub": "External/.data", "mount": "/Volumes/external-1"},
+    {"name": "nas",      "src": "/volume1/nas",      "dest_sub": "nas/.data",      "mount": "/Volumes/nas-1",      "syno_dest": "/volume1/docker/nas"},
+    {"name": "external", "src": "/volume1/external", "dest_sub": "External/.data", "mount": "/Volumes/external-1", "syno_dest": "/volume1/docker/external"},
 ]
 
 # Metadata that must never be copied, diffed, orphaned, or quarantined.
@@ -260,10 +260,11 @@ def shquote(s: str) -> str:
     return shlex.quote(s)
 
 
-def clean_to_file(raw_file: str, cleaned_file: str) -> int:
-    """Read raw find output, drop excluded/unparseable, write `path\\tsize\\n`
-    for COPY. Returns kept row count."""
-    kept = 0
+def clean_to_file(raw_file: str, cleaned_file: str) -> dict:
+    """Single pass: read raw find output, drop excluded/unparseable, write
+    `path\\tsize\\n` for COPY, AND return the {path: size} manifest dict so the
+    diff can be computed set-based in-process (no giant PG self-join)."""
+    manifest: dict[str, int] = {}
     with open(raw_file, encoding="utf-8", errors="replace") as src, \
          open(cleaned_file, "w", encoding="utf-8") as out:
         for line in src:
@@ -274,8 +275,8 @@ def clean_to_file(raw_file: str, cleaned_file: str) -> int:
             if is_excluded(rel):
                 continue
             out.write(f"{rel}\t{size}\n")
-            kept += 1
-    return kept
+            manifest[rel] = size          # last-wins on a dup path (matches DISTINCT ON intent)
+    return manifest
 
 
 def pg_replace_manifest(conn, box: str, share: str, cleaned_file: str) -> int:
@@ -291,9 +292,15 @@ def pg_replace_manifest(conn, box: str, share: str, cleaned_file: str) -> int:
         with open(cleaned_file, encoding="utf-8", errors="replace") as f:
             cur.copy_expert("COPY _stg (path, size) FROM STDIN", f)
         cur.execute(f"DELETE FROM {MANIFEST_TABLE} WHERE box=%s AND share=%s", (box, share))
+        # DISTINCT ON collapses pathological duplicate paths (a real filename with
+        # an embedded TAB splits under the \t-delimited manifest and can yield two
+        # rows with the same parsed path — would violate the PK). Prefer the larger
+        # size so an ambiguous dup errs toward "copy", never toward a missed change.
         cur.execute(
             f"INSERT INTO {MANIFEST_TABLE} (box, share, path, size, run_ts) "
-            f"SELECT %s, %s, path, size, now() FROM _stg", (box, share))
+            f"SELECT %s, %s, path, size, now() FROM "
+            f"  (SELECT DISTINCT ON (path) path, size FROM _stg ORDER BY path, size DESC) t",
+            (box, share))
         cur.execute("DROP TABLE _stg")
     return prev
 
@@ -357,18 +364,53 @@ def write_nul_list(paths, outfile: str) -> int:
     return n
 
 
-def rsync_delta(share: dict, nul_list: str, timeout=14400):
-    """rsync only the listed files: Synology-over-ssh source -> local mount dest.
-    NUL-delimited --files-from (--from0) => spaces/odd bytes handled literally.
-    argv list, no shell => no injection. Returns rsync rc."""
-    rsync_bin = "/opt/homebrew/bin/rsync" if Path("/opt/homebrew/bin/rsync").exists() else "/usr/bin/rsync"
-    argv = [
-        rsync_bin, "-a", "--from0", f"--files-from={nul_list}",
-        "-e", "ssh " + " ".join(SSH_OPTS),
-        f"{SYNO_HOST}:{share['src']}/", f"{share['mount'].rstrip('/')}/",
-    ]
-    r = run_with_retry(argv, timeout=timeout, retries=3, backoff=10, ok_rc=(0, 24))
-    return r.returncode
+def rsync_delta(share: dict, dest_local: str, nul_list: str, timeout=14400):
+    """Copy the KNOWN delta files explicitly — no rsync, no compare. The manifest
+    diff already decided exactly which files to move, so re-scanning with rsync is
+    wasted work. We just stream those files with tar in ONE connection:
+      Synology (tar, read as kochj)  ->  .6 pipe  ->  UNAS (untar as ROOT -> .data).
+
+    Why tar, not rsync/scp? (1) DSM rsync *service* is disabled -> rsync-as-sender
+    over ssh dies 'service disabled' (code 52). (2) The Synology's CIFS mount of the
+    UNAS is writable as SMB-user kochj but CANNOT create dirs (mkdir -> Permission
+    denied 13), so rsync-to-mount writes nothing. (3) scp/sftp subsystem on the
+    Synology is off. Untarring as ROOT on the UNAS-local .data has full perms and
+    needs no per-file comparison; one tar stream carries all files. Returns 0 on ok."""
+    remote_list = f"/tmp/nova_copy_{share['name']}.nul"
+    with open(nul_list, "rb") as f:  # ship list via stdin (scp/sftp disabled on Syno)
+        subprocess.run(["ssh", *SSH_OPTS, SYNO_HOST, f"cat > {shquote(remote_list)}"],
+                       stdin=f, timeout=300, check=True)
+    src_cmd = (f"cd {shquote(share['src'])} && "
+               f"tar --null --files-from={shquote(remote_list)} -cf - ; "
+               f"rc=$?; rm -f {shquote(remote_list)}; exit $rc")
+    dst_cmd = f"mkdir -p {shquote(dest_local)} && cd {shquote(dest_local)} && tar -xf -"
+    last = ""
+    for attempt in range(1, 4):
+        p_src = subprocess.Popen(["ssh", *SSH_OPTS, SYNO_HOST, src_cmd],
+                                 stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        p_dst = subprocess.Popen(["ssh", *SSH_OPTS, UNAS_HOST, dst_cmd],
+                                 stdin=p_src.stdout, stderr=subprocess.PIPE)
+        p_src.stdout.close()  # let src get SIGPIPE if dst dies
+        try:
+            _, dst_err = p_dst.communicate(timeout=timeout)
+            _, src_err = p_src.communicate(timeout=300)
+        except subprocess.TimeoutExpired:
+            p_src.kill(); p_dst.kill(); last = "timeout"
+            if attempt < 3:
+                time.sleep(10 * attempt)
+            continue
+        # tar source rc 1 = files changed/vanished mid-read (benign for a live tree)
+        if p_src.returncode in (0, 1) and p_dst.returncode == 0:
+            if p_src.returncode == 1:
+                log(f"{share['name']}: tar-src rc=1 (files changed during read — benign)")
+            return 0
+        last = (f"src_rc={p_src.returncode} dst_rc={p_dst.returncode} "
+                f"{((dst_err or b'') + (src_err or b''))[:180]!r}")
+        log(f"  copy attempt {attempt}/3 failed: {last}")
+        if attempt < 3:
+            time.sleep(10 * attempt)
+    log(f"{share['name']}: copy FAILED after 3 attempts: {last}")
+    return 1
 
 
 def quarantine_orphans(share: str, dest_sub: str, trash_root: str, orphans, day: str,
@@ -452,15 +494,19 @@ def sync_share(conn, share: dict, uroot: str, args) -> dict:
             fut_dst = ex.submit(ssh_find, UNAS_HOST, dest_local, dst_raw)
             fut_src.result(); fut_dst.result()
 
-        nsrc = clean_to_file(src_raw, src_clean)
-        ndst = clean_to_file(dst_raw, dst_clean)
+        src_manifest = clean_to_file(src_raw, src_clean)
+        dst_manifest = clean_to_file(dst_raw, dst_clean)
+        nsrc, ndst = len(src_manifest), len(dst_manifest)
         log(f"{name}: manifests — src={nsrc:,} dst={ndst:,} (found in {int(time.time()-t0)}s)")
 
-        # Persist both manifests to PG and diff in SQL (state lives in PG).
+        # Persist both manifests to PG (state lives in PG, reloaded each run).
         prev_src = pg_replace_manifest(conn, "syno", name, src_clean)
         pg_replace_manifest(conn, "unas", name, dst_clean)
         conn.commit()
-        to_copy, orphans = sql_diff(conn, name)
+        # Diff set-based in-process from the same manifests (O(n); avoids a
+        # nightly 4M-row PG self-join). sql_diff() is the documented SQL
+        # equivalent, exercised by the integration test / ad-hoc ops.
+        to_copy, orphans = diff_manifests(src_manifest, dst_manifest)
 
     copy_bytes = sum(s for _, s in to_copy)
     orphan_bytes = sum(s for _, s in orphans)
@@ -507,8 +553,8 @@ def sync_share(conn, share: dict, uroot: str, args) -> dict:
             delta = tf.name
         try:
             copied = write_nul_list((p for p, _ in to_copy), delta)
-            log(f"{name}: rsyncing {copied:,} files ({copy_bytes/1e9:.2f} GB)…")
-            rc = rsync_delta(share, delta)
+            log(f"{name}: copying {copied:,} files ({copy_bytes/1e9:.2f} GB) via tar-stream…")
+            rc = rsync_delta(share, dest_local, delta)
         finally:
             try:
                 os.unlink(delta)
@@ -555,6 +601,13 @@ def run(args) -> int:
     uroot = resolve_uroot()
     log(f"UNAS unifi-drive root: {uroot}")
     conn = psycopg2.connect(DSN)
+    with conn.cursor() as _c:
+        # This job replaces ~2M-row manifests per share; the server's default
+        # statement_timeout is too low for the bulk DELETE/INSERT. Raise it and
+        # give the writes room. (Session-scoped — does not touch server config.)
+        _c.execute("SET statement_timeout = '1200s'")
+        _c.execute("SET work_mem = '256MB'")
+    conn.commit()
     results = []
     try:
         for share in SHARES:
