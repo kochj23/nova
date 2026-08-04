@@ -230,16 +230,21 @@ def run_with_retry(argv, timeout, retries=3, backoff=5, ok_rc=(0,)):
 
 
 def ssh_find(host: str, path: str, outfile: str, retries=3, timeout=2400) -> int:
-    """Stream `find <path> -type f -printf '%P\\t%s\\n'` on <host> to outfile.
+    """Stream `find <path> -type f -printf '%s\\0%P\\0'` on <host> to outfile.
+
+    NUL-DELIMITED on purpose: NUL is the one byte a filename can NOT contain, so
+    records survive filenames with embedded tabs/newlines/quotes (a recurring
+    fleet bug — the old %P\\t%s\\n format split such names into bogus rows and
+    collided on the manifest PK). Each record is `<size>\\0<path>\\0`.
 
     find exits nonzero on benign permission warnings even when it lists
     everything, so success is gauged by OUTPUT SIZE, not rc. Retries on empty
     output. Returns bytes written. The remote command quotes <path>; the outer
     ssh call is an argv list (no shell) so no injection is possible."""
-    remote = f"cd {shquote(path)} && find . -type f -printf '%P\\t%s\\n'"
+    remote = f"cd {shquote(path)} && find . -type f -printf '%s\\0%P\\0'"
     last = ""
     for attempt in range(1, retries + 1):
-        with open(outfile, "w") as f:
+        with open(outfile, "wb") as f:
             try:
                 subprocess.run(["ssh", *SSH_OPTS, host, remote],
                                stdout=f, stderr=subprocess.DEVNULL, timeout=timeout)
@@ -261,20 +266,31 @@ def shquote(s: str) -> str:
 
 
 def clean_to_file(raw_file: str, cleaned_file: str) -> dict:
-    """Single pass: read raw find output, drop excluded/unparseable, write
-    `path\\tsize\\n` for COPY, AND return the {path: size} manifest dict so the
-    diff can be computed set-based in-process (no giant PG self-join)."""
+    """Parse NUL-delimited `<size>\\0<path>\\0` find output, drop excluded/
+    unparseable, write a CSV `(path,size)` for COPY, AND return {path: size}.
+
+    CSV (not tab-delimited) is used for the COPY wire format so a path containing
+    a tab/newline/comma/quote is safely quoted instead of corrupting the load —
+    the same weird-filename class the NUL find format guards on the read side."""
+    import csv
     manifest: dict[str, int] = {}
-    with open(raw_file, encoding="utf-8", errors="replace") as src, \
-         open(cleaned_file, "w", encoding="utf-8") as out:
-        for line in src:
-            parsed = parse_manifest_line(line)
-            if parsed is None:
+    with open(raw_file, "rb") as src:
+        fields = src.read().split(b"\x00")
+    with open(cleaned_file, "w", encoding="utf-8", newline="") as out:
+        w = csv.writer(out, quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
+        # records are (size, path) pairs; a trailing empty field follows the last NUL
+        for i in range(0, len(fields) - 1, 2):
+            size_b, path_b = fields[i], fields[i + 1]
+            if not path_b:
                 continue
-            rel, size = parsed
+            try:
+                size = int(size_b)
+            except ValueError:
+                continue
+            rel = path_b.decode("utf-8", "replace")
             if is_excluded(rel):
                 continue
-            out.write(f"{rel}\t{size}\n")
+            w.writerow([rel, size])
             manifest[rel] = size          # last-wins on a dup path (matches DISTINCT ON intent)
     return manifest
 
@@ -283,23 +299,30 @@ def pg_replace_manifest(conn, box: str, share: str, cleaned_file: str) -> int:
     """COPY cleaned manifest into a temp staging table, then replace the current
     (box,share) rows in MANIFEST_TABLE. Returns previous source-row count for
     box='syno' (the sanity baseline) — 0 for others. Caller controls commit."""
+    import zlib
     prev = 0
     with conn.cursor() as cur:
+        # Serialize concurrent loads of the SAME (box,share) so two runs can't race
+        # the DELETE+INSERT into a PK violation. crc32 gives a STABLE key across
+        # processes (Python's hash() is randomized per-process and would NOT match).
+        # Held until the caller's commit (xact lock).
+        lock_key = zlib.crc32(f"{box}:{share}".encode()) - 2**31
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (lock_key,))
         cur.execute(f"SELECT count(*) FROM {MANIFEST_TABLE} WHERE box=%s AND share=%s",
                     (box, share))
         prev = cur.fetchone()[0]
         cur.execute("CREATE TEMP TABLE _stg (path text, size bigint) ON COMMIT DROP")
-        with open(cleaned_file, encoding="utf-8", errors="replace") as f:
-            cur.copy_expert("COPY _stg (path, size) FROM STDIN", f)
+        with open(cleaned_file, encoding="utf-8", newline="") as f:
+            cur.copy_expert("COPY _stg (path, size) FROM STDIN WITH (FORMAT csv)", f)
         cur.execute(f"DELETE FROM {MANIFEST_TABLE} WHERE box=%s AND share=%s", (box, share))
-        # DISTINCT ON collapses pathological duplicate paths (a real filename with
-        # an embedded TAB splits under the \t-delimited manifest and can yield two
-        # rows with the same parsed path — would violate the PK). Prefer the larger
-        # size so an ambiguous dup errs toward "copy", never toward a missed change.
+        # Belt-and-suspenders: DISTINCT ON collapses any duplicate path (prefer the
+        # larger size so an ambiguous dup errs toward "copy", never a missed change),
+        # and ON CONFLICT makes the insert idempotent even under an unexpected dup.
         cur.execute(
             f"INSERT INTO {MANIFEST_TABLE} (box, share, path, size, run_ts) "
             f"SELECT %s, %s, path, size, now() FROM "
-            f"  (SELECT DISTINCT ON (path) path, size FROM _stg ORDER BY path, size DESC) t",
+            f"  (SELECT DISTINCT ON (path) path, size FROM _stg ORDER BY path, size DESC) t "
+            f"ON CONFLICT (box, share, path) DO UPDATE SET size = EXCLUDED.size, run_ts = now()",
             (box, share))
         cur.execute("DROP TABLE _stg")
     return prev

@@ -98,25 +98,37 @@ def test_integration_pg_staging_upsert_roundtrip(tmp_path):
         conn = psycopg2.connect(m.DSN, connect_timeout=5)
     except Exception as e:  # noqa: BLE001
         pytest.skip(f"PG unavailable: {e}")
+    import csv
     share = "_pytest_share"
+
+    def write_csv(p, rows):
+        # matches clean_to_file's CSV output (QUOTE_MINIMAL, \n terminator)
+        with open(p, "w", newline="") as f:
+            csv.writer(f, quoting=csv.QUOTE_MINIMAL, lineterminator="\n").writerows(rows)
+
+    # REGRESSION: a filename with an embedded tab, newline, comma and quote — the
+    # weird-char class that used to corrupt the tab/newline-delimited load and
+    # collide on the manifest PK. It must survive COPY and round-trip exactly.
+    weird = 'w/ta\tb\nnl,q".jpg'
     try:
-        # clean source manifest
-        s1 = tmp_path / "s1.tsv"
-        s1.write_text("a/x\t100\nb/y\t200\n")
+        s1 = tmp_path / "s1.csv"
+        write_csv(s1, [["a/x", 100], ["b/y", 200], [weird, 55]])
         prev = m.pg_replace_manifest(conn, "syno", share, str(s1))
         assert prev == 0                                   # first load, no prior rows
         # dest manifest: b/y size differs, plus an orphan c/z
-        d1 = tmp_path / "d1.tsv"
-        d1.write_text("b/y\t999\nc/z\t7\n")
+        d1 = tmp_path / "d1.csv"
+        write_csv(d1, [["b/y", 999], ["c/z", 7]])
         m.pg_replace_manifest(conn, "unas", share, str(d1))
         to_copy, orphans = m.sql_diff(conn, share)
-        assert sorted(to_copy) == [("a/x", 100), ("b/y", 200)]
+        assert sorted(to_copy) == sorted([("a/x", 100), ("b/y", 200), (weird, 55)])
         assert orphans == [("c/z", 7)]
-        # replace source (upsert semantics) -> prev now reflects prior 2 rows
-        s2 = tmp_path / "s2.tsv"
-        s2.write_text("a/x\t100\n")
+        # the weird path round-tripped through Postgres byte-for-byte
+        assert (weird, 55) in to_copy
+        # replace source (upsert semantics) -> prev now reflects prior 3 rows
+        s2 = tmp_path / "s2.csv"
+        write_csv(s2, [["a/x", 100]])
         prev2 = m.pg_replace_manifest(conn, "syno", share, str(s2))
-        assert prev2 == 2
+        assert prev2 == 3
         with conn.cursor() as cur:
             cur.execute(f"SELECT count(*) FROM {m.MANIFEST_TABLE} WHERE box='syno' AND share=%s",
                         (share,))
