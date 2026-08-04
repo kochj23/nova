@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+import nova_journal as nj
 from nova_image_utils import generate_image
 
 # ── PII scrubbing (matches nova_journal canonical pattern) ──────────────────────
@@ -261,15 +262,8 @@ description: "Nova's nightly audit of the 50 weirdest things shoved into her bra
     post_path.write_text(front_matter + body)
     log(f"Post written: {post_path.name}")
 
-    # Git commit and push
-    subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=15)
-    msg = f"rando: {date} — nightly weird memories ({title[:50]})"
-    r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=15)
-    if r.returncode == 0:
-        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=120)
-        log("Pushed to GitHub")
-    else:
-        log(f"Commit issue: {r.stderr[:100]}")
+    # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
+    nj.git_push("operations", title)
 
     # Notify Slack
     nova_config.post_both(

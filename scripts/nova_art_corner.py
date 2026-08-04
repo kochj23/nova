@@ -440,12 +440,20 @@ def git_push(message: str):
                 return
             log(f"Commit failed: {result.stderr[:200]}")
             return
+        # Rebase onto origin BEFORE pushing so a diverged clone can't silently strand
+        # commits (the failure mode that let host .6 drift 82 ahead / 25 behind unnoticed).
+        pull = subprocess.run(["git", "pull", "--rebase", "--autostash", "origin", "main"],
+                              cwd=HUGO_ROOT, capture_output=True, text=True, timeout=180)
+        if pull.returncode != 0:
+            subprocess.run(["git", "rebase", "--abort"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
+            log(f"Push ABORTED — pull --rebase failed (repo diverged/conflict): {pull.stderr[:200]}")
+            return
         result = subprocess.run(
             ["git", "push"],
             cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60
         )
         if result.returncode != 0:
-            log(f"Push failed: {result.stderr[:200]}")
+            log(f"Push FAILED (commit NOT on origin): {result.stderr[:200]}")
         else:
             log("Pushed to GitHub — deploy will trigger automatically")
     except Exception as e:

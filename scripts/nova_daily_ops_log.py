@@ -624,18 +624,21 @@ description: "Nova's daily operations log — the day's changes, deployments, an
     msg = f"rando: {date} — daily ops log ({title[:45]})"
     r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=25)
     if r.returncode == 0:
-        r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
-        if r.returncode == 0:
-            log("Pushed to GitHub — deploy triggered.")
+        # Rebase onto origin BEFORE pushing so a diverged clone can't silently strand
+        # commits (the failure mode that let host .6 drift 82 ahead / 25 behind unnoticed).
+        # NOTE: targeted `git add <path>` above is kept on purpose — this repo is huge and
+        # `git add -A` (what nova_journal.git_push does) times out, so we can't route through it.
+        pull = subprocess.run(["git", "pull", "--rebase", "--autostash", "origin", "main"],
+                              cwd=HUGO_ROOT, capture_output=True, text=True, timeout=180)
+        if pull.returncode != 0:
+            subprocess.run(["git", "rebase", "--abort"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
+            log(f"Push ABORTED — pull --rebase failed (repo diverged/conflict): {pull.stderr[:200]}")
         else:
-            # Another writer pushed first (non-fast-forward). Rebase on top and retry once.
-            log(f"Push rejected, rebasing + retrying: {r.stderr[:120]}")
-            subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, timeout=60)
-            r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
-            if r.returncode == 0:
-                log("Pushed to GitHub after rebase — deploy triggered.")
+            p = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
+            if p.returncode == 0:
+                log("Pushed to GitHub — deploy triggered.")
             else:
-                log(f"Push still failed after rebase: {r.stderr[:200]} — commit is safe, ships next run")
+                log(f"Push FAILED (commit NOT on origin): {p.stderr[:200]}")
     else:
         log(f"Commit note: {(r.stdout + r.stderr)[:150]}")
 

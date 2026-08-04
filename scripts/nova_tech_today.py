@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+import nova_journal as nj
 from nova_notify import notify
 from nova_image_utils import ensure_backend, generate_image
 
@@ -472,29 +473,9 @@ description: "{description}"
 
 
 def commit_and_push():
-    """Commit and push changes to nova-journal."""
-    try:
-        subprocess.run(
-            ["git", "add", "-A"],
-            cwd=str(JOURNAL_DIR), capture_output=True, text=True, timeout=30
-        )
-        result = subprocess.run(
-            ["git", "commit", "-m", "feat(tech-today): publish daily tech article"],
-            cwd=str(JOURNAL_DIR), capture_output=True, text=True, timeout=30
-        )
-        if result.returncode == 0:
-            push_result = subprocess.run(
-                ["git", "push"],
-                cwd=str(JOURNAL_DIR), capture_output=True, text=True, timeout=60
-            )
-            if push_result.returncode == 0:
-                log("Committed and pushed to GitHub")
-            else:
-                log(f"Push failed: {push_result.stderr[:200]}")
-        else:
-            log(f"Commit result: {result.stdout[:100]} {result.stderr[:100]}")
-    except Exception as e:
-        log(f"Git error: {e}")
+    """Commit and push changes to nova-journal via the hardened, fleet-serialized path
+    (PG advisory lock, rebase-on-reject, retry, alert-on-failure) — never a raw push."""
+    nj.git_push("operations", "daily tech article")
 
 
 def post_to_slack(title: str, topic: str, word_count: int):

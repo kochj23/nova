@@ -34,18 +34,42 @@ def main():
 
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
     # ONLY the last ~24-48h — this column is about what's NEW, not the backlog.
+    # EXCLUDE self-written dossier writebacks (metadata.type='person_summary' /
+    # "[Fishbowl dossier — X]"): those are Nova's OWN roster summaries, re-ingested
+    # into source='fishbowl' by nova_fishbowl_summaries.py, and they are already fed
+    # separately via dossier_block below. On 2026-08-03 a batch of ~890 dossier rows
+    # (written 22:24 the night before) plus Reddit posts filled the entire newest-30
+    # window and buried the actual live-stream drama out of view — so the LLM saw no
+    # real activity and published a meta "I can't find the source data" placeholder.
+    # Filter them out here so genuine churn (live streams + Reddit) surfaces.
+    ACTIVITY_FILTER = ("AND coalesce(metadata->>'type','') <> 'person_summary' "
+                       "AND text NOT LIKE '[Fishbowl dossier%'")
     mc.execute("SELECT text, created_at FROM memories WHERE source='fishbowl' "
-               "AND created_at > now() - interval '36 hours' ORDER BY created_at DESC LIMIT 30")
+               "AND created_at > now() - interval '36 hours' " + ACTIVITY_FILTER +
+               " ORDER BY created_at DESC LIMIT 30")
     rows = mc.fetchall()
     fresh = len(rows)
-    if not rows:
-        # nothing new in the window — fall back to freshest available so the column still runs
-        mc.execute("SELECT text, created_at FROM memories WHERE source='fishbowl' "
-                   "ORDER BY created_at DESC LIMIT 20")
-        rows = mc.fetchall()
     samples = [r[0] for r in rows]
-    if not samples:
-        nj.log("[opinion-fishbowl] no fishbowl memories yet — aborting"); return 1
+
+    # GUARD: insufficient/empty source data -> SKIP publishing (return early).
+    # Never hand the LLM an empty or near-empty feed: with nothing genuinely new to
+    # write about it emits a placeholder ("I couldn't load the source data…"), and
+    # that once reached the live site (2026-08-03). Below the floor we suppress the
+    # run and post to SLACK_NOTIFY, mirroring publish_hugo's non-publishable path in
+    # nova_journal.py / nova_local_burbank.py / nova_journal_security.py.
+    MIN_FRESH_ITEMS = 3
+    if fresh < MIN_FRESH_ITEMS:
+        reason = f"only {fresh} genuinely-new fishbowl activity item(s) in last 36h (min {MIN_FRESH_ITEMS})"
+        nj.log(f"[opinion-fishbowl] SUPPRESSED — {reason}; skipping publish")
+        try:
+            import nova_config
+            nova_config.post_both(
+                f":no_entry: Suppressed the daily *Fishbowl opinion* column — {reason}.\n"
+                f"  _No live-stream drama / Reddit churn to write about; skipped rather than publish a placeholder._",
+                slack_channel=getattr(nova_config, "SLACK_NOTIFY", None))
+        except Exception:
+            pass
+        return 0
 
     dossier_block = "\n\n".join(f"### {n} ({c})\n{s}" for n, c, s in dossiers) or "(dossiers still building)"
     sample_block = "\n\n---\n\n".join(s[:800] for s in samples)

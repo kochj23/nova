@@ -218,8 +218,16 @@ def main():
                 cwd=str(JOURNAL_DIR), capture_output=True, text=True, timeout=30
             )
             if result.returncode == 0:
-                subprocess.run(["git", "push"], cwd=str(JOURNAL_DIR), capture_output=True, timeout=60)
-                log(f"Committed and pushed {fixed} image fixes")
+                # Rebase onto origin BEFORE pushing so a diverged clone can't silently strand commits.
+                pull = subprocess.run(["git", "pull", "--rebase", "--autostash", "origin", "main"],
+                                      cwd=str(JOURNAL_DIR), capture_output=True, text=True, timeout=180)
+                if pull.returncode != 0:
+                    subprocess.run(["git", "rebase", "--abort"], cwd=str(JOURNAL_DIR), capture_output=True, timeout=30)
+                    log(f"Push ABORTED — pull --rebase failed (diverged/conflict): {pull.stderr[:200]}")
+                else:
+                    p = subprocess.run(["git", "push"], cwd=str(JOURNAL_DIR), capture_output=True, text=True, timeout=60)
+                    log(f"Committed and pushed {fixed} image fixes" if p.returncode == 0
+                        else f"Push FAILED (commit NOT on origin): {p.stderr[:200]}")
         except Exception as e:
             log(f"Git push failed: {e}")
 

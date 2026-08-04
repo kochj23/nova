@@ -29,6 +29,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home()) + "/.openclaw/scripts")
 import nova_config
+import nova_journal as nj
 from nova_notify import notify
 
 HUGO_ROOT = (Path.home() / "nova-journal")
@@ -123,14 +124,8 @@ description: "Nova's postmortem of the afternoon her memory's spine quietly died
     post_path.write_text(front_matter + body)
     print(f"Post written: {post_path}")
 
-    subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=15)
-    msg = f"operations: {date} — postmortem ({title[:50]})"
-    r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=20)
-    if r.returncode == 0:
-        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=45)
-        print("Pushed to GitHub — deploy will trigger.")
-    else:
-        print(f"Commit note: {r.stdout[:200]} {r.stderr[:200]}")
+    # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
+    nj.git_push("operations", title)
 
     url = f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
     try:

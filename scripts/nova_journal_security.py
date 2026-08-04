@@ -301,44 +301,9 @@ description: "{description.replace('"', "'")}"
     output.write_text(front_matter + byline + body)
     log(f"Published: security/{filename}")
 
-    # Git push (clear stale lock files if present)
-    try:
-        lock_file = HUGO_ROOT / ".git" / "index.lock"
-        if lock_file.exists():
-            # Check if lock is stale (older than 5 minutes)
-            lock_age = time.time() - lock_file.stat().st_mtime
-            if lock_age > 300:
-                lock_file.unlink()
-                log(f"Cleared stale git lock ({lock_age:.0f}s old)")
-            else:
-                log(f"Git lock exists ({lock_age:.0f}s old) — skipping push")
-                return filename
-
-        result = subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
-        if result.returncode != 0:
-            log(f"Git add failed: {result.stderr.strip()}")
-            return filename
-        msg = f"security: {dt} — {title[:50]}"
-        result = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
-        if result.returncode == 0:
-            result = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
-            if result.returncode == 0:
-                log("Pushed to GitHub")
-            else:
-                # Another writer pushed first (non-fast-forward). Rebase on top and retry once.
-                log(f"Push rejected, rebasing + retrying: {result.stderr[:120]}")
-                subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, timeout=60)
-                result = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
-                if result.returncode == 0:
-                    log("Pushed to GitHub after rebase")
-                else:
-                    log(f"Push still failed after rebase: {result.stderr[:200]} — commit is safe, ships next run")
-        elif "nothing to commit" in result.stdout:
-            log("Nothing to commit (already pushed)")
-        else:
-            log(f"Git commit failed: {result.stderr.strip()}")
-    except Exception as e:
-        log(f"Git error: {e}")
+    # Hardened commit + push via nova_journal (PG advisory lock, index.lock/wedge repair,
+    # rebase-on-reject, retry, alert-on-failure). Never a raw push that silently strands commits.
+    nova_journal.git_push("security", title)
 
     return filename
 

@@ -38,6 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+import nova_journal as nj
 
 # ── Date override for backfill ────────────────────────────────────────────────
 # Set NOVA_FOR_DATE=YYYY-MM-DD to generate a digest for a specific past date.
@@ -732,29 +733,8 @@ description: "Nova's daily personal newsletter — {date_str}"
     output.write_text(front_matter + body)
     log(f"Written to site: {output.name}")
 
-    # Git commit and push
-    try:
-        subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
-        result = subprocess.run(
-            ["git", "commit", "-m", f"digest: {date_str} — daily digest"],
-            cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30
-        )
-        if result.returncode != 0:
-            if "nothing to commit" in (result.stdout + result.stderr):
-                log("Nothing to commit")
-                return
-            log(f"Commit failed: {result.stderr[:200]}")
-            return
-        result = subprocess.run(
-            ["git", "push"],
-            cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60
-        )
-        if result.returncode == 0:
-            log("Published to site")
-        else:
-            log(f"Push failed: {result.stderr[:200]}")
-    except Exception as e:
-        log(f"Git error: {e}")
+    # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
+    nj.git_push("digest", "daily digest")
 
 
 # ── Main ─────────────────────────────────────────────────────────────────────

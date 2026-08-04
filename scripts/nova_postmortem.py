@@ -30,6 +30,7 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 import nova_config
 from nova_image_utils import generate_image
 from nova_journal import grafana_panel_image
+import nova_journal as nj
 
 try:
     from nova_ops_context import get_full_context, format_security_brief, format_infra_brief
@@ -228,25 +229,8 @@ cover:
     output.write_text(front_matter + body)
     log(f"Published: operations/{filename}")
 
-    # Git push
-    try:
-        subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=15)
-        subprocess.run(["git", "commit", "-m", f"postmortem: {title}"],
-                       cwd=HUGO_ROOT, capture_output=True, timeout=15)
-        r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
-        if r.returncode == 0:
-            log("Pushed to GitHub")
-        else:
-            # Another writer pushed first (non-fast-forward). Rebase on top and retry once.
-            log(f"Push rejected, rebasing + retrying: {r.stderr[:120]}")
-            subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
-            r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
-            if r.returncode == 0:
-                log("Pushed to GitHub after rebase")
-            else:
-                log(f"Push still failed after rebase: {r.stderr[:200]} — commit is safe, ships next run")
-    except Exception as e:
-        log(f"Git push failed: {e}")
+    # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
+    nj.git_push("operations", title)
 
     return True
 

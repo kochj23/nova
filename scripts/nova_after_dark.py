@@ -32,6 +32,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+import nova_journal as nj
 
 # ── Date override for backfill ────────────────────────────────────────────────
 import os as _os
@@ -366,20 +367,9 @@ description: "Nova After Dark — {fact}"
     output.write_text(front_matter + monologue + footer)
     log(f"Hugo post written: {output.name}")
 
-    # Git commit and push
-    try:
-        subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
-        result = subprocess.run(
-            ["git", "commit", "-m", f"after-dark: {date} — {fact}"],
-            cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30
-        )
-        if result.returncode == 0:
-            subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=60)
-            log("Pushed to GitHub")
-        elif "nothing to commit" not in (result.stdout + result.stderr):
-            log(f"Commit failed: {result.stderr[:200]}")
-    except Exception as e:
-        log(f"Git error: {e}")
+    # Commit + push via the hardened, fleet-serialized path (PG advisory lock, rebase-on-
+    # reject, retry, alert-on-failure). Never a raw `git push` that silently strands commits.
+    nj.git_push("after-dark", fact)
 
     return True
 

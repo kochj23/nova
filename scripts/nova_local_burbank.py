@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+import nova_journal as nj
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
@@ -870,20 +871,8 @@ description: "Nova's daily dispatch from Burbank — local news with maximum sar
     post_path.write_text(front_matter + body)
     log(f"Post written: {post_path.name}")
 
-    subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=15)
-    msg = f"local: {date} — Burbank dispatch ({title[:40]})"
-    r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=15)
-    if r.returncode == 0:
-        # A slow/hung push must never crash the run — the commit is safe locally and
-        # the next successful push (any journal script) ships all unpushed commits.
-        try:
-            p = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=90)
-            log("Pushed to GitHub" if p.returncode == 0
-                else f"Push failed (rc={p.returncode}): {p.stderr[:160]} — commit safe, retries next run")
-        except subprocess.TimeoutExpired:
-            log("Push timed out — commit safe locally, retries next run")
-    else:
-        log(f"Commit issue: {r.stderr[:200]}")
+    # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
+    nj.git_push("local", title)
 
     nova_config.post_both(
         f":cityscape: *Burbank Daily Dispatch posted*\n"

@@ -485,8 +485,16 @@ description: "Nova's morning vector audit — finding and fixing misfiled memori
     msg = f"rando: {date} — vector audit ({title[:50]})"
     r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=15)
     if r.returncode == 0:
-        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
-        log("Pushed to GitHub")
+        # Rebase onto origin BEFORE pushing so a diverged clone can't silently strand commits.
+        pull = subprocess.run(["git", "pull", "--rebase", "--autostash", "origin", "main"],
+                              cwd=HUGO_ROOT, capture_output=True, text=True, timeout=180)
+        if pull.returncode != 0:
+            subprocess.run(["git", "rebase", "--abort"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
+            log(f"Push ABORTED — pull --rebase failed (diverged/conflict): {pull.stderr[:200]}")
+        else:
+            p = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
+            log("Pushed to GitHub" if p.returncode == 0
+                else f"Push FAILED (commit NOT on origin): {p.stderr[:200]}")
     else:
         log(f"Commit issue: {r.stderr[:100]}")
 

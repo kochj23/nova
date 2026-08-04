@@ -11,5 +11,12 @@ def run(args):
 run(["git", "rm", "-f", f"content/operations/{SLUG}.md"])
 run(["git", "rm", "-f", f"static/images/operations/{SLUG}.webp"])
 run(["git", "commit", "-m", "Retract Frigate scout article - already in production (#635); scout false positive, now guarded."])
-run(["git", "push"])
+# Rebase onto origin BEFORE pushing so a diverged clone can't silently strand commits.
+pull = subprocess.run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=ROOT, capture_output=True, text=True)
+if pull.returncode != 0:
+    subprocess.run(["git", "rebase", "--abort"], cwd=ROOT, capture_output=True)
+    print(f"push ABORTED — pull --rebase failed (diverged/conflict): {pull.stderr.strip()[-200:]}")
+else:
+    push = subprocess.run(["git", "push"], cwd=ROOT, capture_output=True, text=True)
+    print(f"push rc={push.returncode} {push.stderr.strip()[-200:]}")
 print("RETRACT DONE")

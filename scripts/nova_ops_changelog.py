@@ -179,9 +179,17 @@ def main():
     r = subprocess.run(["git", "-C", str(HUGO), "commit", "-m", f"operations: rewrite weekly wrap as changelog ({title[:45]})"],
                        capture_output=True, text=True, timeout=25)
     if r.returncode == 0:
-        subprocess.run(["git", "-C", str(HUGO), "pull", "--rebase"], capture_output=True, timeout=60)
-        subprocess.run(["git", "-C", str(HUGO), "push"], capture_output=True, timeout=60)
-        wk.log("[changelog] pushed — deploy triggered")
+        # Rebase onto origin BEFORE pushing so a diverged clone can't silently strand
+        # commits (the failure mode that let host .6 drift 82 ahead / 25 behind unnoticed).
+        pull = subprocess.run(["git", "-C", str(HUGO), "pull", "--rebase", "--autostash", "origin", "main"],
+                              capture_output=True, text=True, timeout=180)
+        if pull.returncode != 0:
+            subprocess.run(["git", "-C", str(HUGO), "rebase", "--abort"], capture_output=True, timeout=30)
+            wk.log(f"[changelog] push ABORTED — pull --rebase failed (diverged/conflict): {pull.stderr[:200]}")
+        else:
+            p = subprocess.run(["git", "-C", str(HUGO), "push"], capture_output=True, text=True, timeout=60)
+            wk.log("[changelog] pushed — deploy triggered" if p.returncode == 0
+                   else f"[changelog] push FAILED (commit NOT on origin): {p.stderr[:200]}")
     else:
         wk.log(f"[changelog] commit note: {(r.stdout + r.stderr)[:150]}")
 

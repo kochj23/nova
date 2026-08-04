@@ -156,20 +156,8 @@ description: "Nova's weekly OSINT self-recon — what Amass, theHarvester, and H
     post_path.write_text(front_matter + f"*Published {pub_time}*\n\n" + body)
     log(f"Post written: {post_path.name}")
 
-    subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=15)
-    r = subprocess.run(["git", "commit", "-m", f"osint: {date} — {title[:50]}"],
-                       cwd=HUGO_ROOT, capture_output=True, text=True, timeout=15)
-    if r.returncode == 0:
-        r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
-        if r.returncode != 0:
-            log(f"Push rejected, rebasing + retrying: {r.stderr[:120]}")
-            subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
-            r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
-            log("Pushed after rebase" if r.returncode == 0 else f"Push still failed: {r.stderr[:200]}")
-        else:
-            log("Pushed to GitHub")
-    else:
-        log(f"Commit issue: {r.stderr[:100]}")
+    # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
+    nova_journal.git_push("osint", title)
 
     url = f"https://nova.digitalnoise.net/operations/{date}-{slug}/"
     nova_config.post_both(f"OSINT digest posted — {title}\n{url}", slack_channel=nova_config.SLACK_FEED)

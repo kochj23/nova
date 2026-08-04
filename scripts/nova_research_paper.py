@@ -41,6 +41,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+import nova_journal as nj
 from nova_notify import notify
 
 # ── Date override for backfill ────────────────────────────────────────────────
@@ -796,19 +797,8 @@ description: "{outline.get('thesis', '')[:150]}"
         tmp_output.unlink(missing_ok=True)
     log(f"Hugo post written: {output.name}")
 
-    try:
-        subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
-        result = subprocess.run(
-            ["git", "commit", "-m", f"research: {date} — {title[:60]}"],
-            cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30
-        )
-        if result.returncode == 0:
-            subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=60)
-            log("Pushed to GitHub")
-        elif "nothing to commit" not in (result.stdout + result.stderr):
-            log(f"Commit failed: {result.stderr[:200]}")
-    except Exception as e:
-        log(f"Git error: {e}")
+    # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
+    nj.git_push("research", title)
 
     return True
 

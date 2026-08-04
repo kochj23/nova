@@ -25,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
+import nova_journal as nj
 from nova_tag_extractor import extract_tags
 
 HUGO_ROOT    = (Path.home() / "nova-journal")
@@ -267,17 +268,8 @@ description: "Nova's monthly meta-analysis of her own published output"
     out_path.write_text(content)
     log(f"Written: {out_path.name}")
 
-    try:
-        subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
-        result = subprocess.run(
-            ["git", "commit", "-m", f"meta: {month_str} self-analysis"],
-            cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30
-        )
-        if "nothing to commit" not in (result.stdout + result.stderr):
-            subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=60)
-            log("Pushed")
-    except Exception as e:
-        log(f"Git error: {e}")
+    # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
+    nj.git_push("meta", f"{month_str} self-analysis")
 
     return f"/meta/{slug}/"
 

@@ -49,6 +49,12 @@ for f in sorted(glob.glob(CONTENT+"/*.md")):
 if fixed:
     subprocess.run(["git","add","-A"],cwd=REPO,capture_output=True,timeout=30)
     subprocess.run(["git","commit","-m",f"ops: backfill cover images on {len(fixed)} articles"],cwd=REPO,capture_output=True,text=True,timeout=30)
-    p=subprocess.run(["git","push"],cwd=REPO,capture_output=True,text=True,timeout=90)
-    log(f"pushed: rc={p.returncode} {(p.stdout+p.stderr).strip()[:150]}")
+    # Rebase onto origin BEFORE pushing so a diverged clone can't silently strand commits.
+    pull=subprocess.run(["git","pull","--rebase","--autostash","origin","main"],cwd=REPO,capture_output=True,text=True,timeout=180)
+    if pull.returncode!=0:
+        subprocess.run(["git","rebase","--abort"],cwd=REPO,capture_output=True,timeout=30)
+        log(f"push ABORTED — pull --rebase failed (diverged/conflict): {pull.stderr.strip()[:200]}")
+    else:
+        p=subprocess.run(["git","push"],cwd=REPO,capture_output=True,text=True,timeout=90)
+        log(f"pushed: rc={p.returncode} {(p.stdout+p.stderr).strip()[:150]}")
 log(f"BACKFILL DONE — fixed {len(fixed)}: {fixed}")

@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+import nova_journal as nj
 
 # ── PII scrubbing (matches nova_journal canonical pattern) ──────────────────────
 # Residual-PII redaction applied to memory text AFTER private-source filtering,
@@ -276,15 +277,8 @@ description: "Nova's top 10 weirdest memories ingested in the last 12 hours."
     post_path.write_text(front_matter + body)
     log(f"Post written: {post_path.name}")
 
-    # Git commit and push
-    subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=15)
-    msg = f"rando: {date} top 10 weirdest memories ({title[:40]})"
-    r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=15)
-    if r.returncode == 0:
-        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=120)
-        log("Pushed to GitHub")
-    else:
-        log(f"Commit issue: {r.stderr[:200]}")
+    # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
+    nj.git_push("operations", title)
 
     nova_config.post_both(
         f":brain: *Top 10 Weirdest Memories posted*\n"

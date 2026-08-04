@@ -258,8 +258,19 @@ def publish(title: str, body: str) -> str:
     r = subprocess.run(["git", "commit", "-m", f"operations: {date} — weekly infra report ({title[:45]})"],
                        cwd=HUGO_ROOT, capture_output=True, text=True, timeout=25)
     if r.returncode == 0:
-        subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, timeout=60)
-        log("Pushed to GitHub — deploy triggered.")
+        # Rebase onto origin BEFORE pushing so a diverged clone can't silently strand
+        # commits (the failure mode that let host .6 drift 82 ahead / 25 behind unnoticed).
+        # Targeted `git add <path>` above is kept on purpose (huge repo; add -A times out),
+        # so we harden the push here rather than routing through nova_journal.git_push.
+        pull = subprocess.run(["git", "pull", "--rebase", "--autostash", "origin", "main"],
+                              cwd=HUGO_ROOT, capture_output=True, text=True, timeout=180)
+        if pull.returncode != 0:
+            subprocess.run(["git", "rebase", "--abort"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
+            log(f"Push ABORTED — pull --rebase failed (repo diverged/conflict): {pull.stderr[:200]}")
+        else:
+            p = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=60)
+            log("Pushed to GitHub — deploy triggered." if p.returncode == 0
+                else f"Push FAILED (commit NOT on origin): {p.stderr[:200]}")
     else:
         log(f"Commit note: {(r.stdout + r.stderr)[:150]}")
 

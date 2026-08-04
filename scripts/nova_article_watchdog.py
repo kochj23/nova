@@ -253,8 +253,15 @@ def autofix(causes, dry):
             run(["git", "add", "content/", "static/"], cwd=HUGO)
             run(["git", "-c", "user.name=Jordan Koch", "commit", "-m",
                  "chore: publish content stranded by an interrupted job"], cwd=HUGO)
-            r = run(["git", "push", "origin", "main"], cwd=HUGO, timeout=180)
-            log(f"    push rc={r.returncode}")
+            # Rebase onto origin BEFORE pushing — this watchdog exists to un-strand commits,
+            # so it must NOT itself get stuck behind a diverged clone (host .6: 82 ahead / 25 behind).
+            pull = run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=HUGO, timeout=180)
+            if pull.returncode != 0:
+                run(["git", "rebase", "--abort"], cwd=HUGO)
+                log(f"    push ABORTED — pull --rebase failed (diverged/conflict): {pull.stderr[:200]}")
+            else:
+                r = run(["git", "push", "origin", "main"], cwd=HUGO, timeout=180)
+                log(f"    push rc={r.returncode}" + ("" if r.returncode == 0 else f" FAILED: {r.stderr[:200]}"))
         fixed = True
     return fixed
 

@@ -602,25 +602,8 @@ description: "Nova's daily ops report — what broke, what worked, and what she'
     post_path.write_text(front_matter + byline + body)
     log(f"Post written: {post_path.name}")
 
-    # Git commit and push
-    subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, timeout=15)
-    msg = f"rando: {date} — daily ops ({title[:50]})"
-    r = subprocess.run(["git", "commit", "-m", msg], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=15)
-    if r.returncode == 0:
-        r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
-        if r.returncode == 0:
-            log("Pushed to GitHub")
-        else:
-            # Another writer pushed first (non-fast-forward). Rebase on top and retry once.
-            log(f"Push rejected, rebasing + retrying: {r.stderr[:120]}")
-            subprocess.run(["git", "pull", "--rebase"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
-            r = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
-            if r.returncode == 0:
-                log("Pushed to GitHub after rebase")
-            else:
-                log(f"Push still failed after rebase: {r.stderr[:200]} — commit is safe, ships next run")
-    else:
-        log(f"Commit issue: {r.stderr[:100]}")
+    # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
+    nova_journal.git_push("operations", title)
 
     nova_config.post_both(
         f":gear: *Daily Ops Column posted*\n"
