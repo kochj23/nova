@@ -348,13 +348,24 @@ def sql_diff(conn, share: str):
     return to_copy, orphans
 
 
-def record_run(conn, share: str, rc: int, elapsed_s: int, files: int,
+def record_run(share: str, rc: int, elapsed_s: int, files: int,
                nbytes: int, errors: int, ok: bool) -> None:
-    with conn.cursor() as cur:
-        cur.execute(
-            f"INSERT INTO {RUNS_TABLE} (ts, job, rc, elapsed_s, files, bytes, errors, ok) "
-            f"VALUES (now(), %s, %s, %s, %s, %s, %s, %s)",
-            (f"nova-backup:{share}:manifest-sync", rc, elapsed_s, files, nbytes, errors, ok))
+    """Write the telemetry row on a FRESH connection. A multi-hour copy lets the
+    main connection time out server-side (idle), so depending on it here would
+    silently DROP the record of a real, successful run — hiding it from the
+    dead-man's-switch. Best-effort: a telemetry failure is logged, never raised."""
+    import psycopg2
+    try:
+        c = psycopg2.connect(DSN)
+        c.autocommit = True
+        with c.cursor() as cur:
+            cur.execute(
+                f"INSERT INTO {RUNS_TABLE} (ts, job, rc, elapsed_s, files, bytes, errors, ok) "
+                f"VALUES (now(), %s, %s, %s, %s, %s, %s, %s)",
+                (f"nova-backup:{share}:manifest-sync", rc, elapsed_s, files, nbytes, errors, ok))
+        c.close()
+    except Exception as e:  # noqa: BLE001
+        log(f"{share}: telemetry record_run failed (run itself unaffected): {e}")
 
 
 def ensure_mount(mount: str) -> bool:
@@ -564,9 +575,8 @@ def sync_share(conn, share: dict, uroot: str, args) -> dict:
         alert(f"NAS manifest-sync FAILED [{name}]",
               f"dest mount {share['mount']} not present/writable — aborting.", critical=True)
         result["errors"] += 1
-        record_run(conn, name, rc=1, elapsed_s=int(time.time() - t0),
+        record_run(name, rc=1, elapsed_s=int(time.time() - t0),
                    files=0, nbytes=0, errors=1, ok=False)
-        conn.commit()
         return result
 
     rc = 0
@@ -599,9 +609,8 @@ def sync_share(conn, share: dict, uroot: str, args) -> dict:
         result["errors"] += 1
 
     ok = rc in (0, 24) and result["errors"] == 0
-    record_run(conn, name, rc=rc, elapsed_s=int(time.time() - t0),
+    record_run(name, rc=rc, elapsed_s=int(time.time() - t0),
                files=copied, nbytes=copy_bytes, errors=result["errors"], ok=ok)
-    conn.commit()
     result.update(ok=ok, rc=rc, copied=copied, deleted=deleted, mode="live")
     log(f"{name}: {'OK' if ok else 'FAIL'} rc={rc} copied={copied:,} quarantined={deleted:,} "
         f"in {int(time.time()-t0)}s")
@@ -642,12 +651,8 @@ def run(args) -> int:
                 conn.rollback()
                 log(f"{share['name']}: EXCEPTION {e}")
                 alert(f"NAS manifest-sync EXCEPTION [{share['name']}]", str(e), critical=True)
-                try:
-                    record_run(conn, share["name"], rc=1, elapsed_s=0, files=0,
-                               nbytes=0, errors=1, ok=False)
-                    conn.commit()
-                except Exception:
-                    conn.rollback()
+                record_run(share["name"], rc=1, elapsed_s=0, files=0,
+                           nbytes=0, errors=1, ok=False)
                 results.append({"name": share["name"], "ok": False, "error": str(e)})
     finally:
         conn.close()
