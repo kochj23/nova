@@ -155,6 +155,22 @@ def scrub_pii(text: str) -> str:
     return text
 
 
+# Absolute macOS home paths (/Users/<name>/...) must never appear in public article
+# prose: they leak a local filesystem layout AND trip the per-clone pre-commit
+# secret-scanner (hook rule: any .md containing a "/Users/<name>/" path is rejected), which
+# silently discards the post on every host. Scrubbing at the SOURCE — here, in the
+# shared library, before the body is written — stops that class of false positive
+# fleet-wide without ever touching a security hook. NOTE: this only matches
+# "/Users/..." — site-relative Hugo paths like "/images/local/x.webp" are untouched.
+_HOME_PATH_RE = re.compile(r'/Users/[^/\s]+/[^\s)"\']*')
+
+def scrub_home_paths(text: str) -> str:
+    """Replace absolute macOS home paths (/Users/<name>/...) with a harmless
+    placeholder. Applied to article BODIES only — never front-matter — so
+    site-relative image paths (/images/...) are left intact."""
+    return _HOME_PATH_RE.sub("~/…", text)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # MEMORY FETCHING
 # ══════════════════════════════════════════════════════════════════════════════
@@ -469,7 +485,11 @@ description: "{description.replace('"', "'")}"
     byline = f"*Published {pub_time}*\n\n"
 
     output = content_dir / filename
-    output.write_text(front_matter + byline + scrub_pii(body))
+    # scrub_home_paths(): root-cause fix for the silent-drop bug — strip any
+    # /Users/<name>/... path out of the prose so the pre-commit secret-scanner
+    # never rejects (and silently discards) the post. BODY only; front_matter
+    # (with its site-relative /images/... cover path) is deliberately excluded.
+    output.write_text(front_matter + byline + scrub_home_paths(scrub_pii(body)))
     log(f"Published: {section}/{filename}")
     try:  # store the article into Nova's vector memory as a thing she wrote (non-fatal)
         from nova_articles_to_memory import remember_article
@@ -681,8 +701,25 @@ def git_push(section: str, title: str):
             cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30
         )
         if result.returncode != 0:
-            if "nothing to commit" in (result.stdout + result.stderr):
+            combined = (result.stdout or "") + (result.stderr or "")
+            if "nothing to commit" in combined:
                 log("Nothing to commit")
+                return
+            # The per-clone pre-commit secret-scanner rejected the commit. Historically
+            # this returned silently and the article vanished (never on disk after the
+            # generator moved on, never on origin). Detect the hook's block banner and
+            # ALERT to #nova-warning instead of dropping the post on the floor.
+            low = combined.lower()
+            if any(m in low for m in ("commit blocked", "scan failed", "secrets caught")):
+                excerpt = " ".join(combined.split())[:300]
+                log(f"Commit BLOCKED by pre-commit secret-scan: {excerpt[:200]}")
+                try:
+                    nova_config.post_both(
+                        f":rotating_light: Journal publish BLOCKED by pre-commit "
+                        f"secret-scan: {section}/{title} — {excerpt}",
+                        slack_channel=nova_config.SLACK_NOTIFY, discord_channel=None)
+                except Exception as e:
+                    log(f"BLOCK alert failed to post: {e}")
                 return
             log(f"Commit failed: {result.stderr[:200]}")
             return
