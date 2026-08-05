@@ -66,7 +66,26 @@ def call_llm(system, user, model=None, max_tokens=8000):
     # has been failing (401) on every run since, silently killing this article for 10+ days.
     try:
         import nova_claude_code
-        return nova_claude_code.claude_generate(user, system=system)
+        result = nova_claude_code.claude_generate(user, system=system)
+        # Claude Code prints an auth stub to stdout when its session has expired
+        # ("Not logged in · Please run /login") — a ~33-char string that used to
+        # ship SILENTLY as the article, killing the post for days (2026-08-04/05).
+        # Treat any known auth/error stub as a FAILURE: alert loudly, fall back.
+        low = (result or "").strip().lower()
+        AUTH_STUBS = ("not logged in", "please run /login", "/login",
+                      "invalid api key", "credit balance", "authentication_error")
+        if result and result.strip() and not any(s in low for s in AUTH_STUBS):
+            return result
+        log(f"claude_generate returned an auth/error stub ({(result or '')[:80]!r}) — alerting + falling back to OpenRouter")
+        try:
+            import nova_config
+            nova_config.post_both(
+                f":rotating_light: local_burbank: Claude Code backend returned an auth stub "
+                f"(`{(result or '').strip()[:60]}`) — the CLI is likely logged out on this host. "
+                f"Falling back to OpenRouter; log in `claude` here to restore the primary path.",
+                slack_channel=getattr(nova_config, "SLACK_NOTIFY", None))
+        except Exception:
+            pass
     except Exception as e:
         log(f"claude_generate failed, falling back to OpenRouter: {e}")
     api_key = get_openrouter_key()
