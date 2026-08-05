@@ -791,7 +791,7 @@ tasks:
 
   local_burbank:
     script: nova_local_burbank.py
-    enabled: false  # Wave B -> .2 (2026-07-14)
+    enabled: true  # re-homed to .6 2026-08-05: .2's ~/.openclaw was a flaky Synology CIFS mount (Errno 112 Host is down -> intermittent FAIL exit=1); Claude Code LLM backend + scripts are LOCAL here
     schedule: cron 0 10 * * *
     timeout: 600
     overlap: skip
