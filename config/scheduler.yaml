@@ -227,9 +227,9 @@ tasks:
     timeout: 5400
     overlap: skip
 
-  nas_manifest_sync:                   # #656 §7 — FAST manifest-diff Synology->UNAS backup (kills rsync's 3h tree-walk). SSH-local `find` both sides -> PG manifest diff -> rsync only the delta -> quarantine orphans (14d trash). Hard anti-wipe guards (empty/short source, 5%/500 orphan cap). Starts --dry-run until Jordan green-lights the first destructive quarantine.
+  nas_manifest_sync:                   # #656 §7 — FAST manifest-diff Synology->UNAS backup (kills rsync's 3h tree-walk). SSH-local `find` both sides -> PG manifest diff -> tar-stream only the delta -> quarantine orphans (14d trash). Hard anti-wipe guards (empty/short source, 5%/500 orphan cap). LIVE since 2026-08-04 (green-lit; first full pass verified both shares 0/0, 627GB cruft trashed).
     script: nova_nas_manifest_sync.py
-    args: ["--dry-run"]
+    args: []
     schedule: cron 30 5 * * *
     timeout: 5400
     overlap: skip
