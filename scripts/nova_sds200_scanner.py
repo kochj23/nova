@@ -201,11 +201,25 @@ def audio_command(source: str, host: str):
     return base + ["-ar", str(SR), "-ac", "1", "-f", "s16le", "-"]
 
 
+# Bias the decoder toward the SDS200's mixed public-safety + RAILROAD vocabulary. The rail
+# terms matter: without them Whisper garbles wayside defect-detector readouts (the bulk of rail
+# traffic) into nonsense like "total axle two four house" for "…total axles 240, detector out".
+_ASR_PROMPT = (
+    "Public-safety and railroad radio dispatch. Police/fire unit callsigns and codes "
+    "(187 211 415 10-4 code 3 E-11 RA-63). Railroad: wayside defect detector — "
+    "'detector milepost 468.2, no defects, total axles 240, train speed 45, ambient "
+    "temperature 78 degrees, detector out'; alarm 'you have a defect, stop your train, "
+    "hot box axle 12 from the rear'; signal aspects clear/approach/restricting; highball, "
+    "milepost, siding, crossover, track warrant, control point, Metrolink, EOT."
+)
+
+
 def transcribe(pcm: bytes, model) -> str:
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as f:
         w = wave.open(f.name, "wb")
         w.setnchannels(1); w.setsampwidth(2); w.setframerate(SR); w.writeframes(pcm); w.close()
-        segs, _ = model.transcribe(f.name, language="en", vad_filter=True)
+        segs, _ = model.transcribe(f.name, language="en", vad_filter=True,
+                                   initial_prompt=_ASR_PROMPT)
         return " ".join(s.text.strip() for s in segs).strip()
 
 

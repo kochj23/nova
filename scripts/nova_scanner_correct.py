@@ -33,8 +33,19 @@ _DOMAIN = {
                 "10-4, code 3, 11-99), street names and cross-streets, and vehicle/plate readbacks."),
     "fire":    ("fire/EMS dispatch (Verdugo Fire). Expect engine/truck/medic unit numbers (E-11, "
                 "T-15, RA-63), incident types (structure fire, TC, medical aid), and cross-streets."),
-    "rail":    ("railroad radio (Metrolink/Union Pacific San Fernando corridor). Expect signal "
-                "aspects, milepost numbers, track/switch/siding names, and 'highball/clear' calls."),
+    "rail":    ("railroad radio (Metrolink/Amtrak/Union Pacific/BNSF, San Fernando Valley corridor). "
+                "MUCH of this is AUTOMATED WAYSIDE DEFECT-DETECTOR readouts — reconstruct that exact "
+                "template: '<railroad> detector, milepost <NN.N>, track <N or main>, no defects, no "
+                "defects, total axles <N>, train speed <NN> miles per hour, ambient temperature <NN> "
+                "degrees, detector out'. Defect alarm: 'you have a defect, stop your train, axle <N> "
+                "from the head/rear end — hot box / hot wheel / dragging equipment / high-wide load'. "
+                "Also expect: signal aspects (clear, approach, advance-approach, approach-medium, "
+                "restricting, stop-and-proceed, stop), milepost numbers, track/switch/siding/crossover, "
+                "control points (CP), track warrants, 'OS'/on-sheet position reports, 'highball', EOT/"
+                "FRED, DPU, consist/tonnage, 'Metrolink <train#>', dispatcher, 'copy/over/out', PTC/CTC. "
+                "Typical ASR garbles to undo: 'total axle two four house' -> 'total axles 24X ... "
+                "detector out'; 'no defects' misheard as 'the fix'/'defect'; 'highball' as 'high ball'; "
+                "'milepost' as 'my post'; 'axle' as 'actual'/'access'."),
 }
 
 _SYS = (
