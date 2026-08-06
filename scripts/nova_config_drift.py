@@ -113,7 +113,11 @@ def check():
         notify(f"Config drift — {n} launchd discrepancy(ies)",
                body="\n".join(drift) + "\n\nReconcile, then bless: nova_config_drift.py --bless",
                level="warning", category="config", dedup_key="config-drift")
-        return 1
+        # Drift is a FINDING, already reported via notify() above — not an execution
+        # failure. Exit 0 so the scheduler failure-signal (and task_sentinel/BB) reflect
+        # "did the monitor run OK", not "did it find drift". Exiting non-zero here made
+        # config_drift read as a perpetually-failing task for as long as any drift existed.
+        return 0
     print("[config-drift] no drift — running config matches the blessed baseline.")
     return 0
 

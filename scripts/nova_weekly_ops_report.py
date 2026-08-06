@@ -285,7 +285,11 @@ def main():
     log("=== Weekly Infrastructure Report starting ===")
     brief = fmt(gather())
     log(f"Gathered brief ({len(brief)} chars)")
-    body = call_llm(SYSTEM, brief, max_tokens=4500).strip()
+    # call_llm returns None on any LLM failure (router down / timeout / auth stub);
+    # guard so that degrades to the clean "too short — aborting" path below instead of
+    # crashing with AttributeError on None.strip() (the traceback that had this task
+    # failing every run).
+    body = (call_llm(SYSTEM, brief, max_tokens=4500) or "").strip()
     if not body or len(body) < 200:
         log("Generation failed or too short — aborting")
         return
