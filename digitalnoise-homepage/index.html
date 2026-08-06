@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>digitalnoise.net</title>
+<script defer src="https://analytics.digitalnoise.net/beacon.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&display=swap');
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+:root {
+  --bg: #0a0e14;
+  --surface: #0f1520;
+  --border: #1a2030;
+  --border-glow: rgba(0, 255, 200, 0.12);
+  --border-glow-bright: rgba(0, 255, 200, 0.4);
+  --cyan: #00ffc8;
+  --amber: #ffcc00;
+  --red: #ff3344;
+  --blue: #0088ff;
+  --magenta: #ff00aa;
+  --green: #00ff66;
+  --dim: #1a2030;
+  --text: #c8d0e0;
+  --text-dim: #4a5568;
+  --font: 'Share Tech Mono', 'Courier New', monospace;
+  --font-title: 'Orbitron', 'Share Tech Mono', monospace;
+}
+
+html, body {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.7;
+  overflow-x: hidden;
+}
+
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background:
+    repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0, 255, 200, 0.008) 2px,
+      rgba(0, 255, 200, 0.008) 4px
+    );
+  pointer-events: none;
+  z-index: 1000;
+}
+
+body::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, rgba(0, 255, 200, 0.02) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 999;
+}
+
+.terminal {
+  max-width: 820px;
+  margin: 0 auto;
+  padding: 40px 24px;
+  min-height: 100vh;
+}
+
+.window-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border-glow);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+}
+
+.window-dot {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+}
+.window-dot:nth-child(1) { background: var(--red); }
+.window-dot:nth-child(2) { background: var(--amber); }
+.window-dot:nth-child(3) { background: var(--green); }
+
+.window-title {
+  flex: 1;
+  text-align: center;
+  color: var(--text-dim);
+  font-size: 12px;
+  letter-spacing: 1px;
+  font-family: var(--font-title);
+  text-transform: uppercase;
+}
+
+.screen {
+  background: var(--bg);
+  border: 1px solid var(--border-glow);
+  border-radius: 0 0 8px 8px;
+  padding: 32px 28px;
+  position: relative;
+  overflow: hidden;
+}
+
+.screen::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  opacity: 0.4;
+}
+
+.prompt { color: var(--amber); }
+.command { color: #ffffff; }
+.comment { color: var(--text-dim); font-style: italic; }
+.link { color: var(--cyan); text-decoration: none; transition: all 0.2s; }
+.link:hover {
+  color: #ffffff;
+  text-shadow: 0 0 8px var(--cyan), 0 0 16px var(--cyan);
+}
+
+.block {
+  margin-bottom: 28px;
+  opacity: 0;
+  animation: typeIn 0.4s ease forwards;
+}
+.block:nth-child(1) { animation-delay: 0.2s; }
+.block:nth-child(2) { animation-delay: 0.6s; }
+.block:nth-child(3) { animation-delay: 1.0s; }
+.block:nth-child(4) { animation-delay: 1.4s; }
+.block:nth-child(5) { animation-delay: 1.8s; }
+.block:nth-child(6) { animation-delay: 2.2s; }
+.block:nth-child(7) { animation-delay: 2.6s; }
+.block:nth-child(8) { animation-delay: 3.0s; }
+.block:nth-child(9) { animation-delay: 3.4s; }
+
+@keyframes typeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.ascii-header {
+  font-family: var(--font-title);
+  font-size: clamp(18px, 4vw, 28px);
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  color: var(--cyan);
+  text-shadow: 0 0 20px rgba(0, 255, 200, 0.4), 0 0 60px rgba(0, 255, 200, 0.15);
+  margin-bottom: 4px;
+}
+
+.ascii-sub {
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 2px;
+  text-transform: uppercase;
+}
+
+.divider {
+  border: none;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--cyan), transparent);
+  margin: 24px 0;
+  opacity: 0.2;
+}
+
+.output-line {
+  padding-left: 20px;
+  position: relative;
+}
+.output-line::before {
+  content: '›';
+  position: absolute;
+  left: 4px;
+  color: var(--cyan);
+  opacity: 0.5;
+}
+
+.founders {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  padding-left: 20px;
+  margin-top: 12px;
+}
+
+.founder-card {
+  padding: 14px 16px;
+  border: 1px solid var(--border-glow);
+  border-radius: 4px;
+  background: var(--surface);
+}
+.founder-card .name {
+  color: var(--cyan);
+  font-size: 15px;
+  margin-bottom: 4px;
+}
+.founder-card .role {
+  color: var(--text-dim);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.founder-card .links {
+  display: flex;
+  gap: 10px;
+}
+.founder-card .links a {
+  color: var(--text);
+  text-decoration: none;
+  font-size: 11px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  transition: all 0.2s;
+}
+.founder-card .links a:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+}
+
+.project-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  padding-left: 20px;
+  margin-top: 8px;
+}
+
+.project-item {
+  padding: 12px 14px;
+  border: 1px solid var(--border-glow);
+  border-radius: 4px;
+  transition: all 0.3s;
+  text-decoration: none;
+  color: var(--text);
+  display: block;
+}
+.project-item:hover {
+  border-color: var(--cyan);
+  background: rgba(0, 255, 200, 0.03);
+  box-shadow: 0 0 16px rgba(0, 255, 200, 0.08), inset 0 0 16px rgba(0, 255, 200, 0.02);
+}
+.project-item .label {
+  color: var(--amber);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 1.5px;
+  font-family: var(--font-title);
+}
+.project-item .name {
+  color: var(--cyan);
+  margin-top: 2px;
+}
+
+.social-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-left: 20px;
+  margin-top: 8px;
+}
+
+.social-link {
+  color: var(--text);
+  text-decoration: none;
+  padding: 8px 14px;
+  border: 1px solid var(--border-glow);
+  border-radius: 3px;
+  font-size: 12px;
+  letter-spacing: 0.5px;
+  transition: all 0.2s;
+}
+.social-link:hover {
+  border-color: var(--amber);
+  color: var(--amber);
+  box-shadow: 0 0 12px rgba(255, 204, 0, 0.15);
+  text-shadow: 0 0 8px rgba(255, 204, 0, 0.3);
+}
+
+.cursor-blink {
+  display: inline-block;
+  width: 8px;
+  height: 16px;
+  background: var(--cyan);
+  animation: blink 1s step-end infinite;
+  vertical-align: middle;
+  margin-left: 4px;
+  box-shadow: 0 0 6px var(--cyan);
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+
+.origin-photo {
+  margin: 16px 0 16px 20px;
+  padding: 12px;
+  border: 1px solid var(--border-glow);
+  border-radius: 4px;
+  max-width: 420px;
+  background: var(--surface);
+}
+.origin-photo img {
+  width: 100%;
+  height: auto;
+  border-radius: 2px;
+  filter: brightness(0.9) contrast(1.1);
+  border: 1px solid var(--border);
+}
+.origin-photo .caption {
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  letter-spacing: 0.5px;
+}
+
+.uptime {
+  color: var(--text-dim);
+  font-size: 11px;
+  text-align: right;
+  margin-top: 32px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border-glow);
+  font-family: var(--font-title);
+  letter-spacing: 1px;
+}
+
+.status-led {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 4px var(--green), 0 0 8px var(--green);
+  margin-right: 6px;
+  animation: pulse 2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.6; }
+}
+
+@media (max-width: 600px) {
+  .project-grid { grid-template-columns: 1fr; }
+  .founders { grid-template-columns: 1fr; }
+  .terminal { padding: 20px 12px; }
+  .screen { padding: 20px 16px; }
+}
+</style>
+</head>
+<body>
+<div class="terminal">
+  <div class="window-bar">
+    <div class="window-dot"></div>
+    <div class="window-dot"></div>
+    <div class="window-dot"></div>
+    <span class="window-title">kochj@digitalnoise</span>
+  </div>
+  <div class="screen">
+
+    <div class="block">
+      <div class="ascii-header">DIGITALNOISE.NET</div>
+      <div class="ascii-sub">est. 1999 · still making noise</div>
+    </div>
+
+    <hr class="divider">
+
+    <div class="block">
+      <span class="prompt">$ whoami</span><br>
+      <div class="founders">
+        <div class="founder-card">
+          <div class="name">Jordan Koch</div>
+          <div class="role">Co-Founder, DigitalNoise.net</div>
+          <div class="links">
+            <a href="https://www.linkedin.com/in/kochj23/">LinkedIn</a>
+            <a href="https://github.com/kochj23">GitHub</a>
+          </div>
+        </div>
+        <div class="founder-card">
+          <div class="name">David Bloom</div>
+          <div class="role">Co-Founder, DigitalNoise.net</div>
+          <div class="links">
+            <a href="https://www.linkedin.com/in/davidbloom/">LinkedIn</a>
+            <a href="https://github.com/thedave42">GitHub</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="block">
+      <span class="prompt">$ cat origin.txt</span><br>
+      <div class="output-line" style="color: var(--amber);">Good question. Why are you here?</div>
+      <div class="output-line">Two guys. 1999. Early ADSL — Alcatel modems. 1.5Mb down, 128k up.</div>
+      <div class="output-line">Build a music request system for streaming audio.</div>
+      <div class="output-line">Shoutcast servers, RealAudio feeds, listeners requesting</div>
+      <div class="output-line">tracks over the web. Finally enough upstream to make it work.</div>
+      <div class="output-line">26 years later, the domain lives on. Different signal. Same noise.</div>
+    </div>
+
+    <div class="block">
+      <span class="prompt">$ history | head -1</span><br>
+      <div class="origin-photo">
+        <img src="https://digitalnoise.net/serverssmall.jpeg" alt="The original DigitalNoise.net streaming servers, circa 1999">
+        <div class="caption">The original DigitalNoise.net streaming servers, circa 1999. Music request system + Shoutcast + RealAudio over ADSL.</div>
+      </div>
+    </div>
+
+    <hr class="divider">
+
+    <div class="block">
+      <span class="prompt">$ ls -la projects/</span><br>
+      <div class="project-grid">
+        <a href="https://nova.digitalnoise.net" class="project-item">
+          <div class="label">AI Familiar</div>
+          <div class="name">Nova's Journal</div>
+        </a>
+        <a href="https://github.com/kochj23" class="project-item">
+          <div class="label">Open Source</div>
+          <div class="name">github/kochj23</div>
+        </a>
+        <a href="https://github.com/kochj23/MLXCode" class="project-item">
+          <div class="label">Swift + ML</div>
+          <div class="name">MLXCode</div>
+        </a>
+        <a href="https://github.com/kochj23/NMAPScanner" class="project-item">
+          <div class="label">Security</div>
+          <div class="name">NMAPScanner</div>
+        </a>
+        <a href="https://github.com/kochj23/RsyncGUI" class="project-item">
+          <div class="label">Utilities</div>
+          <div class="name">RsyncGUI</div>
+        </a>
+        <a href="https://nova.digitalnoise.net/pilot/" class="project-item">
+          <div class="label">Creative</div>
+          <div class="name">TV Pilots & Scripts</div>
+        </a>
+      </div>
+    </div>
+
+    <div class="block">
+      <span class="prompt">$ cat /etc/social.conf</span><br>
+      <div class="social-row">
+        <a href="https://www.linkedin.com/in/kochj23/" class="social-link">LinkedIn</a>
+        <a href="https://www.instagram.com/kochj23/" class="social-link">Instagram</a>
+        <a href="https://www.youtube.com/kochj23" class="social-link">YouTube</a>
+        <a href="https://www.facebook.com/jordan.koch" class="social-link">Facebook</a>
+        <a href="https://github.com/kochj23" class="social-link">GitHub</a>
+      </div>
+    </div>
+
+    <div class="block">
+      <span class="prompt">$ </span><span class="cursor-blink"></span>
+    </div>
+
+    <div class="uptime">
+      <span class="status-led"></span>online · uptime: 26 years, 5 months · status: nominal
+    </div>
+
+  </div>
+</div>
+</body>
+</html>
