@@ -190,6 +190,15 @@ def published(section, day, matcher=("slug", "")):
                 continue
             if when > dt.datetime.now() + dt.timedelta(minutes=5):
                 return False, f"{h.name} is FUTURE-DATED ({m.group(1)}) — Hugo will not publish it yet"
+    # Stub guard: a "published" 33-char post (e.g. a logged-out LLM shipping its
+    # "Not logged in · Please run /login" stub as the article, 2026-08-04/05) passes
+    # every existence/push/URL check but is NOT an article. Reject anything under the
+    # word floor as a miss so --fix/alerting fires instead of it looking healthy.
+    STUB_WORD_FLOOR = 150
+    body = re.sub(r"(?s)\A---.*?\n---\s*", "", hits[0].read_text(errors="ignore"))
+    wc = len(body.split())
+    if wc < STUB_WORD_FLOOR:
+        return False, f"{hits[0].name} is a STUB — only {wc} words (LLM backend likely returned an error)"
     r = run(["git", "log", "origin/main..HEAD", "--oneline"], cwd=HUGO, timeout=30)
     if r.returncode == 0 and r.stdout.strip():
         return False, f"written but NOT PUSHED ({len(r.stdout.strip().splitlines())} commit(s) local)"

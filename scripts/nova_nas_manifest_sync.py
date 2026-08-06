@@ -368,6 +368,43 @@ def record_run(share: str, rc: int, elapsed_s: int, files: int,
         log(f"{share}: telemetry record_run failed (run itself unaffected): {e}")
 
 
+def record_delta(share: str, copied, quarantined) -> None:
+    """Persist WHAT changed this run (path + size, per action) so a backup is
+    AUDITABLE — 'what did last night copy/quarantine?' becomes an instant SQL query
+    (SELECT ... FROM telemetry.backup_delta WHERE ...) instead of re-scanning
+    millions of files. Fresh connection (a long copy times the main one out); CSV
+    COPY so a weird filename (tab/newline) can't corrupt the load; all rows in one
+    run share ts=now() for clean per-run grouping. Best-effort — never fails the run."""
+    if not copied and not quarantined:
+        return
+    import csv
+    import io
+    import psycopg2
+    job = f"nova-backup:{share}:manifest-sync"
+    buf = io.StringIO()
+    w = csv.writer(buf, quoting=csv.QUOTE_MINIMAL, lineterminator="\n")
+    for p, s in copied:
+        w.writerow([job, "copy", p, s])
+    for p, s in quarantined:
+        w.writerow([job, "quarantine", p, s])
+    buf.seek(0)
+    try:
+        c = psycopg2.connect(DSN)
+        c.autocommit = True
+        with c.cursor() as cur:
+            cur.execute("""CREATE TABLE IF NOT EXISTS telemetry.backup_delta (
+                ts timestamptz NOT NULL DEFAULT now(), job text NOT NULL,
+                action text NOT NULL, path text NOT NULL, size bigint)""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_backup_delta_ts_job "
+                        "ON telemetry.backup_delta (ts, job)")
+            cur.copy_expert("COPY telemetry.backup_delta (job, action, path, size) "
+                            "FROM STDIN WITH (FORMAT csv)", buf)
+        c.close()
+        log(f"{share}: delta logged ({len(copied)} copy + {len(quarantined)} quarantine rows)")
+    except Exception as e:  # noqa: BLE001 — auditability logging must never fail the run
+        log(f"{share}: delta logging failed (non-fatal): {e}")
+
+
 def ensure_mount(mount: str) -> bool:
     """Assert the UNAS mount is present + writable; try to reuse nova_nas_rsync's
     ensure_mounted self-heal if available. Returns True if usable."""
@@ -611,6 +648,11 @@ def sync_share(conn, share: dict, uroot: str, args) -> dict:
     ok = rc in (0, 24) and result["errors"] == 0
     record_run(name, rc=rc, elapsed_s=int(time.time() - t0),
                files=copied, nbytes=copy_bytes, errors=result["errors"], ok=ok)
+    # Auditability: persist WHAT actually changed (path+size per action) so a backup
+    # can be inspected after the fact without re-scanning millions of files.
+    record_delta(name,
+                 copied=to_copy if rc in (0, 24) else [],
+                 quarantined=orphans if deleted else [])
     result.update(ok=ok, rc=rc, copied=copied, deleted=deleted, mode="live")
     log(f"{name}: {'OK' if ok else 'FAIL'} rc={rc} copied={copied:,} quarantined={deleted:,} "
         f"in {int(time.time()-t0)}s")

@@ -138,13 +138,6 @@ tasks:
     timeout: 180
     overlap: skip
 
-  output_watchdog:                     # RELIABILITY coverage watchdog (2026-08-05). For every EXPECTED recurring output — journal daily sections (local/operations/essays/opinions), DERIVED-cadence sections (research/tech-today/synthesis), and manifest-sync backups — verifies it actually happened, was fresh, is real (word-count > stub, and live-on-site for readers). Misses -> public.incidents (deduped, auto-resolve on recovery) + one #nova-warning alert on transition-to-open. Writes coverage X/Y to public.health_checks. Closes the silent-failure detection gap: the incidents table logged ZERO during the 6-day window Burbank shipped 33-char stubs, NAS sync broke, and journal pushes dropped. Runs 11:45/18:45/23:45, each after a publish deadline.
-    script: nova_output_watchdog.py
-    args: ["--once"]
-    schedule: cron 45 11,18,23 * * *
-    timeout: 180
-    overlap: skip
-
   proactive_peace:
     script: nova_proactive_peace.py
     schedule: every 15m
