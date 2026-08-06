@@ -493,6 +493,18 @@ tasks:
     timeout: 45
     overlap: skip
 
+  # Task-failure sentinel (2026-08-06) — watches the scheduler's OWN tasks. Every other
+  # monitor watches a layer (host/service/device/feed); nothing watched whether each of
+  # the ~150 scheduled jobs actually ran and exited 0, so tasks failed 100% invisibly
+  # while "scheduler: up" stayed green (the local_burbank failure mode). Reads
+  # scheduler_runs, self-learns each task's cadence, pages via notify() on failure/
+  # staleness. See operations/2026-08-06-the-hoarder-s-reckoning.
+  task_sentinel:
+    script: nova_task_sentinel.py
+    schedule: every 15m
+    timeout: 120
+    overlap: skip
+
 
 
 
