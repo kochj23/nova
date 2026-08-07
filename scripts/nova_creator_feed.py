@@ -46,6 +46,50 @@ def keychain(service: str, account: str = "nova") -> str | None:
         return None
 
 
+# ── browser-cookie auth (for platforms whose password login is captcha-walled) ──
+YT_DLP = "/opt/homebrew/bin/yt-dlp"
+
+
+def refresh_browser_cookies(browser: str, probe_url: str, cache_file, max_age_h: float = 12.0):
+    """Ensure `cache_file` holds fresh cookies for `browser`, extracted via osascript so it
+    works even from a launchd daemon (the GUI session is TCC-allowed to read Safari/Chrome
+    cookies; a bare daemon is not — same trick nova_yt_new_episodes uses). Returns the path
+    if usable, else None. Never raises."""
+    import os
+    import subprocess
+    import time
+    cache_file = str(cache_file)
+    try:
+        if os.path.exists(cache_file) and (time.time() - os.path.getmtime(cache_file)) / 3600 < max_age_h:
+            return cache_file
+        os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+        inner = (f'{YT_DLP} --cookies-from-browser {browser} --cookies {cache_file} '
+                 f'--skip-download --simulate "{probe_url}"')
+        # osascript first (TCC-safe from launchd); fall back to direct (works from a terminal)
+        subprocess.run(["/usr/bin/osascript", "-e", f'do shell script "{inner}"'],
+                       capture_output=True, text=True, timeout=60)
+        if not os.path.exists(cache_file):
+            subprocess.run(inner, shell=True, capture_output=True, text=True, timeout=60)
+        if os.path.exists(cache_file):
+            os.chmod(cache_file, 0o600)
+            return cache_file
+    except Exception:
+        pass
+    return None
+
+
+def cookie_opener(cache_file):
+    """Build a urllib opener from a Netscape cookie file. None on failure."""
+    import http.cookiejar
+    import urllib.request
+    try:
+        jar = http.cookiejar.MozillaCookieJar(cache_file)
+        jar.load(ignore_discard=True, ignore_expires=True)
+        return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    except Exception:
+        return None
+
+
 # ── dedup state ───────────────────────────────────────────────────────────────
 def ensure_schema(conn):
     """Idempotent: the one small table this whole feature needs."""
