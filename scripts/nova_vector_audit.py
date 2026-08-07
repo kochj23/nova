@@ -374,8 +374,56 @@ def run_audit() -> dict:
 
 # ── Article Generation ───────────────────────────────────────────────────────
 
+# The audit publishes to a PUBLIC blog. The LLM used to be handed the real stats AND told to
+# "dramatize / alarm bells", so it invented its OWN false statistics (rhyming counts like
+# 191/19,191/1,919,003, and flat falsehoods like "LiveJournal is 100% empty" when it holds
+# 5,823 real entries). Fix: the LLM writes VOICE ONLY and is forbidden from stating any
+# aggregate number; the true measured numbers are appended deterministically as a ledger.
+_PCT_RE = re.compile(r"\b\d{1,3}(?:\.\d+)?\s?%")
+# a big count (1,919,003 comma-grouped, or a bare 4+ digit run like 19191) — but NOT a plain
+# 4-digit year (1900-2099), which is legitimate prose.
+_COUNT_RE = re.compile(r"\b\d{1,3}(?:,\d{3})+\b|\b(?!(?:19|20)\d{2}\b)\d{4,}\b")
+
+
+def _has_invented_stats(prose: str) -> bool:
+    """True if the prose states aggregate numbers it was told not to (percentages or big
+    counts). The ledger owns all real numbers; anything numeric in the prose is suspect."""
+    return bool(_PCT_RE.search(prose) or _COUNT_RE.search(prose))
+
+
+def _scrub_invented_stats(prose: str) -> str:
+    """Last-resort safety net: neutralize any percentage or large count the LLM slipped in so
+    a fabricated statistic can never reach the public post. A slightly vaguer sentence beats a
+    confident false number."""
+    prose = _PCT_RE.sub("a share", prose)
+    prose = _COUNT_RE.sub("plenty", prose)
+    return prose
+
+
+def _facts_ledger(stats: dict) -> str:
+    """Deterministic, code-authored block of the REAL measured numbers. This — not the LLM —
+    is the single source of every statistic in the article."""
+    q = stats.get("quality", {})
+    acc = stats.get("accuracy_pct")
+    lines = [
+        "\n\n---\n\n### The actual numbers (measured, not editorialized)\n",
+        f"- **Memories in the store:** {stats['total_memories']:,} across {stats['total_vectors']} vectors",
+        f"- **Audited this run:** {stats['vectors_audited']} vectors, {stats['memories_sampled']} memories sampled and scanned",
+    ]
+    if acc is not None:
+        lines.append(f"- **Correctly filed:** {stats['correct']} of {stats['memories_classified']} classified ({acc}%)")
+    lines.append(f"- **Misfiled and moved:** {stats['moved']}")
+    ti = q.get("total_issues", 0)
+    qp = stats.get("quality_issue_pct", 0)
+    lines.append(f"- **Quality issues in the scanned sample:** {ti} ({qp}% of scanned) — "
+                 f"repetitive {q.get('repetitive',0)}, near-empty {q.get('near_empty',0)}, "
+                 f"garbled {q.get('garbled',0)}, low-signal {q.get('low_signal',0)}")
+    lines.append("\n*These figures are computed directly from the database; the commentary above adds no numbers of its own.*")
+    return "\n".join(lines)
+
+
 def generate_article(stats: dict) -> str:
-    """Write the sarcastic filing-clerk article."""
+    """Write the sarcastic filing-clerk article — VOICE from the LLM, NUMBERS from code."""
 
     moves_block = ""
     for m in stats["moves"][:30]:
@@ -388,49 +436,59 @@ ADDITIONAL RULES:
 - Classification accuracy can be 100% and quality can STILL be terrible. A perfectly-filed pile of garbage is still garbage.
 - Keep it 600-1000 words
 - Open with a one-liner about the 6am shift
-- Report BOTH classification accuracy AND quality findings
-- If quality issues are high (>5%): alarm bells, dramatic complaint about memory rot
-- Give specific examples of the worst memories found
-- Pick 2-3 funniest garbage memories to roast
+- CRITICAL — NUMBERS: You must NOT state ANY statistic, count, total, or percentage. Not the
+  memory count, not the number moved, not a garbage rate, nothing numeric. A factual ledger
+  with the REAL figures is appended automatically after your text. Inventing numbers (you have
+  done this — a false "100%% empty" about a vector that was full) is the one unforgivable sin
+  here. Describe findings qualitatively ("a stack of misfiles", "mostly clean", "one vector was
+  a disaster") and let the ledger carry every number.
+- You MAY quote the specific example memories provided (those are real) and roast them.
+- Give specific examples of the worst memories found; pick 2-3 funniest to roast
 - End with a one-liner about existential memory hygiene
 - Do NOT include a title""")
 
     quality = stats.get("quality", {})
+    # Only REAL, per-row example memories go to the LLM (safe to quote). Aggregate counts are
+    # deliberately withheld so it can't parrot or mutate them — the ledger owns those.
     quality_block = ""
     if quality.get("total_issues", 0) > 0:
         quality_block = f"""
-QUALITY ISSUES FOUND:
-- Repetitive (same words repeated): {quality.get('repetitive', 0)}
-- Near-empty (< 30 chars): {quality.get('near_empty', 0)}
-- Garbled (non-text junk): {quality.get('garbled', 0)}
-- Low-signal (transcription noise): {quality.get('low_signal', 0)}
-- TOTAL: {quality['total_issues']} issues in {stats['memories_sampled']} sampled = {stats.get('quality_issue_pct', 0)}% garbage rate
+QUALITY: issues were found (exact figures are in the auto-appended ledger — do not restate them).
+Categories seen: repetitive, near-empty, garbled, low-signal.
 
-Worst vectors:
-{json.dumps(quality.get('worst_vectors', [])[:5], indent=2)}
+Worst vectors (names only, for color):
+{json.dumps([w.get('vector') for w in quality.get('worst_vectors', [])[:5]])}
 
-Example garbage memories:
+Real example memories you may quote and roast:
 {json.dumps(quality.get('examples', [])[:8], indent=2)}
 """
     else:
-        quality_block = "\nQUALITY: No issues found in this sample. (Suspicious.)\n"
+        quality_block = "\nQUALITY: nothing flagged in this sample. (Suspicious.)\n"
 
-    user = f"""Today's audit results:
+    user = f"""Today's audit (qualitative brief — NO numbers in your prose, the ledger handles those):
 
-CLASSIFICATION (is it in the right vector?):
-- Vectors audited: {stats['vectors_audited']} of {stats['total_vectors']}
-- Memories sampled: {stats['memories_sampled']}
-- Correctly filed: {stats['correct']} ({stats['accuracy_pct'] if stats['accuracy_pct'] is not None else 'n/a'}%)
-- Misfiled and moved: {stats['moved']}
-- Total memory count: {stats['total_memories']:,}
-
-Moves:
+CLASSIFICATION: {'some misfiles were found and moved' if stats['moved'] else 'everything sampled was correctly filed'}.
+Real moves you may reference by example:
 {moves_block if moves_block else "(None today — all correctly classified)"}
 {quality_block}
 
-Write a filing audit column that covers BOTH classification and quality. Be honest about the garbage."""
+Write the filing-audit column: voice, attitude, roast the real example memories above. State NO
+statistics — describe qualitatively and let the appended ledger carry every figure."""
 
-    return call_llm(system, user, max_tokens=8000)
+    prose = call_llm(system, user, max_tokens=8000)
+    if not prose.strip():
+        return ""  # caller's empty-output guard handles this
+    # Enforce the no-numbers rule: one stricter retry, then scrub as a hard safety net.
+    if _has_invented_stats(prose):
+        log("Article prose contained numbers (forbidden) — regenerating once, stricter")
+        retry = call_llm(system + "\n\nYOU STATED NUMBERS. Rewrite with ZERO digits in the prose.",
+                         user, max_tokens=8000)
+        if retry.strip() and not _has_invented_stats(retry):
+            prose = retry
+        else:
+            log("Still numeric after retry — scrubbing invented stats from prose")
+            prose = _scrub_invented_stats(prose)
+    return prose.rstrip() + _facts_ledger(stats)
 
 
 def generate_title(article_preview: str) -> str:
