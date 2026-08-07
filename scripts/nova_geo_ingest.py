@@ -114,7 +114,7 @@ def _usable_place(title):
     tl = title.lower()
     if any(tl.startswith(b) for b in _BAD_NS):
         return False
-    if tl in {s.lower() for s in US_STATES} or "united states" in tl:
+    if "united states" in tl:
         return False
     return len(title) > 2 and title.count(" ") <= 6
 
