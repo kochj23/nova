@@ -526,6 +526,12 @@ tasks:
     schedule: every 6h
     timeout: 180
     overlap: skip
+  # Rumble: 8 verified channels. FRAGILE (scrapes — Rumble has no RSS); isolated + self-canaries.
+  rumble_watch:
+    script: nova_rumble_watch.py
+    schedule: every 6h
+    timeout: 180
+    overlap: skip
 
 
 
