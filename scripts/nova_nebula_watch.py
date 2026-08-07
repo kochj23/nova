@@ -5,15 +5,11 @@ Seeded from Jordan's YouTube subscriptions: these 7 creators he already follows 
 cross-post to Nebula (found 2026-08-07 by mining their YouTube video descriptions). Nebula
 is subscription-gated, so this needs Jordan's Nebula login — stored in Keychain, never in code.
 
-STATUS: STUBBED, pending Jordan's Nebula signup. Until the Keychain creds exist it exits 0
-with "not configured" (so task_sentinel stays green). The moment the creds are added it goes
-live on the next run — no code or scheduler change needed ("add token and go").
+STATUS: LIVE (verified against Jordan's account 2026-08-07). All 7 channel slugs resolve and
+the endpoints are confirmed. Still exits 0 with "not configured" if the Keychain creds ever go
+missing, so task_sentinel stays green either way.
 
 Keychain (account 'nova'):  nova-nebula-email   nova-nebula-password
-
-⚠ NEEDS-VERIFICATION once creds exist: Nebula's private API hosts/paths have shifted over
-time and can't be tested without an account. The auth + fetch below follow the known shape;
-verify the exact endpoints and the channel slugs against a live login, then remove this note.
 """
 from __future__ import annotations
 import json
@@ -26,21 +22,21 @@ import nova_creator_feed as feed
 
 PLATFORM = "nebula"
 
-# creator display name -> Nebula channel slug  (⚠ VERIFY slugs against a live account)
+# creator display name -> Nebula channel slug  (VERIFIED live 2026-08-07)
 CREATORS = {
     "RealLifeLore":        "reallifelore",
     "Real Engineering":    "realengineering",
     "Joe Scott":           "joescott",
     "The Great War":       "the-great-war",
-    "Adam Neely":          "adamneely",
+    "Adam Neely":          "adam-neely",
     "12tone":              "12tone",
     "The Overview Effekt": "overvieweffekt",
 }
 
-# ⚠ VERIFY: Nebula login returns a Token key; exchange it for a Bearer JWT; then list a
-# channel's episodes. Hosts below are the known-current ones as of writing.
-LOGIN_URL   = "https://nebula.tv/auth/login/"
-AUTH_URL    = "https://users.api.nebula.app/api/v1/authorization/"
+# VERIFIED 2026-08-07: nebula.tv/auth/login is behind a Cloudflare bot-challenge, but the
+# users API takes email+password directly and returns a Bearer token. Content lives on the
+# content API. Item fields: id (unique), title, share_url, published_at.
+AUTH_URL     = "https://users.api.nebula.app/api/v1/authorization/"
 EPISODES_URL = "https://content.api.nebula.app/video_channels/{slug}/video_episodes/"
 UA = "Mozilla/5.0 (NovaCreatorFeed)"
 RECENT = 6  # only look at the newest few per creator
@@ -60,17 +56,14 @@ def _get_json(url, headers=None):
 
 
 def login() -> str | None:
-    """Return a Bearer JWT, or None if unconfigured/failed. Never logs the secret."""
+    """Return a Bearer token, or None if unconfigured/failed. Never logs the secret.
+    The users API accepts email+password directly and returns the bearer in one call."""
     email = feed.keychain("nova-nebula-email")
     password = feed.keychain("nova-nebula-password")
     if not email or not password:
         return None
     try:
-        key = _post_json(LOGIN_URL, {"email": email, "password": password}).get("key")
-        if not key:
-            return None
-        bearer = _get_json(AUTH_URL, {"Authorization": f"Token {key}"}).get("token")
-        return bearer
+        return _post_json(AUTH_URL, {"email": email, "password": password}).get("token")
     except Exception as e:
         print(f"nebula: login failed: {e}", file=sys.stderr)
         return None
