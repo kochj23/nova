@@ -520,6 +520,12 @@ tasks:
     schedule: every 6h
     timeout: 180
     overlap: skip
+  # Patreon: discovers the follow-list dynamically from your pledges (Safari session).
+  patreon_watch:
+    script: nova_patreon_watch.py
+    schedule: every 6h
+    timeout: 180
+    overlap: skip
 
 
 

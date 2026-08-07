@@ -158,7 +158,8 @@ def record_seen(conn, platform: str, creator: str, uploads: list):
 
 
 # ── announce ──────────────────────────────────────────────────────────────────
-_PLATFORM_EMOJI = {"nebula": "🟣", "floatplane": "🔵", "rumble": "🟢", "odysee": "⚫"}
+_PLATFORM_EMOJI = {"nebula": "🟣", "floatplane": "🔵", "rumble": "🟢", "odysee": "⚫",
+                   "patreon": "🧡"}
 
 
 def announce(creator: str, platform: str, title: str, url: str):
