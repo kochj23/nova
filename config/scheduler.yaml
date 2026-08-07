@@ -505,6 +505,22 @@ tasks:
     timeout: 120
     overlap: skip
 
+  # Cross-platform creator following (2026-08-07) — the reliable half of the Grayjay idea:
+  # follow creators from Jordan's YouTube subs on the alt-platforms they cross-post to, ping
+  # #nova-feed on new uploads. Both self-skip (exit 0) until their Keychain creds exist, so
+  # they're safe to run now and go live the moment Jordan signs up ("add token and go").
+  # Seeded from a 799-sub discovery scan; see nova_creator_feed.py.
+  nebula_watch:
+    script: nova_nebula_watch.py
+    schedule: every 6h
+    timeout: 180
+    overlap: skip
+  floatplane_watch:
+    script: nova_floatplane_watch.py
+    schedule: every 6h
+    timeout: 180
+    overlap: skip
+
 
 
 
