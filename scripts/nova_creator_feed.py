@@ -71,11 +71,28 @@ def refresh_browser_cookies(browser: str, probe_url: str, cache_file, max_age_h:
         if not os.path.exists(cache_file):
             subprocess.run(inner, shell=True, capture_output=True, text=True, timeout=60)
         if os.path.exists(cache_file):
+            _filter_cookies_to_domain(cache_file, probe_url)  # security: keep only what we need
             os.chmod(cache_file, 0o600)
             return cache_file
     except Exception:
         pass
     return None
+
+
+def _filter_cookies_to_domain(cache_file: str, probe_url: str):
+    """yt-dlp dumps EVERY browser cookie; we only need the target site's session. Strip the
+    file to just that registered domain so we don't persist every logged-in session on disk."""
+    from urllib.parse import urlparse
+    host = urlparse(probe_url).netloc
+    reg = ".".join(host.split(".")[-2:]) if "." in host else host  # e.g. floatplane.com
+    try:
+        kept = []
+        for ln in open(cache_file, errors="ignore"):
+            if ln.startswith("#") or not ln.strip() or reg in ln.split("\t", 1)[0]:
+                kept.append(ln)
+        open(cache_file, "w").writelines(kept)
+    except Exception:
+        pass  # a filter failure must never break auth
 
 
 def cookie_opener(cache_file):
