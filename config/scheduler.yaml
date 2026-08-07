@@ -505,6 +505,16 @@ tasks:
     timeout: 120
     overlap: skip
 
+  # Keep the Linux fleet's Claude CLI logged in (2026-08-07). The headless claude CLI on .2
+  # doesn't auto-refresh its OAuth token, so it logs out ~12h after each login and silently
+  # kills every content task that shells out to `claude`. .6 stays fresh, so we push .6's
+  # credential to .2 every 4h — well ahead of the ~12h token lifetime. See nova_claude_cred_sync.
+  claude_cred_sync:
+    script: nova_claude_cred_sync.py
+    schedule: every 4h
+    timeout: 60
+    overlap: skip
+
   # Cross-platform creator following (2026-08-07) — the reliable half of the Grayjay idea:
   # follow creators from Jordan's YouTube subs on the alt-platforms they cross-post to, ping
   # #nova-feed on new uploads. Both self-skip (exit 0) until their Keychain creds exist, so
