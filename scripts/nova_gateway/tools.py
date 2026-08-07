@@ -28,6 +28,25 @@ log = logging.getLogger("nova_gateway_v2")
 # ── Tool Registry (structured JSON schema) ──────────────────────────────────
 
 TOOL_REGISTRY: dict[str, dict] = {
+    "nearest_place": {
+        "description": "Find the geographically nearest places to Jordan's home in Burbank — "
+                       "e.g. nearest ghost town, tourist attraction, casino, or mountain peak. Use "
+                       "for any 'what's the nearest X to my house / to me / from home' question. "
+                       "Returns real places sorted by distance in miles. Call place_categories "
+                       "first if unsure which category names exist.",
+        "parameters": {
+            "category": {"type": "string", "description": "Place type, e.g. 'ghost_town', "
+                         "'ca_tourist_attraction', 'ca_casino', 'ca_mountain_peak'"},
+            "limit": {"type": "integer", "description": "How many to return (default 5)"},
+        },
+        "required": ["category"],
+    },
+    "place_categories": {
+        "description": "List the categories of places Nova can run proximity/'nearest' queries "
+                       "over, and how many of each are on file. Use when unsure what geographic "
+                       "place-types are available.",
+        "parameters": {},
+    },
     "run_script": {
         "description": "Execute a Nova script by name",
         "parameters": {
@@ -209,6 +228,10 @@ async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict) 
             return await _tool_home_control(ctx, tool_params)
         elif tool_name == "school_report":
             return await _tool_run_script(ctx, {"script": "nova_school_report.py"})
+        elif tool_name == "nearest_place":
+            return await _tool_nearest_place(ctx, tool_params)
+        elif tool_name == "place_categories":
+            return await _tool_place_categories(ctx, tool_params)
         else:
             return f"[error: tool '{tool_name}' not implemented]"
     except asyncio.TimeoutError:
@@ -218,6 +241,36 @@ async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict) 
 
 
 # ── Tool implementations ─────────────────────────────────────────────────────
+
+_GEO_PY = "/opt/homebrew/bin/python3"
+_GEO_QUERY = str(SCRIPTS_DIR / "nova_geo_query.py")
+
+
+async def _geo_run(argv: list) -> str:
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            _GEO_PY, _GEO_QUERY, *argv,
+            stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        out, err = await asyncio.wait_for(proc.communicate(), timeout=20)
+        if proc.returncode == 0 and out.strip():
+            return out.decode()[:3000]
+        return f"[geo query failed: {(err.decode() or 'no output')[:200]}]"
+    except Exception as e:
+        return f"[geo query error: {e}]"
+
+
+async def _tool_nearest_place(ctx: GatewayContext, params: dict) -> str:
+    """Nearest places of a category to home, by real distance."""
+    cat = str(params.get("category", "")).strip()
+    if not cat:
+        return "[error: no category — try place_categories]"
+    return await _geo_run(["nearest", cat, "--limit", str(params.get("limit", 5))])
+
+
+async def _tool_place_categories(ctx: GatewayContext, params: dict) -> str:
+    """What place categories can be proximity-queried."""
+    return await _geo_run(["categories"])
+
 
 async def _tool_run_script(ctx: GatewayContext, params: dict) -> str:
     """Execute a script from ~/.openclaw/scripts/."""
