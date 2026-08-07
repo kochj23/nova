@@ -509,6 +509,22 @@ ROLLING_PATHS = (
     "static/images/fishbowl/the-fishbowl.webp",
 )
 
+# Cover images are auto-generated per-article. When two hosts publish around the same time
+# they can draw different art for the same slug and collide on rebase — a conflict that is
+# meaningless (either image is fine) but that used to refuse-and-wedge, stranding a clone 81
+# commits behind on 2026-08-07 so nothing it generated ever reached the site. Treat any image
+# under static/images/ as auto-resolvable (take our regenerated copy), same as a rolling file.
+_IMAGE_EXTS = (".webp", ".png", ".jpg", ".jpeg", ".gif")
+
+
+def _auto_resolvable(path: str) -> bool:
+    """True if a conflict on `path` can be safely taken as our regenerated copy without a
+    human: the rolling files, or any auto-generated cover image. A real article's .md is
+    deliberately NOT auto-resolvable — a content conflict there means something and must stop."""
+    if path in ROLLING_PATHS:
+        return True
+    return path.startswith("static/images/") and path.lower().endswith(_IMAGE_EXTS)
+
 
 def _git(args, timeout=60):
     return subprocess.run(["git", *args], cwd=HUGO_ROOT, capture_output=True,
@@ -570,7 +586,8 @@ def _unwedge(reason: str) -> bool:
 
 
 def _resolve_rolling_conflicts() -> bool:
-    """Auto-resolve conflicts limited to ROLLING_PATHS, keeping OUR fresh regeneration.
+    """Auto-resolve conflicts limited to auto-resolvable paths (rolling files + auto-generated
+    cover images), keeping OUR fresh regeneration.
 
     Returns False if there was nothing to resolve or a real article conflicted — either
     way the caller must not assume a rebase is now finishable.
@@ -589,9 +606,9 @@ def _resolve_rolling_conflicts() -> bool:
                          if p})
     if not conflicted:
         return False
-    unexpected = [p for p in conflicted if p not in ROLLING_PATHS]
+    unexpected = [p for p in conflicted if not _auto_resolvable(p)]
     if unexpected:
-        log(f"Conflicts outside rolling files, not auto-resolving: {unexpected[:5]}")
+        log(f"Conflicts on non-auto-resolvable files (real content?), not auto-resolving: {unexpected[:5]}")
         return False
     for p in conflicted:
         if _git(["checkout", "--theirs", "--", p]).returncode != 0:
@@ -607,7 +624,7 @@ def _resolve_rolling_conflicts() -> bool:
                 return False
         except OSError:
             pass
-    log(f"Auto-resolved {len(conflicted)} rolling-file conflict(s), keeping our newer copy")
+    log(f"Auto-resolved {len(conflicted)} rolling-file/cover-image conflict(s), keeping our newer copy")
     return True
 
 
