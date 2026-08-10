@@ -73,7 +73,8 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def classify_task(runs: list[dict], now_ms: Optional[int] = None) -> dict:
+def classify_task(runs: list[dict], now_ms: Optional[int] = None,
+                  expected_interval_s: Optional[float] = None) -> dict:
     """Pure health classifier for one task. `runs` = list of run dicts newest-first,
     each {started_at (ms int), status (str), exit_code (int|None)}. Returns
     {state, consecutive_failures, last_run_age_s, last_ok_age_s, interval_s, reason}.
@@ -133,6 +134,14 @@ def classify_task(runs: list[dict], now_ms: Optional[int] = None) -> dict:
         if gaps:
             interval_s = statistics.median(gaps)
 
+    # The CONFIGURED schedule interval (from the scheduler yaml) is the truth for staleness; the
+    # learned median-gap is only a fallback. A weekly cron ran a few times clustered on its day
+    # and the learned "cadence" came out ~2h, so a healthy Wednesday task looked 50h "stale" by
+    # Friday. Prefer the real configured interval when we have it. (Computed before the decision
+    # chain so the stale test stays a proper elif — a standalone if/else here would clobber the
+    # failing/critical verdict with 'healthy'.)
+    eff_interval = expected_interval_s if expected_interval_s else interval_s
+
     # --- decide state ---
     attempts = sum(1 for r in runs if is_failure(r) or is_success(r) is True)
     successes = len(ok_runs)
@@ -145,12 +154,10 @@ def classify_task(runs: list[dict], now_ms: Optional[int] = None) -> dict:
         state, reason = "failing", (
             f"{streak} consecutive failures" if streak >= FAIL_STREAK
             else f"0 successes in {attempts} attempts")
-    elif interval_s is not None and last_run_age_s > max(STALE_FACTOR * interval_s, STALE_FLOOR_S):
+    elif eff_interval is not None and last_run_age_s > max(STALE_FACTOR * eff_interval, STALE_FLOOR_S):
         hrs = last_run_age_s / 3600.0
-        exp = interval_s / 3600.0
-        # a sub-minute learned interval means the "cadence" is really retry clustering,
-        # not a real schedule — don't quote a bogus "every 0.0h", just report the gap.
-        cadence = f"; expected roughly every {exp:.1f}h" if interval_s >= 300 else ""
+        exp = eff_interval / 3600.0
+        cadence = f"; expected roughly every {exp:.1f}h" if eff_interval >= 300 else ""
         state, reason = "stale", f"last run {hrs:.1f}h ago{cadence}"
     else:
         state, reason = "healthy", "ok"
@@ -222,6 +229,71 @@ def _page(conn, task_id: str, health: dict):
                 cur.execute("ROLLBACK TO SAVEPOINT sp_queue")
 
 
+def load_configured_tasks() -> dict:
+    """Return {task_id: schedule_str} for every ENABLED task across BOTH schedulers (.6 local
+    + .2 scheduler-core via ssh). A task that isn't in either config is RETIRED — we must not
+    alert on it forever just because scheduler_runs still holds its old rows (the daily_digest /
+    output_watchdog phantom-stale spam). Returns {} on total failure -> falls back to judging
+    everything (fail-safe: better a stray alert than silence)."""
+    import os
+    import subprocess
+    import yaml
+    out = {}
+    # .6 — read locally
+    try:
+        d = yaml.safe_load(open(os.path.expanduser("~/.openclaw/config/scheduler.yaml")))
+        for k, v in (d.get("tasks") or {}).items():
+            if (v or {}).get("enabled", True):
+                out[k] = (v or {}).get("schedule", "")
+    except Exception:
+        pass
+    # .2 — read over ssh (best-effort)
+    try:
+        r = subprocess.run(["ssh", "-o", "ConnectTimeout=8", "-o", "BatchMode=yes",
+                            "kochj@192.168.1.2", "cat ~/.openclaw/config/scheduler-core.yaml"],
+                           capture_output=True, text=True, timeout=20)
+        if r.returncode == 0 and r.stdout:
+            d = yaml.safe_load(r.stdout)
+            for k, v in (d.get("tasks") or {}).items():
+                if (v or {}).get("enabled", True):
+                    out.setdefault(k, (v or {}).get("schedule", ""))
+    except Exception:
+        pass
+    return out
+
+
+def schedule_interval_s(sched: str) -> Optional[float]:
+    """Expected seconds between fires, parsed from a schedule string. Handles 'every Nm/Nh/Nd',
+    'daily', and cron (approximated by fires-per-week). None if unknown."""
+    import re as _re
+    s = (sched or "").strip().lower()
+    if not s:
+        return None
+    m = _re.match(r"every\s+(\d+)\s*([smhd])", s)
+    if m:
+        n = int(m.group(1)); unit = {"s": 1, "m": 60, "h": 3600, "d": 86400}[m.group(2)]
+        return n * unit
+    if s.startswith("daily"):
+        return 86400.0
+    if s.startswith("cron"):
+        parts = s.split()
+        if len(parts) >= 6:
+            minute, hour, dom, mon, dow = parts[1:6]
+            # count fires per week by expanding minute+hour over the day(s)-of-week it runs
+            def _n(field, span):
+                if field == "*":
+                    return span
+                if field.startswith("*/"):
+                    step = int(field[2:]); return max(1, span // step)
+                return len([p for p in field.replace("-", ",").split(",") if p])
+            days = 7 if dow == "*" else _n(dow, 7)
+            hours = _n(hour, 24)
+            mins = 1 if minute != "*" and "/" not in minute else _n(minute, 60)
+            fires_per_week = max(1, days * hours * mins)
+            return 604800.0 / fires_per_week
+    return None
+
+
 def ensure_session(conn):
     """Register the 'task-sentinel' session row so claude_queue's FK is satisfiable.
     Mirrors nova_core_liveness.ensure_session — idempotent."""
@@ -255,9 +327,17 @@ def run_once(conn) -> list:
     now = _now_ms()
     ensure_session(conn)
     runs_by_task = fetch_task_runs(conn)
-    degraded, healthy = [], 0
+    configured = load_configured_tasks()   # {task_id: schedule_str} across both schedulers
+    degraded, healthy, retired = [], 0, 0
     for task_id, runs in runs_by_task.items():
-        h = classify_task(runs, now_ms=now)
+        # RETIRED: a task with run-history but no longer in ANY scheduler config was removed;
+        # never alert on it. (Only skip when we actually loaded a config — an empty dict means
+        # config-load failed, and we fall back to judging everything.)
+        if configured and task_id not in configured:
+            retired += 1
+            continue
+        exp_interval = schedule_interval_s(configured.get(task_id, "")) if configured else None
+        h = classify_task(runs, now_ms=now, expected_interval_s=exp_interval)
         if h["state"] in ("failing", "critical", "stale"):
             degraded.append((task_id, h))
             _page(conn, task_id, h)
