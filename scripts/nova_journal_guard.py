@@ -50,6 +50,17 @@ _REFUSAL_BODY = [
     r"the (source )?material you (gave|provided|handed)",
     r"(pile|load|heap) of (bullshit|nonsense|garbage)",
     r"none of (this|that|these) (is|are) about",
+    # 2026-08-10: the LA-County-emergency-dispatch generator shipped a refusal-for-lack-of-input
+    # as the article — "I need the actual article details to write this responsibly. You've given
+    # me just the headline — I can't publish evacuation zones ... without real reporting." Every
+    # near-miss below is one word off an existing pattern; the genre (LLM asking the operator for
+    # source material before it will write) is the same.
+    r"i need (the |more |additional |actual |real )?.{0,20}(article|detail|information|context|reporting|source|specific)",
+    r"you'?ve given me (just |only |nothing but )?",
+    r"i can'?t (write|publish|create|produce|report)",
+    r"to write this (responsibly|accurately|properly)",
+    r"without (real|actual|verified|the actual) (reporting|details|information|sources|data)",
+    r"i don'?t have (enough|the) (details|information|context)",
 ]
 
 # STRUCTURAL tell: a real essay does not open by addressing its commissioner about the brief.
