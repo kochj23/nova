@@ -548,17 +548,47 @@ def generate_title(article_preview: str) -> str:
 
 # ── Publishing ───────────────────────────────────────────────────────────────
 
-def publish(title: str, body: str, image_path: Path | None):
+# A body is a FAILURE, never an article, if it's too short or carries an upstream error
+# signature. The 2026-08-08/09 stubs published because BOTH the Claude CLI and the OpenRouter
+# fallback returned auth-error text as "content" and nothing gated the publish. It does not
+# matter which backend failed — an error message is not prose. This gate refuses to publish it.
+STUB_WORD_FLOOR = 120
+_FAILURE_MARKERS = (
+    "failed to authenticate", "oauth session expired", "could not be refreshed",
+    "not logged in", "please run /login", "invalid api key", "authentication failed",
+    "rate limit", "insufficient credits", "context deadline exceeded", "no auth credentials",
+)
+
+
+def looks_like_failure(body: str) -> tuple[bool, str]:
+    """Return (is_failure, reason). True if `body` is an error stub, not a real article.
+
+    A stub is SHORT, or it LEADS with an upstream-error signature (the whole body IS the error).
+    We only match the signature in the first 200 chars — a real, long article may legitimately
+    *discuss* an auth outage in its prose (Nova's sarcastic ops columns do exactly that), and
+    that must not be blocked. The word floor is the primary gate; the lead-signature is backup."""
+    text = (body or "").strip()
+    wc = len(text.split())
+    if wc < STUB_WORD_FLOOR:
+        return True, f"only {wc} words (< {STUB_WORD_FLOOR} floor)"
+    head = text[:200].lower()
+    for m in _FAILURE_MARKERS:
+        if m in head:
+            return True, f"leads with an upstream-error signature: {m!r}"
+    return False, ""
+
+
+def publish(title: str, body: str, image_path: Path | None, pub_date: str | None = None):
     snap = nova_journal.grafana_panel_image("fleet-health", 7, "operations", "rando-ops-fleet-health")
     if snap:
         body += f"\n\n---\n\n**Fleet health at publish time:**\n\n![Current fleet health]({snap})"
 
-    date = time.strftime("%Y-%m-%d")
+    date = pub_date or time.strftime("%Y-%m-%d")
     # Use the ACTUAL publish time, not a hardcoded 20:00. The task was moved to cron 0 18,
     # but this string was left behind — so every night the front matter was dated two hours
     # in the future and Hugo (which skips future-dated content by default) hid the article
     # until the next build after 20:00. It published fine; it was just invisible meanwhile.
-    timestamp = time.strftime("%Y-%m-%dT%H:%M:%S-07:00")
+    timestamp = f"{pub_date}T12:00:00-07:00" if pub_date else time.strftime("%Y-%m-%dT%H:%M:%S-07:00")
     slug = re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:60]
 
     CONTENT_DIR.mkdir(parents=True, exist_ok=True)
@@ -595,7 +625,10 @@ description: "Nova's daily ops report — what broke, what worked, and what she'
 """
     front_matter += "---\n\n"
 
-    pub_time = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p PT")
+    if pub_date:
+        pub_time = datetime.strptime(pub_date, "%Y-%m-%d").strftime("%A, %B %d, %Y")
+    else:
+        pub_time = datetime.now().strftime("%A, %B %d, %Y at %I:%M %p PT")
     byline = f"*Published {pub_time}*\n\n"
 
     post_path = CONTENT_DIR / f"{date}-{slug}.md"
@@ -634,8 +667,27 @@ def main():
     article = generate_article(ops_data)
     log(f"Article generated: {len(article)} chars")
 
+    # GATE: never publish an error stub. If the LLM backends failed (auth/rate-limit/etc.)
+    # they can return error text as "content"; publishing it produced the 2026-08-08/09
+    # "Failed to authenticate" stubs. Refuse and alert loudly instead of shipping garbage.
+    failed, reason = looks_like_failure(article)
+    if failed:
+        log(f"ABORT: generated body looks like a failure ({reason}) — NOT publishing")
+        try:
+            nova_config.post_both(
+                f":no_entry: *Daily Ops article skipped* — LLM returned a stub ({reason}). "
+                f"Nothing published (would have been an error-message article). Check .2 claude auth.",
+                slack_channel=getattr(nova_config, "SLACK_BB", "#nova-critical"))
+        except Exception:
+            pass
+        return 1
+
     title = generate_title(article)
     log(f"Title: {title}")
+    # A valid body but a stub/error TITLE is just as bad (the stubs' titles WERE the error) — guard it.
+    if not title.strip() or any(m in title.lower() for m in _FAILURE_MARKERS):
+        log(f"ABORT: title looks like a failure ({title!r}) — NOT publishing")
+        return 1
 
     # Generate cover image
     image_prompt = (
@@ -652,7 +704,9 @@ def main():
 
     publish(title, article, image_path)
     log("Done!")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    sys.exit(main() or 0)
