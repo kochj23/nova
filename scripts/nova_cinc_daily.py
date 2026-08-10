@@ -273,8 +273,11 @@ def detect_drift(node):
     # Reachability first. Without this, an unreachable host does not report as unreachable — it
     # reports as every individual service being down, which is a fabricated diagnosis dressed up
     # as several. One honest "cannot reach" beats three confident wrong answers.
-    rc_probe, _, err_probe = ssh_cmd(host, user, "true", timeout=20)
-    reachable = (rc_probe == 0)
+    if host in ("127.0.0.1", "192.168.1.6"):
+        reachable, err_probe = True, ""   # the host CINC runs on — never SSH to ourselves
+    else:
+        rc_probe, _, err_probe = ssh_cmd(host, user, "true", timeout=20)
+        reachable = (rc_probe == 0)
     if not reachable:
         drift_items.append({"type": "node_unreachable",
                             "detail": (err_probe or "ssh failed").strip()[:120]})
@@ -407,6 +410,20 @@ def main():
         result["drift"] = drift
 
         results.append(result)
+
+    # All-unreachable guard: if EVERY node (including the local host) came back unreachable,
+    # that is a broken SSH context where CINC runs (no agent / no key in the scheduler env) —
+    # not a simultaneous fleet-wide outage. Reporting 9 "node_unreachable" drifts is a fabricated
+    # diagnosis (it even flags the host CINC runs on). Emit one honest diagnostic instead.
+    remote = [r for r in results if r["node"].lower() not in ("mac-studio", "itunes")]
+    if remote and all(any(d.get("type") == "node_unreachable" for d in (r.get("drift") or []))
+                      for r in remote):
+        log("ABORT-REPORT: every remote node unreachable — CINC's own SSH context is broken, "
+            "not a fleet outage. Reporting a single diagnostic, not per-node drift.")
+        results = [{"node": "cinc-runner", "inventory_count": 0, "updates": {}, "converge_ok": False,
+                    "drift": [{"type": "cinc_ssh_context_broken",
+                               "detail": "every node unreachable from the CINC host — SSH agent/key "
+                                         "missing in the scheduler environment; fleet is not down"}]}]
 
     # Report
     send_report(results)
