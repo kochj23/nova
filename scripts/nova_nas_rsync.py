@@ -71,15 +71,29 @@ def ensure_mounted(share) -> bool:
         if not pw:
             log(f"  {share['name']}: no UNAS keychain credential ({UNAS_KEYCHAIN_SRV})")
             return False
-        os.makedirs(dest, exist_ok=True)
         enc = urllib.parse.quote(pw, safe="")
-        r = subprocess.run(
-            ["mount_smbfs", f"//{UNAS_USER}:{enc}@{UNAS_IP}/{share['unas_share']}", dest],
-            capture_output=True, text=True, timeout=30)
+        # Attempt 1: mount_smbfs (needs the mount point to already exist). Under /Volumes a
+        # scheduled (non-GUI) process usually CAN'T create the mount dir — that's the recurring
+        # "Permission denied: /Volumes/<x>-1" that left backups dead for days.
+        try:
+            os.makedirs(dest, exist_ok=True)
+            subprocess.run(
+                ["mount_smbfs", f"//{UNAS_USER}:{enc}@{UNAS_IP}/{share['unas_share']}", dest],
+                capture_output=True, text=True, timeout=30)
+        except Exception:
+            pass
+        # Attempt 2 (self-heal): osascript 'mount volume' runs in the GUI session, which is
+        # allowed to create the mount point under /Volumes and picks the '-1' name automatically
+        # when the base name is taken by the Synology source mount. This is what actually works.
+        if not os.path.ismount(dest):
+            subprocess.run(
+                ["/usr/bin/osascript", "-e",
+                 f'mount volume "smb://{UNAS_USER}:{enc}@{UNAS_IP}/{share["unas_share"]}"'],
+                capture_output=True, text=True, timeout=45)
         if os.path.ismount(dest):
             log(f"  {share['name']}: auto-mounted UNAS {share['unas_share']} -> {dest}")
             return True
-        log(f"  {share['name']}: auto-mount failed — {r.stderr.strip()[:120]}")
+        log(f"  {share['name']}: auto-mount failed (mount_smbfs + osascript both) — check UNAS/{share['unas_share']}")
         return False
     except Exception as e:
         log(f"  {share['name']}: auto-mount error — {e}")
