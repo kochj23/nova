@@ -223,6 +223,20 @@ SLOW_OIDS = {
         "unit": "KB",
         "description": "Available swap space",
     },
+    # Buffers + Cached are RECLAIMABLE. memAvailReal (above) is only MemFree, so a healthy
+    # cache-heavy Linux box reads ~1% "free" and the mem_headroom alert cries wolf all night.
+    # True MemAvailable ≈ memAvailReal + memBuffer + memCached — collect these so the headroom
+    # metric reflects memory the kernel can actually hand out. (added 2026-08-10)
+    "mem_buffer": {
+        "oid": "1.3.6.1.4.1.2021.4.14.0",
+        "unit": "KB",
+        "description": "Memory used for buffers (reclaimable)",
+    },
+    "mem_cached": {
+        "oid": "1.3.6.1.4.1.2021.4.15.0",
+        "unit": "KB",
+        "description": "Memory used for cache (reclaimable)",
+    },
     "sys_temp": {
         "oid": "1.3.6.1.4.1.6574.1.2.0",
         "unit": "celsius",

@@ -301,12 +301,19 @@ async def build_snapshot(device_name, device_ip):
                 SELECT
                     (SELECT metric_value FROM snmp_metrics WHERE device_name=$1 AND metric_name='mem_total_real' ORDER BY timestamp DESC LIMIT 1) as total,
                     (SELECT metric_value FROM snmp_metrics WHERE device_name=$1 AND metric_name='mem_avail_real' ORDER BY timestamp DESC LIMIT 1) as avail,
+                    (SELECT metric_value FROM snmp_metrics WHERE device_name=$1 AND metric_name='mem_buffer' ORDER BY timestamp DESC LIMIT 1) as buffer,
+                    (SELECT metric_value FROM snmp_metrics WHERE device_name=$1 AND metric_name='mem_cached' ORDER BY timestamp DESC LIMIT 1) as cached,
                     (SELECT metric_value FROM snmp_metrics WHERE device_name=$1 AND metric_name='mem_total_swap' ORDER BY timestamp DESC LIMIT 1) as swap_total,
                     (SELECT metric_value FROM snmp_metrics WHERE device_name=$1 AND metric_name='mem_avail_swap' ORDER BY timestamp DESC LIMIT 1) as swap_avail
             """, device_name)
         if mem_row and mem_row["total"] and mem_row["total"] > 0:
             mem_total = mem_row["total"] / 1024.0
-            mem_free = (mem_row["avail"] or 0) / 1024.0
+            # TRUE available memory = MemFree + reclaimable Buffers + Cached. memAvailReal alone
+            # is just MemFree, which reads ~1% on a healthy cache-heavy box and cried wolf all
+            # night. Buffers/cached collected 2026-08-10; COALESCE to 0 so a host that hasn't
+            # reported them yet degrades to the old (conservative) free-only number.
+            mem_free = ((mem_row["avail"] or 0) + (mem_row["buffer"] or 0) + (mem_row["cached"] or 0)) / 1024.0
+            mem_free = min(mem_free, mem_total)   # never exceed total
             mem_used = mem_total - mem_free
             # Net-SNMP's mem_avail_real is MemFree — it EXCLUDES reclaimable buffers/cache,
             # so a Postgres/cache-heavy box reads ~1-3% "free" while the kernel's real
