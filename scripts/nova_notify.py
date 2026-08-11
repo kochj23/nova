@@ -19,6 +19,7 @@ Never raises — a notification must never crash its caller.
 """
 import json
 import os
+import re
 import sys
 import subprocess
 
@@ -34,6 +35,20 @@ def notify(title, body=None, level="info", category=None, source=None,
     if not source:
         # Auto-detect the emitting script from argv[0] (e.g. nova_calendar.py).
         source = os.path.basename(sys.argv[0]) or "unknown"
+
+    # STATE-CHANGE BY DEFAULT: if a producer didn't supply a dedup_key, derive a stable one from
+    # (source, category, title-with-volatile-numbers-stripped) so an ongoing condition re-firing
+    # every cycle collapses at the notifier instead of flooding. This makes dedup opt-OUT, not
+    # opt-in — no producer can leak the whole storm by forgetting a key (the way negative_space
+    # did: 196 NULL-key fires in one night). Digits are stripped because the parts that change on
+    # each re-fire of the SAME condition are durations, counts, %, and timestamps; the words that
+    # distinguish genuinely-different events (sensor names, "First"/"Second" bed) survive. A
+    # producer with meaningful numeric IDs (incidents) or one that truly wants every event
+    # distinct should pass its own dedup_key (include a uuid to force always-send).
+    if not dedup_key:
+        _stable = re.sub(r"\d[\d:.,%\s/_-]*", "#", str(title)).strip()[:80]
+        dedup_key = f"auto:{source}:{category or '-'}:{_stable}"
+
     payload = {
         "source": source, "level": level, "category": category,
         "title": str(title)[:500], "body": (str(body) if body is not None else None),
