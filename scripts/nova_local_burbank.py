@@ -405,12 +405,25 @@ def get_lora_summary(hours=24):
             ORDER BY long_name, snr DESC NULLS LAST LIMIT 12
         """, (hours,))
         notable = [(r[0], r[1]) for r in cur.fetchall()]
+        # The HUMAN side of the mesh: actual messages neighbors sent on the shared community
+        # channel (captured by nova_meshtastic_bridge). This is people talking — weather, coffee,
+        # greetings — not signals to monitor. Dedup exact repeats; skip radio-test noise.
+        cur.execute("""
+            SELECT DISTINCT observation FROM shared_observations
+            WHERE observer='nova_meshtastic_bridge' AND subject ILIKE 'message from%%'
+              AND observed_at >= now() - interval '%s hours'
+              AND observation !~* '^(test\\w*|ping|ack|seq|node )'
+              AND length(btrim(observation)) > 2
+            ORDER BY observation LIMIT 30
+        """, (hours,))
+        chatter = [r[0].strip() for r in cur.fetchall() if r[0] and r[0].strip()]
         cur.close(); conn.close()
     except Exception:
         return None
-    if not total:
+    if not total and not chatter:
         return None
-    return {"total": total, "direct": direct, "closest_hops": closest_hops, "notable": notable}
+    return {"total": total, "direct": direct, "closest_hops": closest_hops,
+            "notable": notable, "chatter": chatter}
 
 
 def get_myburbank_arrests(news_items):
@@ -719,6 +732,18 @@ def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=No
             f'"{n}"' + (f" ({h} hop{"s" if h != 1 else ""})" if h else "")
             for n, h in notable)
         closest = lora.get("closest_hops")
+        chatter = lora.get("chatter") or []
+        chatter_bit = ""
+        if chatter:
+            quoted = " · ".join(f'"{c}"' for c in chatter[:12])
+            chatter_bit = (
+                f" AND — this is the good part — real people were TALKING on the shared community "
+                f"channel today. Actual messages that came across: {quoted}. These are your neighbors "
+                f"on homemade radio: weather gripes, coffee, good-mornings, radio tests, someone "
+                f"checking who's out there. Make THIS the heart of the mesh section — quote a few of "
+                f"the messages, catch the warmth and small-community feel of strangers keeping in "
+                f"touch over LoRa when they could just text. It's genuinely sweet; write it that way, "
+                f"not as surveillance.")
         lora_block = (
             f"\n\n[LORA MESH — last 24h. Nova's Meshtastic node ('Rancho Adjacent', a Heltec T114) "
             f"heard {lora['total']} distinct node(s) on the local long-range radio mesh"
@@ -726,9 +751,10 @@ def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=No
             + (f". A sampling of who was on the air: {node_bits}." if node_bits else ".")
             + " This is the SoCal LoRa mesh — SoCalMesh.org infrastructure, ham operators, solar "
             "test nodes, oddball hobbyist handles — all public LoRa broadcast, so naming nodes is "
-            "fine. Give it a short, genuinely-interested paragraph: this is Burbank's invisible "
-            "long-range radio neighborhood, the kind of thing that keeps working when the internet "
-            "doesn't. Note anything with a callsign or a funny node name.]\n"
+            "fine."
+            + chatter_bit
+            + " This is Burbank's invisible long-range radio neighborhood, the kind of thing that "
+            "keeps working when the internet doesn't. Warm and curious, never a threat feed.]\n"
         )
 
     arrests_block = ""
