@@ -286,6 +286,13 @@ async def build_snapshot(device_name, device_ip):
     load5 = cpu_row["load5"] if cpu_row and cpu_row["load5"] else 0
     load15 = cpu_row["load15"] if cpu_row and cpu_row["load15"] else 0
     cpu_headroom = max(0, 100.0 * (1.0 - load5 / cores))
+    # cpu_headroom SATURATES at 0 the instant load reaches core count, so it can't tell a
+    # healthy 1x box from a genuinely-drowning 3x box — both read 0, and the old status gated
+    # 'crit' at headroom<10 (load 0.9x cores), paging on well-utilized hardware. The honest
+    # signal is load-per-core (run-queue depth normalized by cores), the classic *nix rule:
+    # under 1x is fine, 1-2x is 'busy, watch it', past ~2x sustained is real pressure. Status
+    # is gated on THIS, not the saturating headroom. (Jordan's Solaris-admin heuristic, 2026-08-11)
+    cpu_load_ratio = (load5 / cores) if cores else 0.0
 
     mem_total, mem_used, mem_free = None, None, None
     swap_headroom = None   # % of swap still free; None = unknown/macOS (don't gate on it)
@@ -362,9 +369,13 @@ async def build_snapshot(device_name, device_ip):
     _mem_lowfree = mem_headroom is not None and device_name not in MEM_CACHE_HOSTS
     _linux = swap_headroom is not None
     mem_matters = _mem_lowfree and (_swap_pressured or not _linux)
-    if cpu_headroom < 20 or (mem_matters and mem_headroom < 15) or disk_worst > 85:
+    # CPU: gate on load-per-core, the *nix run-queue rule — NOT the saturating headroom.
+    # >1.5x cores sustained = busy enough to watch; >2.0x = genuine pressure. A box humming
+    # along at 0.8-1.2x its core count is well-utilized, not in trouble, and no longer pages.
+    CPU_WARN_RATIO, CPU_CRIT_RATIO = 1.5, 2.0
+    if cpu_load_ratio > CPU_WARN_RATIO or (mem_matters and mem_headroom < 15) or disk_worst > 85:
         status = "warn"
-    if cpu_headroom < 10 or (mem_matters and mem_headroom < 5) or disk_worst > 92:
+    if cpu_load_ratio > CPU_CRIT_RATIO or (mem_matters and mem_headroom < 5) or disk_worst > 92:
         status = "crit"
 
     snapshot = {
