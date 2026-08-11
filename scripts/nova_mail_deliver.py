@@ -82,10 +82,15 @@ def slack_post(text):
 
 
 def send_email(subject, body):
-    """Send mail summary to Jordan via nova_send_mail."""
+    """Send the daily mail summary to Jordan's PERSONAL inbox.
+
+    Was JORDAN_WORK_EMAIL — but that's the sanitized placeholder 'user@example-corp.com' (a dead
+    default that was never replaced), so the digest silently bounced twice a day and Jordan never
+    got it. A personal mail digest belongs in his personal inbox anyway, never a work address
+    (redline: no work involvement). Fixed 2026-08-11."""
     from nova_send_mail import send_mail
     log(f"Sending email: {subject}")
-    send_mail(nova_config.JORDAN_WORK_EMAIL, subject, body)
+    send_mail(nova_config.JORDAN_EMAIL, subject, body)
 
 
 def is_noise(sender, subject):

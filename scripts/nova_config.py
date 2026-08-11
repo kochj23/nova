@@ -102,7 +102,12 @@ CHANNEL_MAP = {
 
 JORDAN_EMAIL  = "kochj23" + "@gmail.com"     # noqa: avoid scanner false-positive
 JORDAN_DOMAIN_EMAIL = "kochj" + "@digitalnoise" + ".net"  # noqa: assembled at runtime
-JORDAN_WORK_EMAIL = "user" + "@example-corp" + ".com"  # noqa: assembled at runtime
+# DEAD PLACEHOLDER — do NOT send here. 'user@example-corp.com' is a sanitized stand-in that was
+# never a real address; it has no MX/A record so anything sent to it bounces. It silently ate the
+# daily mail digest for weeks (nova_mail_deliver, fixed 2026-08-11 to use JORDAN_EMAIL). Redline:
+# no work involvement — Nova should never email Jordan's work anyway. Left here only so nothing
+# NameErrors; if you're reaching for this, you want JORDAN_EMAIL.
+JORDAN_WORK_EMAIL = None  # was "user@example-corp.com" — do not use as a recipient
 NOVA_EMAIL    = "nova@digitalnoise.net"
 NOVA_SIGNAL   = "+1" + "3233645436"         # noqa: Nova's Signal (Google Voice)
 JORDAN_SIGNAL = "+1" + "8187310893"         # noqa: Jordan's Signal
