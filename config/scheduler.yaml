@@ -129,6 +129,15 @@ tasks:
     timeout: 120
     overlap: skip
 
+  # The FRIENDLY side of the mesh: surface the neighborhood community chatter as something
+  # interesting (weather, coffee, greetings) — not an attack surface. Local LLM, posts to
+  # #nova-chat. Built 2026-08-11 (Jordan: "there's a shared channel where people talk").
+  mesh_digest:
+    script: nova_mesh_digest.py
+    schedule: cron 0 19 * * *
+    timeout: 180
+    overlap: skip
+
   negative_space:                    # alerts on correlations that SHOULD have happened and didn't
     script: nova_negative_space.py
     args: ["--alert"]
