@@ -518,9 +518,16 @@ def get_bluetooth_patterns(days=21, min_days=3):
                        date(ts AT TIME ZONE 'America/Los_Angeles') AS day,
                        extract(hour FROM ts AT TIME ZONE 'America/Los_Angeles') AS hr,
                        (metadata->>'vendor' = 'unknown') AS unk
-                FROM telemetry.bluetooth
+                FROM telemetry.bluetooth b
                 WHERE ts >= now() - (%s || ' days')::interval
                   AND device_name IS NOT NULL AND device_name != ''
+                  -- Exclude devices we've already LABELED (HomePods, phones, etc.): a known
+                  -- household device is not an "unidentified mystery". Match by stable MAC or by
+                  -- name so a labeled device can't leak back in as a ghost. (2026-08-11)
+                  AND lower(b.device_mac) NOT IN
+                      (SELECT lower(device_mac) FROM telemetry.ble_device_map WHERE device_mac IS NOT NULL)
+                  AND b.device_name NOT IN
+                      (SELECT device_name FROM telemetry.ble_device_map WHERE device_name IS NOT NULL)
             ),
             per_device AS (
                 SELECT device_name,
@@ -699,26 +706,33 @@ def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=No
         if wifi_ble.get("ble_devices") is not None:
             bits.append(f"{wifi_ble['ble_devices']} distinct Bluetooth LE devices heard")
         pattern_bits = []
+        household_note = ""
         if ble_patterns:
             if ble_patterns["resident"]:
-                pattern_bits.append(f"{ble_patterns['resident']} unidentified device(s) that are "
-                                     f"basically always in range (present most of every day, day after day "
-                                     f"over the last few weeks) -- something stationary and unlabeled nearby, "
-                                     f"not a passerby")
+                # A device present >12h/day for WEEKS is definitionally the household's own
+                # always-on gear (hubs, smart lights, speakers, a tablet on a charger), not a
+                # threat parked outside. Frame it warmly as "the house is full", NOT as a mystery.
+                household_note = (f"{ble_patterns['resident']} always-on device(s) that live here "
+                                  f"round the clock — the household's own smart-home gadgetry (hubs, "
+                                  f"lights, speakers, chargers). The house is just full of gizmos; "
+                                  f"mention it as a warm one-liner, NOT a mystery or a threat")
             for p in ble_patterns["transient_patterned"]:
-                pattern_bits.append(f"an unidentified device that shows up briefly on {p['distinct_days']} "
+                # THIS is the genuinely interesting one: a device that ISN'T ours, showing up on a
+                # schedule. A passerby with a routine — fun to speculate about.
+                pattern_bits.append(f"a device that isn't one of ours, showing up briefly on {p['distinct_days']} "
                                      f"of the last ~21 days, consistently around {p['start']}")
             if ble_patterns["transient_random"]:
-                pattern_bits.append(f"{ble_patterns['transient_random']} other recurring unidentified device(s) "
+                pattern_bits.append(f"{ble_patterns['transient_random']} other device(s) that recur "
                                      f"with no consistent time-of-day pattern")
-        if bits or pattern_bits:
+        if bits or pattern_bits or household_note:
             wifi_ble_block = (
                 f"\n\n[RF NEIGHBORHOOD — last 24h. {'; '.join(bits)}."
-                + (f" PATTERNS FOUND IN THE LAST ~3 WEEKS OF HISTORY: {'; '.join(pattern_bits)}. "
-                   f"This is worth a real paragraph, not just a passing line -- it's genuinely interesting "
-                   f"(a mystery device that's always here, or one that shows up like clockwork). Speculate "
-                   f"playfully about what it might be (a neighbor's smart device, a delivery route, a dog "
-                   f"walker's phone) but don't claim certainty." if pattern_bits else
+                + (f" HOUSEHOLD: {household_note}." if household_note else "")
+                + (f" GENUINELY INTERESTING — a device that ISN'T ours with a real time pattern: {'; '.join(pattern_bits)}. "
+                   f"THIS deserves a playful paragraph — it's a stranger's device on a schedule, the closest thing to a "
+                   f"recurring character in the logs. Speculate warmly about what it might be (a dog walker's afternoon "
+                   f"route, a delivery van, a neighbor's habit) but don't claim certainty. Frame it as a friendly "
+                   f"curiosity, never a threat or surveillance." if pattern_bits else
                    " Mention this only briefly (a sentence, maybe two) as neighborhood color.")
                 + " Do NOT name secured networks, and never print a BSSID or MAC. The OPEN networks"
                 + " listed by name above ARE fine to name (they broadcast openly to anyone with a phone) —"
