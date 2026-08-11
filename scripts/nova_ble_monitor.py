@@ -490,16 +490,21 @@ def check_unknown_devices(devices: list[dict]):
             _alerted_macs.add(mac)
             name = d.get("name") or "unnamed"
             rssi = d.get("rssi")
-            log.warning(f"Unknown BLE device: {mac} ({name}) RSSI={rssi}")
+            log.info(f"New BLE device nearby: {mac} ({name}) RSSI={rssi}")
 
             try:
                 conn = get_db()
                 with conn.cursor() as cur:
+                    # AMBIENT, not a threat. A one-off unknown BLE device in a dense neighborhood
+                    # is a neighbor's phone / AirPods / car passing by — the texture of a lived-in
+                    # place, not an attack surface. Filed as 'ambient'/'info', neutral wording.
+                    # Genuine loitering/tracker threats (a device that PERSISTS near the house) are
+                    # nova_tracker_watch's job; this stays curious, not paranoid. (reframed 2026-08-11)
                     cur.execute("""
                         INSERT INTO shared_observations (observer, category, subject, observation, severity, metadata)
-                        VALUES ('nova', 'security', 'ble-unknown-device', %s, 'warning', %s)
+                        VALUES ('nova', 'ambient', 'ble-new-device', %s, 'info', %s)
                     """, (
-                        f"Unknown BLE device detected: {mac} ({name}) RSSI={rssi}",
+                        f"New BLE device seen nearby: {name} ({mac}) RSSI={rssi}",
                         json.dumps({"mac": mac, "name": name, "rssi": rssi, "type": d.get("type")}),
                     ))
             except Exception:

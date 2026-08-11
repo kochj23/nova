@@ -332,10 +332,13 @@ def gather() -> dict:
 
     # 5. Network device count + new devices (NAMES ok; no presence)
     d["net_clients"] = scalar(DB, "SELECT COUNT(DISTINCT client_mac) FROM telemetry.network WHERE ts > NOW()-INTERVAL '24 hours'")
+    # New devices seen: NAMES ok, framed as ambient neighborhood texture (a new phone/AirPods
+    # passing through), not a threat roster. ble-new-device replaced the old security-framed
+    # ble-unknown-device 2026-08-11; keep the old subject too so history still surfaces.
     d["new_devices"] = q(DB, """
         SELECT subject, LEFT(observation,140) FROM shared_observations
         WHERE observed_at > NOW()-INTERVAL '24 hours'
-          AND subject IN ('new_device','new_devices_bulk','ble-unknown-device')
+          AND subject IN ('new_device','new_devices_bulk','ble-new-device','ble-unknown-device')
         ORDER BY observed_at DESC LIMIT 10""")
     d["top_talkers"] = q(DB, """
         SELECT client_name, ROUND((SUM(rx_bytes+tx_bytes)/1e9)::numeric,2) AS gb
