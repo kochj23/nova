@@ -205,8 +205,12 @@ def _page(conn, task_id: str, health: dict):
     body = (f"{health['reason']}. "
             f"last run {health.get('last_run_age_s', '?')}s ago, "
             f"last success {health.get('last_ok_age_s')}s ago.")
+    # Re-notify window 6h (not the default 1h): a task that's been failing all day doesn't need
+    # 23 hourly pings — the first tells you, ~4/day is a reminder, more is just noise burying the
+    # NEW failures. (2026-08-11 S/N pass: task-sentinel sent 77 alerts/night for 9 conditions.)
     notify(title, body=body, level=level, category="task-sentinel",
-           source="nova_task_sentinel", dedup_key=f"task-sentinel:{task_id}")
+           source="nova_task_sentinel", dedup_key=f"task-sentinel:{task_id}",
+           meta={"dedup_window_s": 21600})
 
     if state == "critical":
         # SAVEPOINT so a failed insert (e.g. FK/constraint) rolls back only THIS write

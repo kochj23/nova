@@ -122,9 +122,19 @@ def main(alert):
         log(f"[{kind}] {msg}")
     if findings and alert:
         try:
+            import re as _re
             from nova_notify import notify
             for kind, msg in findings:
-                notify(f"Negative-space: {msg}", level="warning", category="security")
+                # STABLE dedup key: a silent sensor stays silent, and the message's ticking
+                # duration ("nothing for 5 days, 13:34:11") changed every fire, so with a NULL
+                # key this producer fired 196x/night — a quarter of the whole storm. Strip the
+                # volatile numbers/timestamps so every re-fire of the SAME condition collapses,
+                # and widen the re-notify window to 8h (a broken sensor doesn't need 24 reminders).
+                stable = _re.sub(r"\d[\d:.,\s-]*", "#", msg)[:80]
+                notify(f"Negative-space: {msg}", level="warning", category="security",
+                       source="nova_negative_space.py",
+                       dedup_key=f"negspace:{kind}:{stable}",
+                       meta={"dedup_window_s": 28800})
             log(f"alerted on {len(findings)} finding(s)")
         except Exception as e:
             log(f"notify failed: {e}")
