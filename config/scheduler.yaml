@@ -515,6 +515,23 @@ tasks:
     timeout: 60
     overlap: skip
 
+  # Early warning before .6's Claude token expires (~8h life, doesn't auto-refresh headless).
+  # Pages BEFORE articles fail instead of after. Permanent fix is `claude setup-token`.
+  claude_token_watch:
+    script: nova_claude_token_watch.py
+    schedule: every 1h
+    timeout: 45
+    overlap: skip
+
+  # 6:30am daily operations review — reads 24h of the alert channels, separates real problems
+  # from monitor noise/false-alarms, auto-fixes the safe ones + queues the rest, publishes a
+  # sanitized ops postmortem + a #nova-digest summary. Built 2026-08-10.
+  overnight_review:
+    script: nova_overnight_review.py
+    schedule: cron 30 6 * * *
+    timeout: 600
+    overlap: skip
+
   # Cross-platform creator following (2026-08-07) — the reliable half of the Grayjay idea:
   # follow creators from Jordan's YouTube subs on the alt-platforms they cross-post to, ping
   # #nova-feed on new uploads. Both self-skip (exit 0) until their Keychain creds exist, so
