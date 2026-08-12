@@ -182,6 +182,31 @@ def classify_source(show_name: str, title: str, snippet: str) -> str:
     text = (show_name + " " + title + " " + snippet[:400]).lower()
     show = show_name.lower()
 
+    # ── NEWS (checked FIRST — highest priority) ───────────────────────────────
+    # News broadcasts were falling through to the content-keyword fallbacks below and getting
+    # mis-filed by a stray word in the transcript: "Combat Veteran News" -> crime_drama (combat),
+    # KTLA/NBC4 episodes -> documentary (a "century"/"war" mention), NBC News -> automotive (an
+    # "engine" mention). So NOT ONE news show reached local_news/news, and every local-news article
+    # (Burbank morning, etc.) queries those sources — the broadcasts were invisible to them.
+    # Two tiers so the articles can weight local over national (Jordan, 2026-08-12):
+    #   LA-market broadcast stations -> local_news  (feeds the Burbank morning piece)
+    #   national/world networks + any other news-titled show -> news
+    LA_STATIONS = ("ktla", "nbc4", "nbc 4", "knbc", "nbcla", "cbs la", "kcbs", "kcal", "fox 11",
+                   "kttv", "abc 7", "abc7", "kabc", "eyewitness news", "cbs 2 los angeles",
+                   "spectrum news 1", "good day la", "good nite la", "good night la")
+    NATIONAL = ("cbs evening news", "nbc nightly news", "abc world news", "world news tonight",
+                "pbs news", "pbs newshour", "bbc", "ms now", "msnbc", "cnn", "fox news",
+                "meet the press", "face the nation", "nbc news", "cbs news", "abc news",
+                "world news", "60 minutes", "democracy now")
+    # Word-boundary match, NOT bare substring: short callsigns (bbc/cnn) otherwise matched inside
+    # Plex's hex-hash folder names for unnamed recordings (…5814bbc43e8 -> "bbc" -> mis-filed news).
+    def _has(tokens):
+        return any(re.search(r"\b" + re.escape(k) + r"\b", show) for k in tokens)
+    if _has(LA_STATIONS):
+        return "local_news"
+    if _has(NATIONAL) or re.search(r"\bnews\b", show):   # national/world + any news-titled show
+        return "news"
+
     # ── Explicit show-name overrides (checked first, highest priority) ────────
     # Food/cooking channels
     if any(w in show for w in ["meat church", "arnitex", "arnie tex",

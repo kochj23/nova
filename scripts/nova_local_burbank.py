@@ -116,13 +116,17 @@ def get_local_news(hours=24, limit=50):
     conn = psycopg2.connect(PG_DSN)
     cur = conn.cursor()
     cutoff = datetime.now() - timedelta(hours=hours)
+    # 'news' = national/world broadcasts (BBC, PBS News Hour, CBS Evening, etc.), added 2026-08-12
+    # so the news shows Jordan records into the TV Shows library actually reach this article. LOCAL
+    # sources sort FIRST (local_burbank/local_news) so the piece leads with Burbank/LA coverage and
+    # the national broadcasts trail as 'National/World' context, not the lede.
     cur.execute("""
         SELECT text, source, created_at, metadata
         FROM memories
-        WHERE source IN ('local_burbank', 'local_news')
+        WHERE source IN ('local_burbank', 'local_news', 'news')
           AND created_at >= %s
           AND LENGTH(text) > 80
-        ORDER BY created_at DESC
+        ORDER BY (source = 'news') ASC, created_at DESC
         LIMIT %s
     """, (cutoff, limit))
     rows = cur.fetchall()
