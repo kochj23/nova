@@ -280,20 +280,48 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
             f"{len(system.encode())} bytes exceeds the 128 KiB execve per-arg limit — "
             f"move the bulk into the user prompt (stdin)")
         return None
+    # WEDGE FIX (2026-08-11): claude -p can leave a background child (telemetry/daemon) holding
+    # the stdout pipe open, so after the timeout kills the DIRECT child, communicate() keeps
+    # blocking on a read that never sees EOF — subprocess.run then hangs FOREVER past its timeout
+    # (fishbowl_daily wedged 8+ min at 0% CPU this way). Run claude in its OWN process group
+    # (start_new_session) and, on timeout, SIGKILL the whole group so the pipe-holder dies too;
+    # bound the reap so this function can never hang the caller.
+    import os as _os
+    import signal as _signal
+    proc = None
     try:
-        result = subprocess.run(
+        proc = subprocess.Popen(
             ["claude", "-p", "--model", cli_model, "--system-prompt", system],
-            input=user, capture_output=True, text=True, timeout=300)
-        if result.returncode != 0:
-            log(f"Claude Code call failed ({cli_model}): {result.stderr.strip()[:300]}")
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            text=True, start_new_session=True)
+        try:
+            out, err = proc.communicate(input=user, timeout=240)
+        except subprocess.TimeoutExpired:
+            try:
+                _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
+            except Exception:
+                proc.kill()
+            try:
+                proc.communicate(timeout=10)
+            except Exception:
+                pass
+            log(f"Claude Code call TIMED OUT ({cli_model}) — killed process group")
             return None
-        text = result.stdout.strip()
+        if proc.returncode != 0:
+            log(f"Claude Code call failed ({cli_model}): {(err or '').strip()[:300]}")
+            return None
+        text = (out or "").strip()
         if not text:
             log(f"Claude Code call returned empty output ({cli_model})")
             return None
         log(f"LLM [{cli_model} via claude-code] chars out={len(text)}")
         return text
     except Exception as e:
+        if proc is not None:
+            try:
+                _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
+            except Exception:
+                pass
         log(f"Claude Code call failed ({cli_model}): {e}")
         return None
 
