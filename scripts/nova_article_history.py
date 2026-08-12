@@ -28,11 +28,11 @@ def _content_dir(section: str):
     for c in candidates:
         if c.is_dir():
             return c
-    # last resort: any nova-journal/content/<section> under $HOME
-    home = Path.home()
-    for p in home.glob(f"**/nova-journal/content/{section}"):
-        if p.is_dir():
-            return p
+    # A section dir that simply doesn't exist (e.g. renamed/removed) returns None. The old
+    # last-resort `Path.home().glob("**/...")` recursively walked the ENTIRE home tree — millions
+    # of files, mounted volumes and all — and effectively hung forever when a section was missing
+    # (it wedged fishbowl_daily for minutes after the fishbowl->opinions move, 2026-08-12). A
+    # recursive glob over $HOME is never acceptable; a missing dir is just missing.
     return None
 
 

@@ -93,7 +93,10 @@ def main():
             f"--- FRESHEST INGESTED STREAMS (newest first) ---\n{sample_block}\n\n"
             f"Write today's Fishbowl dispatch.")
     import nova_article_history
-    _h = nova_article_history.recent_articles_context("fishbowl")
+    # 'opinions' now (the dispatch moved sections 2026-08-11) — NOT 'fishbowl'. The old
+    # content/fishbowl dir was removed, so passing 'fishbowl' here fell through to _content_dir's
+    # last-resort recursive home glob and WEDGED the whole run for minutes (py-spy caught it).
+    _h = nova_article_history.recent_articles_context("opinions")
     if _h:
         user = user + "\n\n" + _h
     raw = nj.call_openrouter(system, user, max_tokens=3200, temperature=0.85)
