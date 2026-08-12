@@ -235,6 +235,20 @@ def generate_image_openrouter(article_preview: str) -> Path | None:
 # ── Publishing ────────────────────────────────────────────────────────────────
 
 def publish(title: str, body: str, image_path: Path | None):
+    # Guard against publishing an LLM-failure stub ("Not logged in · Please run /login" shipped
+    # 2026-08-12 when .6's token lapsed). This generator has its own publish() and bypassed the
+    # shared is_publishable guard — route through it here so a refusal/error can't reach the site.
+    try:
+        from nova_journal_guard import is_publishable
+        ok, reason = is_publishable(title, body)
+        if not ok:
+            print(f"[top10-weird] BLOCKED publish — {reason}: {title!r}", flush=True)
+            return
+    except Exception:
+        # Fail-safe minimal check if the guard import fails: never publish a tiny body.
+        if len((body or "").split()) < 60:
+            print(f"[top10-weird] BLOCKED publish — body too short ({len((body or '').split())} words)", flush=True)
+            return
     date = time.strftime("%Y-%m-%d")
     hour = datetime.now().hour
     time_label = "06:00:00" if hour < 12 else "18:00:00"
