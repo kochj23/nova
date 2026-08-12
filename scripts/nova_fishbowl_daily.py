@@ -28,21 +28,26 @@ def main():
     # grow without limit. Take the standing cast plus the most-covered guests, which is
     # what "the cast" in the prompt actually means. Same shape as
     # nova_opinion_fishbowl_roster.py, which already did this correctly.
+    # WEDGE FIX (2026-08-11): the full roster (28 cast @ ~1.6K chars + 15 guests) built an
+    # ~86K-char prompt that hung claude -p for its full 300s timeout every run — the fishbowl
+    # flakiness all session. Cap to the most-covered 12 cast + 8 guests; each dossier is
+    # truncated to an orientation-sized snippet below (the article needs "who's who", not the
+    # whole file). Shrinks the prompt ~6x so generation completes in seconds.
     oc.execute("SELECT name, channels, summary FROM fishbowl_people "
-               "WHERE kind='cast' AND summary IS NOT NULL ORDER BY n_mem DESC NULLS LAST")
+               "WHERE kind='cast' AND summary IS NOT NULL ORDER BY n_mem DESC NULLS LAST LIMIT 12")
     dossiers = oc.fetchall()
     oc.execute("SELECT name, channels, summary FROM fishbowl_people "
-               "WHERE kind='guest' AND summary IS NOT NULL ORDER BY n_mem DESC NULLS LAST LIMIT 15")
+               "WHERE kind='guest' AND summary IS NOT NULL ORDER BY n_mem DESC NULLS LAST LIMIT 8")
     dossiers += oc.fetchall()
 
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
     # freshest transcripts first — this is what makes it a DAILY dispatch, not a static intro
     mc.execute("SELECT text, created_at FROM memories WHERE source='fishbowl' "
-               "AND metadata->>'type'='fishbowl_stream' ORDER BY created_at DESC LIMIT 25")
+               "AND metadata->>'type'='fishbowl_stream' ORDER BY created_at DESC LIMIT 12")
     rows = mc.fetchall()
     if not rows:
         mc.execute("SELECT text, created_at FROM memories WHERE source='fishbowl' "
-                   "ORDER BY created_at DESC LIMIT 25")
+                   "ORDER BY created_at DESC LIMIT 12")
         rows = mc.fetchall()
     samples = [r[0] for r in rows]
     # recency stats for an honest "since yesterday" framing
@@ -55,8 +60,11 @@ def main():
     if not samples:
         nj.log("[fishbowl-daily] no fishbowl memories yet — aborting"); return 1
 
-    dossier_block = "\n\n".join(f"### {n} ({c})\n{s}" for n, c, s in dossiers) or "(dossiers still building)"
-    sample_block = "\n\n---\n\n".join(s[:800] for s in samples)
+    # Truncate each dossier to an orientation snippet (~450 chars) and each transcript to ~500 —
+    # the article needs the gist of who's who + the freshest churn, not full files. Keeps the
+    # whole prompt well under the size that hangs claude -p.
+    dossier_block = "\n\n".join(f"### {n} ({c})\n{s[:450]}" for n, c, s in dossiers) or "(dossiers still building)"
+    sample_block = "\n\n---\n\n".join(s[:500] for s in samples)
 
     ctx = (
         "Write TODAY'S entry in Nova's running 'Fishbowl' dispatch for her journal, in Nova's "
