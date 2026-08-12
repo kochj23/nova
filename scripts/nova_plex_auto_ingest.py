@@ -263,6 +263,17 @@ SHOW_VECTOR_MAP = {
 # ── Classification ────────────────────────────────────────────────────────────
 
 def classify_content(title: str, show_name: str, genres: list, text: str) -> str:
+    # NEWS first, via the SHARED classifier (nova_tv_ingest.classify_source) so this pipeline and
+    # the nightly TV scan agree: LA stations -> local_news, national/world -> news. This is what the
+    # Burbank + local-news articles query. Checked before SHOW_VECTOR_MAP so a stale hand-mapping
+    # (BBC News -> daily_news, Good Nite LA -> daily_news) can't misroute a news broadcast. 2026-08-12.
+    try:
+        import nova_tv_ingest
+        _news = nova_tv_ingest.classify_source(show_name, title, text)
+        if _news in ("local_news", "news"):
+            return _news
+    except Exception:
+        pass
     if show_name in SHOW_VECTOR_MAP:
         return SHOW_VECTOR_MAP[show_name]
 

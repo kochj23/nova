@@ -35,7 +35,10 @@ RECORD_DURATION = 1800  # 30 minutes
 FFMPEG = "/opt/homebrew/bin/ffmpeg"
 MLX_WHISPER = "/opt/homebrew/bin/mlx_whisper"
 WHISPER_MODEL = "mlx-community/whisper-large-v3-turbo"
-MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember?async=1"
+# Sync endpoint (no ?async=1). The async path returns {"status":"queued"} and — critically — does
+# NOT read `source` from top-level, so KABC chunks landed under source='unknown' from 2026-08-06
+# and never reached the local feed. The sync endpoint stores immediately with the top-level source.
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
 CHUNK_SIZE = 2000
 
 WORK_DIR = Path("/Volumes/Data/nova-livetv/daily-news")
@@ -191,12 +194,19 @@ def chunk_text(text: str) -> list[str]:
 
 
 def ingest_chunks(chunks: list[str], timestamp: str, date_str: str) -> int:
+    import urllib.request
     ingested = 0
+    errs = 0
     for i, chunk in enumerate(chunks):
         payload = json.dumps({
+            # TOP-LEVEL source is what the memory server stores in the source column (metadata.source
+            # is ignored on write). KABC is LA-local news, so it rides the local_news tier -> the
+            # Burbank morning article + the other local-news pieces pick it up alongside KTLA/NBC4.
+            "source": "local_news",
             "text": chunk,
             "metadata": {
-                "source": "daily_news",
+                "source": "local_news",
+                "show": "ABC7 Eyewitness News",
                 "channel": CHANNEL,
                 "channel_name": CHANNEL_NAME,
                 "timestamp": timestamp,
@@ -207,15 +217,16 @@ def ingest_chunks(chunks: list[str], timestamp: str, date_str: str) -> int:
                 "privacy": "public",
             },
         }).encode()
-        req = __import__("urllib.request", fromlist=["Request"]).Request(
-            MEMORY_URL, data=payload,
-            headers={"Content-Type": "application/json"},
-        )
+        req = urllib.request.Request(MEMORY_URL, data=payload, headers={"Content-Type": "application/json"})
         try:
-            with __import__("urllib.request", fromlist=["urlopen"]).urlopen(req, timeout=10):
+            with urllib.request.urlopen(req, timeout=10):
                 ingested += 1
-        except Exception:
-            pass
+        except Exception as e:
+            errs += 1
+            if errs <= 3:
+                log.warning(f"chunk {i} ingest failed: {e}")
+    if errs:
+        log.error(f"{errs}/{len(chunks)} chunks FAILED to ingest to the memory server")
     return ingested
 
 
