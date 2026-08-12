@@ -45,7 +45,9 @@ HOST_CORES = {
     "tv-movies-mini": 12,
     "udm-pro": 4,
     "synology-nas": 4,
-    "nova-core": 4,
+    "nova-core": 16,   # .2 pg-primary/scheduler — nproc=16, NOT 4. The stale 4 made a box at
+                       # ~25% load report 0% CPU headroom + 4x-inflated load-ratio, crying wolf
+                       # 24/7 (the mem_headroom bug's twin, on CPU). 2026-08-12.
     "nova-core2": 16,
     "nova-core5": 4,
 }
