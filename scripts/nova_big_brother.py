@@ -722,14 +722,17 @@ def _notify(message: str, is_critical: bool = False):
     _notify_immediate(message, is_critical)
 
 
-def _notify_immediate(message: str, is_critical: bool = False):
-    """Post to all channels immediately. Falls back to raw HTTP + signal-cli if gateway is dead."""
+def _notify_immediate(message: str, is_critical: bool = False, channel: str = None):
+    """Post to all channels immediately. Falls back to raw HTTP + signal-cli if gateway is dead.
+    `channel` defaults to #nova-critical; the hourly DIGEST passes #nova-digest instead (a rollup
+    is not a critical alert — it was 43% of the critical channel). 2026-08-12."""
+    channel = channel or nova_config.SLACK_BB
     # Local macOS notification — always fires regardless of Slack/Discord
     clean = message.replace(":rotating_light:", "").replace(":wrench:", "").replace(":x:", "").replace("*", "").strip()
     nova_config.notify_local("Nova — Big Brother", clean[:200], critical=is_critical)
 
     try:
-        nova_config.post_both(message, slack_channel=nova_config.SLACK_BB)
+        nova_config.post_both(message, slack_channel=channel)
         return
     except Exception as e:
         log(f"Primary notify failed: {e}", level=LOG_WARN, source="big-brother")
@@ -738,7 +741,7 @@ def _notify_immediate(message: str, is_critical: bool = False):
     if token:
         try:
             data = json.dumps({
-                "channel": nova_config.SLACK_BB,
+                "channel": channel,
                 "text": message,
             }).encode()
             req = urllib.request.Request(
@@ -804,7 +807,7 @@ def _flush_digest():
     if not issue_counts:
         lines.append("  :white_check_mark: All clear — nothing unresolved")
 
-    _notify_immediate("\n".join(lines))
+    _notify_immediate("\n".join(lines), channel=nova_config.SLACK_DIGEST)
 
 
 def _maybe_notify(issue_key: str, message: str, is_critical: bool = False,

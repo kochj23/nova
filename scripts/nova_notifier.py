@@ -13,6 +13,7 @@ Routing policy lives in ROUTE() below — changing where a category goes is one 
 """
 import argparse
 import json
+import re
 import sys
 import time
 from pathlib import Path
@@ -59,6 +60,9 @@ CHANNEL = {
 CATEGORY_OVERRIDE = {
     "security_news": nova_config.SLACK_FEED,   # CVE/threat NEWS is FYI, not your-network
     "claude_code":   nova_config.SLACK_FEED,   # Claude Code activity is FYI
+    "email":         nova_config.SLACK_EMAIL,  # mail digests -> #nova-email (its purpose). Without
+                                               # this they fell to info->#nova-feed, so #nova-email
+                                               # sat silent while the digest drowned in the firehose.
 }
 # Info-level events in these categories are rollups -> #nova-digest.
 # (Only applies to level=info: a warning/critical in any of these still alerts.)
@@ -156,6 +160,19 @@ def drain(verbose=False, only_source=None) -> int:
                     if verbose:
                         print(f"  muted #{ev['id']} [{ev['category']}] — maintenance window")
                     continue
+                # 0.5) STATE-CHANGE SAFETY NET: an event arriving with NO dedup_key skips the dedup
+                #      below and floods — 39% of a recent 3-day window's sends did exactly that
+                #      (producers that never set one, or an emit path that dropped it). Derive a
+                #      stable fallback from source+category+title (volatile numbers stripped) and
+                #      persist it, so EVERY event participates in dedup regardless of the emitter.
+                #      Genuinely-distinct items (media titles differ by NAME, not just number) keep
+                #      distinct keys and still send; only true repeats collapse. A producer that
+                #      wants every copy opts out by passing its own unique key. (2026-08-12)
+                if not ev.get("dedup_key"):
+                    _t = re.sub(r"\d[\d:.,%\s-]*", "#", (ev.get("title") or ""))[:80]
+                    ev["dedup_key"] = f"auto:{ev.get('source') or '-'}:{ev.get('category') or '-'}:{_t}"
+                    cur.execute("UPDATE telemetry.events SET dedup_key=%s WHERE id=%s",
+                                (ev["dedup_key"], ev["id"]))
                 # 1) Dedup/rate-limit: was the same key already sent in the window?
                 if ev["dedup_key"]:
                     cur.execute(

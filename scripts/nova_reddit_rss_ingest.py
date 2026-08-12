@@ -195,23 +195,37 @@ def main():
 
     conn = _db(); cur = conn.cursor(); ensure(cur)
     seeded = []
+    incr = []             # (sub, new) — general incremental activity, rolled up into ONE ping
+    fishbowl_pings = []   # fishbowl keeps its own sampled per-sub pings (the drama IS the point)
     for sub, vector in targets.items():
         try:
             new, sample, was_seed = crawl_sub(cur, sub, vector)
         except Exception as e:
             log(f"r/{sub}: error {e}"); continue
-        # Slack only on real activity: one summary for the first-seed batch, per-sub pings for
-        # incremental new posts (sample only for fishbowl drama). No daily "blocked"/"0 new" noise.
+        # Slack only on real activity. First-seed batch → one summary. Incremental new posts →
+        # a single per-run ROLLUP (not a per-sub ping storm — that was a top nova-feed noise
+        # source, and the posts are already ingested to the vector; the Slack line is pure FYI).
+        # Fishbowl is the exception: it keeps its sampled per-sub ping. No "0 new" noise.
         if was_seed:
             seeded.append(f"r/{sub}→{vector} ({new})")
             log(f"r/{sub}: SEEDED {new} posts (comments skipped)")
         elif new:
-            msg = f":mag: *Reddit RSS* — r/{sub} → {vector}: {new} new post(s)."
-            if sample and vector == "fishbowl":
-                msg += f"\n*Sample:*\n> {sample}…"
-            slack(msg)
+            if vector == "fishbowl":
+                msg = f":mag: *Reddit RSS* — r/{sub} → {vector}: {new} new post(s)."
+                if sample:
+                    msg += f"\n*Sample:*\n> {sample}…"
+                fishbowl_pings.append(msg)
+            else:
+                incr.append((sub, new))
+            log(f"r/{sub}: {new} new")
         else:
             log(f"r/{sub}: no new posts")
+    if incr:
+        total = sum(n for _, n in incr)
+        subs = ", ".join(f"r/{s} ({n})" for s, n in sorted(incr, key=lambda x: -x[1]))
+        slack(f":mag: *Reddit RSS* — {total} new post(s) across {len(incr)} sub(s): {subs}")
+    for m in fishbowl_pings:
+        slack(m)
     if seeded:
         slack(":seedling: *Reddit RSS restored* — first-seed pass ingested: " + ", ".join(seeded))
     conn.close()

@@ -240,7 +240,12 @@ def execute_action(watcher: dict, new_value: str):
             level=level,
             category="scheduler",
             dedup_key=f"watcher-{watcher['id']}",
-            meta={"host": "Office-M4-2", "watcher": watcher["name"]},
+            # RSS news feeds (FBI, Pwn2Own, security-NEWS) are pure FYI — announce a given feed at
+            # most once/DAY instead of hourly (the "new item detected" pings were a top nova-feed
+            # noise source). Availability watchers (http/db/file) keep the short default window so a
+            # real outage still re-announces promptly. 2026-08-12.
+            meta={"host": "Office-M4-2", "watcher": watcher["name"],
+                  **({"dedup_window_s": 86400} if watcher["type"] == "rss" else {})},
         )
 
     elif action_type == "run_script":

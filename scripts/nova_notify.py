@@ -75,7 +75,7 @@ def notify(title, body=None, level="info", category=None, source=None,
                  "VALUES (:'s',:'l',:'c',:'t',:'b',:'dk',:'ci',:'m'::jsonb)",
                  "-v", f"s={source}", "-v", f"l={level}", "-v", f"c={category or ''}",
                  "-v", f"t={title}", "-v", f"b={body or ''}", "-v", f"dk={dedup_key or ''}",
-                 "-v", f"ci={correlation_id or ''}", "-v", "m={}"],
+                 "-v", f"ci={correlation_id or ''}", "-v", f"m={payload['meta']}"],
                 capture_output=True, timeout=10)
             return True
         except Exception:
