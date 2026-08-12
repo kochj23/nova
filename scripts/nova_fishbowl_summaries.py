@@ -74,6 +74,16 @@ PEOPLE = [
      "channels": ["@TheCramaReels"]},
 ]
 
+# CURATED FACTS — ground truth from Jordan that the LLM must not get wrong by inferring from
+# noisy transcripts. Injected into both the dossier prompt and the daily article prompt.
+KNOWN_FACTS = (
+    "GROUND-TRUTH RELATIONSHIPS (from Jordan, who actually watches this scene — do NOT contradict "
+    "these no matter what a transcript seems to imply):\n"
+    "- Watch Nicholas and The Franchise Club (aka The Franchise / The Franchise Clubs) are NOT "
+    "friends and never have been. They have been bitter ENEMIES for YEARS. Any apparent friendliness "
+    "is sarcasm, a truce, or someone else's spin — frame them as long-running adversaries."
+)
+
 
 def log(m):
     print(f"[fishbowl-summary] {m}", flush=True)
@@ -176,7 +186,7 @@ def summarize(name, channels, mems, signature=None):
            "speakers apart without voice ID, so call out any signature phrases). Be factual "
            "and observational. This community is toxic (slurs, attacks, threats over "
            "superchats) — report it plainly as data, do not endorse or sanitize. 150-250 words.")
-    system = nova_voice.system_prompt(ctx)
+    system = nova_voice.system_prompt(ctx + "\n\n" + KNOWN_FACTS)
     sigline = f"\nKnown speech signature: {signature}" if signature else ""
     user = (f"PERSON: {name}\nChannels: {', '.join(channels)}{sigline}\n\n"
             f"--- MEMORIES ---\n{context}\n\nWrite the dossier on {name}.")
@@ -208,10 +218,12 @@ def main():
             "VALUES (%s,%s,%s,%s,%s,now()) ON CONFLICT (name) DO UPDATE SET "
             "summary=EXCLUDED.summary, n_mem=EXCLUDED.n_mem, channels=EXCLUDED.channels, updated_at=now()",
             (p["name"], ", ".join(p["aliases"]), ", ".join(p["channels"]), summary, len(mems)))
-        remember_dossier(p["name"], summary)
-        slack(f":bust_in_silhouette: *Fishbowl dossier — {p['name']}* "
-              f"({', '.join(p['channels'])}, from {len(mems)} memories)\n{summary[:1500]}")
-        log(f"{p['name']}: dossier updated ({len(mems)} mems)")
+        # Dossiers are now WORKING DATA ONLY (fishbowl_people table), consumed by the single
+        # living opinions article (nova_fishbowl_daily). Per Jordan 2026-08-11: stop spamming
+        # each dossier into vector memory (poisoned the corpus + flooded the hourly scanner) and
+        # stop posting each one to Slack. One evergreen article, updated as the cast changes —
+        # not N individual dossiers. (remember_dossier + per-person slack removed here.)
+        log(f"{p['name']}: dossier refreshed in fishbowl_people ({len(mems)} mems)")
         done += 1
     if done == 0:
         slack(":hourglass: *Fishbowl dossiers* — no per-person memories yet; "

@@ -75,6 +75,11 @@ def main():
         f"({fresh_48h}) and the running total in the vector ({total}).\n"
         "600-1000 words, markdown, section headers welcome, no H1 title (added separately).\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy title, no quotes>\n<blank line>\n<the body>")
+    try:
+        from nova_fishbowl_summaries import KNOWN_FACTS
+        ctx = ctx + "\n\n" + KNOWN_FACTS
+    except Exception:
+        pass
     system = nova_voice.system_prompt(ctx)
     user = (f"--- PER-PERSON DOSSIERS (the cast) ---\n{dossier_block}\n\n"
             f"--- FRESHEST INGESTED STREAMS (newest first) ---\n{sample_block}\n\n"
@@ -114,16 +119,17 @@ def main():
     except Exception as e:
         nj.log(f"[fishbowl-daily] image gen failed (non-fatal): {e}")
 
-    tags = ["fishbowl", "watch-community", "drama", "daily"]
-    desc = "Nova's running daily dispatch from The Fishbowl — the watch-community livestream drama scene she tracks."
-    # See nova_opinion_fishbowl.py: a guard rejection must fail the run, not be logged as
-    # a publish. Extra bite here — the evergreen slug means a silent no-op leaves YESTERDAY's
-    # article in place, so the site looks current while the job has actually been dead.
-    if not nj.publish_hugo(title, body, "fishbowl", tags, desc, image_path=img, emoji="🐠",
+    tags = ["fishbowl", "watch-community", "drama", "opinions"]
+    desc = "Nova's running dispatch from The Fishbowl — the watch-community livestream drama scene she tracks, updated as the cast changes."
+    # Publishes to OPINIONS now (Jordan 2026-08-11), still under the same evergreen stable slug so
+    # it's ONE living article the cast gets added to/removed from — never a new post per day.
+    # A guard rejection must FAIL the run, not log a publish: the evergreen slug means a silent
+    # no-op leaves yesterday's article in place, so the site looks current while the job is dead.
+    if not nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🐠",
                            stable_slug=STABLE_SLUG):
         nj.log(f"[fishbowl-daily] NOT PUBLISHED — quality guard rejected: {title}")
         return 1
-    nj.git_push("fishbowl", title)
+    nj.git_push("opinions", title)
     nj.notify_slack("fishbowl", f"🐠 {title}", "Nova's daily Fishbowl dispatch updated.")
     nj.log(f"[fishbowl-daily] PUBLISHED (evergreen): {title}")
     return 0
