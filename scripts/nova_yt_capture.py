@@ -29,6 +29,36 @@ WMODEL = "mlx-community/whisper-large-v3-turbo"
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 WORK = Path.home() / ".openclaw/cache/fishbowl_cap"
+# Plex YouTube library — fishbowl streams are filed here, grouped by channel, so they appear in
+# Plex's YouTube section (Jordan 2026-08-11). Same volume the existing YouTube pipeline uses.
+PLEX_YT = Path("/Volumes/external/videos/youtube/Fishbowl")
+
+
+def file_video_to_plex(stem, channel, title, vid):
+    """Move the captured 480p video into the Plex YouTube library. Best-effort: if the external
+    volume isn't mounted or there's no video file, just log and move on (the transcript already
+    landed; a missing Plex copy is not worth failing the capture over)."""
+    import shutil
+    try:
+        srcs = [f for f in WORK.glob(f"{stem}.*")
+                if f.suffix.lower() in (".mp4", ".mkv", ".webm")]
+        if not srcs:
+            return
+        video = max(srcs, key=lambda f: f.stat().st_size)  # the real video, not a fragment
+        if not PLEX_YT.parent.parent.exists():   # /Volumes/external/videos present == volume mounted
+            log("Plex volume not mounted — keeping transcript only, skipping video file")
+            return
+        safe_ch = re.sub(r"[^A-Za-z0-9 ._-]", "", channel or "unknown").strip() or "unknown"
+        safe_ti = re.sub(r"[^A-Za-z0-9 ._-]", "", title or vid).strip()[:120] or vid
+        dest_dir = PLEX_YT / safe_ch
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / f"{safe_ti} [{vid}]{video.suffix.lower()}"
+        if dest.exists():
+            return  # already filed (idempotent on re-capture)
+        shutil.move(str(video), str(dest))
+        log(f"Filed to Plex: {dest}")
+    except Exception as e:
+        log(f"Plex filing failed (non-fatal, transcript kept): {e}")
 CHUNK = 1500
 
 
@@ -74,7 +104,13 @@ def meta_of(vid):
 def download(url, live, stem):
     WORK.mkdir(parents=True, exist_ok=True)
     out = str(WORK / f"{stem}.%(ext)s")
-    cmd = ytbase() + ["-f", "bestaudio/best", "--write-subs", "--sub-langs", "live_chat", "-o", out]
+    # 480p VIDEO (with audio) instead of audio-only — Jordan wants the streams kept in Plex
+    # (2026-08-11). We transcribe from this same file (to_wav extracts the audio), so it's one
+    # download serving both the transcript AND the Plex archive. 480p is plenty for talking-head
+    # streams and keeps multi-hour files ~0.5-1GB. Merge to mp4 for Plex compatibility.
+    cmd = ytbase() + ["-f", "bv*[height<=480]+ba/b[height<=480]/best[height<=480]/best",
+                      "--merge-output-format", "mp4",
+                      "--write-subs", "--sub-langs", "live_chat", "-o", out]
     if live:
         cmd += ["--live-from-start", "--wait-for-video", "0"]
     cmd += [url]
@@ -268,6 +304,10 @@ def main():
             transcript = transcribe(wav, stem)
     chat, commenters = parse_chat(chatf)
     record_commenters(channel, vid, commenters)
+    # File the VIDEO into Plex's YouTube library before cleaning up the temp dir, so fishbowl
+    # streams show up in Plex (Jordan 2026-08-11). Everything captured, grouped by channel under
+    # a "Fishbowl" folder. Then delete the leftover temp files (audio-extract wavs, chat json).
+    file_video_to_plex(stem, channel, title, vid)
     for f in WORK.glob(f"{stem}.*"):
         try:
             f.unlink()
