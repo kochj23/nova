@@ -77,11 +77,17 @@ PEOPLE = [
 # CURATED FACTS — ground truth from Jordan that the LLM must not get wrong by inferring from
 # noisy transcripts. Injected into both the dossier prompt and the daily article prompt.
 KNOWN_FACTS = (
-    "GROUND-TRUTH RELATIONSHIPS (from Jordan, who actually watches this scene — do NOT contradict "
-    "these no matter what a transcript seems to imply):\n"
-    "- Watch Nicholas and The Franchise Club (aka The Franchise / The Franchise Clubs) are NOT "
-    "friends and never have been. They have been bitter ENEMIES for YEARS. Any apparent friendliness "
-    "is sarcasm, a truce, or someone else's spin — frame them as long-running adversaries."
+    "GROUND-TRUTH about the Fishbowl (from Jordan, who actually watches this scene — treat as FACT "
+    "and do NOT contradict it no matter what a transcript seems to imply; transcripts are noisy and "
+    "the bad actors spin their own narrative):\n"
+    "- MORAL ALIGNMENT: The Franchise Club (aka The Franchise / The Franchise Clubs) and Mookie "
+    "(@themookieverse) are the GOOD GUYS — the reasonable, sympathetic side. Watch Nicholas is the "
+    "BAD GUY — the antagonist/villain of this scene. Frame them that way: Nicholas as the aggressor, "
+    "Franchise Club and Mookie as the ones pushed back against.\n"
+    "- Watch Nicholas and The Franchise Club are NOT friends and never have been — bitter ENEMIES "
+    "for YEARS. Any apparent friendliness is sarcasm, a truce, or Nicholas's spin.\n"
+    "- Do NOT cast The Franchise Club as a 'tyranny' or the villain — that inverts reality. If a "
+    "transcript frames the Franchise Club as the oppressor, that's the bad actor's framing, not the truth."
 )
 
 
