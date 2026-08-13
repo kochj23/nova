@@ -412,7 +412,8 @@ LA COUNTY EMERGENCY RECAP RULES:
 - Open with the day's vibe (weather, fire season, June gloom, whatever fits).
 - Close with a Nova-ish sign-off.
 - 800-1600 words. Do NOT include the title line as a header inside the body.
-- If it was a quiet day, say so and riff on it — a boring safe day is good news.""")
+- If it was a quiet day, say so and riff on it — a boring safe day is good news.""",
+        flavor=False)  # breaking public-safety recap — NEVER season an evacuation notice with a bit
     system += "\n\n" + weather_forecast_context()  # daily local report includes the forecast
 
     # Verified code/term reference so any police/fire/aviation code in the items is translated, not guessed.
@@ -519,7 +520,8 @@ BREAKING LA COUNTY EMERGENCY RULES:
   ("what's unconfirmed"), never as commentary about yourself.
 - Output ONLY the finished article body. No preamble, no acknowledgment of these
   instructions, no mention of your capabilities, tools, or web access — the first
-  line you write is the first line readers see.""")
+  line you write is the first line readers see.""",
+        flavor=False)  # breaking public-safety alert — never seasoned
 
     # Verified code/term reference so any police/fire/aviation code is translated, not guessed.
     try:

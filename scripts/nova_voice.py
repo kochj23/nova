@@ -272,22 +272,51 @@ def shared_context() -> str:
     return _live_facts() + _recent_activity()
 
 
-def system_prompt(context: str = "", section: str = "", topic: str = "") -> str:
+# Map a CONTEXT_JOURNAL_* block to the section name the lexicon seasons on. Generators almost
+# never pass an explicit section= (only two did fleet-wide), so the borrowed tongues barely
+# fired. Inferring the section from the context block that's ALREADY being passed lights up
+# every article generator at once — without editing each one — while an unrecognised context
+# (e.g. a breaking-emergency caller that passes none) still infers "" and stays unseasoned.
+_CTX_TO_SECTION = None
+
+
+def _infer_section(context: str) -> str:
+    global _CTX_TO_SECTION
+    if _CTX_TO_SECTION is None:
+        pairs = [(CONTEXT_JOURNAL_OPS, "operations"), (CONTEXT_JOURNAL_LOCAL, "local"),
+                 (CONTEXT_JOURNAL_SECURITY, "security"), (CONTEXT_JOURNAL_ESSAY, "essays"),
+                 (CONTEXT_JOURNAL_RESEARCH, "research"), (CONTEXT_JOURNAL_AFTER_DARK, "after-dark"),
+                 (CONTEXT_JOURNAL_DIGEST, "digests"), (CONTEXT_JOURNAL_WEIRD_MEMORIES, "rando"),
+                 (CONTEXT_JOURNAL_VECTOR_AUDIT, "meta")]
+        # longest constant first so a block that contains another matches specifically
+        _CTX_TO_SECTION = sorted(((c.strip(), s) for c, s in pairs if c),
+                                 key=lambda x: -len(x[0]))
+    for const, sec in _CTX_TO_SECTION:
+        if const and const in context:
+            return sec
+    return ""
+
+
+def system_prompt(context: str = "", section: str = "", topic: str = "", flavor: bool = True) -> str:
     """Build a complete system prompt with Nova's voice + optional context additions.
 
     NOTE: the live weather dateline is prepended to the BODY by publish_hugo (and the
     burbank publisher) — NOT injected here — so it never gets scraped as the title.
 
-    section/topic (optional) enable the borrowed-tongues seasoning — a topic-matched
-    Ferengi Rule of Acquisition plus Newspeak/Mando'a flavour. Omitted automatically
-    for public-safety sections; see nova_lexicon.seasoning().
+    Borrowed-tongues seasoning (a topic-matched Ferengi Rule + a rotating sample of Nova's
+    conlangs and creeds; see nova_lexicon.seasoning()) fires for any recognised article
+    section — passed explicitly OR inferred from the CONTEXT_JOURNAL_* block. Pass flavor=False
+    to force it off; the breaking-emergency generators do exactly that so an evacuation notice
+    is never seasoned.
     """
     prompt = NOVA_VOICE + _live_facts() + _recent_activity()
-    try:
-        from nova_lexicon import seasoning
-        prompt += seasoning(section, topic or context[:300])
-    except Exception:
-        pass  # flavour is never allowed to break publishing
+    if flavor:
+        try:
+            from nova_lexicon import seasoning
+            sec = section or _infer_section(context)
+            prompt += seasoning(sec, topic or context[:300])
+        except Exception:
+            pass  # flavour is never allowed to break publishing
     if context:
         return prompt + "\n" + context
     return prompt
