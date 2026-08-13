@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-"""nova_overnight_review.py — 6:30am daily operations review.
+"""nova_copenhagen.py — 6:30am daily operations review (the alert verifier).
+
+Named for the Copenhagen interpretation: every overnight alert is in superposition — both a real
+fire AND a false alarm — until something OBSERVES it and collapses the wavefunction to a definite
+state. This is that observer. It opens the box.
 
 Reads the past 24h of the five alert channels (nova-alerts, nova-critical, nova-digest,
-nova-feed, nova-warning), de-duplicates the storm into DISTINCT incidents, separates REAL
-problems from monitor NOISE / FALSE ALARMS, auto-applies a whitelist of safe fixes (idempotent
-re-runs only — never destructive, per redline), queues the rest for a session, and publishes a
-SANITIZED public operations postmortem plus a #nova-digest summary.
+nova-feed, nova-warning), de-duplicates the storm into DISTINCT incidents, COLLAPSES each to REAL
+vs NOISE / FALSE ALARM, auto-applies a whitelist of safe fixes (idempotent re-runs only — never
+destructive, per redline), queues the rest for a session, and publishes a SANITIZED public
+operations postmortem plus a #nova-digest summary. (Formerly nova_overnight_review; renamed
+2026-08-13.)
 
 Design notes:
 - The channels re-fire the same alerts every 30-60 min all night, so raw counts lie. We cluster
@@ -19,7 +24,7 @@ Design notes:
 - PUBLIC output is sanitized: internal IPs and hostnames are replaced BEFORE the text ever reaches
   the LLM or the site (redline: no internal topology, no third-party data).
 
-Run: 6:30am daily (scheduler task overnight_review). Manual: `python3 nova_overnight_review.py`
+Run: 6:30am daily (scheduler task copenhagen). Manual: `python3 nova_copenhagen.py`
 (add --dry-run to skip publishing/fixing).
 """
 from __future__ import annotations
@@ -49,7 +54,7 @@ DSN = "host=localhost dbname=nova_ops user=kochj"
 
 
 def log(m):
-    print(f"[overnight_review {time.strftime('%H:%M:%S')}] {m}", flush=True)
+    print(f"[copenhagen {time.strftime('%H:%M:%S')}] {m}", flush=True)
 
 
 # ── 1. fetch ──────────────────────────────────────────────────────────────────
@@ -162,9 +167,11 @@ def sanitize(text: str) -> str:
     text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "an internal host", text)
     for h in sorted(_HOSTS, key=len, reverse=True):
         text = re.sub(re.escape(h), "an internal node", text, flags=re.I)
-    # Household first names -> "a resident" (word-boundary; "Amy's iPhone" -> "a resident's iPhone").
+    # Household first names -> "a resident". The optional 's/'s catches BOTH the alert form
+    # ("Amy's iPhone" -> "a resident's iPhone") AND the device-label compound ("Amys-iPhone" ->
+    # "a resident-iPhone") that a bare \bamy\b would miss. Redline-critical, so cover both.
     for n in _HOUSEHOLD:
-        text = re.sub(rf"\b{re.escape(n)}\b", "a resident", text, flags=re.I)
+        text = re.sub(rf"\b{re.escape(n)}(?:'?s)?\b", "a resident", text, flags=re.I)
     # Presence/surveillance method names reveal how the house watches itself — generalize them
     # (redline spirit: no internal topology / surveillance detail in public).
     text = re.sub(r"\b(vehicle_vision|gps_tracker|av_power|ha_motion|ha_lights|ha_presence|"
@@ -301,13 +308,13 @@ def queue_stale(stale: list, dry: bool):
     try:
         import psycopg2
         conn = psycopg2.connect(DSN); conn.autocommit = True; cur = conn.cursor()
-        cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES ('overnight-review','active') "
+        cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES ('copenhagen','active') "
                     "ON CONFLICT (session_id) DO NOTHING")
         for s in todo:
             desc = f"STALE DAEMON: restart {s['name']} — running {s['stale_h']:.0f}h-old code"
             cur.execute(
                 """INSERT INTO claude_queue (session_id, status, priority, description, context)
-                   SELECT 'overnight-review','queued',2,%s,%s
+                   SELECT 'copenhagen','queued',2,%s,%s
                    WHERE NOT EXISTS (SELECT 1 FROM claude_queue WHERE description=%s AND status IN ('queued','in_progress'))""",
                 (desc, f"Process up since {s['since']}; on-disk code is newer. Restart: {_restart_cmd(s)}", desc))
         cur.close(); conn.close()
@@ -391,7 +398,7 @@ def queue_for_session(real_incidents: list, dry: bool):
         conn = psycopg2.connect(DSN)
         conn.autocommit = True
         cur = conn.cursor()
-        cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES ('overnight-review','active') "
+        cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES ('copenhagen','active') "
                     "ON CONFLICT (session_id) DO NOTHING")
         for inc in real_incidents:
             if any(k in inc["sig"] for k in SAFE_FIXES):
@@ -401,7 +408,7 @@ def queue_for_session(real_incidents: list, dry: bool):
             desc = f"OVERNIGHT: {inc['example'][:80]}"
             cur.execute(
                 """INSERT INTO claude_queue (session_id, status, priority, description, context)
-                   SELECT 'overnight-review','queued',3,%s,%s
+                   SELECT 'copenhagen','queued',3,%s,%s
                    WHERE NOT EXISTS (SELECT 1 FROM claude_queue WHERE description=%s AND status IN ('queued','in_progress'))""",
                 (desc, f"{inc['count']}x in 24h. {inc['note']}", desc))
         cur.close(); conn.close()
@@ -483,7 +490,12 @@ AUTO-FIXES APPLIED THIS RUN:
     from nova_voice import system_prompt, CONTEXT_JOURNAL_OPS
     system = system_prompt(CONTEXT_JOURNAL_OPS) + (
         "\n\nADDITIONAL RULES FOR THIS PIECE:\n"
-        "- This is your MORNING OPERATIONS REVIEW: the past 24h of your own alert channels.\n"
+        "- This is your MORNING OPERATIONS REVIEW — you are COPENHAGEN, the observer. Lean into the "
+        "quantum-measurement frame, lightly and wittily, not as a gimmick: every overnight alert "
+        "arrives in SUPERPOSITION — simultaneously a real fire and a false alarm — and stays both "
+        "until you open the box and OBSERVE it. Your whole job is COLLAPSING each one to a definite "
+        "state. Prefer the verbs: an alert 'collapses to REAL' or 'collapses to NOISE.' You can open "
+        "with the box being opened. Don't overdo the physics — a few good beats, then get on with it.\n"
         "- The THESIS: an alert storm is mostly the monitoring crying wolf; the skill is telling the "
         "real fire from the smoke-detector-that-hallucinates-smoke. Be ruthless about the false alarms "
         "(name the broken behavior — a memory metric that reads 'free' instead of 'available', a "
@@ -543,8 +555,8 @@ AUTO-FIXES APPLIED THIS RUN:
 
     if dry:
         log(f"[dry-run] would publish: '{title}' ({len(body.split())} words, image={'yes' if image_path else 'no'})")
-        Path("/tmp/overnight_review_preview.md").write_text(f"# {title}\n\n{body}")
-        return "[dry-run] /tmp/overnight_review_preview.md"
+        Path("/tmp/copenhagen_preview.md").write_text(f"# {title}\n\n{body}")
+        return "[dry-run] /tmp/copenhagen_preview.md"
 
     ok = j.publish_hugo(title=title, body=body, section="operations",
                         tags=["operations", "postmortem", "reliability", "alert-fatigue", "nova"],

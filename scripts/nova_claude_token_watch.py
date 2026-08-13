@@ -3,7 +3,7 @@
 
 THE RECURRING FAILURE: .6's Claude Max OAuth access token has an ~8h life and the headless
 background context doesn't reliably auto-refresh it, so it expires roughly nightly. Every time
-it does, every generator that shells out to `claude` (local_burbank, overnight_review, the
+it does, every generator that shells out to `claude` (local_burbank, copenhagen, the
 journal/ops pipeline, and — via claude_cred_sync — the whole .2 content fleet) fails until
 Jordan runs /login again. The publish guards now catch the resulting stubs (no garbage ships),
 but the articles silently go MISSING and Jordan only finds out hours later.

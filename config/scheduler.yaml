@@ -535,8 +535,8 @@ tasks:
   # 6:30am daily operations review — reads 24h of the alert channels, separates real problems
   # from monitor noise/false-alarms, auto-fixes the safe ones + queues the rest, publishes a
   # sanitized ops postmortem + a #nova-digest summary. Built 2026-08-10.
-  overnight_review:
-    script: nova_overnight_review.py
+  copenhagen:                      # was overnight_review — the alert verifier (renamed 2026-08-13)
+    script: nova_copenhagen.py
     schedule: cron 30 6 * * *
     timeout: 600
     overlap: skip
