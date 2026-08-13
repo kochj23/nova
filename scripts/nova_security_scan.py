@@ -439,9 +439,11 @@ COMMANDS = {
 TIMEOUTS = {
     "rkhunter": 600,
     "chkrootkit": 300,
-    # 1200, not 600: aide on .2 hit exactly 600s and errored on EVERY run in the last 7 days.
-    # A timeout that always fires is not a limit, it is a scheduled failure.
-    "aide": 1200,
+    # 3600 (Jordan, 2026-08-13): aide --check is a full-filesystem integrity hash and on nova-core
+    # it never finished inside 600s (it errored at exactly 600 EVERY night). An earlier bump to 1200
+    # never took effect because the runner was executing a stale copy — so this also gets redeployed
+    # to every host + the running process restarted. A full check legitimately wants up to an hour.
+    "aide": 3600,
 }
 
 

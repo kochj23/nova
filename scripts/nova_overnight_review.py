@@ -234,6 +234,10 @@ MONITOR_DAEMONS = [
     _L("nova-system-monitor",  "nova_big_brother.py",    "net.digitalnoise.nova-system-monitor"),
     _L("nova-backup-monitor",  "nova_backup_monitor.py", "net.digitalnoise.nova-backup-monitor"),
     _L("nova-core-liveness",   "nova_core_liveness.py",  "net.digitalnoise.core-liveness"),
+    # Added 2026-08-13: an 18-day-stale security-scan daemon held aide's timeout at 600 for weeks
+    # after the file said 1200 — exactly the stale-code-in-a-long-lived-process failure this check
+    # exists to catch. It was missed only because it wasn't listed. Now it is.
+    _L("nova-security-scan",   "nova_security_scan.py",  "net.digitalnoise.nova-security-scan"),
     {"name": "nova-scheduler-core", "script": "nova_scheduler.py", "host": "192.168.1.2",
      "unit": "nova-scheduler-core.service", "auto": False},  # may be mid-task — queue, don't bounce
 ]
