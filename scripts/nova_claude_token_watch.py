@@ -66,37 +66,66 @@ def _record(hours_left):
         pass
 
 
+def _longlived_ok() -> bool:
+    """Is the long-lived CLAUDE_CODE_OAUTH_TOKEN (from `claude setup-token`) present AND does it
+    actually authenticate? This is now the PRIMARY health signal: while it's good, the nightly
+    expiry of the short-lived FILE credential is harmless — `claude -p` falls back to this token
+    (nova_claude_code.claude_env injects it), so generators keep working. Verified 2026-08-12."""
+    try:
+        from nova_claude_code import claude_oauth_token
+        tok = claude_oauth_token()
+    except Exception:
+        tok = None
+    if not tok:
+        return False
+    try:
+        import tempfile, subprocess, os
+        th = tempfile.mkdtemp()          # blind `claude` to any file credential — token-only auth
+        env = {**os.environ, "HOME": os.path.expanduser("~"), "CLAUDE_CODE_OAUTH_TOKEN": tok}
+        # keychain read needs the real HOME; the CLI is pointed at the empty temp HOME below
+        env["HOME"] = th
+        r = subprocess.run(["claude", "-p", "--model", "haiku"], input="Reply with the single word OK.",
+                           capture_output=True, text=True, timeout=60, env=env)
+        return "OK" in (r.stdout or "")
+    except Exception:
+        return False
+
+
 def main() -> int:
+    # PRIMARY: the long-lived token. If it's healthy, the short-lived file-credential's nightly
+    # expiry is a non-event — do NOT page about it (that was the old false-alarm-forever behaviour).
+    ll = _longlived_ok()
+    if ll:
+        _record(24 * 365)   # effectively "fresh" — the long-lived token carries auth
+        print("token: long-lived CLAUDE_CODE_OAUTH_TOKEN present and authenticating — healthy")
+        return 0
+
+    # Long-lived token MISSING or BROKEN — we've regressed to the nightly file-credential dance.
+    # THIS is worth an alarm, because now the old failure mode is back in play.
+    _notify("Claude long-lived token missing/broken on .6 — back on the nightly-expiry treadmill",
+            "The CLAUDE_CODE_OAUTH_TOKEN from `claude setup-token` no longer authenticates (Keychain "
+            "'claude-code-oauth-token' on .6 / ~/.config/nova/claude-oauth-token on the Linux nodes). "
+            "Re-run `claude setup-token` and store it, or generators will start failing again whenever "
+            "the short-lived file credential expires. See agent_docs services-monitoring.", "warning")
+
     o = read_token()
     if not o:
-        _notify("Claude token unreadable on .6",
-                "Keychain 'Claude Code-credentials' missing/unreadable — .6 may be logged out. "
-                "Run `claude /login` (or `claude setup-token` for a long-lived token).", "critical")
-        print("token: unreadable")
+        _notify("Claude file credential ALSO unreadable on .6 — logged out",
+                "Both the long-lived token and the Keychain file credential are unavailable; "
+                "`claude -p` cannot authenticate at all. Run `claude /login` and `claude setup-token`.",
+                "critical")
+        print("token: long-lived broken AND file cred unreadable")
         return 0
 
     now = time.time() * 1000
     access_h = (int(o.get("expiresAt", 0)) - now) / 3600000.0
-    refresh_d = (int(o.get("refreshTokenExpiresAt", 0)) - now) / 86400000.0
     _record(access_h)
-
     if access_h <= 0:
-        _notify("Claude token EXPIRED on .6 — content generators are failing NOW",
-                "The access token has expired; local_burbank / overnight_review / the journal "
-                "pipeline (and the .2 fleet via cred-sync) will fail until you re-auth. "
-                "Run `claude /login`. Permanent fix: `claude setup-token` (long-lived).", "critical")
-    elif access_h < WARN_H:
-        _notify(f"Claude token on .6 expires in {access_h:.1f}h",
-                "Re-auth soon to avoid overnight article failures: `claude /login`. "
-                "Permanent fix so this stops recurring: `claude setup-token` (long-lived token).",
-                "warning")
-
-    if 0 < refresh_d < REFRESH_WARN_DAYS:
-        _notify(f"Claude REFRESH token on .6 expires in {refresh_d:.1f} days",
-                "The 27-day refresh token is nearly up — a `claude /login` will be required soon "
-                "regardless of the nightly access-token dance.", "warning")
-
-    print(f"token: access {access_h:.1f}h left, refresh {refresh_d:.1f}d left")
+        _notify("Claude file credential EXPIRED and no long-lived fallback — generators failing NOW",
+                "The short-lived access token has expired and the long-lived token isn't working, so "
+                "content generation is down. Run `claude setup-token` (preferred) or `claude /login`.",
+                "critical")
+    print(f"token: long-lived BROKEN; file-cred access {access_h:.1f}h left")
     return 0
 
 

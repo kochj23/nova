@@ -289,11 +289,20 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
     import os as _os
     import signal as _signal
     proc = None
+    # Inject the long-lived CLAUDE_CODE_OAUTH_TOKEN so `claude -p` stays authenticated even after
+    # its short-lived file credential expires nightly (the recurring "Not logged in" that killed
+    # every generator). Fail-safe: if the helper or token is unavailable, env stays None and the
+    # CLI falls back to its file credential exactly as before.
+    try:
+        from nova_claude_code import claude_env
+        _env = claude_env()
+    except Exception:
+        _env = None
     try:
         proc = subprocess.Popen(
             ["claude", "-p", "--model", cli_model, "--system-prompt", system],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, start_new_session=True)
+            text=True, start_new_session=True, env=_env)
         try:
             out, err = proc.communicate(input=user, timeout=240)
         except subprocess.TimeoutExpired:
