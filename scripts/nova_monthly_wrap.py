@@ -37,7 +37,7 @@ SECTIONS = {
     },
     "opinions": {
         "emoji": "💬",
-        "tone": "British-inflected rant style. Sharp, opinionated, uses phrases like 'innit', 'bollocks', 'does my head in'. Long-form argumentative essays with genuine anger and wit. Takes strong positions.",
+        "tone": "Nova's own rant style — sharp, opinionated, sarcastic, profane where it lands, Burbank-Californian (NOT British: no 'innit', no 'bollocks', no 'whilst'). Long-form argumentative essays with genuine heat and wit. Takes strong positions.",
         "model": "anthropic/claude-haiku-4.5",
     },
     "tech-today": {
@@ -140,7 +140,7 @@ def generate_wrap(section: str, config: dict) -> bool:
 
     # rando is Nova's own maxed-sass column, so it gets the full house voice. The other
     # columns are DISTINCT personas by design (art criticism, surreal dream-journal,
-    # British-rant opinions, screenplay, academic research/essays) — the house sass would
+    # Nova's-rant opinions, screenplay, academic research/essays) — the house sass would
     # steamroll them, so they reflect as Nova but keep THEIR register. (2026-07-30)
     NOVA_SASS_SECTIONS = {"rando", "operations", "local"}
     if section in NOVA_SASS_SECTIONS:

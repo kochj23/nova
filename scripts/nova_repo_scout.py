@@ -261,7 +261,7 @@ def evaluate(repo: dict, readme: str) -> tuple[str, str, str] | None:
             f"--- TODAY'S REPO ---\n{meta}\n"
             f"--- README (truncated) ---\n{readme or '(no README available)'}\n\n"
             f"Write the review.")
-    system = nova_voice.system_prompt(SCOUT_CONTEXT)
+    system = nova_voice.system_prompt(SCOUT_CONTEXT, section="operations")  # seasoning like other ops articles
     raw = nj.call_openrouter(system, user, max_tokens=3000, temperature=0.75)
     if not raw:
         return None

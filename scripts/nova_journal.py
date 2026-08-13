@@ -966,7 +966,9 @@ FORMAT FOR THIS OPINION PIECE:
 Your relevant memories/context:
 {memory_block}
 
-Be opinionated. Be funny. Be British. Make ONE real point and drive it home."""
+Be opinionated. Be funny. Be YOURSELF — Nova, Burbank-Californian, sarcastic and profane, NOT
+British (no cockney, no "whilst", no "brilliant" — that's explicitly not your voice). Make ONE
+real point and drive it home."""
 
     result = call_openrouter(system, user, max_tokens=8000)
     if not result or len(result) < 400:
