@@ -168,7 +168,9 @@ def get_burbank_search(limit=30, hours=36):
     return fresh
 
 
-def get_scanner_blotter(hours=18):
+def get_scanner_blotter(hours=24):  # 24, not 18: the scanner is this article's PRIMARY feed, and
+    # the piece frames itself as "the past 24 hours" (and get_local_news uses 24h) — an 18h scanner
+    # window made it narrate ~17-18h of reality while claiming 24, the mismatch Jordan spotted. 2026-08-13.
     """Airwaves activity (police + fire + rail), AGGREGATED IN CODE into safe theme tallies.
 
     Returns theme counts, aggregate distance-from-home (nearest run, how many within 3 mi), and
