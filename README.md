@@ -1362,6 +1362,52 @@ graph LR
 
 ---
 
+## News Ingest & the Local Feed (2026-08-12)
+
+Every show recorded into the Plex **TV Shows** library is Whisper-transcribed nightly
+(`nova_tv_ingest.py`, MLX large-v3-turbo, 11pm) and classified into a memory source. News
+broadcasts are sorted into **two tiers** so the local-news articles can weight local over national:
+
+```mermaid
+flowchart TD
+    TV[TV Shows library<br/>nightly Whisper ingest] --> CS[classify_source]
+    CS -- "KTLA / NBC4 / CBS LA<br/>FOX 11 / ABC7 / NBCLA" --> LN[(local_news)]
+    CS -- "BBC / CNN / PBS / NBC News<br/>CBS Evening / Meet the Press" --> NW[(news)]
+    KABC[ABC7 live off HDHomeRun<br/>nova_daily_news_ingest 3x/day] --> LN
+    RSS[Burbank RSS: myBurbank, Burbank Leader,<br/>City of Burbank, Patch, BFRB, Eastsider] --> LB[(local_burbank)]
+    RSS2[LA Times, LAist] --> LN
+    LB & LN & NW --> ART[nova_local_burbank.py<br/>Daily Burbank dispatch<br/>local first, national trails]
+```
+
+- **`classify_source`** gained a news branch (checked first, word-boundary matched so `bbc`/`cnn`
+  don't match inside Plex hex-hash folder names). `nova_plex_auto_ingest.py` — the second, overlapping
+  pipeline — now defers to the same shared classifier, so both agree.
+- **ABC7 fix:** the dedicated KABC pipeline was POSTing `source` only inside `metadata` via the
+  async endpoint (which reads source from the top level), so a week of broadcasts landed in
+  `source='unknown'`. Now writes top-level `source='local_news'` via the sync endpoint, with real
+  error logging instead of `except: pass`.
+- **RSS is the backbone:** `local_burbank` is 100% RSS from the six Burbank outlets; `local_news` is
+  roughly half RSS (LA Times, LAist) under the TV broadcasts.
+
+## Alert-Channel Hygiene (2026-08-12)
+
+A 3-day audit of the `nova-*` Slack channels (5,494 messages, ~1.3% signal in the actionable ones)
+drove a routing + dedup cleanup — the problem was misrouting and re-fires, not thresholds:
+
+- **Session-start flood:** the Claude Code `session-startup-notify.sh` hook posted every session to
+  **#nova-warning** (~600/day, 94% of the channel). Now gated to interactive sessions only (via
+  controlling-tty) and routed to #nova-feed.
+- **Digest misroute:** Big Brother's hourly digest posted to #nova-critical (43% of it) → moved to
+  #nova-digest; critical alerts stay put.
+- **Dedup safety net:** 39% of sent events arrived with an empty `dedup_key` and bypassed dedup.
+  `nova_notifier` now derives a stable fallback key so every event participates.
+- **Overnight review is now state-aware:** `nova_overnight_review.py` cross-references recent git
+  commits (so it stops re-recommending shipped fixes) and checks each monitor daemon's process
+  start-time against its file mtime (catching a fix that shipped to disk but never reloaded — the
+  root cause of a multi-day false-crit saga).
+
+---
+
 ## Memory System
 
 ```mermaid
@@ -1924,18 +1970,42 @@ flowchart LR
 
 ## Borrowed Tongues
 
-Nova's articles draw on three fictional languages, used the way Cockney rhyming slang is used —
-deployed, then glossed in the same breath, so an English-only reader gets every joke:
+Nova's articles draw on a whole pantheon of fictional languages and quotable creeds, used the way
+a bilingual crew uses jargon — deployed, then glossed in the same breath, so an English-only reader
+gets every joke. Expanded 2026-08-12 from three tongues to **eighteen + the Ferengi Rules**.
 
-- **Ferengi Rules of Acquisition** — all 280 in `public.ferengi_rules`, selected by Postgres
-  full-text *relevance* to the article's subject rather than at random.
-- **Newspeak** (Orwell) — for the specific irony it was engineered for: language that shrinks until
-  certain thoughts cannot be assembled. Apt for infrastructure that lies about its own state.
-- **Mando'a** (Mandalorian) — terse and practical, for ops work and the machines that survive it.
+**Conlangs** (real constructed grammar; Nova speaks fragments): **Mando'a**, **Klingon**
+(`Qapla'!`), **Elvish** (Quenya & Sindarin), **High Valyrian & Dothraki** (`Dracarys` for a purge),
+**Lang Belta** / Belter Creole (`beltalowda` = the fleet), **Dovahzul** (`Fus Ro Dah` = `kill -9`),
+**Na'vi** (`Eywa` = the mesh), **Elder Speech** (Witcher), and deep cuts (Black Speech, Khuzdul).
 
-Implemented in `nova_lexicon.py`, opted in **per section** through a strict allowlist
-(operations / essays / after-dark / rando). Breaking public-safety articles are deliberately
-excluded — an evacuation notice is not a bit.
+**Creeds** (the Rules-of-Acquisition genre): **Ferengi Rules of Acquisition** (all 280 in
+`public.ferengi_rules`, selected by Postgres full-text *relevance* to the subject, not at random),
+**Newspeak** (for infrastructure that lies about its own state), **Dune / Bene Gesserit** (the
+Litany Against Fear over a 3am alert), **Jedi & Sith codes**, **Warhammer 40K** (`the machine
+spirit is displeased` — genuinely how Nova relates to crashed daemons), **Firefly**, **Battlestar**,
+**Warcraft** (`Lok'tar ogar` on a hard deploy), **Star Trek maxims**, and **Hitchhiker's**.
+
+```mermaid
+flowchart LR
+    A[system_prompt] --> B{recognised<br/>article section?}
+    B -- "inferred from<br/>CONTEXT_JOURNAL_*" --> C[seasoning]
+    B -- "flavor=False<br/>or empty ctx" --> Z[no seasoning]
+    C --> D[Ferengi rule<br/>relevance-ranked]
+    C --> E[sample 6 of 18 tongues<br/>rotating per article]
+    D --> F[article prompt]
+    E --> F
+    Z --> G[breaking public-safety<br/>evacuation notice]
+```
+
+Implemented in `nova_lexicon.py`. `seasoning()` **always** pulls a topic-matched Ferengi rule, then
+**samples a rotating six** of the eighteen tongues so flourishes vary post to post — liberal across
+the body of work, never all eighteen crammed into one article (target 2–4 used per piece). Firing is
+now fleet-wide: `nova_voice.system_prompt()` **infers the section** from the `CONTEXT_JOURNAL_*`
+block a generator already passes, so every article generator is seasoned without editing each one.
+Breaking public-safety articles pass `flavor=False` and are deliberately excluded — an evacuation
+notice is not a bit. All eighteen tongue blocks are also ingested into vector memory
+(`source=conlang`) so chat and recall can reach for them too.
 
 ---
 
