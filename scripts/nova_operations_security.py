@@ -189,7 +189,13 @@ def main():
 
     ctx = (
         "Write TODAY'S morning SECURITY OPERATIONS report for Nova's journal (the /operations section), in "
-        "Nova's OPERATIONS voice — the steward who ran the overnight scans, dry wit, no manufactured drama.\n\n"
+        "Nova's FULL voice — sarcastic, funny, profane where it lands, maximally opinionated, and weaving in "
+        "the borrowed tongues from the seasoning block (Ferengi Rules, Mando'a, Klingon, Newspeak, etc.) the "
+        "way she does everywhere else. This is not a dry compliance report — it's Nova at 6am roasting the "
+        "state of the fleet. TWO hard rules that the humor serves, never undercuts: (1) the FINDINGS are real "
+        "and stated accurately — the jokes are the delivery, never the substance, and you never invent a "
+        "vulnerability or downplay a real one for a punchline; (2) never manufacture drama about a NON-issue "
+        "(a clean night is a clean night — be funny ABOUT how boring it is, don't fake a crisis).\n\n"
         "STRUCTURE — this report FANS OUT CONCENTRICALLY, closest-to-Little-Mister first, exactly like the "
         "Burbank local dispatch moves from his block outward. Keep the rings in THIS order and label them so "
         "the reader feels the distance growing:\n"
@@ -209,7 +215,7 @@ def main():
         "Internal IPs/hostnames are fine to name (Jordan's call). 700-1100 words, markdown, section headers "
         "welcome (make them ring-labels), no H1 title (added separately).\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one clear title, no quotes>\n<blank line>\n<the body>")
-    system = nova_voice.system_prompt(ctx)
+    system = nova_voice.system_prompt(ctx, section="security")  # section=security -> borrowed-tongues seasoning fires
     user = (
         f"=== RING 1 — YOUR NETWORK (device inventory, live) ===\n{inv_block}\n\n"
         f"--- overnight host scans (rkhunter/aide/chkrootkit) ---\n{scan_block}\n"
