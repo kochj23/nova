@@ -114,9 +114,18 @@ def get_all_vectors() -> list[tuple[str, int]]:
 
 
 def sample_memories(vector: str, n: int = 20) -> list[dict]:
-    """Sample random memories from a vector."""
+    """Sample random memories from a vector.
+
+    NOTE the regexp_replace: psql output is parsed below by splitting on NEWLINES, so any memory
+    whose text contains a newline (most multi-part docs do — "Foo — Plot (part 8/14):\\nBody…")
+    was getting split across output lines. Only the FIRST line survived the `"|" in line` filter,
+    truncating the memory to its pre-newline fragment — and when that fragment was < 30 chars
+    ("Polyester — Plot (part 8/14):"), the quality check counted it as NEAR-EMPTY. That single
+    parser bug manufactured ~2,189 phantom near-empties in the 2026-08-13 run ("Memory Filing
+    Catastrophe") — the store was fine; the sampler was lying. Collapse newlines to spaces so each
+    memory is exactly one output line and the full 300-char preview reaches the quality check."""
     result = psql(f"""
-        SELECT id, LEFT(text, 300) as text FROM memories
+        SELECT id, regexp_replace(LEFT(text, 300), E'[\\r\\n]+', ' ', 'g') AS text FROM memories
         WHERE source = '{vector}'
         ORDER BY RANDOM() LIMIT {n};
     """)
