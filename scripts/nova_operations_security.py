@@ -123,11 +123,39 @@ def get_security_advisories():
     return mine[:8], broad[:8]
 
 
+# ── RING 1 (software layer) + RING 2 (real version-level exposure) ────────────
+def get_package_audit(cur):
+    """Fresh fleet software audit from nova_pkg_audit (package_audit_hosts + package_audit).
+    Returns (summary_block, exposure_block). An OUTDATED package is Jordan's real CVE surface —
+    version-level exposure on the software he actually runs, not vendor-name guessing."""
+    hosts = q(cur, "SELECT host_name, installed, outdated, reachable, to_char(ts,'MM-DD HH24:MI') "
+                   "FROM package_audit_hosts ORDER BY outdated DESC")
+    if not hosts:
+        return "(no software audit yet — nova_pkg_audit hasn't populated package_audit)", "(none)"
+    inst = sum(h[1] for h in hosts if h[3]); out = sum(h[2] for h in hosts if h[3])
+    reach = sum(1 for h in hosts if h[3]); freshest = max((h[4] for h in hosts), default="?")
+    per_host = "; ".join(f"{h[0]} {h[2]} pending/{h[1]}" for h in hosts if h[3])
+    unreach = ", ".join(h[0] for h in hosts if not h[3])
+    summary = (f"{inst:,} packages installed across {reach} reachable hosts; {out} updates pending "
+               f"(audited {freshest}). Per host: {per_host}." + (f" Unreachable: {unreach}." if unreach else ""))
+    # exposure: the outdated packages themselves, security-notable ones surfaced first
+    NOTABLE = ("openssl", "libssl", "openssh", "ssh", "docker", "containerd", "curl", "libcurl",
+               "sudo", "kernel", "linux-", "glibc", "apparmor", "nginx", "bind9", "python3",
+               "signal", "postgres", "gnutls", "libxml", "expat", "zlib", "git")
+    rows = q(cur, "SELECT host_name, package_name, current_version, available_version, source FROM package_audit")
+    notable = [r for r in rows if any(n in (r[1] or '').lower() for n in NOTABLE)]
+    others = [r for r in rows if r not in notable]
+    pick = (notable[:10] + others[:5]) or rows[:12]
+    exposure = "\n".join(f"- {r[1]} {r[2]} -> {r[3]} on {r[0]} ({r[4]})" for r in pick) or "(nothing pending)"
+    return summary, exposure
+
+
 def main():
     c = psycopg2.connect(OPS_DSN); c.autocommit = True; cur = c.cursor()
 
-    # RING 1 — inventory + posture
+    # RING 1 — inventory + posture + software audit
     devices, camera_count, infra = get_inventory(cur)
+    sw_summary, sw_exposure = get_package_audit(cur)
     scans = q(cur, "SELECT host_name, scan_type, status, coalesce(findings::text,'[]') FROM security_scan_results "
                    "WHERE scan_time > now() - interval '30 h' ORDER BY host_name, scan_type")
     wz = q(cur, "SELECT count(*), mode() WITHIN GROUP (ORDER BY rule_description) FROM security_events "
@@ -205,12 +233,17 @@ def main():
         "Burbank local dispatch moves from his block outward. Keep the rings in THIS order and label them so "
         "the reader feels the distance growing:\n"
         "1. YOUR NETWORK (closest): open on the actual device manifest — how many devices are on the network "
-        "right now, the switches/APs, and the notable clients. Then the overnight posture: which hosts scanned "
-        "(rkhunter/aide/chkrootkit), the Strix purple-team result, the Wazuh picture. Flag anything unknown or "
-        "risky ON HIS OWN NETWORK first — that's the whole point.\n"
-        "2. CVEs AGAINST YOUR GEAR (the part he cares about MOST): CVEs / hacks reported against the vendors and "
-        "models he ACTUALLY runs (Ubiquiti/UniFi, Synology, Apple, his AV/IoT). Lead the security-news portion "
-        "with THESE. If none hit his gear, say so plainly — that's a good result, not a boring one.\n"
+        "right now, the switches/APs, and the notable clients. THEN the software layer: how many packages are "
+        "installed across the fleet and how many updates are pending (from the fleet software audit) — the "
+        "machines aren't just boxes, they're running actual software. Then the overnight posture: which hosts "
+        "scanned (rkhunter/aide/chkrootkit), the Strix purple-team result, the Wazuh picture. Flag anything "
+        "unknown or risky ON HIS OWN NETWORK first — that's the whole point.\n"
+        "2. EXPOSURE ON YOUR GEAR (the part he cares about MOST): LEAD with the UPDATES PENDING on his ACTUAL "
+        "installed software — that outdated-package list IS his real, version-level attack surface (an unpatched "
+        "package is a live CVE waiting to happen), far more concrete than 'you own an Apple'. Call out the "
+        "security-notable ones (ssl/ssh/docker/kernel/sudo/etc.) by name and version. THEN fold in any CVE/"
+        "advisory items that name vendors he runs. If nothing's pending and no advisory hits, say so plainly — "
+        "that's a good result, not a boring one.\n"
         "3. BROADER CVEs (fanning out): other-vendor CVEs and industry threat news — keep it BRIEF and clearly "
         "secondary. Do NOT open the news with a vendor he doesn't run; a Cisco CVE is a footnote here, not a lede.\n"
         "4. MILITARY / GEOPOLITICAL (farthest ring): a short summary of the defense/geopolitics feed, clearly "
@@ -223,10 +256,14 @@ def main():
     system = nova_voice.system_prompt(ctx, section="security")  # section=security -> borrowed-tongues seasoning fires
     user = (
         f"=== RING 1 — YOUR NETWORK (device inventory, live) ===\n{inv_block}\n\n"
+        f"--- software installed on your hosts (fleet audit) ---\n{sw_summary}\n"
         f"--- overnight host scans (rkhunter/aide/chkrootkit) ---\n{scan_block}\n"
         f"--- Strix purple-team pentest ---\n{strix_block}\n"
         f"--- Wazuh (overnight) ---\n{wz_block}\nHigh-severity (10+): {wzhi_block}\n\n"
-        f"=== RING 2 — CVEs AGAINST YOUR GEAR (priority) ===\n{mine_block}\n\n"
+        f"=== RING 2 — EXPOSURE ON YOUR GEAR (priority) ===\n"
+        f"UPDATES PENDING on your actual installed software — an outdated package is your real, "
+        f"version-level CVE surface (this is the concrete answer to 'what's exposed on MY gear'):\n{sw_exposure}\n\n"
+        f"CVE/advisory items naming vendors you run:\n{mine_block}\n\n"
         f"=== RING 3 — BROADER CVEs (brief, secondary) ===\n{broad_block}\n\n"
         f"=== RING 4 — MILITARY / GEOPOLITICAL (farthest, summarize) ===\n{mil_block}\n\n"
         f"--- open security queue ---\n{queue_block}\n"
