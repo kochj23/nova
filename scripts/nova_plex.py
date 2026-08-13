@@ -5,7 +5,7 @@ nova_plex.py — Comprehensive Plex Media Server integration for Nova.
 Single script with subcommands for watch history, active sessions, stats,
 library sync, recommendations, mood tracking, and more.
 
-Plex server: Synology NAS at 192.168.1.10:32400
+Plex server: nova-core at 192.168.1.2:32400 (host resolved via service mesh)
 Auth: macOS Keychain (service: nova-plex-token, account: nova)
 Skips library key 23 ("Other") in ALL queries.
 

@@ -795,9 +795,9 @@ class TestPlexIngestIntegration:
     def check_services_available(self):
         import urllib.request
         try:
-            urllib.request.urlopen("http://192.168.1.10:32400/identity", timeout=3)
+            urllib.request.urlopen("http://192.168.1.2:32400/identity", timeout=3)
         except Exception:
-            pytest.skip("Plex server at 192.168.1.10:32400 not available")
+            pytest.skip("Plex server at 192.168.1.2:32400 not available")
         try:
             urllib.request.urlopen("http://127.0.0.1:18790/health", timeout=3)
         except Exception:

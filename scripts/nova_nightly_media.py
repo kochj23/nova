@@ -75,7 +75,7 @@ from nova_yt_new_episodes import (
 
 # ── Config constants ──────────────────────────────────────────────────────────
 
-BASE_DIR        = Path("/Volumes/external/videos/TVShows")
+BASE_DIR        = Path("/Volumes/external/videos/youtube")
 VIDEO_ROOT      = Path("/Volumes/external/videos")
 EXCLUDED_DIRS   = {"other", "Other"}
 MUSIC_DIRS      = {"Youtube Music Videos"}

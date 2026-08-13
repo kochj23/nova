@@ -47,7 +47,7 @@ def categories():
 
 def nearest(category, lat, lon, limit=5):
     import psycopg2
-    sql = (f"SELECT name, subcategory, url, round({_DIST}::numeric,1) AS miles "
+    sql = (f"SELECT name, subcategory, url, round({_DIST}::numeric,0) AS miles "
            "FROM places WHERE category=%s AND lat IS NOT NULL ORDER BY miles LIMIT %s")
     with psycopg2.connect(MEM_DSN) as c, c.cursor() as cur:
         cur.execute(sql, (lat, lon, lat, category, limit))

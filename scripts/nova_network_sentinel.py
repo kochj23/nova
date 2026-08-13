@@ -75,7 +75,7 @@ KNOWN_SAFE = {
     "192.168.1.2": "nova-core",
     "192.168.1.6": "M4 Mac — Nova primary host",
     "192.168.1.7": "TV-Movies Mac Mini (itunes)",
-    "192.168.1.10": "NUK (Plex, Homebridge)",
+    "192.168.1.10": "NUK (Homebridge)",
     "192.168.1.11": "Synology NAS",
     "192.168.1.89": "HDHomeRun TV tuner (multi-port probe is normal)",
     "192.168.1.190": "Mac Mini (secondary)",

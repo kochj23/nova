@@ -632,14 +632,14 @@ class TestPlexIntegration:
     def check_plex_available(self):
         import urllib.request
         try:
-            urllib.request.urlopen("http://192.168.1.10:32400/identity", timeout=3)
+            urllib.request.urlopen("http://192.168.1.2:32400/identity", timeout=3)
         except Exception:
-            pytest.skip("Plex server at 192.168.1.10:32400 not available")
+            pytest.skip("Plex server at 192.168.1.2:32400 not available")
 
     def test_can_connect_to_plex(self, plex_module):
         """Verify connection to Plex server."""
         import urllib.request
-        resp = urllib.request.urlopen("http://192.168.1.10:32400/identity", timeout=5)
+        resp = urllib.request.urlopen("http://192.168.1.2:32400/identity", timeout=5)
         assert resp.status == 200
 
     def test_rewatch_returns_data(self, plex_module):

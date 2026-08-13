@@ -6,7 +6,7 @@
 
 CHANNEL_URL="https://www.youtube.com/@ForgottenWeapons"
 SHOW_NAME="Forgotten Weapons"
-BASE_DIR="/Volumes/external/videos/TVShows"
+BASE_DIR="/Volumes/external/videos/youtube"
 SHOW_DIR="${BASE_DIR}/${SHOW_NAME}"
 SEASON_DIR="${SHOW_DIR}/Season 01"
 LOG_FILE="${HOME}/.openclaw/logs/yt_forgotten_weapons.log"

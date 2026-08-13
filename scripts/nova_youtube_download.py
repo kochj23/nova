@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-nova_youtube_download.py — Download YouTube channels into TVShows structure.
+nova_youtube_download.py — Download YouTube channels into the youtube library structure.
 
 Downloads videos from YouTube channels/playlists into:
-  /Volumes/external/videos/TVShows/<ChannelName>/Season XX/<ChannelName> - SXXEXX - Title.mp4
+  /Volumes/external/videos/youtube/<ChannelName>/Season XX/<ChannelName> - SXXEXX - Title.mp4
 
 For channels with playlists (CrashCourse): each playlist = one season.
 For channels without (Leno, Vintage Space, Cammisa): season by upload year.
@@ -362,7 +362,7 @@ def main():
     notify(
         f":arrow_down: YouTube TVShows Download Starting\n"
         f"• Channels: {', '.join(c['name'] for c in channels_to_process.values())}\n"
-        f"• Target: /Volumes/external/videos/TVShows/\n"
+        f"• Target: /Volumes/external/videos/youtube/\n"
         f"• Format: 720p mp4\n"
         f"• Delay: {DELAY_BETWEEN_VIDEOS}s between videos\n"
         f"• Status updates every 5 min"

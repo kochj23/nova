@@ -27,6 +27,7 @@ import nova_config
 LIKED_DIR       = Path("/Volumes/external/videos/Liked")
 MUSIC_DIR       = Path("/Volumes/external/music/YouTube")
 TVSHOWS_DIR     = Path("/Volumes/external/videos/TVShows")
+YOUTUBE_DIR     = Path("/Volumes/external/videos/youtube")
 YT_DLP          = "/opt/homebrew/bin/yt-dlp"
 FFPROBE         = "/opt/homebrew/bin/ffprobe"
 YT_COOKIES_FILE = Path.home() / ".openclaw/cache/yt_cookies.txt"
@@ -227,8 +228,8 @@ def _build_tvshows_index() -> set:
     names = set()
     try:
         result = subprocess.run(
-            ["find", str(TVSHOWS_DIR), "-type", "f", "-name", "*.mp4", "-o",
-             "-name", "*.mkv", "-o", "-name", "*.avi"],
+            ["find", str(TVSHOWS_DIR), str(YOUTUBE_DIR), "-type", "f",
+             "-name", "*.mp4", "-o", "-name", "*.mkv", "-o", "-name", "*.avi"],
             capture_output=True, text=True, timeout=60
         )
         for line in result.stdout.splitlines():

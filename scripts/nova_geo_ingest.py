@@ -146,13 +146,23 @@ def list_titles(url, recurse=1, _seen=None):
     return out
 
 
-def run_list(conn, url, label, recurse=1):
+# California bounding box — for CA-scoped lists, keep only places actually inside CA. This
+# throws out the navigation/reference/other-state link noise that raw list pages are full of.
+CA_BBOX = (32.30, 42.05, -124.48, -114.13)  # (lat_min, lat_max, lon_min, lon_max)
+
+
+def _in_bbox(lat, lon, bbox):
+    return bbox is None or (bbox[0] <= lat <= bbox[1] and bbox[2] <= lon <= bbox[3])
+
+
+def run_list(conn, url, label, recurse=0, bbox=CA_BBOX):
     titles = list_titles(url, recurse)
     print(f"'{label}' candidate place titles: {len(titles)}", flush=True)
     coords = fetch_coords(list(titles))
-    rows = [(t, label, None, la, lo, _url(t)) for t, (la, lo) in coords.items()]
+    rows = [(t, label, None, la, lo, _url(t)) for t, (la, lo) in coords.items()
+            if _in_bbox(la, lo, bbox)]
     insert_places(conn, rows)
-    print(f"DONE {label}: {len(coords)} located, {len(rows)} inserted", flush=True)
+    print(f"DONE {label}: {len(coords)} located, {len(rows)} in-CA inserted", flush=True)
 
 
 def main():
@@ -167,15 +177,17 @@ def main():
         insert_places(conn, rows)
         print(f"DONE ghost_town: {len(coords)} located, {len(rows)} inserted", flush=True)
     elif mode == "list":
-        run_list(conn, sys.argv[2], sys.argv[3])
+        rec = int(sys.argv[4]) if len(sys.argv) > 4 else 0
+        run_list(conn, sys.argv[2], sys.argv[3], recurse=rec)
     elif mode == "category":
         cat, label = sys.argv[2], sys.argv[3]
         pages = category_members(cat, depth=1)
         print(f"'{cat}' member pages: {len(pages)}", flush=True)
         coords = fetch_coords(list(pages))
-        rows = [(t, label, None, la, lo, _url(t)) for t, (la, lo) in coords.items()]
+        rows = [(t, label, None, la, lo, _url(t)) for t, (la, lo) in coords.items()
+                if _in_bbox(la, lo, CA_BBOX)]
         insert_places(conn, rows)
-        print(f"DONE {label}: {len(coords)} located, {len(rows)} inserted", flush=True)
+        print(f"DONE {label}: {len(coords)} located, {len(rows)} in-CA inserted", flush=True)
     conn.close()
 
 
