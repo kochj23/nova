@@ -146,14 +146,25 @@ def classify(sig: str) -> tuple[str, str]:
 
 # ── 4. sanitize (public safety — redline) ─────────────────────────────────────
 _HOSTS = ["nova-core5", "nova-core4", "nova-core3", "nova-core2", "nova-core6", "nova-core",
-          "mac-studio", "mac-mini", "office-m2", "office-m4", "unas-pro-8", "unas-pro", "unas",
-          "synology nas", "synology", "udm-pro", "udmpro", "digitalnoise.net", "digitalnoise"]
+          "mac-studio", "mac-mini", "tv-movies-mini", "tv-movies-3", "tv-movies", "office-m2",
+          "office-m4", "unas-pro-8", "unas-pro", "unas", "synology nas", "synology", "udm-pro",
+          "udmpro", "digitalnoise.net", "digitalnoise"]
+
+# Household members — HARD redline: never in public content. Kept as a self-contained list (this
+# module is redline-critical and must never fail OPEN on an import error) in a PRIVATE repo. The
+# names leak in because presence/WiFi/BLE alerts label devices by owner ("Amy's iPhone" at -77 dBm)
+# and those labels flow alert -> Slack -> this recap. 2026-08-13: 'Amy's iPhone' reached the live
+# site before this guard existed. Jordan/Little Mister is fine (it's his journal); Amy & Dylan are not.
+_HOUSEHOLD = ["amy", "dylan"]
 
 
 def sanitize(text: str) -> str:
     text = re.sub(r"\b(?:\d{1,3}\.){3}\d{1,3}\b", "an internal host", text)
     for h in sorted(_HOSTS, key=len, reverse=True):
         text = re.sub(re.escape(h), "an internal node", text, flags=re.I)
+    # Household first names -> "a resident" (word-boundary; "Amy's iPhone" -> "a resident's iPhone").
+    for n in _HOUSEHOLD:
+        text = re.sub(rf"\b{re.escape(n)}\b", "a resident", text, flags=re.I)
     # Presence/surveillance method names reveal how the house watches itself — generalize them
     # (redline spirit: no internal topology / surveillance detail in public).
     text = re.sub(r"\b(vehicle_vision|gps_tracker|av_power|ha_motion|ha_lights|ha_presence|"
