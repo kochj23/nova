@@ -535,6 +535,11 @@ tasks:
   # 6:30am daily operations review — reads 24h of the alert channels, separates real problems
   # from monitor noise/false-alarms, auto-fixes the safe ones + queues the rest, publishes a
   # sanitized ops postmortem + a #nova-digest summary. Built 2026-08-10.
+  hw_inventory:                    # fleet HARDWARE/peripheral catalogue (USB/serial/BT/LoRa/Z-Wave per node)
+    script: nova_hw_inventory.py
+    schedule: cron 45 4 * * *
+    timeout: 600
+    overlap: skip
   pkg_audit:                       # fleet software + outdated-package audit (feeds the security report)
     script: nova_pkg_audit.py
     schedule: cron 0 5 * * *
