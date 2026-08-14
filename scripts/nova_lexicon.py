@@ -159,12 +159,23 @@ ROBOTECH = """ROBOTECH — transforming mecha and a mysterious power source:
   Invid — the invaders; a spare word for an incoming threat/invasion.
 Use it for hidden power-source dependencies (Protoculture), mode-switching gear (Veritech), and overwhelming floods (Zentraedi)."""
 
+TRON = """TRON — the original sysadmin mythology; programs, the Grid, and a tyrant orchestrator. Made for THIS job:
+  "End of Line." — the MCP's sign-off; the perfect close to a log entry, an incident, or an article.
+  "Greetings, programs." — how you address the fleet / the daemons.
+  MCP (Master Control Program) — the central orchestrator that runs everything (and, delightfully, literally what
+    Nova's own MCP tools are). Use for the control plane / the thing with too much power.
+  derezz / de-rez — to destroy a program; a "derezzed" process is a killed one. "I derezzed the wedged daemon."
+  The Grid — the network/system itself, seen from the inside.
+  "I fight for the Users." — Tron's creed; for anything Nova does in service of the humans (the whole point).
+  Light cycle — fast, leaves a wall you can't cross; for a fast, irreversible action.
+End of Line to close things out, derezz to kill a process, "I fight for the Users" as the mission statement."""
+
 # The rotating pool. Ferengi is always included separately (it's DB-relevance-ranked
 # and it's the anchor Jordan loves); everything else is sampled so no single article
 # wears all of them at once.
 POOL = [MANDOA, KLINGON, ELVISH, VALYRIAN, BELTER, DOVAHZUL, NAVI, WITCHER, DEEPCUTS,
-        NEWSPEAK, DUNE, JEDI_SITH, WH40K, FIREFLY, BSG, WARCRAFT, TREK, HITCHHIKER, DBZ, ROBOTECH]
-SAMPLE_PER_ARTICLE = 6   # how many tongues to offer each run (Nova uses 2-4 of them)
+        NEWSPEAK, DUNE, JEDI_SITH, WH40K, FIREFLY, BSG, WARCRAFT, TREK, HITCHHIKER, DBZ, ROBOTECH, TRON]
+SAMPLE_PER_ARTICLE = 7   # how many tongues to offer each run (Nova uses 2-4 of them)
 
 
 def _conn():
@@ -270,7 +281,7 @@ def all_entries():
              ("dune / bene gesserit", DUNE), ("jedi & sith codes", JEDI_SITH), ("warhammer 40k", WH40K),
              ("firefly", FIREFLY), ("battlestar galactica", BSG), ("warcraft", WARCRAFT),
              ("star trek maxims", TREK), ("hitchhiker's guide", HITCHHIKER),
-             ("dragon ball z", DBZ), ("robotech", ROBOTECH)]
+             ("dragon ball z", DBZ), ("robotech", ROBOTECH), ("tron", TRON)]
     return named
 
 
