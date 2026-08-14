@@ -15,9 +15,6 @@ import subprocess
 import sys
 import time
 
-import psycopg2
-import psycopg2.extras
-
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 SCAN_S = int(sys.argv[1]) if len(sys.argv) > 1 else 25
 OBS = socket.gethostname().split(".")[0]
@@ -56,22 +53,30 @@ def scan():
     return devs
 
 
+def _sql_str(v):
+    if v is None:
+        return "NULL"
+    return "'" + str(v).replace("'", "''") + "'"
+
+
 def main():
     devs = scan()
-    rows = [(mac, (d["name"] or None), d["rssi"], "ble_hci",
-             psycopg2.extras.Json({"scanner": "bluetoothctl", "window_s": SCAN_S}), OBS)
-            for mac, d in devs.items()]
-    if rows:
-        conn = psycopg2.connect(DSN); conn.autocommit = True
-        with conn.cursor() as cur:
-            psycopg2.extras.execute_values(
-                cur,
-                "INSERT INTO telemetry.bluetooth (ts, device_mac, device_name, rssi, device_type, metadata, observer) "
-                "VALUES %s",
-                rows, template="(NOW(), %s, %s, %s, %s, %s, %s)")
-        conn.close()
+    # Insert via psql — dependency-free (psycopg2 isn't installed on every box, but psql is, since
+    # they all talk to pg-primary). One multi-row INSERT, values escaped.
+    vals = []
+    for mac, d in devs.items():
+        vals.append(f"(now(), {_sql_str(mac)}, {_sql_str(d['name'] or None)}, "
+                    f"{d['rssi'] if d['rssi'] is not None else 'NULL'}, 'ble_hci', {_sql_str(OBS)})")
+    if vals:
+        sql = ("INSERT INTO telemetry.bluetooth (ts, device_mac, device_name, rssi, device_type, observer) "
+               "VALUES " + ",".join(vals) + ";")
+        try:
+            subprocess.run(["psql", DSN, "-v", "ON_ERROR_STOP=1", "-q", "-c", sql],
+                           capture_output=True, text=True, timeout=30, check=True)
+        except Exception as e:
+            print(f"[ble_scan] insert failed: {getattr(e, 'stderr', e)}"); return 1
     named = sum(1 for _, d in devs.items() if d["name"])
-    print(f"[ble_scan] {OBS}: {len(rows)} BLE devices ({named} named) in {SCAN_S}s")
+    print(f"[ble_scan] {OBS}: {len(vals)} BLE devices ({named} named) in {SCAN_S}s")
     return 0
 
 
