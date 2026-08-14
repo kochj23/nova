@@ -1401,10 +1401,82 @@ drove a routing + dedup cleanup — the problem was misrouting and re-fires, not
   #nova-digest; critical alerts stay put.
 - **Dedup safety net:** 39% of sent events arrived with an empty `dedup_key` and bypassed dedup.
   `nova_notifier` now derives a stable fallback key so every event participates.
-- **Overnight review is now state-aware:** `nova_overnight_review.py` cross-references recent git
-  commits (so it stops re-recommending shipped fixes) and checks each monitor daemon's process
-  start-time against its file mtime (catching a fix that shipped to disk but never reloaded — the
-  root cause of a multi-day false-crit saga).
+- **The alert verifier is now state-aware:** `nova_copenhagen.py` (renamed from `nova_overnight_review`
+  2026-08-13 — every alert is in superposition, both a real fire and a false alarm, until it's
+  *observed* and its wavefunction *collapses* to REAL vs NOISE) cross-references recent git commits
+  (so it stops re-recommending shipped fixes) and checks each monitor daemon's process start-time
+  against its file mtime (catching a fix that shipped to disk but never reloaded — the root cause of
+  a multi-day false-crit saga, and how it caught an 18-day-stale AIDE-timeout daemon).
+
+---
+
+## Fleet Inventory — Software + Hardware (2026-08-13)
+
+Two scheduled collectors give Nova a live picture of *what runs* and *what's plugged in* across the
+fleet — answering, from a table, questions that used to take an SSH scavenger hunt.
+
+- **`nova_pkg_audit.py`** (05:00 daily) — per host, counts **installed** packages and collects the
+  **outdated** ones (`brew outdated` / `apt list --upgradable`) into `package_audit` +
+  `package_audit_hosts`. Replaced the stale CINC path (its `software_inventory` stopped writing
+  2026-07-29; `package_updates` had stuffed raw apt progress-output into package rows). ~9.4K
+  installed / ~230 outdated across the fleet.
+- **`nova_hw_inventory.py`** (04:45 daily) — per host (one SSH call each, to dodge sshd
+  rate-limiting), catalogues **USB devices, serial ports, Bluetooth adapters (up/down)**, and
+  identifies each serial device via `/dev/serial/by-id` so it distinguishes a **Z-Wave dongle**
+  from a **LoRa board** (nova-core's CP210x is a SONOFF Z-Wave stick; the spare LoRa board is on
+  nova-core4). Writes `hardware_inventory` + `hardware_inventory_hosts`; unreachable hosts flagged,
+  never fabricated.
+
+## Security Operations Report — Concentric Rings (2026-08-13)
+
+`nova_operations_security.py` rewritten to fan out **closest-to-Jordan first**, like the Burbank
+local dispatch does with geography — and in full Nova voice with the borrowed tongues:
+
+```mermaid
+flowchart TD
+    R1["RING 1 — YOUR NETWORK<br/>UniFi device manifest + software (pkg_audit)<br/>+ hardware (hw_inventory) + overnight scan posture"]
+    R2["RING 2 — EXPOSURE ON YOUR GEAR<br/>updates pending on your ACTUAL installed software<br/>(docker/postgres/openssl by version) + CVEs naming your vendors"]
+    R3["RING 3 — BROADER CVEs (brief)"]
+    R4["RING 4 — MILITARY / GEOPOLITICAL (summary)"]
+    R1 --> R2 --> R3 --> R4
+```
+
+Fixed a self-referential bug along the way: the old CVE source was `telemetry.events` — Nova's *own*
+published security articles — so yesterday's write-up reappeared as today's "fresh" intel. Now reads
+the actual ingested advisory feed and matches CVEs to the versions the fleet actually runs.
+
+## Distributed BLE Sensing & Identification (2026-08-13)
+
+Bluetooth went from a single observer (mac-studio) producing *"N devices, maybe neighbors"* to a
+distributed grid that **identifies** what it sees.
+
+```mermaid
+flowchart LR
+    subgraph Observers["nova-core boxes (idle built-in Bluetooth, now scanning)"]
+      C1["nova-core"]; C2["nova-core2"]; C3["nova-core3"]
+    end
+    C1 & C2 & C3 -->|"bleak scan"| T["Theengs Decoder<br/>brand / model / type<br/>+ TRACK flag + prmac"]
+    MS["mac-studio (Ubertooth)"] --> BT[("telemetry.bluetooth<br/>observer=&lt;host&gt;")]
+    T --> BT
+    BT --> ART["Burbank article: exclude brand=Apple,<br/>surface NEW+BRIEF strangers + tracker beacons"]
+```
+
+- **`nova_ble_theengs.py`** — `bleak` scan → **Theengs Decoder** names the device (Apple Watch, Tile
+  tracker, sensors), flags **trackers** (`type=TRACK`) and **private-random-MAC** devices. Runs every
+  5 min via cron on nova-core / core2 / core3 (heterogeneous older boxes core4/core5 stayed on the
+  plain scanner). Inserts via `psql` (no psycopg2 dependency).
+- **`get_bluetooth_patterns`** in the Burbank article now **excludes `brand=Apple`** (your HomePods/
+  AirPods were the "unidentified" noise), surfaces **never-seen-before named devices present only a
+  few minutes** (grouped by name, not MAC — MACs rotate every ~15 min and would inflate the count to
+  tens of thousands of phantoms), and flags **Find-My/AirTag/Tile beacons** seen on 2+ days.
+
+## Long-Lived Claude Token (2026-08-13)
+
+The headless `claude -p` fleet used a short-lived OAuth access token that expired ~nightly, killing
+every generator at dawn. `claude setup-token`'s ~1-year token is now injected as
+`CLAUDE_CODE_OAUTH_TOKEN` at the `claude -p` chokepoint (`nova_claude_code.claude_env` — Keychain on
+.6, 0600 file on the Linux nodes), which overrides the expired file credential. `nova_claude_token_watch`
+now validates the long-lived token instead of paging nightly.
 
 ---
 
