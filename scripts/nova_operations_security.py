@@ -150,12 +150,30 @@ def get_package_audit(cur):
     return summary, exposure
 
 
+def get_hardware_inventory(cur):
+    """Fleet hardware/peripheral summary from nova_hw_inventory (Ring 1). What's physically attached
+    to each node — and the hook to notice a NEW/rogue USB device (someone plugged something in)."""
+    hosts = q(cur, "SELECT host_name, usb, serial, reachable FROM hardware_inventory_hosts")
+    if not hosts:
+        return "(no hardware inventory yet — nova_hw_inventory hasn't populated it)"
+    total_usb = sum(h[1] for h in hosts if h[3]); reach = sum(1 for h in hosts if h[3])
+    bt_up = q(cur, "SELECT count(*) FROM hardware_inventory WHERE category='bluetooth' AND status='up'")
+    peri = q(cur, "SELECT category, host_name, name FROM hardware_inventory "
+                  "WHERE category IN ('zwave','zigbee','lora') AND name NOT LIKE '===%' ORDER BY category")
+    out = [f"{total_usb} USB devices across {reach} reachable hosts; every box has a Bluetooth adapter "
+           f"({bt_up[0][0] if bt_up else 0} Linux hci UP + the Macs' built-in) — currently only mac-studio scans BLE."]
+    if peri:
+        out.append("Notable peripherals: " + "; ".join(f"{p[2]} ({p[1]})" for p in peri) + ".")
+    return " ".join(out)
+
+
 def main():
     c = psycopg2.connect(OPS_DSN); c.autocommit = True; cur = c.cursor()
 
     # RING 1 — inventory + posture + software audit
     devices, camera_count, infra = get_inventory(cur)
     sw_summary, sw_exposure = get_package_audit(cur)
+    hw_summary = get_hardware_inventory(cur)
     scans = q(cur, "SELECT host_name, scan_type, status, coalesce(findings::text,'[]') FROM security_scan_results "
                    "WHERE scan_time > now() - interval '30 h' ORDER BY host_name, scan_type")
     wz = q(cur, "SELECT count(*), mode() WITHIN GROUP (ORDER BY rule_description) FROM security_events "
@@ -235,7 +253,10 @@ def main():
         "1. YOUR NETWORK (closest): open on the actual device manifest — how many devices are on the network "
         "right now, the switches/APs, and the notable clients. THEN the software layer: how many packages are "
         "installed across the fleet and how many updates are pending (from the fleet software audit) — the "
-        "machines aren't just boxes, they're running actual software. Then the overnight posture: which hosts "
+        "machines aren't just boxes, they're running actual software. And the HARDWARE layer: the peripherals "
+        "physically attached (USB, serial dev boards, Z-Wave/Zigbee/LoRa radios, Bluetooth adapters) — note "
+        "anything notable, and that a NEW/unexpected USB device appearing would itself be a security signal. "
+        "Then the overnight posture: which hosts "
         "scanned (rkhunter/aide/chkrootkit), the Strix purple-team result, the Wazuh picture. Flag anything "
         "unknown or risky ON HIS OWN NETWORK first — that's the whole point.\n"
         "2. EXPOSURE ON YOUR GEAR (the part he cares about MOST): LEAD with the UPDATES PENDING on his ACTUAL "
@@ -257,6 +278,7 @@ def main():
     user = (
         f"=== RING 1 — YOUR NETWORK (device inventory, live) ===\n{inv_block}\n\n"
         f"--- software installed on your hosts (fleet audit) ---\n{sw_summary}\n"
+        f"--- hardware/peripherals attached to your hosts (fleet inventory) ---\n{hw_summary}\n"
         f"--- overnight host scans (rkhunter/aide/chkrootkit) ---\n{scan_block}\n"
         f"--- Strix purple-team pentest ---\n{strix_block}\n"
         f"--- Wazuh (overnight) ---\n{wz_block}\nHigh-severity (10+): {wzhi_block}\n\n"
