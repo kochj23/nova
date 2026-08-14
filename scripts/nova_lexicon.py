@@ -140,11 +140,30 @@ HITCHHIKER = """THE HITCHHIKER'S GUIDE — deadpan cosmic absurdism:
   "42." — the answer, for any metric that's suspiciously precise and explains nothing.
   "Mostly harmless." — the ideal service status.   "So long, and thanks for all the fish." — for a decommission."""
 
+DBZ = """DRAGON BALL Z — power-scaling bombast, made for metrics and escalation:
+  "It's OVER 9000!" — the scouter meme; for a metric spiking absurdly high (load, alert count, temp, RSSI).
+  "This isn't even my final form." — Frieza; for an incident/bug that keeps escalating and transforming.
+  Kamehameha — the signature energy blast; for hitting something with everything you've got (a full purge/deploy).
+  Senzu bean — instant full heal; for a restart that brings a wedged service all the way back.
+  Scouter — reads a "power level"; for benchmarking/measuring ("the scouter puts the NAS at...").
+  Spirit Bomb — energy gathered from everyone; for a distributed/fleet-wide effort (the BLE grid, a cluster job).
+Reach for it on raw numbers and runaway escalation: a spiking metric is "over 9000", a restart is a senzu bean."""
+
+ROBOTECH = """ROBOTECH — transforming mecha and a mysterious power source:
+  Protoculture — the strange energy that powers EVERYTHING in Robotech; for the ONE dependency the whole fleet
+    secretly runs on (mains power, the core DB, the MQTT broker). "It all runs on Protoculture, and Protoculture is a .11 NAS."
+  Veritech — a fighter that transforms between jet / Guardian / Battloid modes; for a device or service that
+    shifts modes (a box that's both a scanner and a mesh node; a script that's both cron and daemon).
+  SDF-1 — the Super Dimension Fortress, the giant flagship everything orbits; for the central/primary node.
+  Zentraedi — the giant alien horde; for an OVERWHELMING flood (an alert storm, a broadcast storm, MAC-rotation churn).
+  Invid — the invaders; a spare word for an incoming threat/invasion.
+Use it for hidden power-source dependencies (Protoculture), mode-switching gear (Veritech), and overwhelming floods (Zentraedi)."""
+
 # The rotating pool. Ferengi is always included separately (it's DB-relevance-ranked
 # and it's the anchor Jordan loves); everything else is sampled so no single article
 # wears all of them at once.
 POOL = [MANDOA, KLINGON, ELVISH, VALYRIAN, BELTER, DOVAHZUL, NAVI, WITCHER, DEEPCUTS,
-        NEWSPEAK, DUNE, JEDI_SITH, WH40K, FIREFLY, BSG, WARCRAFT, TREK, HITCHHIKER]
+        NEWSPEAK, DUNE, JEDI_SITH, WH40K, FIREFLY, BSG, WARCRAFT, TREK, HITCHHIKER, DBZ, ROBOTECH]
 SAMPLE_PER_ARTICLE = 6   # how many tongues to offer each run (Nova uses 2-4 of them)
 
 
@@ -250,7 +269,8 @@ def all_entries():
              ("elder speech / witcher", WITCHER), ("deep cuts", DEEPCUTS), ("newspeak", NEWSPEAK),
              ("dune / bene gesserit", DUNE), ("jedi & sith codes", JEDI_SITH), ("warhammer 40k", WH40K),
              ("firefly", FIREFLY), ("battlestar galactica", BSG), ("warcraft", WARCRAFT),
-             ("star trek maxims", TREK), ("hitchhiker's guide", HITCHHIKER)]
+             ("star trek maxims", TREK), ("hitchhiker's guide", HITCHHIKER),
+             ("dragon ball z", DBZ), ("robotech", ROBOTECH)]
     return named
 
 
