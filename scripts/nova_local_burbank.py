@@ -534,6 +534,11 @@ def get_bluetooth_patterns(days=21, min_days=3):
                       (SELECT lower(device_mac) FROM telemetry.ble_device_map WHERE device_mac IS NOT NULL)
                   AND b.device_name NOT IN
                       (SELECT device_name FROM telemetry.ble_device_map WHERE device_name IS NOT NULL)
+                  -- 2026-08-13: Theengs Decoder now IDENTIFIES devices. brand='Apple' is your own
+                  -- gear + the Apple ecosystem (HomePods/AirPods/Watches/Continuity beacons) — the
+                  -- dominant "unidentified" noise Jordan flagged. Exclude it here so the analysis is
+                  -- about genuine strangers, not your furniture.
+                  AND coalesce(b.metadata->>'brand','') <> 'Apple'
             ),
             per_device AS (
                 SELECT device_name,
@@ -558,13 +563,58 @@ def get_bluetooth_patterns(days=21, min_days=3):
             ORDER BY count(*) DESC
         """, (days, min_days))
         rows = cur.fetchall()
+
+        # NEW + BRIEF: the signal Jordan actually wants — a device we've NEVER seen before that
+        # shows up for only a few minutes (a stranger passing, a tracker dropped nearby). Non-Apple,
+        # not household-mapped, first heard in the last 7 days, present <= 15 min on its busiest day.
+        cur.execute("""
+            -- group by device_NAME, not device_mac: BLE MACs rotate every ~15 min, so counting by
+            -- MAC turns the neighborhood's normal churn into tens of thousands of phantom "new"
+            -- devices. A device_name is stable across rotation (a "Galaxy Buds", a "Fitbit Sense 2"),
+            -- so a NAMED device first heard this week that only lingered minutes is a real stranger.
+            WITH per_day AS (
+                SELECT device_name,
+                       date(ts AT TIME ZONE 'America/Los_Angeles') AS the_day,
+                       min(ts) AS dmin, max(ts) AS dmax
+                FROM telemetry.bluetooth
+                WHERE ts >= now() - interval '10 days'
+                  AND device_name IS NOT NULL AND device_name <> ''
+                  AND coalesce(metadata->>'brand','') <> 'Apple'
+                  AND device_name NOT IN
+                      (SELECT device_name FROM telemetry.ble_device_map WHERE device_name IS NOT NULL)
+                GROUP BY device_name, the_day
+            ),
+            per_dev AS (
+                SELECT device_name, min(dmin) AS first_seen,
+                       max(EXTRACT(EPOCH FROM (dmax - dmin))) AS max_daily_s
+                FROM per_day GROUP BY device_name
+            )
+            SELECT count(*) FROM per_dev
+            WHERE first_seen > now() - interval '7 days' AND max_daily_s <= 15*60
+        """)
+        new_brief = cur.fetchone()[0]
+
+        # TRACKERS: Theengs flags Find-My/AirTag/Tile-class beacons (device_type='TRACK' or
+        # metadata.track). Report distinct trackers seen on >= 2 days (persistent, not a one-off
+        # pass-through) — the honest counter-surveillance signal. Not proof of stalking; a device
+        # worth a human glance if the count is unusual.
+        cur.execute("""
+            SELECT count(*) FROM (
+              SELECT device_mac FROM telemetry.bluetooth
+              WHERE ts >= now() - interval '10 days'
+                AND (device_type = 'TRACK' OR metadata->>'track' = 'true')
+              GROUP BY device_mac
+              HAVING count(DISTINCT date(ts AT TIME ZONE 'America/Los_Angeles')) >= 2) t
+        """)
+        trackers = cur.fetchone()[0]
+
         cur.close()
         conn.close()
     except Exception as e:
         log(f"bluetooth pattern query failed: {e}")
         return None
 
-    if not rows:
+    if not rows and not new_brief and not trackers:
         return None
 
     resident, transient_patterned, transient_random = 0, [], 0
@@ -585,6 +635,8 @@ def get_bluetooth_patterns(days=21, min_days=3):
         "resident": resident,               # unidentified but present most of the day, every day
         "transient_patterned": transient_patterned[:3],  # real time-of-day recurrence
         "transient_random": transient_random,
+        "new_brief": new_brief,             # NEVER-seen-before devices present only a few minutes (the signal)
+        "trackers": trackers,               # Find-My/AirTag/Tile-class beacons seen on 2+ days
     }
 
 
@@ -730,6 +782,16 @@ def generate_article(news_items, scanner_blotter=None, flights=None, wifi_ble=No
             if ble_patterns["transient_random"]:
                 pattern_bits.append(f"{ble_patterns['transient_random']} other device(s) that recur "
                                      f"with no consistent time-of-day pattern")
+            # NEW+BRIEF: never-seen-before devices present only a few minutes — the signal Jordan asked
+            # for. Apple/household gear is already excluded, so these are genuine strangers passing.
+            if ble_patterns.get("new_brief"):
+                pattern_bits.append(f"{ble_patterns['new_brief']} device(s) we've NEVER seen before that "
+                                     f"appeared for only a few minutes this week — someone passing close, briefly")
+            # TRACKERS: Find-My/AirTag/Tile-class beacons seen on 2+ days. Honest framing — not proof of
+            # stalking, but a persistent tracker near the house is worth a calm, non-alarmist mention.
+            if ble_patterns.get("trackers"):
+                pattern_bits.append(f"{ble_patterns['trackers']} item-tracker beacon(s) (AirTag/Tile-class) "
+                                     f"seen on multiple days — mention calmly as an FYI, not an alarm")
         if bits or pattern_bits or household_note:
             wifi_ble_block = (
                 f"\n\n[RF NEIGHBORHOOD — last 24h. {'; '.join(bits)}."
@@ -977,7 +1039,8 @@ def main():
     ble_patterns = get_bluetooth_patterns()  # recurring unidentified BLE devices, aggregate only
     if ble_patterns:
         log(f"BLE patterns: {ble_patterns['candidates']} candidates, {ble_patterns['resident']} resident, "
-            f"{len(ble_patterns['transient_patterned'])} time-patterned, {ble_patterns['transient_random']} random")
+            f"{len(ble_patterns['transient_patterned'])} time-patterned, {ble_patterns['transient_random']} random, "
+            f"{ble_patterns.get('new_brief',0)} new+brief, {ble_patterns.get('trackers',0)} trackers")
 
     arrests = get_myburbank_arrests(all_items)  # full per-arrest detail from any Police Log post today
     if arrests:
