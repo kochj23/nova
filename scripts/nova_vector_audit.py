@@ -43,7 +43,9 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://192.168.1.6:11434/api/generate
 OLLAMA_MODEL = "qwen3-coder:30b"
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 SAMPLE_PER_VECTOR = 100
-MAX_VECTORS_PER_RUN = 999
+VECTORS_PER_RUN = 15   # audit a ROTATING subset each run (least-recently-audited first) so
+                       # coverage cycles across all ~200 vectors and articles don't feature the
+                       # same buckets (e.g. livejournal) every single time. Full cycle ~14 runs.
 DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # Video / spoken-word vectors whose transcripts naturally repeat words (dialogue, chants,
@@ -243,6 +245,50 @@ def quality_check_batch(memories: list[dict], source: str = None) -> dict:
     return trash
 
 
+def _rotation_pick(candidates: list[tuple[str, int]], n: int) -> list[tuple[str, int]]:
+    """Pick the N least-recently-audited vectors so coverage rotates across runs.
+
+    Never-audited vectors sort first; ties broken randomly. State lives in nova_ops
+    (vector_audit_rotation). Falls back to plain random selection if the state DB is
+    unreachable — variety over a hard failure.
+    """
+    last: dict[str, float] = {}
+    try:
+        import psycopg2
+        conn = psycopg2.connect(DB_DSN)
+        cur = conn.cursor()
+        cur.execute("""CREATE TABLE IF NOT EXISTS vector_audit_rotation (
+                         vector text PRIMARY KEY,
+                         last_audited timestamptz NOT NULL DEFAULT now())""")
+        conn.commit()
+        cur.execute("SELECT vector, extract(epoch FROM last_audited) FROM vector_audit_rotation")
+        last = {v: float(ts) for v, ts in cur.fetchall()}
+        cur.close(); conn.close()
+    except Exception as e:
+        log(f"rotation state unavailable ({e}) — random selection this run")
+        return random.sample(candidates, min(n, len(candidates)))
+    # oldest last_audited first (never-audited = 0.0), random tie-break for fairness
+    ranked = sorted(candidates, key=lambda vc: (last.get(vc[0], 0.0), random.random()))
+    return ranked[:min(n, len(ranked))]
+
+
+def _rotation_mark(audited: list[str]) -> None:
+    """Stamp audited vectors as just-seen so the next run rotates past them."""
+    if not audited:
+        return
+    try:
+        import psycopg2
+        conn = psycopg2.connect(DB_DSN)
+        cur = conn.cursor()
+        cur.executemany(
+            """INSERT INTO vector_audit_rotation (vector, last_audited) VALUES (%s, now())
+               ON CONFLICT (vector) DO UPDATE SET last_audited = now()""",
+            [(v,) for v in audited])
+        conn.commit(); cur.close(); conn.close()
+    except Exception as e:
+        log(f"rotation mark failed ({e}) — non-fatal")
+
+
 def run_audit() -> dict:
     """Run the full vector audit. Returns stats for the article."""
     log("Starting vector audit")
@@ -260,9 +306,12 @@ def run_audit() -> dict:
             f"publish a hallucinated audit. Check pg-primary connectivity.")
         return {"aborted": True, "reason": f"only {total_mem} memories visible"}
 
-    # Pick vectors to audit (random selection weighted toward larger ones)
+    # Pick a ROTATING subset (least-recently-audited first) so runs cover different
+    # vectors and no single bucket (livejournal, we're looking at you) shows up every time.
     candidates = [v for v in all_vectors if v[1] >= 50]  # skip tiny vectors
-    to_audit = random.sample(candidates, min(MAX_VECTORS_PER_RUN, len(candidates)))
+    to_audit = _rotation_pick(candidates, VECTORS_PER_RUN)
+    log(f"Rotation: auditing {len(to_audit)} of {len(candidates)} eligible vectors this run — "
+        f"{', '.join(v for v, _ in to_audit)}")
 
     moves = []
     audited_count = 0          # memories the LLM actually returned a verdict for
@@ -271,6 +320,8 @@ def run_audit() -> dict:
     all_quality_issues = {"repetitive": 0, "near_empty": 0, "garbled": 0, "low_signal": 0,
                           "total_issues": 0, "examples": [], "worst_vectors": []}
 
+    audited_detail = []  # per-vector record (REAL names + REAL examples) so the article
+                         # grades actual vectors and never invents them.
     for vector_name, vector_count in to_audit:
         memories = sample_memories(vector_name, SAMPLE_PER_VECTOR)
         if not memories:
@@ -298,6 +349,15 @@ def run_audit() -> dict:
                     {"vector": vector_name, "issues": quality["total_issues"],
                      "sampled": len(memories), "issue_pct": issue_pct})
 
+        # Record this REAL vector + its REAL problem examples (may be zero) for grading.
+        audited_detail.append({
+            "vector": vector_name,
+            "count": vector_count,
+            "sampled": len(memories),
+            "issues": quality["total_issues"],
+            "examples": quality.get("examples", [])[:3],
+        })
+
         # Classification check (is this in the right vector?)
         try:
             results = classify_batch(vector_name, memories, vector_names)
@@ -322,6 +382,9 @@ def run_audit() -> dict:
             else:
                 correct_count += 1
 
+    # Stamp this run's vectors as just-audited so the next run rotates past them.
+    _rotation_mark([v for v, _ in to_audit])
+
     # Sort worst vectors by issue percentage
     all_quality_issues["worst_vectors"].sort(key=lambda x: x["issue_pct"], reverse=True)
 
@@ -340,6 +403,7 @@ def run_audit() -> dict:
 
     stats = {
         "vectors_audited": len(to_audit),
+        "audited_detail": audited_detail,            # REAL per-vector names + examples for grading
         "memories_sampled": quality_checked_count,   # rows actually pulled + scanned
         "memories_classified": audited_count,        # rows the LLM returned a verdict for
         "correct": correct_count,
@@ -441,48 +505,69 @@ def generate_article(stats: dict) -> str:
     from nova_voice import system_prompt, CONTEXT_JOURNAL_VECTOR_AUDIT
     system = system_prompt(CONTEXT_JOURNAL_VECTOR_AUDIT + """
 ADDITIONAL RULES:
-- You check TWO things: CLASSIFICATION (right vector?) and QUALITY (worth keeping?)
-- Classification accuracy can be 100% and quality can STILL be terrible. A perfectly-filed pile of garbage is still garbage.
-- Keep it 600-1000 words
-- Open with a one-liner about the 6am shift
-- CRITICAL — NUMBERS: You must NOT state ANY statistic, count, total, or percentage. Not the
-  memory count, not the number moved, not a garbage rate, nothing numeric. A factual ledger
-  with the REAL figures is appended automatically after your text. Inventing numbers (you have
-  done this — a false "100%% empty" about a vector that was full) is the one unforgivable sin
-  here. Describe findings qualitatively ("a stack of misfiles", "mostly clean", "one vector was
-  a disaster") and let the ledger carry every number.
-- You MAY quote the specific example memories provided (those are real) and roast them.
-- Give specific examples of the worst memories found; pick 2-3 funniest to roast
-- End with a one-liner about existential memory hygiene
-- Do NOT include a title""")
+- You check TWO things: CLASSIFICATION (right vector?) and QUALITY (worth keeping?). Classification
+  can be 100% correct and QUALITY still terrible — a perfectly-filed pile of garbage is still garbage.
 
-    quality = stats.get("quality", {})
-    # Only REAL, per-row example memories go to the LLM (safe to quote). Aggregate counts are
-    # deliberately withheld so it can't parrot or mutate them — the ledger owns those.
-    quality_block = ""
-    if quality.get("total_issues", 0) > 0:
-        quality_block = f"""
-QUALITY: issues were found (exact figures are in the auto-appended ledger — do not restate them).
-Categories seen: repetitive, near-empty, garbled, low-signal.
+FORMAT — this is a REPORT CARD, not a stream of consciousness. You are the TEACHER, grading the
+memory system's overnight filing homework. Use markdown '## ' section headers and this structure:
+- Open with a short "homeroom" one-liner about the 6am shift (1-2 sentences, no header).
+- "## The Grades" — a tight report-card list: for EACH vector named in the brief, ONE line giving its
+  filing a letter grade (A+ down to F; D- and F are fair game) plus a punchy one-clause reason.
+  Keep each vector to a single line. Letter grades are NOT statistics — use them freely.
+- "## Sent to the Principal's Office" — pick the 2-3 WORST real example memories and roast them in
+  detail, quoting each one EXACTLY (they are real). This is where the comedy lives.
+- "## Teacher's Note" — 2-3 sentences of existential memory-hygiene reflection to close.
+- Keep the whole thing 600-1000 words. Do NOT include a title.
 
-Worst vectors (names only, for color):
-{json.dumps([w.get('vector') for w in quality.get('worst_vectors', [])[:5]])}
+CRITICAL — ONLY REAL VECTORS AND REAL MEMORIES (this is the unforgivable sin, worse than numbers):
+- Grade ONLY the exact vector names listed in the brief. Do NOT invent, rename, or add vectors. If the
+  brief lists 'tihkal' and 'astronomy', you grade THOSE — never a plausible-sounding fabrication like
+  'Weather Forecasting' or 'Device Health Reports'. Every graded name must appear in the brief verbatim.
+- In the Principal's Office, quote ONLY the real example memories provided, verbatim. Do NOT invent
+  memories to roast. If few or no real problem examples were provided, the shelf was genuinely CLEAN
+  today — SAY SO plainly (a quiet principal's office, mostly good grades) and keep that section short.
+  A boring honest audit is infinitely better than a funny fabricated one.
 
-Real example memories you may quote and roast:
-{json.dumps(quality.get('examples', [])[:8], indent=2)}
-"""
-    else:
-        quality_block = "\nQUALITY: nothing flagged in this sample. (Suspicious.)\n"
+VOICE RESTRAINT — deploy AT MOST 2-3 borrowed tongues in the ENTIRE piece, each chosen to fit and
+landed well. Do NOT cram every tongue into one paragraph — a word-salad of Klingon + Dothraki +
+Dovahzul in one breath reads as trying too hard. Two or three, deliberately, spelled correctly.
 
-    user = f"""Today's audit (qualitative brief — NO numbers in your prose, the ledger handles those):
+CRITICAL — NO STATISTICS IN PROSE: state NO count, total, percentage, or rate anywhere (letter grades
+are fine; digits-as-quantities are not). A factual ledger with the REAL figures is appended
+automatically after your text. Inventing numbers (you once wrote a false "100%% empty" about a vector
+that was full) is the one unforgivable sin. Describe findings qualitatively and let the ledger carry
+every number.""")
 
-CLASSIFICATION: {'some misfiles were found and moved' if stats['moved'] else 'everything sampled was correctly filed'}.
-Real moves you may reference by example:
-{moves_block if moves_block else "(None today — all correctly classified)"}
-{quality_block}
+    # Build the REAL grade sheet from per-vector detail: every audited vector by its exact name
+    # (clean ones included), plus ONLY the real problem memories, tagged with their vector.
+    detail = stats.get("audited_detail", [])
+    graded_lines, real_examples = [], []
+    for d in detail:
+        tag = "CLEAN — nothing flagged" if d.get("issues", 0) == 0 else f"{d['issues']} quality issue(s) found"
+        graded_lines.append(f"- {d['vector']} — {tag}")
+        for ex in d.get("examples", []):
+            real_examples.append({"vector": d["vector"], "memory": ex})
+    vectors_block = "\n".join(graded_lines) if graded_lines else "(no vectors sampled this run)"
+    examples_json = (json.dumps(real_examples[:8], indent=2) if real_examples
+                     else "(NONE — the sample was clean today; say so, do not invent memories)")
 
-Write the filing-audit column: voice, attitude, roast the real example memories above. State NO
-statistics — describe qualitatively and let the appended ledger carry every figure."""
+    user = f"""Today's filing audit — grade ONLY these real vectors, quote ONLY these real memories.
+
+VECTORS AUDITED THIS RUN — grade each of these EXACT names (A+ to F). A "CLEAN" vector earns a high
+mark; one with issues earns a low one. Do NOT grade any vector not on this list:
+{vectors_block}
+
+CLASSIFICATION: {'some misfiles were found and moved to better vectors' if stats['moved'] else 'everything sampled was correctly filed'}.
+{("Real moves you may reference:" + moves_block) if moves_block else ""}
+
+REAL problem memories for the Principal's Office — quote these VERBATIM only. If this says NONE, the
+shelf was clean; say that plainly and keep the section short. Do NOT invent memories:
+{examples_json}
+
+Write the morning filing REPORT CARD per the format rules: a homeroom one-liner, then "## The Grades"
+(one line per vector listed above, real names only), then "## Sent to the Principal's Office" (roast
+ONLY the real memories above, quoted exactly — or note a quiet clean day if none), then a
+"## Teacher's Note" close. Letter grades only — NO statistics, NO invented vectors, NO invented memories."""
 
     prose = call_llm(system, user, max_tokens=8000)
     if not prose.strip():
@@ -533,8 +618,8 @@ title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
 categories: ["operations"]
-tags: ["vectors", "audit", "filing", "librarian", "maintenance"]
-description: "Nova's morning vector audit — finding and fixing misfiled memories since 6am."
+tags: ["vectors", "audit", "filing", "librarian", "report-card", "maintenance"]
+description: "Nova's morning filing report card — grading the memory system's overnight filing job, one vector at a time."
 """
     if hugo_image:
         front_matter += f"""cover:
