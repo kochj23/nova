@@ -544,6 +544,10 @@ CRITICAL — ONLY REAL VECTORS AND REAL MEMORIES (the unforgivable sin, worse th
 - Walk through ONLY the exact vector names listed in the brief. Do NOT invent, rename, or add vectors.
   If the brief lists 'tihkal' and 'astronomy', those are the shelves you visit — never a plausible-
   sounding fabrication like 'Weather Forecasting'. Every vector you name must appear in the brief verbatim.
+- Your VERY FIRST period must be one of the real shelves in the brief. Do NOT open on a themed shelf
+  (e.g. "the sci-fi shelf", "the mundane stuff") unless that EXACT vector name is in the brief. Never
+  describe a shelf as clean/checked/visited unless it is listed in the brief — if you didn't audit it
+  this morning, you cannot say anything about its state. Naming an unaudited shelf is fabrication.
 - Quote ONLY the real example memories provided, verbatim. Do NOT invent memories to tease. If a shelf
   had no problems, just say it was clean and charming and move on — do NOT manufacture drama. If the
   whole morning was clean, SAY SO warmly. A quiet honest diary beats a funny fabricated one.
