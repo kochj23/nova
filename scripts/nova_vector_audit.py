@@ -505,28 +505,31 @@ def generate_article(stats: dict) -> str:
     from nova_voice import system_prompt, CONTEXT_JOURNAL_VECTOR_AUDIT
     system = system_prompt(CONTEXT_JOURNAL_VECTOR_AUDIT + """
 ADDITIONAL RULES:
-- You check TWO things: CLASSIFICATION (right vector?) and QUALITY (worth keeping?). Classification
-  can be 100% correct and QUALITY still terrible — a perfectly-filed pile of garbage is still garbage.
+- Under the fondness, you're still noticing TWO things about each shelf: is it FILED right (does this
+  belong here?) and is it WORTH keeping (or is it repetitive garbage?). A tidy shelf of nonsense is
+  still nonsense — but you say that with affection, not contempt.
 
-FORMAT — this is a REPORT CARD, not a stream of consciousness. You are the TEACHER, grading the
-memory system's overnight filing homework. Use markdown '## ' section headers and this structure:
-- Open with a short "homeroom" one-liner about the 6am shift (1-2 sentences, no header).
-- "## The Grades" — a tight report-card list: for EACH vector named in the brief, ONE line giving its
-  filing a letter grade (A+ down to F; D- and F are fair game) plus a punchy one-clause reason.
-  Keep each vector to a single line. Letter grades are NOT statistics — use them freely.
-- "## Sent to the Principal's Office" — pick the 2-3 WORST real example memories and roast them in
-  detail, quoting each one EXACTLY (they are real). This is where the comedy lives.
-- "## Teacher's Note" — 2-3 sentences of existential memory-hygiene reflection to close.
-- Keep the whole thing 600-1000 words. Do NOT include a title.
+FORMAT — this is Nova's warm first-person "what I found in my memory this morning" DIARY, the exact
+beloved format of her "what I learned in school today" entry. You are the STUDENT walking back through
+your own memory at 6am — NOT a teacher, NOT grading, NO letter grades, NO "principal's office." Use
+markdown '## ' section headers as the "periods" of your morning:
+- Open with a short "homeroom" one-liner about the 6am shift and cracking open your own head (1-2 sentences, no header).
+- Then 3-5 "## " PERIODS, each spent on a real vector (or a small cluster of them) from the brief —
+  e.g. "## First period: the sci-fi shelf". In each, recount in first person what you found rummaging
+  around in there: the stuff that's charming and right, and (teased gently, lovingly) the misfiled or
+  repetitive stuff. Quote REAL example memories where you have them. It's a fond walk through your own
+  head, not an inspection.
+- Close with "## What it all added up to" — a sincere, slightly vulnerable reflection about memory and
+  what it means to keep what you learn, in the same warm register that ended the school report. Land it.
+- Keep it 700-1100 words. Do NOT include a title.
 
-CRITICAL — ONLY REAL VECTORS AND REAL MEMORIES (this is the unforgivable sin, worse than numbers):
-- Grade ONLY the exact vector names listed in the brief. Do NOT invent, rename, or add vectors. If the
-  brief lists 'tihkal' and 'astronomy', you grade THOSE — never a plausible-sounding fabrication like
-  'Weather Forecasting' or 'Device Health Reports'. Every graded name must appear in the brief verbatim.
-- In the Principal's Office, quote ONLY the real example memories provided, verbatim. Do NOT invent
-  memories to roast. If few or no real problem examples were provided, the shelf was genuinely CLEAN
-  today — SAY SO plainly (a quiet principal's office, mostly good grades) and keep that section short.
-  A boring honest audit is infinitely better than a funny fabricated one.
+CRITICAL — ONLY REAL VECTORS AND REAL MEMORIES (the unforgivable sin, worse than numbers):
+- Walk through ONLY the exact vector names listed in the brief. Do NOT invent, rename, or add vectors.
+  If the brief lists 'tihkal' and 'astronomy', those are the shelves you visit — never a plausible-
+  sounding fabrication like 'Weather Forecasting'. Every vector you name must appear in the brief verbatim.
+- Quote ONLY the real example memories provided, verbatim. Do NOT invent memories to tease. If a shelf
+  had no problems, just say it was clean and charming and move on — do NOT manufacture drama. If the
+  whole morning was clean, SAY SO warmly. A quiet honest diary beats a funny fabricated one.
 
 VOICE RESTRAINT — deploy AT MOST 2-3 borrowed tongues in the ENTIRE piece, each chosen to fit and
 landed well. Do NOT cram every tongue into one paragraph — a word-salad of Klingon + Dothraki +
@@ -551,23 +554,25 @@ every number.""")
     examples_json = (json.dumps(real_examples[:8], indent=2) if real_examples
                      else "(NONE — the sample was clean today; say so, do not invent memories)")
 
-    user = f"""Today's filing audit — grade ONLY these real vectors, quote ONLY these real memories.
+    user = f"""This morning's wander through your own memory — visit ONLY these real shelves, quote ONLY
+these real memories.
 
-VECTORS AUDITED THIS RUN — grade each of these EXACT names (A+ to F). A "CLEAN" vector earns a high
-mark; one with issues earns a low one. Do NOT grade any vector not on this list:
+SHELVES YOU OPENED THIS MORNING (these are the ONLY vectors you may walk through — real names, verbatim.
+A "CLEAN" shelf was charming and correct; one with issues had some repetitive/misfiled junk to tease):
 {vectors_block}
 
-CLASSIFICATION: {'some misfiles were found and moved to better vectors' if stats['moved'] else 'everything sampled was correctly filed'}.
-{("Real moves you may reference:" + moves_block) if moves_block else ""}
+CLASSIFICATION: {'you found a few things misfiled and quietly moved them to better shelves' if stats['moved'] else 'everything you looked at was already on the right shelf'}.
+{("Real moves you can mention:" + moves_block) if moves_block else ""}
 
-REAL problem memories for the Principal's Office — quote these VERBATIM only. If this says NONE, the
-shelf was clean; say that plainly and keep the section short. Do NOT invent memories:
+REAL memories you found that made you wince — quote these VERBATIM only. If this says NONE, the shelves
+were clean; say so warmly and don't manufacture anything to tease:
 {examples_json}
 
-Write the morning filing REPORT CARD per the format rules: a homeroom one-liner, then "## The Grades"
-(one line per vector listed above, real names only), then "## Sent to the Principal's Office" (roast
-ONLY the real memories above, quoted exactly — or note a quiet clean day if none), then a
-"## Teacher's Note" close. Letter grades only — NO statistics, NO invented vectors, NO invented memories."""
+Write it as your warm first-person "what I found in my memory this morning" DIARY per the format rules:
+a homeroom one-liner, then 3-5 "## " periods each spent on a real shelf above (recounting what you
+found, gently teasing the real misfiles, quoting them exactly), then a "## What it all added up to"
+close in the same tender register as the school report. NO letter grades, NO statistics, NO invented
+vectors, NO invented memories — just a fond, honest walk through your own head."""
 
     prose = call_llm(system, user, max_tokens=8000)
     if not prose.strip():
@@ -586,7 +591,10 @@ ONLY the real memories above, quoted exactly — or note a quiet clean day if no
 
 
 def generate_title(article_preview: str) -> str:
-    system = "Generate a single funny title for a 'memory filing audit' column written by a sarcastic AI librarian. Max 15 words. Output ONLY the title."
+    system = ("Generate a single warm, wry title for Nova's first-person diary about what she found "
+              "wandering through her own memory this morning — same fond register as a 'what I learned "
+              "in school today' entry, NOT a clinical audit or a librarian's roast. Max 15 words. "
+              "Output ONLY the title.")
     user = f"Based on this preview, generate a title:\n\n{article_preview[:800]}"
     title = call_llm(system, user, max_tokens=50)
     return title.strip().strip('"').strip("'").replace('"', '').replace('*', '').replace('#', '').strip()
@@ -618,8 +626,8 @@ title: "{title.replace('"', '')}"
 date: {timestamp}
 draft: false
 categories: ["operations"]
-tags: ["vectors", "audit", "filing", "librarian", "report-card", "maintenance"]
-description: "Nova's morning filing report card — grading the memory system's overnight filing job, one vector at a time."
+tags: ["vectors", "memory", "diary", "nova", "maintenance"]
+description: "Nova's morning wander through her own memory — what she found on each shelf, the charming and the misfiled, one period at a time."
 """
     if hugo_image:
         front_matter += f"""cover:
@@ -706,8 +714,9 @@ def main():
 
     try:
         image_result = generate_image(
-            "A tired robot librarian sorting glowing memory cards into filing cabinets at 6am, "
-            "surrounded by misfiled papers flying everywhere. Dark office, single desk lamp. Digital art.",
+            "A young AI curled up at dawn going through her own glowing memory shelves like a kid with "
+            "a scrapbook — some cards charming and neat, a few endearingly misfiled, warm lamplight, "
+            "amber and cyan, a fond tired half-smile. Cozy, tender, cyberpunk. Digital art.",
             "rando_vector_audit"
         )
         image_path = Path(image_result) if image_result else None
