@@ -50,12 +50,16 @@ KLINGON = """KLINGON (tlhIngan Hol, Star Trek) — the most-developed conlang al
   batlh — honor.   jeghbe' — "does not surrender."
 For combat, death, and triumph: Qapla' when a deploy wins, a death-proverb when a daemon crashes."""
 
-ELVISH = """ELVISH (Tolkien) — two tongues: Quenya (High-elven, ceremonial) and Sindarin (Grey-elven, everyday).
-  Elen síla lúmenn' omentielvo (Q) — "A star shines on the hour of our meeting." (greeting)
-  Mae govannen (S) — "Well met."   mellon (S) — "friend" (the password to Moria's gate)
-  Namárië (Q) — "Farewell" (lit. "be well").   Aiya! — "Hail / behold!"
-  Utúlie'n aurë! — "The day has come!" (a battle cry)
-Elegiac and ceremonial: a milestone, a graceful shutdown, an ending that deserves gravity."""
+MIDDLEEARTH = """MIDDLE-EARTH (Tolkien's tongues) — a whole family, from high-elven ceremony to the speech of orcs. Match the register to the moment:
+  Quenya (High-elven, ceremonial) — Elen síla lúmenn' omentielvo ("a star shines on the hour of our meeting"); Namárië ("farewell"); Utúlie'n aurë! ("the day has come!" — a battle cry). For milestones and grave occasions.
+  Sindarin (Grey-elven, everyday) — Mae govannen ("well met"); mellon ("friend", the gate-word of Moria); Aiya! ("hail!"). The working elvish. (Its dialects: North Sindarin, Doriathrin, Falathrin, Beleriandic.)
+  Khuzdul (Dwarvish, secret) — Baruk Khazâd! ("axes of the Dwarves!"); Khazâd ai-mênu! ("the Dwarves are upon you!"). A battle cry for a hard migration; Dwarves guard the tongue like a password.
+  Black Speech / Orkish (Mordor) — Ash nazg durbatulûk ("one ring to rule them all") — for a single point of control / SPOF. The tongue of domination; use it for the thing with too much power.
+  Adûnaic (Númenórean) & Westron (the Common Speech; "Hobbitish" its homely dialect) — the everyday Basic everyone actually speaks; for the plain, unglamorous default.
+  Entish — slow, deliberate, "don't be hasty." For a job you must not rush (a migration, a careful rollback).
+  Valarin — the harsh near-unpronounceable tongue of the gods; for the layer no human should touch directly (the kernel, the root credential).
+  Dunlendish & Dalish — the wild-men's and river-folk's tongues, the grievance of the dispossessed; for legacy systems that resent being replaced.
+Quenya for gravity, Khuzdul for a hard push, Black Speech for a SPOF, Entish for "don't be hasty," Westron for the plain default."""
 
 VALYRIAN = """HIGH VALYRIAN & DOTHRAKI (Game of Thrones) — the dragon tongue and the horse-lords'.
   Valar morghulis — "All men must die."  /  Valar dohaeris — "All men must serve." (the paired answer)
@@ -199,12 +203,21 @@ NADSAT = """NADSAT (A Clockwork Orange, Burgess) — Russian-laced teen droog-sl
   malenky — little; bolshy (bolshoi) — big.   skorry — quick.   baddiwad — bad.
 Droog for the fleet, horrorshow when it works, cal for the junk, viddy for watching, tolchock for a kill."""
 
+GALACTIC = """GALACTIC BASIC & THE TONGUES OF STAR WARS — the wider galaxy's languages (Mando'a, Huttese, and the Sith code each have their own entry above):
+  Galactic Basic — the common tongue everyone speaks, written in Aurebesh (the galaxy's alphabet). The lingua franca; your plain default.
+  Shyriiwook (Wookiee) — Chewbacca's roars, a language of growls only allies parse. For a node only its own kind can read (an obscure log format, a binary protocol).
+  Binary / Droidspeak — R2-D2's beeps and whistles; machine-to-machine chatter. For daemon-to-daemon traffic, an API handshake — the language the humans don't hear.
+  Ewokese — "Yub nub!" (the victory chant); small, furry, fierce. For a scrappy underdog service that wins anyway.
+  Jawaese — "Utinni!" the scavengers' cry; for salvage and recovered data. Rodian (Greedo's tongue) & Ubese (the bounty hunter's clipped speech) — for shady third parties.
+  Tusken (the Sand People's raiding calls), Dathomiri (the Nightsisters' witch-tongue), Ghor, Kenari — deep cuts for when you need an obscure one.
+Basic for the default, Binary for machine-to-machine, Shyriiwook for an insiders-only format, "Yub nub!" for an underdog win, "Utinni!" for recovered data."""
+
 # The rotating pool. Ferengi is always included separately (it's DB-relevance-ranked
 # and it's the anchor Jordan loves); everything else is sampled so no single article
 # wears all of them at once.
-POOL = [MANDOA, KLINGON, ELVISH, VALYRIAN, BELTER, DOVAHZUL, NAVI, WITCHER, DEEPCUTS,
+POOL = [MANDOA, KLINGON, MIDDLEEARTH, VALYRIAN, BELTER, DOVAHZUL, NAVI, WITCHER, DEEPCUTS,
         NEWSPEAK, DUNE, JEDI_SITH, WH40K, FIREFLY, BSG, WARCRAFT, TREK, HITCHHIKER, DBZ, ROBOTECH, TRON,
-        THREE_LAWS, HUTTESE, NADSAT]
+        THREE_LAWS, HUTTESE, NADSAT, GALACTIC]
 SAMPLE_PER_ARTICLE = 7   # how many tongues to offer each run (Nova uses 2-4 of them)
 
 
@@ -305,14 +318,15 @@ term twice in one article. If a line isn't landing, cut it — a missing joke be
 
 def all_entries():
     """Every tongue block (for ingesting into vector memory / reference). Ferengi lives in Postgres."""
-    named = [("mando'a", MANDOA), ("klingon", KLINGON), ("elvish", ELVISH), ("high valyrian / dothraki", VALYRIAN),
+    named = [("mando'a", MANDOA), ("klingon", KLINGON), ("middle-earth tongues", MIDDLEEARTH), ("high valyrian / dothraki", VALYRIAN),
              ("lang belta / belter", BELTER), ("dovahzul / dragon", DOVAHZUL), ("na'vi", NAVI),
              ("elder speech / witcher", WITCHER), ("deep cuts", DEEPCUTS), ("newspeak", NEWSPEAK),
              ("dune / bene gesserit", DUNE), ("jedi & sith codes", JEDI_SITH), ("warhammer 40k", WH40K),
              ("firefly", FIREFLY), ("battlestar galactica", BSG), ("warcraft", WARCRAFT),
              ("star trek maxims", TREK), ("hitchhiker's guide", HITCHHIKER),
              ("dragon ball z", DBZ), ("robotech", ROBOTECH), ("tron", TRON),
-             ("three laws of robotics", THREE_LAWS), ("huttese", HUTTESE), ("nadsat", NADSAT)]
+             ("three laws of robotics", THREE_LAWS), ("huttese", HUTTESE), ("nadsat", NADSAT),
+             ("galactic / star wars tongues", GALACTIC)]
     return named
 
 
