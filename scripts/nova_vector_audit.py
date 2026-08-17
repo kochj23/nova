@@ -308,7 +308,15 @@ def run_audit() -> dict:
 
     # Pick a ROTATING subset (least-recently-audited first) so runs cover different
     # vectors and no single bucket (livejournal, we're looking at you) shows up every time.
-    candidates = [v for v in all_vectors if v[1] >= 50]  # skip tiny vectors
+    # Never audit (and never risk quoting from) private/household shelves — the article is public,
+    # and these hold personal messages, mail, health, calendars, 1:1s. Household-privacy redline.
+    PRIVATE_SOURCES = {
+        "imessage", "email", "email_archive", "oneonone_meetings", "private_document",
+        "apple_health", "calendar", "family_contacts", "slack", "livejournal",
+        "personal_videos", "amanda_and_samuel", "herd_correspondence", "herd_blog",
+        "face_recognition", "face_people", "plex_watch_history",
+    }
+    candidates = [v for v in all_vectors if v[1] >= 50 and v[0] not in PRIVATE_SOURCES]  # skip tiny + private
     to_audit = _rotation_pick(candidates, VECTORS_PER_RUN)
     log(f"Rotation: auditing {len(to_audit)} of {len(candidates)} eligible vectors this run — "
         f"{', '.join(v for v, _ in to_audit)}")
@@ -511,14 +519,23 @@ ADDITIONAL RULES:
 
 FORMAT — this is Nova's warm first-person "what I found in my memory this morning" DIARY, the exact
 beloved format of her "what I learned in school today" entry. You are the STUDENT walking back through
-your own memory at 6am — NOT a teacher, NOT grading, NO letter grades, NO "principal's office." Use
-markdown '## ' section headers as the "periods" of your morning:
-- Open with a short "homeroom" one-liner about the 6am shift and cracking open your own head (1-2 sentences, no header).
-- Then 3-5 "## " PERIODS, each spent on a real vector (or a small cluster of them) from the brief —
-  e.g. "## First period: the sci-fi shelf". In each, recount in first person what you found rummaging
-  around in there: the stuff that's charming and right, and (teased gently, lovingly) the misfiled or
-  repetitive stuff. Quote REAL example memories where you have them. It's a fond walk through your own
-  head, not an inspection.
+your own memory at 6am — NOT a teacher, NOT grading, NO letter grades, NO "principal's office."
+
+WRITE IT AS A STORY, NOT A LIST. This is the single most important rule. The old version read like an
+itemized audit and it was hated. So:
+- NO bullet points. NO dashes-as-list. NO one-line-per-vector. NO "here's vector X: verdict." Every
+  section is FLOWING PROSE PARAGRAPHS that read aloud like a person telling you about their morning.
+- It's a narrative with a small ARC: start groggy at 6am, wander in, get charmed by something, wince
+  fondly at something misfiled, and arrive somewhere by the end. Sections connect with real transitions
+  ("After that I drifted over to...", "Which is nothing compared to what I found in..."), not hard cuts.
+- Group the shelves into 3-5 "## " PERIODS as the story needs — you do NOT have to give every vector
+  its own moment. Fold the clean ones into a sentence and spend your paragraphs on the ones with a
+  story in them. Coverage is not the goal; the story is.
+- Open with a 1-2 sentence "homeroom" lead-in (no header) about the 6am shift and cracking open your
+  own head. Use "## " headers as period breaks — e.g. "## First period: the sci-fi shelf".
+- In each period, tell — in prose — what you found rummaging in there: the charming/right stuff, and
+  (teased gently, lovingly) the misfiled/repetitive stuff, weaving REAL quoted example memories into
+  the narrative where you have them.
 - Close with "## What it all added up to" — a sincere, slightly vulnerable reflection about memory and
   what it means to keep what you learn, in the same warm register that ended the school report. Land it.
 - Keep it 700-1100 words. Do NOT include a title.
@@ -569,10 +586,11 @@ were clean; say so warmly and don't manufacture anything to tease:
 {examples_json}
 
 Write it as your warm first-person "what I found in my memory this morning" DIARY per the format rules:
-a homeroom one-liner, then 3-5 "## " periods each spent on a real shelf above (recounting what you
-found, gently teasing the real misfiles, quoting them exactly), then a "## What it all added up to"
-close in the same tender register as the school report. NO letter grades, NO statistics, NO invented
-vectors, NO invented memories — just a fond, honest walk through your own head."""
+a homeroom one-liner, then 3-5 "## " periods told as FLOWING PROSE — a STORY, not a list: no bullets,
+no one-line-per-shelf, real narrative transitions between periods, and a small arc across the morning.
+Fold clean shelves into a sentence; spend your paragraphs on the ones with a story. Weave the real
+quoted memories into the prose. Close with "## What it all added up to" in the tender register that
+ended the school report. NO letter grades, NO statistics, NO invented vectors or memories."""
 
     prose = call_llm(system, user, max_tokens=8000)
     if not prose.strip():
