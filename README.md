@@ -27,9 +27,10 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | BLE observers | multi-radio; every sighting tagged with the radio that saw it (`telemetry.bluetooth.observer`) |
 | Scheduler tasks | 180 unique |
 | Scheduler runs logged | 724,479 (95.0% success) |
-| Vector memories | 1,827,043 (deduplicated, pgvector HNSW, 768-dim nomic-embed) |
+| Vector memories | 2,010,000+ across 209 sources (deduplicated, pgvector HNSW, 768-dim nomic-embed) |
+| Borrowed tongues | 25 sampled languages/creeds + Ferengi Rules anchor (`nova_lexicon.py`; `conlang` vectors, DB-trigger protected) |
 | Tests | ~9,550 (pytest) — smoke covers all 353 scripts; dedicated suites on the highest-risk services |
-| Memory sources | 200 domains |
+| Memory sources | 209 domains |
 | Gateway | Nova Gateway v2.4.0 (pure Python asyncio, hot-reloadable config) |
 | Channels | Slack + Discord + Signal + Web Chatroom + Claude Code bridge |
 | Agents | 4 (Chat, Research, Home, Main) |
@@ -49,7 +50,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Load balancing | Capacity-aware (`nova_capacity.py` + `nova_resolve.py`) — headroom-scored instance selection, active-active, auto-fail-stale nodes |
 | Nova-MIB | `nova_component_metrics.py` — external SNMP-style per-component vitals (up/RSS/CPU/uptime/data-freshness) → `telemetry.nova_components` |
 | Retention | `nova_retention.py` — daily auto-purge (04:30), telemetry downsampling to `*_hourly`, partition DETACH+DROP, syslog 90d |
-| Home Assistant | v2025.1.4 on Mac Studio (:8123) — 392 entities (Hue, Lutron, UniFi, Apple TV, Cast, Google) |
+| Home Assistant | v2025.1.4 on Mac Studio (:8123) — 2,120 entities; HACS cards incl. mushroom, auto-entities, **mini-graph-card** |
 | JARVIS Brain | Activity classifier + environmental awareness on port 37480 |
 | Presence Engine | Multi-signal fusion on port 37465 (mmWave, BLE, camera, lights, media, vehicle, GPS) |
 | Camera Presence | YOLOv8-nano person detection on 5 interior cameras every 60s |
@@ -69,7 +70,74 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ---
 
-## Infrastructure & Security (June–July 2026)
+## Infrastructure & Security (June–August 2026)
+
+### Borrowed Tongues, Memory Protection, a Story-Format Audit & Mini-Graph Cards (2026-08-17)
+
+Nova crossed **2,000,000 vector memories**, and a run of work landed on top of it: a much larger
+borrowed-language system, a database-level guard that stops her own housekeeping from eating curated
+memories, a full rewrite of the daily vector-audit article, and a Home Assistant sensor-viz card.
+
+**Borrowed tongues — now 25.** `nova_lexicon.py` holds a rotating **POOL of 25 fictional
+languages/creeds** plus the **Ferengi Rules of Acquisition** (280 rules in `public.ferengi_rules`,
+full-text-ranked, *always* included as the anchor). `seasoning(section, topic)` samples **7 of the 25**
+per article and pulls the one Ferengi rule that best matches the topic; `nova_voice.system_prompt()`
+injects the result. A `FLAVOR_SECTIONS` allowlist gates it, and public-safety content opts out
+(`flavor=False`) — you do not garnish a smoke detector. This session added **Tron, Asimov's Three Laws
+of Robotics, Huttese, Nadsat**, expanded Elvish into the **full Middle-earth family** (Quenya, Sindarin
++dialects, Khuzdul, Black Speech, Adûnaic/Westron, Entish, Valarin, Dunlendish), and added a
+**Star Wars `GALACTIC`** entry (Basic/Aurebesh, Shyriiwook, Binary/Droidspeak, Ewokese, Jawaese, Rodian,
+Ubese, Tusken…). Each tongue is embedded once into `nova_memories` as `source='conlang'`.
+
+**A guard against self-inflicted forgetting.** The 25 tongue blocks share a template, so a cosine
+near-dup consolidation pass saw them as duplicates and **collapsed the whole `conlang` shelf to zero**.
+Fix is topology-independent: a **`BEFORE DELETE` trigger** (`trg_protect_curated`) on
+`nova_memories.memories` that returns `NULL` for `source='conlang'` — every deleter on every host is
+refused at the one chokepoint, no app restart. Verified: `DELETE FROM memories WHERE source='conlang'`
+→ `DELETE 0`, rows survive; other sources delete normally. Defense-in-depth added to `memory_server.py`
+(`/forget` guard) and `nova_rem_sleep.py` (consolidation exclusion).
+
+```mermaid
+flowchart LR
+    A["article request<br/>(section, topic)"] --> V["nova_voice<br/>system_prompt()"]
+    V --> S["nova_lexicon.seasoning()"]
+    S -->|"sample 7 of 25"| POOL["POOL — 25 tongues"]
+    S -->|"topic-matched, always"| FER["ferengi_rules<br/>(280, full-text)"]
+    S --> OUT["seasoned prose"]
+    V -. "public-safety" .-> OFF["flavor=False → no seasoning"]
+    POOL --> CL["conlang vectors<br/>(nova_memories)"]
+    CL --> TRG["trg_protect_curated<br/>BEFORE DELETE → NULL"]
+    TRG -.->|"blocks dedup wipe"| CL
+```
+
+**The daily vector-audit article, rewritten.** `nova_vector_audit.py` publishes a 6am "state of the
+memory shelves" piece. Three problems fixed: **(1) rotation** — the old `999` cap audited *every* vector
+every run (so `livejournal` was on every article and a run took ~2.5h); now it audits a rotating **15**
+via **least-recently-audited** tracking (`vector_audit_rotation` in `nova_ops`), full cycle ~14 runs,
+~12 min. **(2) voice/format** — from a caustic teacher's *report card* (letter grades, "principal's
+office", all 7 tongues crammed in) to a warm first-person **story-diary** ("what I found wandering my
+own memory this morning"), flowing prose with an arc, 2–3 tongues used with restraint. **(3)
+anti-fabrication** — on a clean sample the LLM used to invent fake vectors ("Weather Forecasting") and
+fake quoted memories; it now threads **real per-vector detail** and may only name real audited shelves
+and quote real memories (or honestly say the shelf was clean). Private/household vectors (`imessage`,
+`email*`, `oneonone`, `apple_health`, `calendar`, `face_*`, …) are **excluded from the audit** so a
+public article can never quote personal content.
+
+```mermaid
+flowchart TD
+    R["vector_audit_rotation<br/>(nova_ops)"] -->|"least-recently-audited"| PICK["pick 15 of ~185<br/>(private shelves excluded)"]
+    PICK --> SAMP["sample 100/vector<br/>quality-check"]
+    SAMP --> DET["real per-vector detail<br/>+ real example memories"]
+    DET --> GEN["story-diary generation<br/>(anti-fabrication, 2-3 tongues)"]
+    GEN --> PUB["publish → operations"]
+    PICK -->|"stamp last_audited"| R
+```
+
+**Mini-graph-card in Home Assistant.** Nova's repo-scout had stamped `kalkih/mini-graph-card` **ADOPT**
+but never installed it. Now done: bundle in `www/community/mini-graph-card/`, Lovelace resource
+registered via the HA websocket API, and a **"Mini Graphs"** dashboard with six live cards (indoor/
+outdoor temps, humidity, solar, plug power, UDMPro CPU/memory). Codeless install, no restart — HA
+serves the bundle (verified 200) and the dashboard is in the sidebar.
 
 ### Signal vs. Noise — Three-Tier Routing, Mesh SIGINT, and an External Agent Front Door (2026-07-29)
 
