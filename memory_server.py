@@ -963,9 +963,26 @@ async def dead_letter_queue(n: int = Query(20)):
     return {"count": len(items), "total": await _redis.llen(REDIS_DEAD_LETTER), "items": items}
 
 
+# Curated, hand-built sources that must NEVER be auto-pruned. Their entries are
+# deliberately similar (the borrowed-tongues lexicon shares a template), so a
+# cosine dedup/consolidation sweep sees them as near-duplicates and collapses
+# them — but each is intentional and distinct. Every deletion funnels through
+# these endpoints, so guarding here protects against every current and future
+# deleter at once. (2026-08-17: the 22 'conlang' tongue vectors were silently
+# collapsed to zero by a consolidation pass; this is the fix.)
+PROTECTED_SOURCES = {"conlang"}
+
+
 @app.delete("/forget")
 async def forget(id: str = Query(...)):
     async with _pg_pool.acquire() as conn:
+        src = await conn.fetchval("SELECT source FROM memories WHERE id = $1", id)
+        if src is None:
+            raise HTTPException(status_code=404, detail="Memory not found")
+        if src in PROTECTED_SOURCES:
+            # Refuse — a curated source; return 200 with protected=True so callers
+            # treat it as handled, not as an error to retry.
+            return {"deleted": False, "id": id, "protected": True, "source": src}
         result = await conn.execute("DELETE FROM memories WHERE id = $1", id)
     deleted = int(result.split()[-1])
     if deleted == 0:
@@ -975,11 +992,16 @@ async def forget(id: str = Query(...)):
 
 @app.delete("/forget_all")
 async def forget_all(source: Optional[str] = Query(None)):
+    if source in PROTECTED_SOURCES:
+        return {"deleted": 0, "protected": True, "source": source}
     async with _pg_pool.acquire() as conn:
         if source:
             result = await conn.execute("DELETE FROM memories WHERE source = $1", source)
         else:
-            result = await conn.execute("DELETE FROM memories")
+            # Even a delete-everything must spare the protected sources.
+            result = await conn.execute(
+                "DELETE FROM memories WHERE source != ALL($1::text[])",
+                list(PROTECTED_SOURCES))
     deleted = int(result.split()[-1])
     return {"deleted": deleted}
 

@@ -107,7 +107,7 @@ def phase_triage(conn):
         FROM memories
         WHERE tier = 'long_term'
           AND created_at > now() - interval '30 days'
-          AND source NOT IN ('synthesis', 'correction')
+          AND source NOT IN ('synthesis', 'correction', 'conlang')  -- conlang: curated, template-similar, never dedup
         GROUP BY source
         HAVING COUNT(*) > 50
         ORDER BY cnt DESC
@@ -321,7 +321,7 @@ def phase_pruning(conn):
         SET tier = 'scratchpad'
         WHERE tier = 'long_term'
           AND LENGTH(text) < 30
-          AND source NOT IN ('synthesis', 'correction')
+          AND source NOT IN ('synthesis', 'correction', 'conlang')  -- conlang: curated, template-similar, never dedup
     """)
     short_count = cur.rowcount
 
