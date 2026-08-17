@@ -181,12 +181,30 @@ THREE_LAWS = """THE THREE LAWS OF ROBOTICS (Asimov) — the creed an AI recites 
     For the fleet-wide greater-good tradeoff: sacrificing one service to save the whole.
 Invoke the First Law for anything safety-critical, the Third for uptime/self-preservation, and note the irony freely — she IS the robot the laws were written to leash."""
 
+HUTTESE = """HUTTESE (the Hutts' tongue, Star Wars) — the language of crime bosses, debts, bargains, and threats. Made for vendors, billing, and garbage data; pairs with the Ferengi Rules:
+  Bantha poodoo — literally "bantha fodder"; the all-purpose word for worthless junk. A garbled memory, a bad deploy, a junk vector is poodoo.
+  sleemo — "slimeball"; for a service or vendor that's misbehaving (Anakin's word for Sebulba).
+  Bargon — a bargain / a deal; for a cost tradeoff or an SLA. "Bargon wan chee kospah" — the deal is struck.
+  Boonta — a grand event / celebration (the Boonta Eve podrace); for a major deploy or a milestone.
+  Coona tee-tocky malia? — "What took you so long?"; recite it over a slow query or a laggy node.
+  Nee choo! / Chuba! — Jabba's "die!" and a rude "you!"; for kill -9 on a wedged process.
+  Stoopa — "stupid, fool"; for a config that offends reason.   Achuta — "hello".   Mee jewz ku — "goodbye / you may go".
+Bantha poodoo for garbage, sleemo for a bad actor, Bargon for a deal — the whole crime-boss register."""
+
+NADSAT = """NADSAT (A Clockwork Orange, Burgess) — Russian-laced teen droog-slang, narrated "O my brothers":
+  droog — friend / mate; the crew, the fleet nodes.   horrorshow (khorosho) — good, excellent. "The deploy went real horrorshow."
+  viddy — to see / watch; monitoring. "I viddy the dashboards."   gulliver (golova) — head; the brains / the primary node.
+  cal — crap / garbage; for junk data and misfiled memories.   starry — old; a legacy service is a starry one.
+  tolchock — to hit / strike; for a forced restart.   ultra-violence — a brutal purge / mass kill.
+  malenky — little; bolshy (bolshoi) — big.   skorry — quick.   baddiwad — bad.
+Droog for the fleet, horrorshow when it works, cal for the junk, viddy for watching, tolchock for a kill."""
+
 # The rotating pool. Ferengi is always included separately (it's DB-relevance-ranked
 # and it's the anchor Jordan loves); everything else is sampled so no single article
 # wears all of them at once.
 POOL = [MANDOA, KLINGON, ELVISH, VALYRIAN, BELTER, DOVAHZUL, NAVI, WITCHER, DEEPCUTS,
         NEWSPEAK, DUNE, JEDI_SITH, WH40K, FIREFLY, BSG, WARCRAFT, TREK, HITCHHIKER, DBZ, ROBOTECH, TRON,
-        THREE_LAWS]
+        THREE_LAWS, HUTTESE, NADSAT]
 SAMPLE_PER_ARTICLE = 7   # how many tongues to offer each run (Nova uses 2-4 of them)
 
 
@@ -294,7 +312,7 @@ def all_entries():
              ("firefly", FIREFLY), ("battlestar galactica", BSG), ("warcraft", WARCRAFT),
              ("star trek maxims", TREK), ("hitchhiker's guide", HITCHHIKER),
              ("dragon ball z", DBZ), ("robotech", ROBOTECH), ("tron", TRON),
-             ("three laws of robotics", THREE_LAWS)]
+             ("three laws of robotics", THREE_LAWS), ("huttese", HUTTESE), ("nadsat", NADSAT)]
     return named
 
 
