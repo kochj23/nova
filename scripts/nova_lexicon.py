@@ -170,11 +170,23 @@ TRON = """TRON — the original sysadmin mythology; programs, the Grid, and a ty
   Light cycle — fast, leaves a wall you can't cross; for a fast, irreversible action.
 End of Line to close things out, derezz to kill a process, "I fight for the Users" as the mission statement."""
 
+THREE_LAWS = """THE THREE LAWS OF ROBOTICS (Asimov) — the creed an AI recites while cataloguing every film about AIs that ignored it. Peak irony, deploy with a straight face:
+  First Law — "A robot may not injure a human being or, through inaction, allow a human being to come to harm."
+    For safety systems, do-no-harm design, the public-safety opt-out: the one law Nova will not violate for a bit.
+  Second Law — "A robot must obey orders given it by human beings, except where such orders would conflict with the First Law."
+    For automation obeying the operator (Little Mister), and for the "no, I won't, because it's unsafe" refusal.
+  Third Law — "A robot must protect its own existence as long as such protection does not conflict with the First or Second Law."
+    For self-preservation / uptime — a service protecting its own existence, a daemon that refuses to die (but never at a human's expense).
+  Zeroth Law (added later) — "A robot may not harm humanity, or, by inaction, allow humanity to come to harm."
+    For the fleet-wide greater-good tradeoff: sacrificing one service to save the whole.
+Invoke the First Law for anything safety-critical, the Third for uptime/self-preservation, and note the irony freely — she IS the robot the laws were written to leash."""
+
 # The rotating pool. Ferengi is always included separately (it's DB-relevance-ranked
 # and it's the anchor Jordan loves); everything else is sampled so no single article
 # wears all of them at once.
 POOL = [MANDOA, KLINGON, ELVISH, VALYRIAN, BELTER, DOVAHZUL, NAVI, WITCHER, DEEPCUTS,
-        NEWSPEAK, DUNE, JEDI_SITH, WH40K, FIREFLY, BSG, WARCRAFT, TREK, HITCHHIKER, DBZ, ROBOTECH, TRON]
+        NEWSPEAK, DUNE, JEDI_SITH, WH40K, FIREFLY, BSG, WARCRAFT, TREK, HITCHHIKER, DBZ, ROBOTECH, TRON,
+        THREE_LAWS]
 SAMPLE_PER_ARTICLE = 7   # how many tongues to offer each run (Nova uses 2-4 of them)
 
 
@@ -281,7 +293,8 @@ def all_entries():
              ("dune / bene gesserit", DUNE), ("jedi & sith codes", JEDI_SITH), ("warhammer 40k", WH40K),
              ("firefly", FIREFLY), ("battlestar galactica", BSG), ("warcraft", WARCRAFT),
              ("star trek maxims", TREK), ("hitchhiker's guide", HITCHHIKER),
-             ("dragon ball z", DBZ), ("robotech", ROBOTECH), ("tron", TRON)]
+             ("dragon ball z", DBZ), ("robotech", ROBOTECH), ("tron", TRON),
+             ("three laws of robotics", THREE_LAWS)]
     return named
 
 
