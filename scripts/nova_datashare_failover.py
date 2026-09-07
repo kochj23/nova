@@ -167,6 +167,15 @@ def handle(spec, check_only):
         return "skip", "not on this host"
     src = current_source(mount)
     healthy = readable(mount)
+    # ROOT-CAUSE FIX (2026-09-06): a CONFIGURED share whose mount fully dropped leaves
+    # an empty placeholder dir. readable() runs `ls` on it, gets rc=0 on the empty dir,
+    # and reports "healthy" — so the healer concluded "healthy on primary" and never
+    # remounted. That is exactly what left /mnt/nas (Plex) unmounted for ~40h across the
+    # 2026-09-05/06 Synology outage despite this running every 2 min. If NOTHING is
+    # mounted at the mountpoint (current_source is None; autofs shows 'systemd-1', not
+    # None, so this won't misfire), it is NOT healthy — force recovery.
+    if not src:
+        healthy = False
     syn_up = reachable(SYNOLOGY)
     # "On the fallback" is the only positively-identifiable state (our ro UNAS mount
     # shows the UNAS UNC). Everything else that's readable — a direct-CIFS Synology
