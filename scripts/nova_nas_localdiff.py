@@ -149,6 +149,21 @@ def synology_resyncing():
     return bool(re.search(r"(resync|recovery)\s*=", r.stdout))
 
 
+def source_reachable():
+    """Preflight: the Synology (source of truth) must be up before we reconcile.
+    Without this, an unreachable source made find_to() return an empty listing, the
+    loop 'skipped' every share, and main() still returned 0 — so a DEAD Synology
+    looked like a successful sync. That masked the ~40h 2026-09-05/06 outage: the
+    UNAS replica silently went stale and nothing alarmed. Fail LOUD instead."""
+    try:
+        r = subprocess.run(
+            ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", SYNO, "echo ok"],
+            capture_output=True, text=True, timeout=20)
+        return r.returncode == 0 and "ok" in r.stdout
+    except Exception:
+        return False
+
+
 def ensure_mounts():
     """Self-heal: bring the Synology's CIFS mounts of the UNAS back up if they dropped
     (e.g. after a reboot) before we rsync into them. The mountpoints are chattr +i, so
@@ -162,6 +177,14 @@ def ensure_mounts():
 
 def main():
     os.makedirs(TMP, exist_ok=True)
+    # Source-down guard (must run FIRST): a dead Synology used to look like success.
+    if not source_reachable():
+        msg = ("Synology source (192.168.1.11) unreachable — reconcile ABORTED. "
+               "The UNAS replica is NOT being updated and is going stale.")
+        print(msg, flush=True)
+        slack(f":rotating_light: *NAS reconcile FAILED* — {msg}")
+        record("nas", 99, 0)   # write a failed backup_run so the backup monitor catches it
+        return 1
     if synology_resyncing() and os.environ.get("NOVA_LOCALDIFF_FORCE") != "1":
         print("synology RAID resyncing — deferring reconcile (set NOVA_LOCALDIFF_FORCE=1 to override)", flush=True)
         return 0
@@ -236,4 +259,7 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    # sys.exit(main()) so main()'s return code becomes the process exit code — the
+    # scheduler was previously blind to failures because main() was called bare and
+    # the process always exited 0 regardless of what happened inside.
+    sys.exit(main())
