@@ -109,6 +109,13 @@ def is_publishable(title: str, body: str) -> tuple[bool, str]:
     if any(tl.startswith(p) for p in _BAD_TITLE_PREFIX):
         return (False, f"refusal/meta title: {title!r}")
 
+    # Leaked model meta-commentary as the opener ("I can see your article...
+    # Let me expand it...") — the longform expander's acknowledgment reaching
+    # the page. 30 such articles shipped before this check existed (2026-09-13).
+    if re.match(r"^(i can see|i'?ll expand|let me expand|i've expanded|here is the|"
+                r"here's the|the draft you|below is the)", bl):
+        return (False, "leaked meta-commentary opener in body")
+
     # A real article is substantial; refusals/stubs are short. Word count on the body only.
     words = len(re.findall(r"\w+", b))
     if words < 60:

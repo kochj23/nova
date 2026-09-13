@@ -298,41 +298,65 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
         _env = claude_env()
     except Exception:
         _env = None
-    try:
-        proc = subprocess.Popen(
-            ["claude", "-p", "--model", cli_model, "--system-prompt", system],
-            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-            text=True, start_new_session=True, env=_env)
+    # RETRY (2026-09-04): claude.exe (a Bun single-file binary) intermittently exits
+    # nonzero with "ENOENT: Bun could not find a file" (or an empty error) — most likely
+    # concurrent generators racing its temp extraction. With no retry, one flaky exit =
+    # one silently MISSING article (this cost the 2026-09-03 digest, and flaked essay/
+    # dream on adjacent days). Retry transient failures with backoff; do NOT retry a
+    # timeout (too expensive) or the size refusal above. One fix covers all ~15 callers.
+    import time as _time
+    _attempts = 3
+    for _attempt in range(1, _attempts + 1):
+        proc = None
         try:
-            out, err = proc.communicate(input=user, timeout=240)
-        except subprocess.TimeoutExpired:
+            proc = subprocess.Popen(
+                ["claude", "-p", "--model", cli_model, "--system-prompt", system],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                text=True, start_new_session=True, env=_env)
             try:
-                _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
-            except Exception:
-                proc.kill()
-            try:
-                proc.communicate(timeout=10)
-            except Exception:
-                pass
-            log(f"Claude Code call TIMED OUT ({cli_model}) — killed process group")
+                out, err = proc.communicate(input=user, timeout=240)
+            except subprocess.TimeoutExpired:
+                try:
+                    _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
+                except Exception:
+                    proc.kill()
+                try:
+                    proc.communicate(timeout=10)
+                except Exception:
+                    pass
+                log(f"Claude Code call TIMED OUT ({cli_model}) — killed process group")
+                return None
+            if proc.returncode != 0:
+                log(f"Claude Code call failed ({cli_model}) attempt {_attempt}/{_attempts}: "
+                    f"{(err or '').strip()[:300]}")
+                if _attempt < _attempts:
+                    _time.sleep(2 * _attempt)
+                    continue
+                return None
+            text = (out or "").strip()
+            if not text:
+                log(f"Claude Code call returned empty output ({cli_model}) "
+                    f"attempt {_attempt}/{_attempts}")
+                if _attempt < _attempts:
+                    _time.sleep(2 * _attempt)
+                    continue
+                return None
+            if _attempt > 1:
+                log(f"Claude Code call recovered on attempt {_attempt} ({cli_model})")
+            log(f"LLM [{cli_model} via claude-code] chars out={len(text)}")
+            return text
+        except Exception as e:
+            if proc is not None:
+                try:
+                    _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
+                except Exception:
+                    pass
+            log(f"Claude Code call failed ({cli_model}) attempt {_attempt}/{_attempts}: {e}")
+            if _attempt < _attempts:
+                _time.sleep(2 * _attempt)
+                continue
             return None
-        if proc.returncode != 0:
-            log(f"Claude Code call failed ({cli_model}): {(err or '').strip()[:300]}")
-            return None
-        text = (out or "").strip()
-        if not text:
-            log(f"Claude Code call returned empty output ({cli_model})")
-            return None
-        log(f"LLM [{cli_model} via claude-code] chars out={len(text)}")
-        return text
-    except Exception as e:
-        if proc is not None:
-            try:
-                _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
-            except Exception:
-                pass
-        log(f"Claude Code call failed ({cli_model}): {e}")
-        return None
+    return None
 
 
 def grafana_panel_image(dashboard_uid: str, panel_id: int, section: str, name: str,
@@ -450,6 +474,19 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
                 "paragraphs; keep the existing structure, title-free format, and voice. "
                 "Output ONLY the full expanded article body.",
                 body, max_tokens=16000, temperature=0.7)
+            # The model routinely prefaces with an acknowledgment ("I can see your
+            # article... Let me expand it...") despite the Output-ONLY rule — 30
+            # such leaks reached the live site between Jul 30 and Sep 13. Strip any
+            # leading meta-commentary paragraphs (and a stray --- after them)
+            # before the guard sees the text.
+            _META = re.compile(
+                r"^(i can see|i'?ll expand|let me expand|i've expanded|here is the|"
+                r"here's the|the draft you|below is the)", re.I)
+            if expanded:
+                paras = expanded.split("\n\n")
+                while paras and (_META.match(paras[0].strip()) or paras[0].strip() == "---"):
+                    paras.pop(0)
+                expanded = "\n\n".join(paras).strip()
             if expanded and len(expanded.split()) > wc:
                 ok2, why = is_publishable(title, expanded)
                 if ok2:
