@@ -150,9 +150,38 @@ def fetch_xml():
         return resp.read()
 
 
+def _repair_truncated(xml_bytes):
+    """Salvage a truncated feed body.
+
+    Since ~2026-08 the CHP edge caps the response at exactly 152 KiB (observed
+    2026-09-13: identical cutoff plain and gzip — origin-side cap), cutting the
+    statewide XML mid-token as the feed outgrew it. Every fetch then died with
+    ParseError and the task hard-failed for weeks. The LAHB (LA) Center sits
+    well before the cap, so cut back to the last complete </Log> and close any
+    still-open ancestor elements; ET can then parse everything that arrived.
+    Returns repaired bytes, or None if nothing salvageable.
+    """
+    text = xml_bytes.decode("utf-8", "replace")
+    idx = text.rfind("</Log>")
+    if idx == -1:
+        return None
+    head = text[: idx + len("</Log>")]
+    for tag in ("Dispatch", "Center", "State"):
+        missing = head.count("<" + tag) - head.count("</" + tag + ">")
+        head += ("</" + tag + ">") * max(0, missing)
+    return head.encode("utf-8")
+
+
 def parse_incidents(xml_bytes):
     """Return list of LA-area incident dicts."""
-    root = ET.fromstring(xml_bytes)
+    try:
+        root = ET.fromstring(xml_bytes)
+    except ET.ParseError:
+        repaired = _repair_truncated(xml_bytes)
+        if repaired is None:
+            raise
+        log("feed truncated by CHP edge (152KiB cap) — parsing salvaged prefix")
+        root = ET.fromstring(repaired)
     out = []
     for center in root.findall("Center"):
         cid = (center.get("ID") or "").strip()

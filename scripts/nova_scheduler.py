@@ -61,6 +61,14 @@ def _should_alert_failure(n: int) -> bool:
     return n >= 1 and (n & (n - 1)) == 0
 
 
+# Alert-flood controls (2026-09-13): at most one failure alert per task per
+# hour, and after QUARANTINE_THRESHOLD consecutive failures the task is
+# dead-lettered — unscheduled until scheduler restart or a config reload that
+# touches it — with a single clear alert instead of an endless failure stream.
+ALERT_MIN_INTERVAL_S = 3600
+QUARANTINE_THRESHOLD = 10
+
+
 # ── Data structures ──────────────────────────────────────────────────────────
 
 @dataclass
@@ -218,6 +226,8 @@ class NovaScheduler:
         self._total_failures = 0
         self._prev_heartbeat_state = None  # (healthy, total, failing_ids) from last heartbeat
         self._last_forced_heartbeat = 0    # timestamp of last proof-of-life heartbeat
+        self._last_task_alert: dict = {}   # task_id -> ts of last failure alert (1h rate limit)
+        self._quarantined: set = set()     # dead-lettered task ids (in-memory; cleared on restart)
 
     def load(self):
         self.sched_cfg, self.slack_cfg, self.tasks = load_config()
@@ -399,6 +409,11 @@ class NovaScheduler:
                 task.state.consecutive_failures = 0
                 task.state._retry_pending = False
                 task.state.last_error = ""
+                if task.id in self._quarantined:
+                    # A successful (e.g. manual /run) execution clears dead-letter.
+                    self._quarantined.discard(task.id)
+                    log(f"UNQUARANTINE {task.id} — succeeded, rescheduling",
+                        level=LOG_INFO, source="scheduler")
 
         except Exception as e:
             if _run_status == "success":  # not already set to timeout/failure above
@@ -433,6 +448,23 @@ class NovaScheduler:
             task.state.run_count += 1
             self._running_count -= 1
             self._total_runs += 1
+            # Dead-letter: after QUARANTINE_THRESHOLD consecutive failures stop
+            # scheduling this task entirely and say so exactly once (bypasses the
+            # per-task rate limit via its own dedup key). Cleared by scheduler
+            # restart, a config reload touching the task, or a successful run.
+            if (task.state.consecutive_failures >= QUARANTINE_THRESHOLD
+                    and task.id not in self._quarantined):
+                self._quarantined.add(task.id)
+                log(f"QUARANTINE {task.id} — {task.state.consecutive_failures} consecutive "
+                    f"failures; unscheduled until scheduler restart or config change",
+                    level=LOG_ERROR, source="scheduler")
+                if self.slack_cfg.get("alerts", True):
+                    await self._slack_post(
+                        f":octagonal_sign: *[{SCHED_HOST}] {task.id} QUARANTINED* — "
+                        f"{task.state.consecutive_failures} consecutive failures. Task is "
+                        f"unscheduled until scheduler restart or config change. "
+                        f"Last error: {task.state.last_error[:200]}",
+                        level="warning", dedup_key=f"scheduler-quarantine-{task.id}")
             # Don't overwrite next_run if a retry was just scheduled
             if not task.state._retry_pending:
                 self._advance_next_run(task)
@@ -455,6 +487,13 @@ class NovaScheduler:
 
     async def _slack_alert(self, text, task_id=None):
         if self.slack_cfg.get("alerts", True):
+            # Per-task rate limit: at most one failure alert per task per hour,
+            # on top of the power-of-two backoff cadence (2026-09-13).
+            if task_id:
+                now = time.time()
+                if now - self._last_task_alert.get(task_id, 0) < ALERT_MIN_INTERVAL_S:
+                    return
+                self._last_task_alert[task_id] = now
             # Host prominent in the title so the alert is identifiable at a glance.
             text = f":x: *[{SCHED_HOST}] {task_id}* — " + text.split("—", 1)[1].strip() \
                 if task_id and "—" in text else f"[{SCHED_HOST}] " + text
@@ -551,6 +590,7 @@ class NovaScheduler:
                         "last_exit_code": t.state.last_exit_code,
                         "consecutive_failures": t.state.consecutive_failures,
                         "run_count": t.state.run_count,
+                        "quarantined": tid in self._quarantined,
                     }
                 body = json.dumps(tasks_data, indent=2).encode()
             elif path.startswith("/run/"):
@@ -683,7 +723,8 @@ class NovaScheduler:
 
             # Find due tasks
             for task in self.tasks.values():
-                if not task.enabled or task.state.next_run > now:
+                if (not task.enabled or task.id in self._quarantined
+                        or task.state.next_run > now):
                     continue
 
                 if task.state.running:
@@ -796,6 +837,8 @@ class NovaScheduler:
                         removed.append(tid)
                         del self.tasks[tid]
 
+            # Config change clears dead-letter for tasks that were added/updated.
+            self._quarantined -= set(added) | set(updated)
             self._recalculate_next_runs()
             parts = []
             if added:
