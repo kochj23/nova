@@ -434,12 +434,33 @@ def _canon_section(section: str) -> str:
 
 def publish_hugo(title: str, body: str, section: str, tags: list[str],
                  description: str, image_path: str | None = None, emoji: str = "",
-                 stable_slug: str | None = None) -> bool:
+                 stable_slug: str | None = None,
+                 cited_memory_ids: list | None = None) -> bool:
     """Write a Hugo markdown post and copy cover image.
 
     stable_slug: if set, the post uses a FIXED filename ("<slug>.md", no date prefix) so
     repeated runs overwrite the same evergreen article instead of creating a new dated post.
+    cited_memory_ids: memory ids this article drew on — recorded in
+    nova_ops.article_citations at publish time (the provenance invariant, 2026-09-13);
+    the nightly sleep cycle materializes them into nova_memories.memory_links once the
+    article is re-ingested.
     """
+    # Central title fallback (2026-09-13): degenerate titles ("Abstract", "Let me…",
+    # stray markdown) previously reached the site from generators lacking their own
+    # guard. One check here covers every generator.
+    def _degenerate_title(t):
+        t = (t or "").strip().strip("*# ").strip()
+        toks = [w.strip(".,!?—-:;\"'").lower() for w in t.split() if w.strip()]
+        if len(t) < 8 or len(toks) < 2:
+            return True
+        if toks[0] in ("i", "let", "here", "sure", "okay", "alright") or "**" in t:
+            return True
+        return len(set(toks)) <= max(1, len(toks) // 4)
+    if _degenerate_title(title):
+        old = title
+        title = f"{section.title()} Dispatch — {today_str()}"
+        log(f"[title-guard] replaced degenerate title {old!r} -> {title!r}")
+
     # Publish gate: never let a refusal / clarifying-question / placeholder reach the site.
     from nova_journal_guard import is_publishable
     ok, reason = is_publishable(title, body)
@@ -487,7 +508,11 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
                 while paras and (_META.match(paras[0].strip()) or paras[0].strip() == "---"):
                     paras.pop(0)
                 expanded = "\n\n".join(paras).strip()
-            if expanded and len(expanded.split()) > wc:
+            # Honest floor (2026-09-13): only accept an expansion that actually
+            # reaches the stated minimum — "longer than the draft" was shipping
+            # 2,292-word articles through a stage named 3000. Anything less keeps
+            # the original: a tight short piece beats a padded medium one.
+            if expanded and len(expanded.split()) >= LONGFORM_MIN_WORDS:
                 ok2, why = is_publishable(title, expanded)
                 if ok2:
                     body = expanded
@@ -495,7 +520,8 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
                 else:
                     log(f"[longform] expansion failed guard ({why}) — publishing original")
             else:
-                log("[longform] expansion came back shorter/empty — publishing original")
+                got = len(expanded.split()) if expanded else 0
+                log(f"[longform] expansion reached {got} < {LONGFORM_MIN_WORDS} — publishing original {wc}w")
         except Exception as e:
             log(f"[longform] expansion error ({e}) — publishing original")
 
@@ -570,6 +596,20 @@ description: "{description.replace('"', "'")}"
         remember_article(str(output))
     except Exception as e:
         log(f"article->memory skipped: {e}")
+    if cited_memory_ids:
+        try:  # provenance invariant: record what this article drew on (non-fatal)
+            import psycopg2
+            _c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+            _c.autocommit = True
+            with _c.cursor() as cur:
+                for mid in cited_memory_ids[:50]:
+                    cur.execute(
+                        "INSERT INTO article_citations (article_slug, memory_id) "
+                        "VALUES (%s, %s) ON CONFLICT DO NOTHING", (slug, str(mid)))
+            _c.close()
+            log(f"citations: {len(cited_memory_ids[:50])} recorded for {slug}")
+        except Exception as e:
+            log(f"citations skipped: {e}")
     return True
 
 

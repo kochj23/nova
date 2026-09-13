@@ -294,6 +294,78 @@ def _system_prompt(agent_id: str, bootstrap_docs: str) -> str:
 
 # ── Memory injection ──────────────────────────────────────────────────────────
 
+# Sources that are Nova's OWN lived experience — safe and *wanted* in every
+# conversation (retrieve-before-reply, 2026-09-13, per Jordan: "I want the
+# memories to enhance the interaction"). Deliberately excludes raw personal
+# archives (email, imessage): the 2002-email-needling lesson stands — always-on
+# recall draws on shared history and Nova's writing, not Jordan's filing cabinet.
+_EXPERIENCE_SOURCES = ("conversation", "episodic", "association", "nova_articles")
+
+
+async def _experience_recall(ctx: GatewayContext, question: str) -> str:
+    """Always-on recall lane: what do WE know — past conversations, episodes,
+    sparks, and Nova's own articles — that's relevant to this message?
+    Budget: parallel fast-tier calls, 4s overall, degrade to nothing."""
+    if len(question.strip()) < 12:          # greetings/acks — don't bother
+        return ""
+
+    async def one(src, n):
+        try:
+            r = await ctx.http.get(
+                "http://memory-server.digitalnoise.net:18790/recall",
+                params={"q": question, "n": n, "source": src,
+                        "tier": "fast", "min_score": 0.35},
+                timeout=4)
+            return r.json().get("memories", [])
+        except Exception:
+            return []
+
+    try:
+        batches = await asyncio.wait_for(
+            asyncio.gather(one("conversation", 2), one("episodic", 2),
+                           one("association", 1), one("nova_articles", 1)),
+            timeout=4.5)
+    except Exception:
+        return ""
+    items = [m for b in batches for m in b]
+    if not items:
+        return ""
+    lines = []
+    for m in items[:5]:
+        txt = (m.get("text") or "").strip().replace("\n", " ")[:280]
+        src = m.get("source", "?")
+        date = str(m.get("created_at", ""))[:10]
+        if txt:
+            lines.append(f"- ({src}, {date}) {txt}")
+    if not lines:
+        return ""
+    return ("[Shared history — Nova's own memory relevant to this message. Use it "
+            "naturally for continuity and callbacks ('as we discussed', 'this reminds "
+            "me of...'). Never recite credentials, PII, or private specifics.]\n"
+            + "\n".join(lines) + "\n[End shared history]\n\n")
+
+
+async def _remember_exchange(ctx: GatewayContext, session_id: str, agent_id: str,
+                             user_msg: str, reply: str) -> None:
+    """Reflect-after: write the exchange back as a conversation memory so future
+    turns (and the nightly consolidation pass) can recall it. Fire-and-forget."""
+    try:
+        parts = session_id.split(":")
+        channel = parts[1] if len(parts) > 1 else "unknown"
+        text = (f"Jordan: {user_msg.strip()[:1200]}\n"
+                f"Nova: {reply.strip()[:1200]}")
+        await ctx.http.post(
+            "http://memory-server.digitalnoise.net:18790/remember",
+            params={"async": "1"},
+            json={"text": text, "source": "conversation",
+                  "metadata": {"type": "chat_turn", "person": "jordan",
+                               "channel": channel, "agent": agent_id,
+                               "session_id": session_id, "privacy": "private"}},
+            timeout=5)
+    except Exception as e:
+        log.debug(f"reflect-after write failed (non-fatal): {e}")
+
+
 async def _inject_memory(ctx: GatewayContext, question: str) -> str:
     """Run nova_memory_first.py and return result to prepend to context.
 
@@ -594,13 +666,18 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
     except Exception as e:
         log.debug(f"[{trace_id}] Cross-context injection failed (non-fatal): {e}")
 
-    # Memory injection — resilient: continues without context on failure
+    # Memory injection — resilient: continues without context on failure.
+    # Two lanes since 2026-09-13: the always-on experiential lane (shared
+    # history / Nova's own writing) plus the original intent-gated deep lane.
     try:
-        memory_ctx = await _inject_memory(ctx, message)
+        exp_ctx, memory_ctx = await asyncio.gather(
+            _experience_recall(ctx, message), _inject_memory(ctx, message))
     except Exception as e:
         log.warning(f"[{trace_id}] Memory injection failed (degraded): {e}")
-        memory_ctx = ""
-    user_content = f"{memory_ctx}{message}" if memory_ctx else message
+        exp_ctx, memory_ctx = "", ""
+    if exp_ctx:
+        log.info(f"[{trace_id}] experiential recall injected ({len(exp_ctx)} chars)")
+    user_content = f"{exp_ctx}{memory_ctx}{message}" if (exp_ctx or memory_ctx) else message
 
     # Build message history (wrapped in try/except for session isolation)
     try:
@@ -767,6 +844,9 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
     # Log assistant turn
     await log_turn(ctx, session_id, agent_id, "assistant", clean_response,
                    model=model, turn_index=turn_index + 1)
+
+    # Reflect-after: persist the exchange as a conversation memory (fire-and-forget)
+    asyncio.create_task(_remember_exchange(ctx, session_id, agent_id, message, clean_response))
 
     # Calculate metrics
     total_ms = int((time.time() - t_start) * 1000)

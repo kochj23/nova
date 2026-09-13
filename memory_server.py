@@ -46,6 +46,7 @@ import logging
 import time
 import uuid
 from contextlib import asynccontextmanager
+import math
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -94,6 +95,20 @@ PRIVATE_SOURCES = [
 ]
 
 # ef_search tiers — set per query type via ?tier= param
+# Set at startup: whether the memories table has supersession columns
+# (superseded_by / valid_to, added 2026-09-13). When true, recall excludes
+# superseded rows so stale facts stop outranking their replacements.
+_HAS_SUPERSESSION = False
+
+# Hybrid recall (2026-09-13): vector + full-text legs fused with Reciprocal
+# Rank Fusion, then weighted by recency and prior usefulness. RRF_K is the
+# standard fusion constant; the boost weights are deliberately modest so
+# cosine relevance stays dominant.
+RRF_K            = 60
+FTS_CANDIDATES   = 50
+W_RECENCY        = 0.010   # * exp(-age_days/90)
+W_ACCESS         = 0.002   # * log1p(access_count)
+
 EF_SEARCH = {
     "fast":     40,    # casual chat, low-stakes — ~40ms
     "standard": 100,   # normal recall — ~150ms
@@ -308,6 +323,11 @@ async def lifespan(app: FastAPI):
                 access_count       INTEGER NOT NULL DEFAULT 0
             )
         """)
+        global _HAS_SUPERSESSION
+        _HAS_SUPERSESSION = bool(await conn.fetchval(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name='memories' AND column_name='superseded_by'"))
+        logger.info(f"supersession filter: {'ON' if _HAS_SUPERSESSION else 'off (columns absent)'}")
         # Same table nova_ingest.py's bulk pipeline already writes to — reuse it
         # rather than invent a second discard log with different columns.
         await conn.execute("""
@@ -504,6 +524,65 @@ async def _do_recall(
     # Fetch more candidates than needed so post-filter (min_score, tier) has room
     k = n * 20 if source else n * 3
 
+    sup = "AND superseded_by IS NULL" if _HAS_SUPERSESSION else ""
+
+    # Hybrid: run the vector leg and the full-text leg concurrently, fuse below.
+    vec_rows, fts_rows = await asyncio.gather(
+        _vector_leg(vec_str, k, n, ef, source, include_private, sup),
+        _fts_leg(q, source, include_private, sup),
+    )
+
+    now = datetime.now(timezone.utc)
+    fused: dict = {}
+    for i, r in enumerate(vec_rows):
+        fused[r["id"]] = {"row": r, "vec": float(r["score"]), "rrf": 1.0 / (RRF_K + i)}
+    for i, r in enumerate(fts_rows):
+        e = fused.get(r["id"])
+        if e:
+            e["rrf"] += 1.0 / (RRF_K + i)
+        else:
+            fused[r["id"]] = {"row": r, "vec": None, "rrf": 1.0 / (RRF_K + i)}
+
+    scored = []
+    for e in fused.values():
+        r = e["row"]
+        # min_score keeps its historical meaning (cosine similarity floor) for
+        # vector-sourced hits; exact-match FTS hits pass — surfacing the row
+        # whose proper noun matched is the entire point of the text leg.
+        if e["vec"] is not None and e["vec"] < min_score:
+            continue
+        try:
+            age_days = max(0.0, (now - r["created_at"]).total_seconds() / 86400.0)
+        except Exception:
+            age_days = 365.0
+        order = (e["rrf"]
+                 + W_RECENCY * math.exp(-age_days / 90.0)
+                 + W_ACCESS * math.log1p(float(r["access_count"] or 0)))
+        # Reported score: real cosine similarity when known; FTS-only hits get a
+        # flat 0.5 marker (documented: "matched by text, not by vector").
+        report = e["vec"] if e["vec"] is not None else 0.5
+        scored.append((order, report, r))
+
+    scored.sort(key=lambda t: t[0], reverse=True)
+    results = [_row_to_result(r, float(s)) for _o, s, r in scored]
+    top = results[:n]
+
+    # Update access tracking asynchronously — don't block the response
+    asyncio.create_task(_update_access([m.id for m in top]))
+
+    response = {"memories": [m.model_dump() for m in top], "query": q, "count": len(top)}
+
+    try:
+        await _redis.setex(cache_key, CACHE_TTL, json.dumps(response, default=str))
+    except Exception:
+        pass
+
+    return response
+
+
+async def _vector_leg(vec_str, k, n, ef, source, include_private, sup):
+    """The original HNSW cosine leg of recall, unchanged in behavior except for
+    the supersession filter and access_count in the select list."""
     async with _pg_pool.acquire() as conn:
         if source:
             # For sources with partial HNSW indexes, the planner will pick the
@@ -535,10 +614,10 @@ async def _do_recall(
             async with conn.transaction():
                 await conn.execute(f"SET LOCAL hnsw.ef_search = {query_ef}")
                 rows = await conn.fetch(
-                    """SELECT id, text, metadata, source, created_at,
+                    f"""SELECT id, text, metadata, source, created_at, access_count,
                               1 - (embedding <=> $1::vector) AS score
                        FROM memories
-                       WHERE source = $2 AND tier NOT IN ('scratchpad', 'reference')
+                       WHERE source = $2 AND tier NOT IN ('scratchpad', 'reference') {sup}
                        ORDER BY embedding <=> $1::vector
                        LIMIT $3""",
                     vec_str, source, k
@@ -551,32 +630,47 @@ async def _do_recall(
             async with conn.transaction():
                 await conn.execute(f"SET LOCAL hnsw.ef_search = {ef}")
                 rows = await conn.fetch(
-                    f"""SELECT id, text, metadata, source, created_at,
+                    f"""SELECT id, text, metadata, source, created_at, access_count,
                               1 - (embedding <=> $1::vector) AS score
                        FROM memories
                        WHERE tier NOT IN ('scratchpad', 'reference')
-                       {priv_clause}
+                       {priv_clause} {sup}
                        ORDER BY embedding <=> $1::vector
                        LIMIT $2""",
                     *args
                 )
+    return rows
 
-    results = [_row_to_result(r, float(r["score"])) for r in rows
-               if float(r["score"]) >= min_score]
-    results.sort(key=lambda x: x.score, reverse=True)
-    top = results[:n]
 
-    # Update access tracking asynchronously — don't block the response
-    asyncio.create_task(_update_access([m.id for m in top]))
-
-    response = {"memories": [m.model_dump() for m in top], "query": q, "count": len(top)}
-
+async def _fts_leg(q, source, include_private, sup):
+    """Full-text leg: exact/lexical matching over tsv with websearch syntax.
+    Catches the proper nouns, hostnames, and names that cosine similarity
+    fumbles. Returns [] on any failure — recall degrades to vector-only."""
     try:
-        await _redis.setex(cache_key, CACHE_TTL, json.dumps(response, default=str))
-    except Exception:
-        pass
-
-    return response
+        priv_clause = "" if include_private else "AND source <> ALL($3::text[])"
+        src_clause = "AND source = $3" if source else ""
+        # source and private-exclusion are mutually exclusive in arg slot $3:
+        # source-scoped recalls are internal (private allowed) by convention.
+        if source:
+            args = [q, FTS_CANDIDATES, source]
+        elif not include_private:
+            args = [q, FTS_CANDIDATES, PRIVATE_SOURCES]
+        else:
+            args = [q, FTS_CANDIDATES]
+        async with _pg_pool.acquire() as conn:
+            return await conn.fetch(
+                f"""SELECT id, text, metadata, source, created_at, access_count,
+                           ts_rank_cd(tsv, websearch_to_tsquery('english', $1)) AS rank
+                    FROM memories
+                    WHERE tsv @@ websearch_to_tsquery('english', $1)
+                      AND tier NOT IN ('scratchpad', 'reference')
+                      {src_clause} {priv_clause} {sup}
+                    ORDER BY rank DESC
+                    LIMIT $2""",
+                *args)
+    except Exception as e:
+        logger.warning(f"FTS leg failed ({e}) — vector-only recall")
+        return []
 
 
 @app.get("/recall")
