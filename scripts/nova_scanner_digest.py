@@ -18,7 +18,10 @@ import psycopg2
 
 MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
-ROUTER = "http://192.168.1.2:37475/v1/chat/completions"
+# Native Ollama + think:false (router's OpenAI shim unreliable for qwen3 — see
+# nova_sleep_cycle.py). qwen3:8b on .6 handles hourly digests comfortably.
+OLLAMA = "http://192.168.1.6:11434/api/chat"
+LLM_MODEL = "qwen3:8b"
 MIN_ROWS = 8          # below this, the hour isn't worth a digest
 
 
@@ -28,12 +31,13 @@ def log(m):
 
 def llm(prompt, max_tokens=260):
     req = urllib.request.Request(
-        ROUTER, method="POST", headers={"Content-Type": "application/json"},
-        data=json.dumps({"model": "fast", "temperature": 0.3,
-                         "max_tokens": max_tokens,
+        OLLAMA, method="POST", headers={"Content-Type": "application/json"},
+        data=json.dumps({"model": LLM_MODEL, "stream": False, "think": False,
+                         "options": {"temperature": 0.3,
+                                     "num_predict": max_tokens},
                          "messages": [{"role": "user", "content": prompt}]}).encode())
-    with urllib.request.urlopen(req, timeout=120) as r:
-        return json.load(r)["choices"][0]["message"]["content"].strip()
+    with urllib.request.urlopen(req, timeout=240) as r:
+        return json.load(r).get("message", {}).get("content", "").strip()
 
 
 def remember(text, metadata):

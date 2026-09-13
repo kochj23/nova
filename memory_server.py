@@ -482,16 +482,26 @@ async def remember(req: RememberRequest, async_mode: bool = Query(False, alias="
         created_dt = datetime.fromisoformat(created).replace(tzinfo=timezone.utc)
     except Exception:
         created_dt = datetime.now(timezone.utc)
+    status = "stored"
     async with _pg_pool.acquire() as conn:
-        await conn.execute(
+        row = await conn.fetchrow(
             """INSERT INTO memories
                  (id, text, metadata, embedding, source, raw_classification, created_at, text_hash, tier)
                VALUES ($1, $2, $3, $4::vector, $5, $5, $6, $7, $8)
-               ON CONFLICT (text_hash) DO NOTHING""",
+               ON CONFLICT (text_hash) DO NOTHING
+               RETURNING id""",
             memory_id, clean_text, json.dumps(req.metadata),
             _vec_str(vector), req.source, created_dt, text_hash, target_tier,
         )
-    return {"id": memory_id, "dims": len(vector), "status": "stored", "tier": target_tier}
+        if row is None:
+            # Dedup hit: the insert no-op'd. Return the EXISTING row's id — callers
+            # link against the returned id (memory_links, citations), and returning
+            # an id that was never inserted broke those links with FK violations.
+            existing = await conn.fetchval(
+                "SELECT id FROM memories WHERE text_hash = $1", text_hash)
+            if existing:
+                memory_id, status = existing, "deduplicated"
+    return {"id": memory_id, "dims": len(vector), "status": status, "tier": target_tier}
 
 
 async def _do_recall(

@@ -23,6 +23,7 @@ LLM calls go through the fleet inference router (local, free). Scheduled 03:40
 nightly on nova-core via scheduler-core.yaml (task: sleep_cycle).
 """
 import json
+import re
 import sys
 import urllib.parse
 import urllib.request
@@ -33,7 +34,11 @@ import psycopg2
 MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
-ROUTER = "http://192.168.1.2:37475/v1/chat/completions"
+# Native Ollama on .6 with think:false — the inference router's OpenAI shim
+# returns empty content for qwen3 thinking models (verified 2026-09-13), and
+# the 'fast' pool backend was erroring. Direct + no-think is reliable.
+OLLAMA = "http://192.168.1.6:11434/api/chat"
+LLM_MODEL = "qwen3:8b"
 TODAY = date.today().isoformat()
 
 
@@ -43,12 +48,13 @@ def log(m):
 
 def llm(prompt, max_tokens=700, temperature=0.4):
     req = urllib.request.Request(
-        ROUTER, method="POST", headers={"Content-Type": "application/json"},
-        data=json.dumps({"model": "conversation", "temperature": temperature,
-                         "max_tokens": max_tokens,
+        OLLAMA, method="POST", headers={"Content-Type": "application/json"},
+        data=json.dumps({"model": LLM_MODEL, "stream": False, "think": False,
+                         "options": {"temperature": temperature,
+                                     "num_predict": max_tokens},
                          "messages": [{"role": "user", "content": prompt}]}).encode())
-    with urllib.request.urlopen(req, timeout=180) as r:
-        return json.load(r)["choices"][0]["message"]["content"].strip()
+    with urllib.request.urlopen(req, timeout=300) as r:
+        return json.load(r).get("message", {}).get("content", "").strip()
 
 
 def remember(text, source, metadata):
@@ -155,7 +161,7 @@ def phase_resonance(mc):
         # cross-domain: different source, decent similarity, not itself
         others = [c for c in cands
                   if c.get("source") not in (ssrc, "scanner") and c.get("id") != sid
-                  and 0.45 <= float(c.get("score", 0)) <= 0.85]
+                  and 0.35 <= float(c.get("score", 0)) <= 0.85]
         if not others:
             continue
         c = others[0]
@@ -171,7 +177,16 @@ def phase_resonance(mc):
                 max_tokens=120, temperature=0.8)
         except Exception:
             continue
-        if spark and "NONE" not in spark[:12] and len(spark) > 40:
+        # Model hygiene: reject any "no connection" phrasing (NONE, "None of the
+        # memories...", "no genuine..."), and strip meta prefixes it sometimes adds.
+        if spark:
+            spark = re.sub(r"^(Nova'?s dry voice:|In Nova'?s voice:|Spark:)\s*", "",
+                           spark.strip()).strip(' "')
+        low = (spark or "").lower()
+        if (spark and len(spark) > 40
+                and not low.startswith("none")
+                and "no genuine" not in low and "not connected" not in low
+                and "no interesting" not in low and "no non-obvious" not in low):
             remember(f"[Spark] {spark}", "association",
                      {"type": "spark", "date": TODAY, "privacy": "private",
                       "source_a": str(sid), "source_b": str(c.get("id")),
