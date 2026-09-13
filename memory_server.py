@@ -41,6 +41,7 @@ Author: Jordan Koch / kochj23
 
 import asyncio
 import hashlib
+import hmac
 import json
 import logging
 import time
@@ -393,6 +394,50 @@ async def lifespan(app: FastAPI):
     await _http.aclose()
 
 app = FastAPI(title="Nova Memory Server", version="3.1.0-pgvector", lifespan=lifespan)
+
+# ── auth ─────────────────────────────────────────────────────────────────────────
+# This server had NO authentication of any kind (queue #509). .2:18790 is firewalled to
+# .6 only, but the socat shim on .6:18790 is reachable from the whole LAN and forwards
+# here unauthenticated — so in practice anything on the network could write memories AND
+# call DELETE /forget_all?source=... to erase them. Verified 2026-07-28 by writing a row
+# from an unauthenticated request (since removed).
+#
+# STAGED ON PURPOSE. 114 scripts call :18790; flipping mandatory auth on every route would
+# break the fleet in one move. So destructive routes ENFORCE now (only 3 callers), while
+# reads and writes log the unauthenticated caller so the remaining callers can be
+# enumerated from evidence instead of guesswork before enforcement widens.
+# (Restored 2026-09-13 after a wholesale deploy briefly dropped this block — the
+# merged server file is now the single source of truth for BOTH hosts.)
+_TOKEN = _os.environ.get("NOVA_MEMORY_TOKEN", "").strip()
+_ENFORCE = {"/forget", "/forget_all"}          # widen once callers are updated
+
+
+def _presented(request: "Request") -> str:
+    a = request.headers.get("authorization", "")
+    if a.lower().startswith("bearer "):
+        return a[7:].strip()
+    return request.headers.get("x-nova-token", "").strip()
+
+
+@app.middleware("http")
+async def _auth(request: "Request", call_next):
+    path = request.url.path.rstrip("/") or "/"
+    if not _TOKEN:                              # unset = legacy behaviour, but say so
+        logging.warning("[auth] NOVA_MEMORY_TOKEN unset — running unauthenticated")
+        return await call_next(request)
+    supplied = _presented(request)
+    ok = bool(supplied) and hmac.compare_digest(supplied, _TOKEN)
+    if path in _ENFORCE and not ok:
+        logging.warning("[auth] BLOCKED %s %s from %s", request.method, path,
+                        request.client.host if request.client else "?")
+        return JSONResponse({"error": "unauthorized", "hint": "Bearer token required"},
+                            status_code=401)
+    if not ok and request.method in ("POST", "PUT", "PATCH", "DELETE"):
+        logging.warning("[auth] UNAUTHENTICATED %s %s from %s (allowed during migration)",
+                        request.method, path,
+                        request.client.host if request.client else "?")
+    return await call_next(request)
+
 
 # ── Models ───────────────────────────────────────────────────────────────────────
 class RememberRequest(BaseModel):
