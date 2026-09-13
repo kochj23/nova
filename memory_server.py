@@ -152,6 +152,13 @@ def _classify_resilient(text: str, source: str) -> tuple[str, str]:
     exception we allow the write and count it as a filter error.
     """
     try:
+        # The filter lives in ~/.openclaw/scripts/, which is not on sys.path when
+        # the server runs from ~/.openclaw — without this the import raised
+        # ModuleNotFoundError on EVERY item and the filter failed open (memdb fix).
+        import os as _o, sys as _s
+        _scripts_dir = _o.path.join(_o.path.dirname(_o.path.abspath(__file__)), "scripts")
+        if _scripts_dir not in _s.path:
+            _s.path.insert(0, _scripts_dir)
         from nova_memory_quality_filter import classify_quality
         return classify_quality(text, source or "")
     except Exception as e:
