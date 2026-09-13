@@ -91,6 +91,40 @@ KNOWN_FACTS = (
 )
 
 
+def source_links(rows, limit=12):
+    """Markdown bullet list of the streams/posts a fishbowl article draws on, from
+    memory rows whose LAST column is the jsonb metadata. Streams carry a direct
+    url; Reddit rows only carry post_id+subreddit, so the permalink is rebuilt.
+    Deduped by url, input order kept (callers pass newest-first). Shared by
+    nova_fishbowl_daily.py and nova_opinion_fishbowl.py (Jordan 2026-09-13: every
+    fishbowl article must cite which streams/posts it is about, with URLs)."""
+    seen, out = set(), []
+    for r in rows:
+        md = r[-1] or {}
+        t = md.get("type")
+        if t == "fishbowl_stream":
+            url = md.get("url")
+            label = f'{md.get("channel", "stream")} — {md.get("title", "")}'
+        elif t == "reddit":
+            pid = (md.get("post_id") or "").removeprefix("t3_")
+            sub = md.get("subreddit") or ""
+            url = f"https://www.reddit.com/r/{sub}/comments/{pid}/" if pid and sub else None
+            label = f'r/{sub} — {md.get("title", "post")}'
+        else:
+            url = md.get("url")
+            label = md.get("title") or url or ""
+        if not url or url in seen:
+            continue
+        seen.add(url)
+        label = label.strip(" —").replace("]", ")")
+        if len(label) > 90:
+            label = label[:87] + "…"
+        out.append(f"- [{label}]({url})")
+        if len(out) >= limit:
+            break
+    return "\n".join(out)
+
+
 def log(m):
     print(f"[fishbowl-summary] {m}", flush=True)
 

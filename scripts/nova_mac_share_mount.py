@@ -52,6 +52,32 @@ MOUNTS = [
     {"mount": "/Volumes/external", "syn_share": "external", "unas_share": "External"},
 ]
 
+# UNAS-primary cutover 2026-09-10: the UNAS (192.168.1.69) is now the read-write
+# PRIMARY and the Synology (192.168.1.11) the read-only FALLBACK — inverted from the
+# original Synology-primary design. Flip these two back to restore the old order.
+PRIMARY, FALLBACK = UNAS, SYNOLOGY
+
+
+def _share_for(host, spec):
+    """Share name differs by box: Synology serves lowercase 'external', the UNAS
+    serves capital 'External'. Pick the right one for whichever host we're mounting."""
+    return spec["unas_share"] if host == UNAS else spec["syn_share"]
+
+
+def _host_of(src):
+    """Which known host serves this mount source. The mount table doesn't always
+    show an IP: Finder/login items mount the Synology over AFP as
+    //user@NAS._afpovertcp._tcp.local/<share>, which must still be recognized as
+    the Synology or a healthy fallback mount gets misread as dead/foreign
+    (post-reboot 2026-09-12: that misread caused a 2-min mount_smbfs EPERM loop)."""
+    if not src:
+        return None
+    if SYNOLOGY in src or "NAS._afpovertcp" in src:
+        return SYNOLOGY
+    if UNAS in src:
+        return UNAS
+    return None
+
 
 _CRED_URL = re.compile(r"(//[^:/\s]+:)[^@\s]*(@)")
 
@@ -136,7 +162,7 @@ def health(mount):
         return "unmounted", None
     if can_ls(mount):
         return "healthy", src
-    host = SYNOLOGY if SYNOLOGY in src else (UNAS if UNAS in src else None)
+    host = _host_of(src)
     if host and reachable(host):
         return "healthy", src
     return "dead", src
@@ -170,34 +196,35 @@ def _clear(mount):
 
 
 def mount_primary(spec):
-    """Mount the Synology share read-write at its mount point (steady state)."""
-    url = _smb_url(SYNOLOGY, spec["syn_share"])
+    """Mount the PRIMARY share (UNAS since the 2026-09-10 cutover) read-write."""
+    url = _smb_url(PRIMARY, _share_for(PRIMARY, spec))
     if not url:
-        log(f"{spec['mount']}: no Synology creds in Keychain — cannot mount")
+        log(f"{spec['mount']}: no PRIMARY creds in Keychain — cannot mount")
         return False
     _ensure_mountpoint(spec["mount"])
     r = run(["mount_smbfs", url, spec["mount"]], timeout=30)
-    # Success == the mount table now shows this point served by the Synology. Do NOT
+    # Success == the mount table now shows this point served by the PRIMARY. Do NOT
     # use ls here: it is TCC-blocked in the agent and would report a good mount failed
     # ("File exists" then a false negative). The mount table is the honest signal.
-    if _mounted_from(spec["mount"], SYNOLOGY):
+    if _mounted_from(spec["mount"], PRIMARY):
         return True
-    log(f"{spec['mount']}: Synology SMB mount failed: {(r.stderr or '').strip()[:150]}")
+    log(f"{spec['mount']}: PRIMARY SMB mount failed: {(r.stderr or '').strip()[:150]}")
     return False
 
 
 def mount_fallback_ro(spec):
-    """Mount the UNAS replica READ-ONLY (reads survive a Synology outage; writes
-    correctly fail rather than diverge and get clobbered by the mirror on recovery)."""
-    url = _smb_url(UNAS, spec["unas_share"])
+    """Mount the FALLBACK replica READ-ONLY (Synology since the 2026-09-10 cutover;
+    reads survive a UNAS outage; writes correctly fail rather than diverge and get
+    clobbered by the reverse mirror on recovery)."""
+    url = _smb_url(FALLBACK, _share_for(FALLBACK, spec))
     if not url:
-        log(f"{spec['mount']}: no UNAS creds in Keychain — cannot fail over")
+        log(f"{spec['mount']}: no FALLBACK creds in Keychain — cannot fail over")
         return False
     _ensure_mountpoint(spec["mount"])
     r = run(["mount", "-t", "smbfs", "-o", "ro", url, spec["mount"]], timeout=30)
-    if _mounted_from(spec["mount"], UNAS):
+    if _mounted_from(spec["mount"], FALLBACK):
         return True
-    log(f"{spec['mount']}: UNAS ro mount failed: {(r.stderr or '').strip()[:150]}")
+    log(f"{spec['mount']}: FALLBACK ro mount failed: {(r.stderr or '').strip()[:150]}")
     return False
 
 
@@ -214,44 +241,46 @@ def notify(msg, level="warning"):
 def handle(spec, check_only):
     mount = spec["mount"]
     state, src = health(mount)
-    on_fallback = bool(src and UNAS in src)
-    syn_up = reachable(SYNOLOGY)
+    on_fallback = _host_of(src) == FALLBACK
+    primary_up = reachable(PRIMARY)
 
-    # Healthy on the Synology primary (the common case), or healthy on any protocol
-    # we didn't place (a pre-existing AFP mount): leave it alone.
+    # Healthy on the UNAS primary (the common case), or healthy on a host we
+    # don't know: leave it alone. A Synology mount counts as fallback whatever
+    # the protocol (login items remount it over AFP) — read-write on the replica
+    # diverges, so it must fail back like any other fallback mount.
     if state == "healthy" and not on_fallback:
         return "ok", f"healthy ({src})"
 
-    # Healthy on the UNAS fallback — fail BACK when the Synology returns.
+    # Healthy on the Synology fallback — fail BACK when the UNAS primary returns.
     if state == "healthy" and on_fallback:
-        if not syn_up:
-            return "ok", "synology still down; serving read-only from UNAS"
+        if not primary_up:
+            return "ok", "UNAS primary still down; serving read-only from Synology"
         if check_only:
-            return "would-failback", "synology is back; would restore primary"
+            return "would-failback", "UNAS primary is back; would restore primary"
         _clear(mount)
         if mount_primary(spec):
-            notify(f"{mount} failed BACK to synology (read-write)", "info")
-            return "failback", "restored synology primary"
-        # restore failed — get reads back on the UNAS rather than leaving it dark
+            notify(f"{mount} failed BACK to UNAS primary (read-write)", "info")
+            return "failback", "restored UNAS primary"
+        # restore failed — get reads back on the Synology rather than leaving it dark
         mount_fallback_ro(spec)
-        return "failback-failed", "restore failed; left UNAS read-only fallback"
+        return "failback-failed", "restore failed; left Synology read-only fallback"
 
     # state is 'dead' (mounted but its server is unreachable) or 'unmounted'.
-    # Recover: prefer the Synology primary, else the UNAS replica read-only.
-    if syn_up:
+    # Recover: prefer the UNAS primary, else the Synology replica read-only.
+    if primary_up:
         if check_only:
-            return "would-recover", "synology up; would mount primary"
+            return "would-recover", "UNAS primary up; would mount primary"
         _clear(mount)
         if mount_primary(spec):
-            return "recovered", "mounted synology primary"
-        return "recover-failed", "synology up but SMB mount failed"
+            return "recovered", "mounted UNAS primary"
+        return "recover-failed", "UNAS primary up but SMB mount failed"
     if check_only:
-        return "would-failover", "synology down; would mount UNAS read-only"
+        return "would-failover", "UNAS down; would mount Synology read-only"
     _clear(mount)
     if mount_fallback_ro(spec):
-        notify(f"{mount} FAILED OVER to UNAS (READ-ONLY) — synology is down. Writes "
+        notify(f"{mount} FAILED OVER to Synology (READ-ONLY) — UNAS primary is down. Writes "
                f"will fail until it returns; that is intentional (no split-brain).", "warning")
-        return "failover", "read-only on UNAS"
+        return "failover", "read-only on Synology"
     notify(f"{mount} DOWN — neither synology nor UNAS mountable", "critical")
     return "down", "no target mountable"
 

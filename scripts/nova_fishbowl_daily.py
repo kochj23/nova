@@ -42,14 +42,16 @@ def main():
 
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
     # freshest transcripts first — this is what makes it a DAILY dispatch, not a static intro
-    mc.execute("SELECT text, created_at FROM memories WHERE source='fishbowl' "
+    mc.execute("SELECT text, created_at, metadata FROM memories WHERE source='fishbowl' "
                "AND metadata->>'type'='fishbowl_stream' ORDER BY created_at DESC LIMIT 12")
     rows = mc.fetchall()
     if not rows:
-        mc.execute("SELECT text, created_at FROM memories WHERE source='fishbowl' "
+        mc.execute("SELECT text, created_at, metadata FROM memories WHERE source='fishbowl' "
                    "ORDER BY created_at DESC LIMIT 12")
         rows = mc.fetchall()
     samples = [r[0] for r in rows]
+    from nova_fishbowl_summaries import source_links
+    src_block = source_links(rows)
     # recency stats for an honest "since yesterday" framing
     mc.execute("SELECT count(1) FROM memories WHERE source='fishbowl' "
                "AND created_at > now() - interval '48 hours'")
@@ -81,6 +83,8 @@ def main():
         "superchats — and that Nova tracks all of it as data, not endorsement.\n"
         "- End with a one-line 'monitoring' note: how many streams/items Nova ingested in the last 48h "
         f"({fresh_48h}) and the running total in the vector ({total}).\n"
+        "- A 'Sources' list of the streams (with links) is appended below the dispatch automatically — "
+        "refer to streams by channel/title in the text where it helps, but do not write your own link list.\n"
         "600-1000 words, markdown, section headers welcome, no H1 title (added separately).\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy title, no quotes>\n<blank line>\n<the body>")
     try:
@@ -122,6 +126,9 @@ def main():
 
     if not title or _degenerate(title):
         title = f"The Fishbowl — Daily Dispatch, {nj.today_str()}"
+
+    if src_block:
+        body += "\n\n## Sources — what this dispatch is about\n\n" + src_block
 
     img = None
     try:

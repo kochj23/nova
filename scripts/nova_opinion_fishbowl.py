@@ -44,12 +44,14 @@ def main():
     # Filter them out here so genuine churn (live streams + Reddit) surfaces.
     ACTIVITY_FILTER = ("AND coalesce(metadata->>'type','') <> 'person_summary' "
                        "AND text NOT LIKE '[Fishbowl dossier%'")
-    mc.execute("SELECT text, created_at FROM memories WHERE source='fishbowl' "
+    mc.execute("SELECT text, created_at, metadata FROM memories WHERE source='fishbowl' "
                "AND created_at > now() - interval '36 hours' " + ACTIVITY_FILTER +
                " ORDER BY created_at DESC LIMIT 30")
     rows = mc.fetchall()
     fresh = len(rows)
     samples = [r[0] for r in rows]
+    from nova_fishbowl_summaries import source_links
+    src_block = source_links(rows)
 
     # GUARD: insufficient/empty source data -> SKIP publishing (return early).
     # Never hand the LLM an empty or near-empty feed: with nothing genuinely new to
@@ -90,6 +92,9 @@ def main():
         "Nova watches it as an anthropologist, not a fan — the opinion can be scathing about the "
         "behavior without endorsing it.\n"
         f"- You have {fresh} fresh items from the last ~36h to work with.\n"
+        "- A 'Sources' list of the streams/posts (with links) is appended below the column "
+        "automatically — refer to streams by channel/title in the text where it helps, but do "
+        "not write your own link list.\n"
         "500-900 words, markdown, section headers optional, no H1 title (added separately).\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy opinion-column title, no quotes>\n<blank line>\n<the body>")
     system = nova_voice.system_prompt(ctx)
@@ -121,6 +126,9 @@ def main():
 
     if not title or _degenerate(title):
         title = f"The Fishbowl, Reviewed — {nj.today_str()}"
+
+    if src_block:
+        body += "\n\n## Sources — what this column is about\n\n" + src_block
 
     img = None
     try:
