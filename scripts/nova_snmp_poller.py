@@ -104,7 +104,7 @@ DEVICES = [
         "enabled": True,
     },
     {
-        "ip": "192.168.1.190",
+        "ip": "192.168.1.251",  # static Ethernet — .190 is its WiFi (private MAC, drops inbound while idle)
         "name": "mac-mini",
         "version": "v2c",
         "community_keychain": "nova-snmp-community",

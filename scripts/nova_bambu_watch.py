@@ -47,6 +47,10 @@ SOURCE = "bambu"
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 DIGEST_EVERY_S = 300  # write a status digest to memory every 5 min
 SAMPLE_EVERY_S = 300  # write a telemetry row per printer to PG this often (Grafana)
+STALE_AFTER_S = 120   # a powered printer streams frames every ~1-2s; no frame within
+                      # this window means it is OFF/unreachable, NOT idle. Everything
+                      # that reads self.state must gate on this so a stale last-known
+                      # frame is never re-published as if it were current.
 PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 BUSY_STATES = {"RUNNING", "PAUSE", "PREPARE", "SLICING", "RESUMING"}
 
@@ -64,6 +68,17 @@ STAGE = {  # stg_cur: a few common ones for human digests
 
 def log(msg):
     print(f"[nova_bambu {datetime.now():%H:%M:%S}] {msg}", flush=True)
+
+
+def _fmt_age(seconds):
+    seconds = int(seconds)
+    if seconds < 90:
+        return f"{seconds}s"
+    if seconds < 5400:
+        return f"{seconds // 60}m"
+    if seconds < 172800:
+        return f"{seconds // 3600}h"
+    return f"{seconds // 86400}d"
 
 
 def code(serial):
@@ -145,6 +160,7 @@ class Printer:
         self.gcode_state = None  # last seen, for transition detection
         self.hms_codes = set()
         self.connected = False
+        self.last_report_ts = None  # wall-clock of the last real MQTT frame; None = never heard from
         self._seq = 0
         # client_id MUST be unique per process: the persistent daemon and any CLI
         # invocation otherwise share "nova-<key>", and an MQTT broker boots the older
@@ -191,6 +207,7 @@ class Printer:
         if not isinstance(p, dict):
             return
         self.state.update(p)  # deltas accumulate
+        self.last_report_ts = time.time()  # mark freshness — see STALE_AFTER_S
         self._detect_transitions(p)
 
     # ── transition detection / alerts ────────────────────────────────────────
@@ -241,9 +258,23 @@ class Printer:
                    f"bambu-{self.key}-pause-{job}", phone=True)
 
     # ── status / digest ──────────────────────────────────────────────────────
+    def is_live(self):
+        """True only if MQTT is up AND we've seen a fresh frame. A powered printer
+        streams frames continuously, so silence means it is off/unreachable — not idle.
+        This is the single gate that keeps a stale last-known frame from being reported
+        (or sampled to PG) as if it were the printer's current state."""
+        return (self.connected and self.last_report_ts is not None
+                and (time.time() - self.last_report_ts) < STALE_AFTER_S)
+
     def status_line(self):
-        if not self.state:
-            return f"{self.name} ({self.ip}): {'connecting…' if not self.connected else 'no report yet'}"
+        if not self.state or self.last_report_ts is None:
+            if self.connected:
+                return f"{self.name} ({self.ip}): connected, waiting for first report…"
+            return f"{self.name} ({self.ip}): OFFLINE (no response — powered off or unreachable)"
+        if not self.is_live():
+            age = _fmt_age(time.time() - self.last_report_ts)
+            return (f"{self.name} ({self.ip}): OFFLINE "
+                    f"(powered off or unreachable; last seen {age} ago)")
         s = self.state
         st = s.get("gcode_state", "?")
         job = s.get("subtask_name") or "—"
@@ -344,9 +375,21 @@ def pg_sample(printers):
     try:
         with conn.cursor() as cur:
             for p in printers:
-                s = p.state
-                if not s:
+                if not p.is_live():
+                    # Off/unreachable: record an explicit OFFLINE row with NULL temps so
+                    # Grafana shows offline (not a frozen 31°/28° flatline) and the digest
+                    # never re-emits a stale frame. Skip only if we've never heard from it
+                    # this run (nothing truthful to log).
+                    if p.last_report_ts is None:
+                        continue
+                    cur.execute(
+                        "INSERT INTO bambu_telemetry "
+                        "(printer,name,state,busy,stage,job,nozzle_temp,bed_temp,chamber_temp,pct,layer,total_layer) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (p.key, p.name, "OFFLINE", False, "offline", None,
+                         None, None, None, None, None, None))
                     continue
+                s = p.state
                 st = s.get("gcode_state")
                 cur.execute(
                     "INSERT INTO bambu_telemetry "
@@ -413,7 +456,13 @@ def _one(printer_key):
     if printer_key not in PRINTERS:
         sys.exit(f"unknown printer '{printer_key}' (have: {', '.join(PRINTERS)})")
     p = Printer(printer_key, PRINTERS[printer_key])
-    p.connect()
+    try:
+        p.connect()
+    except Exception as e:
+        # Printer off / unreachable: paho raises synchronously here. Return the
+        # Printer with empty state so callers read it as OFFLINE instead of crashing.
+        log(f"{p.name}: connect failed: {e}")
+        return p
     for _ in range(30):  # wait up to ~9s for first report
         if p.state:
             break
@@ -446,13 +495,23 @@ def selftest():
     assert _is_filament_runout(0, 0x07008011) and not _is_filament_runout(0, 0x12345678)
     # telemetry: busy classification (drives the Grafana idle/in-use panel)
     assert is_busy("RUNNING") and is_busy("PAUSE") and not is_busy("FINISH") and not is_busy(None)
-    # status_line tolerates empty + populated state
+    assert not is_busy("OFFLINE")
+    # status_line: never-heard-from printer reads OFFLINE, not a stale/idle line
     p = Printer("P1", PRINTERS["P1"]); p.client.loop_stop()
-    assert "Printer 1" in p.status_line()
+    assert "Printer 1" in p.status_line() and "OFFLINE" in p.status_line()
+    # a live (fresh + connected) printer reads its real state
     p.state = {"gcode_state": "RUNNING", "subtask_name": "x", "mc_percent": 42,
                "mc_remaining_time": 10, "layer_num": 5, "total_layer_num": 9,
-               "nozzle_temper": 220, "bed_temper": 60, "total_layer_num": 9}
-    assert "42%" in p.status_line()
+               "nozzle_temper": 220, "bed_temper": 60}
+    p.connected = True
+    p.last_report_ts = time.time()
+    assert p.is_live() and "42%" in p.status_line()
+    # the SAME frame, once stale/disconnected, must read OFFLINE — not "idle at 220°"
+    p.connected = False
+    assert not p.is_live() and "OFFLINE" in p.status_line()
+    p.connected = True
+    p.last_report_ts = time.time() - (STALE_AFTER_S + 5)
+    assert not p.is_live() and "OFFLINE" in p.status_line()
     print("selftest OK")
 
 
@@ -494,6 +553,10 @@ if __name__ == "__main__":
             p.client.loop_stop()
     elif args.cmd in ("pause", "resume", "stop", "light", "speed", "print"):
         p = _one(args.printer)
+        if not p.connected:
+            print(f"{p.name} ({p.ip}): OFFLINE — {args.cmd} not sent (printer powered off or unreachable)")
+            p.client.loop_stop()
+            sys.exit(1)
         if args.cmd == "light":
             p.light(args.mode == "on"); print(f"{p.name}: light {args.mode}")
         elif args.cmd == "speed":

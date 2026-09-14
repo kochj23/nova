@@ -43,12 +43,12 @@ UNAS_CREDS = "/etc/cifs-unas.creds"
 # present on this host. The UNAS secondary UNCs were verified 2026-07-30 to mount
 # and hold the mirrored data (//69/nas and //69/External).
 MANAGED = [
-    {"mount": "/mnt/nas",  "primary_unc": "//192.168.1.11/nas",
-     "secondary_unc": "//192.168.1.69/nas"},
-    {"mount": "/nas",      "primary_unc": "//192.168.1.11/nas",
-     "secondary_unc": "//192.168.1.69/nas"},
-    {"mount": "/external", "primary_unc": "//192.168.1.11/external",
-     "secondary_unc": "//192.168.1.69/External"},
+    {"mount": "/mnt/nas",  "primary_unc": "//192.168.1.69/nas",
+     "secondary_unc": "//192.168.1.11/nas"},
+    {"mount": "/nas",      "primary_unc": "//192.168.1.69/nas",
+     "secondary_unc": "//192.168.1.11/nas"},
+    {"mount": "/external", "primary_unc": "//192.168.1.69/External",
+     "secondary_unc": "//192.168.1.11/external"},
     # NOTE: the old NFS mount /mnt/nas-external (192.168.1.11:/volume1/external) was
     # retired 2026-07-30 — it exposed the same /volume1/external data as /external
     # (CIFS) above, had zero consumers (no repo/cron/systemd refs, no open handles),

@@ -12,6 +12,11 @@ set -uo pipefail
 
 DB_NAME="nova_memories"
 DB_USER="kochj"
+# The Postgres primary moved off this host (now .10) — target it explicitly so the
+# pg_isready check and every psql call reach the real DB. Without this, pg_isready
+# probed a nonexistent LOCAL socket and the job aborted "PostgreSQL is not running"
+# every run (biweekly failures since the DB relocation). Fixed 2026-09-08.
+export PGHOST="pg-primary.digitalnoise.net"
 LOG_FILE="$HOME/.openclaw/logs/nova_pg_maintain.log"
 export PATH="/opt/homebrew/opt/postgresql@17/bin:/opt/homebrew/bin:$PATH"
 

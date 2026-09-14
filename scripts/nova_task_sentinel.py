@@ -62,6 +62,7 @@ FAIL_STREAK      = 3      # >= this many consecutive failures -> FAILING
 CRIT_STREAK      = 6      # >= this many -> CRITICAL (and queued for a human)
 STALE_FACTOR     = 3.0    # last_run older than FACTOR x learned-interval -> STALE
 STALE_FLOOR_S    = 3 * 3600   # never call something stale inside 3h regardless of cadence
+RECENT_GAPS      = 5      # learned cadence uses only the most recent N successful-run gaps
 NOW_MS_ENV       = None   # injected in tests; None -> real clock at call site
 
 # statuses that mean "this run did not succeed" (running/None are neutral, not failures)
@@ -125,14 +126,23 @@ def classify_task(runs: list[dict], now_ms: Optional[int] = None,
     ok_runs = [r for r in runs if is_success(r) is True]
     last_ok_age_s = (now_ms - ok_runs[0]["started_at"]) / 1000.0 if ok_runs else None
 
-    # learned cadence: median gap between successful runs (self-tuning, no config)
+    # learned cadence: median gap between successful runs, RE-DERIVED every run from the most
+    # recent RECENT_GAPS gaps only (a rolling window) — NOT a median over every gap in the 7d
+    # window, and NOT a one-time learned/cached value. This is the fix for the schedule-
+    # memorization false alarm: when a task's cron changes (e.g. hourly -> every 6h), a
+    # whole-window median stays anchored to the OLD cadence for up to WINDOW_DAYS, so the task
+    # trips STALE deterministically on every sweep even though it is running exactly on its new
+    # schedule. Using only the trailing gaps means the derived interval tracks the CURRENT cadence
+    # within a few runs of the change and the false alarm self-clears. (The configured-yaml
+    # interval, when parseable, still takes precedence below — this governs the fallback path,
+    # which is exactly where the stale false positives were coming from.)
     interval_s = None
     if len(ok_runs) >= 2:
         ts = sorted(r["started_at"] for r in ok_runs)
         gaps = [(ts[i + 1] - ts[i]) / 1000.0 for i in range(len(ts) - 1)]
         gaps = [g for g in gaps if g > 0]
         if gaps:
-            interval_s = statistics.median(gaps)
+            interval_s = statistics.median(gaps[-RECENT_GAPS:])
 
     # The CONFIGURED schedule interval (from the scheduler yaml) is the truth for staleness; the
     # learned median-gap is only a fallback. A weekly cron ran a few times clustered on its day

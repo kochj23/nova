@@ -61,6 +61,13 @@ _state = {
     "started_at": datetime.now(timezone.utc).isoformat(),
 }
 
+# DB-insert alert throttle: readings arrive every ~20s, so an outage must not
+# produce one Slack post per reading (2026-08-22 outage: 8,700+ criticals).
+# First failure alerts immediately, then at most one summary per hour; a single
+# recovery post closes the episode.
+_ALERT_INTERVAL_S = 3600
+_alert_state = {"last_alert_ts": 0.0, "fails_since_alert": 0, "fails_total": 0}
+
 
 # ── Weather Calculations ──────────────────────────────────────────────────────
 
@@ -192,18 +199,40 @@ def insert_reading(data: dict) -> bool:
         with _state_lock:
             _state["last_reading_ts"] = ts.isoformat()
             _state["reading_count"] += 1
+            recovered = _alert_state["fails_total"]
+            _alert_state.update(last_alert_ts=0.0, fails_since_alert=0, fails_total=0)
+        if recovered:
+            try:
+                nova_config.post_both(
+                    f":white_check_mark: Weather receiver DB inserts recovered "
+                    f"({recovered} failed reading(s) during the episode)",
+                    slack_channel=nova_config.SLACK_BB,
+                )
+            except Exception:
+                pass
 
         return True
 
     except Exception as e:
         log.error(f"DB insert failed: {e}")
-        try:
-            nova_config.post_both(
-                f":warning: Weather receiver DB insert failed: {e}",
-                slack_channel=nova_config.SLACK_BB,
-            )
-        except Exception:
-            pass
+        now = time.time()
+        with _state_lock:
+            _alert_state["fails_since_alert"] += 1
+            _alert_state["fails_total"] += 1
+            due = now - _alert_state["last_alert_ts"] >= _ALERT_INTERVAL_S
+            n = _alert_state["fails_since_alert"]
+            if due:
+                _alert_state["last_alert_ts"] = now
+                _alert_state["fails_since_alert"] = 0
+        if due:
+            suffix = "" if n == 1 else f" ({n} failures since last alert)"
+            try:
+                nova_config.post_both(
+                    f":warning: Weather receiver DB insert failed: {e}{suffix}",
+                    slack_channel=nova_config.SLACK_BB,
+                )
+            except Exception:
+                pass
         return False
 
 
@@ -433,10 +462,23 @@ def main():
         log.info("Database connection verified")
     except Exception as e:
         log.error(f"Cannot connect to database: {e}")
-        nova_config.post_both(
-            f":x: Weather receiver cannot connect to DB: {e}",
-            slack_channel=nova_config.SLACK_BB,
-        )
+        # launchd restarts us on exit, so throttle this alert across restarts
+        # or a DB outage becomes one Slack post per respawn.
+        marker = Path.home() / ".openclaw" / "state" / "weather_receiver_db_alert.ts"
+        try:
+            stale = time.time() - marker.stat().st_mtime >= _ALERT_INTERVAL_S
+        except FileNotFoundError:
+            stale = True
+        if stale:
+            try:
+                marker.parent.mkdir(parents=True, exist_ok=True)
+                marker.touch()
+                nova_config.post_both(
+                    f":x: Weather receiver cannot connect to DB: {e}",
+                    slack_channel=nova_config.SLACK_BB,
+                )
+            except Exception:
+                pass
         sys.exit(1)
 
     # Configure station to push to us

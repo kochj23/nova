@@ -78,7 +78,7 @@ KNOWN_SAFE = {
     "192.168.1.10": "NUK (Homebridge)",
     "192.168.1.11": "Synology NAS",
     "192.168.1.89": "HDHomeRun TV tuner (multi-port probe is normal)",
-    "192.168.1.190": "Mac Mini (secondary)",
+    "192.168.1.251": "Mac Mini (secondary)",
     "192.168.1.253": "UniFi Honeypot/IDS (Ubiquiti)",
 }
 

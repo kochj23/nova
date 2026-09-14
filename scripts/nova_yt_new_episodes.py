@@ -46,6 +46,87 @@ RECENT_VIDEOS_CHECK = 15   # how many recent YT videos to check per channel
 #   "playlists" — season = playlist (checked separately, not used here for new eps)
 
 CHANNELS = {
+    # ── News / news-adjacent (added 2026-09-09: cover Little Mister's actual news viewing) ──
+    "insider": {
+        "name": "Insider",
+        "url": "https://www.youtube.com/@Insider",
+        "mode": "single",
+    },
+    "nbcla": {
+        "name": "NBCLA",
+        "url": "https://www.youtube.com/@NBCLA",
+        "mode": "single",
+    },
+    "cnn": {
+        "name": "CNN",
+        "url": "https://www.youtube.com/@CNN",
+        "mode": "single",
+    },
+    "associatedpress": {
+        "name": "Associated Press",
+        "url": "https://www.youtube.com/@AssociatedPress",
+        "mode": "single",
+    },
+    "bulwarkmedia": {
+        "name": "The Bulwark",
+        "url": "https://www.youtube.com/@bulwarkmedia",
+        "mode": "single",
+    },
+    "nbcnews": {
+        "name": "NBC News",
+        "url": "https://www.youtube.com/@NBCNews",
+        "mode": "single",
+    },
+    "thedamagereport": {
+        "name": "The Damage Report",
+        "url": "https://www.youtube.com/@TheDamageReport",
+        "mode": "single",
+    },
+    "lovettorleaveitpodcast": {
+        "name": "Lovett or Leave It",
+        "url": "https://www.youtube.com/@lovettorleaveitpodcast",
+        "mode": "single",
+    },
+    "podsavetheworld": {
+        "name": "Pod Save the World",
+        "url": "https://www.youtube.com/@podsavetheworld",
+        "mode": "single",
+    },
+    "combatveterannews": {
+        "name": "Combat Veteran News",
+        "url": "https://www.youtube.com/@CombatVeteranNews",
+        "mode": "single",
+    },
+    "weeklyshowpodcast": {
+        "name": "The Weekly Show with Jon Stewart",
+        "url": "https://www.youtube.com/@WeeklyShowPodcast",
+        "mode": "single",
+    },
+    "rfu": {
+        "name": "RFU News — Strategic Geopolitics",
+        "url": "https://www.youtube.com/@RFU",
+        "mode": "single",
+    },
+    "thelincolnproject": {
+        "name": "The Lincoln Project",
+        "url": "https://www.youtube.com/@TheLincolnProject",
+        "mode": "single",
+    },
+    "taskandpurpose": {
+        "name": "Task & Purpose",
+        "url": "https://www.youtube.com/@Taskandpurpose",
+        "mode": "single",
+    },
+    "ukrainenewsnowua": {
+        "name": "Ukraine News NowUA",
+        "url": "https://www.youtube.com/@UkraineNewsNowUA",
+        "mode": "single",
+    },
+    "theproblemwithjonstewart": {
+        "name": "The Problem With Jon Stewart",
+        "url": "https://www.youtube.com/@TheProblemWithJonStewart",
+        "mode": "single",
+    },
     "arnietex": {
         "name": "ArnieTex",
         "url": "https://www.youtube.com/@ArnieTex",

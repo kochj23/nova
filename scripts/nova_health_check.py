@@ -30,7 +30,7 @@ SCHEDULER_API = "http://127.0.0.1:37460/tasks"
 MAX_CONSECUTIVE_ERRORS  = 2       # alert after this many consecutive failures
 FAST_RUN_THRESHOLD_MS   = 100     # runs shorter than this are suspect (empty promises)
 STALE_HOURS             = 26      # job hasn't run in this long despite being scheduled daily
-WEEKLY_TASKS            = {"weekly_journal", "self_audit", "weekly_reliability"}
+WEEKLY_TASKS            = {"weekly_journal", "self_audit", "weekly_reliability", "alert_patterns", "local_trends", "network_health"}
 FAST_RUN_EXEMPT         = {       # jobs that legitimately run fast
     "Nova Disk Check (noon only)",
     "Nova Gateway Watchdog",

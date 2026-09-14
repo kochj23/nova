@@ -133,10 +133,13 @@ def main():
 
     os.makedirs(TMP, exist_ok=True)
     if apply and not force and synology_resyncing():
-        slack(":no_entry: reverse reconcile ABORTED — Synology RAID is resyncing; refusing to write. "
-              "Wait for resync or pass --force.")
-        print("aborted: synology resyncing", flush=True)
-        return 3
+        # Clean, EXPECTED skip — not a failure. Return 0 so the scheduler doesn't
+        # treat the deferral as a failing job and retry/alert every cycle for the
+        # (multi-day) duration of a resync. The reverse mirror simply waits its turn.
+        slack(":hourglass_flowing_sand: reverse reconcile deferred — Synology RAID is resyncing; "
+              "waiting for it to finish before writing (this is normal, not an error). Override: --force.")
+        print("deferred cleanly: synology resyncing (exit 0, not a failure)", flush=True)
+        return 0
 
     slack(f":arrows_counterclockwise: *UNAS->Synology reverse reconcile ({mode})* — "
           f"{'copying' if apply else 'reporting only, no changes'}"

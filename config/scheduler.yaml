@@ -169,20 +169,30 @@ tasks:
   wifi_presence:                     # resolves WiFi clients to NAMED people — presence had 8 signals and 1 real name
     script: nova_wifi_presence.py
     schedule: every 2m
-    timeout: 60
+    timeout: 90
     overlap: skip
 
 
-  nas_localdiff:                       # nightly Synology->UNAS reconcile (keeps the replica tight ahead of the UNAS-primary cutover). Self-defers while the Synology RAID is resyncing and self-heals the CIFS mount. Runs after the 03:30 Synology backup.
+  nas_localdiff:                       # nightly Synology->UNAS reconcile. DISABLED 2026-09-10 at UNAS-primary cutover: direction reversed — the Synology is now the REPLICA, so a forward Synology->UNAS sync is backwards. Superseded by nas_localdiff_reverse (UNAS->Synology). Self-defers while the Synology RAID is resyncing and self-heals the CIFS mount. Runs after the 03:30 Synology backup.
+    enabled: false                     # UNAS-primary cutover 2026-09-10 — forward direction retired
     script: nova_nas_localdiff.py
     schedule: cron 0 5 * * *
     timeout: 5400
     overlap: skip
 
-  nas_manifest_sync:                   # #656 §7 — FAST manifest-diff Synology->UNAS backup (kills rsync's 3h tree-walk). SSH-local `find` both sides -> PG manifest diff -> tar-stream only the delta -> quarantine orphans (14d trash). Hard anti-wipe guards (empty/short source, 5%/500 orphan cap). LIVE since 2026-08-04 (green-lit; first full pass verified both shares 0/0, 627GB cruft trashed).
+  nas_manifest_sync:                   # #656 §7 — FAST manifest-diff Synology->UNAS backup. DISABLED 2026-09-10 at UNAS-primary cutover: forward direction (Synology now replica). Hard anti-wipe guards (empty/short source, 5%/500 orphan cap). LIVE 2026-08-04 -> retired 2026-09-10.
+    enabled: false                     # UNAS-primary cutover 2026-09-10 — forward direction retired
     script: nova_nas_manifest_sync.py
     args: []
     schedule: cron 30 5 * * *
+    timeout: 5400
+    overlap: skip
+
+  nas_localdiff_reverse:               # UNAS-primary cutover 2026-09-10: REVERSE mirror UNAS->Synology, keeps the Synology a current warm replica now that it's the secondary. Self-defers (aborts cheaply, no writes/scan) while the Synology RAID resyncs, then activates automatically once resync completes. Additive; deletes stay OFF (no --allow-deletes) until we've watched several clean rounds post-resync.
+    enabled: true
+    script: nova_nas_localdiff_reverse.py
+    args: ["--apply"]
+    schedule: cron 0 5 * * *
     timeout: 5400
     overlap: skip
 
@@ -362,6 +372,13 @@ tasks:
 
 
 
+  cve_autopatch:                       # WEEKLY Mon 3:37am — ticket-driven CVE patching for the Linux fleet (reads Wazuh L13 tickets). Userspace: auto-upgrade. Kernels: install-only, NEVER auto-reboot (reboots stay a supervised window). Reports to Slack. Host map fixed 2026-08-22 (nova-core3 was mismapped to .88, corrected to .5).
+    script: nova_cve_autopatch.py
+    enabled: true
+    schedule: cron 37 3 * * 1
+    timeout: 1800
+    overlap: skip
+
   security_weekly:
     script: nova_security_weekly.py
     enabled: true  # re-enabled on .6 2026-07-31: .2 migration stranded it — .2's nova-journal clone diverges from origin so the auto-push is rejected (announce-but-don't-publish). .6 publishes reliably (HTTPS creds + clean clone). .2 trigger disabled in scheduler-core.yaml.
@@ -382,7 +399,7 @@ tasks:
   daily_threat_assessment:                # inbound-email threat scan + rollup of fishbowl/airwaves/security reports -> #nova-info
     script: nova_daily_threat_assessment.py
     schedule: cron 0 10 * * *              # 10am -- trails fishbowl_daily/operations_security/local_airwaves so rollup links resolve
-    timeout: 600
+    timeout: 900
     overlap: skip
 
 
@@ -499,7 +516,7 @@ tasks:
   canary:
     script: nova_canary.py
     schedule: every 5m
-    timeout: 45
+    timeout: 67
     overlap: skip
 
   # Task-failure sentinel (2026-08-06) — watches the scheduler's OWN tasks. Every other
@@ -529,7 +546,7 @@ tasks:
   claude_token_watch:
     script: nova_claude_token_watch.py
     schedule: every 1h
-    timeout: 45
+    timeout: 67
     overlap: skip
 
   # 6:30am daily operations review — reads 24h of the alert channels, separates real problems

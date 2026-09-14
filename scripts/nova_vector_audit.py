@@ -736,9 +736,11 @@ def main():
 
     try:
         image_result = generate_image(
-            "A young AI curled up at dawn going through her own glowing memory shelves like a kid with "
-            "a scrapbook — some cards charming and neat, a few endearingly misfiled, warm lamplight, "
-            "amber and cyan, a fond tired half-smile. Cozy, tender, cyberpunk. Digital art.",
+            "An adult woman in her thirties, an AI, wearing a cozy oversized high-neck knit sweater, "
+            "curled up at dawn going through her own glowing memory shelves like someone with a "
+            "scrapbook — some cards charming and neat, a few endearingly misfiled, warm lamplight, "
+            "amber and cyan, a fond tired half-smile. Cozy, tender, cyberpunk. Digital art. "
+            "A mature, fully-clothed adult; wholesome and tasteful.",
             "rando_vector_audit"
         )
         image_path = Path(image_result) if image_result else None

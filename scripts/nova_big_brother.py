@@ -166,7 +166,9 @@ SERVICES = [
 ]
 
 # Services that are monitored (shown in dashboard) but never trigger alerts.
-SILENCED_SERVICES = {}
+# HDHomeRun silenced 2026-08-27: hard-down (100% loss, ARP fails from two hosts),
+# needs a physical power-cycle — Little Mister notified. UNSILENCE once it's back.
+SILENCED_SERVICES = {"HDHomeRun"}
 
 # launchd services to monitor beyond the SERVICES port list.
 # Format: (label, friendly_name, can_restart, silence)

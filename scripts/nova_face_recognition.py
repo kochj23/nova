@@ -176,31 +176,47 @@ def looks_like_person(image_path):
     printed faces on tins (2026-06-23). One local vision call kills the whole
     not-a-human alert class. Fail-open on errors — an extra alert beats a
     silently missed person."""
-    import base64
+    import base64, time
     try:
         with open(image_path, "rb") as f:
             img_b64 = base64.b64encode(f.read()).decode()
-        payload = json.dumps({
-            "model": VISION_MODEL,
-            "prompt": ("Does this image contain a real, physically present human person or human face? "
-                       "Bright lights, lens glare, lamps, headlights, animals, objects, and printed/pictured "
-                       "faces on labels, posters, or screens do NOT count. Answer only YES or NO."),
-            "images": [img_b64],
-            "stream": False,
-            # qwen3-vl thinks before answering; a small budget gets eaten by
-            # thinking tokens and returns an empty response (= fail-open).
-            "options": {"temperature": 0.0, "num_predict": 512},
-        }).encode()
-        req = urllib.request.Request(OLLAMA_URL, data=payload,
-                                     headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=90) as resp:
-            ans = json.loads(resp.read()).get("response", "").strip().upper()
-        if not ans:
-            return True  # empty/thinking-only response — fail open
-        return "NO" not in ans.split()[-1:][0]
     except Exception as e:
-        log(f"Vision person-gate failed (fail-open): {e}")
+        log(f"Vision gate: cannot read {image_path} ({e}) — fail-open")
         return True
+    payload = json.dumps({
+        "model": VISION_MODEL,
+        "prompt": ("Does this image contain a real, physically present human person or human face? "
+                   "Bright lights, lens glare, lamps, headlights, VEHICLES, car wheels/grilles, animals, "
+                   "objects, and printed/pictured faces on labels, posters, or screens do NOT count. "
+                   "Answer only YES or NO."),
+        "images": [img_b64],
+        "stream": False,
+        # qwen3-vl needs thinking ON to answer (think=false returns empty); give it
+        # headroom so thinking tokens don't starve the YES/NO.
+        "options": {"temperature": 0.0, "num_predict": 1024},
+    }).encode()
+    # RETRY before giving up. The old code fail-OPENED on the FIRST empty/timeout — so
+    # every transient vision hiccup became a false "unknown person" alert (the 2026-09-03
+    # car-wheel at Alley North: dlib saw a "face" in a hubcap, vision was momentarily
+    # unavailable, gate failed open). The model answers reliably when actually reached,
+    # so 3 tries convert a transient miss into a real NO instead of a false alert.
+    for attempt in range(1, 4):
+        try:
+            req = urllib.request.Request(OLLAMA_URL, data=payload,
+                                         headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=90) as resp:
+                ans = json.loads(resp.read()).get("response", "").strip().upper()
+            if ans:
+                return "NO" not in ans.split()[-1:][0]
+            log(f"Vision gate empty response (attempt {attempt}/3) — retrying")
+        except Exception as e:
+            log(f"Vision gate error (attempt {attempt}/3): {e}")
+        time.sleep(1)
+    # Only after 3 genuine failures do we fall back to the old behavior. Log it LOUDLY
+    # (the old empty-path was silent) so a run of these points at a vision-backend outage.
+    log("Vision person-gate INCONCLUSIVE after 3 tries — failing open (alerting anyway). "
+        "If these cluster, the local vision backend is down and cars/glare will leak through.")
+    return True
 
 
 def _load_sam_faces():

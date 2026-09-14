@@ -34,7 +34,7 @@ DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 HOSTS = {
     "nova-core": "192.168.1.2", "nova-core2": "192.168.1.86",
-    "nova-core3": "192.168.1.88", "nova-core4": "192.168.1.250",
+    "nova-core3": "192.168.1.5", "nova-core4": "192.168.1.250",
     "nova-core5": "192.168.1.10",
 }
 KERNEL_PREFIXES = ("linux-image", "linux-generic", "linux-headers", "linux-modules")

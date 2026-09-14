@@ -35,6 +35,13 @@ PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 PKG_PATH = "/Volumes/Data/AI/python_packages"
 GATEWAY_HEALTH = "http://192.168.1.2:18792/health"
 MLX_MODELS = "http://127.0.0.1:5050/v1/models"
+# The pool behind the :5050 nginx LB — probed individually only when the LB blips,
+# so a one-minute transient 502 to one backend (network hiccup) doesn't page when the
+# pool is still serving. Keep in sync with nginx/servers/mlx-lb.conf.
+MLX_BACKENDS = [
+    "http://192.168.1.251:5050/v1/models",  # M4 Pro, 64GB
+    "http://192.168.1.7:5050/v1/models",    # M2 Pro, 32GB
+]
 OLLAMA_TAGS = "http://127.0.0.1:11434/api/tags"
 
 OK, WARN, FAIL = "ok", "warn", "fail"
@@ -96,12 +103,34 @@ def check_gateway():
 
 
 def check_mlx():
+    # Retry the LB a few times before deciding anything: a single transient 502 (a
+    # ~1-minute network blip to one backend) shouldn't page — the pool is redundant and
+    # self-heals via nginx failover. Only WARN when the WHOLE pool is unreachable.
+    last = None
+    for attempt in range(3):
+        try:
+            d = http_json(MLX_MODELS)
+            models = [m.get("id", "?") for m in d.get("data", [])]
+            return OK, f"serving {os.path.basename(models[0]) if models else '?'}"
+        except Exception as e:
+            last = e
+            if attempt < 2:
+                time.sleep(3)
+    # LB still failing after retries — distinguish "LB/transient blip" from "pool down"
+    # by probing the backends directly. If any backend is serving, the pool has capacity
+    # and this is a transient LB hiccup, not an outage worth alerting on.
+    up = sum(1 for b in MLX_BACKENDS if _reachable_json(b))
+    if up:
+        return OK, f"LB blip (transient) — {up}/{len(MLX_BACKENDS)} backends serving directly"
+    return WARN, f"MLX pool DOWN — 0/{len(MLX_BACKENDS)} backends reachable: {last}"
+
+
+def _reachable_json(url):
     try:
-        d = http_json(MLX_MODELS)
-        models = [m.get("id", "?") for m in d.get("data", [])]
-        return OK, f"serving {os.path.basename(models[0]) if models else '?'}"
-    except Exception as e:
-        return WARN, f"not serving on :5050: {e}"
+        http_json(url)
+        return True
+    except Exception:
+        return False
 
 
 def check_ollama():

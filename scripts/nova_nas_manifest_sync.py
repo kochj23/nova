@@ -454,7 +454,14 @@ def rsync_delta(share: dict, dest_local: str, nul_list: str, timeout=14400):
     src_cmd = (f"cd {shquote(share['src'])} && "
                f"tar --null --files-from={shquote(remote_list)} -cf - ; "
                f"rc=$?; rm -f {shquote(remote_list)}; exit $rc")
-    dst_cmd = f"mkdir -p {shquote(dest_local)} && cd {shquote(dest_local)} && tar -xf -"
+    # After extraction, chown anything root-owned back to kochj:unifi-drive (1001:988).
+    # tar-as-root creates IMPLICIT parent dirs owned root:root, and the Synology's
+    # nightly CIFS rsync (SMB user uid 1001) then gets EPERM setting times on them —
+    # every nightly fails rc=23 until someone chowns (bit us 2026-09-08..11 with the
+    # backups/postgres/nova_*_20260908 dirs). The find piggybacks on a tree walk this
+    # job already pays for elsewhere, and runs only when tar succeeded.
+    dst_cmd = (f"mkdir -p {shquote(dest_local)} && cd {shquote(dest_local)} && tar -xf - "
+               f"&& find . \\( -uid 0 -o -gid 0 \\) -exec chown -h 1001:988 {{}} +")
     last = ""
     for attempt in range(1, 4):
         p_src = subprocess.Popen(["ssh", *SSH_OPTS, SYNO_HOST, src_cmd],

@@ -99,8 +99,17 @@ def main():
             time.sleep(2)
     client = mqtt.Client()
     client.on_message = on_message
+    # RE-SUBSCRIBE ON EVERY (RE)CONNECT. loop_forever() auto-reconnects after a network
+    # drop, but the broker forgets our subscription on disconnect — without an on_connect
+    # handler the client stays connected yet receives NO messages, so telemetry.energy
+    # silently stops while the process looks alive (the recurring wedge that keeps paging
+    # nova-warning). Subscribing inside on_connect fixes it for every reconnect. 2026-09-09.
+    def on_connect(c, _userdata, _flags, rc):
+        c.subscribe("zigbee2mqtt/+")
+        print(f"[zigbee-energy] (re)connected rc={rc}, subscribed zigbee2mqtt/+", flush=True)
+    client.on_connect = on_connect
+    client.reconnect_delay_set(min_delay=1, max_delay=60)
     client.connect(MQTT_HOST, MQTT_PORT, 60)
-    client.subscribe("zigbee2mqtt/+")
     print("[zigbee-energy] streaming Zigbee plug power -> telemetry.energy", flush=True)
     client.loop_forever()
 

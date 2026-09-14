@@ -174,13 +174,31 @@ async def lifespan(app: FastAPI):
     history_pool = None
     for attempt in range(30):                      # up to ~5 min (30 x 10s)
         try:
-            history_pool = await asyncpg.create_pool(OPS_PG_DSN, min_size=2, max_size=5)
+            history_pool = await asyncpg.create_pool(
+                OPS_PG_DSN, min_size=2, max_size=5,
+                # Self-heal after a PG failover/blip: without these, a pool connection to
+                # the OLD primary (OPS_PG_DSN is the pg-primary failover alias) goes dead and
+                # hangs forever on acquire/query, exhausting the pool so ALL dashboard writes
+                # stop permanently ("wrote once, then wedged"). command_timeout makes a dead-
+                # connection query raise instead of hang (the conn is then discarded), and
+                # max_inactive_connection_lifetime recycles idle connections so stale ones
+                # get replaced within minutes. Added 2026-09-09 after repeated wedges.
+                command_timeout=15, max_inactive_connection_lifetime=180)
             break
         except Exception as e:
             print(f"[startup] PG not ready yet ({type(e).__name__}); retry {attempt+1}/30 in 10s", flush=True)
             await asyncio.sleep(10)
     if history_pool is None:                        # final attempt — raise if PG is truly down
-        history_pool = await asyncpg.create_pool(OPS_PG_DSN, min_size=2, max_size=5)
+        history_pool = await asyncpg.create_pool(
+                OPS_PG_DSN, min_size=2, max_size=5,
+                # Self-heal after a PG failover/blip: without these, a pool connection to
+                # the OLD primary (OPS_PG_DSN is the pg-primary failover alias) goes dead and
+                # hangs forever on acquire/query, exhausting the pool so ALL dashboard writes
+                # stop permanently ("wrote once, then wedged"). command_timeout makes a dead-
+                # connection query raise instead of hang (the conn is then discarded), and
+                # max_inactive_connection_lifetime recycles idle connections so stale ones
+                # get replaced within minutes. Added 2026-09-09 after repeated wedges.
+                command_timeout=15, max_inactive_connection_lifetime=180)
     app.state.history_pool = history_pool
 
     # Cleanup rows older than 30 days (async)
@@ -2020,8 +2038,22 @@ async def write_history_snapshot(state: dict):
                            session_count = excluded.session_count""",
                     today, prov, pdata.get("cost", 0), pdata.get("input_tokens", 0),
                     pdata.get("output_tokens", 0), pdata.get("sessions", 0))
-    except Exception:
-        pass  # Non-critical — never block the poll loop
+    except Exception as e:
+        # Was a silent `pass` — which hid the daily wedge (writes failing, nobody knew).
+        # Log it, and recreate the pool: after a PG failover the pooled connections point
+        # at the dead old primary and every write fails forever until the process restarts.
+        # Recreating re-resolves the pg-primary alias to the current primary. 2026-09-10.
+        print(f"[history-snapshot] write failed: {type(e).__name__}: {e}", flush=True)
+        try:
+            old = app.state.history_pool
+            app.state.history_pool = await asyncpg.create_pool(
+                OPS_PG_DSN, min_size=2, max_size=5,
+                command_timeout=15, max_inactive_connection_lifetime=180)
+            if old:
+                old.terminate()  # force-close (a wedged pool's .close() could hang)
+            print("[history-snapshot] recreated history_pool after failure", flush=True)
+        except Exception as e2:
+            print(f"[history-snapshot] pool recreate failed: {e2}", flush=True)
 
 
 # --- Alert Evaluator ---
@@ -4795,9 +4827,13 @@ async def poll_loop():
     psutil.cpu_percent(interval=None)
     await asyncio.sleep(0.1)
 
+    cyc = 0
     while True:
         start = time.monotonic()
-        results = await asyncio.gather(
+        cyc += 1
+        print(f"[pl] cycle {cyc} A-start", flush=True)
+        try:
+            results = await asyncio.wait_for(asyncio.gather(
             collect_scheduler(session),       # 0
             collect_agents(redis_client),     # 1
             collect_gateway(session),         # 2
@@ -4841,7 +4877,16 @@ async def poll_loop():
             collect_recent_events(),         # 40
             collect_repo_scout(),            # 41
             return_exceptions=True,
-        )
+            ), timeout=45)
+        except asyncio.TimeoutError:
+            # A collector HUNG (unresponsive network call, no per-call timeout). gather()
+            # waits forever on a hang even with return_exceptions=True, silently stalling
+            # the whole poll loop = frozen dashboard, no history writes. Skip the cycle and
+            # continue instead of hanging. This was the real recurring wedge. 2026-09-10.
+            print("[poll_loop] collectors timed out (>45s, a collector hung) - skipping cycle", flush=True)
+            await asyncio.sleep(POLL_INTERVAL)
+            continue
+        print(f"[pl] cycle {cyc} B-gathered", flush=True)
 
         def safe(idx):
             r = results[idx]
@@ -4853,7 +4898,11 @@ async def poll_loop():
         redis_data = safe(4)
         task_data = safe(3)
         svc_data = safe(5)
-        traffic = collect_traffic_flow(sched_data, redis_data, task_data, svc_data)
+        try:
+            traffic = collect_traffic_flow(sched_data, redis_data, task_data, svc_data)
+        except Exception as e:
+            traffic = {}
+            print(f"[poll_loop] collect_traffic_flow failed (loop continues): {e}", flush=True)
 
         # Build openrouter summary from model_usage data
         model_usage_data = safe(11)
@@ -4950,9 +4999,14 @@ async def poll_loop():
             state["big_brother"] = {"error": "Big Brother unreachable"}
 
         # Evaluate alerts every poll cycle
-        state["alerts"] = evaluate_alerts(state)
+        try:
+            state["alerts"] = evaluate_alerts(state)
+        except Exception as e:
+            state["alerts"] = []
+            print(f"[poll_loop] evaluate_alerts failed (loop continues): {e}", flush=True)
 
         current_state = state
+        print(f"[pl] cycle {cyc} C-state-set", flush=True)
 
         # Write history snapshot every 30s (non-blocking)
         now = time.time()
@@ -4966,10 +5020,17 @@ async def poll_loop():
         dead = set()
         for ws in list(connected_clients):
             try:
-                await ws.send_json(state)
+                # BOUND the send: a slow/stuck client (backgrounded tab, full send buffer)
+                # makes an unbounded `await ws.send_json` hang FOREVER, parking the whole
+                # poll loop right here — the try/except only catches errors, not a hang.
+                # This was the real dashboard wedge: wrote once, a client connected, the
+                # next broadcast parked, and history writes stopped while HTTP kept serving
+                # cached state. 5s cap -> a stuck client is dropped, loop continues. 2026-09-10.
+                await asyncio.wait_for(ws.send_json(state), timeout=5)
             except Exception:
                 dead.add(ws)
         connected_clients -= dead
+        print(f"[pl] cycle {cyc} D-done", flush=True)
 
         elapsed = time.monotonic() - start
         await asyncio.sleep(max(0, POLL_INTERVAL - elapsed))

@@ -41,11 +41,15 @@ REFRESH_MARKER = Path(MOUNT) / ".last-git-refresh"
 REFRESH_MIN_AGE = 900                    # don't let N nodes all refresh at once
 
 # Preference order. First reachable wins; the script fails BACK automatically.
+# UNAS-primary cutover 2026-09-10: UNAS is now the primary store for /nova, served
+# from //192.168.1.69/nas/nova-fs (a dedicated faithful replica of the Synology's
+# /volume1/nova — the old //.69/nas/nova path held unrelated data). Synology is the
+# read-back-first fallback. Flip the two list entries to restore Synology-primary.
 TARGETS = [
+    {"name": "unas", "host": "192.168.1.69", "unc": "//192.168.1.69/nas/nova-fs",
+     "creds": "/etc/cifs-unas.creds", "primary": True},
     {"name": "synology", "host": "192.168.1.11", "unc": "//192.168.1.11/nova",
-     "creds": "/etc/cifs-nas.creds", "primary": True},
-    {"name": "unas", "host": "192.168.1.69", "unc": "//192.168.1.69/nas/nova",
-     "creds": "/etc/cifs-unas.creds", "primary": False},
+     "creds": "/etc/cifs-nas.creds", "primary": False},
 ]
 MOUNT_OPTS = "uid=kochj,gid=kochj,iocharset=utf8,vers=3.0,_netdev"
 

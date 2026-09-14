@@ -64,6 +64,11 @@ _shutdown = False
 _pool = None
 _start_time = time.time()
 _current_activity = {"state": "unknown", "confidence": 0.0, "since": None, "signals": {}}
+_last_activity_write = None  # datetime of last telemetry.activity write (heartbeat tracking)
+# Re-record the current activity even when unchanged at least this often, so a stable
+# (or stuck) classification never makes the stream look DEAD to freshness monitoring.
+# Root cause of the 2026-09-02 -> 2026-09-09 silence: writes were change-only, no heartbeat.
+ACTIVITY_HEARTBEAT_SEC = 900  # 15 min
 _environment = {}  # room -> latest scene
 
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -390,27 +395,31 @@ async def phase5_activity_classifier(pool, states):
     except Exception:
         pass
 
+    global _last_activity_write
     state, confidence, signals = classify_activity(states, presence_data)
 
-    # Only update if state changed or confidence shifted significantly
     prev_state = _current_activity.get("state")
-    if state != prev_state:
-        _current_activity = {
-            "state": state,
-            "confidence": confidence,
-            "since": datetime.now(timezone.utc).isoformat(),
-            "signals": signals,
-        }
+    changed = state != prev_state
+    now = datetime.now(timezone.utc)
+    # Write on a state change OR when the heartbeat interval has elapsed. The heartbeat
+    # keeps telemetry.activity fresh even during long stable/stuck stretches, so the
+    # freshness monitor can tell "classifier alive, state steady" from "classifier dead".
+    due = _last_activity_write is None or (now - _last_activity_write).total_seconds() >= ACTIVITY_HEARTBEAT_SEC
+    if changed:
+        _current_activity = {"state": state, "confidence": confidence,
+                             "since": now.isoformat(), "signals": signals}
         log(f"Activity: {state} (confidence={confidence:.2f})")
-
-        async with pool.acquire() as conn:
-            await conn.execute("""
-                INSERT INTO telemetry.activity (ts, person, state, confidence, signals, metadata)
-                VALUES (now(), 'jordan', $1, $2, $3, '{}')
-            """, state, confidence, json.dumps(signals, default=str))
     else:
         _current_activity["confidence"] = confidence
         _current_activity["signals"] = signals
+    if changed or due:
+        _last_activity_write = now
+        async with pool.acquire() as conn:
+            await conn.execute("""
+                INSERT INTO telemetry.activity (ts, person, state, confidence, signals, metadata)
+                VALUES (now(), 'jordan', $1, $2, $3, $4)
+            """, state, confidence, json.dumps(signals, default=str),
+                json.dumps({"heartbeat": not changed}, default=str))
 
 
 # ── Phase 6: Environmental Awareness ────────────────────────────────────────
@@ -433,27 +442,32 @@ async def phase6_environmental_awareness(pool, states):
                 pass
 
     if outdoor_temp and outdoor_temp > 95 and hour >= 10 and hour <= 18:
-        # Check if patio is occupied
-        patio_occupied = False
-        for s in states:
-            if "patio" in s["entity_id"].lower() and s["state"] == "on":
-                patio_occupied = True
+        # Occupied means a person was DETECTED (motion/occupancy/presence sensor) —
+        # not merely that something patio-named is switched on. The old check matched
+        # light.patio_* being on, so every hot afternoon with patio lights on produced
+        # a "you're outdoors in the heat" nag about... the lights being on.
+        patio_occupied = any(
+            s["entity_id"].startswith("binary_sensor.")
+            and "patio" in s["entity_id"].lower()
+            and any(k in s["entity_id"].lower() for k in ("motion", "occupancy", "presence"))
+            and s["state"] == "on"
+            for s in states)
         if patio_occupied:
-            suggestions.append(f"It's {outdoor_temp:.0f}°F outside and patio lights are on — very hot to be outdoors")
+            suggestions.append(("patio_heat", f"It's {outdoor_temp:.0f}°F outside and the patio is occupied — very hot to be outdoors"))
 
     # Late night with office lights still on
     if hour >= 23 or hour <= 1:
         office_on = any(s["state"] == "on" and "office" in s["entity_id"]
                        for s in states if s["entity_id"].startswith("light."))
         if office_on:
-            suggestions.append("Past 11pm with office lights still on — consider winding down")
+            suggestions.append(("office_late", "Past 11pm with office lights still on — consider winding down"))
 
     # All lights off but someone home and it's not sleep hours
     all_off = not any(s["state"] == "on" for s in states if s["entity_id"].startswith("light."))
     jordan_home = any(s["state"] == "home" for s in states
                      if s["entity_id"] == "device_tracker.jordan_s_iphone")
     if all_off and jordan_home and 7 <= hour <= 21:
-        suggestions.append("All lights are off but you're home — everything okay?")
+        suggestions.append(("lights_off_home", "All lights are off but you're home — everything okay?"))
 
     # Outdoor light level + indoor activity (sun glare)
     illuminance = None
@@ -468,17 +482,25 @@ async def phase6_environmental_awareness(pool, states):
         office_on = any(s["state"] == "on" and "office" in s["entity_id"]
                        for s in states if s["entity_id"].startswith("light."))
         if office_on:
-            suggestions.append(f"Bright afternoon sun ({illuminance:.0f} lux) — west-facing windows may cause glare")
+            suggestions.append(("sun_glare", f"Bright afternoon sun ({illuminance:.0f} lux) — west-facing windows may cause glare"))
 
-    # Write suggestions
+    # Write suggestions — at most one per key per 2h. This loop runs every 2 minutes;
+    # without the cooldown a persistent condition wrote the same observation ~30x/hour
+    # (patio-heat peaked at 12,538 rows), which then leaked into every generated
+    # article/journal that samples shared_observations for local color.
     if suggestions:
         async with pool.acquire() as conn:
-            for suggestion in suggestions:
-                await conn.execute("""
+            for key, suggestion in suggestions:
+                inserted = await conn.execute("""
                     INSERT INTO shared_observations (observer, category, subject, observation, severity)
-                    VALUES ('jarvis_brain', 'environmental', 'suggestion', $1, 'info')
-                """, suggestion)
-                log(f"Suggestion: {suggestion}")
+                    SELECT 'jarvis_brain', 'environmental', $1, $2, 'info'
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM shared_observations
+                        WHERE observer = 'jarvis_brain' AND subject = $1
+                          AND observed_at > now() - interval '2 hours')
+                """, key, suggestion)
+                if inserted != "INSERT 0 0":
+                    log(f"Suggestion: {suggestion}")
 
 
 # ── Main Loop ───────────────────────────────────────────────────────────────

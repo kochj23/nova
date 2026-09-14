@@ -78,6 +78,11 @@ BOSE_DEVICES = [
 
 POLL_ACTIVE_SEC = 30
 POLL_STANDBY_SEC = 300
+# Record an "off/unreachable" snapshot at least this often per device, even when the
+# device is powered down. Without this the poller wrote NOTHING while gear was off, so
+# telemetry.av_state looked DEAD to freshness monitoring (the 2026-09-02 6-day silence
+# was just the Onkyos being off, not a failure). Off is now recorded data, not silence.
+AV_HEARTBEAT_SEC = 600  # 10 min
 
 # ── Database ─────────────────────────────────────────────────────────────────
 
@@ -482,6 +487,7 @@ class AVPoller:
         self.onkyo_connections: dict[str, OnkyoConnection] = {}
         self.last_states: dict[str, dict] = {}  # key: "device_name/zone"
         self.last_poll_times: dict[str, float] = {}
+        self.last_write_times: dict[str, float] = {}  # last av_state snapshot write per key (heartbeat)
         self.running = True
 
         # Initialize Onkyo connections
@@ -526,6 +532,29 @@ class AVPoller:
         except Exception as e:
             log.error(f"DB reconnection failed: {e}")
 
+    def _record(self, name: str, zone: str, key: str, state: dict):
+        """Record an av_state snapshot and stamp the heartbeat clock for this key."""
+        try:
+            record_state(self.db, name, zone, state)
+            self.last_write_times[key] = time.time()
+        except Exception as e:
+            log.error(f"Failed to record state for {name}/{zone}: {e}")
+            self._reconnect_db()
+
+    def _heartbeat_due(self, key: str) -> bool:
+        """True if it's time to re-record this key even though nothing changed."""
+        return time.time() - self.last_write_times.get(key, 0) >= AV_HEARTBEAT_SEC
+
+    def _handle_unreachable(self, name: str, zone: str, key: str, state: dict):
+        """Record an off/unreachable snapshot on the transition to unreachable OR when
+        the heartbeat is due — so the stream reflects 'device off' instead of going
+        silent. Event table (device_power_events) is intentionally NOT written here."""
+        prev = self.last_states.get(key, {}).get("power")
+        was_reachable = prev not in (None, "unreachable")
+        if was_reachable or self._heartbeat_due(key):
+            self._record(name, zone, key, state)
+        self.last_states[key] = state
+
     def poll_onkyo(self, device: dict):
         """Poll one Onkyo receiver (all zones)."""
         name = device["name"]
@@ -550,19 +579,15 @@ class AVPoller:
 
             if state["power"] == "unreachable":
                 log.debug(f"{name}/{zone} unreachable")
-                # Don't record unreachable as a snapshot, but track it
-                self.last_states[key] = state
+                # Record 'off' as data (transition or heartbeat) instead of going silent.
+                self._handle_unreachable(name, zone, key, state)
                 continue
 
             # Check for power transitions
             self.check_power_transition(name, zone, state)
 
             # Record state snapshot
-            try:
-                record_state(self.db, name, zone, state)
-            except Exception as e:
-                log.error(f"Failed to record state for {name}/{zone}: {e}")
-                self._reconnect_db()
+            self._record(name, zone, key, state)
 
             self.last_states[key] = state
             log.debug(f"{name}/{zone}: {state}")
@@ -589,18 +614,15 @@ class AVPoller:
 
         if state["power"] == "unreachable":
             log.debug(f"{name} unreachable")
-            self.last_states[key] = state
+            # Record 'off' as data (transition or heartbeat) instead of going silent.
+            self._handle_unreachable(name, zone, key, state)
             return
 
         # Check for power transitions
         self.check_power_transition(name, zone, state)
 
         # Record state snapshot
-        try:
-            record_state(self.db, name, zone, state)
-        except Exception as e:
-            log.error(f"Failed to record state for {name}: {e}")
-            self._reconnect_db()
+        self._record(name, zone, key, state)
 
         self.last_states[key] = state
         log.debug(f"{name}: {state}")

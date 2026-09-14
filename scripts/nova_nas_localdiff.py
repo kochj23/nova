@@ -17,6 +17,7 @@ import re
 import subprocess
 import sys
 import time
+from collections import Counter
 
 import psycopg2
 
@@ -38,7 +39,12 @@ JOBS = [
     ("nas",      "/volume1/nas",      f"{UROOT}/nas/.data",      "/volume1/docker/nas"),
     ("external", "/volume1/external", f"{UROOT}/External/.data", "/volume1/docker/external"),
 ]
-EXCL = re.compile(r"@eaDir|/#recycle|/#snapshot|\.DS_Store$|\.app/|GoogleDriveBackups/Pics/Pictures/\.com-apple-bird-noname-")
+# NOTE 2026-09-10: `find` emits RELATIVE paths (no leading slash), so the old `/#recycle`
+# and `/#snapshot` never matched top-level Recycle Bin / snapshot dirs — the Synology
+# recycle bin (deleted backups) counted as "differing" on every run, so the nas share
+# NEVER reached parity (ok=false forever). Anchor with (^|/) and also drop DSM index
+# sidecars (@SynoEAStream / SYNOINDEX_*), which are regenerable metadata, never user data.
+EXCL = re.compile(r"@eaDir|@Syno|SYNOINDEX|(^|/)#recycle|(^|/)#snapshot|\.DS_Store$|\.app/|GoogleDriveBackups/Pics/Pictures/\.com-apple-bird-noname-")
 
 
 def slack(msg):
@@ -61,13 +67,19 @@ def find_to(host, path, outfile):
 
 
 def load_sizes(path):
-    d = {}
+    # Counter of (rel, size) PAIRS, not a rel->size dict. Some Synology entries share
+    # a relative path but differ in size (media-index siblings, pathological duplicate
+    # names like the "spicy pot roast …).jpg" recipe thumbs). A plain dict kept only
+    # the LAST size per rel, so every other same-rel file looked "missing" forever —
+    # the recurring nas:localdiff ok=false false positive that never reconciled even
+    # though the bytes were already on the UNAS. Comparing as a multiset fixes it. 2026-09-10.
+    c = Counter()
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
             rel, _, size = line.rstrip("\n").rpartition("\t")
             if rel and not EXCL.search(rel):
-                d[rel] = size
-    return d
+                c[(rel, size)] += 1
+    return c
 
 
 def record(name, rc, files):
@@ -199,7 +211,9 @@ def main():
         sf, df, tf = f"{TMP}/ld_src_{name}.lst", f"{TMP}/ld_dst_{name}.lst", f"{TMP}/ld_to_{name}.lst"
         if find_to(SYNO, src, sf) == 0 or find_to(UNAS, udst, df) == 0:
             slack(f":warning: {name}: find produced no output on one side — skipping."); continue
-        dst = load_sizes(df)
+        dst = load_sizes(df)                    # Counter[(rel, size)] -> count
+        remaining = Counter(dst)                # consumed as each source file matches a UNAS copy
+        dst_rels = {rel for (rel, _sz) in dst}
         src_set = set()
         nto = 0
         with open(sf, encoding="utf-8", errors="replace") as s, open(tf, "w") as out:
@@ -208,17 +222,23 @@ def main():
                 if not rel or EXCL.search(rel):
                     continue
                 src_set.add(rel)
-                if dst.get(rel) != size:        # missing on dest OR size differs
+                if remaining[(rel, size)] > 0:  # this exact (rel,size) already on the UNAS
+                    remaining[(rel, size)] -= 1
+                else:                           # missing on dest OR size differs
                     out.write(rel + "\n"); nto += 1
         nsrc = len(src_set)
-        ndst = len(dst)
-        orphans = [rel for rel in dst if rel not in src_set]  # on UNAS, gone from Synology
+        ndst = sum(dst.values())
+        orphans = [rel for rel in dst_rels if rel not in src_set]  # on UNAS, gone from Synology
         if orphans:
-            orphan_bytes = sum(int(dst[rel]) for rel in orphans)
+            osz = {}                            # orphan rel -> total bytes across its (rel,size) entries
+            for (rel, size), cnt in dst.items():
+                if rel not in src_set:
+                    osz[rel] = osz.get(rel, 0) + int(size) * cnt
+            orphan_bytes = sum(osz.values())
             rep = f"{TMP}/ld_orphans_{name}.lst"
             with open(rep, "w") as f:
-                for rel in sorted(orphans, key=lambda r: -int(dst[r])):
-                    f.write(f"{dst[rel]}\t{rel}\n")
+                for rel in sorted(orphans, key=lambda r: -osz.get(r, 0)):
+                    f.write(f"{osz.get(rel, 0)}\t{rel}\n")
             slack(f"• *{name}*: \U0001f5c2️ {len(orphans):,} UNAS-only files not on Synology "
                   f"(~{orphan_bytes/1e9:.1f} GB) — suggested for deletion, see {rep} "
                   f"(not deleted; requires NOVA_LOCALDIFF_PRUNE=1)")

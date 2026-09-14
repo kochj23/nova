@@ -32,8 +32,21 @@ UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTM
 DELAY = 22          # seconds between Reddit requests (avoid 429)
 CHUNK = 1500
 SORTS = [("", "")]  # hot feed only — one request per sub keeps us well under Reddit's RSS throttle
-COMMENT_CAP = 5     # max comment-fetches per sub per run (0 on first seed) — bounds request volume
+COMMENT_CAP = 3     # max comment-fetches per sub per run (0 on first seed) — bounds request volume
 ROTATE_BATCH = 4    # non-fishbowl subs crawled per run; rotate the rest so each run stays tiny
+DEADLINE_S = 750    # bail cleanly before the scheduler's 900s timeout kills us mid-run
+START_TS = time.time()
+
+# 2026-08-24: 43 consecutive scheduler timeouts. Root cause: on 429 the old code slept
+# 60s and retried IN-RUN (up to 5x), blowing the 900s budget, and the next run hammered
+# Reddit again while still throttled — which kept the throttle hot for days. New shape:
+# first 429 aborts the whole pass and persists a cooldown (honoring Retry-After, growing
+# 15m -> 4h across consecutive throttled runs); runs during cooldown exit immediately.
+
+
+class RateLimited(Exception):
+    def __init__(self, retry_after):
+        self.retry_after = retry_after
 
 # subreddit -> vector. Restored from the retired .json ingester (Reddit now 403-blocks that API);
 # RSS is the only working path. Per-sub vector so each lands in the same place it did before.
@@ -85,18 +98,47 @@ def ensure(cur):
     cur.execute("CREATE TABLE IF NOT EXISTS reddit_rss_seen ("
                 "subreddit text, post_id text, seen_at timestamptz DEFAULT now(), "
                 "PRIMARY KEY (subreddit, post_id))")
+    cur.execute("CREATE TABLE IF NOT EXISTS reddit_rss_state ("
+                "key text PRIMARY KEY, value text, updated_at timestamptz DEFAULT now())")
+
+
+def get_state(cur, key, default=""):
+    cur.execute("SELECT value FROM reddit_rss_state WHERE key=%s", (key,))
+    row = cur.fetchone()
+    return row[0] if row else default
+
+
+def set_state(cur, key, value):
+    cur.execute("INSERT INTO reddit_rss_state (key, value, updated_at) VALUES (%s,%s,now()) "
+                "ON CONFLICT (key) DO UPDATE SET value=EXCLUDED.value, updated_at=now()",
+                (key, str(value)))
+
+
+class Deadline(Exception):
+    """Raised inside a crawl when the run budget is exhausted — caller exits cleanly."""
+
+
+def check_deadline():
+    if time.time() - START_TS > DEADLINE_S:
+        raise Deadline()
 
 
 def fetch(url):
+    """GET a Reddit RSS URL. Raises RateLimited on 429 — no in-run retry: more requests
+    while throttled just extend the throttle, and the sleeps blow the scheduler budget.
+    Raises Deadline when the run budget is spent — the between-subs check alone let a
+    slow sub (comments + retries) started at 740s run past the scheduler's 900s axe."""
+    check_deadline()
     req = urllib.request.Request(url, headers={"User-Agent": UA,
                                                "Accept": "application/atom+xml,application/xml,text/xml"})
-    for attempt in range(5):
+    for attempt in range(3):
         try:
             with urllib.request.urlopen(req, timeout=30) as r:
                 return r.read().decode("utf-8", "replace")
         except urllib.error.HTTPError as e:
             if e.code == 429:
-                log(f"429 — backing off 60s (attempt {attempt})"); time.sleep(60); continue
+                ra = e.headers.get("Retry-After")
+                raise RateLimited(int(ra) if ra and ra.isdigit() else 0)
             log(f"HTTP {e.code} on {url[:70]}"); return None
         except Exception:
             time.sleep(10)
@@ -117,6 +159,7 @@ def parse_entries(xml):
 
 
 def remember(text, meta):
+    check_deadline()   # chunk loops can be long; a mid-post abort just re-crawls the post next run
     payload = json.dumps({"text": text, "source": meta["vector"], "tier": "long_term",
                           "metadata": {**meta, "privacy": "private"}}).encode()
     req = urllib.request.Request(MEMORY_URL + "?async=1", data=payload,
@@ -194,12 +237,38 @@ def main():
         log("another crawl is already running — skipping this pass"); return
 
     conn = _db(); cur = conn.cursor(); ensure(cur)
+
+    # Respect an active rate-limit cooldown: exit clean immediately (a cooled-down skip is
+    # correct behavior, not a failure — the scheduler timeout alarms were the old spiral).
+    cooldown_until = float(get_state(cur, "cooldown_until", "0") or 0)
+    if time.time() < cooldown_until:
+        mins = int((cooldown_until - time.time()) / 60)
+        log(f"rate-limit cooldown active for another {mins}m — skipping this pass")
+        conn.close()
+        return
+
     seeded = []
     incr = []             # (sub, new) — general incremental activity, rolled up into ONE ping
     fishbowl_pings = []   # fishbowl keeps its own sampled per-sub pings (the drama IS the point)
     for sub, vector in targets.items():
+        if time.time() - START_TS > DEADLINE_S:
+            log("deadline reached — stopping cleanly (rotation offset resumes next run)")
+            break
         try:
             new, sample, was_seed = crawl_sub(cur, sub, vector)
+        except Deadline:
+            log("deadline reached mid-crawl — stopping cleanly (rotation offset resumes next run)")
+            break
+        except RateLimited as rl:
+            # First 429 ends the pass. Cooldown = max(Retry-After, 15m), doubling across
+            # consecutive throttled runs up to 4h; a clean run resets the streak.
+            streak = int(get_state(cur, "throttle_streak", "0") or 0) + 1
+            cool = max(rl.retry_after, min(900 * (2 ** (streak - 1)), 14400))
+            set_state(cur, "throttle_streak", streak)
+            set_state(cur, "cooldown_until", time.time() + cool)
+            log(f"429 from Reddit — aborting pass, cooldown {cool // 60}m (streak {streak})")
+            conn.close()
+            return
         except Exception as e:
             log(f"r/{sub}: error {e}"); continue
         # Slack only on real activity. First-seed batch → one summary. Incremental new posts →
@@ -220,6 +289,10 @@ def main():
             log(f"r/{sub}: {new} new")
         else:
             log(f"r/{sub}: no new posts")
+    # Clean pass (no 429): reset the throttle streak so future cooldowns start small again.
+    set_state(cur, "throttle_streak", 0)
+    set_state(cur, "cooldown_until", 0)
+
     if incr:
         total = sum(n for _, n in incr)
         subs = ", ".join(f"r/{s} ({n})" for s, n in sorted(incr, key=lambda x: -x[1]))
