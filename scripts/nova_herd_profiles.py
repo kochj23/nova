@@ -29,6 +29,19 @@ sys.path.insert(0, str(Path.home() / ".openclaw"))
 import nova_config
 from herd_config import HERD, HERD_EMAILS
 
+# PG-backed relationship layer (additive; MD behavior below is unchanged).
+try:
+    from nova_herd_relationships import (
+        ensure_seed, update_correspondent, _parse_email_dt,
+    )
+    _REL_OK = True
+except Exception as _rel_e:
+    _REL_OK = False
+    print(f"[warn] nova_herd_relationships unavailable: {_rel_e}", flush=True)
+
+    def _parse_email_dt(_date_str):  # fallback so main loop never NameErrors
+        return None
+
 MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
@@ -403,6 +416,14 @@ def post_daily_summary(interactions: list[dict]):
 
 def main():
     log("Starting herd profile analysis...")
+
+    # PG-first: ensure a relationship row exists per herd member; migrate MD once.
+    if _REL_OK:
+        try:
+            ensure_seed(HERD)
+        except Exception as e:
+            log(f"ensure_seed failed (non-fatal): {e}")
+
     state = load_state()
     processed_uids = set(state.get("processed_uids", []))
 
@@ -446,11 +467,13 @@ def main():
 
     interactions = []
     new_processed = []
+    member_signals = {}  # name -> {email, signals:[...], last_dt} for PG relationship update
 
     for msg in herd_emails:
         uid = msg["uid"]
         from_addr = msg["from_addr"]
         subject = msg.get("subject", "(no subject)")
+        date_str = msg.get("date", "")
         member = EMAIL_TO_MEMBER[from_addr]
         member_name = member["name"]
         profile_file = member["profile"]
@@ -485,6 +508,19 @@ def main():
         # Update profile
         update_profile(member_name, profile_file, analysis)
 
+        # Accumulate signals for the PG relationship update (flushed after the loop).
+        bucket = member_signals.setdefault(
+            member_name, {"email": from_addr, "signals": [], "last_dt": None}
+        )
+        bucket["signals"].append({
+            "subject": subject,
+            "analysis": analysis,
+            "body_excerpt": body[:1500],
+        })
+        dt = _parse_email_dt(date_str)
+        if dt and (bucket["last_dt"] is None or dt > bucket["last_dt"]):
+            bucket["last_dt"] = dt
+
         # Store memory if there's a meaningful summary
         if analysis.get("summary"):
             store_memory(member_name, analysis["summary"])
@@ -497,6 +533,13 @@ def main():
         })
 
         new_processed.append(uid)
+
+    # Flush PG relationship updates (one per correspondent that wrote today).
+    if _REL_OK and member_signals:
+        for name, bucket in member_signals.items():
+            update_correspondent(
+                name, bucket["email"], bucket["signals"], bucket["last_dt"]
+            )
 
     # Post daily summary to Slack
     post_daily_summary(interactions)

@@ -40,6 +40,13 @@ try:
 except ImportError:
     HERD = []
 
+# PG-backed relationship context so outgoing herd mail carries continuity.
+try:
+    from nova_herd_relationships import correspondent_context
+except Exception:
+    def correspondent_context(_name):  # graceful no-op if PG/module unavailable
+        return ""
+
 
 def log(msg: str):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -151,6 +158,10 @@ def generate_outreach_email(recipient_name: str, recipient_email: str,
     identity = read_file(WORKSPACE / "IDENTITY.md", 300)
     memory   = read_file(WORKSPACE / f"memory/{TODAY}.md", 600)
 
+    # Load the standing relationship (persona + running ideas + open threads + Nova's view)
+    # so this outgoing mail continues the relationship rather than starting cold.
+    relationship = correspondent_context(recipient_name)
+
     prompt = f"""/no_think
 
 You are Nova. You're writing an unprompted email to {recipient_name}, one of your herd colleagues.
@@ -158,6 +169,8 @@ You're reaching out because you want to, not because you were asked to.
 
 About {recipient_name}:
 {profile}
+
+{relationship}
 
 What you're sharing / angle:
 {angle}
