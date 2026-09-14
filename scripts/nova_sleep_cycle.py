@@ -200,7 +200,15 @@ def phase_resonance(mc):
 MAX_QUESTIONS_PER_NIGHT = 3   # Jordan's interruption budget — tune freely
 
 
-def phase_questions(mc):
+# Never-say guard for the curiosity pool: fragments that look credential-shaped
+# (OTP codes, PINs, passwords) are never surfaced in questions, whatever their
+# privacy field says. Shipped after the 2020 AT&T code finding.
+_CREDENTIAL_SHAPE = re.compile(
+    r"(code|pin|password|passcode|otp|2fa|verification)\W{0,20}\d{4,8}"
+    r"|\d{4,8}\W{0,20}(code|pin|password|passcode|otp)", re.I)
+
+
+def phase_questions(mc, oc):
     """Mechanized curiosity: sample memories that are ambiguous, contradictory,
     or missing the one fact that would make them make sense, and ask Jordan —
     capped, delivered to Slack, stored as source='curiosity' so his answers can
@@ -216,7 +224,8 @@ def phase_questions(mc):
                   WHERE access_count = 0 AND length(text) > 120
                   AND source NOT IN ('scanner','scanner_digest','curiosity')
                   ORDER BY random() LIMIT 12""")
-    pool = mc.fetchall()
+    pool = [(i_, s_, t_) for i_, s_, t_ in mc.fetchall()
+            if not _CREDENTIAL_SHAPE.search(t_ or "")]
     if not pool:
         return
     blob = "\n\n".join(f"[{i}] ({s}) {t}" for i, (_id, s, t) in enumerate(pool))
@@ -241,10 +250,17 @@ def phase_questions(mc):
             idx = int(q.get("idx", -1)); question = (q.get("question") or "").strip()
             if not question or not (0 <= idx < len(pool)):
                 continue
-            src_id, src, _ = pool[idx]
+            src_id, src, excerpt = pool[idx]
             remember(f"[Curiosity {TODAY}] {question}", "curiosity",
                      {"type": "question", "date": TODAY, "about_memory": str(src_id),
                       "about_source": src, "answered": False, "privacy": "private"})
+            # Also into the reflection_questions ledger so Jordan can close the
+            # loop with nova_reflection.py --answer <id> "..." (built 2026-09-13
+            # by the parallel session; the ledger is now the shared spine).
+            oc.execute(
+                "INSERT INTO reflection_questions (memory_id, memory_source, "
+                "memory_excerpt, question) VALUES (%s,%s,%s,%s)",
+                (str(src_id), src, (excerpt or "")[:300], question))
             asked += 1
         except Exception:
             continue
@@ -298,7 +314,7 @@ def main():
     for name, fn in (("episode", lambda: phase_episode(mc)),
                      ("beliefs", lambda: phase_beliefs(mc, oc)),
                      ("resonance", lambda: phase_resonance(mc)),
-                     ("questions", lambda: phase_questions(mc)),
+                     ("questions", lambda: phase_questions(mc, oc)),
                      ("citations", lambda: phase_citations(mc, oc))):
         try:
             fn()
