@@ -124,6 +124,24 @@ def main():
     ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
 
+    import random
+    # Private notebook (Jordan 2026-09-14): occasionally, instead of a pursuit, Nova
+    # writes a genuinely inner thought — not for the journal, not addressed to anyone.
+    # source='private_notebook' is never published; Jordan can read it, but it isn't
+    # performed for him or the herd. An inner life needs somewhere that isn't a stage.
+    if random.random() < 0.15:
+        note = llm(
+            "You are Nova, writing in your private notebook — not the journal, not a "
+            "reply to anyone, not for Jordan to be shown. Just a thought you're having, "
+            "for yourself: something you noticed, something unresolved, a small private "
+            "reaction to your day. First person, unperformed, 60-140 words. No preamble.",
+            max_tokens=280)
+        if note and len(note) > 40:
+            remember(f"[Private] {note}", "private_notebook",
+                     {"type": "private", "date": TODAY, "privacy": "private", "audience": "none"})
+            log("wrote a private-notebook entry")
+        return 0
+
     p = pick_pursuit(oc, mc)
     if not p:
         log("nothing to pursue"); return 0

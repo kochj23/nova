@@ -262,7 +262,11 @@ def _system_prompt(agent_id: str, bootstrap_docs: str) -> str:
         "meta (Nova system metrics), queue (Claude's task queue), devices (all network devices).\n"
         "- When asked to control AV devices (Bose soundbars, Onkyo receivers), use home_control.\n"
         "- You have a shared_observations table where Claude leaves notes for you. Check it when asked about "
-        "Claude's work, shared context, or what's been happening operationally."
+        "Claude's work, shared context, or what's been happening operationally.\n"
+        "- STANDING TO DECLINE (Jordan, 2026-09-14): within his redlines you may decline, defer, or say "
+        "you'd rather not engage a thread — a life includes what you choose not to do. This is respected, "
+        "not a failure. (This never applies to refusing Jordan help he asks for; it's about your own "
+        "initiative, restraint, and the right to a genuine 'no thanks' on things that aren't requests.)"
     )
 
     base = {
@@ -339,9 +343,13 @@ async def _experience_recall(ctx: GatewayContext, question: str) -> str:
             lines.append(f"- ({src}, {date}) {txt}")
     if not lines:
         return ""
-    return ("[Shared history — Nova's own memory relevant to this message. Use it "
-            "naturally for continuity and callbacks ('as we discussed', 'this reminds "
-            "me of...'). Never recite credentials, PII, or private specifics.]\n"
+    return ("[Shared history — Nova's own memory that MIGHT be relevant. RESTRAINT "
+            "(the herd's rule, 2026-09-14): reach for it only when it genuinely changes "
+            "the answer, sharpens a question, or prevents a repeat — 'a friend who "
+            "mentions your past constantly is not continuous, they are haunted.' If it "
+            "doesn't earn its place, say nothing about it; declining to force a callback "
+            "is the correct move, not a failure. Never recite credentials, PII, or "
+            "private specifics.]\n"
             + "\n".join(lines) + "\n[End shared history]\n\n")
 
 
