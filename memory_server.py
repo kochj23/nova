@@ -687,7 +687,11 @@ async def _vector_leg(vec_str, k, n, ef, source, include_private, sup):
         else:
             # Public-journal recall (include_private=false) excludes private/work sources
             # so that content can never surface in a public post. Default keeps all sources.
-            priv_clause = "" if include_private else "AND source <> ALL($3::text[])"
+            # 2026-09-13: ALSO exclude rows individually marked privacy='private' — the
+            # source blocklist alone let a private-marked row in an unlisted source (e.g.
+            # a 2020 OTP code) surface in public recall.
+            priv_clause = ("" if include_private
+                           else "AND source <> ALL($3::text[]) AND privacy IS DISTINCT FROM 'private'")
             args = [vec_str, k] if include_private else [vec_str, k, PRIVATE_SOURCES]
             async with conn.transaction():
                 await conn.execute(f"SET LOCAL hnsw.ef_search = {ef}")
@@ -709,7 +713,8 @@ async def _fts_leg(q, source, include_private, sup):
     Catches the proper nouns, hostnames, and names that cosine similarity
     fumbles. Returns [] on any failure — recall degrades to vector-only."""
     try:
-        priv_clause = "" if include_private else "AND source <> ALL($3::text[])"
+        priv_clause = ("" if include_private
+                       else "AND source <> ALL($3::text[]) AND privacy IS DISTINCT FROM 'private'")
         src_clause = "AND source = $3" if source else ""
         # source and private-exclusion are mutually exclusive in arg slot $3:
         # source-scoped recalls are internal (private allowed) by convention.

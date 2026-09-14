@@ -195,7 +195,78 @@ def phase_resonance(mc):
     log(f"resonance: {sparks} spark(s) from {len(seeds)} seeds")
 
 
-# ── Phase 4: citation backfill into memory_links ─────────────────────────────
+# ── Phase 4: curiosity — the interrogative pass ──────────────────────────────
+
+MAX_QUESTIONS_PER_NIGHT = 3   # Jordan's interruption budget — tune freely
+
+
+def phase_questions(mc):
+    """Mechanized curiosity: sample memories that are ambiguous, contradictory,
+    or missing the one fact that would make them make sense, and ask Jordan —
+    capped, delivered to Slack, stored as source='curiosity' so his answers can
+    be ingested back as top-tier corrections. Being asked questions is labor;
+    the cap respects that."""
+    # Don't re-ask: skip if we already asked our quota in the last 24h.
+    mc.execute("""SELECT count(*) FROM memories WHERE source='curiosity'
+                  AND created_at > now() - interval '24 hours'""")
+    if mc.fetchone()[0] >= MAX_QUESTIONS_PER_NIGHT:
+        log("questions: quota already used"); return
+    # Seed pool: never-recalled memories with substance, plus recent episodes.
+    mc.execute("""SELECT id, source, left(text, 450) FROM memories
+                  WHERE access_count = 0 AND length(text) > 120
+                  AND source NOT IN ('scanner','scanner_digest','curiosity')
+                  ORDER BY random() LIMIT 12""")
+    pool = mc.fetchall()
+    if not pool:
+        return
+    blob = "\n\n".join(f"[{i}] ({s}) {t}" for i, (_id, s, t) in enumerate(pool))
+    try:
+        raw = llm(
+            "You are Nova reviewing fragments of your own memory that you have never "
+            "once consulted. Find at most "
+            f"{MAX_QUESTIONS_PER_NIGHT} fragments that are AMBIGUOUS, CONTRADICTORY, "
+            "or missing one fact that would make them make sense — where asking Jordan "
+            "one specific question would genuinely improve your understanding. "
+            "Skip anything boring, invasive, or answerable from context. Output JSON: "
+            '[{"idx": <fragment number>, "question": "<one specific, conversational '
+            'question in Nova\'s dry voice>"}] or [] if nothing merits asking. '
+            "Output ONLY the JSON array.\n\n" + blob,
+            max_tokens=500, temperature=0.6)
+        qs = json.loads(raw[raw.find("["):raw.rfind("]") + 1])
+    except Exception as e:
+        log(f"questions: generation failed ({e})"); return
+    asked = 0
+    for q in qs[:MAX_QUESTIONS_PER_NIGHT]:
+        try:
+            idx = int(q.get("idx", -1)); question = (q.get("question") or "").strip()
+            if not question or not (0 <= idx < len(pool)):
+                continue
+            src_id, src, _ = pool[idx]
+            remember(f"[Curiosity {TODAY}] {question}", "curiosity",
+                     {"type": "question", "date": TODAY, "about_memory": str(src_id),
+                      "about_source": src, "answered": False, "privacy": "private"})
+            asked += 1
+        except Exception:
+            continue
+    if asked:
+        try:
+            sys.path.insert(0, "/home/kochj/.openclaw/scripts")
+            import nova_config
+            mc.execute("""SELECT text FROM memories WHERE source='curiosity'
+                          AND created_at > now() - interval '10 minutes'
+                          ORDER BY created_at""")
+            lines = "\n".join(f"• {r[0].split('] ', 1)[-1]}" for r in mc.fetchall())
+            nova_config.post_both(
+                f":thought_balloon: *Things I found in my own memory tonight that I "
+                f"can't figure out:*\n{lines}\n_Reply whenever — answers get ingested "
+                f"as corrections._",
+                slack_channel=getattr(nova_config, "SLACK_NOTIFY", None))
+        except Exception as e:
+            log(f"questions: delivery failed ({e})")
+    log(f"questions: asked {asked}")
+
+
+# ── Phase 5: citation backfill into memory_links ─────────────────────────────
 
 def phase_citations(mc, oc):
     oc.execute("""SELECT article_slug, memory_id FROM article_citations
@@ -227,6 +298,7 @@ def main():
     for name, fn in (("episode", lambda: phase_episode(mc)),
                      ("beliefs", lambda: phase_beliefs(mc, oc)),
                      ("resonance", lambda: phase_resonance(mc)),
+                     ("questions", lambda: phase_questions(mc)),
                      ("citations", lambda: phase_citations(mc, oc))):
         try:
             fn()
