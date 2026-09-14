@@ -38,7 +38,7 @@ TSIG_KEY_NAME = "nova-dns-key"
 # .6:5432 is only a pgbouncer shim forwarding there (kept old localhost DSNs working),
 # and the only live replica is .10. The container named "pg17-replica" is the primary.
 SERVICE_ALIASES = {
-    "pg-primary":       "192.168.1.2",    # REAL PG primary (docker pg17 on nova-core)
+    "pg-primary":       "192.168.1.2",   # FAILED BACK 2026-09-14: primary is nova-core (.2) again — controlled switchover off .10 back onto the Beelink. .2:5432 socat shim (pg-primary-forward.service) -> local container :5434 (the primary). .10 rebuilt as standby.
     "memory-server":    "192.168.1.2",    # :18790 — ALSO on nova-core now; .6:18790 is a socat shim -> .138
     "grafana":          "192.168.1.2",    # nova-core wired (was its wifi ip)
     "inference-router": "192.168.1.2",    # :37475 fleet LLM proxy

@@ -406,10 +406,11 @@ def _openrouter_generate(prompt: str, section: str = "default") -> str | None:
     except Exception as e:
         # Surface the HTTP body — a bare "HTTP Error 402" hides the actual
         # remedy (credit balance) and cost a day of debugging by log-reading.
+        # Duck-typed: HTTPError has .read(). (Importing urllib.error here made
+        # `urllib` function-local and broke the try block — UnboundLocalError.)
         detail = ""
         try:
-            import urllib.error
-            if isinstance(e, urllib.error.HTTPError):
+            if hasattr(e, "read"):
                 detail = f" — {e.read()[:200]}"
         except Exception:
             pass
