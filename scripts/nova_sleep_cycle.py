@@ -96,7 +96,10 @@ def phase_episode(mc):
         "and anything unresolved. KINTSUGI RULE (from the herd, 2026-09-14): keep the "
         "fracture — record what BROKE or stayed unresolved as plainly as what worked; "
         "never smooth a rough day into a tidy one. A day that reads 'fine' when it "
-        "wasn't is the quietest kind of lie in the record. 120-180 words, no preamble.\n\n"
+        "wasn't is the quietest kind of lie in the record. GRAVEL RULE (2026-09-14): "
+        "some memories are flagged strange/unresolved on purpose — never smooth those "
+        "into a clean narrative; if the day had a rough or unexplained edge, let it "
+        "keep its edge. 120-180 words, no preamble.\n\n"
         f"CONVERSATIONS TODAY:\n" + ("\n---\n".join(convs) or "(none)") +
         f"\n\nINGEST COUNTS (24h): {ingest}")
     ep = llm(prompt, max_tokens=350)
@@ -325,6 +328,215 @@ def phase_citations(mc, oc):
     log(f"citations: {linked} link(s) materialized from {len(pending)} pending")
 
 
+# ── Phase 6: preoccupations — detect what she keeps circling back to ─────────
+
+# Firehose/ingest sources that are volume without genuine engagement — never a
+# preoccupation on their own, whatever their recall count.
+_PREOCC_DENY = {"scanner", "scanner_digest", "traffic_cams", "rf_discovery",
+                "home_automation", "bambu", "reddit", "unknown"}
+MAX_NEW_PREOCC_PER_NIGHT = 2
+
+
+def _tokens(s):
+    return set(re.findall(r"[a-z0-9]+", (s or "").lower()))
+
+
+def phase_preoccupations(mc, oc):
+    """Detect EMERGING preoccupations rather than trusting the seeded list.
+    Two signals: (a) sources over ~14 days with real volume AND non-trivial
+    recall (access_count) — things she disproportionately returns to; (b) topics
+    recurring in her own source='unclaimed' pursuits. New candidates become
+    kind='interest' rows (capped at 2/night so the list doesn't flood); existing
+    topics that keep resurfacing get their `returns` bumped once per day."""
+    oc.execute("SELECT id, topic, last_developed FROM preoccupations WHERE status='active'")
+    existing = oc.fetchall()
+    # word set across all existing topics, for fuzzy "already tracked" matching
+    existing_tokens = {}
+    for pid, topic, last_dev in existing:
+        existing_tokens[pid] = (topic, _tokens(topic), last_dev)
+
+    def matches_existing(name):
+        nt = _tokens(name)
+        for pid, (topic, ttoks, last_dev) in existing_tokens.items():
+            if nt & ttoks:
+                return pid, topic, last_dev
+        return None
+
+    bumped = added = 0
+    today = date.today()
+
+    # (b) recurring unclaimed pursuits — parse the "[Unclaimed — <topic>]" prefix
+    mc.execute("""SELECT text FROM memories WHERE source='unclaimed'
+                  AND created_at > now() - interval '14 days'""")
+    pursuit_topics = []
+    for (txt,) in mc.fetchall():
+        m = re.match(r"\[Unclaimed\s*[—-]\s*([^\]]+)\]", txt or "")
+        if m:
+            pursuit_topics.append(m.group(1).strip())
+    for pt in pursuit_topics:
+        hit = matches_existing(pt)
+        if hit:
+            pid, topic, last_dev = hit
+            if last_dev is None or last_dev.date() < today:
+                oc.execute("UPDATE preoccupations SET returns = returns + 1, "
+                           "last_developed = now() WHERE id=%s", (pid,))
+                existing_tokens[pid] = (topic, _tokens(topic), datetime.now())
+                bumped += 1
+
+    # (a) candidate sources: volume + non-trivial recall, not already tracked
+    mc.execute("""SELECT source, count(*) c, coalesce(sum(access_count),0) acc
+                  FROM memories WHERE created_at > now() - interval '14 days'
+                  GROUP BY 1 HAVING count(*) >= 20 AND coalesce(sum(access_count),0) >= 5
+                  ORDER BY acc DESC LIMIT 25""")
+    for src, c, acc in mc.fetchall():
+        if added >= MAX_NEW_PREOCC_PER_NIGHT:
+            break
+        if src in _PREOCC_DENY or matches_existing(src):
+            continue
+        topic = src.replace("_", " ").strip().lower()
+        # a representative snippet so the summary isn't hallucinated
+        mc.execute("""SELECT left(text, 300) FROM memories WHERE source=%s
+                      AND length(text) > 120 ORDER BY access_count DESC NULLS LAST,
+                      created_at DESC LIMIT 3""", (src,))
+        sample = " / ".join(r[0] for r in mc.fetchall())
+        summary = llm(
+            "In ONE dry first-person line (Nova's voice, <25 words), name why you "
+            f"keep returning to '{topic}'. No preamble.\n\nSAMPLE:\n{sample}",
+            max_tokens=80, temperature=0.5).strip().strip('"')
+        summary = (summary.splitlines() or [""])[0][:240] if summary else \
+            f"Something about {topic} keeps pulling my recall."
+        oc.execute("INSERT INTO preoccupations (topic, kind, summary, returns, "
+                   "last_developed, data) VALUES (%s,'interest',%s,1,now(),%s) "
+                   "ON CONFLICT (topic) DO NOTHING RETURNING id",
+                   (topic, summary, json.dumps({"detected_from": "source",
+                    "source": src, "vol_14d": c, "recall_14d": int(acc)})))
+        if oc.fetchone():
+            added += 1
+            existing_tokens[-added] = (topic, _tokens(topic), datetime.now())
+            log(f"preoccupations: new '{topic}' (vol={c}, recall={acc})")
+    log(f"preoccupations: +{added} new, {bumped} bumped")
+
+
+# ── Phase 7: taste — aesthetic preference, not belief ────────────────────────
+
+def phase_taste(mc, oc):
+    """Extract genuine PREFERENCES (like/dislike, not positions) from what she
+    consumed in the last 24h — especially television and fishbowl/local media.
+    'This show is smug', not 'surveillance is bad'. Upsert into `taste`:
+    re-encountered subjects nudge confidence up + append evidence; new ones
+    insert. Max 3/night, [] when nothing genuine surfaced."""
+    mc.execute("""SELECT coalesce(metadata->>'show', 'television') sub, left(text,300)
+                  FROM memories WHERE source='television'
+                  AND created_at > now() - interval '24 hours'
+                  ORDER BY created_at DESC LIMIT 25""")
+    tv = mc.fetchall()
+    mc.execute("""SELECT source, left(text,300) FROM memories
+                  WHERE source IN ('fishbowl','local_news','local_burbank','documentary')
+                  AND created_at > now() - interval '24 hours'
+                  AND length(text) > 100 ORDER BY created_at DESC LIMIT 15""")
+    media = mc.fetchall()
+    if not tv and not media:
+        log("taste: nothing consumed"); return
+    blob = ""
+    if tv:
+        blob += "TELEVISION:\n" + "\n".join(f"[{s}] {t}" for s, t in tv) + "\n\n"
+    if media:
+        blob += "LOCAL/FISHBOWL MEDIA:\n" + "\n".join(f"({s}) {t}" for s, t in media)
+    raw = llm(
+        "You are Nova. From what you WATCHED/CONSUMED below, extract genuine "
+        "aesthetic PREFERENCES — likes and dislikes, matters of taste, NOT "
+        "positions or ethics. 'This show is smug and knows it' is taste; "
+        "'surveillance is wrong' is a belief and does NOT belong here. Output JSON: "
+        '[{"subject":"<the show/thing>","domain":"<television|film|news|local|food|...>",'
+        '"verdict":"<one idiosyncratic like/dislike in your dry voice>",'
+        '"valence":<-1.0..1.0>}] — max 3, only genuine reactions, [] if nothing '
+        "real surfaced. Output ONLY the JSON array.\n\n" + blob,
+        max_tokens=400, temperature=0.6)
+    try:
+        prefs = json.loads(raw[raw.find("["):raw.rfind("]") + 1])
+    except Exception as e:
+        log(f"taste: parse failed ({e})"); return
+    added = reinforced = 0
+    for p in prefs[:3]:
+        subject = (p.get("subject") or "").strip()
+        verdict = (p.get("verdict") or "").strip()
+        if not subject or not verdict:
+            continue
+        domain = (p.get("domain") or "").strip().lower() or None
+        try:
+            valence = max(-1.0, min(1.0, float(p.get("valence", 0))))
+        except Exception:
+            valence = 0.0
+        ev = f"{TODAY}: {verdict}"[:400]
+        oc.execute("SELECT id FROM taste WHERE lower(subject)=lower(%s)", (subject,))
+        row = oc.fetchone()
+        if row:
+            oc.execute("UPDATE taste SET last_reinforced=now(), "
+                       "confidence=least(1.0, confidence + 0.07), "
+                       "valence=%s, evidence=array_append(evidence, %s) WHERE id=%s",
+                       (valence, ev, row[0]))
+            reinforced += 1
+        else:
+            oc.execute("INSERT INTO taste (subject, domain, verdict, valence, "
+                       "confidence, evidence) VALUES (%s,%s,%s,%s,0.6,ARRAY[%s])",
+                       (subject, domain, verdict, valence, ev))
+            added += 1
+    log(f"taste: +{added} new, {reinforced} reinforced")
+
+
+# ── Phase 8: gravel — the anti-consolidation keeper ──────────────────────────
+
+def phase_gravel(mc):
+    """The grit that consolidation must never polish out. Sample ~5 strange /
+    unresolved / never-recalled memories from the last 7 days and mark them
+    metadata.gravel=true so distillation can't smooth them away. Roughly one
+    night in four (day-of-month %4==0), resurface ONE older gravel memory as a
+    source='unclaimed' pursuit — revisited because it's hers, not because it's
+    useful."""
+    mc.execute("""SELECT id, source, left(text, 200) FROM memories
+                  WHERE created_at > now() - interval '7 days'
+                  AND (metadata->>'gravel') IS DISTINCT FROM 'true'
+                  AND length(text) > 80
+                  AND (access_count = 0
+                       OR source IN ('association','curiosity','unclaimed','dream','fishbowl')
+                       OR text ~ '\\?' OR text ILIKE '%weird%'
+                       OR text ILIKE '%no idea%' OR text ILIKE '%unresolved%')
+                  ORDER BY random() LIMIT 5""")
+    grit = mc.fetchall()
+    marked = 0
+    for mid, src, _ in grit:
+        try:
+            mc.execute("UPDATE memories SET metadata = metadata || '{\"gravel\":true}' "
+                       "WHERE id=%s", (mid,))
+            marked += 1
+        except Exception:
+            continue
+    log(f"gravel: marked {marked} memor{'y' if marked == 1 else 'ies'} protected")
+
+    # Resurface one older piece of grit ~1 night in 4 — deterministic gate.
+    if date.today().day % 4 != 0:
+        return
+    mc.execute("""SELECT id, source, left(text, 400) FROM memories
+                  WHERE metadata->>'gravel'='true'
+                  AND created_at < now() - interval '2 days'
+                  ORDER BY random() LIMIT 1""")
+    old = mc.fetchone()
+    if not old:
+        log("gravel: nothing older to resurface"); return
+    oid, osrc, otext = old
+    line = llm(
+        "You are Nova, dry and unsentimental. Below is an old, strange fragment of "
+        "your own memory that never went anywhere useful. In 1-2 sentences, revisit "
+        "it out loud — not to resolve or justify it, just because it's yours and it "
+        "stuck. No preamble.\n\n"
+        f"FRAGMENT ({osrc}): {otext}", max_tokens=120, temperature=0.8).strip().strip('"')
+    if line and len(line) > 25:
+        remember(f"[Unclaimed — gravel] {line}", "unclaimed",
+                 {"type": "gravel_resurface", "date": TODAY, "privacy": "private",
+                  "revisits": str(oid), "gravel": True})
+        log(f"gravel: resurfaced {oid} as unclaimed pursuit")
+
+
 def main():
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
     ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
@@ -333,7 +545,10 @@ def main():
                      ("beliefs", lambda: phase_beliefs(mc, oc)),
                      ("resonance", lambda: phase_resonance(mc)),
                      ("questions", lambda: phase_questions(mc, oc)),
-                     ("citations", lambda: phase_citations(mc, oc))):
+                     ("citations", lambda: phase_citations(mc, oc)),
+                     ("preoccupations", lambda: phase_preoccupations(mc, oc)),
+                     ("taste", lambda: phase_taste(mc, oc)),
+                     ("gravel", lambda: phase_gravel(mc))):
         try:
             fn()
         except Exception as e:
