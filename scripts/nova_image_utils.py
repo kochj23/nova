@@ -232,6 +232,57 @@ def _model_available_via_api(model_file: str) -> bool:
         return True
 
 
+# ── Image appearance safety policy ───────────────────────────────────────────
+# People in Nova's imagery must read as unambiguously adult and fully clothed. AI-made
+# images of youthful/under-dressed figures land too close to a line we never want to be
+# near, regardless of intent. Enforced centrally in generate_image() (2026-09-09).
+import re as _re
+
+# Words that push the model toward a youthful or under-dressed subject. Rewritten to
+# adult/clothed so the sentence still reads naturally: "a young"->"an adult", etc.
+_SAFETY_SUBS = [
+    (r"\ban?\s+young\b", "an adult"),
+    (r"\byoung\b", "adult"),
+    (r"\byouthful\b", "mature adult"),
+    (r"\blike a kid\b", "like someone"),
+    (r"\bkids?\b", "adults"),
+    (r"\bchild(ish|like|ren)?\b", "adult"),
+    (r"\bteen(age[rd]?|ager)?s?\b", "adult"),
+    (r"\bgirls?\b", "woman"),
+    (r"\bboys?\b", "man"),
+    (r"\blittle\s+", ""),
+    (r"\b(nude|naked|topless|shirtless|lingerie|underwear|bikini)\b", "fully clothed"),
+]
+
+# Sentinel phrase used to detect prior application (idempotency) AND as the policy clause.
+# PHRASED POSITIVELY on purpose: image models (esp. diffusion) follow "is a clothed adult"
+# far more reliably than "no children/nudity", where the risky nouns can leak into output.
+_SAFETY_SENTINEL = "a mature, fully-clothed adult"
+_SAFETY_SUFFIX = (
+    " Any person shown is " + _SAFETY_SENTINEL + " in their thirties or older, dressed "
+    "in modest high-neck clothing; the overall image is wholesome, tasteful, and entirely "
+    "non-sexual. Do not add people who are not described."
+)
+
+
+def apply_image_safety(prompt: str) -> str:
+    """Rewrite youth/undress cues to adult/clothed and append the positive policy clause.
+
+    Idempotent: the guard runs FIRST, so a re-applied prompt is returned untouched (a
+    second substitution pass would otherwise mangle the clause's own words). Harmless for
+    people-free prompts. This is the single chokepoint every Nova image passes through.
+    """
+    if not prompt:
+        return prompt
+    if _SAFETY_SENTINEL in prompt:
+        return prompt  # already processed
+    cleaned = prompt
+    for pat, repl in _SAFETY_SUBS:
+        cleaned = _re.sub(pat, repl, cleaned, flags=_re.IGNORECASE)
+    cleaned = _re.sub(r"\s{2,}", " ", cleaned).strip()
+    return cleaned.rstrip() + _SAFETY_SUFFIX
+
+
 def generate_image(prompt: str, width: int = 1024, height: int = 768, steps: int = 12,
                     model: str = None, section: str = "default") -> str | None:
     """Generate an image. OpenRouter primary, local ComfyUI fallback.
@@ -244,6 +295,11 @@ def generate_image(prompt: str, width: int = 1024, height: int = 768, steps: int
         model: Local model key from MODELS dict (only for local fallback)
         section: Journal section name for mood-matching ("art", "dreams", "after-dark", etc.)
     """
+    # ── SAFETY: every generated image goes through here, so enforce the appearance
+    # policy centrally rather than trusting ~40 individual prompt strings. Harmless for
+    # people-free scenes (server rooms, landscapes); decisive when a person is depicted.
+    prompt = apply_image_safety(prompt)
+
     # ── Primary: OpenRouter (fast, reliable, no GPU contention) ────────────────
     result = _openrouter_generate(prompt, section)
     if result:
@@ -276,6 +332,11 @@ def _openrouter_generate(prompt: str, section: str = "default") -> str | None:
         payload = json.dumps({
             "model": model_id,
             "modalities": modalities,
+            # Cap the token reservation: without max_tokens OpenRouter reserves
+            # ~59K tokens of headroom per image request and 402s whenever the
+            # credit balance dips below that, even though an image only needs
+            # ~8K. Found 2026-09-14 after a day of coverless articles.
+            "max_tokens": 8000,
             "messages": [
                 {
                     "role": "user",
@@ -343,7 +404,16 @@ def _openrouter_generate(prompt: str, section: str = "default") -> str | None:
         return None
 
     except Exception as e:
-        _log(f"OpenRouter image generation failed: {e}")
+        # Surface the HTTP body — a bare "HTTP Error 402" hides the actual
+        # remedy (credit balance) and cost a day of debugging by log-reading.
+        detail = ""
+        try:
+            import urllib.error
+            if isinstance(e, urllib.error.HTTPError):
+                detail = f" — {e.read()[:200]}"
+        except Exception:
+            pass
+        _log(f"OpenRouter image generation failed: {e}{detail}")
         return None
 
 
