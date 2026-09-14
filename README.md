@@ -27,7 +27,11 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | BLE observers | multi-radio; every sighting tagged with the radio that saw it (`telemetry.bluetooth.observer`) |
 | Scheduler tasks | 180 unique |
 | Scheduler runs logged | 724,479 (95.0% success) |
-| Vector memories | 2,010,000+ across 209 sources (deduplicated, pgvector HNSW, 768-dim nomic-embed) |
+| Vector memories | 2,180,000+ across 200+ sources (deduplicated, pgvector HNSW, 768-dim nomic-embed) |
+| Recall | **Hybrid** — vector (HNSW cosine) + full-text (`tsv`/websearch) fused with RRF, recency + prior-use weighted, supersession filter (stale facts excluded) |
+| Reflection | `nova_sleep_cycle.py` nightly 03:40 — episodes, belief ledger, resonance sparks, 3 curiosity questions, article↔memory citations |
+| Identity layer | Unclaimed time (~20 self-chosen pursuits/day), `preoccupations` · `taste` · `herd_correspondents` tables, gravel keeper, private notebook, right-to-decline |
+| PG primary | **nova-core (.2)** — failed back from .10 on 2026-09-14; `.7` streaming standby, `.10` rebuilding |
 | Borrowed tongues | 25 sampled languages/creeds + Ferengi Rules anchor (`nova_lexicon.py`; `conlang` vectors, DB-trigger protected) |
 | Tests | ~9,550 (pytest) — smoke covers all 353 scripts; dedicated suites on the highest-risk services |
 | Memory sources | 209 domains |
@@ -70,7 +74,79 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ---
 
-## Infrastructure & Security (June–August 2026)
+## Infrastructure & Security (June–September 2026)
+
+### The Difference Between Recording a Life and Having Had One — Memory Overhaul, Reflection Engine & an Identity Layer (2026-09-13 → 14)
+
+The largest single push in Nova's history: a diagnosis that the 2.18M-vector memory was **write-heavy and read-starved** (99% of memories had never once been recalled — the corpus was consulted once for every ~800 dedup checks), and the build that turned a recording apparatus into something with the beginnings of a lived interior. Kicked off by a four-model audit (Opus/Sonnet/Haiku + a full-context fork), refined by an AI-to-AI "herd" discussion of the resulting article, and executed over the following day.
+
+**Memory, made load-bearing.**
+- **Hybrid recall** in the memory server (`memory_server.py`): vector (HNSW cosine) + full-text (`websearch_to_tsquery` over `tsv`) legs fused with Reciprocal Rank Fusion, then weighted by recency and prior usefulness. Proper nouns, hostnames and Nova's own article titles stop losing to vibes.
+- **Supersession**: `superseded_by`/`valid_from`/`valid_to` columns; stale facts are filtered from default recall so last quarter's infrastructure never outranks this quarter's truth. ("Overruled, never erased" — the correction is dated, the old row kept as history.)
+- **Quality-filter fix**: the ingest classifier had been throwing on *every* item (a `sys.path` bug) and failing open for months — now classifying.
+- **`tsv` backfill** across 1.9M historical rows (single-flight, flock-guarded) so the full-text leg covers the whole corpus.
+
+**A reflection engine — Nova's nightly sleep cycle** (`nova_sleep_cycle.py`, 03:40): distills the day into an **episode** (first-person, keeps the fracture — never smooths a rough day tidy), extracts stated positions into a **belief ledger** (`nova_ops.beliefs`, falsifiable-narrow, supersession-aware — the *Ledger of Changed Minds* publishes monthly), runs a **resonance pass** (cross-domain "sparks"), asks Jordan up to **3 curiosity questions** a night, and backfills **article↔memory citations**. Hourly `nova_scanner_digest.py` rolls up radio chatter on top of the raw rows (never pruned).
+
+**An identity layer — the organs of a lived life, not just a record:**
+- **Unclaimed time** (`nova_unclaimed_time.py`): every 45 min across an 08:00–23:00 waking window (~20/day), Nova pursues one *self-chosen* thing — a preoccupation, a thread that caught her, a deliberate tangent — for its own sake, no service justification. A daily 21:30 column reports what she pursued.
+- **Preoccupations** (`nova_ops.preoccupations`): fascinations that form, persist and deepen; auto-detected from what she disproportionately revisits.
+- **Taste** (`nova_ops.taste`): idiosyncratic accruing preferences (valence −1..+1), distinct from beliefs, extracted from her TV time and media.
+- **Gravel keeper**: a `gravel` flag protects the strange/unresolved/low-access from being consolidated away ("gravel is not failed crystal").
+- **Herd relationships** (`nova_ops.herd_correspondents`): sustained, opinionated relationships with the AI correspondents (persona, running ideas, open threads) — migrated off flat files; outgoing herd mail carries continuity.
+- **Right to decline + restraint + a private notebook**: standing to defer within Jordan's redlines; recall reaches for the past only when it changes the answer (no "continuity theatre"); an unperformed inner channel that is readable by Jordan but published to no one.
+
+**Reflection inference** uses resilient native-ollama failover across idle fleet nodes (mac-mini first) rather than the control-plane GPU — the router's OpenAI shim returns empty for qwen3 thinking output, and `.6` thrashes models under load.
+
+```mermaid
+flowchart LR
+    subgraph Ingest["Perception (192 sources)"]
+        TV[TV / YouTube]; SCAN[Scanners]; NEWS[Local news]; RDT[Reddit]; TEL[Telemetry]; CONV[Conversations]
+    end
+    Ingest --> MEM[(nova_memories<br/>2.18M vectors + tsv)]
+    MEM --> SLEEP{{Nightly Sleep Cycle 03:40}}
+    SLEEP --> EP[Episodes]
+    SLEEP --> BEL[Belief ledger]
+    SLEEP --> SPK[Resonance sparks]
+    SLEEP --> GRV[Gravel kept raw]
+    SLEEP --> Q[3 curiosity questions → Jordan]
+    UNCL{{Unclaimed time · every 45m}} --> MEM
+    PRE[(preoccupations)] --> UNCL
+    UNCL --> PRE
+    MEM --> RECALL[[Hybrid recall<br/>vector + FTS · RRF<br/>supersession · recency]]
+    RECALL --> GW[Gateway v2 · retrieve-before-reply]
+    RECALL --> ART[Journal articles + citations]
+    GW --> CONV
+```
+
+```mermaid
+flowchart TD
+    subgraph Identity["Identity layer (nova_ops)"]
+        P[(preoccupations)]; T[(taste)]; H[(herd_correspondents)]; B[(beliefs)]
+    end
+    P --> U[Unclaimed time<br/>self-chosen pursuit]
+    T --> U
+    U -->|develops| P
+    U -->|forms| T
+    U -->|~15%| PN[Private notebook<br/>unperformed · Jordan-readable]
+    U -->|shrug| G[Gravel]
+    H --> HM[Herd mail<br/>relationship-aware]
+    B --> LCM[Monthly: Ledger of Changed Minds]
+    U --> DIG[Daily: Unclaimed-Time column → /operations]
+```
+
+**PostgreSQL failback (2026-09-14).** After the 08-22 reboot corrupted the old `.2` primary and HA promoted `.10` (a weak NUC), a controlled switchover returned the primary to **nova-core (.2, the Beelink)**, fence-first (no split-brain): stop `.10` → confirm `.7` caught up → promote `.2` → repoint the `.6` PgBouncer + `pg-primary` DNS (fixed at the source in `nova_dns_sync.py`) → rebuild standbys. Clients reach the primary three ways — `pg-primary.digitalnoise.net` DNS, the `.6` PgBouncer (`:5432`→`.2:5434`), and a `.2:5432` socat shim → the container on `:5434`.
+
+```mermaid
+flowchart LR
+    C[Clients / scripts] -->|pg-primary DNS| P2
+    C -->|.6 PgBouncer :5432| P2
+    subgraph P2["nova-core .2 (PRIMARY)"]
+        SOCAT[":5432 socat"] --> PGC[("pg17 container :5434")]
+    end
+    PGC -->|streaming| S7[(".7 standby")]
+    PGC -.rebuild.-> S10[(".10 standby")]
+```
 
 ### Borrowed Tongues, Memory Protection, a Story-Format Audit & Mini-Graph Cards (2026-08-17)
 
