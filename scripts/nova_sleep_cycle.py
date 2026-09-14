@@ -37,8 +37,12 @@ MEMSRV = "http://memory-server.digitalnoise.net:18790"
 # Native Ollama on .6 with think:false — the inference router's OpenAI shim
 # returns empty content for qwen3 thinking models (verified 2026-09-13), and
 # the 'fast' pool backend was erroring. Direct + no-think is reliable.
-OLLAMA = "http://192.168.1.6:11434/api/chat"
 LLM_MODEL = "qwen3:8b"
+# Resilient: try idle/dedicated nodes first (mac-mini etc), fall back down the list.
+# .6 thrashes models and the router's OpenAI shim returns empty for qwen3 thinking.
+OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434",
+                "http://192.168.1.252:11434", "http://192.168.1.7:11434",
+                "http://192.168.1.6:11434"]
 TODAY = date.today().isoformat()
 
 
@@ -47,14 +51,20 @@ def log(m):
 
 
 def llm(prompt, max_tokens=700, temperature=0.4):
-    req = urllib.request.Request(
-        OLLAMA, method="POST", headers={"Content-Type": "application/json"},
-        data=json.dumps({"model": LLM_MODEL, "stream": False, "think": False,
-                         "options": {"temperature": temperature,
-                                     "num_predict": max_tokens},
-                         "messages": [{"role": "user", "content": prompt}]}).encode())
-    with urllib.request.urlopen(req, timeout=300) as r:
-        return json.load(r).get("message", {}).get("content", "").strip()
+    body = json.dumps({"model": LLM_MODEL, "stream": False, "think": False,
+                       "options": {"temperature": temperature, "num_predict": max_tokens},
+                       "messages": [{"role": "user", "content": prompt}]}).encode()
+    for node in OLLAMA_NODES:
+        try:
+            req = urllib.request.Request(node + "/api/chat", method="POST",
+                                         headers={"Content-Type": "application/json"}, data=body)
+            with urllib.request.urlopen(req, timeout=90) as r:
+                out = json.load(r).get("message", {}).get("content", "").strip()
+            if out:
+                return out
+        except Exception:
+            continue
+    return ""
 
 
 def remember(text, source, metadata):

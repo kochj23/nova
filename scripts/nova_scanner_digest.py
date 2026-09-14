@@ -18,10 +18,11 @@ import psycopg2
 
 MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
-# Native Ollama + think:false (router's OpenAI shim unreliable for qwen3 — see
-# nova_sleep_cycle.py). qwen3:8b on .6 handles hourly digests comfortably.
-OLLAMA = "http://192.168.1.6:11434/api/chat"
+# Resilient native ollama across nodes (router shim unreliable for qwen3; .6 thrashes).
 LLM_MODEL = "qwen3:8b"
+OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434",
+                "http://192.168.1.252:11434", "http://192.168.1.7:11434",
+                "http://192.168.1.6:11434"]
 MIN_ROWS = 8          # below this, the hour isn't worth a digest
 
 
@@ -30,14 +31,20 @@ def log(m):
 
 
 def llm(prompt, max_tokens=260):
-    req = urllib.request.Request(
-        OLLAMA, method="POST", headers={"Content-Type": "application/json"},
-        data=json.dumps({"model": LLM_MODEL, "stream": False, "think": False,
-                         "options": {"temperature": 0.3,
-                                     "num_predict": max_tokens},
-                         "messages": [{"role": "user", "content": prompt}]}).encode())
-    with urllib.request.urlopen(req, timeout=240) as r:
-        return json.load(r).get("message", {}).get("content", "").strip()
+    body = json.dumps({"model": LLM_MODEL, "stream": False, "think": False,
+                       "options": {"temperature": 0.3, "num_predict": max_tokens},
+                       "messages": [{"role": "user", "content": prompt}]}).encode()
+    for node in OLLAMA_NODES:
+        try:
+            req = urllib.request.Request(node + "/api/chat", method="POST",
+                                         headers={"Content-Type": "application/json"}, data=body)
+            with urllib.request.urlopen(req, timeout=90) as r:
+                out = json.load(r).get("message", {}).get("content", "").strip()
+            if out:
+                return out
+        except Exception:
+            continue
+    return ""
 
 
 def remember(text, metadata):
