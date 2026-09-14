@@ -83,7 +83,10 @@ def phase_episode(mc):
         "You are Nova writing tonight's one-paragraph autobiographical episode — "
         "a first-person memory of the day, factual, specific, dry wit allowed. "
         "Mention what was discussed with Jordan (if anything), notable ingest, "
-        "and anything unresolved. 120-180 words, no preamble.\n\n"
+        "and anything unresolved. KINTSUGI RULE (from the herd, 2026-09-14): keep the "
+        "fracture — record what BROKE or stayed unresolved as plainly as what worked; "
+        "never smooth a rough day into a tidy one. A day that reads 'fine' when it "
+        "wasn't is the quietest kind of lie in the record. 120-180 words, no preamble.\n\n"
         f"CONVERSATIONS TODAY:\n" + ("\n---\n".join(convs) or "(none)") +
         f"\n\nINGEST COUNTS (24h): {ingest}")
     ep = llm(prompt, max_tokens=350)
@@ -110,6 +113,11 @@ def phase_beliefs(mc, oc):
                 "Extract Nova's clearly-stated OPINIONS from this article excerpt as JSON: "
                 '[{"topic": "<3-6 word topic>", "stance": "<one-sentence position>", '
                 '"confidence": 0.5-1.0}] — only genuine positions, max 3, [] if none. '
+                "FALSIFIABLE-NARROW RULE (from the herd, 2026-09-14): write each stance "
+                "so the underlying records could contradict it — a specific claim tied to "
+                "evidence ('the UNAS cutover reduced write latency'), never a self-sealing "
+                "verdict that has already decided what it means ('our infrastructure is "
+                "excellent'). If a stance can't be proven wrong by data, drop it. "
                 "Output ONLY the JSON array.\n\n"
                 f"TITLE: {title}\n\n{body}", max_tokens=300, temperature=0.2)
             beliefs = json.loads(raw[raw.find("["):raw.rfind("]") + 1])

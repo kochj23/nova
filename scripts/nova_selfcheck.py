@@ -1,0 +1,333 @@
+#!/usr/bin/env python3
+"""nova_selfcheck.py — the "ignore Nova for a week" watchdog.
+
+Runs every 30 min from launchd (net.digitalnoise.nova-selfcheck). Checks the
+outcomes that matter (is data flowing?), not just whether processes exist,
+auto-fixes the failure classes we have already lived through, records every
+run to nova_ops.selfcheck_runs, and posts a one-message daily digest to
+#nova-digest around 07:00.
+
+Born 2026-08-24 after a weekend where the PG primary died and five separate
+things failed silently. Design rule: every check must alarm on the OUTCOME
+(backup landed, memory written, heartbeat fresh) so that a wedged-but-running
+process can never look healthy.
+
+Fix policy: one automatic fix attempt per check per run; if the re-check still
+fails, escalate once per 6h to a headless `claude -p` session, and always leave
+the failure in selfcheck_runs for the digest.
+"""
+
+import json
+import subprocess
+import sys
+import time
+import urllib.request
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+PSQL = ["/opt/homebrew/bin/psql", "-h", "localhost", "-U", "kochj", "-tA"]
+STATE_DIR = Path.home() / ".openclaw" / "state"
+LOG = Path.home() / ".openclaw" / "logs" / "nova_selfcheck.log"
+SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
+PRIMARY = "192.168.1.2"   # failed back to nova-core (.2 Beelink) 2026-09-14; was .10 during the 08-24..09-14 window
+SLACK_DIGEST_CHANNEL = "C0BLJLKQMMZ"   # #nova-digest
+SLACK_ALERT_CHANNEL = "C0BMK83BLFJ"    # #nova-alerts
+CLAUDE = "/opt/homebrew/bin/claude"
+ESCALATION_COOLDOWN_S = 6 * 3600
+
+results = []  # (check, status, action, detail)
+
+
+def log(msg: str) -> None:
+    line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {msg}"
+    print(line, flush=True)
+    with open(LOG, "a") as f:
+        f.write(line + "\n")
+
+
+def sh(cmd, timeout=60):
+    """Run a command, return (rc, stdout+stderr)."""
+    try:
+        p = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        return p.returncode, (p.stdout + p.stderr).strip()
+    except subprocess.TimeoutExpired:
+        return 124, "timeout"
+    except Exception as e:  # noqa: BLE001
+        return 1, str(e)
+
+
+def pg(sql, db="nova_ops", host="localhost", timeout=20):
+    rc, out = sh(["/opt/homebrew/bin/psql", "-h", host, "-U", "kochj", "-d", db, "-tA", "-c", sql], timeout)
+    return (out if rc == 0 else None)
+
+
+def record(check, status, action=None, detail=None):
+    results.append((check, status, action, detail))
+    log(f"{check}: {status}" + (f" | fix: {action}" if action else "") + (f" | {detail}" if detail else ""))
+
+
+def slack(channel, text):
+    try:
+        token = subprocess.check_output(
+            ["security", "find-generic-password", "-s", "nova-slack-bot-token", "-w"], text=True).strip()
+        req = urllib.request.Request(
+            "https://slack.com/api/chat.postMessage",
+            data=json.dumps({"channel": channel, "text": text}).encode(),
+            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+        urllib.request.urlopen(req, timeout=15)
+    except Exception as e:  # noqa: BLE001
+        log(f"slack post failed: {e}")
+
+
+# ── Checks ────────────────────────────────────────────────────────────────────
+
+def check_primary():
+    if pg("SELECT 1") == "1":
+        record("pg-primary", "ok")
+        return True
+    # pgbouncer may be wedged while the primary itself is fine
+    if pg("SELECT 1", host=PRIMARY) == "1":
+        sh(["pkill", "-HUP", "pgbouncer"])
+        time.sleep(3)
+        if pg("SELECT 1") == "1":
+            record("pg-primary", "fixed", "HUP pgbouncer", "primary fine, local pgbouncer was wedged")
+            return True
+        record("pg-primary", "FAIL", "HUP pgbouncer", "primary reachable direct but not via pgbouncer")
+        return False
+    record("pg-primary", "CRITICAL", None,
+           f"primary {PRIMARY}:5432 unreachable — manual failover required (see agent_docs data-platform)")
+    slack(SLACK_ALERT_CHANNEL,
+          ":rotating_light: *selfcheck: PG PRIMARY UNREACHABLE* — nova-core5 (.10) is down. "
+          "No auto-failover configured; promote a replica per the data-platform runbook.")
+    return False
+
+
+def check_replication():
+    out = pg("SELECT count(*), COALESCE(max(EXTRACT(EPOCH FROM replay_lag)),0)::int FROM pg_stat_replication",
+             host=PRIMARY)
+    if out is None:
+        record("replication", "SKIP", None, "primary unreachable")
+        return
+    count, lag = out.split("|")
+    if int(count) >= 2 and int(lag) < 900:
+        record("replication", "ok", None, f"{count} replicas, max lag {lag}s")
+        return
+    # Which replica is missing? .2 shows client_addr 192.168.1.2, .7 shows .7
+    addrs = pg("SELECT COALESCE(string_agg(client_addr::text, ','), '') FROM pg_stat_replication", host=PRIMARY) or ""
+    fixes = []
+    if "192.168.1.2" not in addrs:
+        sh(SSH + ["kochj@192.168.1.2", "docker restart pg17-replica"], 90)
+        fixes.append("restarted pg17-replica container on .2")
+    if "192.168.1.7" not in addrs:
+        sh(SSH + ["kochj@192.168.1.7", "sudo -n launchctl kickstart -k system/com.kochj.postgresql17-replica"], 60)
+        fixes.append("kickstarted postgres daemon on .7")
+    time.sleep(20)
+    out2 = pg("SELECT count(*) FROM pg_stat_replication", host=PRIMARY) or "0"
+    status = "fixed" if int(out2) >= 2 else "FAIL"
+    record("replication", status, "; ".join(fixes) or "none",
+           f"was {count} replicas (lag {lag}s), now {out2}. NOTE .7 dies if macOS re-revokes Local Network — "
+           "needs a GUI login via vnc://192.168.1.7 to re-approve.")
+
+
+def check_backups():
+    bad = []
+    for job in ("nova-backup:nas", "nova-backup:external"):
+        out = pg("SELECT count(*) FROM telemetry.backup_runs WHERE job LIKE '" + job +
+                 ":%' AND job NOT LIKE '%lockguard%' AND ok AND ts > now() - interval '30 hours'")
+        if out == "0":
+            bad.append(job)
+    if not bad:
+        record("backups", "ok")
+        return
+    # One rerun attempt per day — the agent now clears its own stale locks
+    marker = STATE_DIR / "selfcheck_backup_rerun.ts"
+    if marker.exists() and time.time() - marker.stat().st_mtime < 20 * 3600:
+        record("backups", "FAIL", "rerun already attempted today", ",".join(bad))
+        return
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+    rc, _ = sh(SSH + ["kochj@192.168.1.11", "/volume1/homes/kochj/nova_backup_agent.sh incremental"], 3600)
+    ok_now = all(pg("SELECT count(*) FROM telemetry.backup_runs WHERE job LIKE '" + j +
+                    ":%' AND job NOT LIKE '%lockguard%' AND ok AND ts > now() - interval '2 hours'") != "0"
+                 for j in bad)
+    record("backups", "fixed" if ok_now else "FAIL", "reran backup agent on synology",
+           f"stale: {','.join(bad)}, agent rc={rc}")
+
+
+MESH_FIX = {
+    "nova-core": (SSH + ["kochj@192.168.1.2", "sudo -n systemctl restart nova-mesh-agent"]),
+    "nova-core2": (SSH + ["kochj@192.168.1.86", "sudo -n systemctl restart nova-mesh-agent"]),
+    "nova-core3": (SSH + ["kochj@192.168.1.5", "sudo -n systemctl restart nova-mesh-agent"]),
+    "nova-core4": (SSH + ["kochj@192.168.1.250", "sudo -n systemctl restart nova-mesh-agent"]),
+    "nuk": (SSH + ["kochj@192.168.1.10", "sudo -n systemctl restart nova-mesh-agent"]),
+    "tv-movies-mini": (SSH + ["kochj@192.168.1.7", "sudo -n launchctl kickstart -k system/net.digitalnoise.nova-mesh-agent"]),
+    "mac-mini": (SSH + ["kochj@192.168.1.251", "sudo -n launchctl kickstart -k system/net.digitalnoise.nova-mesh-agent"]),
+    "mac-studio": ["launchctl", "kickstart", "-k", "gui/501/net.digitalnoise.nova-mesh-agent"],
+}
+
+
+def check_heartbeats():
+    out = pg("SELECT COALESCE(string_agg(node_name, ','), '') FROM node_status "
+             "WHERE last_heartbeat < now() - interval '10 minutes'")
+    if out is None:
+        record("heartbeats", "SKIP", None, "PG unreachable")
+        return
+    stale = [n for n in out.split(",") if n]
+    if not stale:
+        record("heartbeats", "ok")
+        return
+    for node in stale:
+        if node in MESH_FIX:
+            sh(MESH_FIX[node], 45)
+    time.sleep(30)
+    out2 = pg("SELECT COALESCE(string_agg(node_name, ','), '') FROM node_status "
+              "WHERE last_heartbeat < now() - interval '10 minutes'") or ""
+    still = [n for n in out2.split(",") if n]
+    record("heartbeats", "FAIL" if still else "fixed",
+           f"restarted mesh agents: {','.join(stale)}",
+           f"still stale: {','.join(still) or 'none'}")
+
+
+def check_ingest():
+    out = pg("SELECT EXTRACT(EPOCH FROM (now() - max(created_at)))::int FROM memories", db="nova_memories")
+    if out is None:
+        record("memory-ingest", "SKIP", None, "nova_memories unreachable")
+        return
+    age_h = int(out) / 3600
+    if age_h < 6:
+        record("memory-ingest", "ok", None, f"last memory {age_h:.1f}h ago")
+        return
+    sh(SSH + ["kochj@192.168.1.2", "sudo -n systemctl restart nova-memory-server"], 60)
+    time.sleep(30)
+    rc, health = sh(["curl", "-s", "-m", "8", "http://127.0.0.1:18790/health"])
+    ok = rc == 0 and '"status":"ok"' in health.replace(" ", "")
+    record("memory-ingest", "fixed" if ok else "FAIL",
+           "restarted nova-memory-server on nova-core",
+           f"last memory {age_h:.1f}h ago; health after restart: {health[:120]}")
+
+
+SERVICES = [
+    ("memory-server", "http://127.0.0.1:18790/health",
+     SSH + ["kochj@192.168.1.2", "sudo -n systemctl restart nova-memory-server"]),
+    ("gateway-v2", "http://127.0.0.1:18792/health",
+     ["launchctl", "kickstart", "-k", "gui/501/net.digitalnoise.nova-gateway-v2"]),
+]
+
+
+def check_services():
+    for name, url, fix in SERVICES:
+        rc, out = sh(["curl", "-s", "-m", "8", url])
+        if rc == 0 and ('"ok": true' in out or '"status":"ok"' in out.replace(" ", "") or '"ok":true' in out.replace(" ", "")):
+            record(f"svc-{name}", "ok")
+            continue
+        sh(fix, 60)
+        time.sleep(15)
+        rc2, out2 = sh(["curl", "-s", "-m", "8", url])
+        ok = rc2 == 0 and ("ok" in out2)
+        record(f"svc-{name}", "fixed" if ok else "FAIL", "restarted", out2[:100])
+
+
+def check_disks():
+    out = pg("SELECT COALESCE(string_agg(node_name || ':' || round(disk_percent) || '%', ', '), '') "
+             "FROM node_status WHERE disk_percent > 90")
+    if out:
+        record("disk", "WARN", None, out)
+    elif out is not None:
+        record("disk", "ok")
+
+
+# ── Escalation & digest ───────────────────────────────────────────────────────
+
+def escalate(failures):
+    marker = STATE_DIR / "selfcheck_escalation.ts"
+    if marker.exists() and time.time() - marker.stat().st_mtime < ESCALATION_COOLDOWN_S:
+        log("escalation suppressed (cooldown)")
+        return
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.touch()
+    summary = "; ".join(f"{c}: {d or s}" for c, s, a, d in failures)
+    prompt = (
+        "You are the escalation step of nova_selfcheck.py on mac-studio. These checks failed and their "
+        f"automatic fixes did not work: {summary}. Investigate and fix them. Fleet knowledge is in "
+        "nova_ops.agent_docs (doc_type='data-platform'). Log what you do to claude_actions "
+        "(session_id 'selfcheck-escalation'). If a fix needs a human, post specifics to Slack #nova-alerts.")
+    log(f"escalating to claude: {summary}")
+    slack(SLACK_ALERT_CHANNEL, f":robot_face: selfcheck escalating to Claude: {summary}")
+    rc, out = sh([CLAUDE, "-p", prompt, "--permission-mode", "bypassPermissions"], timeout=1500)
+    log(f"claude escalation rc={rc}: {out[-400:]}")
+
+
+FORCE_DIGEST = False
+
+
+def post_digest():
+    """Post one digest covering the last 24h, at most once per day, around 07:00."""
+    marker = STATE_DIR / "selfcheck_digest.date"
+    today = datetime.now().strftime("%Y-%m-%d")
+    if not FORCE_DIGEST and (datetime.now().hour < 7 or (marker.exists() and marker.read_text().strip() == today)):
+        return
+    rows = pg("SELECT check_name, status, count(*) FROM selfcheck_runs "
+              "WHERE ts > now() - interval '24 hours' GROUP BY 1,2 ORDER BY 1,2")
+    fixes = pg("SELECT ts::timestamp(0) || ' ' || check_name || ': ' || action FROM selfcheck_runs "
+               "WHERE ts > now() - interval '24 hours' AND status IN ('fixed','FAIL','CRITICAL') "
+               "AND action IS NOT NULL ORDER BY ts DESC LIMIT 10")
+    counts = {}
+    for line in (rows or "").splitlines():
+        check, status, n = line.split("|")
+        counts.setdefault(check, []).append(f"{status}×{n}")
+    body = "\n".join(f"  {'✅' if all(s.startswith('ok') for s in v) else '⚠️'} {k}: {', '.join(v)}"
+                     for k, v in sorted(counts.items()))
+    actions = ("\n*Actions taken:*\n" + "\n".join(f"  • {l}" for l in fixes.splitlines())) if fixes else ""
+    slack(SLACK_DIGEST_CHANNEL,
+          f":shield: *Nova self-check daily digest* ({today})\n{body}{actions}\n"
+          f"_checks run every 30 min; details in nova_ops.selfcheck_runs_")
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(today)
+    log("daily digest posted")
+
+
+def lan_up():
+    rc, _ = sh(["ping", "-c", "1", "-t", "3", "192.168.1.1"], timeout=10)
+    return rc == 0
+
+
+def main():
+    log("=== selfcheck run start ===")
+    # 2026-09-02: a ~3 min site network blip made the primary look dead and
+    # triggered a false "manual failover required" escalation. If we can't even
+    # reach the gateway, nothing here is diagnosable (and PG/Slack/claude are
+    # all unreachable anyway) — wait out a blip, else skip the run.
+    if not lan_up():
+        time.sleep(60)
+        if not lan_up():
+            log("=== local network down (gateway 192.168.1.1 unreachable) — skipping run ===")
+            return
+        log("network blip recovered after 60s retry")
+    primary_up = check_primary()
+    if primary_up:
+        check_replication()
+        check_backups()
+        check_heartbeats()
+        check_ingest()
+        check_disks()
+    check_services()
+
+    # persist results (best effort — PG may be the thing that is down)
+    for check, status, action, detail in results:
+        sql = ("INSERT INTO selfcheck_runs (check_name, status, action, detail) VALUES "
+               f"($novaq${check}$novaq$, $novaq${status}$novaq$, "
+               f"$novaq${action or ''}$novaq$, $novaq${(detail or '')[:500]}$novaq$)")
+        pg(sql)
+
+    failures = [r for r in results if r[1] in ("FAIL", "CRITICAL")]
+    if failures:
+        escalate(failures)
+    post_digest()
+    log(f"=== selfcheck run done: {sum(1 for r in results if r[1]=='ok')} ok, "
+        f"{sum(1 for r in results if r[1]=='fixed')} fixed, {len(failures)} failing ===")
+
+
+if __name__ == "__main__":
+    if "--digest-now" in sys.argv:
+        FORCE_DIGEST = True
+    main()
