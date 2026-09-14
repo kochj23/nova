@@ -97,6 +97,12 @@ def register_file(
         file_size = None
         inode     = None
 
+    # SMB/NAS mounts (e.g. /Volumes/external) report unsigned 64-bit inodes;
+    # values with the high bit set overflow the signed BIGINT column. The
+    # inode is informational only, so store NULL rather than crash the ingest.
+    if inode is not None and inode > 0x7FFFFFFFFFFFFFFF:
+        inode = None
+
     sql_insert = """
         INSERT INTO media_files
             (path, file_size, inode, status, show_name, title, source_label, ingest_script)
