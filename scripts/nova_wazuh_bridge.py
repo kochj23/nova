@@ -521,6 +521,20 @@ def main():
 
     auto_forensics()
 
+    # Vault-7 behavioral TTP signatures (firmware tamper, anti-forensic log gaps,
+    # IoT beaconing, smart-TV fake-off, rogue persistence). Rides the existing 2-min
+    # detection flow. Wrapped so a detector bug can never break the bridge; each
+    # finding is triaged + emitted at most once/24h per (rule,host).
+    try:
+        import nova_vault7_ttp
+        conn = pg_connect()
+        try:
+            nova_vault7_ttp.scan(conn, do_alert=True, logger=log)
+        finally:
+            conn.close()
+    except Exception as e:
+        log(f"vault7 TTP scan failed (non-fatal): {e}")
+
     log("Bridge run complete")
 
 
