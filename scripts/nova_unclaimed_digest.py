@@ -27,7 +27,7 @@ def main():
 
     mc.execute("""SELECT metadata->>'mode', metadata->>'topic', text
                   FROM memories WHERE source='unclaimed'
-                  AND created_at > now() - interval '20 hours'
+                  AND created_at > now() - interval '24 hours'
                   ORDER BY created_at""")
     pursuits = mc.fetchall()
     if len(pursuits) < 2:
