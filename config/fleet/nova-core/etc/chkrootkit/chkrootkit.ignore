@@ -1,0 +1,5 @@
+# 2026-09-14 fleet health deep-dive: NAS share is CIFS-mounted at /tmp/unova; the
+# aliens test enumerates every file there (119k lines, 16MB report) which exceeds
+# postfix message_size_limit (10MB) and makes chkrootkit.service exit 1 daily.
+# Filter those lines from the report; real findings on local paths still show.
+^/tmp/unova/

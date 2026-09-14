@@ -1,0 +1,9 @@
+# Exclude network-mounted NAS shares — AIDE should checksum LOCAL files only,
+# not pull the whole NAS over the wire. Mirrors nova-core. Added 2026-09-14 (fleet health deep-dive).
+!/mnt/nas-external
+!/mnt/nas
+!/external
+!/nova
+!/var/lib/docker
+!/var/lib/containerd
+!/tmp

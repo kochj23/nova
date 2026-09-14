@@ -1,0 +1,13 @@
+# Nova curated integrity scope, applied 2026-09-14 (fleet health deep-dive),
+# mirrors nova-core2 2026-09-08 fix. Replaces Debian blanket "/ 0 Full" which
+# walked /mnt/nas-external (34T NFS) and made daily checks run 2-4 DAYS.
+# AIDE watches only the tamper surface. Restore: re-enable "/ 0 Full".
+/boot   Full
+/bin    Full
+/sbin   Full
+/lib    Full
+/lib64  Full
+/usr    Full
+/etc    Full
+/opt    Full
+/root   Full

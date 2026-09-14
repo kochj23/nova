@@ -1,0 +1,4 @@
+# Scoped 2026-09-14 (fleet health deep-dive), mirrors nova-core2 2026-09-08 fix:
+# stock "/ =vfat Full-i" anchored at / forces AIDE to traverse the ENTIRE root
+# (incl. 51T NAS mounts) to test each file for vfat. Scope to the EFI partition.
+/boot/efi =vfat Full-i
