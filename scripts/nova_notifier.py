@@ -25,6 +25,38 @@ import nova_remediation
 
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
+# ── AI alert-triage brain (fail-open) ─────────────────────────────────────────
+# Right before an event is posted to Slack we ask nova_alert_triage what it turned
+# out to be historically (page / downgrade / suppress + likely-cause annotation).
+# HARD RULE: triage must never swallow an alert. Any failure — exception, timeout,
+# or junk return — falls open to posting the alert exactly as it would have before
+# triage existed. The brain enforces its own safety (hard-critical always pages).
+_TRIAGE_TIMEOUT_S = 20
+
+
+def _triage_event(ev: dict):
+    """Run the triage brain with a hard timeout in a daemon thread.
+    Returns the decision dict, or None on ANY failure (caller fails open to paging)."""
+    import threading
+    import nova_alert_triage
+    box = {}
+
+    def _run():
+        try:
+            box["v"] = nova_alert_triage.triage(
+                ev.get("title") or "", ev.get("body") or "",
+                ev.get("level") or "info", ev.get("category"),
+                ev.get("source"), ev.get("dedup_key"))
+        except Exception as e:  # noqa: BLE001 — fail open
+            box["err"] = e
+
+    th = threading.Thread(target=_run, daemon=True)
+    th.start()
+    th.join(_TRIAGE_TIMEOUT_S)
+    if th.is_alive():
+        return None  # timed out — leave the hung thread; fail open
+    return box.get("v")
+
 # Out-of-band relay: critical alerts also go over the Meshtastic mesh (LoRa),
 # so Little Mister can be reached even if home internet/WiFi is fully down.
 # Best-effort -- bridge/radio being unreachable must never block Slack delivery.
@@ -224,6 +256,31 @@ def drain(verbose=False, only_source=None) -> int:
                            f"{summary}\n_correlating further events on this host into this incident{by}_")
                 else:
                     msg = _fmt(ev)
+
+                # 3.5) AI triage — fail-open to paging (see _triage_event above).
+                #      suppress -> don't post; downgrade -> post to #nova-feed w/ note;
+                #      page/downgrade -> append likely-cause + similar-incident context.
+                t = _triage_event(ev)
+                if isinstance(t, dict) and t.get("decision") in ("page", "downgrade", "suppress"):
+                    decision = t["decision"]
+                    if decision == "suppress":
+                        # Only ever reached for non-critical (brain's own rule). Mark the
+                        # row so it isn't re-drained; triage already logged the decision.
+                        cur.execute("UPDATE telemetry.events SET status='suppressed', "
+                                    "channel='triage-suppressed', sent_at=now() WHERE id=%s", (ev["id"],))
+                        if verbose:
+                            print(f"  triage-suppressed #{ev['id']} ({t.get('verdict')}) — {t.get('reason')}")
+                        continue
+                    ann = (t.get("annotation") or "").strip()
+                    if ann:
+                        msg = f"{msg}\n{ann}"
+                    if decision == "downgrade":
+                        channel = nova_config.SLACK_FEED  # lower-priority ambient channel
+                        msg = f"(downgraded) {msg}"
+                        if verbose:
+                            print(f"  triage-downgraded #{ev['id']} ({t.get('verdict')}) -> feed")
+                # else: fail open — triage unavailable/junk; post normally, unmodified.
+
                 try:
                     nova_config.post_both(msg, slack_channel=channel)
                     if ev["level"] == "critical":
