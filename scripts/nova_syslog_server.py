@@ -152,6 +152,17 @@ SENSITIVE_PATHS_RE = re.compile(
     r"SecKeychainItem|/var/db/dslocal|/private/etc/sudoers|"
     r"com\.apple\.keychainaccess", re.IGNORECASE)
 
+# Benign macOS noise that the substring match above catches but which is NOT an
+# access attempt: Apple's own keychain/security daemons logging (esp. sandbox
+# denials from keychainsharingmessagingd), and kernel Sandbox lines. These fired
+# sensitive_access 26x on TV-Movies-3 and 13x on the mac-mini over ~8 days, all
+# false (2026-09-14). Real threats — an unexpected process reading id_rsa/.ssh or
+# dumping a *.keychain-db — do not match this and still alert.
+SENSITIVE_BENIGN_RE = re.compile(
+    r"keychainsharingmessagingd|Sandbox:\s*(deny|allow)|"
+    r"\b(secd|securityd|trustd|apsd|cloudd|akd|CommCenter)\b|"
+    r"com\.apple\.(security|keychain|logind|defaults|cfprefs)", re.IGNORECASE)
+
 SUDO_RE = re.compile(r"sudo.*COMMAND=(.+)", re.IGNORECASE)
 SANDBOX_DENY_RE = re.compile(r"\(Sandbox\).*deny\(1\)\s+(.+)")
 CRASH_RE = re.compile(r"crash|ReportCrash|EXC_BAD_ACCESS|SIGABRT|SIGSEGV", re.IGNORECASE)
@@ -433,7 +444,7 @@ def detect_anomaly(event: dict) -> dict | None:
 
     # 3. Sensitive path access — process probing SSH keys, keychains, shadow files
     sens_m = SENSITIVE_PATHS_RE.search(msg)
-    if sens_m:
+    if sens_m and not SENSITIVE_BENIGN_RE.search(msg):
         _sensitive_access[hostname].append(now)
         recent = [t for t in _sensitive_access[hostname] if now - t < 300]
         if len(recent) >= 3:
