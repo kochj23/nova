@@ -662,6 +662,20 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
     bootstrap = await _load_agent_docs(ctx, agent_id)
     sys_prompt = _system_prompt(agent_id, bootstrap)
 
+    # Self-concept injection — Nova reasons FROM her self-model, not just from facts.
+    # The nightly nova_self_model.py maintains a versioned self-model; here we load
+    # the latest full_text so "who I am" is in her working context. Uses the async
+    # pool (never blocks the loop); fully non-fatal. (The sync equivalent for other
+    # callers is nova_self_model.current_self_model().)
+    try:
+        pool = await get_pg(ctx)
+        row = await pool.fetchrow("SELECT full_text FROM self_model ORDER BY ts DESC LIMIT 1")
+        if row and row["full_text"]:
+            sm = row["full_text"].strip()[:4000]
+            sys_prompt = f"{sys_prompt}\n\n--- WHO I AM (my current self-model) ---\n{sm}"
+    except Exception as e:
+        log.debug(f"[{trace_id}] Self-model injection failed (non-fatal): {e}")
+
     # Cross-channel context injection — share conversation context across channels
     try:
         pool = await get_pg(ctx)
