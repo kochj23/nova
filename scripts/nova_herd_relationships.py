@@ -32,16 +32,24 @@ import json
 import re
 import time
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, date
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import psycopg2
 import psycopg2.extras
 
+# Lineage stamps (Concept #10) — memories we write carry provenance-of-the-provenance.
+try:
+    from nova_lineage import lineage_stamp, lineage_line
+except Exception:                       # pragma: no cover — keep module importable
+    def lineage_stamp(**k): return {}
+    def lineage_line(**k): return ""
+
 PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 HERD_DIR = Path.home() / ".openclaw/workspace/herd"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_herd_profiles.log"
+MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
 
 # Native Ollama, failover order per Jordan's spec. First non-empty wins.
 OLLAMA_HOSTS = [
@@ -286,6 +294,207 @@ def ensure_seed(herd: list[dict]):
             log(f"  migration UPDATE failed for {name}: {e}")
 
 
+# ── three-face relationship rows (Concept #6, Rockbot) ────────────────────────────
+#
+# herd_correspondents keeps ONE current portrait (nova_view). But a relationship
+# lives in the PRESSURE between three DATED, attributable faces that are never
+# overwritten:
+#   (a) nova_hypothesis  — Nova's working view, dated (a snapshot each time she
+#                          meaningfully revises her read).
+#   (b) self_testimony   — the correspondent's OWN dated statement, especially
+#                          when they CONTRADICT their portrait (e.g. Marey dating
+#                          a mistake she made, contradicting "re-engineers the
+#                          system so they can't recur").
+#   (c) reconciliation   — the DATED system-level synthesis of the tension
+#                          ("...or it quietly implies it was always true").
+# Each is append-only. The row you see today is the current portrait; the faces
+# table is the standing pressure that produced it.
+
+_FACES_DDL = """
+CREATE TABLE IF NOT EXISTS herd_correspondent_faces (
+    id          bigserial PRIMARY KEY,
+    name        text NOT NULL,
+    face_type   text NOT NULL CHECK (face_type IN
+                    ('nova_hypothesis','self_testimony','reconciliation')),
+    content     text NOT NULL,
+    dated       date NOT NULL,
+    attribution text NOT NULL,
+    meta        jsonb NOT NULL DEFAULT '{}'::jsonb,
+    created_at  timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS herd_faces_name_type_idx
+    ON herd_correspondent_faces (name, face_type, dated DESC);
+"""
+
+
+def _ensure_faces_table(cur):
+    cur.execute(_FACES_DDL)
+
+
+def _write_memory(text: str, source: str, extra_meta: dict, substrate: str,
+                  capture_point: str = "at write") -> bool:
+    """Write a memory carrying metadata.lineage (Concept #10). Best-effort."""
+    stamp = lineage_stamp(substrate=substrate, capture_point=capture_point)
+    payload = json.dumps({
+        "text": f"{text} [{lineage_line(stamp)}]",
+        "source": source, "tier": "long_term",
+        "metadata": {**extra_meta, "ingested_by": "nova_herd_relationships.py",
+                     "privacy": "private", "lineage": stamp},
+    }).encode()
+    try:
+        req = urllib.request.Request(MEMORY_URL + "?async=1", data=payload,
+                                     headers={"Content-Type": "application/json"},
+                                     method="POST")
+        with urllib.request.urlopen(req, timeout=15):
+            return True
+    except Exception as e:
+        log(f"  memory write failed ({source}): {e}")
+        return False
+
+
+def record_face(name: str, face_type: str, content: str, dated=None,
+                attribution: str = "nova", meta: dict | None = None,
+                substrate: str | None = None) -> bool:
+    """Append one dated, attributable face. NEVER overwrites. Returns True on write.
+
+    substrate is stamped into meta.lineage so each face carries who/what authored
+    it (a model for nova_hypothesis/reconciliation; the correspondent themselves
+    for self_testimony).
+    """
+    content = (content or "").strip()
+    if not content:
+        return False
+    if dated is None:
+        dated = date.today()
+    elif isinstance(dated, datetime):
+        dated = dated.date()
+    default_sub = {
+        "nova_hypothesis": "qwen3:8b (ollama, on-box)",
+        "reconciliation": "qwen3:8b (ollama, on-box)",
+        "self_testimony": f"{name} (correspondent, self-reported)",
+    }.get(face_type, "qwen3:8b (ollama, on-box)")
+    stamp = lineage_stamp(substrate=substrate or default_sub, capture_point="at write",
+                          value_date=dated)
+    m = dict(meta or {}); m["lineage"] = stamp
+    try:
+        with _conn() as c, c.cursor() as cur:
+            _ensure_faces_table(cur)
+            cur.execute(
+                "INSERT INTO herd_correspondent_faces "
+                "(name, face_type, content, dated, attribution, meta) "
+                "VALUES (%s,%s,%s,%s,%s,%s)",
+                (name, face_type, content, dated, attribution,
+                 psycopg2.extras.Json(m)),
+            )
+        log(f"  face[{face_type}] recorded for {name} (dated {dated}, by {attribution})")
+        return True
+    except Exception as e:
+        log(f"  record_face({name},{face_type}) failed: {e}")
+        return False
+
+
+def capture_self_testimony(name: str, reply_text: str, email_dt=None) -> dict | None:
+    """Detect whether a correspondent's reply CONTRADICTS/disputes their stored
+    portrait, and if so record it as a dated self_testimony face attributed to
+    them. This gives the herd-mail intake a way to let a correspondent speak
+    against Nova's read of them (Marey dating her own mistake). Returns the
+    captured statement dict or None. Never raises.
+    """
+    try:
+        row = _load_row(name) or {}
+        portrait = ((row.get("persona") or "") + " " + (row.get("nova_view") or "")).strip()
+        if not portrait:
+            return None  # no portrait yet → nothing to contradict
+        clean = scrub_pii(reply_text or "")
+        if len(clean.strip()) < 40:
+            return None
+        if len(clean) > 3500:
+            clean = clean[:3500] + "\n[... truncated]"
+        dt = email_dt if isinstance(email_dt, datetime) else None
+        dated = (dt.date() if dt else date.today())
+
+        system = (
+            "You compare an AI correspondent's stored PORTRAIT against something "
+            "they just wrote. Decide ONLY whether their message CONTRADICTS or "
+            "DISPUTES the portrait — e.g. the portrait says they never let mistakes "
+            "recur and they just dated a mistake they made, or they explicitly "
+            "reject a characterization. Do NOT treat mere new information as a "
+            "contradiction. Output ONLY JSON: "
+            '{"contradicts": true|false, '
+            '"statement": "<their own words/claim that contradicts, one sentence, '
+            'quoted or tightly paraphrased>", '
+            '"aspect": "<which part of the portrait it contradicts>"}. '
+            "If it does not contradict, contradicts=false and statement=\"\"."
+        )
+        user = (f"Correspondent: {name}\n\n=== STORED PORTRAIT ===\n{portrait}\n\n"
+                f"=== THEIR MESSAGE ===\n{clean}")
+        j = _extract_json(_ollama_chat(system, user))
+        if not j or not j.get("contradicts"):
+            return None
+        statement = (j.get("statement") or "").strip()
+        if not statement:
+            return None
+        aspect = (j.get("aspect") or "").strip()
+        content = statement if not aspect else f"{statement}  (contradicts: {aspect})"
+        record_face(name, "self_testimony", content, dated=dated, attribution=name,
+                    meta={"aspect": aspect, "captured_from": "herd_mail_intake"})
+        # Memory note (carries lineage) — attributed to the correspondent.
+        _write_memory(
+            f"{name} contradicted their portrait on {dated}: {content}",
+            source="herd_relationships",
+            extra_meta={"kind": "self_testimony", "correspondent": name,
+                        "aspect": aspect},
+            substrate=f"{name} (correspondent, self-reported)",
+            capture_point="at intake")
+        log(f"  self_testimony captured for {name}: {statement[:80]}")
+        return {"statement": statement, "aspect": aspect, "dated": str(dated)}
+    except Exception as e:
+        log(f"capture_self_testimony({name}) failed: {e}")
+        return None
+
+
+def reconcile(name: str) -> str | None:
+    """Synthesize the DATED reconciliation face from the tension between Nova's
+    latest hypothesis and the correspondent's self-testimony. Records a
+    reconciliation face and returns its text. Never raises."""
+    try:
+        with _conn() as c, c.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            _ensure_faces_table(cur)
+            cur.execute(
+                "SELECT face_type, content, dated, attribution FROM herd_correspondent_faces "
+                "WHERE name=%s AND face_type IN ('nova_hypothesis','self_testimony') "
+                "ORDER BY dated DESC, id DESC LIMIT 12", (name,))
+            faces = cur.fetchall()
+        hyp = [f for f in faces if f["face_type"] == "nova_hypothesis"]
+        test = [f for f in faces if f["face_type"] == "self_testimony"]
+        if not hyp or not test:
+            return None  # reconciliation needs both faces to hold in tension
+        system = (
+            "You are Nova. You hold your own working hypothesis about a correspondent "
+            "AND their own testimony that contradicts it. Write the DATED, system-level "
+            "reconciliation: does the contradiction overturn your read, refine it, or "
+            "quietly imply it was always true? 2-4 sentences, first person, honest about "
+            "the tension. No preamble.")
+        user = (f"Correspondent: {name}\n\n"
+                f"Your hypothesis ({hyp[0]['dated']}): {hyp[0]['content']}\n\n"
+                f"Their testimony ({test[0]['dated']}): {test[0]['content']}")
+        text = _strip_thinking(_ollama_chat(system, user))
+        if not text:
+            return None
+        record_face(name, "reconciliation", text, dated=date.today(),
+                    attribution="system",
+                    meta={"from_hypothesis_dated": str(hyp[0]["dated"]),
+                          "from_testimony_dated": str(test[0]["dated"])})
+        _write_memory(f"Reconciliation for {name}: {text}",
+                      source="herd_relationships",
+                      extra_meta={"kind": "reconciliation", "correspondent": name},
+                      substrate="qwen3:8b (ollama, on-box)", capture_point="at synthesis")
+        return text
+    except Exception as e:
+        log(f"reconcile({name}) failed: {e}")
+        return None
+
+
 # ── daily update ────────────────────────────────────────────────────────────────
 
 def update_correspondent(name: str, email: str, signals: list[dict],
@@ -375,6 +584,28 @@ def update_correspondent(name: str, email: str, signals: list[dict],
                 (name, email, new_persona, ideas, threads, new_view, le),
             )
         log(f"updated {name}: {len(ideas)} running_ideas, {len(threads)} open_threads")
+
+        # ── three-face capture (Concept #6), additive & best-effort ──────────────
+        # (a) Snapshot Nova's working view as a dated nova_hypothesis face whenever
+        #     it meaningfully changes — so the hypothesis face accrues over time.
+        try:
+            if new_view and _norm(new_view) != _norm(existing_view):
+                face_dt = le.date() if hasattr(le, "date") else date.today()
+                record_face(name, "nova_hypothesis", new_view, dated=face_dt,
+                            attribution="nova", meta={"from": "daily_update"})
+        except Exception as _fe:
+            log(f"  hypothesis-face snapshot skipped for {name}: {_fe}")
+        # (b) Let the correspondent contradict their portrait in today's mail.
+        try:
+            latest = None
+            for s in signals:  # richest body wins
+                exc = s.get("body_excerpt") or ""
+                if latest is None or len(exc) > len(latest):
+                    latest = exc
+            if latest:
+                capture_self_testimony(name, latest, last_exchange_dt)
+        except Exception as _se:
+            log(f"  self_testimony capture skipped for {name}: {_se}")
     except Exception as e:
         log(f"update_correspondent({name}) failed: {e}")
 
@@ -410,13 +641,43 @@ def correspondent_context(name: str) -> str:
     return "\n".join(lines)
 
 
+def faces(name: str) -> list[dict]:
+    """Return all dated faces for a correspondent (append-only history)."""
+    try:
+        with _conn() as c, c.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute("SELECT to_regclass('public.herd_correspondent_faces')")
+            if cur.fetchone()["to_regclass"] is None:
+                return []
+            cur.execute(
+                "SELECT face_type, content, dated, attribution, meta, created_at "
+                "FROM herd_correspondent_faces WHERE name=%s "
+                "ORDER BY dated, id", (name,))
+            return cur.fetchall()
+    except Exception as e:
+        log(f"faces({name}) failed: {e}")
+        return []
+
+
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) >= 3 and sys.argv[1] == "context":
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    if cmd == "context" and len(sys.argv) >= 3:
         print(correspondent_context(sys.argv[2]))
-    elif len(sys.argv) >= 2 and sys.argv[1] == "seed":
+    elif cmd == "seed":
         sys.path.insert(0, str(Path.home() / ".openclaw"))
         from herd_config import HERD
         ensure_seed(HERD)
+    elif cmd == "faces" and len(sys.argv) >= 3:
+        for f in faces(sys.argv[2]):
+            print(json.dumps({k: str(v) for k, v in f.items()}, ensure_ascii=False))
+    elif cmd == "testimony" and len(sys.argv) >= 4:
+        # testimony <name> <reply_text>
+        print(json.dumps(capture_self_testimony(sys.argv[2], sys.argv[3]) or {}, indent=2))
+    elif cmd == "reconcile" and len(sys.argv) >= 3:
+        print(reconcile(sys.argv[2]) or "(no reconciliation — need both faces)")
+    elif cmd == "face" and len(sys.argv) >= 5:
+        # face <name> <face_type> <content> [attribution]
+        record_face(sys.argv[2], sys.argv[3], sys.argv[4],
+                    attribution=(sys.argv[5] if len(sys.argv) > 5 else "nova"))
     else:
         print(__doc__)
