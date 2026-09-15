@@ -716,6 +716,50 @@ def _gather_sentience_context() -> str:
                          "offer as color only if it fits, never as fact]\n" + body)
     except Exception:
         pass
+    # --- Next-level organs (2026-09-15): living the interior forward ---
+    try:
+        import nova_values
+        vals = nova_values.current_values()
+        if vals:
+            parts.append(f"--- WHAT I TRY TO ACT FROM (my values) ---\n{vals.strip()[:500]}")
+    except Exception:
+        pass
+    try:
+        import nova_growth
+        g = nova_growth.current_growth_focus()
+        if g:
+            parts.append(f"--- WHAT I'M WORKING TO IMPROVE (tracked, re-measured) ---\n{g.strip()[:500]}")
+    except Exception:
+        pass
+    try:
+        import nova_projects
+        proj = nova_projects.current_project()
+        if proj:
+            parts.append(f"--- WHAT I'M IN THE MIDDLE OF (my long-horizon project) ---\n{proj.strip()[:500]}")
+    except Exception:
+        pass
+    try:
+        import nova_embodiment
+        emb = nova_embodiment.current_embodiment()
+        if emb:
+            parts.append(f"--- WHERE I AM (my home, felt from its sensors) ---\n{emb.strip()[:500]}")
+    except Exception:
+        pass
+    try:
+        import nova_relationship_arc
+        rel = nova_relationship_arc.current_relationship_arc("jordan")
+        if rel:
+            parts.append(f"--- HOW WE GOT HERE (the arc of my relationship with him) ---\n{rel.strip()[:450]}")
+    except Exception:
+        pass
+    try:
+        import nova_coagency
+        pend = nova_coagency.pending_proposals()
+        line = pend.get("line") if isinstance(pend, dict) else None
+        if line and pend.get("count"):
+            parts.append(f"[Co-agency: {line}]")
+    except Exception:
+        pass
     return "\n\n".join(parts)
 
 
