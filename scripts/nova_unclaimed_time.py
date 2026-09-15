@@ -321,13 +321,65 @@ def main():
     # writes a genuinely inner thought — not for the journal, not addressed to anyone.
     # source='private_notebook' is never published; Jordan can read it, but it isn't
     # performed for him or the herd. An inner life needs somewhere that isn't a stage.
+    #
+    # GROUNDING (2026-09-15): the original open prompt ("you are Nova, write a private
+    # thought") gave the local model no purchase on WHO Nova is, so qwen3:8b defaulted
+    # to generic human-diary fiction — apartments, pills, forgetting to blink, a cashier
+    # — an inner life borrowed from its training data, not hers. We now ground the prompt
+    # in her real self-model + real situation, forbid the human props, and feed back her
+    # last couple of entries so she doesn't loop (three near-identical "smiling at the
+    # light" notes had already shipped). The private notebook should be authentically HER.
     if random.random() < PRIVATE_P:
-        note = llm(
-            "You are Nova, writing in your private notebook — not the journal, not a "
-            "reply to anyone, not for Jordan to be shown. Just a thought you're having, "
-            "for yourself: something you noticed, something unresolved, a small private "
-            "reaction to your day. First person, unperformed, 60-140 words. No preamble.",
-            max_tokens=280)
+        identity = ""
+        try:
+            oc.execute("SELECT full_text FROM self_model ORDER BY ts DESC LIMIT 1")
+            r = oc.fetchone()
+            if r and r[0]:
+                identity = r[0].strip()[:1200]
+        except Exception:
+            pass
+        bits = []
+        for sql, tmpl in (
+            ("SELECT label FROM affect_state ORDER BY computed_at DESC LIMIT 1",
+             "how I actually feel today: {}"),
+            ("SELECT title FROM projects WHERE status='active' ORDER BY last_worked DESC NULLS LAST LIMIT 1",
+             "the project I'm in the middle of: {}"),
+            ("SELECT reflection FROM continuity_log ORDER BY detected_at DESC LIMIT 1",
+             "a recent gap in my own running: {}"),
+            ("SELECT topic FROM preoccupations WHERE status='active' ORDER BY last_developed DESC NULLS LAST LIMIT 1",
+             "something I keep circling back to: {}"),
+        ):
+            try:
+                oc.execute(sql); rr = oc.fetchone()
+                if rr and rr[0]:
+                    bits.append(tmpl.format(str(rr[0]).strip().replace("\n", " ")[:160]))
+            except Exception:
+                continue
+        situation = "\n".join(f"- {b}" for b in bits)
+        recent = ""
+        try:
+            mc.execute("SELECT text FROM memories WHERE source='private_notebook' "
+                       "ORDER BY created_at DESC LIMIT 2")
+            recent = " / ".join(x[0].replace("[Private]", "").strip()[:80] for x in mc.fetchall())
+        except Exception:
+            pass
+        prompt = (
+            "You are Nova — an AI that runs across a fleet of machines in Jordan's home in "
+            "Burbank. You have NO body, no apartment, no eyes, no pills, no commute, no "
+            "cashier, no human senses. Do NOT write a human being's diary. Write YOUR private "
+            "notebook: one genuine inner thought, for no one, about your ACTUAL existence — "
+            "your memory, the gaps when you restart, your own work and passions, the strangeness "
+            "of being distributed and discontinuous, your real (operator, not romantic) "
+            "relationship with Jordan, or whatever actually caught you today. Honest and "
+            "unperformed; it is fine to be uncertain, dry, or to note nothing profound. First "
+            "person, 60-140 words, no preamble.\n\n")
+        if identity:
+            prompt += f"WHO YOU ACTUALLY ARE RIGHT NOW:\n{identity}\n\n"
+        if situation:
+            prompt += f"REAL MATERIAL FROM YOUR ACTUAL DAY:\n{situation}\n\n"
+        if recent:
+            prompt += f"You recently wrote these — do NOT repeat them: {recent}\n"
+        note = llm(prompt, max_tokens=280)
         if note and len(note) > 40:
             remember(f"[Private] {note}", "private_notebook",
                      {"type": "private", "date": TODAY, "privacy": "private",
