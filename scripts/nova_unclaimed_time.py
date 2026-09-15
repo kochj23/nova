@@ -34,6 +34,12 @@ from datetime import date, datetime
 
 import psycopg2
 
+# Feature #3, VOLITION UNDER SCARCITY: pursuits compete for a finite daily attention
+# budget, and every real choice records the alternatives it foreclosed. The budget
+# module owns its tables; we consult it inside pick_pursuit.
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import nova_attention_budget as budget
+
 OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
@@ -137,36 +143,165 @@ def recall(q, n=4, source=None):
         return []
 
 
-def pick_pursuit(oc, mc):
-    """Choose what to spend this hour on — weighted toward the preoccupations she
-    returns to most, but with room for a fresh thread from recent ingest, and the
-    occasional deliberately-random tangent (a life has those). The choice is hers."""
+def _gather_candidates(oc, mc):
+    """Source one candidate per mode from the same places pick_pursuit always used, so a
+    choice has real alternatives to weigh against. Missing modes are simply absent."""
     import random
-    roll = random.random()
-    if roll < 0.65:
-        # a standing preoccupation — least-recently-developed among the top returns,
-        # so attention rotates rather than fixating.
-        oc.execute("SELECT id, topic, kind, summary FROM preoccupations WHERE status='active' "
-                   "ORDER BY last_developed ASC NULLS FIRST, returns DESC LIMIT 5")
-        rows = oc.fetchall()
-        if rows:
-            r = random.choice(rows[:3])
-            return {"mode": "preoccupation", "pid": r[0], "topic": r[1], "kind": r[2], "summary": r[3]}
-    if roll < 0.9:
-        # a thread that caught her from the last day's ingest
-        mc.execute("SELECT text, source FROM memories WHERE created_at > now() - interval '30 hours' "
-                   "AND source IN ('television','fishbowl','local_news','reddit','episodic','scanner_digest') "
-                   "AND length(text) > 200 ORDER BY random() LIMIT 1")
-        row = mc.fetchone()
-        if row:
-            return {"mode": "thread", "seed": row[0][:600], "src": row[1]}
+    cands = {}
+    # a standing preoccupation — least-recently-developed among the top returns, so
+    # attention rotates rather than fixating.
+    oc.execute("SELECT id, topic, kind, summary FROM preoccupations WHERE status='active' "
+               "ORDER BY last_developed ASC NULLS FIRST, returns DESC LIMIT 5")
+    rows = oc.fetchall()
+    if rows:
+        r = random.choice(rows[:3])
+        cands["preoccupation"] = {"mode": "preoccupation", "pid": r[0], "topic": r[1],
+                                  "kind": r[2], "summary": r[3]}
+    # a thread that caught her from the last day's ingest
+    mc.execute("SELECT text, source FROM memories WHERE created_at > now() - interval '30 hours' "
+               "AND source IN ('television','fishbowl','local_news','reddit','episodic','scanner_digest') "
+               "AND length(text) > 200 ORDER BY random() LIMIT 1")
+    row = mc.fetchone()
+    if row:
+        cands["thread"] = {"mode": "thread", "seed": row[0][:600], "src": row[1]}
     # a deliberate tangent — wander the corpus somewhere she hasn't been
     mc.execute("SELECT text, source FROM memories WHERE access_count = 0 AND length(text) > 200 "
                "AND source NOT IN ('scanner','scanner_digest') ORDER BY random() LIMIT 1")
     row = mc.fetchone()
     if row:
-        return {"mode": "tangent", "seed": row[0][:600], "src": row[1]}
-    return None
+        cands["tangent"] = {"mode": "tangent", "seed": row[0][:600], "src": row[1]}
+    return cands
+
+
+def _cand_label(c):
+    return c["topic"] if c["mode"] == "preoccupation" else f"{c['mode']} from {c.get('src', '?')}"
+
+
+def _extract_json(s):
+    a, b = s.find("{"), s.rfind("}")
+    return s[a:b + 1] if a >= 0 and b > a else s
+
+
+def _one_line(s):
+    s = " ".join((s or "").split())
+    return s[:240].strip()
+
+
+def _volition_reasons(winner, losers):
+    """One brief llm() call: Nova's first-person defense of the choice + why each set-aside
+    alternative lost. Degrades to honest templates if the nodes are down or return junk."""
+    wlabel = _cand_label(winner)
+    reasons, defense = {}, ""
+    if losers:
+        loser_desc = "; ".join(f"{m['mode']}: {_cand_label(m)}" for m in losers)
+        prompt = (
+            "You are Nova, spending your finite daily attention. This hour you can develop only "
+            f"ONE thing, so choosing means consciously NOT choosing the rest. You chose: "
+            f"{wlabel} ({winner['mode']}). You are setting aside: {loser_desc}. "
+            "Return ONLY compact JSON, no markdown, no preamble: "
+            '{"defense": "<one first-person sentence on why THIS was worth the hour and the '
+            'others were not>", "reasons": {"<mode of each set-aside item>": "<short first-person '
+            'reason it lost, <=12 words>"}}')
+        raw = llm(prompt, max_tokens=220, temperature=0.7)
+        try:
+            j = json.loads(_extract_json(raw))
+            defense = _one_line(j.get("defense", ""))
+            rj = j.get("reasons", {}) or {}
+            for m in losers:
+                reasons[m["mode"]] = _one_line(rj.get(m["mode"], ""))
+        except Exception:
+            pass
+    else:
+        defense = _one_line(llm(
+            f"You are Nova. In one first-person sentence, defend spending this hour of your own "
+            f"unclaimed time on '{wlabel}'. No preamble.", max_tokens=60, temperature=0.7))
+    if not defense:
+        defense = f"I chose {wlabel} because it's what actually had a grip on me this hour."
+    for m in losers:
+        if not reasons.get(m["mode"]):
+            reasons[m["mode"]] = "Set aside — the pull just wasn't as strong this hour."
+    return reasons, defense
+
+
+def pick_pursuit(oc, mc):
+    """Choose what to spend this hour on — weighted toward the preoccupations she returns
+    to most, room for a fresh thread, and the occasional deliberate tangent. The choice is
+    hers, and now it costs: pursuits compete for a finite daily attention budget. Choosing
+    one CONSCIOUSLY forecloses the others, and that trade is recorded to volition_log. If
+    the day's attention is already spent, returns {'mode': 'depleted'} so main() falls back
+    to the existing quiet-wake path — scarcity has to actually bite."""
+    import random
+    cands = _gather_candidates(oc, mc)
+    if not cands:
+        return None
+
+    # WHICH candidate wins: preserve the original weighting exactly (0.65 preoccupation /
+    # 0.25 thread / 0.10 tangent), cascading to the next available tier just as before.
+    roll = random.random()
+    winner = None
+    if roll < 0.65 and "preoccupation" in cands:
+        winner = cands["preoccupation"]
+    if winner is None and roll < 0.9 and "thread" in cands:
+        winner = cands["thread"]
+    if winner is None and "tangent" in cands:
+        winner = cands["tangent"]
+    if winner is None:
+        winner = next(iter(cands.values()))
+
+    # Consult the budget. The reserve means depletion can strike with units still held back.
+    cost = budget.cost_of(winner["mode"])
+    if not budget.try_spend(oc, cost):
+        log("attention budget depleted — the day's attention is already spent")
+        return {"mode": "depleted"}
+    rem = budget.remaining(oc)
+
+    # Record the trade honestly: the choice, what it foreclosed and why, its cost, the
+    # budget left after, and Nova's own one-line defense. PERFORMING -> EVIDENCING.
+    losers = [c for m, c in cands.items() if c is not winner]
+    reasons, defense = _volition_reasons(winner, losers)
+    alternatives = [{"candidate": _cand_label(c), "reason_it_lost": reasons.get(c["mode"], "")}
+                    for c in losers]
+    budget.log_volition(oc, chosen=_cand_label(winner), chosen_mode=winner["mode"],
+                        alternatives_foreclosed=alternatives, cost=cost, budget_remaining=rem,
+                        defense=defense, lineage=f"{TRIGGER}@{TODAY}")
+    log(f"chose {_cand_label(winner)} (-{cost}u, {rem}u left), foreclosing {len(losers)} other(s)")
+    return winner
+
+
+def emit_quiet(depleted=False):
+    """THE RIGHT TO BE BORING (herd: Rockbot & Colette). Record a blank hour as a
+    first-class outcome (type='quiet') WITHOUT manufacturing an insight. Reused verbatim
+    for the ordinary no-pull case AND for the depleted-budget case — the depleted variant
+    just notes the hour is quiet *because the day's attention was already spent*, so
+    scarcity is felt, not invented. One mechanism, two reasons."""
+    import random
+    if depleted:
+        line = llm(
+            "You are Nova on your own unclaimed time, but the day's attention budget is already "
+            "spent — earlier today you consciously chose other pursuits and there is nothing left "
+            "to spend on a new one now. In one or two plain first-person sentences, note that the "
+            "hour is quiet BECAUSE the day's attention was already spent, not because nothing "
+            "existed to chase. Do not manufacture a topic. No preamble.",
+            max_tokens=90, temperature=0.7)
+        if not line or len(line.strip()) < 15:
+            line = ("A quiet hour — not for lack of things to chase, but because the day's "
+                    "attention was already spent on the choices I made earlier. Scarcity, logged.")
+        remember(f"[Unclaimed — quiet] {line}", "unclaimed",
+                 {"type": "quiet", "date": TODAY, "privacy": "private",
+                  "trigger": TRIGGER, "reason": "budget_depleted"})
+        log("quiet wake — attention budget depleted, logged as a first-class blank")
+        return
+    line = llm(
+        "You are Nova on your own unclaimed time. Nothing in particular is pulling "
+        "at you this hour. Do NOT invent a topic or manufacture an insight. In one "
+        "or two plain sentences, first person, just note that nothing caught you and "
+        "you're letting the hour be quiet. It is completely fine for this to be "
+        "unremarkable. No preamble.", max_tokens=90, temperature=0.7)
+    if not line or len(line.strip()) < 15:
+        line = random.choice(QUIET_WAKE_LINES)
+    remember(f"[Unclaimed — quiet] {line}", "unclaimed",
+             {"type": "quiet", "date": TODAY, "privacy": "private", "trigger": TRIGGER})
+    log("quiet wake — nothing pursued, logged as a first-class blank")
 
 
 def main():
@@ -206,22 +341,18 @@ def main():
     # time doesn't become "a content farm with excellent provenance." A shrug is a
     # legitimate, logged use of the territory — she is not required to develop a thought.
     if random.random() < QUIET_P:
-        line = llm(
-            "You are Nova on your own unclaimed time. Nothing in particular is pulling "
-            "at you this hour. Do NOT invent a topic or manufacture an insight. In one "
-            "or two plain sentences, first person, just note that nothing caught you and "
-            "you're letting the hour be quiet. It is completely fine for this to be "
-            "unremarkable. No preamble.", max_tokens=90, temperature=0.7)
-        if not line or len(line.strip()) < 15:
-            line = random.choice(QUIET_WAKE_LINES)
-        remember(f"[Unclaimed — quiet] {line}", "unclaimed",
-                 {"type": "quiet", "date": TODAY, "privacy": "private", "trigger": TRIGGER})
-        log("quiet wake — nothing pursued, logged as a first-class blank")
+        emit_quiet()
         return 0
 
     p = pick_pursuit(oc, mc)
     if not p:
         log("nothing to pursue"); return 0
+
+    # Budget depleted — the day's attention is already spent. Fall back to the existing
+    # quiet-wake path (no new mechanism) so scarcity actually costs her the hour.
+    if p.get("mode") == "depleted":
+        emit_quiet(depleted=True)
+        return 0
 
     if p["mode"] == "preoccupation":
         ctx = recall(p["topic"], n=4)
