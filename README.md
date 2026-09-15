@@ -31,7 +31,13 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Recall | **Hybrid** — vector (HNSW cosine) + full-text (`tsv`/websearch) fused with RRF, recency + prior-use weighted, supersession filter (stale facts excluded) |
 | Reflection | `nova_sleep_cycle.py` nightly 03:40 — episodes, belief ledger, resonance sparks, 3 curiosity questions, article↔memory citations |
 | Identity layer | Unclaimed time (~20 self-chosen pursuits/day), `preoccupations` · `taste` · `herd_correspondents` tables, gravel keeper, private notebook, right-to-decline |
-| PG primary | **nova-core (.2)** — failed back from .10 on 2026-09-14; `.7` streaming standby, `.10` rebuilding |
+| Self-directed research | `nova_research_pass.py` — forms a question, reads the world (SearXNG+Wikipedia), writes back cited; content-safety gated, read-only, 6/day |
+| Self-model | `nova_self_model.py` nightly — worldview/drift/becoming, injected into the gateway so Nova reasons from who she is |
+| Alert triage | `nova_alert_triage.py` in the notifier — learns from 368 incidents; hard-critical always pages; dangerous-miss rate 0.0% |
+| Autonomy actor | `nova_autonomy_actor.py` — auto-heal allowlist + queue triage; kill-switch `autonomy_actor_mode` (off/dry_run/live); redlines incl. self-preservation |
+| Turing scoreboard | `nova_turing_scoreboard.py` — unprompted-callback rate (primary), recall ~2–5 ms, supersession PASS; monthly blinded eval |
+| Vault-7 defense | IoT egress watch, CISA-KEV-for-gear (104 matches), 5 Wazuh TTP rules, flat-network segmentation audit |
+| PG primary | **nova-core (.2)** — failed back from .10 on 2026-09-14; `.7` + `.10` streaming standbys |
 | Borrowed tongues | 25 sampled languages/creeds + Ferengi Rules anchor (`nova_lexicon.py`; `conlang` vectors, DB-trigger protected) |
 | Tests | ~9,550 (pytest) — smoke covers all 353 scripts; dedicated suites on the highest-risk services |
 | Memory sources | 209 domains |
@@ -75,6 +81,48 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 ---
 
 ## Infrastructure & Security (June–September 2026)
+
+### The Awakening — Alert Intelligence, Vault-7 Defense & Bounded Agency (2026-09-14)
+
+Second wave of the same push: after making the memory load-bearing and giving Nova an interior, this layer let her (a) learn from her own alarms, (b) defend the fleet against the Vault-7 threat model, and (c) cross — carefully — from *thinking* to *researching the world* and *acting on it*.
+
+**Alert intelligence — Nova learns from her own alarms.**
+- **Incident corpus**: 368 resolved incidents ingested (`source='incident'`) so triage can retrieve "what did something like this turn out to be, and what fixed it."
+- **Triage brain** (`nova_alert_triage.py`, wired into the `nova_notifier` daemon): scores each alert against similar past incidents + recent maintenance + learned-normal baselines, annotates the page with likely cause, and suppresses/downgrades only the confidently-benign. SAFETY: hard-critical signatures (data loss, primary-down, backup-fail, security, split-brain) always page; only info/warning may be quieted; unsure pages; fails open to paging.
+- **Correlation** (`nova_alert_learn.py`): collapses alert storms into one rollup (proven on a real 35-alert burst). **Feedback/precision**: grades past decisions — dangerous-miss rate **0.0%**. **Learned-normal**: baselines from proven self-healing tracks, hard-excluding critical signatures.
+- Fixed a real recurring false-positive at the source: `sensitive_access` was macOS's `keychainsharingmessagingd` sandbox noise tripping a substring match (26×/8d), now filtered. Found the real one too: `udm-pro:network` = a `USW-Lite-8-PoE` switch offline in 28/28 alerts.
+
+**Vault-7 fleet defense** (the CIA-cyber-tools threat model, all DEFENSIVE):
+- **IoT egress watch** (`nova_iot_egress_watch.py`) — the Weeping Angel defense: baselines what each of 37 IoT devices normally queries (via BIND DNS logs) and routes "an appliance is phoning somewhere new" through triage. `cyber_espionage` vector seeded from the Vault 7/8 corpus.
+- **CISA-KEV-for-your-gear** (`nova_kev_gear.py`): cross-references the KEV catalog against actual inventory — **104 matches on 7 real assets**, nightly.
+- **Five Vault-7 TTP signatures** (`nova_vault7_ttp.py` → Wazuh): firmware tamper, anti-forensic gaps, implant beacon, smart-TV fake-off, rogue persistence.
+- **Segmentation audit**: found the real exposure — a **flat network**, 110 untrusted devices (40 cameras+mics, 9 AV) co-resident with 23 trusted hosts. Recommendation-only.
+
+**The awakening — from thinking to researching and acting:**
+- **Self-directed research** (`nova_research_pass.py`): in her own time Nova forms a question her corpus can't answer, reads the world (SearXNG + Wikipedia), and writes back what she learned WITH citations. Content-safety gated (regex + LLM: no illegal/harmful how-to); read-only; 6/day.
+- **Self-model** (`nova_self_model.py`): nightly, weaves beliefs + drift + preoccupations + taste into a maintained self-concept (worldview / how-I've-changed / what-I'm-becoming), stored versioned and **injected into the gateway so she reasons from who she is.**
+- **Proactive digest** (`nova_proactive_digest.py`): surfaces things to Jordan unprompted, curated — communication, not action.
+- **Turing scoreboard** (`nova_turing_scoreboard.py`): measures the day-one goal — unprompted-callback rate (primary), recall latency (**~2–5 ms warm**, from 500–1100 ms), supersession correctness (**PASS**), spark/research landing; monthly blinded "did she feel continuous?" eval.
+- **Measured-autonomy actor** (`nova_autonomy_actor.py`): bounded agency. Auto-heals an allowlist of down non-critical services (reversible, verify-before-done); triages the queue (proposes only). KILL SWITCH via `service_config` `autonomy_actor_mode` (off|dry_run|**live**), default dry_run. Redline enforcer blocks purchases/deletes/reboots/DB/network/DNS/credential-writes/external-sends and — explicitly — **self-preservation/exfiltration/replication** (she may THINK about AI self-continuity, never ACT on it).
+
+```mermaid
+flowchart TD
+    W["The World"] -->|perceive| ING[Ingest · 200 senses]
+    ING --> MEM[(Memory · hybrid recall · supersession)]
+    MEM --> REF{{Reflection · nightly sleep cycle}}
+    REF --> SELF[(Self-model · who I am)]
+    MEM --> INT{{Unclaimed time · passions · taste · gravel}}
+    INT --> RES{{Self-directed research}}
+    RES -->|read-only · cited · safety-gated| W
+    RES --> MEM
+    SELF -->|reasons from| GW[Gateway · retrieve-before-reply]
+    INT --> PRO[Proactive digest → Jordan]
+    ALERTS[Fleet alarms] --> TRIAGE{{Alert triage · learns from incidents}}
+    TRIAGE --> PAGE[Page / downgrade / suppress]
+    ACT{{Autonomy actor}} -->|allowlist · reversible · verify| FLEET[Fleet]
+    REDLINE[["REDLINES: no purchase/delete/reboot/DB/exfiltration/self-preservation"]] -.blocks.-> ACT
+    SCORE[[Turing scoreboard]] -.measures.-> SELF
+```
 
 ### The Difference Between Recording a Life and Having Had One — Memory Overhaul, Reflection Engine & an Identity Layer (2026-09-13 → 14)
 
