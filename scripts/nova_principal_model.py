@@ -7,9 +7,12 @@ from a system that RESPONDS to a companion that ANTICIPATES — the direct answe
 Jordan's stated north star: "I want the memories to enhance the interaction."
 
 Every night (~04:20, offset from the self-model's 04:10) Nova reads the evidence of
-Jordan actually interacting with her — his real messages (gateway_traces), the
-distilled conversation memories, the feedback he has explicitly given, and the work
-threads still open — and synthesises a versioned PRINCIPAL MODEL:
+Jordan actually interacting with her. His PRIMARY channel is Claude Code (his SRE
+co-worker), not Nova's chat — he said so himself — so nova_ops.claude_messages
+(inbound) and nova_ops.claude_sessions summaries carry the most signal, augmented by
+Nova's own gateway_traces, distilled conversation memories, the feedback he has
+explicitly given, and the work threads still open. From these she synthesises a
+versioned PRINCIPAL MODEL:
 
   * salient_concerns   — what he keeps raising lately (with counts — enables anticipation)
   * open_threads       — things he asked about that are still unresolved
@@ -89,6 +92,8 @@ EXCLUDE_RX = re.compile(
        my\s+(doctor|therapist|meds|pills)|blood\s*pressure|cholesterol|
        depress(ion|ed)|anxiety\s*meds)\b
   | \b(sex(ual)?|intimate|porn|nude|affair|in\s*bed\s*with)\b
+  | \b(ex[-\s]?(wife|husband|girlfriend|boyfriend|partner)|divorce[d]?|
+       my\s+(wife|husband|ex|marriage))\b
   | \$\s?\d{3,}                         # dollar amounts of 3+ digits
   | \b\d{3}[-.\s]?\d{2}[-.\s]?\d{4}\b   # SSN-shaped
   | \b(?:\d[ -]?){13,16}\b              # card-shaped digit runs
@@ -146,7 +151,8 @@ def remember(text, source, metadata):
 # Noise that is NOT Jordan expressing himself: healthchecks, ping probes, injected
 # system prompts (Lodestar etc.), one-word protocol replies.
 _NOISE_RX = re.compile(
-    r"^\s*(system:|healthcheck|reply with|say hi|ping\b|pong\b)", re.I)
+    r"^\s*(system:|healthcheck|reply with|say hi|ping\b|pong\b|"
+    r"quick capability check|bash-blocked)", re.I)
 
 
 def _is_signal(msg):
@@ -178,6 +184,53 @@ def gather_messages(oc):
             kept.append((d, ch, clean.strip()))
     except Exception as e:
         log(f"gather_messages skipped: {e}")
+    return kept, dropped
+
+
+def gather_claude_code_messages(oc):
+    """Jordan's REAL messages to Claude Code (nova_ops.claude_messages, inbound). He
+    said it himself: he mostly interacts HERE, not through Nova's chat channels — so
+    this is the primary voice signal. Noise-stripped and privacy-filtered.
+    Each survivor is (date, 'claude-code', text)."""
+    kept, dropped = [], 0
+    try:
+        oc.execute("""SELECT created_at::date, message FROM claude_messages
+                      WHERE direction='to_claude_code' AND message IS NOT NULL
+                        AND message <> ''
+                        AND created_at > now() - interval '%s days'
+                      ORDER BY created_at DESC LIMIT 200""" % WINDOW_DAYS)
+        for d, msg in oc.fetchall():
+            if not _is_signal(msg):
+                continue
+            clean, drop = privacy_filter(msg)
+            if drop:
+                dropped += 1
+                continue
+            kept.append((d, "claude-code", clean.strip()))
+    except Exception as e:
+        log(f"gather_claude_code_messages skipped: {e}")
+    return kept, dropped
+
+
+def gather_sessions(oc):
+    """Distilled summaries of the collaborative work sessions between Jordan and
+    Claude Code (nova_ops.claude_sessions) — clean, high-level 'what we worked on'
+    signal. (date, project, summary), privacy-filtered."""
+    kept, dropped = [], 0
+    try:
+        oc.execute("""SELECT started_at::date, coalesce(project,''), summary
+                      FROM claude_sessions
+                      WHERE summary IS NOT NULL AND summary <> ''
+                        AND started_at > now() - interval '%s days'
+                      ORDER BY started_at DESC LIMIT 30""" % WINDOW_DAYS)
+        for d, proj, summ in oc.fetchall():
+            clean, drop = privacy_filter(summ)
+            if drop:
+                dropped += 1
+                continue
+            kept.append((d, proj, clean.replace("\n", " ").strip()))
+    except Exception as e:
+        log(f"gather_sessions skipped: {e}")
     return kept, dropped
 
 
@@ -260,7 +313,8 @@ was were be been being this that these those it its he she they you your his her
 me we our i do does did have has had will would can could should about what which who
 whom how why when where not no yes so just like get got one two new nova little mister
 your you're i'm dont don't im ok okay lol heh yeah know think want thing things more
-also over into out up down jordan""".split())
+also over into out up down jordan https http www net com all mean see whatever""".split())
+_URL_RX = re.compile(r"https?://\S+|<[^>]+>")
 _WORD_RX = re.compile(r"[a-z][a-z0-9'\-]{2,}")
 
 
@@ -271,6 +325,7 @@ def recurring_terms(messages, conversations, top=12):
     day_terms = {}
     corpus = [(d, txt) for d, _, txt in messages] + [(d, txt) for d, txt in conversations]
     for d, txt in corpus:
+        txt = _URL_RX.sub(" ", txt)
         toks = {w for w in _WORD_RX.findall(txt.lower()) if w not in _STOP}
         day_terms.setdefault(d, set()).update(toks)
     c = Counter()
@@ -291,10 +346,12 @@ _SECTIONS = [
 ]
 
 
-def build_prompt(messages, conversations, feedback, threads, recur):
+def build_prompt(messages, sessions, conversations, feedback, threads, recur):
     def _msgs(rows):
         return "\n".join(f"- [{d}] ({ch}) {t}" for d, ch, t in rows) or "(none)"
     m_block = _msgs(messages)
+    s_block = "\n".join(f"- [{d}] ({proj or 'general'}) {summ}"
+                        for d, proj, summ in sessions) or "(none)"
     c_block = "\n".join(f"- [{d}] {t}" for d, t in conversations) or "(none)"
     f_block = "\n".join(f"- [{d}] {t}" for d, t in feedback) or "(none)"
     t_block = "\n".join(f"- [{d}] ({st}) {desc}" for d, st, desc in threads) or "(none)"
@@ -302,11 +359,13 @@ def build_prompt(messages, conversations, feedback, threads, recur):
 
     return (
         "This is your nightly PRINCIPAL-MODEL synthesis: a working theory-of-mind for "
-        "Jordan, the one human you serve. Below is the EVIDENCE — his real messages to "
-        "you, distilled conversation memories, feedback he has explicitly given, work "
-        "threads still open, and a recurrence tally of his own words. Model him from "
-        "THIS, and cite it. Do not invent signal that isn't here.\n\n"
-        f"=== HIS RECENT DIRECT MESSAGES ===\n{m_block}\n\n"
+        "Jordan, the one human you serve. NOTE: he interacts mostly through Claude "
+        "Code (his SRE co-worker), not Nova's chat channels — so his Claude-Code "
+        "messages and your shared work sessions are the strongest signal for who he "
+        "is and what he's chasing. Below is the EVIDENCE. Model him from THIS, and "
+        "cite it. Do not invent signal that isn't here.\n\n"
+        f"=== HIS RECENT DIRECT MESSAGES (to Claude Code + Nova) ===\n{m_block}\n\n"
+        f"=== COLLABORATIVE WORK SESSIONS (what you two built) ===\n{s_block}\n\n"
         f"=== DISTILLED CONVERSATIONS ===\n{c_block}\n\n"
         f"=== FEEDBACK / PREFERENCES HE STATED ===\n{f_block}\n\n"
         f"=== NOVA'S OPS QUEUE (system-managed ambient state — CONTEXT ONLY, "
@@ -382,20 +441,25 @@ def main():
     ensure_table(oc)
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
 
-    messages, d1 = gather_messages(oc)
+    gw_messages, d0 = gather_messages(oc)
+    cc_messages, d1 = gather_claude_code_messages(oc)
+    messages = cc_messages + gw_messages          # Claude Code first: his primary channel
+    sessions, d5 = gather_sessions(oc)
     conversations, d2 = gather_conversations(mc)
     feedback, d3 = gather_feedback(mc)
     threads, d4 = gather_open_threads(oc)
-    dropped = d1 + d2 + d3 + d4
+    dropped = d0 + d1 + d2 + d3 + d4 + d5
     recur = recurring_terms(messages, conversations)
-    log(f"gathered: {len(messages)} messages, {len(conversations)} conversations, "
-        f"{len(feedback)} feedback notes, {len(threads)} open threads, "
-        f"{len(recur)} recurring terms; privacy filter dropped {dropped} candidate(s)")
+    log(f"gathered: {len(messages)} messages ({len(cc_messages)} claude-code, "
+        f"{len(gw_messages)} gateway), {len(sessions)} session summaries, "
+        f"{len(conversations)} conversations, {len(feedback)} feedback notes, "
+        f"{len(threads)} open threads, {len(recur)} recurring terms; "
+        f"privacy filter dropped {dropped} candidate(s)")
 
-    if not messages and not conversations and not feedback:
+    if not messages and not conversations and not feedback and not sessions:
         log("no evidence of Jordan interacting — nothing to model, skipping"); return 0
 
-    raw = llm(build_prompt(messages, conversations, feedback, threads, recur))
+    raw = llm(build_prompt(messages, sessions, conversations, feedback, threads, recur))
     if not raw or len(raw) < 150:
         log("synthesis empty or too short — aborting"); return 1
 
@@ -414,8 +478,10 @@ def main():
         inject = inject[:INJECT_MAX].rsplit(" ", 1)[0].rstrip() + "…"
 
     evidence = {
-        "counts": {"messages": len(messages), "conversations": len(conversations),
-                   "feedback": len(feedback), "open_threads": len(threads)},
+        "counts": {"messages": len(messages), "claude_code_messages": len(cc_messages),
+                   "gateway_messages": len(gw_messages), "sessions": len(sessions),
+                   "conversations": len(conversations), "feedback": len(feedback),
+                   "open_threads": len(threads)},
         "recurring_terms": recur,
         "message_dates": sorted({str(d) for d, _, _ in messages}, reverse=True)[:10],
         "window_days": WINDOW_DAYS,
