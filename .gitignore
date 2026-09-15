@@ -195,3 +195,4 @@ pentest/
 # generated voice audio
 voice_out/
 voice_refs/
+launchd/net.digitalnoise.nova-deep-healthcheck.plist

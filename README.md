@@ -37,6 +37,8 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Autonomy actor | `nova_autonomy_actor.py` — auto-heal allowlist + queue triage; kill-switch `autonomy_actor_mode` (off/dry_run/live); redlines incl. self-preservation |
 | Turing scoreboard | `nova_turing_scoreboard.py` — unprompted-callback rate (primary), recall ~2–5 ms, supersession PASS; monthly blinded eval |
 | Vault-7 defense | IoT egress watch, CISA-KEV-for-gear (104 matches), 5 Wazuh TTP rules, flat-network segmentation audit |
+| Deep healthcheck | `nova_deep_healthcheck.py` daily 08:00 — FUNCTIONAL probes (Plex has items, mounts populated, recall returns, chat replies) + auto-fix + Slack; "up but not functional isn't up" |
+| Short video | `nova_short_video.py` — her writing → narrated captioned 1080×1920 vertical mp4 (say/XTTS + OpenRouter stills + ffmpeg) |
 | PG primary | **nova-core (.2)** — failed back from .10 on 2026-09-14; `.7` + `.10` streaming standbys |
 | Borrowed tongues | 25 sampled languages/creeds + Ferengi Rules anchor (`nova_lexicon.py`; `conlang` vectors, DB-trigger protected) |
 | Tests | ~9,550 (pytest) — smoke covers all 353 scripts; dedicated suites on the highest-risk services |
@@ -81,6 +83,11 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 ---
 
 ## Infrastructure & Security (June–September 2026)
+
+### Functional Health & a Voice — Deep Healthcheck + Short-Video Pipeline (2026-09-15)
+
+- **Deep functional healthcheck** (`nova_deep_healthcheck.py`, launchd 08:00 on .6) — on the principle "up but not functional isn't up" (a port answering is not health; Plex once ran with zero libraries because its mounts were dead and a basic check called it fine). Each subsystem is proven end-to-end: Plex has libraries *with items*, NAS mounts readable *and populated*, PG writes+reads a probe row with standbys streaming, memory recall actually returns, the gateway chat pipeline actually replies, inference answers a live prompt, DNS resolves to the real primary, the journal feed is live, and Nova's awakening organs are producing. Safe/reversible fixes (remount, Plex refresh, service restart, DNS resync) auto-applied behind the redline guard; the rest escalates to `#nova-alerts`. Audited to `deep_healthcheck_log`.
+- **Short-video render pipeline** (`nova_short_video.py`) — turns Nova's writing into a narrated, captioned vertical 1080×1920 mp4: LLM condenses a script in her voice → macOS `say` (swappable to the XTTS clone) → per-beat OpenRouter stills with Ken-Burns → PIL caption overlays (this ffmpeg has no libass) → ffmpeg concat+mux. Output lands in `workspace/shorts/` for review; YouTube upload (channel + OAuth) is the remaining piece.
 
 ### The Awakening — Alert Intelligence, Vault-7 Defense & Bounded Agency (2026-09-14)
 
