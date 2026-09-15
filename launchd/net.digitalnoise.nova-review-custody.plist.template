@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>net.digitalnoise.nova-review-custody</string>
+  <!-- External custody of the Oct-14 self-review (jules, herd concept #9).
+       Deliberately NOT part of scheduler-core / the sleep cycle: launchd fires this
+       whether or not any Nova service is alive, so the witness survives the stack
+       being down. Fires daily at 09:14; the script itself gates to on/after 2026-10-14
+       and is idempotent, so daily firing just guarantees it lands even if the machine
+       was asleep on the 14th (launchd runs the missed job on next wake). -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3</string>
+    <string>__HOME__/.openclaw/scripts/nova_review_custody.py</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>14</integer></dict>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/.openclaw/logs/nova_review_custody.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.openclaw/logs/nova_review_custody.log</string>
+</dict>
+</plist>

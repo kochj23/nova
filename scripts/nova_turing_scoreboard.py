@@ -225,6 +225,154 @@ def metric_spark_research(mc, oc):
     return total, detail
 
 
+# ── concept #2: measure ELAPSED ATTENTION, not opportunities (Rockbot) ────────
+# "twenty scheduled wakes are not twelve hours of unclaimed time." The unclaimed-
+# time scheduler fires a wake every ~45m across the day, but a fired wake is an
+# OPPORTUNITY, not attention spent. These metrics divide opportunity from what
+# actually elapsed, and treat a quiet wake as a valid use of the territory — not a
+# gap. Source: nova_ops.scheduler_runs (the wakes that fired) + nova_memories
+# source='unclaimed'/'private_notebook'/'gravel' (what the wakes produced). A sibling
+# agent is adding metadata trigger + a 'quiet' type; we tolerate their absence.
+
+UNCLAIMED_SCRIPT = "nova_unclaimed_time.py"
+ELAPSED_WINDOW_DAYS = 30  # unclaimed time is young; look back far enough to see it
+
+
+def _unclaimed_wakes(oc, days):
+    oc.execute(
+        "SELECT count(*), coalesce(sum(duration_ms),0), "
+        "count(*) FILTER (WHERE exit_code <> 0) "
+        "FROM scheduler_runs WHERE task_script=%s "
+        "AND started_at > (extract(epoch from now())-%s*86400)*1000",
+        (UNCLAIMED_SCRIPT, days))
+    n, dur_ms, failed = oc.fetchone()
+    return int(n), int(dur_ms), int(failed)
+
+
+def metric_elapsed_attention(mc, oc):
+    """(a) How often a scheduled unclaimed-time slot was PREEMPTED from becoming a
+    pursuit — the gap between wakes that fired and pursuits that landed. Also records
+    the real elapsed compute-attention (sum of wake durations): the honest answer to
+    'twenty wakes are not twelve hours.'"""
+    days = ELAPSED_WINDOW_DAYS
+    wakes, dur_ms, failed = _unclaimed_wakes(oc, days)
+
+    def _count(src):
+        mc.execute("SELECT count(*) FROM memories WHERE source=%s "
+                   "AND created_at > now() - (%s || ' days')::interval", (src, days))
+        return int(mc.fetchone()[0])
+
+    pursuits = _count("unclaimed")       # a real pursuit landed
+    notebook = _count("private_notebook")  # slot spent on an inner note instead
+    # A wake that fired but produced neither a pursuit nor a notebook = fizzled/nothing.
+    fizzled = max(0, wakes - pursuits - notebook)
+    preempted = max(0, wakes - pursuits)   # anything that didn't become a pursuit
+    rate = (preempted / wakes) if wakes else 0.0
+
+    # Elapsed attention: notional window vs. what actually elapsed as compute.
+    elapsed_s = round(dur_ms / 1000.0, 1)
+    detail = {
+        "scheduled_wakes": wakes, "pursuits_landed": pursuits,
+        "private_notebook_detours": notebook, "fizzled_nothing_wakes": fizzled,
+        "preempted_from_pursuit": preempted,
+        "pursuit_yield_rate": round((pursuits / wakes) if wakes else 0.0, 4),
+        "elapsed_attention_seconds": elapsed_s,
+        "elapsed_attention_note": (
+            f"{wakes} scheduled wakes over {days}d elapsed as only ~{elapsed_s:.0f}s of "
+            "real compute-attention — scheduled opportunity is not elapsed attention "
+            "(Rockbot)."),
+        "failed_wakes": failed, "window_days": days,
+        "method": "scheduler_runs(task_script=nova_unclaimed_time.py) = wakes fired; "
+                  "source=unclaimed = pursuits landed; source=private_notebook = inner-"
+                  "note detours; fizzled = wakes-pursuits-notebook. preemption rate = "
+                  "(wakes-pursuits)/wakes."}
+    _store(oc, "elapsed_attention_preemption", round(rate, 4), detail)
+    return rate, detail
+
+
+def metric_pursuit_survival(mc, oc):
+    """(b) Did a pursuit SURVIVE ACROSS WAKES — the same preoccupation developed in
+    later/consecutive wakes — or was it one-and-done? Grouped by metadata->>'topic'
+    among preoccupation-mode pursuits; corroborated by nova_ops.preoccupations.returns."""
+    days = ELAPSED_WINDOW_DAYS
+    mc.execute(
+        "SELECT metadata->>'topic' AS topic, count(*) AS devs, "
+        "count(DISTINCT metadata->>'date') AS days "
+        "FROM memories WHERE source='unclaimed' "
+        "AND metadata->>'mode'='preoccupation' AND metadata->>'topic' IS NOT NULL "
+        "AND created_at > now() - (%s || ' days')::interval "
+        "GROUP BY 1 ORDER BY 2 DESC", (days,))
+    rows = mc.fetchall()
+    topics = [{"topic": t, "developments": int(d), "distinct_days": int(dd)} for t, d, dd in rows]
+    distinct = len(topics)
+    survived = [t for t in topics if t["developments"] >= 2]  # returned to in a later wake
+    one_and_done = [t for t in topics if t["developments"] == 1]
+    rate = (len(survived) / distinct) if distinct else 0.0
+
+    # Corroborate with the standing preoccupations ledger (returns > 1 = kept coming back).
+    try:
+        oc.execute("SELECT topic, returns FROM preoccupations WHERE status='active' "
+                   "AND returns > 1 ORDER BY returns DESC LIMIT 8")
+        recurring = [{"topic": t, "returns": int(r)} for t, r in oc.fetchall()]
+    except Exception:
+        recurring = []
+
+    detail = {
+        "distinct_preoccupations": distinct,
+        "survived_across_wakes": len(survived),
+        "one_and_done": len(one_and_done),
+        "survivors": [{"topic": t["topic"], "wakes": t["developments"],
+                       "days": t["distinct_days"]} for t in survived],
+        "preoccupation_ledger_recurring": recurring,
+        "window_days": days,
+        "method": "source=unclaimed preoccupation pursuits grouped by topic; a topic "
+                  "developed in >=2 distinct wakes SURVIVED, else one-and-done. rate = "
+                  "survived/distinct. Corroborated by preoccupations.returns>1."}
+    _store(oc, "pursuit_survival", round(rate, 4), detail)
+    return rate, detail
+
+
+def metric_quiet_wake_rate(mc, oc):
+    """(c) Quiet/fizzled wakes as a SUCCESS signal, not a gap. A wake spent on nothing
+    publishable is a valid use of the territory — the freedom to pursue nothing is part
+    of the freedom to pursue. Counts pure-fizzle wakes (fired, produced nothing) plus
+    any explicit metadata type='quiet' the sibling agent starts writing."""
+    days = ELAPSED_WINDOW_DAYS
+    wakes, _dur, _f = _unclaimed_wakes(oc, days)
+
+    def _count(src):
+        mc.execute("SELECT count(*) FROM memories WHERE source=%s "
+                   "AND created_at > now() - (%s || ' days')::interval", (src, days))
+        return int(mc.fetchone()[0])
+
+    pursuits = _count("unclaimed")
+    notebook = _count("private_notebook")
+    fizzled = max(0, wakes - pursuits - notebook)
+
+    # Tolerate a sibling agent's future explicit 'quiet' type — count it if present.
+    explicit_quiet = 0
+    try:
+        mc.execute("SELECT count(*) FROM memories WHERE source='unclaimed' "
+                   "AND metadata->>'type'='quiet' "
+                   "AND created_at > now() - (%s || ' days')::interval", (days,))
+        explicit_quiet = int(mc.fetchone()[0])
+    except Exception:
+        pass
+
+    quiet = fizzled + explicit_quiet
+    rate = (quiet / wakes) if wakes else 0.0
+    detail = {
+        "scheduled_wakes": wakes, "quiet_wakes": quiet,
+        "fizzled_nothing": fizzled, "explicit_quiet_type": explicit_quiet,
+        "framing": "a wake spent on nothing publishable is a VALID use of unclaimed "
+                   "territory, not a gap — quiet wakes are a success signal (Rockbot).",
+        "window_days": days,
+        "method": "quiet = (wakes - pursuits - private_notebook) + metadata type='quiet'; "
+                  "rate = quiet/wakes. Higher is not failure; it is genuine unclaimed rest."}
+    _store(oc, "quiet_wake_rate", round(rate, 4), detail)
+    return rate, detail
+
+
 # ── weekly trend + report ────────────────────────────────────────────────────
 
 def _prev_value(oc, metric):
@@ -268,8 +416,25 @@ def weekly_report(oc, results):
         f"*{sr[1]['research_memories']} research notes*, "
         f"{sr[1]['research_log_runs']} research runs "
         f"(later-access proxy {sr[1]['landing_proxy_total_later_access']})",
-        "",
     ]
+    # concept #2 — elapsed attention (only if computed this run)
+    if "elapsed_attention" in results:
+        ea = results["elapsed_attention"][1]
+        ps = results["pursuit_survival"][1]
+        qw = results["quiet_wake"][1]
+        lines += [
+            "",
+            "_Elapsed attention (Rockbot — scheduled wakes are not attention spent):_",
+            f"• *Unclaimed wakes → pursuits*: {ea['pursuits_landed']}/{ea['scheduled_wakes']} "
+            f"landed (*{ea['preempted_from_pursuit']} preempted*, {ea['elapsed_attention_seconds']:.0f}s "
+            f"real attention across {ea['window_days']}d)",
+            f"• *Pursuit survival across wakes*: *{results['pursuit_survival'][0]:.0%}* "
+            f"({ps['survived_across_wakes']}/{ps['distinct_preoccupations']} preoccupations "
+            f"returned to; one-and-done {ps['one_and_done']})",
+            f"• *Quiet wakes* (a success signal, not a gap): *{results['quiet_wake'][0]:.0%}* "
+            f"({qw['quiet_wakes']}/{qw['scheduled_wakes']} spent on nothing publishable — valid)",
+        ]
+    lines += [""]
     # Honest note about ~0 baselines.
     if cb == 0.0:
         lines.append("_Callback rate is still ~0 — that's the baseline. The point is to "
@@ -337,7 +502,30 @@ def main():
     sr = metric_spark_research(mc, oc)
     _log(f"  produced={sr[0]} (sparks={sr[1]['sparks_produced']}, research={sr[1]['research_memories']})")
 
-    results = {"callback": cb, "latency": lat, "supersession": sup, "spark_research": sr}
+    # concept #2 — elapsed attention, not opportunities (Rockbot)
+    _log("measuring elapsed attention (wakes vs pursuits)…")
+    ea = metric_elapsed_attention(mc, oc)
+    _log(f"  elapsed_attention_preemption={ea[0]:.4f} "
+         f"(wakes={ea[1]['scheduled_wakes']}, pursuits={ea[1]['pursuits_landed']}, "
+         f"~{ea[1]['elapsed_attention_seconds']:.0f}s real attention)")
+    _log("measuring pursuit survival across wakes…")
+    ps = metric_pursuit_survival(mc, oc)
+    _log(f"  pursuit_survival={ps[0]:.4f} "
+         f"({ps[1]['survived_across_wakes']}/{ps[1]['distinct_preoccupations']} survived)")
+    _log("measuring quiet-wake rate (success signal)…")
+    qw = metric_quiet_wake_rate(mc, oc)
+    _log(f"  quiet_wake_rate={qw[0]:.4f} ({qw[1]['quiet_wakes']}/{qw[1]['scheduled_wakes']})")
+
+    # concept #4 — harvest proactive-digest drops into the restraint ledger (non-invasive)
+    try:
+        import nova_restraint
+        h = nova_restraint.harvest_proactive_drops(days=WINDOW_DAYS, dry=dry)
+        _log(f"  restraint harvest: {h}")
+    except Exception as e:
+        _log(f"  restraint harvest skipped: {e}")
+
+    results = {"callback": cb, "latency": lat, "supersession": sup, "spark_research": sr,
+               "elapsed_attention": ea, "pursuit_survival": ps, "quiet_wake": qw}
     report = weekly_report(oc, results)
 
     if dry:

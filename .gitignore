@@ -196,3 +196,4 @@ pentest/
 voice_out/
 voice_refs/
 launchd/net.digitalnoise.nova-deep-healthcheck.plist
+launchd/net.digitalnoise.nova-review-custody.plist
