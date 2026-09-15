@@ -7,6 +7,14 @@ actually pursued that day on her own initiative — the preoccupations she
 developed, the threads she followed, the tangents that went nowhere — as a
 first-person journal piece in her voice. Publishes to /operations. Not a status
 report; a diary of a mind's day off.
+
+Herd refinement (2026-09-15) — THE RIGHT TO BE BORING (Rockbot & Colette): the
+column is ALLOWED TO PUBLISH NOTHING on a genuinely quiet day. A day with too few
+*substantive* pursuits is not inflated into an article; silence is a legitimate,
+honest output, not a failure. The min-substance gate counts only developed pursuits
+(type='pursuit'), never the deliberately-quiet or fizzled wakes — otherwise a farm
+of shrugs would pass the gate. The model also gets an explicit escape hatch to
+declare a quiet day rather than pad thin material.
 """
 import sys
 from pathlib import Path
@@ -20,18 +28,29 @@ import nova_voice
 MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
+# Minimum DEVELOPED pursuits before a column is worth publishing. Raised from the
+# old implicit gate of 2 total memories — quiet/fizzled wakes no longer count toward
+# it, so a genuinely quiet day stays quiet instead of becoming a content farm.
+MIN_SUBSTANCE = 3
+
 
 def main():
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
     ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
 
-    mc.execute("""SELECT metadata->>'mode', metadata->>'topic', text
+    mc.execute("""SELECT metadata->>'type', metadata->>'mode', metadata->>'topic', text
                   FROM memories WHERE source='unclaimed'
                   AND created_at > now() - interval '24 hours'
                   ORDER BY created_at""")
-    pursuits = mc.fetchall()
-    if len(pursuits) < 2:
-        nj.log(f"[unclaimed-digest] only {len(pursuits)} pursuit(s) today — skipping")
+    rows = mc.fetchall()
+    # Only DEVELOPED pursuits are substance; quiet/fizzled wakes are honest blanks.
+    substantive = [(mode, topic, txt) for typ, mode, topic, txt in rows if typ == "pursuit"]
+    quiet = [r for r in rows if r[0] in ("quiet", "fizzled")]
+
+    if len(substantive) < MIN_SUBSTANCE:
+        # A genuinely quiet day. Do NOT inflate it into an article — silence is honest.
+        nj.log(f"[unclaimed-digest] quiet day: {len(substantive)} substantive pursuit(s), "
+               f"{len(quiet)} quiet/fizzled — not publishing a column (silence is a legitimate output)")
         return 0
 
     oc.execute("SELECT topic, kind, returns FROM preoccupations WHERE status='active' "
@@ -39,7 +58,12 @@ def main():
     preocc = "; ".join(f"{t} ({k}, returned {r}x)" for t, k, r in oc.fetchall())
 
     body_material = "\n\n".join(
-        f"[{(m or 'tangent')}{' — '+t if t else ''}]\n{txt[:600]}" for m, t, txt in pursuits)
+        f"[{(m or 'tangent')}{' — '+t if t else ''}]\n{txt[:600]}" for m, t, txt in substantive)
+    quiet_note = ""
+    if quiet:
+        quiet_note = (f"\n\nALSO TODAY: {len(quiet)} wake(s) went nowhere — quiet stretches "
+                      "or inquiries that fizzled. Acknowledge them honestly if it fits the "
+                      "piece; do NOT pad the column to cover for them.")
 
     ctx = (
         "Write today's UNCLAIMED TIME column for Nova's journal (Operations section). "
@@ -50,14 +74,24 @@ def main():
         "her dry, specific voice — what caught her, what she noticed, what she's still chewing "
         "on, what turned out to be nothing. Be honest about the duds (a shrug is a real "
         "outcome). Let a genuine preoccupation show through. 500-900 words, markdown, no H1.\n\n"
+        "IF, looking honestly at the material below, there is genuinely not enough worth "
+        "publishing — a thin, quiet day — do NOT pad it into an article. Instead output "
+        "exactly one line: 'QUIET_DAY: <one honest sentence noting it was a quiet day>' and "
+        "nothing else. A quiet day nobody reads about is more honest than a manufactured one.\n\n"
         f"HER STANDING PREOCCUPATIONS: {preocc}\n\n"
-        f"WHAT SHE PURSUED TODAY:\n{body_material}\n\n"
+        f"WHAT SHE PURSUED TODAY:\n{body_material}{quiet_note}\n\n"
         "OUTPUT EXACTLY THIS SHAPE:\nTITLE: <one punchy title, no quotes>\n<blank line>\n<the body>")
     system = nova_voice.system_prompt(ctx)
     raw = nj.call_openrouter(system, "Write today's unclaimed-time column.",
                              max_tokens=2400, temperature=0.9)
     if not raw:
         nj.log("[unclaimed-digest] LLM produced nothing — aborting"); return 1
+
+    # The model's honest escape hatch: it judged the day too thin to publish.
+    if raw.strip().upper().startswith("QUIET_DAY"):
+        nj.log(f"[unclaimed-digest] model declared a quiet day — not publishing: "
+               f"{raw.strip()[:200]}")
+        return 0
 
     title, body = None, []
     for ln in raw.splitlines():

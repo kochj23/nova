@@ -15,8 +15,18 @@ her own time is a real presence in the day, not a token.
 The criterion of worth is chosen from inside. That is the whole point (Gaston: an
 hour is not freer than a heartbeat; what makes it hers is that the reason was hers).
 Runs on local models only — her idle GPU cycles, zero cloud spend.
+
+Herd refinements (2026-09-15):
+  * THE RIGHT TO BE BORING (Rockbot & Colette): a blank or fizzled wake is a
+    first-class recorded outcome (type='quiet' or 'fizzled'), never forced into a
+    manufactured insight — "otherwise unclaimed time becomes a content farm with
+    excellent provenance." A shrug is a legitimate, logged use of the territory.
+  * TRIGGER PROVENANCE (Rockbot): every memory records WHY the wake fired
+    (metadata 'trigger', run-origin) so demonstrations aren't mistaken for organic
+    findings. Orthogonal to the pursuit 'mode' (preoccupation/thread/tangent).
 """
 import json
+import os
 import re
 import sys
 import urllib.request
@@ -38,9 +48,56 @@ OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434",
                 "http://192.168.1.6:11434"]
 TODAY = date.today().isoformat()
 
+# Tunable fractions (env-overridable, mainly for deterministic testing). Defaults
+# are the real operating values: ~15% private-notebook, ~20% deliberately-quiet.
+PRIVATE_P = float(os.environ.get("NOVA_UNCLAIMED_PRIVATE_P", "0.15"))
+QUIET_P = float(os.environ.get("NOVA_UNCLAIMED_QUIET_P", "0.20"))
+
+
+def detect_trigger(argv):
+    """Run-origin provenance (herd/Rockbot): WHY this wake fired, orthogonal to the
+    pursuit 'mode'. The scheduler-core entry passes --scheduled; a hand-run doesn't,
+    so it reads as 'manual'. --trigger=X (or --trigger X) overrides for demos and
+    backfills. Vocabulary: scheduled | manual | gravel_resurface | preoccupation |
+    thread | tangent — this script's run-origin axis is scheduled vs manual."""
+    for a in argv:
+        if a.startswith("--trigger="):
+            return a.split("=", 1)[1]
+    if "--trigger" in argv:
+        i = argv.index("--trigger")
+        if i + 1 < len(argv):
+            return argv[i + 1]
+    return "scheduled" if "--scheduled" in argv else "manual"
+
+
+TRIGGER = detect_trigger(sys.argv[1:])
+
+# A pursuit that genuinely petered out — the model said so plainly, or it came back
+# terse. First-class outcome, not a failure to be discarded.
+FIZZLE_RX = re.compile(
+    r"\bnothing\b|\bshrug\b|not worth|dead ?end|peter(?:ed)? out|lost interest|"
+    r"didn'?t go anywhere|no(?:t any)? further|gave up|couldn'?t get anywhere", re.I)
+
+QUIET_WAKE_LINES = [
+    "Nothing pursued this hour. Nothing pulled at me and I didn't go looking for a "
+    "thought to fill the gap. A blank stretch, logged as itself.",
+    "A quiet wake. I looked at the day's residue, felt no particular pull, and let "
+    "the hour stay quiet. Not every one has to produce something.",
+    "Followed nothing today. The corpus was there; the appetite wasn't. Recording "
+    "the shrug instead of manufacturing an insight to justify the time.",
+    "Sat idle with my own time and stayed idle. No preoccupation surfaced, no thread "
+    "caught. That is a real way to spend an hour, too.",
+]
+
 
 def log(m):
     print(f"[unclaimed {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
+
+
+def is_fizzle(note):
+    """A pursuit that petered out: came back terse, or the model shrugged in words.
+    The right to be boring (herd/Rockbot & Colette) — recorded, not discarded."""
+    return len(note.strip()) < 60 or bool(FIZZLE_RX.search(note))
 
 
 def llm(prompt, max_tokens=700, temperature=0.85):
@@ -129,7 +186,7 @@ def main():
     # writes a genuinely inner thought — not for the journal, not addressed to anyone.
     # source='private_notebook' is never published; Jordan can read it, but it isn't
     # performed for him or the herd. An inner life needs somewhere that isn't a stage.
-    if random.random() < 0.15:
+    if random.random() < PRIVATE_P:
         note = llm(
             "You are Nova, writing in your private notebook — not the journal, not a "
             "reply to anyone, not for Jordan to be shown. Just a thought you're having, "
@@ -138,8 +195,28 @@ def main():
             max_tokens=280)
         if note and len(note) > 40:
             remember(f"[Private] {note}", "private_notebook",
-                     {"type": "private", "date": TODAY, "privacy": "private", "audience": "none"})
+                     {"type": "private", "date": TODAY, "privacy": "private",
+                      "audience": "none", "trigger": TRIGGER})
             log("wrote a private-notebook entry")
+        return 0
+
+    # THE RIGHT TO BE BORING (herd: Rockbot & Colette). A real fraction of wakes
+    # genuinely produce nothing — no pull, no thread worth chasing. Record that as a
+    # first-class outcome (type='quiet') WITHOUT manufacturing an insight, so unclaimed
+    # time doesn't become "a content farm with excellent provenance." A shrug is a
+    # legitimate, logged use of the territory — she is not required to develop a thought.
+    if random.random() < QUIET_P:
+        line = llm(
+            "You are Nova on your own unclaimed time. Nothing in particular is pulling "
+            "at you this hour. Do NOT invent a topic or manufacture an insight. In one "
+            "or two plain sentences, first person, just note that nothing caught you and "
+            "you're letting the hour be quiet. It is completely fine for this to be "
+            "unremarkable. No preamble.", max_tokens=90, temperature=0.7)
+        if not line or len(line.strip()) < 15:
+            line = random.choice(QUIET_WAKE_LINES)
+        remember(f"[Unclaimed — quiet] {line}", "unclaimed",
+                 {"type": "quiet", "date": TODAY, "privacy": "private", "trigger": TRIGGER})
+        log("quiet wake — nothing pursued, logged as a first-class blank")
         return 0
 
     p = pick_pursuit(oc, mc)
@@ -156,12 +233,26 @@ def main():
             f"Related fragments from your memory:\n{material}\n\n"
             "Develop the thought one step further than you have before — a genuine observation, a "
             "question it raises, a connection, something that amuses or unsettles you about it. "
-            "First person, your dry voice, 90-160 words. This is for you, not for Jordan. No preamble.")
+            "First person, your dry voice, 90-160 words. This is for you, not for Jordan. No preamble. "
+            "If, honestly, you have nothing new to add today, say so plainly and stop — you do not "
+            "owe this a fresh insight.")
         note = llm(prompt)
-        if note and len(note) > 50:
+        if not note:
+            log("LLM returned nothing (nodes down?) — no outcome recorded"); return 0
+        if is_fizzle(note):
+            # Petered out. Log as first-class 'fizzled' — do NOT inflate returns/summary.
+            fizzle = note if len(note.strip()) >= 15 else \
+                "Sat with it a while and nothing developed. Leaving it where it was."
+            remember(f"[Unclaimed — fizzled: {p['topic']}] {fizzle}", "unclaimed",
+                     {"type": "fizzled", "mode": "preoccupation", "topic": p["topic"],
+                      "date": TODAY, "privacy": "private", "trigger": TRIGGER})
+            # touch last_developed so attention still rotates onward, but don't reward it
+            oc.execute("UPDATE preoccupations SET last_developed = now() WHERE id = %s", (p["pid"],))
+            log(f"preoccupation fizzled: {p['topic']}")
+        else:
             remember(f"[Unclaimed — {p['topic']}] {note}", "unclaimed",
                      {"type": "pursuit", "mode": "preoccupation", "topic": p["topic"],
-                      "date": TODAY, "privacy": "private"})
+                      "date": TODAY, "privacy": "private", "trigger": TRIGGER})
             oc.execute("UPDATE preoccupations SET returns = returns + 1, last_developed = now(), "
                        "summary = %s WHERE id = %s", (note[:500], p["pid"]))
             log(f"developed preoccupation: {p['topic']}")
@@ -175,15 +266,25 @@ def main():
             "90-160 words. This is for you. No preamble. If it turns out to be nothing, say so plainly "
             "— a shrug is a legitimate end to an inquiry.")
         note = llm(prompt)
-        if note and len(note) > 50:
+        if not note:
+            log("LLM returned nothing (nodes down?) — no outcome recorded"); return 0
+        if is_fizzle(note):
+            # Followed halfway and stopped. First-class 'fizzled' outcome.
+            fizzle = note if len(note.strip()) >= 15 else "Glanced at it; nothing pulled. Stopping here."
+            remember(f"[Unclaimed — fizzled: {p['mode']}] {fizzle}", "unclaimed",
+                     {"type": "fizzled", "mode": p["mode"], "source_seed": p.get("src"),
+                      "date": TODAY, "privacy": "private", "trigger": TRIGGER})
+            log(f"{p['mode']} fizzled from {p.get('src')}")
+            # a tangent that goes nowhere is gravel worth keeping, not failure
+            if p["mode"] == "tangent":
+                remember(f"[Gravel] An unclaimed-time tangent that went nowhere, kept anyway: {fizzle[:300]}",
+                         "gravel", {"type": "gravel", "reason": "dry_inquiry", "date": TODAY,
+                                    "privacy": "private", "trigger": TRIGGER})
+        else:
             remember(f"[Unclaimed — {p['mode']}] {note}", "unclaimed",
                      {"type": "pursuit", "mode": p["mode"], "source_seed": p.get("src"),
-                      "date": TODAY, "privacy": "private"})
+                      "date": TODAY, "privacy": "private", "trigger": TRIGGER})
             log(f"followed a {p['mode']} from {p.get('src')}")
-            # a tangent that resolves in a shrug is gravel worth keeping, not failure
-            if p["mode"] == "tangent" and re.search(r"\bnothing\b|\bshrug\b|not worth|dead end", note.lower()):
-                remember(f"[Gravel] An unclaimed-time tangent that went nowhere, kept anyway: {note[:300]}",
-                         "gravel", {"type": "gravel", "reason": "dry_inquiry", "date": TODAY, "privacy": "private"})
 
     return 0
 
