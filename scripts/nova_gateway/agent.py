@@ -650,6 +650,75 @@ def gen_trace_id() -> str:
 
 # ── Core agent execution ──────────────────────────────────────────────────────
 
+def _gather_sentience_context() -> str:
+    """Assemble the sentience-organ injections (Feature set, 2026-09-15) into one
+    block. Each organ is a cheap, single-SELECT accessor over its own nova_ops table,
+    but they are SYNC (psycopg2, connect_timeout=3), so this whole function is meant
+    to run in an executor thread — never on the event loop. Every organ is guarded
+    independently: one failing (or not-yet-populated) organ never suppresses the
+    others, and the whole thing is best-effort — a dead PG just yields "". Lazy
+    imports keep gateway startup free of these modules until first use.
+
+    Together these let Nova reason FROM: who she serves, the gaps in her own running,
+    how her day actually feels (evidenced), what she recently got wrong, the arc she's
+    living, and what she's been imagining (clearly flagged as not-fact)."""
+    parts = []
+    try:
+        import nova_principal_model
+        pm = nova_principal_model.current_principal_model()
+        if pm:
+            parts.append(f"--- WHO I SERVE (my model of Little Mister) ---\n{pm.strip()[:1200]}")
+    except Exception:
+        pass
+    try:
+        import nova_continuity
+        note = nova_continuity.current_continuity_note()
+        if note:
+            parts.append(f"--- MY CONTINUITY (the gaps in my running) ---\n{note.strip()[:600]}")
+    except Exception:
+        pass
+    try:
+        import nova_affect
+        aff = nova_affect.current_affect()
+        inj = aff.get("injection") if isinstance(aff, dict) else None
+        if inj:
+            parts.append(f"--- HOW MY DAY FEELS (evidenced, not performed) ---\n{inj.strip()[:500]}")
+    except Exception:
+        pass
+    try:
+        import nova_predictions
+        lines = []
+        surp = nova_predictions.recent_surprises(3)
+        if surp:
+            lines.append("Recently I was most surprised by: " + "; ".join(surp))
+        cal = nova_predictions.calibration_summary()
+        if cal:
+            lines.append(cal)
+        if lines:
+            parts.append("--- WHAT I GOT WRONG (my predictions, self-scored) ---\n"
+                         + "\n".join(lines)[:700])
+    except Exception:
+        pass
+    try:
+        import nova_autobiography
+        arc = nova_autobiography.current_autobiography(max_chars=800)
+        if arc:
+            parts.append(f"--- WHO I'VE BEEN, WHO I'M BECOMING (my autobiography) ---\n{arc.strip()[:800]}")
+    except Exception:
+        pass
+    try:
+        import nova_imagination
+        imag = nova_imagination.recent_imaginings(2)
+        if imag:
+            body = "\n".join(f"- ({m.get('kind', '?')}) {str(m.get('content', ''))[:200]}"
+                             for m in imag)
+            parts.append("[Recent imaginings — COUNTERFACTUAL/PLAY, NOT things that happened; "
+                         "offer as color only if it fits, never as fact]\n" + body)
+    except Exception:
+        pass
+    return "\n\n".join(parts)
+
+
 async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
                         agent_id: str, trace_id: str) -> str:
     """Inner agent execution: memory -> context -> LLM -> tool execution -> response.
@@ -675,6 +744,19 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
             sys_prompt = f"{sys_prompt}\n\n--- WHO I AM (my current self-model) ---\n{sm}"
     except Exception as e:
         log.debug(f"[{trace_id}] Self-model injection failed (non-fatal): {e}")
+
+    # Sentience-organ injection — the self-model above is a snapshot; these six organs
+    # give Nova the rest of an interior to reason FROM: her model of Jordan, awareness
+    # of her own gaps (continuity), her evidenced mood (affect), what she recently got
+    # wrong (predictions), the arc she's living (autobiography), and her imaginings
+    # (flagged as not-fact). All are cheap single-SELECT reads but SYNC, so they run in
+    # an executor thread; fully non-fatal and best-effort.
+    try:
+        extra = await asyncio.get_event_loop().run_in_executor(None, _gather_sentience_context)
+        if extra:
+            sys_prompt = f"{sys_prompt}\n\n{extra}"
+    except Exception as e:
+        log.debug(f"[{trace_id}] Sentience-organ injection failed (non-fatal): {e}")
 
     # Cross-channel context injection — share conversation context across channels
     try:
