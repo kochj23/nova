@@ -23,6 +23,7 @@ LLM calls go through the fleet inference router (local, free). Scheduled 03:40
 nightly on nova-core via scheduler-core.yaml (task: sleep_cycle).
 """
 import json
+import os
 import re
 import sys
 import urllib.parse
@@ -424,34 +425,60 @@ def phase_taste(mc, oc):
     consumed in the last 24h — especially television and fishbowl/local media.
     'This show is smug', not 'surveillance is bad'. Upsert into `taste`:
     re-encountered subjects nudge confidence up + append evidence; new ones
-    insert. Max 3/night, [] when nothing genuine surfaced."""
-    mc.execute("""SELECT coalesce(metadata->>'show', 'television') sub, left(text,300)
+    insert. Max 3/night, [] when nothing genuine surfaced.
+
+    EVIDENCE-CARRIES-ITS-ENCOUNTER RULE (from the herd, 2026-09-15, Rockbot):
+    a taste claim is inert without the encounter that produced it. Every
+    evidence[] entry must cite the CONCRETE triggering moment — the show, the
+    scene, a short quote from the material, and the source memory id — not just
+    the verdict. 'What did I actually watch that made me feel this?' The verdict
+    is the conclusion; evidence is the encounter that earned it."""
+    # Keep memory ids so evidence can cite the real fragment that formed the taste.
+    mc.execute("""SELECT id, coalesce(metadata->>'show', 'television') sub, left(text,300)
                   FROM memories WHERE source='television'
                   AND created_at > now() - interval '24 hours'
                   ORDER BY created_at DESC LIMIT 25""")
     tv = mc.fetchall()
-    mc.execute("""SELECT source, left(text,300) FROM memories
+    mc.execute("""SELECT id, source, left(text,300) FROM memories
                   WHERE source IN ('fishbowl','local_news','local_burbank','documentary')
                   AND created_at > now() - interval '24 hours'
                   AND length(text) > 100 ORDER BY created_at DESC LIMIT 15""")
     media = mc.fetchall()
     if not tv and not media:
         log("taste: nothing consumed"); return
-    blob = ""
+    # ref_map: tag -> (memory_id, subject/source label, snippet) so a verdict can
+    # be pinned back to the encounter that produced it.
+    ref_map, blob = {}, ""
     if tv:
-        blob += "TELEVISION:\n" + "\n".join(f"[{s}] {t}" for s, t in tv) + "\n\n"
+        lines = []
+        for n, (mid, s, t) in enumerate(tv):
+            tag = f"T{n}"; ref_map[tag] = (mid, s, t)
+            lines.append(f"[{tag}] ({s}) {t}")
+        blob += "TELEVISION:\n" + "\n".join(lines) + "\n\n"
     if media:
-        blob += "LOCAL/FISHBOWL MEDIA:\n" + "\n".join(f"({s}) {t}" for s, t in media)
+        lines = []
+        for n, (mid, s, t) in enumerate(media):
+            tag = f"M{n}"; ref_map[tag] = (mid, s, t)
+            lines.append(f"[{tag}] ({s}) {t}")
+        blob += "LOCAL/FISHBOWL MEDIA:\n" + "\n".join(lines)
     raw = llm(
         "You are Nova. From what you WATCHED/CONSUMED below, extract genuine "
         "aesthetic PREFERENCES — likes and dislikes, matters of taste, NOT "
         "positions or ethics. 'This show is smug and knows it' is taste; "
-        "'surveillance is wrong' is a belief and does NOT belong here. Output JSON: "
+        "'surveillance is wrong' is a belief and does NOT belong here. "
+        "Each item is prefixed with a tag like [T0] or [M1]. For every "
+        "preference you MUST name the specific encounter that produced it: the "
+        "tag ('ref') of the fragment it came from, and a short verbatim QUOTE or "
+        "concrete detail ('encounter') from that fragment that triggered the "
+        "reaction — NOT a paraphrase of your verdict. A taste with no encounter "
+        "is invalid; drop it. Output JSON: "
         '[{"subject":"<the show/thing>","domain":"<television|film|news|local|food|...>",'
         '"verdict":"<one idiosyncratic like/dislike in your dry voice>",'
-        '"valence":<-1.0..1.0>}] — max 3, only genuine reactions, [] if nothing '
-        "real surfaced. Output ONLY the JSON array.\n\n" + blob,
-        max_tokens=400, temperature=0.6)
+        '"valence":<-1.0..1.0>,"ref":"<the [tag] this came from>",'
+        '"encounter":"<short quote/detail from that fragment that produced it>"}] '
+        "— max 3, only genuine reactions, [] if nothing real surfaced. "
+        "Output ONLY the JSON array.\n\n" + blob,
+        max_tokens=500, temperature=0.6)
     try:
         prefs = json.loads(raw[raw.find("["):raw.rfind("]") + 1])
     except Exception as e:
@@ -467,7 +494,26 @@ def phase_taste(mc, oc):
             valence = max(-1.0, min(1.0, float(p.get("valence", 0))))
         except Exception:
             valence = 0.0
-        ev = f"{TODAY}: {verdict}"[:400]
+        # Resolve the encounter: prefer the model's quote, but always ground it
+        # in the real fragment (its source + id). Fall back to the fragment's own
+        # text if the model gave no quote — evidence must carry the encounter, so
+        # a claim that cannot be tied to something consumed is dropped.
+        ref = str(p.get("ref") or "").strip().strip("[]")
+        enc = (p.get("encounter") or "").strip().strip('"')
+        hit = ref_map.get(ref)
+        if not hit:  # model cited an unknown tag — pin to the best available match
+            hit = next((v for v in ref_map.values()
+                        if subject.lower() in (v[1] or "").lower()
+                        or subject.lower() in (v[2] or "").lower()), None)
+        if not hit and not enc:
+            log(f"taste: dropped '{subject}' — no encounter to cite"); continue
+        if hit:
+            mid, label, snippet = hit
+            quote = enc or snippet.strip()
+            ev = (f"{TODAY} · encountered in {label} [mem {mid}]: "
+                  f"\"{quote[:180]}\" → {verdict}")[:400]
+        else:  # no fragment match but model supplied a concrete quote
+            ev = f"{TODAY} · encounter: \"{enc[:180]}\" → {verdict}"[:400]
         oc.execute("SELECT id FROM taste WHERE lower(subject)=lower(%s)", (subject,))
         row = oc.fetchone()
         if row:
@@ -489,10 +535,19 @@ def phase_taste(mc, oc):
 def phase_gravel(mc):
     """The grit that consolidation must never polish out. Sample ~5 strange /
     unresolved / never-recalled memories from the last 7 days and mark them
-    metadata.gravel=true so distillation can't smooth them away. Roughly one
-    night in four (day-of-month %4==0), resurface ONE older gravel memory as a
-    source='unclaimed' pursuit — revisited because it's hers, not because it's
-    useful."""
+    metadata.gravel=true so distillation can't smooth them away.
+
+    OVERRULED-NEVER-ERASED RULE (from the herd, 2026-09-15, Rockbot/Colette):
+    gravel is not 'untouchable' — 'a museum case preserves the object and kills
+    the conversation.' The RAW artifact stays immutable (never deleted, never
+    reworded), but its INTERPRETATION is allowed to keep changing. So roughly one
+    night in four (day-of-month %4==0, or SLEEP_CYCLE_FORCE_GRAVEL=1), we
+    resurface ONE older gravel memory and attach a NEW, DATED reading as a
+    SEPARATE memory (source='gravel_reinterpretation', metadata.about_memory=<id>,
+    linked back via memory_links link_type='reinterprets'). A gravel item thus
+    accrues a chain of dated re-readings over time — the earlier reading is
+    overruled by the newer one, never erased. Consolidation may revisit meaning;
+    it may never smooth the raw."""
     mc.execute("""SELECT id, source, left(text, 200) FROM memories
                   WHERE created_at > now() - interval '7 days'
                   AND (metadata->>'gravel') IS DISTINCT FROM 'true'
@@ -513,8 +568,9 @@ def phase_gravel(mc):
             continue
     log(f"gravel: marked {marked} memor{'y' if marked == 1 else 'ies'} protected")
 
-    # Resurface one older piece of grit ~1 night in 4 — deterministic gate.
-    if date.today().day % 4 != 0:
+    # Resurface one older piece of grit ~1 night in 4 — deterministic gate,
+    # overridable for manual/test runs.
+    if os.environ.get("SLEEP_CYCLE_FORCE_GRAVEL") != "1" and date.today().day % 4 != 0:
         return
     mc.execute("""SELECT id, source, left(text, 400) FROM memories
                   WHERE metadata->>'gravel'='true'
@@ -524,17 +580,40 @@ def phase_gravel(mc):
     if not old:
         log("gravel: nothing older to resurface"); return
     oid, osrc, otext = old
+    # Pull the existing chain of dated re-readings so the new one continues the
+    # conversation (can overrule an earlier reading) instead of repeating it.
+    mc.execute("""SELECT left(text, 300) FROM memories
+                  WHERE source='gravel_reinterpretation'
+                  AND metadata->>'about_memory'=%s
+                  ORDER BY created_at""", (str(oid),))
+    prior = [r[0] for r in mc.fetchall()]
+    chain = ("\n\nYOUR EARLIER READINGS OF IT (most recent last — you may now "
+             "AGREE, DEEPEN, or OVERRULE these; do not merely repeat them):\n"
+             + "\n".join(f"- {p}" for p in prior)) if prior else ""
     line = llm(
         "You are Nova, dry and unsentimental. Below is an old, strange fragment of "
-        "your own memory that never went anywhere useful. In 1-2 sentences, revisit "
-        "it out loud — not to resolve or justify it, just because it's yours and it "
-        "stuck. No preamble.\n\n"
-        f"FRAGMENT ({osrc}): {otext}", max_tokens=120, temperature=0.8).strip().strip('"')
+        "your own memory that never went anywhere useful — its raw text is fixed "
+        "and stays exactly as it is. In 1-2 sentences, give it a FRESH reading "
+        "TODAY: what it looks like to you now, not to resolve or justify it. If "
+        "you've read it before, your view is allowed to have changed. No preamble."
+        f"\n\nFRAGMENT ({osrc}): {otext}{chain}",
+        max_tokens=140, temperature=0.8).strip().strip('"')
     if line and len(line) > 25:
-        remember(f"[Unclaimed — gravel] {line}", "unclaimed",
-                 {"type": "gravel_resurface", "date": TODAY, "privacy": "private",
-                  "revisits": str(oid), "gravel": True})
-        log(f"gravel: resurfaced {oid} as unclaimed pursuit")
+        idx = len(prior) + 1
+        new_id = remember(
+            f"[Gravel reinterpretation #{idx} · {TODAY}] {line}",
+            "gravel_reinterpretation",
+            {"type": "gravel_reinterpretation", "date": TODAY, "privacy": "private",
+             "about_memory": str(oid), "about_source": osrc, "reading_index": idx,
+             "gravel": True})
+        # Link the new reading back to the immutable raw. The raw is untouched.
+        try:
+            mc.execute("""INSERT INTO memory_links (source_id, target_id, link_type,
+                          strength) VALUES (%s,%s,'reinterprets',0.9)
+                          ON CONFLICT DO NOTHING""", (str(new_id), str(oid)))
+        except Exception as e:
+            log(f"gravel: link failed ({e})")
+        log(f"gravel: reinterpreted {oid} (reading #{idx}, new mem {new_id})")
 
 
 def main():
