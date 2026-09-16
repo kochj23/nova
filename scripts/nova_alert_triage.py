@@ -83,6 +83,41 @@ def _recall(q, n=4, source=None):
         return []
 
 
+def _backoff_status(oc, dedup_key):
+    """RULE B helper — dedup backoff. Returns (suppress:bool, reason:str).
+
+    A still-firing NON-hard alert pages once per escalating window then suppresses
+    repeats of the same dedup_key until the window elapses (then it escalates/pages
+    again). Window ladder: 1h → 4h → 24h, driven by how many times this dedup_key has
+    already PAGED in the last 24h. State is read straight from alert_triage_log (the
+    already-persisted decision history), so it is crash-safe and needs no new infra.
+
+    SAFETY: fails OPEN — any read error, or no prior page in-window, returns
+    (False, "") so the caller pages. Hard-critical never reaches here (handled in the
+    hard branch above and exempt from backoff)."""
+    if not dedup_key:
+        return (False, "")
+    try:
+        oc.execute(
+            "SELECT count(*), EXTRACT(EPOCH FROM (now() - max(ts))) "
+            "FROM alert_triage_log WHERE dedup_key=%s AND decision='page' "
+            "AND ts > now() - interval '24 hours'", (dedup_key,))
+        n, elapsed = oc.fetchone()
+    except Exception as e:
+        _log(f"backoff read failed for {dedup_key}: {e} — failing open (page)")
+        return (False, "")
+    if not n:
+        return (False, "")                       # never paged in window → page
+    elapsed = float(elapsed or 0)
+    ladder = [3600, 14400, 86400]                # 1h, 4h, 24h — escalating
+    window = ladder[min(int(n) - 1, len(ladder) - 1)]
+    if elapsed < window:
+        return (True, (f"backoff: paged {int(elapsed // 60)}m ago, next page in "
+                       f"{int((window - elapsed) // 60)}m (page #{int(n)}/24h, "
+                       f"window {window // 3600}h)")[:200])
+    return (False, "")                           # window elapsed → escalate, page
+
+
 def _recent_changes(oc):
     """Recent maintenance/actions — so 'replica down' 5h after a failback reads as
     expected, not novel."""
@@ -146,6 +181,22 @@ def triage(title, body="", level="info", category=None, source=None, dedup_key=N
             decision = "suppress" if verdict in ("duplicate", "learned_normal") else "downgrade"
         else:
             decision = "page"
+
+        # RULE A — info never pages. Info is feed/ambient material (digests, scheduler
+        # heartbeat, overflights, RSS/live-TV). Route it to the feed/digest, never an
+        # actionable page. Existing suppress/downgrade (benign) is left as-is; only a
+        # would-be PAGE is redirected. hard-critical is exempt (handled above, never here).
+        if level == "info" and decision == "page":
+            decision = "downgrade"
+            reason = ("info→feed (RULE A): " + (reason or "info is ambient/feed material"))[:200]
+
+        # RULE B — dedup backoff. A still-firing non-hard alert pages ONCE per escalating
+        # window (1h/4h/24h) then suppresses repeats of the same dedup_key until the
+        # window elapses. Only acts on a would-be PAGE; hard-critical is exempt (above).
+        if decision == "page":
+            _bo, _bo_reason = _backoff_status(oc, dedup_key)
+            if _bo:
+                decision, reason = "suppress", _bo_reason
 
     if similar:
         top = (similar[0].get("text") or "")[:160]
