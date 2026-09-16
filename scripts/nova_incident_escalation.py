@@ -57,6 +57,24 @@ LOOKBACK_DAYS = 7
 # recurrence_key suffixes we must never escalate (our own meta-notifications).
 _META_SUFFIXES = (":incident_recurring", ":incident_escalation")
 
+# ── Re-escalation throttle (the noise fix) ──────────────────────────────────
+# A still-unresolved chronic pattern must NOT re-page every hourly run. Once it
+# has been escalated, the next page is withheld until this much time has elapsed
+# since the last page — the gap grows with each escalation: 1st page is free,
+# then +1h, then +4h, then +24h and daily thereafter. Per-pattern state lives in
+# public.escalation_state (nova_ops), so the backoff is crash-safe and shared by
+# every host that runs this scan.
+BACKOFF_STEPS_HOURS = (1, 4, 24)  # required gap before the 2nd, 3rd, 4th+ page
+# Once an incident is acknowledged (telemetry.incidents.acked_at, or an ack
+# recorded directly on escalation_state), stop re-paging every cycle — drop to at
+# most one quiet daily reminder until it changes state or resolves.
+ACK_REMINDER_HOURS = 24
+# ...UNLESS it materially worsens while acked (page count climbs this much since
+# the last page): a stale ack must not silence a problem that is blowing up.
+ACK_WORSEN_DELTA = 10
+# Name of the crash-safe per-pattern throttle table (central, in nova_ops).
+STATE_TABLE = "public.escalation_state"
+
 
 def _connect():
     try:
@@ -140,6 +158,67 @@ def _reason(row: dict) -> str:
     return "; ".join(bits)
 
 
+def _required_gap_hours(escalate_count: int) -> int:
+    """Hours that must pass since the last page before the next one is allowed.
+    escalate_count is how many times we have ALREADY paged this pattern (>=1)."""
+    idx = min(max(escalate_count, 1), len(BACKOFF_STEPS_HOURS)) - 1
+    return BACKOFF_STEPS_HOURS[idx]
+
+
+def escalation_decision(state: dict | None, hit: dict,
+                        now: datetime.datetime | None = None) -> dict:
+    """Decide whether an ALREADY-classified chronic pattern may page right now.
+
+    This is the noise throttle: classify() still decides WHAT is a chronic
+    unresolved pattern; this only decides how OFTEN the same pattern re-pages.
+    Pure (no DB, no notify) so it is trivially testable.
+
+      state : the pattern's row from escalation_state, or None if never paged.
+      hit   : one classify() row (may carry 'last_acked_at' from the DB).
+
+    Returns dict(emit: bool, kind: str, new_count: int, clear_ack: bool):
+      kind ∈ {first, backoff-due, backoff-hold,
+              ack-daily-reminder, ack-hold, worsened-despite-ack}
+    """
+    if now is None:
+        now = datetime.datetime.now(datetime.timezone.utc)
+    pages = int(hit.get("pages") or 0)
+
+    # Never paged before -> this is a genuinely new escalation: always emit.
+    if not state:
+        return {"emit": True, "kind": "first", "new_count": 1, "clear_ack": False}
+
+    count = int(state.get("escalate_count") or 1)
+    last_ts = state.get("last_escalated_ts")
+    last_pages = int(state.get("last_pages") or 0)
+    first_ts = state.get("first_escalated_ts")
+
+    # Acknowledged?  Either an ack recorded on our own state row, OR the
+    # underlying incident was acked (telemetry.incidents.acked_at) at/after we
+    # first escalated it — i.e. on-call has seen and owned this escalation.
+    inc_acked_at = hit.get("last_acked_at")
+    acked = bool(state.get("acked")) or (
+        inc_acked_at is not None and first_ts is not None and inc_acked_at >= first_ts)
+
+    if acked:
+        # A stale ack must not muzzle a problem that is materially worsening.
+        if pages - last_pages >= ACK_WORSEN_DELTA:
+            return {"emit": True, "kind": "worsened-despite-ack",
+                    "new_count": count + 1, "clear_ack": True}
+        # Otherwise: at most one quiet daily reminder while acknowledged.
+        if last_ts is None or (now - last_ts) >= datetime.timedelta(hours=ACK_REMINDER_HOURS):
+            return {"emit": True, "kind": "ack-daily-reminder",
+                    "new_count": count, "clear_ack": False}
+        return {"emit": False, "kind": "ack-hold", "new_count": count, "clear_ack": False}
+
+    # Not acked -> escalating backoff since the last page.
+    gap = datetime.timedelta(hours=_required_gap_hours(count))
+    if last_ts is None or (now - last_ts) >= gap:
+        return {"emit": True, "kind": "backoff-due",
+                "new_count": count + 1, "clear_ack": False}
+    return {"emit": False, "kind": "backoff-hold", "new_count": count, "clear_ack": False}
+
+
 # ── DB read (read-only) ─────────────────────────────────────────────────────
 
 def find_recurring(conn, lookback_days: int = LOOKBACK_DAYS) -> list[dict]:
@@ -157,6 +236,7 @@ def find_recurring(conn, lookback_days: int = LOOKBACK_DAYS) -> list[dict]:
                        count(DISTINCT date(opened_at))            AS distinct_days,
                        min(opened_at)                             AS first_open,
                        max(opened_at)                             AS last_open,
+                       max(acked_at)                              AS last_acked_at,
                        max(severity)                              AS severity,
                        (array_agg(host ORDER BY opened_at DESC))[1] AS host
                 FROM telemetry.incidents
@@ -173,38 +253,170 @@ def find_recurring(conn, lookback_days: int = LOOKBACK_DAYS) -> list[dict]:
         return []
 
 
+# ── Backoff state (the only thing this module ever WRITES) ──────────────────
+# public.escalation_state records, per recurrence_key, when we last paged and how
+# many times, plus an optional ack. It is the ONLY write this module makes; it
+# never touches telemetry.incidents. Central in nova_ops so backoff/ack survive a
+# crash and are shared by every host running the scan.
+
+def _ensure_state_table(conn) -> None:
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                CREATE TABLE IF NOT EXISTS {STATE_TABLE} (
+                    recurrence_key     text PRIMARY KEY,
+                    first_escalated_ts timestamptz NOT NULL DEFAULT now(),
+                    last_escalated_ts  timestamptz NOT NULL DEFAULT now(),
+                    escalate_count     integer     NOT NULL DEFAULT 1,
+                    last_pages         integer     NOT NULL DEFAULT 0,
+                    acked              boolean     NOT NULL DEFAULT false,
+                    acked_at           timestamptz,
+                    acked_by           text,
+                    updated_at         timestamptz NOT NULL DEFAULT now()
+                )""")
+        conn.commit()
+    except Exception as e:
+        conn.rollback()
+        print(f"incident_escalation: ensure_state_table failed: {e}", file=sys.stderr)
+
+
+def _load_states(conn, keys) -> dict:
+    """recurrence_key -> state row. Tolerant of a missing table (dry-run)."""
+    keys = list(keys)
+    if not keys:
+        return {}
+    try:
+        import psycopg2.extras
+        with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
+            cur.execute(
+                f"SELECT * FROM {STATE_TABLE} WHERE recurrence_key = ANY(%s)", (keys,))
+            return {r["recurrence_key"]: dict(r) for r in cur.fetchall()}
+    except Exception as e:
+        conn.rollback()
+        print(f"incident_escalation: load_states failed: {e}", file=sys.stderr)
+        return {}
+
+
+def _record_escalation(conn, key: str, now, new_count: int, pages: int,
+                       clear_ack: bool) -> None:
+    """Upsert the pattern's throttle row after we page it. Clears ack when the
+    page fired because the problem worsened past a stale ack."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""INSERT INTO {STATE_TABLE}
+                        (recurrence_key, first_escalated_ts, last_escalated_ts,
+                         escalate_count, last_pages, updated_at)
+                    VALUES (%(k)s, %(now)s, %(now)s, %(cnt)s, %(pages)s, now())
+                    ON CONFLICT (recurrence_key) DO UPDATE SET
+                        last_escalated_ts = EXCLUDED.last_escalated_ts,
+                        escalate_count    = %(cnt)s,
+                        last_pages        = EXCLUDED.last_pages,
+                        acked    = CASE WHEN %(clr)s THEN false
+                                        ELSE {STATE_TABLE}.acked END,
+                        acked_at = CASE WHEN %(clr)s THEN NULL
+                                        ELSE {STATE_TABLE}.acked_at END,
+                        acked_by = CASE WHEN %(clr)s THEN NULL
+                                        ELSE {STATE_TABLE}.acked_by END,
+                        updated_at = now()""",
+                {"k": key, "now": now, "cnt": new_count, "pages": pages,
+                 "clr": clear_ack})
+    except Exception as e:
+        conn.rollback()
+        print(f"incident_escalation: record_escalation failed: {e}", file=sys.stderr)
+
+
+def _forget_absent(conn, present_keys) -> None:
+    """Drop throttle rows for patterns that no longer cross the escalation bar —
+    they resolved / went quiet, so a future recurrence starts fresh (and any old
+    ack is cleared). This is how ack-hold ends 'when it changes state or resolves'."""
+    try:
+        present_keys = list(present_keys)
+        with conn.cursor() as cur:
+            if present_keys:
+                cur.execute(
+                    f"DELETE FROM {STATE_TABLE} WHERE NOT (recurrence_key = ANY(%s))",
+                    (present_keys,))
+            else:
+                cur.execute(f"DELETE FROM {STATE_TABLE}")
+    except Exception as e:
+        conn.rollback()
+        print(f"incident_escalation: forget_absent failed: {e}", file=sys.stderr)
+
+
+def _emit_escalation(row: dict, decision: dict, now) -> None:
+    """Fire ONE critical page for a chronic pattern, phrased for the decision kind."""
+    key = row["recurrence_key"]
+    pages = int(row.get("pages") or 0)
+    host = row.get("host")
+    kind = decision["kind"]
+    on = f" on {host}" if host else ""
+    if kind == "worsened-despite-ack":
+        title = f"WORSENING x{pages} (ack'd but still growing): {key}"
+        lead = (f"Acknowledged recurring incident '{key}'{on} has WORSENED since "
+                f"it was ack'd ({_reason(row)}). The ack is stale — re-escalating.")
+    elif kind == "ack-daily-reminder":
+        title = f"STILL UNRESOLVED x{pages} (ack'd, daily reminder): {key}"
+        lead = (f"Acknowledged recurring incident '{key}'{on} is still unresolved "
+                f"({_reason(row)}). Daily reminder until it is permanently fixed "
+                f"or resolves — not re-paging every cycle.")
+    else:  # first / backoff-due
+        title = f"UNRESOLVED x{pages}: {key} needs a PERMANENT fix"
+        lead = (f"Recurring incident '{key}'{on} has {_reason(row)}. This is not a "
+                f"one-off — it keeps coming back and the current response "
+                f"(ack/auto-close) is not fixing the root cause. Escalating: needs "
+                f"a permanent fix, not another snoozed page.")
+    today = now.date().isoformat()
+    _notify(
+        title,
+        body=lead,
+        level="critical",
+        category="incident_escalation",
+        source="nova_incident_escalation.py",
+        # Distinct per pattern, per day, per escalation-count so each backoff step
+        # (and each daily reminder) is its own page — never the identical snoozable
+        # one, and never the every-cycle flood the throttle now prevents.
+        dedup_key=f"escalation-{key}-{today}-{decision['new_count']}",
+        meta={"recurrence_key": key, "pages": pages,
+              "resolved": int(row.get("resolved") or 0),
+              "acked": int(row.get("acked") or 0),
+              "open_now": int(row.get("open_now") or 0),
+              "distinct_days": int(row.get("distinct_days") or 0),
+              "escalation_kind": kind,
+              "escalation_count": decision["new_count"]},
+    )
+
+
 def scan(conn, emit: bool = True, lookback_days: int = LOOKBACK_DAYS) -> list[dict]:
-    """Find chronic-unresolved keys and (optionally) emit one critical page each.
-    Returns the list of escalated rows. Read-only against the DB either way."""
+    """Find chronic-unresolved patterns and page each one on a BACKOFF, not every
+    run. Detection (classify) is unchanged; this only throttles REPEAT pages of
+    the same still-open pattern and honours acks. Returns every classified hit,
+    each annotated with '_decision' and '_emitted'. The only DB write is to
+    escalation_state (never to telemetry.incidents)."""
     rows = find_recurring(conn, lookback_days)
     hits = classify(rows)
-    if not emit:
-        return hits
-    today = datetime.date.today().isoformat()
+    keys = [h["recurrence_key"] for h in hits]
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    if emit:
+        _ensure_state_table(conn)
+    states = _load_states(conn, keys)
+
     for row in hits:
-        key = row["recurrence_key"]
-        pages = int(row.get("pages") or 0)
-        host = row.get("host")
-        _notify(
-            f"UNRESOLVED x{pages}: {key} needs a PERMANENT fix",
-            body=(f"Recurring incident '{key}'"
-                  + (f" on {host}" if host else "")
-                  + f" has {_reason(row)}. This is not a one-off — it keeps "
-                    f"coming back and the current response (ack/auto-close) is "
-                    f"not fixing the root cause. Escalating: needs a permanent "
-                    f"fix, not another snoozed page."),
-            level="critical",
-            category="incident_escalation",
-            source="nova_incident_escalation.py",
-            # distinct per key per day; the climbing count in the title keeps it
-            # from ever being the identical snoozable page.
-            dedup_key=f"escalation-{key}-{today}",
-            meta={"recurrence_key": key, "pages": pages,
-                  "resolved": int(row.get("resolved") or 0),
-                  "acked": int(row.get("acked") or 0),
-                  "open_now": int(row.get("open_now") or 0),
-                  "distinct_days": int(row.get("distinct_days") or 0)},
-        )
+        decision = escalation_decision(states.get(row["recurrence_key"]), row, now)
+        row["_decision"] = decision
+        row["_emitted"] = bool(decision["emit"])
+        if emit and decision["emit"]:
+            _emit_escalation(row, decision, now)
+            _record_escalation(conn, row["recurrence_key"], now,
+                               decision["new_count"], int(row.get("pages") or 0),
+                               clear_ack=decision["clear_ack"])
+
+    if emit:
+        # Patterns that no longer cross the bar have resolved/gone quiet: forget
+        # them so a future recurrence starts fresh and any stale ack is cleared.
+        _forget_absent(conn, keys)
+        conn.commit()
     return hits
 
 
@@ -287,10 +499,17 @@ def main():
             sys.exit(0)
         hits = scan(conn, emit=a.scan and not a.dry_run, lookback_days=a.days)
         if hits:
-            verb = "WOULD escalate" if (a.dry_run or not a.scan) else "escalated"
-            print(f"{verb} {len(hits)} chronic-unresolved incident pattern(s):")
+            live = a.scan and not a.dry_run
+            paged = [h for h in hits if h.get("_emitted")]
+            held = [h for h in hits if not h.get("_emitted")]
+            verb = "PAGED" if live else "WOULD page"
+            print(f"{len(hits)} chronic-unresolved pattern(s): "
+                  f"{verb} {len(paged)}, throttled {len(held)}")
             for h in hits:
-                print(f"  x{h['pages']}  {h['recurrence_key']}  ({_reason(h)})")
+                d = h.get("_decision") or {}
+                mark = "PAGE" if h.get("_emitted") else "hold"
+                print(f"  [{mark}] x{h['pages']:<4} {h['recurrence_key']:<40} "
+                      f"{d.get('kind','?'):<20} ({_reason(h)})")
         else:
             print("no chronic-unresolved incident patterns crossed the escalation bar")
         sys.exit(0)
