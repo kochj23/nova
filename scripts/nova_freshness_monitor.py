@@ -65,6 +65,29 @@ INTERVAL_S = 900                        # matches the launchd StartInterval
 CONNECT_ATTEMPTS = 3
 CONNECT_BACKOFF_S = 2
 
+# ── Transition-based alerting (noise control) ────────────────────────────────
+# The monitor runs every 15 min (launchd StartInterval 900). Before this change it
+# re-notified EVERY breaching stream on EVERY pass, so a single chronically-dead
+# stream produced ~96 alerts/day; the 8 currently-dead streams alone generated ~768
+# freshness alerts/24h — 26% of ALL alert traffic. That is pure noise: the operator
+# already knows the stream is dead after the first page.
+#
+# We now alert on STATE TRANSITIONS, not on every observation, persisting per-stream
+# state in nova_ops.public.freshness_state (crash-safe: state survives restarts):
+#   * fresh -> stale        : ONE alert at the stream's real severity (the news).
+#   * stale (still)         : re-escalate at most once per RE_ESCALATE_S (daily),
+#                             as a low-severity "still stale" reminder — never hourly.
+#   * stale -> fresh        : ONE low-severity "recovered" note, then reset so a
+#                             future staleness alerts again.
+#   * first-ever sight stale: initialise state SILENTLY as already-known-dead (no
+#                             page) — this is how long-dead producers like
+#                             telemetry.activity (dead since 2026-09-12) stop paging
+#                             hourly; they surface as a single daily reminder 24h later
+#                             via the re-escalation path, not a flood.
+STATE_SCHEMA = "public"                 # nova_ops DB, public schema
+STATE_TABLE = "freshness_state"
+RE_ESCALATE_S = 24 * 3600               # while stale, re-remind at most once per 24h
+
 # Default SLA for any auto-discovered telemetry.* table (24h): generous on purpose so
 # daily/event-driven/sparse tables don't cry wolf, while a truly dead poller still trips.
 DEFAULT_SLA_S = 24 * 3600
@@ -278,6 +301,111 @@ def log_action(conn, description: str, outcome: str) -> None:
         print(f"[freshness] claude_actions log failed: {e}", flush=True)
 
 
+def ensure_state_table(conn) -> bool:
+    """Idempotently create the per-stream state store. Never raises."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""CREATE TABLE IF NOT EXISTS {STATE_SCHEMA}.{STATE_TABLE} (
+                        stream_name     text PRIMARY KEY,
+                        state           text NOT NULL DEFAULT 'fresh',   -- 'fresh' | 'stale'
+                        problem_kind    text,                            -- 'stale' | 'nodata' | 'error'
+                        first_stale_ts  timestamptz,                     -- when this episode began
+                        last_alerted_ts timestamptz,                     -- last page/reminder emitted
+                        last_alert_num  integer NOT NULL DEFAULT 0,      -- escalations this episode
+                        last_age_s      double precision,
+                        last_reason     text,
+                        last_checked_ts timestamptz NOT NULL DEFAULT now(),
+                        updated_at      timestamptz NOT NULL DEFAULT now()
+                    )""")
+        conn.commit()
+        return True
+    except Exception as e:                          # pragma: no cover - defensive
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[freshness] state table ensure failed (alerting will fall back to "
+              f"per-pass, but continuing): {e}", flush=True)
+        return False
+
+
+def load_states(conn) -> dict:
+    """Load every stored per-stream state row into a dict keyed by stream_name."""
+    out: dict = {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""SELECT stream_name, state, problem_kind, first_stale_ts,
+                           last_alerted_ts, last_alert_num
+                    FROM {STATE_SCHEMA}.{STATE_TABLE}""")
+            for name, state, kind, first_ts, last_ts, num in cur.fetchall():
+                out[name] = {"state": state, "problem_kind": kind,
+                             "first_stale_ts": first_ts, "last_alerted_ts": last_ts,
+                             "last_alert_num": num or 0}
+    except Exception as e:                          # pragma: no cover - defensive
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[freshness] state load failed (treating all as unknown): {e}", flush=True)
+    return out
+
+
+def decide_action(prior: Optional[dict], result: Result, now, since_alert_s):
+    """Pure transition logic. Returns (action, problem_kind).
+
+    action ∈ {none, init_silent, transition, reescalate, suppress, recovered}.
+    `since_alert_s` = seconds since last alert for this episode (None if never/unknown).
+    """
+    problem = bool(result.breach or result.error)
+    kind = ("error" if result.error
+            else "nodata" if result.age_s is None
+            else "stale") if problem else None
+
+    if prior is None:                       # never seen before
+        # First-ever sight of an already-broken stream = KNOWN-DEAD baseline: record
+        # it, do NOT page. (This is what tames long-dead producers like
+        # telemetry.activity.) A daily reminder follows via the re-escalation path.
+        return ("init_silent" if problem else "none"), kind
+
+    if prior["state"] != "stale":           # was fresh / healthy
+        return ("transition" if problem else "none"), kind
+
+    # was stale/problem
+    if problem:
+        if since_alert_s is None or since_alert_s >= RE_ESCALATE_S:
+            return "reescalate", kind
+        return "suppress", kind
+    return "recovered", None                # stale -> fresh
+
+
+def _upsert_state(conn, name, state, kind, first_ts, last_ts, num, age_s, reason):
+    """Crash-safe state write, committed immediately so a mid-pass crash can't double-page."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""INSERT INTO {STATE_SCHEMA}.{STATE_TABLE}
+                        (stream_name, state, problem_kind, first_stale_ts, last_alerted_ts,
+                         last_alert_num, last_age_s, last_reason, last_checked_ts, updated_at)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s, now(), now())
+                    ON CONFLICT (stream_name) DO UPDATE SET
+                        state=EXCLUDED.state, problem_kind=EXCLUDED.problem_kind,
+                        first_stale_ts=EXCLUDED.first_stale_ts,
+                        last_alerted_ts=EXCLUDED.last_alerted_ts,
+                        last_alert_num=EXCLUDED.last_alert_num,
+                        last_age_s=EXCLUDED.last_age_s, last_reason=EXCLUDED.last_reason,
+                        last_checked_ts=now(), updated_at=now()""",
+                (name, state, kind, first_ts, last_ts, num, age_s, reason))
+        conn.commit()
+    except Exception as e:                          # pragma: no cover - defensive
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[freshness] state upsert failed for {name}: {e}", flush=True)
+
+
 def run_once(conn, notify_fn: Optional[Callable] = None, dry_run: bool = False) -> dict:
     """One full pass over every stream. Returns a summary dict; never raises."""
     notify_fn = notify_fn or _notify
@@ -287,52 +415,111 @@ def run_once(conn, notify_fn: Optional[Callable] = None, dry_run: bool = False) 
     breaches = [r for r in results if r.breach]
     errors = [r for r in results if r.error]
 
-    # Notify per breaching / erroring stream (deduped per stream at the notifier).
-    if not dry_run:
-        for r in breaches:
-            if r.error:
-                continue  # errored streams are reported below, not double-notified here
-            try:
-                notify_fn(
-                    f"Stale data stream: {r.stream.name}",
-                    body=(f"{r.stream.name} — {r.reason}. "
-                          f"The writer for this stream has likely stopped. {r.stream.note}"),
-                    level=r.stream.level,
-                    category="freshness",
-                    source="nova_freshness_monitor.py",
-                    dedup_key=r.stream.dedup_key(),
-                    meta={"stream": r.stream.name, "age_s": r.age_s,
-                          "sla_s": r.stream.sla_s, "kind": r.stream.kind},
-                )
-            except Exception as e:                  # notifier must never crash us
-                print(f"[freshness] notify failed for {r.stream.name}: {e}", flush=True)
-        for r in errors:
-            try:
-                notify_fn(
-                    f"Freshness check errored: {r.stream.name}",
-                    body=f"Could not evaluate {r.stream.name}: {r.error}",
-                    level="warning", category="freshness",
-                    source="nova_freshness_monitor.py",
-                    dedup_key=f"freshness:error:{r.stream.name}",
-                )
-            except Exception:
-                pass
+    # Transition-based alerting. Ensure the state store exists (idempotent), load it,
+    # and take one authoritative `now` from PG so the escalation clock is immune to any
+    # host clock skew. In dry-run we read state to SHOW decisions but never write/notify.
+    have_state = ensure_state_table(conn)
+    states = load_states(conn) if have_state else {}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT now()")
+            now = cur.fetchone()[0]
+    except Exception:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc)
 
+    actions: dict = {}   # stream_name -> action string (for the report)
+    for r in results:
+        name = r.stream.name
+        prior = states.get(name)
+        since_alert_s = None
+        if prior and prior.get("last_alerted_ts") is not None:
+            since_alert_s = (now - prior["last_alerted_ts"]).total_seconds()
+        action, kind = decide_action(prior, r, now, since_alert_s)
+        actions[name] = action
+
+        if dry_run or not have_state:
+            continue
+
+        first_ts = (prior["first_stale_ts"] if prior and prior.get("first_stale_ts")
+                    else now)
+        num = (prior["last_alert_num"] if prior else 0)
+
+        if action == "none":
+            _upsert_state(conn, name, "fresh", None, None, None, 0, r.age_s, r.reason if r.breach else "ok")
+            continue
+        if action == "suppress":
+            # stay stale, keep episode fields, just refresh observed age/checked-at
+            _upsert_state(conn, name, "stale", kind, first_ts,
+                          prior["last_alerted_ts"], num, r.age_s, r.reason)
+            continue
+        if action == "init_silent":
+            # known-dead baseline: record as stale, start the daily clock at `now`,
+            # emit NOTHING. (num=0 so the first reminder lands ~RE_ESCALATE_S later.)
+            _upsert_state(conn, name, "stale", kind, now, now, 0, r.age_s, r.reason)
+            continue
+
+        # ---- actions that emit a notification ----
+        if action == "transition":
+            new_num = 1
+            _upsert_state(conn, name, "stale", kind, now, now, new_num, r.age_s, r.reason)
+            title = (f"Freshness check errored: {name}" if kind == "error"
+                     else f"Stale data stream: {name}")
+            body = (f"Could not evaluate {name}: {r.error}" if kind == "error"
+                    else (f"{name} — {r.reason}. The writer for this stream has likely "
+                          f"stopped. {r.stream.note}"))
+            level = r.stream.level
+            dedup = r.stream.dedup_key()
+        elif action == "reescalate":
+            new_num = num + 1
+            _upsert_state(conn, name, "stale", kind, first_ts, now, new_num, r.age_s, r.reason)
+            still = _fmt_age((now - first_ts).total_seconds())
+            title = f"Still stale ({still}): {name}"
+            body = (f"{name} is STILL {kind} after {still} ({r.reason}). "
+                    f"Reminder #{new_num}; next in ~24h until it recovers. {r.stream.note}")
+            level = "info"                  # ongoing reminder — low severity, never a page
+            dedup = f"freshness:{name}:reesc:{new_num}"
+        elif action == "recovered":
+            _upsert_state(conn, name, "fresh", None, None, None, 0, r.age_s, "recovered")
+            title = f"Recovered: {name}"
+            body = f"{name} is fresh again (age {_fmt_age(r.age_s)}). Freshness state reset."
+            level = "info"
+            dedup = f"freshness:recovered:{name}:{int(time.time())}"
+        else:
+            continue
+
+        try:
+            notify_fn(title, body=body, level=level, category="freshness",
+                      source="nova_freshness_monitor.py", dedup_key=dedup,
+                      meta={"stream": name, "age_s": r.age_s, "sla_s": r.stream.sla_s,
+                            "kind": r.stream.kind, "action": action})
+        except Exception as e:              # notifier must never crash us
+            print(f"[freshness] notify failed for {name}: {e}", flush=True)
+
+    emitted = [n for n, a in actions.items()
+               if a in ("transition", "reescalate", "recovered")]
     # Concise report to stdout (captured into the launchd log).
     print(f"[freshness] {len(results)} streams checked | "
-          f"{len(breaches)} breach(es) | {len(errors)} error(s)"
-          f"{' | DRY-RUN (no notifications)' if dry_run else ''}", flush=True)
+          f"{len(breaches)} breach(es) | {len(errors)} error(s) | "
+          f"{len(emitted)} alert(s) emitted"
+          f"{' | DRY-RUN (no notifications/state writes)' if dry_run else ''}", flush=True)
     for r in sorted(results, key=lambda x: (not x.breach, x.stream.name)):
         flag = "BREACH " if r.breach else "  ok   "
         src = "disc" if r.stream.discovered else "expl"
+        act = actions.get(r.stream.name, "?")
         print(f"  {flag}[{src}] {r.stream.name:<42} age={_fmt_age(r.age_s):>7} "
-              f"sla={_fmt_age(r.stream.sla_s):>7}"
+              f"sla={_fmt_age(r.stream.sla_s):>7} act={act:<11}"
               + (f"  <- {r.reason}" if r.breach else ""), flush=True)
 
     return {
         "checked": len(results),
         "breaches": [r.stream.name for r in breaches],
         "errors": [r.stream.name for r in errors],
+        "emitted": emitted,
         "results": results,
     }
 
