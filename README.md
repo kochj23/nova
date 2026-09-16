@@ -15,7 +15,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Metric | Value |
 |--------|-------|
 | Scripts | 537 Python/Shell (`nova_*` namespace) |
-| Fleet | 10 machines — 5 Linux (nova-core .2/.86/.88/.10/.250) + 5 Macs (.6 Studio, **.251 mini**, .7 tv-mini, .252 nova-core6). Addressed **by DNS name**, not IP. |
+| Fleet | 9 compute nodes — 4 Linux (.2 nova-core · .86 nova-core2 · .250 nova-core4 · .10 nova-core5) + 5 Macs (.6 Studio M3 Ultra · .251 mini M4 Pro · .7 tv-mini M2 Pro · .252 nova-core6 M1 · .190 mini M4 Pro) — plus NAS, UniFi fabric, LoRa/SDR radios & sensors. Full specs in [Hardware](#hardware). Addressed **by DNS name**, not IP. |
 | Inference pool | 9/9 backends healthy — Ollama across .6/**.251**/.7/.5/.86/.10/.252, MLX behind an nginx LB |
 | Storage failover | `nova_storage_failover.py` — 2-min timer, reads real content (not the mount table), fails over Synology→UNAS and back, refreshes scripts from GitHub |
 | Resilience node | nova-core4 (.250) — warm Gateway standby + cold standbys, local code, host-sealed secrets |
@@ -98,7 +98,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Aqara FP2 | 4x mmWave presence sensors (office, bedroom, living room, patio) — awaiting HACS bridge |
 | SNMP fleet | 14 devices (Mac Studio, nova-core, Mac Mini, NUK, UDM Pro, Synology, 5 switches, 3 APs) |
 | Plex | NFS media from Synology (6 libraries) |
-| Fleet hosts | Mac Studio (.6 · Nova core compute), **nova-core (.2 · consolidated infra)**, Mac Mini (.190), NUK (.10), Synology NAS (.11), UDM Pro (.1) — *TV-Movies (.7) evacuated 2026-06-20* |
+| Fleet hosts | **.6** Mac Studio M3 Ultra (control plane) · **.2** nova-core Beelink GTi (PG primary, consolidated infra) · **.251/.7/.252/.190** Mac minis · **.86/.250/.10** Linux nodes · Synology (.11) · UNAS Pro 8 (.69) · UDM Pro (.1) · UniFi Protect NVR (.9). Full specs in [Hardware](#hardware). |
 
 ---
 
@@ -1958,18 +1958,78 @@ graph LR
 
 ## Hardware
 
+The full environment — compute, storage, network, radio, sensors, and the agent layer. Compute specs below are live-verified (`system_profiler` / `lscpu`, 2026-09-15).
+
+### Compute — Apple Silicon (inference + macOS-bound services)
+
+| Host | Machine | Chip | Cores | RAM | macOS | Role |
+|------|---------|------|-------|-----|-------|------|
+| **.6** mac-studio *(Office-M4-2)* | Mac Studio (Mac15,14) | **M3 Ultra** | 32 CPU (24P+8E), 80 GPU | **512 GB** | 26.6.2 ✅ | **Control plane** — ~95 launchd jobs, Ollama+MLX, Home Assistant, gateway |
+| **.251** mac-mini | Mac mini (Mac16,11) | **M4 Pro** | 14 (10P+4E) | 64 GB | 26.5.2 ⚠️ | Idle-GPU inference (unclaimed-time + organ fleet) |
+| **.7** tv-movies-mini | Mac mini (Mac14,12) | **M2 Pro** | 12 (8P+4E) | 32 GB | 26.6 ⚠️ | Media/iTunes + light inference + PG standby |
+| **.252** nova-core6 | Mac mini (Macmini9,1) | **M1** | 8 (4P+4E) | 16 GB | 15.7.8 ⚠️ | Failover inference node |
+| **.190** mac-mini | Mac mini | M4 Pro | — | — | *(offline)* | GPU inference (qwen3:30b) — DHCP node, currently down |
+
+⚠️ = unpatched for CVE-2026-65400 (Screen Sharing pre-auth RCE); Screen Sharing is off on all, so surface is closed — patch to 26.6.1+/15.7.9 recommended.
+
+### Compute — x86 (Linux, PostgreSQL + services)
+
+| Host | Machine | CPU | Cores | RAM | OS | Role |
+|------|---------|-----|-------|-----|-----|------|
+| **.2** nova-core | Beelink GTi | Intel Core Ultra 9 285H | 16 | 61 GB | Ubuntu 26.04.1 LTS | **Consolidated infra** — PG **primary**, memory server, scheduler-core, Plex, Wazuh, Frigate |
+| **.86** nova-core2 | Beelink SER | AMD Ryzen AI 7 350 (Radeon 860M) | 16 | 26 GB | Ubuntu 26.04.1 LTS | Inference + services |
+| **.250** nova-core4 | Intel Mac mini (Macmini8,1) | Intel i5-8500B | 6 | 31 GB | Ubuntu 26.04.1 LTS | Resilience node — warm gateway standby |
+| **.10** nova-core5 *(NUK)* | Beelink SEi | Intel i5-8279U | 8 | 15 GB | Linux Mint 20.3 | PG streaming standby |
+
+### Storage
+
 | Component | Spec | Role |
 |-----------|------|------|
-| Mac Studio M3 Ultra | 512GB unified memory, 32-core CPU, 80-core GPU | Inference + macOS-bound services |
-| Main SSD | 926GB APFS | OS, binaries, cache |
-| `/Volumes/Data` | 3.6TB | AI models, Xcode, Nova workspace, binaries |
-| `/Volumes/MoreData` | 3.6TB | PostgreSQL data (27GB), MLX models |
-| Synology RS1221+ | RAID, 192.168.1.11, switch port 7 | NAS: video, Plex library, `/nova` share |
-| Plex Media Server | nova-core, 192.168.1.2:32400 | Moved off .86 2026-07; media via NAS bind mounts |
-| UNAS Pro 8 | 192.168.1.69, 51TB | Secondary storage + `/nova` failover target |
-| HDHomeRun QUATRO | 224 OTA channels, 4 tuners, 192.168.1.89 | Live TV + DVR |
-| 15 UniFi Protect cameras | Face recognition, 5-layer event filtering | Security |
-| UniFi Dream Machine | 192.168.1.1 | Network |
+| Synology RS1221+ | RAID, .11 | NAS — video, Plex library, `/nova` share |
+| UNAS Pro 8 | .69, 51 TB | Secondary storage + `/nova` failover target + backup vault |
+| Mac Studio SSD + `/Volumes/Data` + `/Volumes/MoreData` | 926 GB + 3.6 TB + 3.6 TB | OS/binaries · AI models/Xcode/workspace · PG data + MLX models |
+
+### Network — UniFi / Ubiquiti
+
+| Component | Address | Role |
+|-----------|---------|------|
+| UniFi Dream Machine Pro | .1 | Router / gateway / IDS |
+| UniFi switch + AP fabric | SNMP-polled | ~5 switches + ~3 APs (part of the 14-device SNMP fleet) |
+| UniFi Protect NVR | .9 (RTSPS :7441) | **~24 UniFi Protect cameras** → Frigate (.2:8971) + local qwen3-vl vision (`nova_camera_look.py`), face recognition, 5-layer event filtering |
+| Pi-hole DNS | on .2 | LAN DNS (lts01-pi decommissioned) |
+
+### Radio / RF
+
+| Component | Role |
+|-----------|------|
+| **Meshtastic LoRa** (Heltec / LILYGO T-Beam, USB serial `/dev/cu.usbmodem*`) | Out-of-band alerting — survives NAS/DB/gateway/DNS/internet all being down |
+| **SDR scanners** (RTL-SDR dongles via `rtl_tcp` / SoapySDR) | Six-tuner SIGINT — public-safety scanner audio, `rtl_433` sensors, ADS-B flight tracking, WiFi/BLE presence |
+| HDHomeRun QUATRO | .89 — 4-tuner OTA ATSC, 224 channels, live TV + DVR |
+
+### Smart Home & Sensors
+
+| Component | Detail |
+|-----------|--------|
+| Aqara FP2 mmWave presence | ×4 (office, bedroom, living room, patio) |
+| Zigbee | SLZB coordinator (.23) + Zigbee2MQTT + Mosquitto (:1883); ~40 room-named metering plugs → `telemetry.energy` |
+| Philips Hue (.195), Lutron Caséta, Z-Wave, Eve HomeKit energy strips | Lighting + power metering |
+| Ambient Weather (.33) + WH31 probes + rack/patio/outdoor climate probes | Environmental telemetry |
+| Bambu 3D printers | X1C · P1 (.40) · P2 (.166) — `nova_bambu_watch.py` |
+
+### Power
+
+| Component | Role |
+|-----------|------|
+| Rack UPS (USB → Mac Studio) | `nova_ups_shutdown.py` powers the fleet down in dependency order at 35% battery |
+
+### The Agent Layer
+
+Not hardware, but part of the system that runs *on* it:
+
+| Agent | What it is |
+|-------|-----------|
+| **Nova** (she/her) | The resident AI — runs on the fleet's own inference (Ollama/MLX across the nodes above), PostgreSQL-backed memory + the 13-organ interior; reachable via Slack/Discord/Signal/Web/Claude Code. |
+| **Claude Code** (Opus 4.8) | The external engineer — operates on the fleet over SSH via the Claude Code CLI and a PG-backed MCP bridge (`claude_instructions`, `claude_memory_*`, `slack_history`). The hands that build and maintain Nova; not resident on the hardware. |
 
 ---
 
