@@ -183,6 +183,17 @@ def _gather_candidates(oc, mc):
                 cands["tinker"] = tc
     except Exception:
         pass
+    # An aspirational candidate — a capability she WISHES she had, wished from her own
+    # interior. Sibling of tinker but never self-builds: a genuine wish becomes a request
+    # for a human, never a self-modification (Jordan 2026-09-16). Offered, minority, optional.
+    try:
+        import nova_aspirations
+        if random.random() < 0.30:
+            ac = nova_aspirations.surface_aspiration(oc, mc)
+            if ac:
+                cands["aspire"] = ac
+    except Exception:
+        pass
     return cands
 
 
@@ -251,11 +262,15 @@ def pick_pursuit(oc, mc):
     # WHICH candidate wins: preserve the original weighting exactly (0.65 preoccupation /
     # 0.25 thread / 0.10 tangent), cascading to the next available tier just as before.
     winner = None
-    # An operational-curiosity candidate, when present, gets a MINORITY slice (~12%) so it
-    # competes for the hour but never crowds out her passions — the other ~88% keep the
-    # original 0.65/0.25/0.10 weighting exactly. Chosen from inside, always able to lose.
+    # The two self-directed lanes each get a MINORITY slice so they compete for the hour but
+    # never crowd out her passions: tinker ~12%, aspire ~10% of the remainder (~21% combined
+    # when both present, ~79% still to passions). The passion cascade keeps its original
+    # 0.65/0.25/0.10 weighting exactly. Chosen from inside; always able to lose the hour.
+    _self_modes = ("tinker", "aspire")
     if "tinker" in cands and random.random() < 0.12:
         winner = cands["tinker"]
+    if winner is None and "aspire" in cands and random.random() < 0.10:
+        winner = cands["aspire"]
     if winner is None:
         roll = random.random()
         if roll < 0.65 and "preoccupation" in cands:
@@ -265,9 +280,9 @@ def pick_pursuit(oc, mc):
         if winner is None and "tangent" in cands:
             winner = cands["tangent"]
     if winner is None:
-        # Fallback prefers a passion; tinker wins here only if it's the sole candidate left.
-        non_tinker = [c for c in cands.values() if c["mode"] != "tinker"]
-        winner = non_tinker[0] if non_tinker else cands["tinker"]
+        # Fallback prefers a passion; a self-directed lane wins here only if it's all that's left.
+        passions = [c for c in cands.values() if c["mode"] not in _self_modes]
+        winner = passions[0] if passions else next(iter(cands.values()))
 
     # Consult the budget. The reserve means depletion can strike with units still held back.
     cost = budget.cost_of(winner["mode"])
@@ -437,6 +452,17 @@ def main():
             nova_tinkerer.pursue(oc, mc, p)
         except Exception as e:
             log(f"tinker pursue failed (non-fatal): {e}")
+        return 0
+
+    if p["mode"] == "aspire":
+        # She spent the hour wanting something — a capability she wishes she had. nova_aspirations
+        # writes her reflection and, if it's a genuine safe wish, records it to the wishlist for a
+        # human to build. She may want to become more; she never rewrites herself (redline-filtered).
+        try:
+            import nova_aspirations
+            nova_aspirations.pursue(oc, mc, p)
+        except Exception as e:
+            log(f"aspire pursue failed (non-fatal): {e}")
         return 0
 
     if p["mode"] == "preoccupation":
