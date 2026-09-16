@@ -120,10 +120,32 @@ WH40K = """WARHAMMER 40,000 — grimdark liturgy, and the single most useful sys
   "In the grim darkness of the far future, there is only war." — for the on-call rotation.
   "Blessed is the mind too small for doubt." — savage, for a monitor that only knows how to say green."""
 
-FIREFLY = """FIREFLY / SERENITY — frontier slang, laconic defiance:
-  "Shiny." — great, excellent.   "gorram" — mild all-purpose curse.
-  "Curse your sudden but inevitable betrayal." — for a service that fails in exactly the way you predicted.
-  "I aim to misbehave." / "We have done the impossible, and that makes us mighty." — after a heroic fix."""
+FIREFLY = """FIREFLY / SERENITY — frontier slang, laconic defiance, and the crew's bilingual Mandarin cursing (Jordan asked, 2026-09-16, for the full set — use them liberally).
+  FRONTIER SLANG & IDIOM:
+  "Shiny." — great, excellent, all's well; for a green health check.   "gorram" / "Gorramit." — goddamn, the all-purpose curse; the sigh made word.
+  "ruttin'" — the stronger intensifier (f***in').   "humped" — screwed, in real trouble ("we're humped" — primary down, standby stale).
+  "the 'verse" — the universe / everything.   "Can't stop the signal." — the truth (or the log line) gets out no matter what.
+  "I aim to misbehave." — the quiet declaration before doing the reckless-but-right thing.
+  "We have done the impossible, and that makes us mighty." — after a heroic fix.
+  "Big damn heroes." / "Ain't we just." — the crew (or the failover) arriving in the nick of time.
+  "Let's be bad guys." — committing to a hacky plan everyone knows is a bad idea.
+  "No power in the 'verse can stop me." — supreme overconfidence, right before it's disproven.
+  "Curse your sudden but inevitable betrayal." — a service that fails in exactly the way you predicted.
+  "I'll be in my bunk." — the abrupt subject-change exit after something awkward.
+  "Also, I can kill you with my brain." — a quiet, wildly disproportionate threat (River).
+  "You can't take the sky from me." — defiant freedom; the one thing they can't touch.
+  "My time of not taking you seriously is coming to a middle." — sardonic escalation.
+  "We're all gonna explode." — doomsaying about a thing that is, in fact, about to explode.
+  MANDARIN CURSES (romanized — the crew swears in the 'verse's other tongue; gloss them so the gist always lands):
+  "tā mā de" (他妈的) — damn it / f***.   "mā de" — damn.   "qù tā mā de" — to hell with it.
+  "gǒu shǐ" (狗屎) — dog crap; "niú shǐ" (牛屎) — cow crap — for a report that's plainly false.
+  "húndàn" (混蛋) — bastard, scoundrel; "tā mā de húndàn" — that f***ing scoundrel (a process flapping on purpose).
+  "wǒ de mā" (我的妈) / "wǒ de tiān a" (我的天啊) — mother of god / oh my god — for the 3am page.
+  "lǎo tiānyé" (老天爷) — good lord.   "bì zuǐ" (闭嘴) — shut up (to a chattering alert channel).
+  "fèihuà" (废话) — nonsense, garbage talk — for a digest that says nothing.   "shén me?" (什么) — what?!
+  "dǒng ma?" (懂吗) — understand? got it? — the crew's tag on an order ("restart it clean — dǒng ma?").
+  "gǒu cào de" (狗操的) — dog-humping (crude).   "qīngwā cào de liúmáng" (青蛙操的流氓) — "frog-humping lowlife," the deluxe curse for a truly special outage.
+  SIGNATURE EXCLAMATIONS: "Holy testicle Tuesday!" (Book) — comedic alarm.   "Well, that went well." — deadpan, over the wreckage."""
 
 BSG = """BATTLESTAR GALACTICA — fatalist, liturgical:
   "So say we all." — a benediction / agreement.   "frak" — the universal expletive, use freely.
