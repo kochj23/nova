@@ -170,6 +170,19 @@ def _gather_candidates(oc, mc):
     row = mc.fetchone()
     if row:
         cands["tangent"] = {"mode": "tangent", "seed": row[0][:600], "src": row[1]}
+    # An operational-curiosity candidate — something in her OWN environment that's been
+    # nagging (a recurring page, a dead stream, a chronic incident). OFFERED, never forced:
+    # only sometimes even considered, only present when there's genuine friction, and it
+    # still has to win the roll below against her passions. The house is her body; this is
+    # the itch to fix a squeak in it — chosen from inside (Jordan 2026-09-16). Fully optional.
+    try:
+        import nova_tinkerer
+        if random.random() < 0.35:
+            tc = nova_tinkerer.surface_friction(oc, mc)
+            if tc:
+                cands["tinker"] = tc
+    except Exception:
+        pass
     return cands
 
 
@@ -237,16 +250,24 @@ def pick_pursuit(oc, mc):
 
     # WHICH candidate wins: preserve the original weighting exactly (0.65 preoccupation /
     # 0.25 thread / 0.10 tangent), cascading to the next available tier just as before.
-    roll = random.random()
     winner = None
-    if roll < 0.65 and "preoccupation" in cands:
-        winner = cands["preoccupation"]
-    if winner is None and roll < 0.9 and "thread" in cands:
-        winner = cands["thread"]
-    if winner is None and "tangent" in cands:
-        winner = cands["tangent"]
+    # An operational-curiosity candidate, when present, gets a MINORITY slice (~12%) so it
+    # competes for the hour but never crowds out her passions — the other ~88% keep the
+    # original 0.65/0.25/0.10 weighting exactly. Chosen from inside, always able to lose.
+    if "tinker" in cands and random.random() < 0.12:
+        winner = cands["tinker"]
     if winner is None:
-        winner = next(iter(cands.values()))
+        roll = random.random()
+        if roll < 0.65 and "preoccupation" in cands:
+            winner = cands["preoccupation"]
+        if winner is None and roll < 0.9 and "thread" in cands:
+            winner = cands["thread"]
+        if winner is None and "tangent" in cands:
+            winner = cands["tangent"]
+    if winner is None:
+        # Fallback prefers a passion; tinker wins here only if it's the sole candidate left.
+        non_tinker = [c for c in cands.values() if c["mode"] != "tinker"]
+        winner = non_tinker[0] if non_tinker else cands["tinker"]
 
     # Consult the budget. The reserve means depletion can strike with units still held back.
     cost = budget.cost_of(winner["mode"])
@@ -404,6 +425,18 @@ def main():
     # quiet-wake path (no new mechanism) so scarcity actually costs her the hour.
     if p.get("mode") == "depleted":
         emit_quiet(depleted=True)
+        return 0
+
+    if p["mode"] == "tinker":
+        # She chose to spend the hour on a squeak in her own house. nova_tinkerer writes her
+        # reflection (her thought is hers) and, only if she genuinely wants the fix and it's
+        # concrete, files a GATED co-agency proposal — she may think freely, but acting goes
+        # through redline + value_check + human approval. Chosen from inside (Jordan 2026-09-16).
+        try:
+            import nova_tinkerer
+            nova_tinkerer.pursue(oc, mc, p)
+        except Exception as e:
+            log(f"tinker pursue failed (non-fatal): {e}")
         return 0
 
     if p["mode"] == "preoccupation":

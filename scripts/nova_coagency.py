@@ -479,6 +479,38 @@ def mode_propose(oc, mode):
     return 0
 
 
+def file_proposal(oc, origin, action, rationale="", target_service=None, context=""):
+    """Reusable, GATED entry point for other organs (e.g. the tinkerer) to file a
+    self-initiated proposal through co-agency's exact safety gates — so a fix Nova
+    surfaces in her own free time flows through the same redline + value_check +
+    human-approval path, never around it.
+
+    Respects the kill switch: files NOTHING when mode is 'off'. Applies the redline,
+    nulls any non-allowlisted target_service, runs value_check, and stores as
+    pending_human (or blocked). Executes NOTHING. Returns a dict describing what happened."""
+    ensure_schema(oc)
+    mode = get_mode(oc)
+    if mode == "off":
+        clog(oc, mode, "file_declined", f"mode=off — not filing from {origin}: {action[:100]}")
+        return {"filed": False, "status": "not_filed", "reason": "coagency mode is off"}
+    rp = redline_ok(action) and redline_ok(rationale or "") and redline_ok(target_service or "")
+    tgt = target_service if (target_service in SAFE_SERVICES) else None
+    if not rp:
+        status, vc = "blocked", {"available": False, "reason": "redline"}
+    else:
+        vc = run_value_check(oc, action, (context or "")[:2000])
+        status = "pending_human"
+    oc.execute("""INSERT INTO coagency_proposals
+                    (origin, proposed_action, rationale, target_service, redline_pass, value_check, status, lineage)
+                  VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+               (origin, action, rationale, tgt, rp, json.dumps(vc), status, json.dumps(_lineage())))
+    pid = oc.fetchone()[0]
+    clog(oc, mode, f"proposal_{status}",
+         f"#{pid} origin={origin} redline_pass={rp} value_available={vc.get('available')} :: {action[:120]}")
+    return {"filed": True, "pid": pid, "status": status, "redline_pass": rp,
+            "value_available": vc.get("available"), "reason": ""}
+
+
 def mode_decide(oc, mode, pid, decision, note, by):
     if mode == "off":
         clog(oc, mode, "disabled", f"mode=off — refusing to record decision on #{pid}")
