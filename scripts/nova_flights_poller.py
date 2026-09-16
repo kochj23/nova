@@ -29,7 +29,12 @@ DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 LAT, LON, ZIP_RADIUS_NM = 34.169, -118.325, 3.0
 ALT_CEILING_FT = 10000          # only low/overhead traffic (Jordan's pick)
 LOW_PASS_FT, CLOSE_NM = 4000, 1.5   # a "low pass" = this low AND this close
-NEW_GAP_S = 180                 # hex unseen this long => it's a fresh arrival
+# signalnoise: coalesce one aircraft's whole overflight into ONE alert. A single
+# pass throws off several altitude samples (700/900/1200/1800 ft) and a circling
+# helicopter lingers for minutes — the old 180s "fresh arrival" gate let each of
+# those re-ping. We now suppress a repeat ping for the SAME hex within this
+# cooldown, using the overhead_flights.notified column as crash-safe state.
+NOTIFY_COOLDOWN_MIN = 45        # don't re-alert the same aircraft within this window
 EMERGENCY_SQUAWKS = {"7500", "7600", "7700"}
 FEED_URL = f"https://api.adsb.lol/v2/point/{LAT}/{LON}/{int(ZIP_RADIUS_NM)}"
 
@@ -118,14 +123,19 @@ def main():
         reg = (a.get("r") or "").strip()
         operator = lookup_operator(hexid, cur)
 
-        # fresh arrival? (table is the state — ponytail-approved)
-        cur.execute("SELECT 1 FROM telemetry.overhead_flights WHERE hex=%s AND ts > now() - interval %s LIMIT 1",
-                    (hexid, f"{NEW_GAP_S} seconds"))
-        is_new = cur.fetchone() is None
+        # Have we already pinged THIS aircraft recently? (overhead_flights.notified
+        # is the crash-safe state — ponytail-approved, no side table.) One alert per
+        # overflight; a lingering/circling hex won't re-ping until the cooldown lapses.
+        cur.execute("SELECT 1 FROM telemetry.overhead_flights "
+                    "WHERE hex=%s AND notified AND ts > now() - interval %s LIMIT 1",
+                    (hexid, f"{NOTIFY_COOLDOWN_MIN} minutes"))
+        recently_pinged = cur.fetchone() is not None
 
         emergency = squawk in EMERGENCY_SQUAWKS
         low_pass = isinstance(alt, (int, float)) and alt < LOW_PASS_FT and dst < CLOSE_NM
-        should_ping = is_new and (is_heli or low_pass or emergency)
+        # Emergency squawks always ping (rare + safety-critical); ambient heli/low
+        # passes are coalesced to one per aircraft per cooldown.
+        should_ping = emergency or ((is_heli or low_pass) and not recently_pinged)
 
         cur.execute(
             "INSERT INTO telemetry.overhead_flights "
@@ -149,10 +159,13 @@ def main():
             else:
                 title = f"✈️ Low pass — {who} — {where}"
                 level = "info"
+            meta = {"hex": hexid, "alt": int(alt), "dst": round(float(dst), 1)}
+            if not emergency:  # reinforce the per-aircraft cooldown at the notifier too
+                meta["dedup_window_s"] = NOTIFY_COOLDOWN_MIN * 60
             try:
                 notify(title, body=f"{who} at {where}, {a.get('gs')} kt, heading {a.get('track')}°.",
                        level=level, category="flights", source="nova_flights_poller.py",
-                       dedup_key=f"flight:{hexid}", meta={"hex": hexid, "alt": int(alt), "dst": round(float(dst), 1)})
+                       dedup_key=f"flight:{hexid}", meta=meta)
                 pinged += 1
             except Exception as e:
                 print(f"[flights] notify failed for {hexid}: {e}", flush=True)
