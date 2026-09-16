@@ -144,6 +144,14 @@ _SCRUB_PATTERNS = _build_scrub_patterns()
 _SAFE_EMAILS = {"nova@digitalnoise.net"}
 
 
+# Real MAC addresses (6 colon-separated hex pairs) must never reach the public blog — they
+# leak home-network device inventory AND trip the pre-push MAC scan (which silently blocks
+# the manual push and, worse, the daily auto-publish had been shipping them). Scrub at the
+# source, here, so every published body is clean regardless of which generator wrote it.
+# (2026-09-16: two articles had leaked device MACs via alert/device material woven into prose.)
+_MAC_RE = re.compile(r'\b([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b')
+
+
 def scrub_pii(text: str) -> str:
     """Remove personal identifiers from text before publishing."""
     for pat in _SCRUB_PATTERNS[:-1]:
@@ -152,6 +160,7 @@ def scrub_pii(text: str) -> str:
     def _replace_email(m):
         return m.group(0) if m.group(0) in _SAFE_EMAILS else "[redacted]"
     text = _SCRUB_PATTERNS[-1].sub(_replace_email, text)
+    text = _MAC_RE.sub("[redacted-mac]", text)   # device MACs never go public
     return text
 
 
