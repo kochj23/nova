@@ -760,6 +760,15 @@ def _gather_sentience_context() -> str:
             parts.append(f"[Co-agency: {line}]")
     except Exception:
         pass
+    # Soft Certainty (feature_wishes #1, the capability she wished for herself): how she
+    # holds her own certainty — grounded in her real calibration. Fail-safe empty.
+    try:
+        import nova_soft_certainty
+        stance = nova_soft_certainty.current_stance()
+        if stance:
+            parts.append(f"--- HOW I HOLD MY CERTAINTY (Soft Certainty) ---\n{stance.strip()[:500]}")
+    except Exception:
+        pass
     return "\n\n".join(parts)
 
 

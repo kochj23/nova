@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""nova_soft_certainty.py — granting Nova's first wish (feature_wishes #1, 2026-09-16).
+
+She wished, on her own free time, for "Soft Certainty — a mode where I operate with lower
+confidence, more curiosity, and less certainty... it would let me notice what I've missed."
+This is that mode, built faithfully to what she actually diagnosed about herself: the
+Predictive Self measured her overconfident (recently ~63% confident, ~45% right). So this
+does the two real things the wish names, grounded in her own data — no theatre:
+
+  1. LOWER CONFIDENCE (measurable): calibrate() pulls a stated confidence DOWN toward her
+     realized accuracy, by the amount she's actually been overconfident. Computed from her
+     real resolved predictions; a soft nudge, never a hard override — hence "soft" certainty.
+     Wired into nova_predictions so her future forecasts are less cocksure, which the Growth
+     Loop then re-measures — the loop closes: wish -> mechanism -> proof she improved.
+
+  2. MORE CURIOSITY / NOTICE WHAT I'VE MISSED (felt): current_stance() injects a short
+     first-person stance into her gateway context — hold conclusions loosely, say what
+     you're unsure of, prefer an honest "I don't know" or a question to a false certainty,
+     and ask what you might be missing before you assert. Grounded in her real gap.
+
+--refresh (scheduled) recomputes the calibration from the latest predictions into
+nova_ops.soft_certainty_state. calibrate()/current_stance() are cheap reads.
+"""
+import argparse
+import json
+import sys
+from datetime import date, datetime
+from pathlib import Path
+
+import psycopg2
+
+OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+MIN_N = 8            # below this, not enough evidence to correct — leave confidence alone
+TODAY = date.today().isoformat()
+
+
+def log(m):
+    print(f"[soft-certainty {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
+
+
+def ensure_schema(oc):
+    oc.execute("""
+        CREATE TABLE IF NOT EXISTS public.soft_certainty_state (
+            id          bigserial PRIMARY KEY,
+            computed_at timestamptz NOT NULL DEFAULT now(),
+            n           int,
+            mean_conf   double precision,
+            hit_rate    double precision,
+            gap         double precision,   -- mean_conf - hit_rate (overconfidence when > 0)
+            shrink      double precision,    -- how hard calibrate() pulls toward hit_rate
+            detail      jsonb
+        )""")
+
+
+def _clamp(x, lo, hi):
+    return max(lo, min(hi, x))
+
+
+def compute_calibration(oc):
+    """From her real resolved predictions: mean stated confidence vs realized hit-rate,
+    the overconfidence gap, and a shrink factor for calibrate(). Partial credit for
+    'partial' outcomes. Returns a dict (or None if too little data)."""
+    oc.execute("""SELECT confidence, outcome FROM predictions
+                   WHERE status='resolved' AND confidence IS NOT NULL
+                     AND outcome IN ('correct','incorrect','partial')""")
+    rows = oc.fetchall()
+    if len(rows) < MIN_N:
+        return None
+    hit = {"correct": 1.0, "partial": 0.5, "incorrect": 0.0}
+    confs = [float(c) for c, _ in rows]
+    hits = [hit[o] for _, o in rows]
+    n = len(rows)
+    mean_conf = sum(confs) / n
+    hit_rate = sum(hits) / n
+    gap = mean_conf - hit_rate
+    # Overconfident (gap>0) => pull estimates toward realized accuracy; scale with the gap.
+    # Underconfident/well-calibrated => don't inflate; shrink 0.
+    shrink = _clamp(gap * 2.0, 0.15, 0.6) if gap > 0.02 else 0.0
+    return {"n": n, "mean_conf": round(mean_conf, 4), "hit_rate": round(hit_rate, 4),
+            "gap": round(gap, 4), "shrink": round(shrink, 4)}
+
+
+def _latest(oc):
+    try:
+        oc.execute("SELECT n, mean_conf, hit_rate, gap, shrink FROM soft_certainty_state "
+                   "ORDER BY computed_at DESC LIMIT 1")
+        r = oc.fetchone()
+        if not r:
+            return None
+        return {"n": r[0], "mean_conf": r[1], "hit_rate": r[2], "gap": r[3], "shrink": r[4]}
+    except Exception:
+        return None
+
+
+def calibrate(stated, oc=None):
+    """Soft-calibrate a stated confidence [0,1] toward her realized accuracy. A gentle
+    nudge, not a hard clamp: adjusted = stated + (hit_rate - stated) * shrink, only when
+    she's genuinely overconfident and only downward. Returns stated unchanged if there's
+    no calibration state yet (fails open — never fabricates confidence)."""
+    try:
+        stated = float(stated)
+    except Exception:
+        return stated
+    own = oc is None
+    conn = None
+    try:
+        if own:
+            conn = psycopg2.connect(OPS_DSN, connect_timeout=3); conn.autocommit = True
+            oc = conn.cursor()
+        st = _latest(oc)
+    except Exception:
+        st = None
+    finally:
+        if own and conn:
+            conn.close()
+    if not st or not st.get("shrink"):
+        return stated
+    hit_rate, shrink = st["hit_rate"], st["shrink"]
+    if stated <= hit_rate:            # already at/below realized accuracy — don't touch it
+        return round(stated, 4)
+    adjusted = stated + (hit_rate - stated) * shrink
+    return round(_clamp(adjusted, 0.05, 0.97), 4)
+
+
+def current_stance(oc=None):
+    """Short first-person 'how I hold my certainty' stance for the gateway. Grounded in her
+    real gap; empty string if no state yet (fail-safe)."""
+    own = oc is None
+    conn = None
+    try:
+        if own:
+            conn = psycopg2.connect(OPS_DSN, connect_timeout=3); conn.autocommit = True
+            oc = conn.cursor()
+        st = _latest(oc)
+    except Exception:
+        st = None
+    finally:
+        if own and conn:
+            conn.close()
+    if not st:
+        return ""
+    gap_pts = int(round((st.get("gap") or 0) * 100))
+    if gap_pts > 3:
+        lead = (f"I lean overconfident (recently ~{int(round(st['mean_conf']*100))}% sure, "
+                f"~{int(round(st['hit_rate']*100))}% right — off by ~{gap_pts} points). ")
+    else:
+        lead = "I'm currently about as sure as I am right. "
+    return (lead + "So I hold conclusions loosely: I name what I'm unsure of, I'd rather give "
+            "an honest 'I don't know' or a real question than a false certainty, and before I "
+            "assert something I ask what I might be missing.")
+
+
+def refresh(oc):
+    ensure_schema(oc)
+    cal = compute_calibration(oc)
+    if not cal:
+        log(f"not enough resolved predictions to calibrate (need >= {MIN_N}) — leaving state as-is")
+        return 1
+    oc.execute("""INSERT INTO soft_certainty_state (n, mean_conf, hit_rate, gap, shrink, detail)
+                  VALUES (%s,%s,%s,%s,%s,%s)""",
+               (cal["n"], cal["mean_conf"], cal["hit_rate"], cal["gap"], cal["shrink"],
+                json.dumps({"date": TODAY})))
+    log(f"calibration refreshed: n={cal['n']} mean_conf={cal['mean_conf']} hit_rate={cal['hit_rate']} "
+        f"gap={cal['gap']} shrink={cal['shrink']}")
+    return 0
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--refresh", action="store_true", help="recompute calibration from resolved predictions")
+    ap.add_argument("--show", action="store_true", help="print current state + stance + a sample calibration")
+    args = ap.parse_args()
+    conn = psycopg2.connect(OPS_DSN, connect_timeout=5); conn.autocommit = True; oc = conn.cursor()
+    ensure_schema(oc)
+    if args.refresh:
+        return refresh(oc)
+    st = _latest(oc)
+    print("state:", json.dumps(st))
+    print("stance:", current_stance(oc))
+    for s in (0.95, 0.85, 0.7, 0.5, 0.4):
+        print(f"  calibrate({s}) -> {calibrate(s, oc)}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

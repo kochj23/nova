@@ -309,6 +309,14 @@ def do_predict(oc, mc, limit=4):
             if domain not in DOMAINS:
                 domain = "self"
             conf = clamp01(c.get("confidence"))
+            # Soft Certainty (feature_wishes #1, granted 2026-09-16): calibrate the stated
+            # confidence toward her realized accuracy before storing — she asked to be less
+            # overconfident, so her forecasts inherit the correction. Fails open (unchanged).
+            try:
+                import nova_soft_certainty
+                conf = nova_soft_certainty.calibrate(conf, oc)
+            except Exception:
+                pass
             resolves_by = parse_resolves_by(c.get("resolves_by"))
             criteria = (c.get("resolution_criteria") or "").strip() or \
                 "(no explicit criterion given — judge against recalled evidence)"
