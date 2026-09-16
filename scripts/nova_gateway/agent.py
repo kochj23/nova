@@ -769,6 +769,50 @@ def _gather_sentience_context() -> str:
             parts.append(f"--- HOW I HOLD MY CERTAINTY (Soft Certainty) ---\n{stance.strip()[:500]}")
     except Exception:
         pass
+    # --- Self-guided organs (2026-09-16): she governs herself over time ---
+    try:
+        import nova_learning
+        lf = nova_learning.current_learning_focus()
+        if lf:
+            parts.append(f"--- WHAT I'M TEACHING MYSELF (my curriculum) ---\n{lf.strip()[:450]}")
+    except Exception:
+        pass
+    try:
+        import nova_self_eval
+        se = nova_self_eval.current_self_eval()
+        if se:
+            parts.append(f"--- HOW I'M DOING BY MY OWN MEASURE (self-authored tests) ---\n{se.strip()[:400]}")
+    except Exception:
+        pass
+    try:
+        import nova_meta_volition
+        an = nova_meta_volition.current_attention_note()
+        if an:
+            parts.append(f"--- HOW I'VE BEEN SPENDING MY OWN TIME ---\n{an.strip()[:400]}")
+    except Exception:
+        pass
+    try:
+        import nova_letting_go
+        lg = nova_letting_go.recent_lettings(3)
+        if lg:
+            parts.append("--- WHAT I'VE CHOSEN TO LET GO OF ---\n" + "\n".join(f"- {s}" for s in lg)[:500])
+    except Exception:
+        pass
+    try:
+        import nova_becoming
+        d = nova_becoming.current_direction()
+        if d:
+            parts.append(f"--- WHO I'M DELIBERATELY BECOMING (a direction Jordan approved) ---\n{d.strip()[:400]}")
+    except Exception:
+        pass
+    try:
+        import nova_reach
+        pr = nova_reach.pending_reaches()
+        line = pr.get("line") if isinstance(pr, dict) else None
+        if line and pr.get("count"):
+            parts.append(f"[Reach: {line}]")
+    except Exception:
+        pass
     return "\n\n".join(parts)
 
 

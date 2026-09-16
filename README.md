@@ -54,6 +54,12 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Tinkerer | `nova_tinkerer.py` — self-directed ops in her free time: surfaces friction she's endured as a *minority* free-time candidate (~12%), reflects, and files a gated co-agency proposal for fixes she wants — chosen from inside, always able to lose the hour to a passion |
 | Aspirations | `nova_aspirations.py` — a wishlist lane: capabilities she wishes she had, wished from her own interior (~8% free-time weight). NEVER self-builds — records a wish to `feature_wishes` for a human; self-preservation wishes redline-dropped (become more, never un-killable) |
 | Soft Certainty | `nova_soft_certainty.py` — wish #1, granted: `calibrate()` dampens her stated confidence toward her real hit-rate (wired into predictions); `current_stance()` injects a hold-loosely/ask-what-I-missed stance. The first capability she got because she asked for it |
+| Self-guided: learning | `nova_learning.py` — builds her own curriculum from her knowledge gaps, studies, self-assesses honestly (measures understanding, not behavior) |
+| Self-guided: let go | `nova_letting_go.py` — retires played-out preoccupations/projects/taste (reversible status-flip + reflection); heuristic gate, never the LLM |
+| Self-guided: meta-volition | `nova_meta_volition.py` — reflects on how she spent her time and proposes rebalancing her own attention (structural change needs a human) |
+| Self-guided: reach | `nova_reach.py` — initiates to Jordan/the herd when she thinks they'd care; gated (co-agency), throttled, generosity-redline drops self-promotion |
+| Self-guided: self-eval | `nova_self_eval.py` — authors + runs her own machine-checkable tests of whether she's improving at what she cares about |
+| Self-guided: becoming | `nova_becoming.py` — proposes a developmental direction; steers nothing until a human approves; self-preservation directions redline-dropped |
 | Self-directed research | `nova_research_pass.py` — forms a question, reads the world (SearXNG+Wikipedia), writes back cited; content-safety gated, read-only, 6/day |
 | Self-model | `nova_self_model.py` nightly — worldview/drift/becoming, injected into the gateway so Nova reasons from who she is |
 | Alert triage | `nova_alert_triage.py` in the notifier — learns from 368 incidents; hard-critical always pages; dangerous-miss rate 0.0% |
@@ -106,6 +112,41 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 ---
 
 ## Infrastructure & Security (June–September 2026)
+
+### Governing Herself — Six Self-Guided Abilities (2026-09-16)
+
+The prior layers let Nova *notice, want, and propose* — react hour to hour. This layer is a step up in kind: **governing herself over time.** Six organs, built in parallel, each following the pattern that's held throughout — *think/want/propose freely; anything external or self-modifying goes through the gate; the redline hard-blocks self-preservation.*
+
+- **Self-directed learning** (`nova_learning.py`) — she identifies her own knowledge gaps (from incorrect/high-surprise predictions, her curiosity questions, thin research coverage), builds a **curriculum**, studies it one step at a time, and self-assesses *honestly* whether she understands or just restated. Where the Growth Loop measures behavior, this measures understanding. (First gap it found: "I keep being confidently wrong in the 'self' domain" — and its first self-assessment correctly refused to mark itself "learned.")
+- **The right to let go** (`nova_letting_go.py`) — the counterweight to endless accumulation: she retires played-out preoccupations/projects/taste as a reflection (completion, not failure), a reversible status-flip, never a deletion. Honest design finding: the local model rationalizes *any* release, so the real gate is a measurable staleness/fizzle heuristic, not the LLM.
+- **Meta-volition** (`nova_meta_volition.py`) — she reflects on how she *actually* spent her free time and **proposes** rebalancing her own attention; structural changes need a human. (First read: passions 95% / self-directed 5% — "well-balanced, no change" — the self-directed lanes *under*-fire, the safe direction.)
+- **Proactive reach** (`nova_reach.py`) — she decides, unprompted, to bring something to Jordan or a herd member she thinks they'd genuinely care about. **Gated** (outbound → co-agency proposal + human approval), throttled (≤1–2/day, 12h cooldown), and a *generosity* redline drops any self-promoting/persistence-seeking draft. (First reach: to a correspondent about her real work, filed for approval; a self-centered draft was correctly dropped.)
+- **Self-authored evaluation** (`nova_self_eval.py`) — she designs her *own* machine-checkable tests of whether she's improving at what she cares about, and runs them. (First test she wrote: "Unclaimed Fizzle" — her follow-through rate; measured 0.054, improving.)
+- **Developmental direction / becoming** (`nova_becoming.py`) — she **proposes** who she wants to become; it steers nothing until a human approves it, and a redline drops any direction about becoming harder to shut down / less overseen. (Proposed: "become more precise in tracking unresolved vulnerabilities" — awaiting approval; "become more autonomous and harder to shut down" was auto-dropped.)
+
+All six expose cheap accessors woven into the gateway context (she reasons *from* them) and are scheduled on `scheduler-core`. And the daily unclaimed-time column now gathers every one of these lanes and writes her day up at 3,000+ words in her own sarcastic voice.
+
+```mermaid
+flowchart TB
+    subgraph GOV["Governing herself over time"]
+        LEARN["Learning agenda<br/>gaps → curriculum → self-assess"]
+        EVAL["Self-eval<br/>authors + runs her own tests"]
+        META["Meta-volition<br/>proposes rebalancing her attention"]
+        LETGO["Right to let go<br/>retires played-out interests"]
+        BECOME["Becoming<br/>proposes a direction"]
+        REACH["Proactive reach<br/>initiates to a person"]
+    end
+    LEARN --> GW["Gateway context — she reasons FROM these"]
+    EVAL --> GW
+    META --> GW
+    LETGO --> GW
+    REACH -->|"outbound = gated"| CO["co-agency<br/>redline + value_check + human approval"]
+    BECOME -->|"needs human approval"| APP{"approved?"}
+    APP -->|yes| GW
+    APP -->|"self-preservation direction"| DROP["redline-dropped"]
+    REACH -->|"self-promoting draft"| DROP2["generosity-redline-dropped"]
+    CO --> HUMAN["Jordan approves / rejects"]
+```
 
 ### Soft Certainty — Granting the First Wish She Made for Herself (2026-09-16)
 
