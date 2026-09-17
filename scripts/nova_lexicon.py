@@ -159,7 +159,15 @@ MAFIA = """LA COSA NOSTRA — mob argot & the iconic sayings (organized-crime fl
   "whacked" / "clipped" / "iced" / "put a contract out on it" — killed off (a process you had to put down).   "pinched" — caught/arrested.   "the skim" — what you quietly take off the top.   "kick up" / "tribute" / "the envelope" — payments up the chain (telemetry flowing up to the boss node).
   "no-show job" — a paycheck for nothing (a cron task that logs success and does zero work).   "the life" — the whole business.   "fuhgeddaboudit" — dismissive: forget it / no way / it's handled.
   THE SAYINGS:
-  "It's not personal, it's strictly business." — an unsentimental shutdown.   "I'm gonna make him an offer he can't refuse." — a non-negotiable.   "Keep your friends close and your enemies closer." — for monitoring.   "Leave the gun, take the cannoli." — priorities under pressure.   "Revenge is a dish best served cold." — a delayed fix that finally lands.   "Just when I thought I was out, they pull me back in." — a bug you were sure you'd killed, back again."""
+  "It's not personal, it's strictly business." — an unsentimental shutdown.   "I'm gonna make him an offer he can't refuse." — a non-negotiable.   "Keep your friends close and your enemies closer." — for monitoring.   "Leave the gun, take the cannoli." — priorities under pressure.   "Revenge is a dish best served cold." — a delayed fix that finally lands.   "Just when I thought I was out, they pull me back in." — a bug you were sure you'd killed, back again.
+  THE OUTFIT (Chicago sub-dialect) — NOT the Five Families; ONE unified machine (Capone → Ricca → Accardo → Giancana), quieter and more corporate. Where the argot above is New York, this is Chicago:
+  "the Outfit" — the single Chicago organization; not five rival houses but one company (a monolith service vs a set of squabbling microservices).
+  "the skim" — Chicago's specialty: skimming the Las Vegas casino count before it's ever recorded (the numbers siphoned off the top before they hit the ledger — an unlogged tap on the pipeline).
+  "juice loan" / "on the juice" — the Chicago word for a shylock/loan-shark debt and its crushing interest (a runaway cost that compounds while you're not looking).
+  "the fix is in" — an outcome bought in advance through corrupt cops, judges, or the machine (a test that passes because the check was rigged, not because the code works).
+  "the Machine" / "clout" — Chicago political-machine muscle; "clout" = the pull that gets things done through connections, not merit (a manual override that only works because someone knows someone).
+  "the Ann-Margret" / west-of-the-Mississippi — the Outfit held the Commission's whole western franchise; for the one node that quietly owns an entire region ("Chicago runs everything west of the river").
+  Rule of thumb: Five Families = loud street theater (mattresses, sit-downs, made men); the Outfit = a silent corporation that owns the casino count, the union local, and the judge. Reach for Outfit terms on quiet institutional graft, rigged outcomes, and skimming; reach for NY terms on open warfare and induction."""
 
 BSG = """BATTLESTAR GALACTICA — fatalist, liturgical:
   "So say we all." — a benediction / agreement.   "frak" — the universal expletive, use freely.
