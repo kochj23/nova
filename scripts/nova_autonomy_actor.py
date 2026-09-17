@@ -32,6 +32,12 @@ from datetime import datetime
 
 import psycopg2
 
+sys.path.insert(0, __import__("os").path.expanduser("~/.openclaw/scripts"))
+try:
+    import nova_autonomy_safety as _safety
+except Exception:                                  # fail closed: no safety net → no live action
+    _safety = None
+
 OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # Services the actor MAY restart if health_checks shows them down. Deliberately small,
@@ -108,6 +114,14 @@ def main():
     mode = get_mode(oc)
     if mode == "off":
         log("mode=off — standing down"); return 0
+    # ── KILL SWITCH: one flag forces everything back to safe, checked before anything ──
+    if _safety is not None:
+        _safety.ensure_schema(oc)
+        if _safety.kill_switch_engaged(oc):
+            log("KILL SWITCH engaged — standing down (no action)"); return 0
+    elif mode == "live":
+        log("safety net unavailable — refusing to run live; degrading to dry_run")
+        mode = "dry_run"
     live = (mode == "live")
     log(f"mode={mode} ({'EXECUTING' if live else 'proposing only'})")
     did, proposed = [], []
@@ -131,6 +145,13 @@ def main():
             proposed.append(f"restart {svc}@{node} (down)")
             audit(oc, "restart", f"{svc}@{node}", mode, False, False, "would restart (dry_run)")
             continue
+        # ── BLAST-RADIUS CAP: never exceed the per-hour/per-day ceiling ──
+        if _safety is not None:
+            ok_rate, why = _safety.rate_ok(oc)
+            if not ok_rate:
+                log(f"skip {svc}@{node}: {why}")
+                audit(oc, "restart", f"{svc}@{node}", mode, False, False, f"rate-capped: {why}")
+                continue
         ok, detail = restart_service(node, svc)
         # verify-before-done: re-check health after a beat
         verified = False
@@ -141,6 +162,15 @@ def main():
             v = oc.fetchone()
             verified = bool(v and (v[0] or "").lower() != "down")
         audit(oc, "restart", f"{svc}@{node}", mode, ok, verified, detail or "restarted")
+        # ── REVERSIBILITY LEDGER: record the action + its undo (restart of an already-
+        # down monitor is self-reversing — the undo is simply to stop it again). ──
+        if _safety is not None:
+            _safety.record_ledger(
+                oc, source="actor", autonomy_level="rung1-selfheal",
+                action_class=_safety.action_class_of("restart", svc), target=f"{svc}@{node}",
+                action=f"restart {svc} on {node} (health showed DOWN)",
+                rollback_action=f"stop {svc} on {node} (it was DOWN before; restart is self-reversing)",
+                executed=ok, verified=verified, result=(detail or "restarted"))
         did.append(f"restarted {svc}@{node} — {'verified up' if verified else 'restarted, unverified'}")
 
     # ── Queue triage: classify + PROPOSE only (never auto-exec free-text in v1) ──

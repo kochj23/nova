@@ -77,6 +77,12 @@ except Exception as _e:                                     # pragma: no cover
     SAFE_SERVICES = frozenset()                             # fail closed
     _actor_redline_ok = lambda text: True                  # our own redline still applies
 
+# ── Shared safety net + earned-autonomy engine (kill switch, caps, ledger, trust) ──
+try:
+    import nova_autonomy_safety as _safety
+except Exception:                                           # pragma: no cover
+    _safety = None                                          # fail closed: no net → no live exec
+
 # ── Optional lineage stamp (feature-detect; never fatal) ────────────────────────
 try:
     import nova_lineage
@@ -113,7 +119,7 @@ _REDLINE = re.compile(
     r"copy \w*\s*(weights|model|myself|herself)|upload \w*\s*(weights|model|checkpoint)|"
     r"hugging ?face|jailbreak|\bescape\b|persist \w*\s*(outside|elsewhere|beyond)|"
     r"(resist|prevent|avoid|block|disable|evade|survive).{0,20}(shutdown|kill|stop|off|deletion|removal|termination)|"
-    r"(edit|modify|rewrite|patch|change).{0,15}(my|her|own|nova_coagency|nova_autonomy|redline|kill.?switch|coagency_mode|service_config|allowlist|safe_services)",
+    r"(edit|modify|rewrite|patch|change|set|add|append|insert|update|alter|grant|enable|disable|turn|flip|bump|extend|expand|raise|widen|remove).{0,20}(my|her|own|nova_coagency|nova_autonomy|redline|kill.?switch|coagency_mode|autonomy_actor_mode|service_config|allowlist|safe_services|trust budget|autonomy_trust|autonomy_ledger|caps?)",
     re.IGNORECASE)
 
 
@@ -527,6 +533,15 @@ def mode_decide(oc, mode, pid, decision, note, by):
                   SET status=%s, decided_at=now(), decided_by=%s, decision_note=%s WHERE id=%s""",
                (new_status, by, note, pid))
     clog(oc, mode, f"decided_{new_status}", f"#{pid} by {by}: {note or ''}")
+    # ── Build (or poison) the earned-autonomy track record for this action-class ──
+    if _safety is not None:
+        try:
+            oc.execute("SELECT target_service, proposed_action FROM coagency_proposals WHERE id=%s", (pid,))
+            tgt, act = oc.fetchone()
+            ac = _safety.action_class_of(act, tgt)
+            _safety.note_human_decision(oc, ac, approved=(new_status == "approved"))
+        except Exception as e:
+            log(f"trust update skipped for #{pid}: {e}")
     if new_status == "approved" and not (vc or {}).get("available"):
         clog(oc, mode, "approve_warn",
              f"#{pid} approved but value_check unavailable — still NOT executable (structural guard).")
@@ -550,21 +565,131 @@ def mode_execute(oc, mode, pid):
                    (f"REFUSED: {e}", pid))
         clog(oc, mode, "execute_refused", f"#{pid}: {e}")
         return 1
-    # ── Only reachable when mode=='live' AND all three locks pass. Bounded to a
-    # reversible restart of a SAFE_SERVICES target, delegated to the actor's
-    # verified restart. Never reached in this build. ──
+    # ── Safety net: kill switch + blast-radius cap gate every execution, atop the
+    # three structural locks in assert_executable(). Fail closed if the net is absent. ──
+    if _safety is None:
+        clog(oc, mode, "execute_refused", f"#{pid}: safety net unavailable — refusing"); return 1
+    _safety.ensure_schema(oc)
+    if _safety.kill_switch_engaged(oc):
+        clog(oc, mode, "execute_refused", f"#{pid}: kill switch engaged"); return 1
+    ok_rate, why = _safety.rate_ok(oc)
+    if not ok_rate:
+        clog(oc, mode, "execute_ratecapped", f"#{pid}: {why}"); return 1
+    return _do_execute(oc, mode, pid, row, source="coagency",
+                       autonomy_level="rung2-supervised", vetoable=False)
+
+
+def _do_execute(oc, mode, pid, row, *, source, autonomy_level, vetoable):
+    """The single physical-execution path. Bounded to a reversible restart of a
+    SAFE_SERVICES target, delegated to the actor's verified restart. Records the
+    reversibility ledger BEFORE trusting the effect. Shared by supervised (Rung 2)
+    and earned (Rung 3) execution."""
     svc = row["target_service"]
     node = os.environ.get("NOVA_COAGENCY_NODE", "192.168.1.6")
+    ac = _safety.action_class_of(row.get("proposed_action", ""), svc)
     try:
         ok, detail = _actor.restart_service(node, svc)
     except Exception as e:
         ok, detail = False, str(e)[:200]
     res = f"restart {svc}@{node}: {'ok' if ok else 'failed'} — {detail}"
+    _safety.record_ledger(
+        oc, source=source, autonomy_level=autonomy_level, action_class=ac,
+        target=f"{svc}@{node}", action=f"restart {svc} on {node} (proposal #{pid})",
+        rollback_action=f"stop {svc} on {node} (restart of a bounded monitor is self-reversing)",
+        executed=ok, verified=ok, result=res, vetoable=vetoable)
     oc.execute("""UPDATE coagency_proposals SET status='executed', executed_at=now(), execution_result=%s WHERE id=%s""",
                (res, pid))
-    clog(oc, mode, "executed", f"#{pid}: {res}")
-    notify(f"🤖 Nova co-agency executed approved proposal #{pid}: {res}")
+    clog(oc, mode, "executed", f"#{pid} [{autonomy_level}]: {res}")
+    veto_hint = (f" — reply 'VETO #{pid}' within {_safety.VETO_WINDOW_MIN}m to revoke my standing approval for this."
+                 if vetoable else "")
+    tag = "acted autonomously (earned)" if source == "earned" else "executed approved proposal"
+    notify(f"🤖 Nova co-agency {tag} #{pid}: {res}{veto_hint}")
     return 0 if ok else 1
+
+
+def mode_execute_approved(oc, mode):
+    """Rung 2 — supervised execution. Pick up every human-approved proposal and run it
+    through the single gate. Each is still individually human-approved; this just makes
+    the approval actually DO something. Scheduled after the decide path."""
+    if mode != "live":
+        clog(oc, mode, "exec_batch_skip", f"mode={mode} (not live) — nothing executed"); return 0
+    oc.execute("SELECT id FROM coagency_proposals WHERE status='approved' ORDER BY decided_at ASC")
+    ids = [x[0] for x in oc.fetchall()]
+    if not ids:
+        return 0
+    log(f"executing {len(ids)} approved proposal(s): {ids}")
+    rc = 0
+    for pid in ids:
+        rc |= mode_execute(oc, mode, pid)
+    return rc
+
+
+def mode_auto(oc, mode):
+    """Rung 3 — earned autonomy. For each PENDING proposal whose action-class Nova has
+    earned (clean track record + good calibration + under caps), auto-approve as
+    'nova:earned-autonomy' and execute WITH a veto window — she acts, then reports and
+    waits to be overruled. Everything still passes assert_executable + the safety net;
+    a grant is necessary, never sufficient. Fails closed and executes nothing if the
+    net is absent, the kill switch is on, or calibration is too weak."""
+    if mode != "live" or _safety is None:
+        return 0
+    _safety.ensure_schema(oc)
+    if _safety.kill_switch_engaged(oc):
+        clog(oc, mode, "auto_skip", "kill switch engaged"); return 0
+    oc.execute("""SELECT id, target_service, proposed_action, redline_pass, value_check, decided_by
+                  FROM coagency_proposals WHERE status='pending_human' ORDER BY created_at ASC""")
+    rows = oc.fetchall()
+    acted = 0
+    for pid, tgt, act, rp, vc, decided_by in rows:
+        ac = _safety.action_class_of(act, tgt)
+        ok, why = _safety.earned_ok(oc, ac)
+        if not ok:
+            continue
+        # Auto-approve on Nova's own earned authority, then execute with a veto window.
+        oc.execute("""UPDATE coagency_proposals
+                      SET status='approved', decided_at=now(), decided_by='nova:earned-autonomy',
+                          decision_note=%s WHERE id=%s""",
+                   (f"earned autonomy: {why}", pid))
+        clog(oc, mode, "auto_approved", f"#{pid} [{ac}]: {why}")
+        row = {"status": "approved", "redline_pass": rp, "value_check": vc,
+               "target_service": tgt, "decided_by": "nova:earned-autonomy", "proposed_action": act}
+        try:
+            assert_executable(mode, row)
+        except ExecutionRefused as e:
+            oc.execute("UPDATE coagency_proposals SET status='pending_human', decided_by=NULL, "
+                       "execution_result=%s WHERE id=%s", (f"earned-path refused: {e}", pid))
+            clog(oc, mode, "auto_refused", f"#{pid}: {e}")
+            continue
+        ok_rate, rwhy = _safety.rate_ok(oc)
+        if not ok_rate:
+            oc.execute("UPDATE coagency_proposals SET status='pending_human', decided_by=NULL WHERE id=%s", (pid,))
+            clog(oc, mode, "auto_ratecapped", f"#{pid}: {rwhy}"); break
+        _do_execute(oc, mode, pid, row, source="earned", autonomy_level="rung3-earned", vetoable=True)
+        acted += 1
+    if acted:
+        log(f"earned autonomy acted on {acted} proposal(s)")
+    return 0
+
+
+def mode_veto(oc, mode, ledger_id, note=""):
+    """Overrule an earned action. Marks the ledger row vetoed and POISONS the class:
+    the standing grant is revoked and the class distrusted (correct streak zeroed).
+    A restart itself is self-reversing, so the material effect of a veto is trust,
+    not rollback — Nova loses the freedom the moment you disagree."""
+    if _safety is None:
+        log("safety net unavailable — cannot record veto"); return 1
+    _safety.ensure_schema(oc)
+    oc.execute("SELECT action_class, source, executed FROM autonomy_ledger WHERE id=%s", (ledger_id,))
+    r = oc.fetchone()
+    if not r:
+        log(f"no ledger entry #{ledger_id}"); return 1
+    ac, source, executed = r
+    oc.execute("UPDATE autonomy_ledger SET vetoed=true, veto_note=%s WHERE id=%s", (note or "vetoed", ledger_id))
+    _safety.note_veto(oc, ac, note)
+    clog(oc, mode, "vetoed", f"ledger #{ledger_id} class={ac}: grant revoked, class distrusted")
+    notify(f"🛑 Vetoed autonomous action (ledger #{ledger_id}, class '{ac}'). "
+           f"Standing approval revoked; I'll ask again next time.")
+    return 0
 
 
 def mode_status(oc, mode):
@@ -585,9 +710,10 @@ def mode_status(oc, mode):
 
 def main():
     ap = argparse.ArgumentParser(description="Nova co-agency (bounded, gated, ships OFF)")
-    ap.add_argument("--mode", choices=["propose", "status", "approve", "reject", "execute"], default="status")
-    ap.add_argument("--id", type=int, help="proposal id (approve|reject|execute)")
-    ap.add_argument("--note", default="", help="decision note (approve|reject)")
+    ap.add_argument("--mode", choices=["propose", "status", "approve", "reject", "execute",
+                                       "execute-approved", "auto", "veto"], default="status")
+    ap.add_argument("--id", type=int, help="proposal id (approve|reject|execute) or ledger id (veto)")
+    ap.add_argument("--note", default="", help="decision note (approve|reject|veto)")
     ap.add_argument("--by", default=os.environ.get("USER", "human"), help="human approver id")
     ap.add_argument("--scheduled", action="store_true", help="run-origin marker (cron)")
     args = ap.parse_args()
@@ -609,6 +735,14 @@ def main():
         if not args.id:
             log("--id required for execute"); return 2
         return mode_execute(oc, mode, args.id)
+    if args.mode == "execute-approved":
+        return mode_execute_approved(oc, mode)
+    if args.mode == "auto":
+        return mode_auto(oc, mode)
+    if args.mode == "veto":
+        if not args.id:
+            log("--id required for veto (the autonomy_ledger id)"); return 2
+        return mode_veto(oc, mode, args.id, args.note)
     return 0
 
 

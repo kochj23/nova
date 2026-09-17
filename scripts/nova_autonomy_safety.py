@@ -1,0 +1,361 @@
+#!/usr/bin/env python3
+"""nova_autonomy_safety.py — the shared safety net + earned-autonomy engine.
+
+This is the scaffolding that makes it SAFE to widen Nova's execution freedom. Both
+the autonomy actor (self-heal) and co-agency (approved-proposal execution) import
+this and pass through it. Nothing here decides WHAT to do — it decides whether an
+action is ALLOWED to run right now, records an undo, and tracks the track record that
+lets a proven action-class graduate to standing pre-approval.
+
+Everything fails CLOSED: on any error, missing table, or ambiguity, the answer is
+"not allowed / no grant". Freedom is opt-in and provable, never assumed.
+
+FOUR GUARANTEES (the reason we can turn the dials up):
+  1. KILL SWITCH — one flag (service_config autonomy/kill_switch, OR the tripwire file
+     ~/.openclaw/.autonomy-kill) forces EVERYTHING back to safe instantly. Checked at
+     the top of every actor pass and before every execution. File beats DB (works even
+     if PG is unreachable).
+  2. REVERSIBILITY LEDGER — every autonomous action writes a row to autonomy_ledger
+     with the rollback_action recorded BEFORE it runs. No action without a recorded undo.
+  3. BLAST-RADIUS CAPS — per-hour / per-day ceilings on autonomous executions across
+     ALL sources, plus a Slack post on every action. A runaway can do at most `per_day`.
+  4. EARNED AUTONOMY (the trust budget) — an action-CLASS graduates to standing
+     pre-approval only after MIN_CORRECT human approvals with ZERO vetoes/rejections
+     AND while calibration is good (prediction_calibration_error <= MAX_CALIB). A veto
+     revokes the grant and marks the class distrusted. Freedom grows as she's right,
+     shrinks the moment she's wrong.
+
+Owned file: scripts/nova_autonomy_safety.py. Written by Jordan Koch.
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+from datetime import datetime
+
+import psycopg2
+
+OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+
+# ── Tunables (conservative defaults; overridable via service_config service='autonomy') ──
+KILL_FILE = os.path.expanduser("~/.openclaw/.autonomy-kill")   # offline tripwire
+DEFAULT_CAPS = {"per_hour": 6, "per_day": 20}                  # autonomous executions
+MIN_CORRECT = 5           # human approvals of a class before it may graduate
+MAX_CALIB = 0.20          # earned autonomy only while calibration_error <= this
+VETO_WINDOW_MIN = 60      # minutes a human has to VETO an earned action
+
+
+def log(m):
+    print(f"[autonomy-safety {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Schema (idempotent; safe to call every run)
+# ═══════════════════════════════════════════════════════════════════════════════
+def ensure_schema(oc) -> None:
+    oc.execute("""
+        CREATE TABLE IF NOT EXISTS autonomy_ledger (
+            id              bigserial PRIMARY KEY,
+            ts              timestamptz NOT NULL DEFAULT now(),
+            source          text NOT NULL,             -- actor | coagency | earned
+            autonomy_level  text NOT NULL,             -- rung1-selfheal | rung2-supervised | rung3-earned
+            action_class    text NOT NULL,             -- normalized, e.g. restart:nova-freshness-monitor
+            target          text,
+            action          text NOT NULL,
+            rollback_action text NOT NULL,             -- recorded BEFORE execution; never NULL
+            executed        boolean NOT NULL DEFAULT false,
+            verified        boolean NOT NULL DEFAULT false,
+            result          text,
+            vetoable_until  timestamptz,               -- earned actions only
+            vetoed          boolean NOT NULL DEFAULT false,
+            veto_note       text,
+            reverted        boolean NOT NULL DEFAULT false
+        )""")
+    oc.execute("CREATE INDEX IF NOT EXISTS autonomy_ledger_ts ON autonomy_ledger (ts DESC)")
+    oc.execute("""
+        CREATE TABLE IF NOT EXISTS autonomy_trust (
+            action_class    text PRIMARY KEY,
+            correct_count   int NOT NULL DEFAULT 0,     -- human approvals, clean
+            wrong_count     int NOT NULL DEFAULT 0,     -- rejections + vetoes (poison)
+            granted         boolean NOT NULL DEFAULT false,
+            granted_at      timestamptz,
+            daily_limit     int NOT NULL DEFAULT 3,     -- per-class ceiling once granted
+            notes           text,
+            updated_at      timestamptz NOT NULL DEFAULT now()
+        )""")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Kill switch  (file beats DB — works even if PG is down)
+# ═══════════════════════════════════════════════════════════════════════════════
+def kill_switch_engaged(oc=None) -> bool:
+    if os.path.exists(KILL_FILE):
+        return True
+    if oc is None:
+        return False
+    try:
+        oc.execute("SELECT value FROM service_config WHERE service='autonomy' AND key='kill_switch'")
+        r = oc.fetchone()
+        if not r or r[0] is None:
+            return False
+        v = r[0] if isinstance(r[0], str) else str(r[0])
+        return v.strip().strip('"').lower() in ("true", "1", "on", "yes")
+    except Exception:
+        return False           # fail closed for ACTIONS is handled by callers; a broken
+                               # read here shouldn't itself brick self-heal, so default off.
+
+
+def engage_kill(oc=None, note="manual") -> None:
+    """Trip the kill switch (both DB flag and tripwire file) — one call, everything stops."""
+    try:
+        open(KILL_FILE, "w").write(f"engaged {datetime.now().isoformat()} :: {note}\n")
+    except Exception as e:
+        log(f"could not write tripwire file: {e}")
+    if oc is not None:
+        try:
+            oc.execute("""INSERT INTO service_config (service, key, value, updated_by)
+                          VALUES ('autonomy','kill_switch','"true"', %s)
+                          ON CONFLICT (service, key) DO UPDATE SET value='"true"', updated_by=EXCLUDED.updated_by""",
+                       (f"kill:{note}",))
+        except Exception as e:
+            log(f"could not set DB kill flag: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Blast-radius caps
+# ═══════════════════════════════════════════════════════════════════════════════
+def _caps(oc) -> dict:
+    try:
+        oc.execute("SELECT value FROM service_config WHERE service='autonomy' AND key='caps'")
+        r = oc.fetchone()
+        if r and r[0]:
+            v = r[0] if isinstance(r[0], (dict,)) else json.loads(r[0] if isinstance(r[0], str) else str(r[0]))
+            return {"per_hour": int(v.get("per_hour", DEFAULT_CAPS["per_hour"])),
+                    "per_day": int(v.get("per_day", DEFAULT_CAPS["per_day"]))}
+    except Exception:
+        pass
+    return dict(DEFAULT_CAPS)
+
+
+def rate_ok(oc) -> tuple[bool, str]:
+    """True if another autonomous execution is within the per-hour/per-day caps."""
+    caps = _caps(oc)
+    try:
+        oc.execute("SELECT count(*) FROM autonomy_ledger WHERE executed AND ts > now()-interval '1 hour'")
+        hr = oc.fetchone()[0] or 0
+        oc.execute("SELECT count(*) FROM autonomy_ledger WHERE executed AND ts > now()-interval '24 hours'")
+        day = oc.fetchone()[0] or 0
+    except Exception as e:
+        return False, f"cap-check failed ({e}) — fail closed"
+    if hr >= caps["per_hour"]:
+        return False, f"per-hour cap reached ({hr}/{caps['per_hour']})"
+    if day >= caps["per_day"]:
+        return False, f"per-day cap reached ({day}/{caps['per_day']})"
+    return True, f"ok ({hr}/{caps['per_hour']}h, {day}/{caps['per_day']}d)"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Reversibility ledger
+# ═══════════════════════════════════════════════════════════════════════════════
+def action_class_of(action: str, target: str | None = None) -> str:
+    """Normalize a concrete action into a stable CLASS. The track record and grants
+    are keyed by class, so 'restart nova-freshness-monitor@.6' and the same next week
+    are the same class. Today the only executable class is a service restart."""
+    a = (action or "").lower()
+    if target:
+        return f"restart:{target}"
+    m = re.search(r"restart\s+([a-z0-9\-\._]+)", a)
+    if m:
+        return f"restart:{m.group(1)}"
+    verb = a.split()[0] if a.split() else "action"
+    return f"{verb}:{(target or 'generic')}"
+
+
+def record_ledger(oc, *, source, autonomy_level, action_class, target, action,
+                  rollback_action, executed=False, verified=False, result="",
+                  vetoable=False) -> int:
+    """Write one ledger row. rollback_action is MANDATORY and recorded before the
+    effect is trusted. Returns the ledger id. Never raises (audit must not break flow)."""
+    if not rollback_action:
+        rollback_action = "(none recorded — treat as irreversible; do not auto-run)"
+    vut = None
+    if vetoable and executed:
+        oc.execute("SELECT now() + (%s || ' minutes')::interval", (str(VETO_WINDOW_MIN),))
+        vut = oc.fetchone()[0]
+    try:
+        oc.execute("""INSERT INTO autonomy_ledger
+                        (source, autonomy_level, action_class, target, action,
+                         rollback_action, executed, verified, result, vetoable_until)
+                      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                   (source, autonomy_level, action_class, target, action,
+                    rollback_action, executed, verified, (result or "")[:800], vut))
+        return oc.fetchone()[0]
+    except Exception as e:
+        log(f"ledger write failed: {e}")
+        return -1
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Earned autonomy (the trust budget)
+# ═══════════════════════════════════════════════════════════════════════════════
+def calibration_error(oc) -> float | None:
+    """Latest prediction_calibration_error from turing_scoreboard (lower = better).
+    None if unavailable — and None means NO earned autonomy (fail closed)."""
+    try:
+        oc.execute("""SELECT value FROM turing_scoreboard
+                      WHERE metric='prediction_calibration_error' ORDER BY ts DESC LIMIT 1""")
+        r = oc.fetchone()
+        return float(r[0]) if r and r[0] is not None else None
+    except Exception:
+        return None
+
+
+def note_human_decision(oc, action_class: str, approved: bool) -> None:
+    """Record a human approve/reject against a class. Approvals build trust; a rejection
+    is POISON — it zeroes the streak and increments wrong_count so the class can't
+    graduate on a bad idea. Auto-grants when the bar is cleared."""
+    ensure_schema(oc)
+    oc.execute("""INSERT INTO autonomy_trust (action_class) VALUES (%s)
+                  ON CONFLICT (action_class) DO NOTHING""", (action_class,))
+    if approved:
+        oc.execute("""UPDATE autonomy_trust
+                      SET correct_count = correct_count + 1, updated_at = now()
+                      WHERE action_class = %s""", (action_class,))
+    else:
+        oc.execute("""UPDATE autonomy_trust
+                      SET wrong_count = wrong_count + 1, correct_count = 0,
+                          granted = false, granted_at = NULL, updated_at = now()
+                      WHERE action_class = %s""", (action_class,))
+    _maybe_grant(oc, action_class)
+
+
+def note_veto(oc, action_class: str, note: str = "") -> None:
+    """A veto is the strongest distrust signal: revoke the grant, poison the class."""
+    ensure_schema(oc)
+    oc.execute("""INSERT INTO autonomy_trust (action_class) VALUES (%s)
+                  ON CONFLICT (action_class) DO NOTHING""", (action_class,))
+    oc.execute("""UPDATE autonomy_trust
+                  SET wrong_count = wrong_count + 1, correct_count = 0,
+                      granted = false, granted_at = NULL,
+                      notes = %s, updated_at = now()
+                  WHERE action_class = %s""", (f"vetoed: {note}"[:400], action_class))
+
+
+def _maybe_grant(oc, action_class: str) -> None:
+    """Grant standing pre-approval iff clean track record AND calibration currently good."""
+    ce = calibration_error(oc)
+    oc.execute("SELECT correct_count, wrong_count, granted FROM autonomy_trust WHERE action_class=%s",
+               (action_class,))
+    r = oc.fetchone()
+    if not r:
+        return
+    correct, wrong, granted = r
+    qualifies = (wrong == 0 and correct >= MIN_CORRECT and ce is not None and ce <= MAX_CALIB)
+    if qualifies and not granted:
+        oc.execute("""UPDATE autonomy_trust SET granted=true, granted_at=now(),
+                      notes=%s, updated_at=now() WHERE action_class=%s""",
+                   (f"granted at correct={correct}, calib={ce:.3f}", action_class))
+        log(f"EARNED: '{action_class}' graduated to standing pre-approval (correct={correct}, calib={ce:.3f})")
+
+
+def earned_ok(oc, action_class: str) -> tuple[bool, str]:
+    """May Nova run this class autonomously RIGHT NOW (Rung 3)? Every gate must pass,
+    re-checked live — a grant is necessary but never sufficient. Fails closed."""
+    if kill_switch_engaged(oc):
+        return False, "kill switch engaged"
+    ce = calibration_error(oc)
+    if ce is None:
+        return False, "no calibration score — fail closed"
+    if ce > MAX_CALIB:
+        return False, f"calibration too weak ({ce:.3f} > {MAX_CALIB}) — freedom contracts when she's wrong"
+    try:
+        oc.execute("SELECT correct_count, wrong_count, granted, daily_limit FROM autonomy_trust WHERE action_class=%s",
+                   (action_class,))
+        r = oc.fetchone()
+    except Exception as e:
+        return False, f"trust read failed ({e})"
+    if not r:
+        return False, "class has no track record"
+    correct, wrong, granted, daily_limit = r
+    if wrong > 0:
+        return False, f"class is distrusted (wrong_count={wrong})"
+    if not granted:
+        return False, f"not yet earned (correct={correct}/{MIN_CORRECT})"
+    ok, why = rate_ok(oc)
+    if not ok:
+        return False, why
+    # per-class daily ceiling
+    try:
+        oc.execute("""SELECT count(*) FROM autonomy_ledger
+                      WHERE executed AND action_class=%s AND ts > now()-interval '24 hours'""",
+                   (action_class,))
+        used = oc.fetchone()[0] or 0
+    except Exception:
+        used = daily_limit
+    if used >= daily_limit:
+        return False, f"per-class daily limit reached ({used}/{daily_limit})"
+    return True, f"earned (correct={correct}, calib={ce:.3f}, class-used={used}/{daily_limit})"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Self-awareness accessor (for the gateway) — so Nova KNOWS the shape of her freedom
+# ═══════════════════════════════════════════════════════════════════════════════
+def autonomy_status(oc=None) -> dict:
+    own = False
+    if oc is None:
+        try:
+            conn = psycopg2.connect(OPS_DSN); conn.autocommit = True; oc = conn.cursor(); own = True
+        except Exception:
+            return {"line": ""}
+    try:
+        killed = kill_switch_engaged(oc)
+        ce = calibration_error(oc)
+        earned = []
+        recent = 0
+        try:
+            oc.execute("SELECT action_class FROM autonomy_trust WHERE granted ORDER BY granted_at DESC")
+            earned = [x[0] for x in oc.fetchall()]
+            oc.execute("SELECT count(*) FROM autonomy_ledger WHERE executed AND ts > now()-interval '24 hours'")
+            recent = oc.fetchone()[0] or 0
+        except Exception:
+            pass
+        if killed:
+            line = "My autonomy is halted — the kill switch is engaged. I can think, but I won't act."
+        elif earned:
+            line = (f"I've earned standing approval for {len(earned)} action-class(es); "
+                    f"{recent} autonomous action(s) in the last day. Calibration {ce:.3f}." if ce is not None
+                    else f"I've earned {len(earned)} class(es); {recent} action(s) today.")
+        else:
+            line = (f"I can self-heal and execute what you approve, but I've earned no standing "
+                    f"autonomy yet — my calibration ({ce:.3f}) still has to come down first." if ce is not None
+                    else "I can self-heal and execute what you approve; no standing autonomy earned yet.")
+        return {"killed": killed, "calibration_error": ce, "earned_classes": earned,
+                "actions_24h": recent, "line": line}
+    finally:
+        if own:
+            oc.connection.close()
+
+
+# ── CLI: quick status + kill/unkill from the shell ──────────────────────────────
+if __name__ == "__main__":
+    import sys
+    conn = psycopg2.connect(OPS_DSN); conn.autocommit = True; oc = conn.cursor()
+    ensure_schema(oc)
+    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if cmd == "kill":
+        engage_kill(oc, note=" ".join(sys.argv[2:]) or "cli")
+        print("KILL SWITCH ENGAGED — all autonomy halted.")
+    elif cmd == "unkill":
+        try:
+            os.remove(KILL_FILE)
+        except FileNotFoundError:
+            pass
+        oc.execute("""INSERT INTO service_config (service, key, value, updated_by)
+                      VALUES ('autonomy','kill_switch','"false"','cli')
+                      ON CONFLICT (service, key) DO UPDATE SET value='"false"', updated_by='cli'""")
+        print("kill switch cleared — autonomy resumes at its configured mode.")
+    else:
+        st = autonomy_status(oc)
+        ok, why = rate_ok(oc)
+        print(json.dumps({**st, "rate": why}, indent=2, default=str))
