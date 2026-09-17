@@ -139,6 +139,16 @@ class ImplicitFTP_TLS(ftplib.FTP_TLS):
             value = self.context.wrap_socket(value)
         self._sock = value
 
+    def ntransfercmd(self, cmd, rest=None):
+        # Bambu's FTPS DATA channel demands TLS session resumption from the control
+        # connection — without it, STOR/RETR fail with "522 SSL connection failed:
+        # session reuse required". Reuse the control socket's SSL session here.
+        conn, size = ftplib.FTP.ntransfercmd(self, cmd, rest)
+        if self._prot_p:
+            conn = self.context.wrap_socket(
+                conn, server_hostname=self.host, session=self._sock.session)
+        return conn, size
+
 
 def _alert(level, title, body, dedup_key, phone=False):
     """Slack (+ phone push if phone=True). level: info|warning|critical. Never raises."""
