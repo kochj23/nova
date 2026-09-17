@@ -169,6 +169,20 @@ EXPLICIT_STREAMS: List[Stream] = [
 # Explicit (schema, table) pairs are skipped during auto-discovery so their tuned SLA wins.
 _EXPLICIT_TABLES = {(s.schema, s.table) for s in EXPLICIT_STREAMS}
 
+# Human-muted streams: still checked and state-recorded, but NEVER paged/re-escalated.
+# Use this ONLY for a stream whose staleness has a known, accepted, out-of-band cause
+# (a device-side producer we can't restart from here) — mute the noise, don't hide a
+# fixable outage. Map stream_name -> reason (shown in the recorded state, so the "why"
+# survives). Re-flowing data will still show as "muted"; remove the entry to un-mute.
+MUTED_STREAMS = {
+    # Approved by Jordan 2026-09-16 (co-agency proposal #14). Root cause: the Apple
+    # Shortcuts automation that POSTs HomeKit accessory data to nova-homekit-receiver
+    # stopped feeding it on 2026-09-12, so the battery poller sees 0 devices and this
+    # stream reads stale. The receiver/poller are healthy; the fix is on the iOS side.
+    # Un-mute once the Shortcuts push is restored.
+    "telemetry.battery": "HomeKit Shortcuts push stopped 2026-09-12 (device-side); poller healthy",
+}
+
 
 def age_sql(stream: Stream) -> str:
     """SQL that returns ONE float: the stream's age in seconds (NULL if the table is empty).
@@ -448,6 +462,16 @@ def run_once(conn, notify_fn: Optional[Callable] = None, dry_run: bool = False) 
         first_ts = (prior["first_stale_ts"] if prior and prior.get("first_stale_ts")
                     else now)
         num = (prior["last_alert_num"] if prior else 0)
+
+        if name in MUTED_STREAMS:
+            # Human-muted: record observed staleness but emit NOTHING and never
+            # re-escalate. Checked every pass BEFORE any notify branch, so it holds
+            # regardless of the transition state it would otherwise be in.
+            _upsert_state(conn, name, "muted", kind, first_ts,
+                          (prior["last_alerted_ts"] if prior else now), num,
+                          r.age_s, f"muted: {MUTED_STREAMS[name]}")
+            actions[name] = "muted"
+            continue
 
         if action == "none":
             _upsert_state(conn, name, "fresh", None, None, None, 0, r.age_s, r.reason if r.breach else "ok")
