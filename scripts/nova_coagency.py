@@ -558,6 +558,16 @@ def mode_execute(oc, mode, pid):
         clog(oc, mode, "execute_missing", f"no proposal #{pid}"); return 1
     row = {"status": r[0], "redline_pass": r[1], "value_check": r[2],
            "target_service": r[3], "decided_by": r[4], "proposed_action": r[5]}
+    # ── Semantics guard: co-agency v1 can only RESTART a bounded SAFE service. An
+    # approved observation/goal ("monitor motion events") is a note, not an action —
+    # acknowledge it, never force a restart of its target_service. ──
+    if _safety is not None and not _safety.is_restart_action(row["proposed_action"]):
+        oc.execute("""UPDATE coagency_proposals SET status='acknowledged', executed_at=now(),
+                      execution_result=%s WHERE id=%s""",
+                   ("approved, but this is an observation/goal — not a restart. Nothing to "
+                    "execute in v1 (co-agency can only restart a SAFE service).", pid))
+        clog(oc, mode, "acknowledged", f"#{pid}: non-restart action — no-op (not executed)")
+        return 0
     try:
         assert_executable(mode, row)
     except ExecutionRefused as e:
@@ -642,6 +652,8 @@ def mode_auto(oc, mode):
     acted = 0
     for pid, tgt, act, rp, vc, decided_by in rows:
         ac = _safety.action_class_of(act, tgt)
+        if not ac.startswith("restart:"):        # only restart classes are executable in v1
+            continue
         ok, why = _safety.earned_ok(oc, ac)
         if not ok:
             continue

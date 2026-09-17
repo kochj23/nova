@@ -92,13 +92,23 @@ def audit(oc, action, target, mode, executed, verified, result, blocked=False):
 
 
 def restart_service(node, svc):
-    """Restart via the node's mechanism. Returns (ok, detail). Read the node from
-    health_checks; .6 = launchd, Linux cores = systemd."""
+    """Restart via the node's mechanism, correctly whether we're ON that node or remote.
+    .6 = launchd (Mac); Linux cores = systemd. The scheduler runs on .2, so a target on
+    the .6 Mac must be reached over SSH — never assume we're co-located with the target
+    (that assumption is what made 'launchctl not found' fail on the Linux box)."""
+    import os, shutil
     try:
-        if node in ("mac-studio", "Office-M4-2", "192.168.1.6"):
-            import os
-            cmd = ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/net.digitalnoise.{svc.replace('nova-','nova-')}"]
-            r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+        is_mac = node in ("mac-studio", "Office-M4-2", "192.168.1.6", "nova-mac-studio")
+        if is_mac:
+            label = f"net.digitalnoise.{svc}"
+            if shutil.which("launchctl"):                 # we ARE on the Mac → local
+                cmd = ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"]
+                r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+            else:                                         # remote → SSH to the Mac, run there
+                r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+                                    "kochj@192.168.1.6",
+                                    f"launchctl kickstart -k gui/$(id -u)/{label}"],
+                                   capture_output=True, text=True, timeout=40)
         else:
             host = node if "." in node else f"{node}"
             r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",

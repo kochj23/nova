@@ -49,6 +49,15 @@ def test_action_class_normalizes_by_target():
     assert S.action_class_of("restart nova-soil-monitor now") == "restart:nova-soil-monitor"
 
 
+def test_observation_never_normalizes_to_a_restart():
+    # The bug that force-restarted approved observations: a 'monitor X' note must NOT
+    # become a 'restart:X' class, or it accrues restart-trust and gets executed.
+    assert S.is_restart_action("Monitor motion detection events for security") is False
+    assert S.is_restart_action("restart nova-soil-monitor now") is True
+    assert S.action_class_of("Monitor motion events", "nova-face-gate-watch").startswith("observe:")
+    assert S.action_class_of("please restart it", "nova-freshness-monitor") == "restart:nova-freshness-monitor"
+
+
 def test_ledger_never_stores_null_rollback(oc):
     lid = S.record_ledger(oc, source="test", autonomy_level="rung1-selfheal",
                           action_class=TEST_CLASS, target="x", action="do x",

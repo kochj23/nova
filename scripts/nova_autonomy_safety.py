@@ -158,18 +158,31 @@ def rate_ok(oc) -> tuple[bool, str]:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Reversibility ledger
 # ═══════════════════════════════════════════════════════════════════════════════
+# The ONLY physically-executable intent in v1 is restarting a bounded SAFE service.
+# Anything else (observe/monitor/track/gather/goal) is a note, not an action — it must
+# NOT normalize to a 'restart:*' class, or an approved observation would accrue restart
+# trust and, worse, be force-restarted. Keep the two worlds strictly separate.
+_RESTART_INTENT = re.compile(
+    r"\b(restart|relaunch|reload|re-?launch|kickstart|bounce|reboot the (?:service|monitor|daemon)|"
+    r"bring .{0,15}back up|heal)\b", re.IGNORECASE)
+
+
+def is_restart_action(action: str) -> bool:
+    return bool(_RESTART_INTENT.search(action or ""))
+
+
 def action_class_of(action: str, target: str | None = None) -> str:
-    """Normalize a concrete action into a stable CLASS. The track record and grants
-    are keyed by class, so 'restart nova-freshness-monitor@.6' and the same next week
-    are the same class. Today the only executable class is a service restart."""
+    """Normalize a concrete action into a stable CLASS, keyed so restart intents and
+    non-actionable notes never collide. 'restart:<svc>' is executable; 'observe:<x>'
+    is a note that no executor ever runs."""
     a = (action or "").lower()
-    if target:
-        return f"restart:{target}"
-    m = re.search(r"restart\s+([a-z0-9\-\._]+)", a)
-    if m:
-        return f"restart:{m.group(1)}"
-    verb = a.split()[0] if a.split() else "action"
-    return f"{verb}:{(target or 'generic')}"
+    if is_restart_action(a):
+        if target:
+            return f"restart:{target}"
+        m = re.search(r"(?:restart|relaunch|kickstart|bounce)\s+([a-z0-9\-\._]+)", a)
+        return f"restart:{m.group(1)}" if m else "restart:unknown"
+    verb = a.split()[0] if a.split() else "note"
+    return f"observe:{target or verb}"
 
 
 def record_ledger(oc, *, source, autonomy_level, action_class, target, action,
