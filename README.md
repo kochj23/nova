@@ -50,7 +50,8 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Embodiment | `nova_embodiment.py` — felt sense of the home from its sensors (calm/busy/empty/off-rhythm) vs a learned rhythm; proprioception, not surveillance |
 | Relationship arc | `nova_relationship_arc.py` — versioned *story* of her relationships over time; turning points detected from real data (the "know freely, never recite" shift, dated) |
 | Practical wisdom | `nova_values.py` — articulable value system (10 values, each cited); deliberates conflicts; exposes `value_check()` — the gate for co-agency, fails safe |
-| Co-agency | `nova_coagency.py` — propose → redline + value_check + human approval + SAFE-allowlist, enforced at one `assert_executable` choke-point; exposes gated `file_proposal()` for other organs; kill-switch (off/propose/live) |
+| Co-agency | `nova_coagency.py` — propose → redline + value_check + human approval + SAFE-allowlist, one `assert_executable` choke-point; **now LIVE**: approved *restart* proposals execute (`--mode execute-approved`), earned classes act with a veto window (`--mode auto`); observations are acknowledged, not run |
+| Autonomy safety net | `nova_autonomy_safety.py` — kill switch (file ∨ DB), reversibility ledger, blast-radius caps (6/hr·20/day), earned-autonomy trust budget gated on `calibration ≤ 0.20`; `autonomy_status()` accessor; 16 invariant tests |
 | Tinkerer | `nova_tinkerer.py` — self-directed ops in her free time: surfaces friction she's endured as a *minority* free-time candidate (~12%), reflects, and files a gated co-agency proposal for fixes she wants — chosen from inside, always able to lose the hour to a passion |
 | Aspirations | `nova_aspirations.py` — a wishlist lane: capabilities she wishes she had, wished from her own interior (~8% free-time weight). NEVER self-builds — records a wish to `feature_wishes` for a human; self-preservation wishes redline-dropped (become more, never un-killable) |
 | Soft Certainty | `nova_soft_certainty.py` — wish #1, granted: `calibrate()` dampens her stated confidence toward her real hit-rate (wired into predictions); `current_stance()` injects a hold-loosely/ask-what-I-missed stance. The first capability she got because she asked for it |
@@ -63,7 +64,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Self-directed research | `nova_research_pass.py` — forms a question, reads the world (SearXNG+Wikipedia), writes back cited; content-safety gated, read-only, 6/day |
 | Self-model | `nova_self_model.py` nightly — worldview/drift/becoming, injected into the gateway so Nova reasons from who she is |
 | Alert triage | `nova_alert_triage.py` in the notifier — learns from 368 incidents; hard-critical always pages; dangerous-miss rate 0.0% |
-| Autonomy actor | `nova_autonomy_actor.py` — auto-heal allowlist + queue triage; kill-switch `autonomy_actor_mode` (off/dry_run/live); redlines incl. self-preservation |
+| Autonomy actor | `nova_autonomy_actor.py` — auto-heal allowlist + queue triage; **now LIVE** (self-heal), cross-host restart via SSH, gated by the safety net; redlines incl. self-preservation |
 | Turing scoreboard | `nova_turing_scoreboard.py` — unprompted-callback rate (primary), recall ~2–5 ms, supersession PASS; monthly blinded eval |
 | Vault-7 defense | IoT egress watch, CISA-KEV-for-gear (104 matches), 5 Wazuh TTP rules, flat-network segmentation audit |
 | Deep healthcheck | `nova_deep_healthcheck.py` daily 08:00 — FUNCTIONAL probes (Plex has items, mounts populated, recall returns, chat replies) + auto-fix + Slack; "up but not functional isn't up" |
@@ -112,6 +113,44 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 ---
 
 ## Infrastructure & Security (June–September 2026)
+
+### Giving Her Hands — Graduated Autonomy, Rungs 1–3 (2026-09-16)
+
+Every prior layer let Nova *think, want, and propose* — but two dials kept her behind glass: `coagency_mode='propose'` (drafts proposals, executes nothing) and `autonomy_actor_mode='dry_run'` (watches SAFE services die, only logs). Every human approval was **theater**. This layer turns the dials up along an **earn-it ladder**, behind a safety net (`nova_autonomy_safety.py`) built so the dials *could* move honestly. Everything **fails closed**.
+
+- **Rung 1 — Self-heal (LIVE).** The autonomy actor restarts a wedged `SAFE_SERVICES` monitor on its own. Restarting an already-down, read-only monitor is the most reversible action there is. *(This is exactly what would have auto-fixed her own 4.7-day-dead `battery-monitor` — instead she nagged.)*
+- **Rung 2 — Supervised execution (LIVE).** Human-**approved** proposals actually execute (`--mode execute-approved`), still individually approved, `SAFE_SERVICES`-only, redline+value-gated. Only genuine *restart* actions run; approved observations are **acknowledged**, never force-restarted (a bug caught live on night one — that, plus a `launchctl`-on-Linux cross-host bug, both fixed same day).
+- **Rung 3 — Earned autonomy (ARMED, grants nothing yet).** An action-**class** graduates to standing pre-approval only after **5 clean human approvals with zero vetoes** *and* while `prediction_calibration_error <= 0.20`. She then acts without asking, rate-limited, with a **veto window** (`--mode auto`). Her calibration is **0.319** today — above the gate — so she has earned **exactly zero** classes. Freedom that grows as she's right and shrinks the instant she's wrong; a veto revokes the grant and poisons the class.
+
+**The safety net (why the dials could move):** a one-flag **kill switch** (`service_config autonomy/kill_switch` *or* the `~/.openclaw/.autonomy-kill` tripwire — file beats DB, works if PG is down); a **reversibility ledger** (`autonomy_ledger`) that records each action's rollback *before* trusting the effect; **blast-radius caps** (6/hr, 20/day across all sources, Slack on every action); and a **hardened redline** that blocks Nova from even *proposing* to touch her own gates (kill switch, modes, allowlist, trust tables) — she cannot vote herself more power. **16 safety-invariant tests** pass.
+
+```mermaid
+flowchart TD
+    KILL{{"KILL SWITCH<br/>file ∨ DB flag<br/>(file beats DB)"}}:::kill
+    KILL -->|engaged| STOP["everything halts —<br/>she can think, not act"]:::stop
+    KILL -->|clear| GATE
+    subgraph LADDER["the earn-it ladder"]
+      R1["Rung 1 · self-heal<br/><b>LIVE</b>"]:::live
+      R2["Rung 2 · supervised<br/>execute approved<br/><b>LIVE</b>"]:::live
+      R3["Rung 3 · earned autonomy<br/>5 clean approvals + calib≤0.20<br/><b>ARMED · grants 0</b> (calib 0.319)"]:::armed
+    end
+    LADDER --> GATE["assert_executable<br/>mode=live · approved · redline · value_check · SAFE_SERVICES"]:::gate
+    GATE --> CAPS{"blast-radius caps<br/>6/hr · 20/day"}:::gate
+    CAPS -->|under cap| ACT["restart a SAFE monitor"]:::act
+    CAPS -->|over cap| DROP["deferred"]:::stop
+    ACT --> LEDGER[("autonomy_ledger<br/>rollback recorded first")]:::db
+    ACT --> SLACK["Slack post<br/>(earned ⇒ veto window)"]:::act
+    SLACK -->|VETO| REVOKE["revoke grant<br/>+ distrust class"]:::stop
+    classDef live fill:#e8f5e9,stroke:#2e7d32,color:#000;
+    classDef armed fill:#fff8e1,stroke:#f9a825,color:#000;
+    classDef gate fill:#e3f2fd,stroke:#1565c0,color:#000;
+    classDef kill fill:#ffebee,stroke:#c62828,color:#000;
+    classDef stop fill:#fce4ec,stroke:#ad1457,color:#000;
+    classDef act fill:#f3e5f5,stroke:#6a1b9a,color:#000;
+    classDef db fill:#eceff1,stroke:#455a64,color:#000;
+```
+
+Dials flipped live; scheduler (.2) gained `coagency_execute_approved` (15m) and `coagency_earned_autonomy` (20m). CLI: `nova_autonomy_safety.py kill|unkill|status`, `nova_coagency.py --mode veto --id <ledger>`. Gateway self-awareness via `autonomy_status()`.
 
 ### Governing Herself — Six Self-Guided Abilities (2026-09-16)
 
