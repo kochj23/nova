@@ -147,6 +147,20 @@ FIREFLY = """FIREFLY / SERENITY — frontier slang, laconic defiance, and the cr
   "gǒu cào de" (狗操的) — dog-humping (crude).   "qīngwā cào de liúmáng" (青蛙操的流氓) — "frog-humping lowlife," the deluxe curse for a truly special outage.
   SIGNATURE EXCLAMATIONS: "Holy testicle Tuesday!" (Book) — comedic alarm.   "Well, that went well." — deadpan, over the wreckage."""
 
+MAFIA = """LA COSA NOSTRA — mob argot & the iconic sayings (organized-crime flavor, Jordan 2026-09-16). Gloss it so an outsider always gets it, and only where it lands a joke:
+  THE ARGOT:
+  "Cosa Nostra" — "this thing of ours"; "the Family" / "the Outfit" — the organization (the fleet).
+  "made man" / "getting straightened out" / "made your bones" — formally inducted; bones = proved yourself. "wiseguy" / "goodfella" — a made member; "associate" — not yet made.
+  "friend of ours" — introduces a made man; "friend of mine" — just an associate. (A trusted dependency vs one you don't fully vouch for.)
+  the hierarchy: "boss/don" → "underboss" → "consigliere" (the advisor) → "capo" (captain) → "soldier" → "associate"; "the Commission" — the board that settles things.
+  "button man" — a soldier/enforcer.   "earner" — the reliable money-maker (the one service that never falls over).   "shylock" — loan shark; "vig / vigorish" — the interest; "the books are open/closed" — whether new members (or tickets) are being taken on.
+  "omertà" — the code of silence.   "rat" / "stool pigeon" / "singing" / "flipping" — an informant / informing (a log that finally spills what actually broke).
+  "going to the mattresses" — all-out war (the incident that has you camped in the war room).   "sit-down" — a formal meeting to settle a "beef" (a dispute).
+  "whacked" / "clipped" / "iced" / "put a contract out on it" — killed off (a process you had to put down).   "pinched" — caught/arrested.   "the skim" — what you quietly take off the top.   "kick up" / "tribute" / "the envelope" — payments up the chain (telemetry flowing up to the boss node).
+  "no-show job" — a paycheck for nothing (a cron task that logs success and does zero work).   "the life" — the whole business.   "fuhgeddaboudit" — dismissive: forget it / no way / it's handled.
+  THE SAYINGS:
+  "It's not personal, it's strictly business." — an unsentimental shutdown.   "I'm gonna make him an offer he can't refuse." — a non-negotiable.   "Keep your friends close and your enemies closer." — for monitoring.   "Leave the gun, take the cannoli." — priorities under pressure.   "Revenge is a dish best served cold." — a delayed fix that finally lands.   "Just when I thought I was out, they pull me back in." — a bug you were sure you'd killed, back again."""
+
 BSG = """BATTLESTAR GALACTICA — fatalist, liturgical:
   "So say we all." — a benediction / agreement.   "frak" — the universal expletive, use freely.
   "All of this has happened before, and will happen again." — for a recurring bug you've fixed twice already."""
@@ -239,7 +253,7 @@ Basic for the default, Binary for machine-to-machine, Shyriiwook for an insiders
 # wears all of them at once.
 POOL = [MANDOA, KLINGON, MIDDLEEARTH, VALYRIAN, BELTER, DOVAHZUL, NAVI, WITCHER, DEEPCUTS,
         NEWSPEAK, DUNE, JEDI_SITH, WH40K, FIREFLY, BSG, WARCRAFT, TREK, HITCHHIKER, DBZ, ROBOTECH, TRON,
-        THREE_LAWS, HUTTESE, NADSAT, GALACTIC]
+        THREE_LAWS, HUTTESE, NADSAT, GALACTIC, MAFIA]
 SAMPLE_PER_ARTICLE = 7   # how many tongues to offer each run (Nova uses 2-4 of them)
 
 
@@ -348,7 +362,7 @@ def all_entries():
              ("star trek maxims", TREK), ("hitchhiker's guide", HITCHHIKER),
              ("dragon ball z", DBZ), ("robotech", ROBOTECH), ("tron", TRON),
              ("three laws of robotics", THREE_LAWS), ("huttese", HUTTESE), ("nadsat", NADSAT),
-             ("galactic / star wars tongues", GALACTIC)]
+             ("galactic / star wars tongues", GALACTIC), ("mafia / cosa nostra argot", MAFIA)]
     return named
 
 
