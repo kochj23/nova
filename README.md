@@ -86,7 +86,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
 | Chatroom | Real-time multi-party chat on port 37480, Nova has full memory access, external via CF tunnel + service token auth |
 | Gauge Dashboard | Live 3D system monitoring — [gauges.digitalnoise.net](https://gauges.digitalnoise.net/gauges) |
-| Grafana | 11 canonical dashboards on **nova-core** (192.168.1.2:3000) — home/fleet/network/brain/SNMP/security/Nova-MIB, provisioned from repo |
+| Grafana | 12 canonical dashboards on **nova-core** (192.168.1.2:3000) — home/fleet/network/brain/SNMP/security/Nova-MIB, provisioned from repo |
 | Mesh / Cluster | `nova_mesh_agent.py` on every node — 15s heartbeats, `service_registry` health authority, ring-peer failure detection, live mesh map |
 | Load balancing | Capacity-aware (`nova_capacity.py` + `nova_resolve.py`) — headroom-scored instance selection, active-active, auto-fail-stale nodes |
 | Nova-MIB | `nova_component_metrics.py` — external SNMP-style per-component vitals (up/RSS/CPU/uptime/data-freshness) → `telemetry.nova_components` |
