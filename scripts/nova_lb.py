@@ -44,14 +44,19 @@ RAMP_BACK_PROBES = 3 # successful probes before node is fully "up" again
 # ground-truthed by port scan, not assumed. A node can be healthy on its 37470
 # sidecar and still be useless for a protocol it doesn't run.
 NODES = [
-    {"name": "mac-studio", "ip": "192.168.1.6", "port": 37470, "gpu": True,
-     "protocols": {"ollama": 11434, "mlx": 5050, "llamacpp": 11435}},
-    {"name": "mac-mini", "ip": "192.168.1.190", "port": 37470, "gpu": True,
-     "protocols": {"mlx": 5050}},
-    {"name": "tv-movies-mini", "ip": "192.168.1.7", "port": 37470, "gpu": True,
-     "protocols": {"mlx": 5050}},
-    {"name": "nova-core5", "ip": "192.168.1.10", "port": 37470, "gpu": False,
+    # ollama CHAT pool — nodes that actually serve chat (2026-09-18 rebuild): .6 ollama is
+    # wedged on /api/chat (answers /api/tags but hangs on chat), nova-core5/.10 is
+    # embeddings-only, and .190 is a dead soundbar IP — all removed from the ollama pool.
+    {"name": "nova-core2", "ip": "192.168.1.86", "port": 37470, "gpu": False,
      "protocols": {"ollama": 11434}},
+    {"name": "nova-core7", "ip": "192.168.1.125", "port": 37470, "gpu": True,
+     "protocols": {"ollama": 11434}},
+    {"name": "nova-core10", "ip": "192.168.1.77", "port": 37470, "gpu": True,
+     "protocols": {"ollama": 11434, "mlx": 5050}},
+    {"name": "tv-movies-mini", "ip": "192.168.1.7", "port": 37470, "gpu": True,
+     "protocols": {"ollama": 11434, "mlx": 5050}},
+    {"name": "mac-studio", "ip": "192.168.1.6", "port": 37470, "gpu": True,
+     "protocols": {"mlx": 5050, "llamacpp": 11435}},   # ollama removed 2026-09-18: chat-wedged; re-add when fixed
 ]
 
 # ── Pool State ────────────────────────────────────────────────────────────────

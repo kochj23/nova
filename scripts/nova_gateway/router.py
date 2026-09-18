@@ -266,7 +266,7 @@ class ModelRouter:
         if name == "ollama":
             # Use Ollama's native API with think:true — thinking goes to
             # separate field, we only return content.
-            model = model_override or "qwen3:30b-a3b"
+            model = model_override or "qwen3:8b"   # 2026-09-18: 30b only on wedged .6 / cold .77; 8b is reliable on the working nodes
             payload = {
                 "model":   model,
                 "messages": msgs,
@@ -368,7 +368,7 @@ class ModelRouter:
     # Lets inference_latency.model carry a real, groupable name for Grafana
     # instead of the placeholder "default".
     _DEFAULT_MODELS = {
-        "ollama":     "qwen3:30b-a3b",
+        "ollama":     "qwen3:8b",
         "mlx":        "/Volumes/Data/mlx-models/qwen2.5-32b-4bit",
         "llamacpp":   "llamacpp",
         "openrouter": "qwen/qwen3-235b-a22b-2507",

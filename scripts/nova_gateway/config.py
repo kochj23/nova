@@ -16,7 +16,7 @@ VERSION = "2.4.0"
 
 # ── URLs & Endpoints ─────────────────────────────────────────────────────────
 PG_DSN       = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
-OLLAMA_URL   = "http://192.168.1.6:11434"
+OLLAMA_URL   = "http://192.168.1.86:11434"   # 2026-09-18: .6 ollama chat wedged; static fallback -> a working chat node
 MLX_URL      = "http://192.168.1.6:5050"
 LLAMACPP_URL = "http://192.168.1.6:11435"
 OPENROUTER   = "https://openrouter.ai/api/v1"
