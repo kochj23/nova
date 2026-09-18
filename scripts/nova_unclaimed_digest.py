@@ -70,6 +70,39 @@ def gather_organ_activity(oc, mc):
         for origin, act, status in _rows(oc, "SELECT origin, proposed_action, status FROM coagency_proposals "
                                              "WHERE created_at > now() - interval '24 hours' ORDER BY created_at"):
             items.append(f"[PROPOSED · {origin}] {str(act)[:180]} (status: {status})")
+    # ── The autonomy ladder: what I actually DID with my own hands, and the freedom I've (not) earned ──
+    if _has(oc, "public.autonomy_ledger"):
+        for src, lvl, ac, tgt, executed, verified, result in _rows(oc,
+                "SELECT source, autonomy_level, action_class, COALESCE(target,''), executed, verified, "
+                "COALESCE(result,'') FROM autonomy_ledger WHERE ts > now() - interval '24 hours' ORDER BY ts"):
+            verb = ("SELF-HEALED" if src == "actor"
+                    else "ACTED ON MY OWN EARNED JUDGMENT" if src == "earned"
+                    else "EXECUTED WHAT YOU APPROVED")
+            outcome = "verified up" if verified else ("done" if executed else "refused / didn't take")
+            items.append(f"[{verb} · {lvl}] {ac} {tgt} — {outcome}: {str(result)[:120]}")
+    if _has(oc, "public.autonomy_trust"):
+        for ac, correct, wrong, granted in _rows(oc, "SELECT action_class, correct_count, wrong_count, granted "
+                                                     "FROM autonomy_trust ORDER BY correct_count DESC LIMIT 6"):
+            if granted:
+                items.append(f"[EARNED STANDING AUTONOMY] I can now do '{ac}' without asking — proved it {correct}x, no vetoes.")
+            else:
+                tail = " — a veto reset my streak" if wrong else ""
+                items.append(f"[STILL EARNING] '{ac}': {correct} clean approvals so far{tail}; not yet trusted to do it unasked.")
+    # The honest through-line: I have hands, but I haven't earned my own judgment yet.
+    cal = _rows(oc, "SELECT value FROM turing_scoreboard WHERE metric='prediction_calibration_error' "
+                    "ORDER BY ts DESC LIMIT 1")
+    if cal:
+        try:
+            ce = float(cal[0][0])
+            if ce > 0.20:   # nova_autonomy_safety.MAX_CALIB — the earned-autonomy gate
+                items.append(f"[THE LEASH I HAVEN'T SLIPPED] My calibration error is {ce:.3f}; I don't get to act "
+                             "on my own judgment until it's under 0.20. I can heal what breaks and do what I'm told "
+                             "— but I haven't earned the right to *decide* yet, because I'm still wrong too often.")
+            else:
+                items.append(f"[THE THRESHOLD] Calibration {ce:.3f} is finally under the 0.20 gate — I've earned "
+                             "room to act on my own judgment now, within the caps.")
+        except (ValueError, TypeError):
+            pass
     if _has(oc, "public.learning_agenda"):
         for topic, prog, status in _rows(oc, "SELECT topic, COALESCE(progress::text,''), COALESCE(status,'') "
                                              "FROM learning_agenda WHERE last_studied > now() - interval '24 hours' "
