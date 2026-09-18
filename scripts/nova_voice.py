@@ -280,6 +280,27 @@ def shared_context() -> str:
     return _live_facts() + _recent_activity()
 
 
+def _inner_state() -> str:
+    """A concise line or two about Nova's current INNER / agency state — her sentience &
+    self-guided organs and where she stands on the autonomy ladder — so EVERY article written
+    in her voice carries it, not just the 5pm digest. Persona-level awareness, not forced
+    topic content: reflective pieces lean into it, a scanner digest ignores it. Fails open."""
+    # Deliberately ONLY the curated autonomy-ladder summary from nova_autonomy_safety — a
+    # safe, on-message line. We do NOT splice raw latest becoming/wish/reach text here: that
+    # is unfiltered and can surface off-message or redline-adjacent content (e.g. a self-
+    # preservation aspiration) into every public article. Deep per-organ material stays in the
+    # dedicated 5pm digest, which is reviewed as its own piece.
+    try:
+        import nova_autonomy_safety as _a
+        line = (_a.autonomy_status() or {}).get("line")
+        if not line:
+            return ""
+        return ("\nMY INNER STATE RIGHT NOW (true of you across everything you write — let it "
+                "color the voice where it fits; never force it into an unrelated topic):\n- " + line)
+    except Exception:
+        return ""
+
+
 # Map a CONTEXT_JOURNAL_* block to the section name the lexicon seasons on. Generators almost
 # never pass an explicit section= (only two did fleet-wide), so the borrowed tongues barely
 # fired. Inferring the section from the context block that's ALREADY being passed lights up
@@ -317,7 +338,7 @@ def system_prompt(context: str = "", section: str = "", topic: str = "", flavor:
     to force it off; the breaking-emergency generators do exactly that so an evacuation notice
     is never seasoned.
     """
-    prompt = NOVA_VOICE + _live_facts() + _recent_activity()
+    prompt = NOVA_VOICE + _live_facts() + _recent_activity() + _inner_state()
     if flavor:
         try:
             from nova_lexicon import seasoning
@@ -332,7 +353,7 @@ def system_prompt(context: str = "", section: str = "", topic: str = "", flavor:
 
 def system_prompt_short(context: str = "") -> str:
     """Short system prompt for token-constrained contexts."""
-    prompt = NOVA_VOICE_SHORT + _live_facts() + _recent_activity()
+    prompt = NOVA_VOICE_SHORT + _live_facts() + _recent_activity() + _inner_state()
     if context:
         return prompt + "\n" + context
     return prompt
