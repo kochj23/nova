@@ -29,7 +29,7 @@ PSQL = ["/opt/homebrew/bin/psql", "-h", "localhost", "-U", "kochj", "-tA"]
 STATE_DIR = Path.home() / ".openclaw" / "state"
 LOG = Path.home() / ".openclaw" / "logs" / "nova_selfcheck.log"
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
-PRIMARY = "192.168.1.2"   # failed back to nova-core (.2 Beelink) 2026-09-14; was .10 during the 08-24..09-14 window
+PRIMARY = "192.168.1.10"  # EMERGENCY FAILOVER 2026-09-17: nova-core (.2) died hard, promoted nova-core5 (.10). .2 fenced pending pg_basebackup rebuild.
 SLACK_DIGEST_CHANNEL = "C0BLJLKQMMZ"   # #nova-digest
 SLACK_ALERT_CHANNEL = "C0BMK83BLFJ"    # #nova-alerts
 CLAUDE = "/opt/homebrew/bin/claude"
@@ -112,12 +112,13 @@ def check_replication():
     if int(count) >= 2 and int(lag) < 900:
         record("replication", "ok", None, f"{count} replicas, max lag {lag}s")
         return
-    # Which replica is missing? .2 shows client_addr 192.168.1.2, .7 shows .7
+    # Which replica is missing? core7 (.125) runs the pg17-replica container; .7 shows .7.
+    # Updated 2026-09-18: post-failover standbys are .7 + core7/.125, NOT the old .2.
     addrs = pg("SELECT COALESCE(string_agg(client_addr::text, ','), '') FROM pg_stat_replication", host=PRIMARY) or ""
     fixes = []
-    if "192.168.1.2" not in addrs:
-        sh(SSH + ["kochj@192.168.1.2", "docker restart pg17-replica"], 90)
-        fixes.append("restarted pg17-replica container on .2")
+    if "192.168.1.125" not in addrs:
+        sh(SSH + ["kochj@192.168.1.125", "docker restart pg17-replica"], 90)
+        fixes.append("restarted pg17-replica container on core7 (.125)")
     if "192.168.1.7" not in addrs:
         sh(SSH + ["kochj@192.168.1.7", "sudo -n launchctl kickstart -k system/com.kochj.postgresql17-replica"], 60)
         fixes.append("kickstarted postgres daemon on .7")

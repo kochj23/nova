@@ -208,7 +208,15 @@ def get_dpi():
 # not a problem, and it must not page. (Kitchen U6: powered off 2026-07-29
 # during the WAN1 flap storm; its "disconnection" drove weeks of recurring
 # "UniFi Network Health" incidents that were really just this known state.)
-INTENTIONALLY_OFFLINE = {"Kitchen U6 Enterprise"}
+#
+# USW-Lite-8-PoE (192.168.1.65): wedged in UniFi state 10 ("managed by other")
+# since the same 2026-07-30 WAN storm. The switch itself WORKS — it forwards
+# traffic and answers ping (~7ms) — only its controller adoption is stuck, which
+# flips the LAN subsystem aggregate to "error". Controller-side adopt/force-provision
+# won't reclaim it and repeated paperclip factory-resets didn't re-adopt it; Jordan
+# has accepted it as-is. This drove ~32 recurring "udm-pro:network" pages in 8 days,
+# so treat it as a known state, exactly like Kitchen U6. (2026-09-17)
+INTENTIONALLY_OFFLINE = {"Kitchen U6 Enterprise", "USW-Lite-8-PoE"}
 
 
 def find_problems(health, devices, clients):
@@ -228,9 +236,12 @@ def find_problems(health, devices, clients):
     if health:
         for name, info in health.items():
             if info["status"] != "ok":
-                # A wlan "warning" caused solely by intentionally-off APs is
-                # the known state, not a problem.
-                if name == "wlan" and info["status"] == "warning" and not unexpected_down:
+                # A wlan "warning" or lan "error" caused solely by intentionally-off
+                # gear is the known state, not a problem. If NOTHING is unexpectedly
+                # down, the subsystem degradation is fully attributable to the
+                # allowlisted devices (e.g. USW-Lite-8-PoE stuck in state 10 keeps the
+                # LAN aggregate red though the switch works). Don't page on it.
+                if name in ("wlan", "lan") and not unexpected_down:
                     continue
                 problems.append({
                     "severity": "high",

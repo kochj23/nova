@@ -267,7 +267,7 @@ tasks:
   hue_history:                     # append-only Hue time-series: color/ct/brightness/on + est. power
     script: nova_hue_history.py
     schedule: every 2m
-    timeout: 60
+    timeout: 90
     overlap: skip
 
 

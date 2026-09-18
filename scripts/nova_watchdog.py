@@ -57,7 +57,7 @@ CHECKS = [
     # /identity is Plex's cheap unauthenticated liveness endpoint (200 = up).
     # Added after Plex was silently down 2026-06-22 with nothing alerting (#663).
     ("nova-core (.2) plex",       "http", "http://192.168.1.2:32400/identity"),
-    ("mac-mini (.190) ollama",    "http", "http://192.168.1.190:11434/api/version"),
+    ("nova-core10 (.77) ollama",  "http", "http://192.168.1.77:11434/api/version"),
     # nova-core5: so a SECOND watcher (on .2) catches it going down — the gap the
     # 2026-06-22 power event exposed (its own watchdog died with it).
     ("nova-core5 (.10) host",      "tcp",  ("192.168.1.10", 22)),

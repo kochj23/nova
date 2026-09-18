@@ -2,8 +2,8 @@ node_name: mac-studio
 pg_dsn: "dbname=nova_ops user=kochj host=127.0.0.1"
 heartbeat_interval: 15
 port: 37470
-peer: 192.168.1.190
-peer_node_name: mac-mini
+peer: 192.168.1.77
+peer_node_name: nova-core10
 
 services:
   - name: postgresql

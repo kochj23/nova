@@ -138,13 +138,19 @@ def cmd_promote(args):
     log(f"Repointing .6's pgbouncer ({PGBOUNCER_INI}) from {PRIMARY_IP} to {STANDBY_IP}...")
     ini = Path(PGBOUNCER_INI)
     text = ini.read_text()
-    new_text = text.replace(f"host={PRIMARY_IP}", f"host={STANDBY_IP}")
+    # Replace host AND port together: the two nodes serve on different ports
+    # (nova-core's docker primary is host-port 5434, nova-core5's linuxbrew PG is 5432).
+    # Host-only replacement left pgbouncer pointing at .10:5434 during the 2026-09-17 failover.
+    new_text = text.replace(f"host={PRIMARY_IP} port=5434", f"host={STANDBY_IP} port=5432")
+    new_text = new_text.replace(f"host={PRIMARY_IP}", f"host={STANDBY_IP}")
     if new_text == text:
         log(f"WARNING: no occurrences of host={PRIMARY_IP} found in pgbouncer.ini — "
             "check the file manually, it may have already been repointed or the format changed.")
     else:
         ini.write_text(new_text)
-        subprocess.run(["brew", "services", "restart", "pgbouncer"], capture_output=True, timeout=30)
+        # Full path: launchd/escalation contexts don't have /opt/homebrew/bin on PATH —
+        # bare "brew" crashed the 2026-09-17 run right after promotion.
+        subprocess.run(["/opt/homebrew/bin/brew", "services", "restart", "pgbouncer"], capture_output=True, timeout=30)
         log("pgbouncer.ini updated and service restarted.")
 
     log("Updating pg-primary.digitalnoise.net DNS record...")

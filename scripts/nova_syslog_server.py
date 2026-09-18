@@ -158,10 +158,23 @@ SENSITIVE_PATHS_RE = re.compile(
 # sensitive_access 26x on TV-Movies-3 and 13x on the mac-mini over ~8 days, all
 # false (2026-09-14). Real threats — an unexpected process reading id_rsa/.ssh or
 # dumping a *.keychain-db — do not match this and still alert.
+#
+# 2026-09-17: the 09-14 filter missed the actual daily offender on TV-Movies-3 —
+# Apple Intelligence's on-device analytics daemon `inputanalyticsd` logging
+#   [com.apple.GenerativeModels:externalPartnerCredentials]
+#   ExternalPartnerCredentialStorageXPCClient:readData: Your process must have
+#   "true" for the "...ExternalPartnerCredentialStorage" entitlement. Falling
+#   back on checking legacy direct access to keychain.
+# The trailing "...access to keychain" tripped SENSITIVE_PATHS_RE. It is a signed
+# Apple system daemon reporting a missing-entitlement fallback (no secret is
+# read), fired ~1x/day, and drove a chronic sensitive_access escalation storm.
+# Added below. A hostile keychain dump is not inputanalyticsd/GenerativeModels.
 SENSITIVE_BENIGN_RE = re.compile(
     r"keychainsharingmessagingd|Sandbox:\s*(deny|allow)|"
-    r"\b(secd|securityd|trustd|apsd|cloudd|akd|CommCenter)\b|"
-    r"com\.apple\.(security|keychain|logind|defaults|cfprefs)", re.IGNORECASE)
+    r"\b(secd|securityd|trustd|apsd|cloudd|akd|CommCenter|inputanalyticsd)\b|"
+    r"ExternalPartnerCredentialStorage|"
+    r"com\.apple\.(security|keychain|logind|defaults|cfprefs|"
+    r"generativeexperiences|GenerativeModels)", re.IGNORECASE)
 
 SUDO_RE = re.compile(r"sudo.*COMMAND=(.+)", re.IGNORECASE)
 SANDBOX_DENY_RE = re.compile(r"\(Sandbox\).*deny\(1\)\s+(.+)")
