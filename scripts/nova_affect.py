@@ -35,6 +35,9 @@ are ASYMMETRIC and honest-by-construction:
                            fraction of a typical full day's output (capped)
     social_contact   pos   real gateway conversations in 24h (capped)
     unresolved_load  neg   standing open backlog (queue + herd threads), low-grade
+    autonomy         ±     recent autonomy-ladder outcomes — a verified self-heal or
+                           clean earned action is quiet competence (+); a veto or a
+                           reverted/failed action is a sting (−). Small weight.
 
   AROUSAL (RESTING_AROUSAL + sum of da, clamped 0..1):
     criticals, alert volume, open incidents, surprise rate (predictions), and a
@@ -89,6 +92,7 @@ WEIGHTS = {
     "creative_v":       0.35,   # valence lift from a day's creative output
     "social_v":         0.20,   # valence lift from real conversation
     "unresolved_v":     0.15,   # low-grade drag from the standing backlog
+    "autonomy_v":       0.12,   # ± nudge from recent autonomy-ladder outcomes (small)
     "alert_volume_a":   0.10,   # arousal from a heavy alert stream
     "criticals_a":      0.20,   # arousal from critical alerts
     "incidents_a":      0.10,   # arousal from open incidents
@@ -99,6 +103,8 @@ WEIGHTS = {
 # Reference "a full positive day" denominators (kept explicit, not hidden):
 SOCIAL_FULL_DAY = 8.0           # ~8 real conversations reads as a fully-social day
 UNRESOLVED_HALF = 800.0        # open-item count at which the drag reaches half-weight
+AUTONOMY_WINDOW_H = 168        # 7 days of autonomy-ladder history feeds the mood nudge
+AUTONOMY_FULL = 4.0            # net (wins − stings) at which the autonomy nudge saturates
 SEVERITY = {"critical": 1.0, "crit": 1.0, "high": 0.8, "sev1": 1.0, "sev2": 0.8,
             "warning": 0.4, "warn": 0.4, "minor": 0.3, "info": 0.2}
 NEUTRAL_MAG = 0.18              # total |contribution| below this ⇒ neutral guard
@@ -335,6 +341,40 @@ def signal_unresolved(oc):
     return [sig("unresolved_load", total, None, dv, 0, note)]
 
 
+def signal_autonomy(oc):
+    """Cross-organ nudge from Nova's OWN autonomy-ladder outcomes (nervous-system wiring,
+    Jordan 2026-09-18). A verified self-heal or a clean earned action is quiet competence
+    and lifts valence a little; a veto or a reverted/failed action is a sting and lowers
+    it. Small, documented weight — it colours the day, it never dominates it. Asymmetric-
+    and-honest like the rest: no autonomy activity in-window contributes NOTHING (neutral,
+    not negative — absence of earned action is not a bad mood). Feature-detected; the
+    signal is skipped entirely if autonomy_ledger is absent."""
+    if not _table_exists(oc, "autonomy_ledger"):
+        return [sig("autonomy", None, None, 0, 0, "autonomy_ledger absent (optional signal)", False)]
+    days = AUTONOMY_WINDOW_H // 24
+    wins = _one(oc, ("SELECT count(*) FROM autonomy_ledger WHERE ts > now() - interval "
+                     "'%s hours' AND verified AND NOT vetoed AND NOT reverted") % AUTONOMY_WINDOW_H) or 0
+    stings = _one(oc, ("SELECT count(*) FROM autonomy_ledger WHERE ts > now() - interval "
+                       "'%s hours' AND (vetoed OR reverted)") % AUTONOMY_WINDOW_H) or 0
+    total = wins + stings
+    if total == 0:
+        return [sig("autonomy", 0, None, 0, 0,
+                    f"no verified/earned or vetoed autonomy actions in {days}d — no signal (neutral)", True)]
+    net = wins - stings
+    frac = clamp(net / AUTONOMY_FULL, -1, 1)
+    dv = WEIGHTS["autonomy_v"] * frac
+    if net > 0:
+        note = (f"{wins} verified/clean earned action(s) vs {stings} vetoed/reverted in "
+                f"{days}d — quiet competence, small lift")
+    elif net < 0:
+        note = (f"{wins} clean vs {stings} vetoed/reverted autonomy action(s) in "
+                f"{days}d — a sting, small drag")
+    else:
+        note = (f"{wins} clean and {stings} vetoed/reverted autonomy action(s) in "
+                f"{days}d — cancels out, neutral")
+    return [sig("autonomy", net, None, dv, 0, note)]
+
+
 # ── Combine + label ─────────────────────────────────────────────────────────────
 
 def combine(signals):
@@ -430,6 +470,7 @@ def compute_affect(oc, mc):
     signals += signal_social(oc)
     signals += signal_surprise(oc)
     signals += signal_unresolved(oc)
+    signals += signal_autonomy(oc)
 
     valence, arousal, is_neutral, magnitude, usable = combine(signals)
 
@@ -533,6 +574,7 @@ def demo_neutral():
         sig("surprise", 0, None, 0, 0, "no resolved predictions — no surprise signal", True),
         sig("unresolved_load", 5, None, -WEIGHTS["unresolved_v"] * clamp(5 / (5 + UNRESOLVED_HALF), 0, 1),
             0, "5 unresolved items — negligible backlog", True),
+        sig("autonomy", 0, None, 0, 0, "no verified/earned or vetoed autonomy actions — no signal", True),
     ]
     valence, arousal, is_neutral, magnitude, usable = combine(signals)
     label = "neutral" if is_neutral else name_label(valence, arousal, signals)[0]

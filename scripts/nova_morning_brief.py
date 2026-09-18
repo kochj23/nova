@@ -29,6 +29,12 @@ except ImportError:
     def format_security_brief(ctx): return ""
     def format_infra_brief(ctx): return ""
 
+# Feature-detected: Nova's earned-autonomy / safety engine. Absent module = no note.
+try:
+    import nova_autonomy_safety as _autonomy
+except Exception:
+    _autonomy = None
+
 SCRIPTS      = Path.home() / ".openclaw" / "scripts"
 WORKSPACE    = Path.home() / ".openclaw" / "workspace"
 MEMORY_DIR   = WORKSPACE / "memory"
@@ -279,6 +285,53 @@ def get_system_health():
     return issues, mem_count
 
 
+# ── Where Nova stands as an agent (curated autonomy note) ────────────────────
+
+def get_autonomy_note():
+    """A short, CURATED 'where I stand as an agent' note for the brief.
+
+    One line is the curated autonomy_status().line; an optional second line reports
+    any *notable* autonomy activity in the last 24h (a self-heal, a newly-earned
+    action-class) as concise counts. Never a dump, never raw inner-state text.
+    Fail-open: returns [] on any error, or if the safety module isn't present.
+    """
+    if _autonomy is None:
+        return []
+    try:
+        status = _autonomy.autonomy_status()
+    except Exception:
+        return []
+    line = (status or {}).get("line", "").strip()
+    if not line:
+        return []
+    lines = [f"*🤖 Where I stand:* {line}"]
+    # One optional line of notable overnight activity — concise counts only.
+    try:
+        import psycopg2
+        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+        conn.autocommit = True
+        cur = conn.cursor()
+        cur.execute("""SELECT count(*) FROM autonomy_ledger
+                       WHERE executed AND source = 'actor'
+                         AND ts > now() - interval '24 hours'""")
+        heals = (cur.fetchone() or [0])[0] or 0
+        cur.execute("""SELECT action_class FROM autonomy_trust
+                       WHERE granted AND granted_at > now() - interval '24 hours'
+                       ORDER BY granted_at DESC LIMIT 1""")
+        row = cur.fetchone()
+        conn.close()
+        notable = []
+        if heals:
+            notable.append(f"self-healed {heals} time{'s' if heals != 1 else ''} overnight")
+        if row and row[0]:
+            notable.append(f"newly earned standing approval for `{row[0]}`")
+        if notable:
+            lines.append("  ↳ " + "; ".join(notable) + ".")
+    except Exception:
+        pass
+    return lines
+
+
 # ── Mail summary (condensed for morning brief) ───────────────────────────────
 
 def get_mail_summary():
@@ -352,13 +405,14 @@ def main():
     date_fmt  = NOW.strftime("%B %d")
 
     # Fetch all data sources in parallel — cuts brief build time from ~30s to ~10s
-    with ThreadPoolExecutor(max_workers=6) as executor:
-        weather_f  = executor.submit(get_weather)
-        emails_f   = executor.submit(get_email_priorities)
-        meetings_f = executor.submit(get_calendar_events)
-        mail_f     = executor.submit(get_mail_summary)
-        gh_f       = executor.submit(get_github_overnight)
-        health_f   = executor.submit(get_system_health)
+    with ThreadPoolExecutor(max_workers=7) as executor:
+        weather_f   = executor.submit(get_weather)
+        emails_f    = executor.submit(get_email_priorities)
+        meetings_f  = executor.submit(get_calendar_events)
+        mail_f      = executor.submit(get_mail_summary)
+        gh_f        = executor.submit(get_github_overnight)
+        health_f    = executor.submit(get_system_health)
+        autonomy_f  = executor.submit(get_autonomy_note)
 
         weather    = weather_f.result(timeout=30)
         emails     = emails_f.result(timeout=15)
@@ -366,6 +420,10 @@ def main():
         mail       = mail_f.result(timeout=120)
         gh_notes   = gh_f.result(timeout=30)
         issues, mem_count = health_f.result(timeout=15)
+        try:
+            autonomy_note = autonomy_f.result(timeout=20)
+        except Exception:
+            autonomy_note = []
 
     # ── Spoken brief (concise, warm, HomePod-friendly) ──
     spoken_parts = [
@@ -476,6 +534,11 @@ def main():
     # Clean overnight indicator — if no issues and no important mail
     if not issues and not mail.get("important") and not emails:
         slack_lines.append("✅ Clean overnight — all systems green")
+        slack_lines.append("")
+
+    # Where I stand as an agent (curated autonomy note) — tasteful, one or two lines.
+    if autonomy_note:
+        slack_lines.extend(autonomy_note)
         slack_lines.append("")
 
     slack_lines.append(f"_Vector memory: {mem_count} memories stored_")

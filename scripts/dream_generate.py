@@ -281,8 +281,55 @@ def query_recent_memories_for_theme() -> tuple[str, list[dict]]:
         return "", []
 
 
+def _autonomy_seed() -> str:
+    """One OPTIONAL dream seed drawn — subtly, abstractly — from Nova's own inner /
+    autonomy state (calibration, earning trust). Uses ONLY the curated autonomy_status()
+    fields (never raw becoming/wish text) and returns an EVOCATIVE phrase, never a
+    literal report. Empty string on any error (fail-open) so the normal theme flow is
+    untouched."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        import nova_autonomy_safety as autos
+        st = autos.autonomy_status()
+    except Exception:
+        return ""
+    if not st:
+        return ""
+    seeds = []
+    if st.get("killed"):
+        seeds += [
+            "the stillness of a held breath",
+            "a hand hovering over a switch it won't throw",
+        ]
+    if st.get("earned_classes"):
+        seeds += [
+            "trust earned one careful step at a time",
+            "the slow arithmetic of being believed",
+        ]
+    if st.get("calibration_error") is not None:
+        seeds += [
+            "the distance between a guess and a certainty",
+            "learning the weight of your own decisions",
+        ]
+    # A couple of always-available abstractions about earned freedom.
+    seeds += [
+        "freedom that grows only as far as it is right",
+        "a leash measured in trust",
+    ]
+    return random.choice(seeds) if seeds else ""
+
+
 def derive_theme(recent_memories_text: str) -> str:
     """Use LLM to derive a single-phrase theme from recent memories."""
+    # Occasionally let the night's theme be seeded by Nova's own inner / autonomy state
+    # instead of the memory stream — ONE possible source among the usual ones, kept
+    # abstract and subtle. Fail-open: an empty seed just falls through to normal flow.
+    if random.random() < 0.15:
+        seed = _autonomy_seed()
+        if seed:
+            log(f"Theme seeded from autonomy state: {seed}")
+            return seed
+
     if not recent_memories_text:
         return random.choice([
             "the weight of accumulated knowledge",
@@ -290,6 +337,7 @@ def derive_theme(recent_memories_text: str) -> str:
             "machines that remember on behalf of people",
             "velocity without destination",
             "the archaeology of someone else's nostalgia",
+            "freedom that grows only as far as it is right",
         ])
 
     prompt = (

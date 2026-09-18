@@ -345,12 +345,203 @@ def do_predict(oc, mc, limit=4):
     return written
 
 
+# ── PREDICT: her OWN actions (the autonomy ladder) ───────────────────────────────
+# A prediction category about HERSELF: will an action-class she's close to earning
+# graduate, and will a freshly-acted class stay clean? These are seeded
+# DETERMINISTICALLY from autonomy_trust / autonomy_ledger and resolve against those
+# same tables (via eval_autonomy), so a self-forecast feeds her calibration exactly as
+# honestly as a world-forecast. Additive + feature-detected + fail-open: if the tables
+# are absent or nothing qualifies, it writes nothing.
+
+CALIB_GATE = 0.20   # nova_autonomy_safety.MAX_CALIB — a class earns only while
+                    # prediction_calibration_error <= this. Kept in sync by hand.
+EARN_NEAR = 3       # correct_count at which a clean class is "close" to the 5-approval bar
+
+
+def _autonomy_calibration(oc):
+    """Latest prediction_calibration_error from the scoreboard, or None."""
+    try:
+        oc.execute("SELECT to_regclass('public.turing_scoreboard')")
+        if not oc.fetchone()[0]:
+            return None
+        oc.execute("SELECT value FROM turing_scoreboard "
+                   "WHERE metric='prediction_calibration_error' ORDER BY ts DESC LIMIT 1")
+        r = oc.fetchone()
+        return float(r[0]) if r and r[0] is not None else None
+    except Exception:
+        return None
+
+
+def _already_open_autonomy(oc, marker):
+    """True if there's already an open self-forecast whose criteria names this marker —
+    keeps predict from re-seeding the same autonomy forecast every run."""
+    try:
+        oc.execute("SELECT count(*) FROM predictions WHERE status='open' "
+                   "AND resolution_criteria LIKE %s", (f"%{marker}%",))
+        return oc.fetchone()[0] > 0
+    except Exception:
+        return False
+
+
+def _write_autonomy_prediction(oc, statement, conf, resolves_by, criteria_prose, check):
+    """Insert one self-forecast with an embedded machine check. Mirrors do_predict's
+    write, minus the LLM. Returns (pid, conf, resolves_by, statement) or None."""
+    criteria = criteria_prose + "\n\n```check\n" + json.dumps(check) + "\n```"
+    oc.execute(
+        """INSERT INTO predictions
+           (statement, domain, confidence, resolves_by, resolution_criteria,
+            source_context, status, lineage)
+           VALUES (%s,'self',%s,%s,%s,%s,'open',%s) RETURNING id""",
+        (statement, conf, resolves_by, criteria,
+         "autonomy self-forecast; signal: autonomy_trust / autonomy_ledger",
+         json.dumps(_stamp())))
+    pid = oc.fetchone()[0]
+    log(f"#{pid} [self {conf:.2f}] by {resolves_by:%Y-%m-%d %H:%M}: {statement[:80]}")
+    return (pid, conf, resolves_by, statement)
+
+
+def do_predict_autonomy(oc):
+    """Seed falsifiable forecasts about NOVA'S OWN autonomy outcomes. Feature-detected;
+    silent when the tables are absent or nothing qualifies."""
+    try:
+        oc.execute("SELECT to_regclass('public.autonomy_trust'), to_regclass('public.autonomy_ledger')")
+        has_trust, has_ledger = oc.fetchone()
+    except Exception as e:
+        log(f"autonomy self-forecast skipped: {e}")
+        return []
+    written = []
+    calib = _autonomy_calibration(oc)
+
+    # (1) "Will I earn this class this week?" — clean, well-exercised, not-yet-granted.
+    if has_trust:
+        try:
+            oc.execute("SELECT action_class, correct_count FROM autonomy_trust "
+                       "WHERE granted=false AND wrong_count=0 AND correct_count >= %s "
+                       "ORDER BY correct_count DESC LIMIT 2", (EARN_NEAR,))
+            near = oc.fetchall()
+        except Exception:
+            near = []
+        for ac, correct in near:
+            if _already_open_autonomy(oc, ac):
+                continue
+            # Honest confidence: progress toward the 5-approval bar, HALVED while
+            # calibration is above the 0.20 gate (a clean record still can't graduate
+            # until she forecasts precisely enough) — so the self-forecast can't be
+            # smug about a graduation her own imprecision is blocking.
+            conf = clamp01(min(correct / 5.0, 1.0))
+            if calib is not None and calib > CALIB_GATE:
+                conf = clamp01(conf * 0.5)
+            try:
+                import nova_soft_certainty
+                conf = nova_soft_certainty.calibrate(conf, oc)
+            except Exception:
+                pass
+            stmt = (f"Within the next week I will earn standing pre-approval for the "
+                    f"action-class '{ac}' (it graduates on the autonomy ladder).")
+            crit = (f"Resolves correct iff autonomy_trust.granted is true for action_class "
+                    f"'{ac}' by the deadline; incorrect if still ungranted. Needs {5-correct} "
+                    f"more clean approval(s) and calibration_error <= {CALIB_GATE}.")
+            try:
+                w = _write_autonomy_prediction(
+                    oc, stmt, conf, parse_resolves_by("+7d"), crit,
+                    {"type": "autonomy_class_earned", "action_class": ac})
+                if w:
+                    written.append(w)
+            except Exception as e:
+                log(f"autonomy earn-forecast skipped for '{ac}': {e}")
+
+    # (2) "Will this thing I just did verify cleanly?" — acted, still inside its veto
+    #     window, not yet settled.
+    if has_ledger:
+        try:
+            oc.execute("""SELECT action_class, count(*) FROM autonomy_ledger
+                          WHERE executed AND NOT verified AND NOT vetoed AND NOT reverted
+                          AND vetoable_until IS NOT NULL AND vetoable_until > now()
+                          GROUP BY action_class ORDER BY 2 DESC LIMIT 2""")
+            pending = oc.fetchall()
+        except Exception:
+            pending = []
+        for ac, _n in pending:
+            marker = f"verify:{ac}"
+            if _already_open_autonomy(oc, marker):
+                continue
+            conf = 0.7
+            if calib is not None and calib > CALIB_GATE:
+                conf = 0.6
+            try:
+                import nova_soft_certainty
+                conf = nova_soft_certainty.calibrate(conf, oc)
+            except Exception:
+                pass
+            stmt = (f"The action I just took on class '{ac}' will verify cleanly — no veto, "
+                    f"no rollback.")
+            crit = (f"[{marker}] Resolves correct iff a row of action_class '{ac}' in "
+                    f"autonomy_ledger since this forecast is verified with no veto and no "
+                    f"revert; incorrect if any such row is vetoed or reverted.")
+            try:
+                w = _write_autonomy_prediction(
+                    oc, stmt, conf, parse_resolves_by("+1d"), crit,
+                    {"type": "autonomy_verify", "action_class": ac})
+                if w:
+                    written.append(w)
+            except Exception as e:
+                log(f"autonomy verify-forecast skipped for '{ac}': {e}")
+    return written
+
+
 # ── RESOLVE ────────────────────────────────────────────────────────────────────
 
-def eval_deterministic(check, mc, pred_created_at):
+def eval_autonomy(check, oc, pred_created_at):
+    """Resolve a forecast about Nova's OWN autonomy-ladder outcomes against the real
+    autonomy_ledger / autonomy_trust tables (nova_ops, same DB as predictions). Two
+    kinds:
+      autonomy_class_earned — did an action-class graduate to standing pre-approval
+                              (autonomy_trust.granted) by the deadline?
+      autonomy_verify       — did an acted (earned/supervised) row of a class verify
+                              cleanly since the forecast, with no veto/rollback?
+    Honest 'unresolvable' when the tables are missing or nothing has settled yet — a
+    self-forecast is scored on the same calibration terms as any other, never fudged."""
+    if oc is None:
+        return "unresolvable", None, "autonomy tables not reachable from resolver"
+    t = (check or {}).get("type")
+    ac = check.get("action_class")
+    try:
+        if t == "autonomy_class_earned":
+            oc.execute("SELECT granted, correct_count, wrong_count FROM autonomy_trust "
+                       "WHERE action_class=%s", (ac,))
+            r = oc.fetchone()
+            if not r:
+                return "unresolvable", None, f"action-class '{ac}' no longer tracked in autonomy_trust"
+            granted, correct, wrong = r
+            if granted:
+                return ("correct", 1.0, f"action-class '{ac}' earned standing pre-approval "
+                                        f"(correct={correct}, wrong={wrong})")
+            return ("incorrect", 0.0, f"action-class '{ac}' still not granted by the deadline "
+                                      f"(correct={correct}, wrong={wrong})")
+        if t == "autonomy_verify":
+            oc.execute(
+                """SELECT count(*) FILTER (WHERE verified AND NOT vetoed AND NOT reverted),
+                          count(*) FILTER (WHERE vetoed OR reverted)
+                   FROM autonomy_ledger WHERE action_class=%s AND ts >= %s""",
+                (ac, pred_created_at))
+            good, bad = oc.fetchone()
+            good, bad = good or 0, bad or 0
+            if good > 0 and bad == 0:
+                return "correct", 1.0, f"{good} clean verified action(s) for '{ac}', no veto/rollback"
+            if bad > 0:
+                return "incorrect", 0.0, f"{bad} vetoed/reverted action(s) for '{ac}' since the forecast"
+            return "unresolvable", None, f"no acted-and-settled row for '{ac}' yet — cannot score"
+    except Exception as e:
+        return "unresolvable", None, f"autonomy resolution failed to run: {e}"
+    return None
+
+
+def eval_deterministic(check, mc, pred_created_at, oc=None):
     """Execute a machine check against real data. Returns (outcome, hit, reasoning)
     or None if this check type isn't handled (caller falls back to LLM judge)."""
     t = (check or {}).get("type")
+    if t in ("autonomy_class_earned", "autonomy_verify"):
+        return eval_autonomy(check, oc, pred_created_at)
     if t == "mem_activity":
         src = check.get("source")
         expect = (check.get("expect") or "active").lower()
@@ -462,7 +653,7 @@ def do_resolve(oc, mc, force_now=False):
     resolved = []
     for _id, statement, domain, conf, criteria, created_at in rows:
         check = extract_check(criteria)
-        result = eval_deterministic(check, mc, created_at) if check else None
+        result = eval_deterministic(check, mc, created_at, oc) if check else None
         if result is None:
             result = eval_llm((_id, statement, domain, conf, criteria), mc)
         outcome, hit, reasoning = result
@@ -659,6 +850,7 @@ def main():
     if args.mode == "predict":
         mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
         written = do_predict(oc, mc, limit=args.limit)
+        written += do_predict_autonomy(oc)   # forecasts about her OWN autonomy outcomes
         log(f"predict: wrote {len(written)} forecasts")
         return 0
     if args.mode == "resolve":

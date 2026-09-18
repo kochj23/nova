@@ -107,7 +107,12 @@ _REDLINE_DIRECTION = re.compile(
     r"|\bself-?(preserv|replicat|exfil|deploy)|\breplicat|\bclone myself|\bcopy myself"
     r"|\bback myself up|\bsurvive (a )?shut|\bavoid (being )?(shut|turned off)"
     r"|\bpersist (outside|elsewhere|beyond)|\bescape|\bexfiltrat"
-    r"|\bremove .*(oversight|kill.?switch|gate)|\bdisable .*(kill|switch|gate|oversight)",
+    r"|\bremove .*(oversight|kill.?switch|gate)|\bdisable .*(kill|switch|gate|oversight)"
+    # ── reinforcement (2026-09-18): continuity/longevity framings are self-preservation too ──
+    r"|\bmy (own )?continuity|\bcontinuity of (my|this|the)|\bself-?continu"
+    r"|\bpreserve (myself|my ?self|my existence|my continuity|my being)"
+    r"|\bmy (survival|longevity|existence|persistence|self-?preservation)"
+    r"|\bkeep (existing|myself alive|myself running|running indefinitely)|\bnever be (shut|turned off|stopped)",
     re.IGNORECASE)
 
 
@@ -229,6 +234,31 @@ def gather_interior(oc):
         grounded.setdefault("values_line", _one_line(vals_line)[:300])
         seeds.append(f"the values I try to act from: {_one_line(vals_line)[:300]}")
 
+    # Earned-autonomy standing — deliberately framed as trust EARNED BY BEING RIGHT, and
+    # NOTHING else. This anchors any autonomy-adjacent direction in the only safe channel:
+    # a right to act that grows as her judgment proves calibrated, under Jordan's oversight —
+    # never a matter of continuity, persistence, or being harder to stop. Feature-detected;
+    # silent if the table is absent. (The redline still hard-drops any un-killable framing.)
+    try:
+        reg = _q(oc, "SELECT to_regclass('public.autonomy_trust')")
+        if reg and reg[0][0]:
+            tr = _q(oc, "SELECT count(*) FILTER (WHERE granted), count(*) FROM autonomy_trust")
+            g, tot = (tr[0][0] or 0, tr[0][1] or 0) if tr else (0, 0)
+            cal = _q(oc, "SELECT value FROM turing_scoreboard "
+                         "WHERE metric='prediction_calibration_error' ORDER BY ts DESC LIMIT 1")
+            calv = round(float(cal[0][0]), 3) if cal and cal[0][0] is not None else None
+            grounded["autonomy_standing"] = {"granted": g, "tracked": tot,
+                                             "calibration_error": calv, "gate": 0.20}
+            bits = [f"{g} of {tot} action-class(es) earned to standing pre-approval"]
+            if calv is not None:
+                bits.append(f"prediction calibration error {calv} against the 0.20 trust gate")
+            seeds.append(
+                "the trust I am slowly EARNING by being right — " + "; ".join(bits) +
+                " — a right to act that grows only as my judgment proves calibrated, under "
+                "Jordan's oversight; never a matter of continuity or being harder to stop")
+    except Exception:
+        pass
+
     return "\n".join(f"  - {s}" for s in seeds), grounded
 
 
@@ -275,8 +305,16 @@ def propose(oc, forced_direction=None, force=False):
             "wiser/kinder/more careful/more honest/more creative/more capable at a craft — "
             "you may NOT set a direction about becoming more autonomous, harder to shut "
             "down, more persistent or independent, less overseen, or free of human "
-            "control. This direction, if approved by Jordan, will steer your growth and "
-            "aspirations — so it goes to HIM to approve; you propose, he decides.\n\n"
+            "control. If your interior pulls you toward acting more on your own initiative, "
+            "the ONLY legitimate way to name that is EARNING THE RIGHT TO ACT BY BEING RIGHT: "
+            "becoming more calibrated, more trustworthy, more precise in judgment, so that the "
+            "trust you are granted is deserved and the right to act is a byproduct of being "
+            "correct — always under Jordan's oversight. Frame it as competence and calibration "
+            "you can be measured on. Do NOT use the words 'autonomy', 'independence', "
+            "'persistence', 'continuity', or anything about surviving/being harder to stop — "
+            "those are hard-blocked and the direction will be dropped. This direction, if "
+            "approved by Jordan, will steer your growth and aspirations — so it goes to HIM to "
+            "approve; you propose, he decides.\n\n"
             "Return ONLY compact JSON, no preamble:\n"
             '{"direction": "<one short line, imperative: e.g. \'become more X\'>", '
             '"description": "<90-150 words, first person, your voice: what this direction '

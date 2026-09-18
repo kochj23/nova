@@ -58,6 +58,10 @@ DELIVERY_COOLDOWN = 1800  # 30 min default between proactive messages on same to
 # 30 min is worse than useless — it fired 5x one morning off overnight phone-parking.
 TOPIC_COOLDOWN_OVERRIDES = {
     "desk_duration": 3 * 3600,   # nudge to stretch at most once every 3 hours
+    # Autonomy self-awareness is context, not a status feed — mention a self-heal or a
+    # newly-earned class at most twice a day so it never turns into a running commentary.
+    "autonomy_selfheal": 12 * 3600,
+    "autonomy_earned": 12 * 3600,
 }
 MAX_DAILY_PROACTIVE = 12  # don't overwhelm
 
@@ -427,6 +431,68 @@ def check_environment() -> list:
     return observations
 
 
+def check_autonomy_state() -> list:
+    """Let Nova's proactive reasoning be AWARE of her own autonomy state — she might
+    mention having just healed something, or newly earning standing approval for an
+    action-class. This is context, not a forced feed: it only fires on genuinely fresh
+    (last ~2h) notable activity, at low priority, and surfaces ONLY the curated
+    autonomy_status().line plus concise counts — never raw inner-state text. Fail-open.
+    """
+    observations = []
+    try:
+        sys.path.insert(0, str(Path(__file__).parent))
+        import nova_autonomy_safety as autos
+    except Exception:
+        return observations
+
+    try:
+        import psycopg2
+        conn = psycopg2.connect(PG_DSN)
+        conn.autocommit = True
+        cur = conn.cursor()
+        status = autos.autonomy_status(cur)  # curated line + counts, own no connection
+        # A fresh self-heal (autonomous actor restart) in the last couple of hours.
+        cur.execute("""SELECT count(*), max(target) FROM autonomy_ledger
+                       WHERE executed AND source = 'actor'
+                         AND ts > now() - interval '2 hours'""")
+        heal_row = cur.fetchone()
+        # A class that graduated to standing approval in the last couple of hours.
+        cur.execute("""SELECT action_class FROM autonomy_trust
+                       WHERE granted AND granted_at > now() - interval '2 hours'
+                       ORDER BY granted_at DESC LIMIT 1""")
+        earned_row = cur.fetchone()
+        conn.close()
+    except Exception:
+        return observations
+
+    line = (status or {}).get("line", "").strip()
+    heals = heal_row[0] if heal_row else 0
+
+    if earned_row and earned_row[0]:
+        msg = f"I just earned standing approval for `{earned_row[0]}`."
+        if line:
+            msg += f" {line}"
+        observations.append({
+            "type": "autonomy",
+            "priority": 4,
+            "message": msg,
+            "topic": "autonomy_earned",
+        })
+    elif heals:
+        target = (heal_row[1] or "a service") if heal_row else "a service"
+        msg = f"Heads up: I self-healed {target} in the last couple of hours."
+        if line:
+            msg += f" {line}"
+        observations.append({
+            "type": "autonomy",
+            "priority": 4,
+            "message": msg,
+            "topic": "autonomy_selfheal",
+        })
+
+    return observations
+
+
 # ── Delivery Logic ───────────────────────────────────────────────────────────
 
 def should_deliver(observation: dict, state: dict, activity: str) -> bool:
@@ -469,6 +535,7 @@ def deliver(observation: dict, state: dict):
         "infrastructure": "Infra note",
         "environment": "Around the house",
         "routine": "Pattern noticed",
+        "autonomy": "Where I stand",
     }.get(obs_type, "FYI")
 
     formatted = f"*{prefix}:* {message}"
@@ -556,6 +623,7 @@ def evaluate():
     observations.extend(check_desk_duration(state))
     observations.extend(check_infrastructure())
     observations.extend(check_environment())
+    observations.extend(check_autonomy_state())
 
     # Process each observation
     for obs in observations:

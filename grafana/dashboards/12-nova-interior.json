@@ -9,7 +9,7 @@
   ],
   "timezone": "browser",
   "schemaVersion": 39,
-  "version": 1,
+  "version": 2,
   "refresh": "5m",
   "time": {
     "from": "now-30d",
@@ -805,6 +805,168 @@
           "format": "table",
           "rawQuery": true,
           "rawSql": "SELECT status AS metric, count(*) AS value FROM coagency_proposals GROUP BY status ORDER BY 2 DESC"
+        }
+      ]
+    },
+    {
+      "id": 21,
+      "type": "row",
+      "title": "Autonomy & Agency",
+      "collapsed": false,
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 45
+      },
+      "panels": []
+    },
+    {
+      "id": 22,
+      "type": "timeseries",
+      "title": "Calibration error vs the 0.20 autonomy gate",
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 46
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "lineWidth": 2,
+            "showPoints": "never"
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "calcs": [
+            "last",
+            "max"
+          ],
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT ts AS time, 'calibration error' AS metric, value FROM turing_scoreboard WHERE metric='prediction_calibration_error' AND $__timeFilter(ts) UNION ALL SELECT ts, '0.20 gate', 0.20 FROM turing_scoreboard WHERE metric='prediction_calibration_error' AND $__timeFilter(ts) ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 23,
+      "type": "timeseries",
+      "title": "Autonomy actions per day (by outcome)",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 12,
+        "y": 46
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "custom": {
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 2,
+            "showPoints": "never",
+            "stacking": {
+              "mode": "normal"
+            }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "calcs": [
+            "last",
+            "max"
+          ],
+          "placement": "right"
+        },
+        "tooltip": {
+          "mode": "multi",
+          "sort": "desc"
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('day',ts) AS time, CASE WHEN vetoed THEN 'vetoed' WHEN executed AND verified THEN 'verified self-heal' WHEN executed THEN 'earned execution' ELSE 'proposed' END AS metric, count(*) AS value FROM autonomy_ledger WHERE $__timeFilter(ts) GROUP BY 1,2 ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 24,
+      "type": "piechart",
+      "title": "Autonomy classes \u2014 earned vs still earning",
+      "gridPos": {
+        "h": 8,
+        "w": 6,
+        "x": 18,
+        "y": 46
+      },
+      "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": {
+          "showLegend": true,
+          "displayMode": "table",
+          "placement": "right",
+          "values": [
+            "value"
+          ]
+        },
+        "pieType": "donut",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "values": true
+        }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT CASE WHEN granted THEN 'earned' ELSE 'still earning' END AS metric, count(*) AS value FROM autonomy_trust GROUP BY 1 ORDER BY 2 DESC"
         }
       ]
     }

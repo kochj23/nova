@@ -813,6 +813,61 @@ def _gather_sentience_context() -> str:
             parts.append(f"[Reach: {line}]")
     except Exception:
         pass
+    # --- Autonomy ladder (2026-09-18): what she can actually do with her own hands,
+    # what she's done in the last day, and what she's earned. autonomy_status() gives
+    # the curated headline (self-heal + execute-approved, earned/unearned standing
+    # autonomy, calibration vs the 0.20 gate, kill-switch); a second cheap read adds a
+    # concise 24h activity sample and the earned-vs-still-earning breakdown. Curated
+    # summaries ONLY — never raw ledger/result text. Best-effort, fail-safe empty. ---
+    try:
+        import nova_autonomy_safety
+        st = nova_autonomy_safety.autonomy_status()
+        alines = []
+        line = st.get("line") if isinstance(st, dict) else None
+        if line:
+            alines.append(line)
+        try:
+            conn = nova_autonomy_safety.psycopg2.connect(
+                nova_autonomy_safety.OPS_DSN, connect_timeout=3)
+            conn.autocommit = True
+            oc = conn.cursor()
+            try:
+                # Recent hands-on activity (last 24h): how many, plus one curated sample.
+                oc.execute("SELECT count(*) FROM autonomy_ledger "
+                           "WHERE executed AND ts > now()-interval '24 hours'")
+                did = oc.fetchone()[0] or 0
+                if did:
+                    oc.execute("SELECT source, action_class, verified FROM autonomy_ledger "
+                               "WHERE executed AND ts > now()-interval '24 hours' "
+                               "ORDER BY ts DESC LIMIT 1")
+                    r = oc.fetchone()
+                    s = (f" (e.g. {r[0]}/{r[1]}, "
+                         f"{'verified' if r[2] else 'unverified'})" if r else "")
+                    alines.append(f"In the last 24h I self-healed/executed {did} action(s).{s}")
+                # Earned vs still-earning, from the trust ledger.
+                oc.execute("SELECT action_class FROM autonomy_trust WHERE granted "
+                           "ORDER BY action_class")
+                granted = [x[0] for x in oc.fetchall()]
+                if granted:
+                    alines.append("Standing approval I've earned: " + ", ".join(granted) + ".")
+                oc.execute("SELECT action_class, correct_count FROM autonomy_trust "
+                           "WHERE NOT granted AND wrong_count = 0 AND correct_count > 0 "
+                           "ORDER BY correct_count DESC LIMIT 3")
+                earning = oc.fetchall()
+                if earning:
+                    alines.append(
+                        "Still earning (clean streak, not yet at the gate): "
+                        + ", ".join(f"{c[0]} {c[1]}/{nova_autonomy_safety.MIN_CORRECT}"
+                                    for c in earning) + ".")
+            finally:
+                conn.close()
+        except Exception:
+            pass
+        if alines:
+            parts.append("--- MY OWN HANDS: what I can do / have done / have earned ---\n"
+                         + "\n".join(alines)[:700])
+    except Exception:
+        pass
     return "\n\n".join(parts)
 
 

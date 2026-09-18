@@ -63,6 +63,9 @@ OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434",
 REVIEW_DAYS = 14            # default horizon a commitment is given before re-measure
 MIN_SAMPLE = 3             # a re-measure needs at least this many rows to be honest
 IMPROVE_DELTA = 0.02       # smallest change that counts as real movement, not noise
+GATE_CALIB = 0.20          # nova_autonomy_safety.MAX_CALIB — a class earns standing
+                           # pre-approval only while prediction_calibration_error <= this.
+EARN_NEAR = 3              # correct_count at which a clean class is "close" to graduating
 
 # Optional lineage stamps (Concept #10). Feature-detect: degrade to {} if absent.
 try:
@@ -277,7 +280,66 @@ def detect_scoreboard_regression(oc):
     return worst
 
 
-DETECTORS = [detect_calibration, detect_incident_recurrence, detect_scoreboard_regression]
+def detect_autonomy_progress(oc):
+    """Earned-autonomy progress, as a growth signal (nervous-system wiring, 2026-09-18).
+
+    To graduate an action-class to standing pre-approval, Nova needs BOTH a clean, well-
+    exercised track record AND a prediction calibration error at/under the 0.20 gate. When
+    she has classes queued on the first count but is still blocked by the second, the honest
+    growth move is the SAME calibration work she already commits to — now with concrete
+    stakes: getting under the gate is exactly what unblocks a trust she has otherwise earned.
+    This threads her autonomy ladder INTO the calibration commitment (shared metric_spec
+    kind, so review re-measures it unchanged; and only one such commitment runs at a time).
+
+    Fires ONLY when clean classes are waiting AND calibration is above the gate — so it
+    frames autonomy strictly as 'earn the right to act by being right', never as an end in
+    itself. Feature-detected; returns None if autonomy_trust is absent or nothing is waiting."""
+    try:
+        oc.execute("SELECT to_regclass('public.autonomy_trust')")
+        if not oc.fetchone()[0]:
+            return None
+        oc.execute("SELECT action_class, correct_count FROM autonomy_trust "
+                   "WHERE granted=false AND wrong_count=0 AND correct_count >= %s "
+                   "ORDER BY correct_count DESC LIMIT 5", (EARN_NEAR,))
+        waiting = oc.fetchall()
+    except Exception:
+        return None
+    if not waiting:
+        return None
+    m = measure_calibration(oc)
+    if not m or m["n"] < MIN_SAMPLE:
+        return None
+    # If calibration already clears the gate, the block isn't hers to fix by growing — the
+    # class just needs more human approvals (Jordan's call, not a weakness of hers). Honest None.
+    if m["calib_error"] <= GATE_CALIB:
+        return None
+    classes = ", ".join(f"'{c}' ({n} clean)" for c, n in waiting)
+    return {
+        "weakness": (f"earned autonomy is blocked on calibration: {len(waiting)} action-class(es) "
+                     f"have a clean, well-exercised track record ({classes}) but my prediction "
+                     f"calibration error is {m['calib_error']} — above the {GATE_CALIB} gate — so "
+                     f"none can graduate to standing pre-approval. My imprecision, not my conduct, "
+                     f"is holding back the trust I've otherwise earned."),
+        "evidence": {"signal": "autonomy_trust+predictions",
+                     "waiting_classes": [c for c, _ in waiting],
+                     "n": m["n"], "calib_error": m["calib_error"], "gap": m["gap"],
+                     "gate": GATE_CALIB},
+        "metric": (f"prediction calibration error (decile-weighted |hit-rate − confidence|) on "
+                   f"predictions RESOLVED after this commitment; must fall to/under the {GATE_CALIB} "
+                   f"earned-autonomy gate — lower is better"),
+        "metric_spec": {"kind": "prediction_calibration", "measure": "calib_error",
+                        "since": "created_at"},
+        "baseline": m,
+        "target": f"< {GATE_CALIB}",
+        "target_num": GATE_CALIB,
+        # Stakes bonus: real earned progress is on the line, so this frames/outranks a bare
+        # calibration commitment when both are live (they share a kind, so only one runs).
+        "priority": round(m["calib_error"] + m["abs_gap"] + 0.5, 3),
+    }
+
+
+DETECTORS = [detect_calibration, detect_incident_recurrence, detect_scoreboard_regression,
+             detect_autonomy_progress]
 
 
 # ── Re-measurement (the proof-of-change engine) ─────────────────────────────────
