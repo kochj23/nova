@@ -215,16 +215,38 @@ SERVICES = [
 ]
 
 
+# Local backends that can actually answer *private* (home/personal) chat. openrouter is
+# excluded on purpose: the privacy blocklist bars cloud for that traffic, so if every local
+# backend is dead, Nova is voiceless for real chat even while /health says ok:true. That
+# "up but can't speak" state is exactly what took the gateway dark on 2026-09-18.
+_VOICE_BACKENDS = ("ollama", "mlx", "llamacpp")
+
+
+def _gateway_voiceless(out: str) -> bool:
+    """True iff the gateway reports ok but no local backend can answer chat."""
+    try:
+        h = json.loads(out)
+    except Exception:
+        return False  # unparseable → let the plain ok-string test decide
+    backends = h.get("backends")
+    if not isinstance(backends, dict):
+        return False  # no backend detail (e.g. memory-server) → not our concern
+    return not any(backends.get(b, {}).get("healthy") for b in _VOICE_BACKENDS)
+
+
 def check_services():
     for name, url, fix in SERVICES:
         rc, out = sh(["curl", "-s", "-m", "8", url])
-        if rc == 0 and ('"ok": true' in out or '"status":"ok"' in out.replace(" ", "") or '"ok":true' in out.replace(" ", "")):
+        alive = rc == 0 and ('"ok": true' in out or '"status":"ok"' in out.replace(" ", "") or '"ok":true' in out.replace(" ", ""))
+        if alive and _gateway_voiceless(out):
+            alive = False  # process up but no local LLM → self-heal, don't report ok
+        if alive:
             record(f"svc-{name}", "ok")
             continue
         sh(fix, 60)
         time.sleep(15)
         rc2, out2 = sh(["curl", "-s", "-m", "8", url])
-        ok = rc2 == 0 and ("ok" in out2)
+        ok = rc2 == 0 and ("ok" in out2) and not _gateway_voiceless(out2)
         record(f"svc-{name}", "fixed" if ok else "FAIL", "restarted", out2[:100])
 
 
