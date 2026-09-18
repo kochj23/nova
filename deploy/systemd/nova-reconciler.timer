@@ -1,0 +1,10 @@
+[Unit]
+Description=Run the Nova documentation reconciler daily
+
+[Timer]
+OnCalendar=*-*-* 07:10:00
+RandomizedDelaySec=300
+Persistent=true
+
+[Install]
+WantedBy=timers.target

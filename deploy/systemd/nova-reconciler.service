@@ -1,0 +1,15 @@
+[Unit]
+Description=Nova documentation reconciler — diff Nova's self-model against the live fleet
+Documentation=https://nova.digitalnoise.net
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=kochj
+LoadCredentialEncrypted=NOVA_SECRET_KEY:/etc/credstore.encrypted/NOVA_SECRET_KEY
+ExecStart=/usr/bin/python3 /opt/nova-config/nova_reconciler.py --quiet
+# exit 1 means "drift found", which is a finding, not a unit failure.
+SuccessExitStatus=0 1
+StandardOutput=journal
+StandardError=journal
