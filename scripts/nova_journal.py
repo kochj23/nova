@@ -835,6 +835,30 @@ def git_push(section: str, title: str):
         if result.returncode != 0:
             log(f"Git add failed: {result.stderr[:200]}")
             return
+        # Universal MAC scrub at the commit chokepoint. scrub_pii runs in publish_hugo, but
+        # some generators publish via other paths (e.g. the memory-audit article on 2026-09-19),
+        # leaking a device MAC that the pre-commit hook then blocks — and since `git add -A`
+        # re-stages every file each run, ONE poisoned article wedges the WHOLE publish queue
+        # silently until a human notices. Scrubbing staged .md here (what the hook blocks on)
+        # closes every bypass path; real secrets still hit the hook and still block, correctly.
+        staged = subprocess.run(["git", "diff", "--cached", "--name-only", "-z"],
+                                cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
+        scrubbed = []
+        for rel in filter(None, staged.stdout.split("\0")):
+            if not rel.endswith(".md"):
+                continue
+            p = HUGO_ROOT / rel
+            try:
+                orig = p.read_text()
+            except (OSError, UnicodeDecodeError):
+                continue
+            fixed = _MAC_RE.sub("[redacted-mac]", orig)
+            if fixed != orig:
+                p.write_text(fixed)
+                subprocess.run(["git", "add", rel], cwd=HUGO_ROOT, timeout=30)
+                scrubbed.append(rel)
+        if scrubbed:
+            log(f"Scrubbed device MAC(s) from {len(scrubbed)} staged article(s): {', '.join(scrubbed)}")
         msg = f"{section}: {today_str()} — {title[:50]}"
         result = subprocess.run(
             ["git", "commit", "-m", msg],
