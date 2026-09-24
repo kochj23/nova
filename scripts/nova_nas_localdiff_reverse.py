@@ -53,7 +53,9 @@ JOBS = [
     ("nas",      f"{UROOT}/nas/.data",      "/volume1/nas",      "/volume1/docker/nas"),
     ("external", f"{UROOT}/External/.data", "/volume1/external", "/volume1/docker/external"),
 ]
-EXCL = re.compile(r"@eaDir|/#recycle|/#snapshot|\.DS_Store$|\.app/")
+# 2026-09-24: anchor on (^|/) — top-level "#recycle/..." entries (no leading slash) slipped
+# through and the reverse rsync failed rc=23 daily since 2026-09-20.
+EXCL = re.compile(r"@eaDir|(^|/)#recycle|(^|/)#snapshot|\.DS_Store$|\.app/")
 
 
 def slack(msg):
