@@ -118,7 +118,10 @@ def rsync_files(name, cifs_src, local_dst, tosync_file, allow_deletes):
     # only when explicitly allowed, so an additive run can never remove replica data.
     p = subprocess.run(
         ["ssh", "-o", "BatchMode=yes", SYNO,
-         f"rsync -rlt --no-perms --no-owner --stats --files-from={remote_list} "
+         # --ignore-missing-args: a filename containing a newline breaks the line-based list into
+         # fragments that don't exist on the source; rsync 3.1.2 on the Synology then exits 23
+         # for the whole run. Missing list entries are noise, not a failed backup. (2026-09-24)
+         f"rsync -rlt --no-perms --no-owner --stats --ignore-missing-args --files-from={remote_list} "
          f"{cifs_src}/ {local_dst}/; echo RC=$?"],
         capture_output=True, text=True, timeout=14400)
     m = re.search(r"RC=(\d+)", p.stdout)
