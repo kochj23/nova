@@ -159,14 +159,23 @@ def tsig_secret():
     ).stdout.strip()
 
 
+# Failover-critical aliases get a SHORT TTL so clients drop the old primary within a
+# minute of a re-point (queue #2656: after the 2026-09-17 failback, .6 kept the stale
+# .10 answer for the full 300s and needed a manual dscacheutil flush). Everything else
+# keeps the 300s default.
+FAILOVER_ALIASES = {"pg-primary", "memory-server"}
+FAILOVER_TTL = 60
+
+
 def push_bind(entries, ttl=300):
     """Push all entries into the BIND primary via authenticated nsupdate. Idempotent —
     each record is deleted then re-added so removed/renamed devices don't leave stale A's."""
     secret = tsig_secret()
     script_lines = [f"server {BIND_PRIMARY}", f"zone {DOMAIN}."]
     for fqdn, ip in entries:
+        rec_ttl = FAILOVER_TTL if fqdn.split(".")[0] in FAILOVER_ALIASES else ttl
         script_lines.append(f"update delete {fqdn}. A")
-        script_lines.append(f"update add {fqdn}. {ttl} A {ip}")
+        script_lines.append(f"update add {fqdn}. {rec_ttl} A {ip}")
     script_lines.append("send")
     script = "\n".join(script_lines) + "\n"
 

@@ -160,7 +160,7 @@ def cmd_promote(args):
             capture_output=True, text=True, timeout=10, check=True).stdout.strip()
         script = (f"server 192.168.1.138\nzone {DOMAIN}.\n"
                   f"update delete pg-primary.{DOMAIN}. A\n"
-                  f"update add pg-primary.{DOMAIN}. 300 A {STANDBY_IP}\nsend\n")
+                  f"update add pg-primary.{DOMAIN}. 60 A {STANDBY_IP}\nsend\n")  # 60s TTL (queue #2656)
         r = subprocess.run(["nsupdate", "-y", f"hmac-sha256:{TSIG_KEY_NAME}:{secret}"],
                             input=script, capture_output=True, text=True, timeout=15)
         log("DNS updated." if r.returncode == 0 else f"DNS update failed (non-fatal, fix manually): {r.stderr[:200]}")
