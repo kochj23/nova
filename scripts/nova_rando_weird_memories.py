@@ -97,6 +97,7 @@ def get_openrouter_key() -> str:
 
 def call_llm(system: str, user: str, max_tokens: int = 8000) -> str:
     api_key = get_openrouter_key()
+    import urllib.error
     import urllib.request
     body = json.dumps({
         "model": MODEL,
@@ -111,7 +112,17 @@ def call_llm(system: str, user: str, max_tokens: int = 8000) -> str:
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     })
-    resp = urllib.request.urlopen(req, timeout=300)
+    try:
+        resp = urllib.request.urlopen(req, timeout=300)
+    except urllib.error.HTTPError as e:
+        # 402 = OpenRouter account out of credits (2026-09-14 incident, queue #2658).
+        # Not a code bug and nothing to retry — skip tonight's column quietly (exit 0
+        # so the scheduler doesn't fire a failure alert every night while it's unpaid;
+        # nova_openrouter_watch.py owns the low-balance alert).
+        if e.code == 402:
+            log("OpenRouter HTTP 402 Payment Required — account out of credits; skipping tonight")
+            sys.exit(0)
+        raise
     data = json.loads(resp.read())
     return data["choices"][0]["message"]["content"]
 
