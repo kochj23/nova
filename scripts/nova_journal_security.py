@@ -316,7 +316,7 @@ def notify(title: str, preview: str, is_breaking: bool = False):
         f"Nova Security — {prefix}: {title}",
         body=preview[:250],
         level="critical" if is_breaking else "info",
-        category="security",
+        category="security_news",  # news is FYI -> #nova-feed, never a page (2026-09-24)
         dedup_key=None if is_breaking else "security-daily-briefing",
     )
     # Breaking alerts also go to Nova's chat (interactive, non-alert) — leave as-is.
