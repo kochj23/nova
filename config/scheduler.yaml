@@ -346,6 +346,12 @@ tasks:
 
 
 
+  openrouter_credit_watch:           # #2620 — daily OpenRouter balance check; WARNING to #nova-notifications below $5 (the 2026-09-14 silent $0 / HTTP 402 day)
+    script: nova_openrouter_watch.py
+    schedule: cron 15 8 * * *
+    timeout: 60
+    overlap: skip
+
   # ── Daily: post-wake (verification, enrichment) ────────────────────────
 
 
