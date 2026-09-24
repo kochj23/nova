@@ -404,6 +404,28 @@ flowchart LR
     EVID --> W["External launchd witness<br/>(survives the stack being down)"]
 ```
 
+### Stabilization Sprint — State-Change Alerting, Gateway Health, Backup Reverse (2026-09-24)
+
+No new organs. A quiet fortnight after the 2026-09-13..18 burst and the 2026-09-17 nova-core NIC hang was spent making what exists trustworthy.
+
+- **State-change alerting** (`nova_notifier.py`) — the dedup window was 1h for every level, so every hourly monitor re-paged every hour: ~830 posts/week to #nova-alerts, and the NAS backup failure was posted 157 times in a week without anyone seeing it. Warning/critical now re-post once per 24h per `dedup_key` (`DEDUP_WINDOW_BY_LEVEL`; info stays 1h for feed/digest; emitters may override via `meta.dedup_window_s`). Target: under 10 actionable posts/day.
+- **Gateway `/health` never blocks** (`nova_gateway/router.py::status`) — it used to await up to four serial 5s backend probes on every cache expiry, so the 5s fleet checker logged the gateway "down" ~25% of the time while chat was fine. It now serves the cached status and refreshes stale entries in the background.
+- **Backup monitor triple-fire** — the launchd wrapper retried the script 3× because "issues found" exits 1; each run emitted its own event. Wrapper removed; exit 1 is a verdict, not a failure.
+- **NAS reverse reconcile rc=23** (`nova_nas_localdiff_reverse.py`) — the `#recycle` exclusion required a leading slash, so top-level `#recycle/...` entries from the UNAS share slipped into the rsync list and the job failed daily since 2026-09-20. Anchored at `(^|/)`.
+- **Dead-lettered tasks** — `prober` and `meshtastic_watch` had been quarantined by the .6 scheduler since the 09-17 outage (10 consecutive failures) and never retried; cleared via `POST /run/<task>`. Five daemons running stale code (redis, HA, LB, bambu-watch, anticipation) restarted.
+- **System map rewritten** (`agent_docs.nova-system-map`) as current truth from live probes — 10 pinned nodes, PG primary on nova-core5, gateway active on nova-core with standbys on .6/.250 — replacing two stacked correction appendices. Rule going forward: replace stale lines, never append corrections.
+- **Queue drained** — 20 of the oldest `claude_queue` items worked (OpenRouter credit watchdog, failover alerting after N failures, alias TTL 300→60, dependabot clean, DNS/HTTP 402 hardening, cited_memory_ids wiring, fleet sysctl/netplan/AIDE fixes); items needing hands (patio Zigbee router, 24 GB stray DVR dir, Mac auto-update policy) deferred with notes.
+
+```mermaid
+flowchart LR
+    M["hourly monitor<br/>(backup, staleness, sentinel)"] -->|nova_notify| E[(telemetry.events)]
+    E --> N[nova_notifier]
+    N -->|same dedup_key sent < 24h| S[suppressed<br/>collapsed_into]
+    N -->|first / > 24h| T[triage brain]
+    T --> A[#nova-alerts]
+    A -. "was: every hour, ~120/day" .-> A
+```
+
 ### Functional Health & a Voice — Deep Healthcheck + Short-Video Pipeline (2026-09-15)
 
 - **Deep functional healthcheck** (`nova_deep_healthcheck.py`, launchd 08:00 on .6) — on the principle "up but not functional isn't up" (a port answering is not health; Plex once ran with zero libraries because its mounts were dead and a basic check called it fine). Each subsystem is proven end-to-end: Plex has libraries *with items*, NAS mounts readable *and populated*, PG writes+reads a probe row with standbys streaming, memory recall actually returns, the gateway chat pipeline actually replies, inference answers a live prompt, DNS resolves to the real primary, the journal feed is live, and Nova's awakening organs are producing. Safe/reversible fixes (remount, Plex refresh, service restart, DNS resync) auto-applied behind the redline guard; the rest escalates to `#nova-alerts`. Audited to `deep_healthcheck_log`.
