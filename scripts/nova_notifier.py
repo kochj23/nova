@@ -109,6 +109,11 @@ DIGEST_CATEGORIES = frozenset({
 # Emitters can widen the window per-event via meta {"dedup_window_s": 86400}
 # (an hourly job with a 1h window re-fires forever — see nova_analytics_aggregate).
 DEDUP_WINDOW_S = 3600
+# State-change alerting (2026-09-24): a persisting warning/critical condition pages ONCE a day,
+# not once an hour. Hourly monitors (backup, staleness, sentinel, recurrence) were re-paging every
+# cycle — 830 posts/week to #nova-alerts, real failures buried. Info stays 1h (feed/digest material).
+# An emitter can still widen/narrow per-event via meta {"dedup_window_s": N}.
+DEDUP_WINDOW_BY_LEVEL = {"warning": 86400, "critical": 86400}
 
 
 # Maintenance gate (fail-open): during an authorized window, mute security-category
@@ -137,9 +142,9 @@ def _dedup_window(ev: dict) -> int:
         meta = ev.get("meta") or {}
         if isinstance(meta, str):
             meta = json.loads(meta)
-        return int(meta.get("dedup_window_s") or DEDUP_WINDOW_S)
+        return int(meta.get("dedup_window_s") or DEDUP_WINDOW_BY_LEVEL.get(ev.get("level"), DEDUP_WINDOW_S))
     except Exception:
-        return DEDUP_WINDOW_S
+        return DEDUP_WINDOW_BY_LEVEL.get(ev.get("level"), DEDUP_WINDOW_S)
 
 
 def _fmt(ev: dict) -> str:

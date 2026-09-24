@@ -408,9 +408,18 @@ class ModelRouter:
 
     async def status(self, ctx=None) -> dict:
         """Return current health status of all backends (for health API)."""
+        # 2026-09-24: /health must never block on backend probes. The fleet checker times out
+        # at 5s and this used to await up to 4 serial 5s probes on every cache expiry, so the
+        # gateway was logged "down" ~25% of the time while answering chat fine. Serve the cache;
+        # refresh stale entries in the background (the chat path still probes inline as before).
         result = {}
         for name, base_url, health_path, is_local in self.BACKENDS:
-            healthy = await self._check_health(name, base_url, health_path, ctx=ctx)
+            cached = self._health_cache.get(name)
+            if cached and (time.time() - cached[1]) < self.HEALTH_TTL:
+                healthy = cached[0]
+            else:
+                asyncio.ensure_future(self._check_health(name, base_url, health_path, ctx=ctx))
+                healthy = cached[0] if cached else False
             cached = self._health_cache.get(name)
             result[name] = {
                 "healthy": healthy,
