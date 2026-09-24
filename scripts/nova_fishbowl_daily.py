@@ -42,14 +42,16 @@ def main():
 
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
     # freshest transcripts first — this is what makes it a DAILY dispatch, not a static intro
-    mc.execute("SELECT text, created_at, metadata FROM memories WHERE source='fishbowl' "
+    # id first: source_links() keys on the LAST column being metadata.
+    mc.execute("SELECT id, text, created_at, metadata FROM memories WHERE source='fishbowl' "
                "AND metadata->>'type'='fishbowl_stream' ORDER BY created_at DESC LIMIT 12")
     rows = mc.fetchall()
     if not rows:
-        mc.execute("SELECT text, created_at, metadata FROM memories WHERE source='fishbowl' "
+        mc.execute("SELECT id, text, created_at, metadata FROM memories WHERE source='fishbowl' "
                    "ORDER BY created_at DESC LIMIT 12")
         rows = mc.fetchall()
-    samples = [r[0] for r in rows]
+    cited_ids = [r[0] for r in rows]   # -> publish_hugo article_citations (#2588)
+    samples = [r[1] for r in rows]
     from nova_fishbowl_summaries import source_links
     src_block = source_links(rows)
     # recency stats for an honest "since yesterday" framing
@@ -144,7 +146,7 @@ def main():
     # A guard rejection must FAIL the run, not log a publish: the evergreen slug means a silent
     # no-op leaves yesterday's article in place, so the site looks current while the job is dead.
     if not nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🐠",
-                           stable_slug=STABLE_SLUG):
+                           stable_slug=STABLE_SLUG, cited_memory_ids=cited_ids):
         nj.log(f"[fishbowl-daily] NOT PUBLISHED — quality guard rejected: {title}")
         return 1
     nj.git_push("opinions", title)

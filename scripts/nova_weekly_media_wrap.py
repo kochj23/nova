@@ -64,14 +64,16 @@ def main():
     # One representative snippet per top show so the LLM can talk themes without
     # being handed 6K chunks. Newest chunk of the newest episode, per show.
     snippets = []
+    cited_ids = []   # memory ids this article drew on -> publish_hugo article_citations (#2588)
     for show, _eps, _chunks, _vec, _last in shows[:14]:
         mc.execute(
-            "SELECT text FROM memories WHERE created_at > now() - interval %s "
+            "SELECT text, id FROM memories WHERE created_at > now() - interval %s "
             "AND metadata->>'type'='tv_transcript' AND metadata->>'show'=%s "
             "ORDER BY created_at DESC LIMIT 1", (WINDOW, show))
         r = mc.fetchone()
         if r:
             snippets.append(f"### {show}\n{r[0][:400]}")
+            cited_ids.append(r[1])
     snippet_block = "\n\n".join(snippets) or "(no transcript snippets)"
 
     show_block = "\n".join(
@@ -155,7 +157,8 @@ def main():
 
     tags = ["operations", "media", "weekly", "ingest", "tv", "youtube"]
     desc = "Nova's weekly wrap-up of every YouTube show and TV recording ingested into her memory — with commentary."
-    if not nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji="📺"):
+    if not nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji="📺",
+                           cited_memory_ids=cited_ids):
         nj.log(f"[media-wrap] NOT PUBLISHED — quality guard rejected: {title}")
         return 1
     nj.git_push("operations", title)
