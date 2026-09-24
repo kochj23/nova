@@ -29,6 +29,7 @@ Runs from a systemd timer on the nova-cores (.2/.10/.86), same as the /nova one.
     nova_datashare_failover.py            # act
     nova_datashare_failover.py --check    # report what it WOULD do, change nothing
 """
+import json
 import os
 import subprocess
 import sys
@@ -135,13 +136,49 @@ def restore_primary(spec):
     return r.returncode == 0 and readable(spec["mount"])
 
 
-def notify(msg, level="warning"):
+def notify(msg, level="warning", dedup_key=None, meta=None):
     try:
         sys.path.insert(0, "/nova/scripts")
         from nova_notify import notify as _n
         _n(f"Data-share failover: {msg}", level=level, category="storage",
-           source="nova_datashare_failover.py", dedup_key=f"datashare-{level}")
+           source="nova_datashare_failover.py", dedup_key=dedup_key or f"datashare-{level}",
+           meta=meta)
     except Exception:
+        pass
+
+
+# Consecutive recovery-failure escalation (incident-2026-09-14-plex-mounts: this daemon
+# failed the remount every 2 min for 31 HOURS and only journald knew). The counter lives
+# in a tiny JSON file (this script has no PG/state store); root-owned like the daemon.
+STATE_FILE = Path("/var/tmp/nova_datashare_failover_fails.json")
+ESCALATE_AFTER = 3
+_STUCK_STATES = ("recover-failed", "failback-failed", "down")
+
+
+def _load_fails():
+    try:
+        return json.loads(STATE_FILE.read_text())
+    except Exception:
+        return {}
+
+
+def track_failure(mount, state, detail):
+    """Count consecutive recovery failures per mount; alert once at ESCALATE_AFTER and
+    re-alert every 6h while still stuck (dedup at the notifier). Reset on any success."""
+    fails = _load_fails()
+    if state in _STUCK_STATES:
+        n = int(fails.get(mount, 0)) + 1
+        fails[mount] = n
+        if n >= ESCALATE_AFTER:
+            notify(f"{mount} recovery has failed {n} consecutive times ({state}: {detail}) — "
+                   f"needs a human (check fstab units / systemctl daemon-reload / NAS reachability)",
+                   "warning", dedup_key=f"datashare-recover-stuck-{mount}",
+                   meta={"dedup_window_s": 6 * 3600, "consecutive_failures": n})
+    elif mount in fails:
+        del fails[mount]
+    try:
+        STATE_FILE.write_text(json.dumps(fails))
+    except OSError:
         pass
 
 
@@ -226,6 +263,8 @@ def main():
         state, detail = handle(spec, check_only)
         if state not in ("ok", "skip"):
             log(f"{spec['mount']}: {state} — {detail}")
+        if not check_only and state != "skip":
+            track_failure(spec["mount"], state, detail)
         if state in ("down", "recover-failed", "failover-failed"):
             rc = 1
     return rc

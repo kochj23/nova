@@ -34,6 +34,7 @@ HARD-WON LESSONS (inherited from nova_nas_mount_watchdog / nova_storage_failover
     nova_mac_share_mount.py            # act
     nova_mac_share_mount.py --check    # report what it WOULD do, change nothing
 """
+import json
 import os
 import re
 import socket
@@ -228,13 +229,50 @@ def mount_fallback_ro(spec):
     return False
 
 
-def notify(msg, level="warning"):
+def notify(msg, level="warning", dedup_key=None, meta=None):
     try:
         sys.path.insert(0, os.path.expanduser("~/.openclaw/scripts"))
         from nova_notify import notify as _n
         _n(f"Mac share mount: {msg}", level=level, category="storage",
-           source="nova_mac_share_mount.py", dedup_key=f"mac-share-{level}")
+           source="nova_mac_share_mount.py", dedup_key=dedup_key or f"mac-share-{level}",
+           meta=meta)
     except Exception:
+        pass
+
+
+# Consecutive recovery-failure escalation (incident-2026-09-14-plex-mounts: the Linux
+# twin failed its remount every 2 min for 31h with nobody told). Counter in the existing
+# ~/.openclaw/state dir; alert at ESCALATE_AFTER, re-alert every 6h while stuck.
+STATE_FILE = os.path.expanduser("~/.openclaw/state/mac_share_mount_fails.json")
+ESCALATE_AFTER = 3
+_STUCK_STATES = ("recover-failed", "failback-failed", "down")
+
+
+def _load_fails():
+    try:
+        with open(STATE_FILE) as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def track_failure(mount, state, detail):
+    fails = _load_fails()
+    if state in _STUCK_STATES:
+        n = int(fails.get(mount, 0)) + 1
+        fails[mount] = n
+        if n >= ESCALATE_AFTER:
+            notify(f"{mount} recovery has failed {n} consecutive times ({state}: {detail}) — "
+                   f"needs a human (Keychain creds / NAS reachability / stale mount)",
+                   "warning", dedup_key=f"mac-share-recover-stuck-{mount}",
+                   meta={"dedup_window_s": 6 * 3600, "consecutive_failures": n})
+    elif mount in fails:
+        del fails[mount]
+    try:
+        os.makedirs(os.path.dirname(STATE_FILE), exist_ok=True)
+        with open(STATE_FILE, "w") as f:
+            json.dump(fails, f)
+    except OSError:
         pass
 
 
@@ -292,6 +330,8 @@ def main():
         state, detail = handle(spec, check_only)
         if state not in ("ok",):
             log(f"{spec['mount']}: {state} — {detail}")
+        if not check_only:
+            track_failure(spec["mount"], state, detail)
         if state in ("down", "recover-failed"):
             rc = 1
     return rc
