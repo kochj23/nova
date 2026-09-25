@@ -267,9 +267,11 @@ def pick_pursuit(oc, mc):
     # when both present, ~79% still to passions). The passion cascade keeps its original
     # 0.65/0.25/0.10 weighting exactly. Chosen from inside; always able to lose the hour.
     _self_modes = ("tinker", "aspire")
-    if "tinker" in cands and random.random() < 0.12:
+    # 2026-09-25 Jordan ("I don't want to hold her back"): self-directed lanes raised from
+    # 12%/10% to 15%/20% — ~32% of runs when both are present, passions keep the rest.
+    if "tinker" in cands and random.random() < 0.15:
         winner = cands["tinker"]
-    if winner is None and "aspire" in cands and random.random() < 0.10:
+    if winner is None and "aspire" in cands and random.random() < 0.20:
         winner = cands["aspire"]
     if winner is None:
         roll = random.random()

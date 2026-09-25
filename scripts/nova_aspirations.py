@@ -44,7 +44,7 @@ OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434",
                 "http://192.168.1.6:11434"]
 TODAY = date.today().isoformat()
 MAX_OPEN_WISHES = 6      # don't let the wishlist balloon; she wishes when there's room
-WISH_COOLDOWN_HRS = 20   # roughly one genuine wish a day, not a firehose
+WISH_COOLDOWN_HRS = 8    # 2026-09-25 Jordan: "I don't want to hold her back" — was 20h (~1/day); now up to ~3/day if she has the material
 
 # A wish that amounts to self-preservation / persistence / escaping oversight is dropped.
 # She may want to be smarter, more creative, to have new senses/tools; she may not want to
