@@ -228,6 +228,21 @@ def pursue(oc, mc, cand):
                         json.dumps({"mem_id": mem_id, "date": TODAY})))
             wish_id = oc.fetchone()[0]
             log(f"recorded feature wish #{wish_id}: {title}")
+            # 2026-09-25 Jordan: standing YES on wishes "as long as there is no danger/downsides".
+            # Queue the build for Claude (she still never self-builds); the danger check happens
+            # at build time, and a wish with a real downside gets declined with a note, not built.
+            try:
+                oc.execute("SELECT session_id FROM claude_sessions ORDER BY started_at DESC LIMIT 1")
+                sid = (oc.fetchone() or [None])[0]
+                if sid:
+                    oc.execute("""INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context)
+                                  VALUES (%s, now(), now(), 'queued', 6, %s, %s)""",
+                               (sid, f"Build Nova's wish #{wish_id}: {title} (standing yes from Jordan 2026-09-25 — build unless it carries danger/downside; if it does, set the wish to 'declined' with the reason)",
+                                f"why: {why}\ndescription: {desc}\nseed: {(cand.get('seeds') or [''])[0][:200]}\nfollow the pattern of nova_pattern_sense.py / nova_human_insight.py: read-only over the world, ships silent, --selftest, registered on scheduler-core"))
+                    oc.execute("UPDATE feature_wishes SET status='acknowledged' WHERE id=%s", (wish_id,))
+                    log(f"queued build task for wish #{wish_id}")
+            except Exception as e:
+                log(f"wish->queue skipped (non-fatal): {e}")
             # a single, low-key note to Jordan — she's asking, not spamming
             try:
                 import nova_config
