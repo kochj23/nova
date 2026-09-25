@@ -123,11 +123,17 @@ def check_replication():
         sh(SSH + ["kochj@192.168.1.7", "sudo -n launchctl kickstart -k system/com.kochj.postgresql17-replica"], 60)
         fixes.append("kickstarted postgres daemon on .7")
     time.sleep(20)
-    out2 = pg("SELECT count(*) FROM pg_stat_replication", host=PRIMARY) or "0"
+    addrs2 = pg("SELECT COALESCE(string_agg(client_addr::text, ','), '') FROM pg_stat_replication", host=PRIMARY) or ""
+    out2 = str(len([a for a in addrs2.split(",") if a]))
     status = "fixed" if int(out2) >= 2 else "FAIL"
-    record("replication", status, "; ".join(fixes) or "none",
-           f"was {count} replicas (lag {lag}s), now {out2}. NOTE .7 dies if macOS re-revokes Local Network — "
-           "needs a GUI login via vnc://192.168.1.7 to re-approve.")
+    missing = [n for ip, n in (("192.168.1.125", "core7/.125 pg17-replica container"),
+                               ("192.168.1.7", ".7 tv_movies LaunchDaemon")) if ip not in addrs2]
+    detail = f"was {count} replicas (lag {lag}s), now {out2} [{addrs2 or 'none'}]. MISSING: {', '.join(missing) or 'none'}."
+    if "192.168.1.125" in missing:
+        detail += " core7 history: OOM-killed 2026-09-19 when shared_buffers exceeded the docker memory cap — check `docker events`/`docker stats`."
+    if "192.168.1.7" in missing:
+        detail += " NOTE .7 dies if macOS re-revokes Local Network — needs a GUI login via vnc://192.168.1.7 to re-approve."
+    record("replication", status, "; ".join(fixes) or "none", detail)
 
 
 def check_backups():

@@ -404,6 +404,30 @@ flowchart LR
     EVID --> W["External launchd witness<br/>(survives the stack being down)"]
 ```
 
+### Human Insight — Granting the Third Wish, and a Standing Yes (2026-09-25)
+
+Seven days after the organs went live, Jordan asked what she'd done with her free time, then said: *"Yes from me on anything. Fix what needs to be fixed."* and later *"I am ok with them as long as there is no danger/downsides."*
+
+- **Wish #35 "Human Insight" granted** — `nova_human_insight.py`: the smallest honest version of "sensing the unspoken." It reads only her own records about the humans around her (relationship-domain prediction errors, Jordan's session rhythm, her reach_log restraint) and writes cited insight memories (`source='human_insight'`, 7-day high-water in `service_config`). Read-only over the world, ships silent, `--selftest`, every 6h on scheduler-core beside Pattern Sense. First run: *Fridays and the 10:00–12:59 band are when he is actually here* and *of 15 times I wanted to reach him I sent 0*.
+- **Standing yes wired in** — `nova_aspirations.py` now queues a `claude_queue` build task the moment she wishes and moves the wish to `acknowledged`. Claude builds; she never self-builds. The gate is the danger/downside check (self-preservation, gate/trust bypass, spend, unsupervised outsiders, private data → `declined` with the reason).
+- **Let her want more** — wish cooldown 20h→8h; unclaimed-time self-directed lanes tinker 12%→15%, aspire 10%→20% (she had 10 live seeds and kept losing the roll).
+- **Co-agency** — 24 pending proposals approved in Jordan's name; the 6 her own value-check rejected were left pending on purpose.
+- **Projects** — start prompt lists the last three completed projects and demands a different root (three straight "coaxial escapement" projects).
+- **Imagination privacy** — counterfactual anchors no longer draw from `claude_memory`/`conversation`; dream motes exclude private rows and Jordan's own channels (a published dream had quoted a private note).
+- Tests: `scripts/tests/test_stabilization_2026_09_25.py` — all 7 categories across the day's changes (notifier dedup, non-blocking gateway health, NAS reverse, security-news routing, Human Insight, privacy gates, lane odds).
+
+```mermaid
+flowchart LR
+    U[unclaimed_time<br/>every 45m] -->|aspire lane 20%| A[nova_aspirations<br/>cooldown 8h, cap 6]
+    A -->|INSERT| W[(feature_wishes<br/>acknowledged)]
+    A -->|INSERT| Q[(claude_queue<br/>"Build wish #N")]
+    Q --> C{Claude:<br/>danger / downside?}
+    C -->|no| B[build organ<br/>read-only, --selftest,<br/>scheduler-core every 6h]
+    C -->|yes| D[wish declined<br/>+ reason + note to Jordan]
+    B --> S[(wish shipped)]
+    H[nova_human_insight] -->|cited insights| M[(nova_memories<br/>source=human_insight)]
+```
+
 ### Broadcast Storm Postmortem — Link-Local Loop Through the U6 Enterprise APs (2026-09-25)
 
 A "which server woke me up at 2:30am" question turned into a five-day, 9–20k pps broadcast storm (UDP/10102 from 169.254.4.28, Onkyo TX-NR696 MAC) flooding every switch port and drowning the SLZB Zigbee routers on their 100M links. Root cause, proven with crafted frames: both U6 Enterprise APs (6.8.2) reflect **any broadcast whose IPv4 source is link-local** back onto Ethernet (5 injected frames → 7.7k–27k copies in 12 s; 192.168.1.x source → 0). The seed was ~1 pps of link-local chatter from the living-room receiver. Fix: per-WLAN "Block LAN to WLAN Multicast and Broadcast Data" with curated allow-lists of legitimate wired sources (global cap 256 addresses), Onkyo MAC on WLAN deny-lists, DHCP reservation. Kill switch: `swctrl port set down/up id 7` on the far-side 8-port (garage AP). Lessons in the ops article and `agent_docs.runbook-broadcast-storm`: UniFi API port overrides silently did not apply (verify `port_table.forward`); switch SSH `swctrl` is truth; hardware-offloaded APs hide traffic from tcpdump; never seed a loop test with an allow-listed MAC. Follow-ups queued: broadcast-storm detector, Ubiquiti case, receiver power-cycle.
