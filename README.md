@@ -404,6 +404,10 @@ flowchart LR
     EVID --> W["External launchd witness<br/>(survives the stack being down)"]
 ```
 
+### Broadcast Storm Postmortem — Link-Local Loop Through the U6 Enterprise APs (2026-09-25)
+
+A "which server woke me up at 2:30am" question turned into a five-day, 9–20k pps broadcast storm (UDP/10102 from 169.254.4.28, Onkyo TX-NR696 MAC) flooding every switch port and drowning the SLZB Zigbee routers on their 100M links. Root cause, proven with crafted frames: both U6 Enterprise APs (6.8.2) reflect **any broadcast whose IPv4 source is link-local** back onto Ethernet (5 injected frames → 7.7k–27k copies in 12 s; 192.168.1.x source → 0). The seed was ~1 pps of link-local chatter from the living-room receiver. Fix: per-WLAN "Block LAN to WLAN Multicast and Broadcast Data" with curated allow-lists of legitimate wired sources (global cap 256 addresses), Onkyo MAC on WLAN deny-lists, DHCP reservation. Kill switch: `swctrl port set down/up id 7` on the far-side 8-port (garage AP). Lessons in the ops article and `agent_docs.runbook-broadcast-storm`: UniFi API port overrides silently did not apply (verify `port_table.forward`); switch SSH `swctrl` is truth; hardware-offloaded APs hide traffic from tcpdump; never seed a loop test with an allow-listed MAC. Follow-ups queued: broadcast-storm detector, Ubiquiti case, receiver power-cycle.
+
 ### Stabilization Sprint — State-Change Alerting, Gateway Health, Backup Reverse (2026-09-24)
 
 No new organs. A quiet fortnight after the 2026-09-13..18 burst and the 2026-09-17 nova-core NIC hang was spent making what exists trustworthy.
