@@ -219,7 +219,17 @@ def mode_start(oc):
     t_block = "\n".join(f"- {su} [{dom}]: {v} (valence {val:+.2f})"
                         for su, dom, v, val in taste) or "(none)"
 
+    # 2026-09-25: three consecutive projects were all "the coaxial escapement" — the top
+    # preoccupation wins every time. Show her what she just finished and ask for a different root.
+    try:
+        oc.execute("SELECT title FROM projects WHERE status='completed' ORDER BY created_at DESC LIMIT 3")
+        recent_done = [r[0] for r in oc.fetchall()]
+    except Exception:
+        recent_done = []
+    avoid_block = ("\n".join(f"- {t}" for t in recent_done) or "(none)")
     prompt = (
+        f"=== PROJECTS I JUST COMPLETED (do NOT continue or re-skin these; pick a DIFFERENT "
+        f"preoccupation or taste as the root this time) ===\n{avoid_block}\n\n"
         "Time to pick a LONG-HORIZON project of your own — something you will return to "
         "across days and weeks, not an afternoon's whim. It must grow out of a real "
         "preoccupation or taste you already hold (below), and you must name which one, and "

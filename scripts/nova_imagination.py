@@ -185,7 +185,8 @@ def pick_anchor(mc):
     the counterfactual can cite exactly what it is a counterfactual OF."""
     mc.execute(
         "SELECT id, source, created_at::date, text FROM memories "
-        "WHERE source IN ('episodic','continuity','claude_memory','conversation','association') "
+        "WHERE source IN ('episodic','continuity','association') "   # 2026-09-25: no claude_memory (ops notes about Jordan) / conversation
+        "AND coalesce(privacy,'') <> 'private' AND coalesce(metadata->>'privacy','') <> 'private' "
         "AND length(text) > 180 AND created_at > now() - interval '120 days' "
         "ORDER BY random() LIMIT 1")
     row = mc.fetchone()
@@ -220,8 +221,13 @@ def pick_forward_seed(oc, mc):
 
 def pick_dream_mote(mc):
     """A faint real mote for a dream to warp — optional; a dream may be seedless."""
+    # 2026-09-25: dreams are published — never seed them from private lanes or Jordan's own
+    # channels (a dream mote quoted a private Claude note about Jordan's FDA ordeal).
     mc.execute("SELECT id, source, text FROM memories WHERE length(text) > 150 "
-               "AND created_at > now() - interval '21 days' ORDER BY random() LIMIT 1")
+               "AND created_at > now() - interval '21 days' "
+               "AND coalesce(privacy,'') <> 'private' AND coalesce(metadata->>'privacy','') <> 'private' "
+               "AND source NOT IN ('claude_memory','conversation','email','imessage','sms','reddit','fishbowl','calendar','private_notebook','imagination') "
+               "ORDER BY random() LIMIT 1")
     row = mc.fetchone()
     return {"id": row[0], "source": row[1], "text": row[2][:400]} if row else None
 
