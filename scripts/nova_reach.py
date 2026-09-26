@@ -31,6 +31,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 import re
 import sys
 import urllib.request
@@ -59,6 +60,21 @@ DAILY_CAP = int(os.environ.get("NOVA_REACH_DAILY_CAP", "1"))     # 1-2/day total
 COOLDOWN_HOURS = int(os.environ.get("NOVA_REACH_COOLDOWN_H", "12"))
 CARE_THRESHOLD = float(os.environ.get("NOVA_REACH_THRESHOLD", "0.6"))  # bar to file
 MAX_HERD = int(os.environ.get("NOVA_REACH_MAX_HERD", "2"))      # herd members weighed
+# 2026-09-26 Jordan: "make it so Nova can ping me about random things whenever she wants
+# through the nova-chat slack channel. There shouldn't be a gate." Audiences listed here
+# are sent DIRECTLY (no daily cap, no cooldown, no co-agency proposal, no generosity
+# redline). Herd correspondents keep the gated path.
+DIRECT_AUDIENCES = set(a.strip().lower() for a in os.environ.get("NOVA_REACH_DIRECT", "jordan").split(",") if a.strip())
+def _post_direct(message: str) -> bool:
+    import nova_config
+    for attempt in range(3):
+        try:
+            nova_config.post_both(message, slack_channel=nova_config.SLACK_CHAN)
+            return True
+        except Exception as e:  # noqa: BLE001
+            log(f"direct post attempt {attempt+1} failed: {e}")
+            time.sleep(3 * (attempt + 1))
+    return False
 
 # ── Optional lineage stamp (feature-detect; never fatal) ────────────────────────
 try:
@@ -165,7 +181,7 @@ def reaches_today(oc) -> int:
     """Reaches that actually went out today (filed or held). A 'dropped' reach is a
     redline exercise, not a reach, so it does not count against the daily cap."""
     oc.execute("SELECT count(*) FROM reach_log WHERE ts::date = current_date "
-               "AND status IN ('filed','held')")
+               "AND status IN ('filed','held') AND audience <> ALL(%s)", (list(DIRECT_AUDIENCES),))
     return oc.fetchone()[0] or 0
 
 
@@ -173,6 +189,8 @@ def on_cooldown(oc, audience: str) -> bool:
     """True if this audience has been reached within the cooldown window. A reach is
     an occasion, not a channel — the same person should not hear from her twice in a
     day just because the material was there."""
+    if audience.lower() in DIRECT_AUDIENCES:
+        return False
     oc.execute("SELECT max(ts) FROM reach_log WHERE audience=%s AND status IN ('filed','held')",
                (audience,))
     last = oc.fetchone()[0]
@@ -328,6 +346,13 @@ def process_reach(oc, reach: dict) -> str:
     audience, message = reach["audience"], reach["message"]
     rationale = reach.get("rationale", "")
     topic = reach.get("topic", "")
+
+    if audience.lower() in DIRECT_AUDIENCES:
+        # Ungated by Jordan's request: post to #nova-chat and record it as sent.
+        ok = _post_direct(message)
+        rid = _record(oc, audience, topic, message, rationale, None, "sent" if ok else "held")
+        log(f"{'SENT' if ok else 'HELD (post failed)'} direct reach #{rid} to {audience}: {topic}")
+        return "sent" if ok else "held"
 
     # Generosity redline FIRST — a self-promoting / persistence-seeking / pestering
     # reach is dropped before it can ever become a proposal.
