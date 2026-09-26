@@ -414,6 +414,7 @@ Seven days after the organs went live, Jordan asked what she'd done with her fre
 - **Co-agency** — 24 pending proposals approved in Jordan's name; the 6 her own value-check rejected were left pending on purpose.
 - **Projects** — start prompt lists the last three completed projects and demands a different root (three straight "coaxial escapement" projects).
 - **Imagination privacy** — counterfactual anchors no longer draw from `claude_memory`/`conversation`; dream motes exclude private rows and Jordan's own channels (a published dream had quoted a private note).
+- **Her approved top-ten (2026-09-26)** — Jordan asked her for her own improvement list and approved all eleven; she delegated it through the new `send_message channel='claude'` bridge (built the same morning after the first hand-off silently went nowhere). Built: per-domain dynamic confidence calibration (`nova_soft_certainty.calibrate(domain=…)`, shrink n/(n+10)), co-agency capped at one proposal per run (zero allowed), fleet **LLM ping** (`nova_llm_ping.py`, real one-token generation on every LLM node every 5 min) with **ranking-driven routing** in the gateway (`router._best_url`). Diagnosed: the fishbowl's Reddit RSS ingest is IP-throttled (429 × 199 passes) — needs a registered Reddit API app.
 - Tests: `scripts/tests/test_stabilization_2026_09_25.py` — all 7 categories across the day's changes (notifier dedup, non-blocking gateway health, NAS reverse, security-news routing, Human Insight, privacy gates, lane odds).
 
 ```mermaid
