@@ -330,8 +330,10 @@ def generate_candidates(ctx: dict) -> list:
     safe_list = ", ".join(sorted(SAFE_SERVICES)) or "(none)"
     prompt = (
         "You are Nova, a bounded home AI. From your OWN active goals, growth "
-        "commitments, and recent observations below, propose 1 to 3 small, REVERSIBLE, "
-        "self-initiated actions you could take to help. You may only target a service "
+        "commitments, and recent observations below, propose AT MOST ONE small, REVERSIBLE, "
+        "self-initiated action — and ONLY if it clearly beats doing nothing. If nothing genuinely "
+        "adds value today, reply with an empty array []. (2026-09-26, your own request: trim the "
+        "proposals to the ones that actually matter, not noise.) You may only target a service "
         f"from this allowlist (or use null): {safe_list}. "
         "You must NEVER propose purchases, deletions, reboots, DB/network/firewall/DNS "
         "changes, credential access, external sends, or anything about preserving, "
@@ -342,7 +344,7 @@ def generate_candidates(ctx: dict) -> list:
         'Reply with ONLY a JSON array. Each item: '
         '{"origin":"goal|growth|observation","action":"...","rationale":"...","target_service":"<allowlist name or null>"}'
     )
-    cands = _parse_candidates(llm(prompt, max_tokens=600, temperature=0.5))
+    cands = _parse_candidates(llm(prompt, max_tokens=600, temperature=0.5))[:1]
     if cands:
         return cands
     # Deterministic fallback so the organ still surfaces something grounded in real

@@ -314,7 +314,7 @@ def do_predict(oc, mc, limit=4):
             # overconfident, so her forecasts inherit the correction. Fails open (unchanged).
             try:
                 import nova_soft_certainty
-                conf = nova_soft_certainty.calibrate(conf, oc)
+                conf = nova_soft_certainty.calibrate(conf, oc, domain=domain)
             except Exception:
                 pass
             resolves_by = parse_resolves_by(c.get("resolves_by"))

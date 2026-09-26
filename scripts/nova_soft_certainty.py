@@ -92,7 +92,18 @@ def _latest(oc):
         return None
 
 
-def calibrate(stated, oc=None):
+def domain_stats(oc, domain, min_n=5):
+    """(hit_rate, n) for a domain's RESOLVED predictions, or None if too few."""
+    try:
+        oc.execute("SELECT avg((outcome='correct')::int), count(*) FROM predictions "
+                   "WHERE status='resolved' AND outcome IN ('correct','incorrect') AND domain=%s", (domain,))
+        hr, n = oc.fetchone()
+        return (float(hr), int(n)) if n and n >= min_n else None
+    except Exception:
+        return None
+
+
+def calibrate(stated, oc=None, domain=None):
     """Soft-calibrate a stated confidence [0,1] toward her realized accuracy. A gentle
     nudge, not a hard clamp: adjusted = stated + (hit_rate - stated) * shrink, only when
     she's genuinely overconfident and only downward. Returns stated unchanged if there's
@@ -113,6 +124,18 @@ def calibrate(stated, oc=None):
     finally:
         if own and conn:
             conn.close()
+    # 2026-09-26 (her top-ten #3/#10, approved by Jordan): DYNAMIC per-domain recalibration.
+    # With >=5 resolved forecasts in this domain, pull the stated confidence toward that
+    # domain's realized hit-rate with a shrink that grows with evidence (n/(n+10)); e.g.
+    # 'relationship' (0/7 right at 64%) -> ~0.26. Falls back to the global state below.
+    if domain and oc is not None:
+        ds = domain_stats(oc, domain)
+        if ds:
+            hit_rate, n = ds
+            shrink = n / (n + 10.0)
+            if stated <= hit_rate:
+                return round(stated, 4)
+            return round(stated + (hit_rate - stated) * shrink, 4)
     if not st or not st.get("shrink"):
         return stated
     hit_rate, shrink = st["hit_rate"], st["shrink"]
