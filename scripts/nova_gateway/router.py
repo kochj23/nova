@@ -47,6 +47,31 @@ def _strip_thinking(text: str) -> str:
     return text
 
 
+
+# ── 2026-09-26: follow nova_llm_ping's ranking (Jordan: "prioritize the LLMs that are actually
+# working with models running"). Best node per kind from service_config, cached 60 s; on any
+# failure fall back to the static URL from config.py. ─────────────────────────────────────
+_RANK_CACHE = {"ts": 0.0, "val": None}
+
+def _best_url(kind: str, default: str) -> str:
+    try:
+        import time as _t
+        if _t.time() - _RANK_CACHE["ts"] > 60:
+            import psycopg2, json as _j
+            conn = psycopg2.connect("dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net", connect_timeout=2)
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM service_config WHERE service='nova_llm_ping' AND key='ranking'")
+            row = cur.fetchone(); conn.close()
+            v = row[0] if row else None
+            _RANK_CACHE["val"] = (v if isinstance(v, dict) else (_j.loads(v) if v else None)); _RANK_CACHE["ts"] = _t.time()
+        rows = (_RANK_CACHE["val"] or {}).get(kind) or []
+        for r in rows:
+            if r.get("status") == "up" and (kind != "ollama" or r.get("has_chat_model")):
+                return r["url"]
+    except Exception:
+        pass
+    return default
+
 class ModelRouter:
     """Routes LLM requests through a priority chain of backends with health checking.
 
@@ -264,6 +289,7 @@ class ModelRouter:
             msgs = [{"role": "system", "content": system}] + messages
 
         if name == "ollama":
+            base_url = _best_url("ollama", base_url)
             # Use Ollama's native API with think:true — thinking goes to
             # separate field, we only return content.
             model = model_override or "qwen3:8b"   # 2026-09-18: 30b only on wedged .6 / cold .77; 8b is reliable on the working nodes
@@ -294,9 +320,10 @@ class ModelRouter:
             return content
 
         elif name == "mlx":
-            # MLX LM Server — OpenAI-compatible
+            base_url = _best_url("mlx", base_url)
+            # MLX LM Server — OpenAI-compatible (2026-09-26: model = what both MLX nodes actually serve)
             payload = {
-                "model":      model_override or "/Volumes/Data/mlx-models/qwen2.5-32b-4bit",
+                "model":      model_override or "mlx-community/Qwen3-8B-4bit",
                 "messages":   msgs,
                 "max_tokens": max_tokens,
                 "temperature": 0.7,
