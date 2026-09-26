@@ -93,6 +93,10 @@ def rank(results: list) -> dict:
 def pick_model(available: list, loaded: list) -> str | None:
     """Prefer the gateway's chat model if the node has it; else whatever is already loaded;
     else the smallest available (so a CPU box isn't forced to load 45 GB just to say 'ping')."""
+    def _gen(m):  # embedding models cannot generate — never pick them for a ping
+        n = (m.get("name") or m.get("model") or "").lower()
+        return n and "embed" not in n
+    available = [m for m in available if _gen(m)]; loaded = [m for m in loaded if _gen(m)]
     names = [m.get("name") or m.get("model") for m in available]
     if CHAT_MODEL in names:
         return CHAT_MODEL
@@ -101,6 +105,11 @@ def pick_model(available: list, loaded: list) -> str | None:
     if available:
         return sorted(available, key=lambda m: m.get("size", 10**15))[0].get("name")
     return None
+
+
+def smallest_model(available: list) -> str | None:
+    gen = [m for m in available if "embed" not in (m.get("name") or "").lower()]
+    return sorted(gen, key=lambda m: m.get("size", 10**15))[0].get("name") if gen else None
 
 
 # ── probes ─────────────────────────────────────────────────────────────────────
@@ -119,18 +128,28 @@ def probe(ep):
             r["has_chat_model"] = any((m.get("name") or "") == CHAT_MODEL for m in tags)
             model = pick_model(tags, ps)
             if not model:
-                r["error"] = "no models"; return r
+                r["error"] = "no models"; r["status"] = "down"; return r
             r["model"] = model
-            t0 = time.time()
-            _post(f"{url}/api/generate", {"model": model, "prompt": "ping", "stream": False,
-                                           "think": False, "keep_alive": "15m",
-                                           "options": {"num_predict": 1}}, GEN_TIMEOUT)
-            r["latency_ms"] = int((time.time() - t0) * 1000); r["ok"] = True
+            def _gen(mdl):
+                t0 = time.time()
+                _post(f"{url}/api/generate", {"model": mdl, "prompt": "ping", "stream": False,
+                                               "think": False, "keep_alive": "15m",
+                                               "options": {"num_predict": 1}}, GEN_TIMEOUT)
+                return int((time.time() - t0) * 1000)
+            try:
+                r["latency_ms"] = _gen(model); r["ok"] = True
+            except Exception as e1:  # the chat model failed (e.g. can't fit on a 16 GB box) — is the node alive at all?
+                small = smallest_model(tags)
+                if small and small != model:
+                    r["latency_ms"] = _gen(small); r["ok"] = True; r["model"] = small
+                    r["has_chat_model"] = False; r["error"] = f"{CHAT_MODEL} failed ({str(e1)[:60]}); alive on {small}"
+                else:
+                    raise
         else:
             models = _get(f"{url}/v1/models", TAGS_TIMEOUT).get("data", [])
             model = (models[0].get("id") if models else None)
             if not model:
-                r["error"] = "no models"; return r
+                r["error"] = "no models"; r["status"] = "down"; return r
             r["model"] = model; r["has_chat_model"] = True; r["loaded"] = [model]
             t0 = time.time()
             _post(f"{url}/v1/chat/completions", {"model": model, "max_tokens": 1,
