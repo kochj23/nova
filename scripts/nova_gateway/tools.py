@@ -417,6 +417,16 @@ async def _tool_send_message(ctx: GatewayContext, params: dict) -> str:
             conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj", connect_timeout=5)
             conn.autocommit = True
             cur = conn.cursor()
+            # Was this already handled? (Nova asked "check if Claude did it" and re-delegated the
+            # same list.) Match the first 60 chars of the text against recent Nova-origin items.
+            cur.execute("""SELECT id, status, left(coalesce(outcome,''), 900) FROM claude_queue
+                           WHERE description LIKE '[from Nova]%%' AND created_at > now() - interval '48 hours'
+                             AND left(description, 72) = left(%s, 72) AND status IN ('done','resolved')
+                           ORDER BY id DESC LIMIT 1""", (f"[from Nova] {text[:900]}",))
+            prior = cur.fetchone()
+            if prior:
+                conn.close()
+                return f"Already done by Claude (claude_queue #{prior[0]}, {prior[1]}). Outcome:\n{prior[2]}"
             cur.execute("SELECT session_id FROM claude_sessions ORDER BY started_at DESC LIMIT 1")
             sid = (cur.fetchone() or [None])[0]
             cur.execute("""INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context)
