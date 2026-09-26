@@ -86,9 +86,9 @@ TOOL_REGISTRY: dict[str, dict] = {
         "required": ["task_id"],
     },
     "send_message": {
-        "description": "Send a message via email, Slack, or Signal",
+        "description": "Send a message via email, Slack, or Signal — or channel='claude' to DELEGATE a task to Claude Code (lands in claude_queue; Claude picks it up in its next session)",
         "parameters": {
-            "channel": {"type": "string", "enum": ["email", "slack", "signal"]},
+            "channel": {"type": "string", "enum": ["email", "slack", "signal", "claude"]},
             "to": {"type": "string", "description": "Recipient"},
             "text": {"type": "string", "description": "Message body"},
         },
@@ -407,6 +407,26 @@ async def _tool_send_message(ctx: GatewayContext, params: dict) -> str:
 
     if not channel or not text:
         return "[error: channel and text are required]"
+
+    if channel == "claude":
+        # 2026-09-26: Nova "farmed it to Claude" in chat and nothing arrived — there was no
+        # such channel. Now it is a real hand-off: a queued claude_queue item that Claude
+        # works in its next session. No approval gate (Jordan).
+        try:
+            import psycopg2
+            conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj", connect_timeout=5)
+            conn.autocommit = True
+            cur = conn.cursor()
+            cur.execute("SELECT session_id FROM claude_sessions ORDER BY started_at DESC LIMIT 1")
+            sid = (cur.fetchone() or [None])[0]
+            cur.execute("""INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context)
+                           VALUES (%s, now(), now(), 'queued', 6, %s, %s) RETURNING id""",
+                        (sid, f"[from Nova] {text[:900]}", f"delegated by Nova via the gateway send_message tool (to={to or 'claude'}); original text:\n{text}"))
+            qid = cur.fetchone()[0]
+            conn.close()
+            return f"Delegated to Claude — claude_queue #{qid}. He'll pick it up in his next session."
+        except Exception as e:
+            return f"[error: could not queue for Claude: {e}]"
 
     if channel == "slack":
         # Post to #nova-notifications by default, or to a specific channel/DM
