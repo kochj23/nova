@@ -177,7 +177,7 @@ def _gather_candidates(oc, mc):
     # the itch to fix a squeak in it — chosen from inside (Jordan 2026-09-16). Fully optional.
     try:
         import nova_tinkerer
-        if random.random() < 0.35:
+        if random.random() < 0.50:   # 2026-09-26: offer gate 0.35 -> 0.50 (Jordan: don't hold her back)
             tc = nova_tinkerer.surface_friction(oc, mc)
             if tc:
                 cands["tinker"] = tc
@@ -188,7 +188,7 @@ def _gather_candidates(oc, mc):
     # for a human, never a self-modification (Jordan 2026-09-16). Offered, minority, optional.
     try:
         import nova_aspirations
-        if random.random() < 0.30:
+        if random.random() < 0.60:   # 2026-09-26: offer gate 0.30 -> 0.60; combined with the 20% lane roll = ~12%/run (~4 real tries/day)
             ac = nova_aspirations.surface_aspiration(oc, mc)
             if ac:
                 cands["aspire"] = ac
