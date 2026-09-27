@@ -69,10 +69,17 @@ _SSL.check_hostname = False
 _SSL.verify_mode = ssl.CERT_NONE
 
 
+def _secret(name):
+    # ponytail: Keychain on macOS, fleet secret store (systemd-creds) on Linux — same key, two homes
+    if sys.platform == "darwin":
+        return subprocess.run(["security", "find-generic-password", "-a", "nova", "-s", name, "-w"],
+                              capture_output=True, text=True, check=True, timeout=10).stdout.strip()
+    import nova_secrets
+    return nova_secrets.get_secret(name)
+
+
 def api_key():
-    return subprocess.run(
-        ["security", "find-generic-password", "-a", "nova", "-s", "nova-unifi-api-key", "-w"],
-        capture_output=True, text=True, timeout=10).stdout.strip()
+    return _secret("nova-unifi-api-key")
 
 
 def get_clients(key):
@@ -153,10 +160,7 @@ def build(conn, clients):
 
 
 def tsig_secret():
-    return subprocess.run(
-        ["security", "find-generic-password", "-a", "nova", "-s", "nova-bind-tsig-key", "-w"],
-        capture_output=True, text=True, check=True
-    ).stdout.strip()
+    return _secret("nova-bind-tsig-key")
 
 
 # Failover-critical aliases get a SHORT TTL so clients drop the old primary within a
