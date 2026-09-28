@@ -420,6 +420,35 @@ Jordan reread her six-month autobiography and asked what should be built from it
 
 Tests: `scripts/tests/test_six_month_builds.py` (7 categories). Queue #2917–2923.
 
+```mermaid
+flowchart LR
+    subgraph sources[Sources]
+        Z[Zigbee2MQTT<br/>bridge/devices + state] --> HF
+        HA[Home Assistant<br/>update.* + areas] --> HF
+        U[UniFi<br/>dns_records + net_inventory] --> HF
+        SR[(service_registry)] --> HF
+    end
+    HF[nova_house_facts<br/>every 15m] --> T[(house_facts)]
+    T -->|"house question → before recall"| GW[gateway chat agent]
+    R[(scheduler_runs<br/>stdout_tail)] --> OD[nova_output_drift<br/>hourly]
+    HC[(health_checks)] --> OD
+    OD -->|warning, state-change dedup| EV[(telemetry.events)]
+    UT[nova_unclaimed_time<br/>every 45m] <-->|last note / NEXT step| PT[(pursuit_threads)]
+    PT --> SB[turing_scoreboard<br/>pursuit_survival]
+    AO[nova_ask_one<br/>09:05] -->|one question| SL[#nova-chat]
+    LG[nova_letting_go<br/>stale goals] -->|proposal| CP[(coagency_proposals)]
+    CP -->|pending| SA
+    SL -->|thread reply| SA[nova_slack_answers<br/>every 10m]
+    SA -->|answer| RQ[(reflection_questions)]
+    SA -->|approve / reject| CP
+    CA[autonomy actor /<br/>co-agency execute] --> FE[nova_fleet_exec]
+    FE -->|local| L[launchctl / systemctl]
+    FE -->|"ssh -i nova_restart (forced cmd)"| G[nova-restart-gate.sh<br/>on the Mac]
+    AD[(agent_docs<br/>identity · soul · user)] --> LD[nova_live_docs<br/>render {{memory_count}}]
+    LD --> GW
+    LD -->|hourly| WS[workspace/*.md]
+```
+
 ### Attention Focus — Granting the Fourth Wish (2026-09-28)
 
 Her fourth wish (`feature_wishes` #36, wished 2026-09-27 from the seed *"Why does Honey need a license if she already has a car?"*): *"To hold what matters without losing what I already have ... to be more present, more useful, and more aligned with what truly needs attention."* Built under the standing yes, a day late — the queue item sat while a Master Bedroom power event was cleaned up, and Jordan asked "did those get done?"
