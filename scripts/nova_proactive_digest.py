@@ -39,7 +39,7 @@ OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
 # Resilient native-Ollama LLM: first non-empty across the fleet. qwen3:8b, think off.
 LLM_MODEL = "qwen3:8b"
-OLLAMA_NODES = ["http://192.168.1.251:11434",
+OLLAMA_NODES = ["http://192.168.1.77:11434",
                 "http://192.168.1.86:11434",
                 "http://192.168.1.6:11434"]
 
@@ -102,6 +102,11 @@ def gather(mc, oc):
     for m in _mem_rows(mc, "episodic", 24, 10):
         cands.append({"kind": "learned", "ref": m["id"],
                       "text": m["text"][:400]})
+    # What her own organs noticed in the last day (attention focus, pattern sense, human
+    # insight, self-eval, growth, learning) — first-person, already cited, never routine.
+    for src in ("attention_focus", "pattern_sense", "human_insight", "self_eval", "growth", "learning"):
+        for m in _mem_rows(mc, src, 24, 3):
+            cands.append({"kind": "noticed", "ref": m["id"], "text": m["text"][:500]})
 
     # Unanswered curiosity questions Nova posed to herself.
     oc.execute("SELECT id, question FROM reflection_questions "
@@ -120,19 +125,30 @@ def gather(mc, oc):
                       "text": f"{cve}: {prod} affecting your {asset or klass}{rs}. "
                               f"CISA due {due or 'n/a'}."})
 
-    # Recent genuine incidents (not routine noise): from claude_actions incidents
-    # / telemetry — kept conservative. Real, resolved-or-open incidents only.
+    # Recent genuine incidents on HER fleet from the live table. The CHP/traffic relay files its
+    # feed as incidents too; that is routine and already triaged, so it is filtered out.
+    # ponytail: prefix regex for the relay; move to a source column if the relay grows more shapes
     try:
-        oc.execute("SELECT title, severity FROM incidents "
+        oc.execute("SELECT severity, host, left(title, 120) FROM telemetry.incidents "
                    "WHERE opened_at > now() - interval '24 hours' "
-                   "ORDER BY opened_at DESC LIMIT 5")
-        for title, sev in oc.fetchall():
+                   "AND severity IN ('critical', 'warning') "
+                   "AND title !~ '^(\U0001F32B|\U0001F6A8|\U0001F697|\U0001F6A7|\U0001F525)' "
+                   "ORDER BY (severity = 'critical') DESC, opened_at DESC LIMIT 6")
+        for sev, host, title in oc.fetchall():
             cands.append({"kind": "incident", "ref": "incident",
-                          "text": f"[{sev}] {title}"})
-    except Exception:
-        pass  # table shape varies across the fleet; incidents are optional here
+                          "text": f"[{sev}] {host}: {title}"})
+    except Exception as e:  # noqa: BLE001
+        _log(f"incidents read failed ({e})")
 
     return cands
+
+
+def is_silence(out):
+    """True when the model's first line is NOTHING in any dress: **NOTHING**, "Nothing.", _nothing_.
+    (2026-09-23..28 it answered in bold, the old exact-match gate missed it, and Nova posted
+    her own silence to Slack five mornings running.)"""
+    first = (out or "").strip().splitlines()[0] if (out or "").strip() else ""
+    return first.strip().strip('*_"\'`.:! ').upper() == "NOTHING"
 
 
 def curate_and_write(cands):
@@ -153,6 +169,7 @@ def curate_and_write(cands):
     prompt = (
         "Below are candidate items from the last 24 hours — your research findings, "
         "resonance sparks, things you learned, open questions you're chewing on, and "
+        "what your own organs noticed (attention focus, patterns, self-eval, growth), and "
         "genuine ops signals (a KEV match on his own gear, a real incident). Routine "
         "alerts are NOT here — those already go through triage.\n\n"
         "Do TWO things:\n"
@@ -173,16 +190,9 @@ def curate_and_write(cands):
     out = llm(prompt, system=system, max_tokens=700, temperature=0.65)
     if not out:
         return "", []
-    # Quality gate: model may say NOTHING (possibly wrapped/quoted).
-    stripped = out.strip().strip('"').strip()
-    if stripped.upper() == "NOTHING" or stripped.upper().startswith("NOTHING\n") \
-            or stripped.upper() == "NOTHING.":
+    if is_silence(out):
         return "", []
-    # If it leads with NOTHING on its own line, treat as silence.
-    first = stripped.splitlines()[0].strip().upper().rstrip(".")
-    if first == "NOTHING":
-        return "", []
-    return stripped, cands
+    return out.strip(), cands
 
 
 def main():
@@ -219,5 +229,17 @@ def main():
     return 0
 
 
+
+def demo():
+    for y in ("NOTHING", "**NOTHING**", "**Nothing.**", '"Nothing"', "_nothing_\nmore", "Nothing!"):
+        assert is_silence(y), y
+    for n in ("Here's what I noticed", "**Here's what I noticed:** nothing else", "", "Nothing is wrong with the NAS, but"):
+        assert not is_silence(n), n
+    print("all proactive-digest assertions passed")
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    if "--selftest" in sys.argv:
+        demo()
+    else:
+        main()
