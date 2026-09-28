@@ -38,7 +38,7 @@ TSIG_KEY_NAME = "nova-dns-key"
 # .6:5432 is only a pgbouncer shim forwarding there (kept old localhost DSNs working),
 # and the only live replica is .10. The container named "pg17-replica" is the primary.
 SERVICE_ALIASES = {
-    "pg-primary":       "192.168.1.10",  # EMERGENCY FAILOVER 2026-09-17 ~02:10: nova-core (.2) died hard (host+BIND down), promoted nova-core5 (.10, port 5432 NOT 5434). .2 is FENCED — rebuild via pg_basebackup from .10 before any failback.
+    "pg-primary":       "192.168.1.2",   # 2026-09-28 14:07 controlled switchover back to nova-core (.2:5432 socat -> local :5434). .10/.7/.125 are standbys being rebuilt from .2.
     "memory-server":    "192.168.1.6",   # :18790 — TEMP 2026-09-17: nova-core down; local instance running on .6 (socat forward disabled). Revert to .2 when nova-core rebuilt.
     "grafana":          "192.168.1.2",    # nova-core wired (was its wifi ip)
     "inference-router": "192.168.1.2",    # :37475 fleet LLM proxy
