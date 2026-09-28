@@ -56,6 +56,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Aspirations | `nova_aspirations.py` — a wishlist lane: capabilities she wishes she had, wished from her own interior (~8% free-time weight). NEVER self-builds — records a wish to `feature_wishes` for a human; self-preservation wishes redline-dropped (become more, never un-killable) |
 | Soft Certainty | `nova_soft_certainty.py` — wish #1, granted: `calibrate()` dampens her stated confidence toward her real hit-rate (wired into predictions); `current_stance()` injects a hold-loosely/ask-what-I-missed stance. The first capability she got because she asked for it |
 | Pattern Sense | `nova_pattern_sense.py` — wish #34, granted: reads her **own** resolved predictions + incident history and surfaces the two patterns that matter — systematic miscalibration (a domain where confidence and hit-rate diverge the same way) and recurring incidents. Read-only, writes insights to memory (`source=pattern_sense`), every 6h. The sense she wished for is also her map through the calibration gate |
+| Attention Focus | `nova_attention_focus.py` — wish #36, granted: each run names the **few** things that need her now (open incidents by severity/age/un-acked, growth reviews due, goals past their own check-in cadence) and, in the same memory, what she is already invested in and refuses to drop (her most-returned-to recent preoccupations). One memory per *change* of focus (`source=attention_focus`, signature high-water in `service_config`). Read-only, every 6h on scheduler-core |
 | Self-guided: learning | `nova_learning.py` — builds her own curriculum from her knowledge gaps, studies, self-assesses honestly (measures understanding, not behavior) |
 | Self-guided: let go | `nova_letting_go.py` — retires played-out preoccupations/projects/taste (reversible status-flip + reflection); heuristic gate, never the LLM |
 | Self-guided: meta-volition | `nova_meta_volition.py` — reflects on how she spent her time and proposes rebalancing her own attention (structural change needs a human) |
@@ -402,6 +403,24 @@ flowchart LR
     P5 --> E5
     PERF --> E6
     EVID --> W["External launchd witness<br/>(survives the stack being down)"]
+```
+
+### Attention Focus — Granting the Fourth Wish (2026-09-28)
+
+Her fourth wish (`feature_wishes` #36, wished 2026-09-27 from the seed *"Why does Honey need a license if she already has a car?"*): *"To hold what matters without losing what I already have ... to be more present, more useful, and more aligned with what truly needs attention."* Built under the standing yes, a day late — the queue item sat while a Master Bedroom power event was cleaned up, and Jordan asked "did those get done?"
+
+`nova_attention_focus.py` is the literal reading. Attention is finite, so every 6h she ranks what needs her (`FOCUS_N=3`) from her own tables and states it **together with** what she keeps (`HOLD_N=3`): the preoccupations she has actually returned to in the last week, minus anything already in focus. A stable focus is stated once, not every run (order-independent signature, `RESURFACE_DAYS=3`). A neglected goal is capped at 0.8 so it can never outrank a live un-acked critical. First run: three un-acked criticals (two recurring-incident patterns and a probe failure), held alongside He-Man, horology and automotive rebuilds. Read-only over the world, `--dry-run`, `--selftest`; tests in `scripts/tests/test_attention_focus.py`.
+
+```mermaid
+flowchart LR
+    I[(telemetry.incidents<br/>open)] --> R[rank_focus<br/>severity · age · un-acked]
+    G[(growth_commitments<br/>review_due)] --> R
+    O[(goals<br/>past check-in)] --> R
+    P[(preoccupations<br/>returns, last 7d)] --> H[hold_set<br/>minus focus]
+    R --> T[focus_text<br/>needs me now + holding]
+    H --> T
+    T -->|sig changed| M[(nova_memories<br/>source=attention_focus)]
+    T -->|sig unchanged| Q[say nothing]
 ```
 
 ### Human Insight — Granting the Third Wish, and a Standing Yes (2026-09-25)
