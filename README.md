@@ -444,7 +444,7 @@ flowchart LR
     CA[autonomy actor /<br/>co-agency execute] --> FE[nova_fleet_exec]
     FE -->|local| L[launchctl / systemctl]
     FE -->|"ssh -i nova_restart (forced cmd)"| G[nova-restart-gate.sh<br/>on the Mac]
-    AD[(agent_docs<br/>identity · soul · user)] --> LD[nova_live_docs<br/>render {{memory_count}}]
+    AD[(agent_docs<br/>identity · soul · user)] --> LD[nova_live_docs<br/>render live placeholders]
     LD --> GW
     LD -->|hourly| WS[workspace/*.md]
 ```
@@ -484,7 +484,7 @@ Seven days after the organs went live, Jordan asked what she'd done with her fre
 flowchart LR
     U[unclaimed_time<br/>every 45m] -->|aspire lane 20%| A[nova_aspirations<br/>cooldown 8h, cap 6]
     A -->|INSERT| W[(feature_wishes<br/>acknowledged)]
-    A -->|INSERT| Q[(claude_queue<br/>"Build wish #N")]
+    A -->|INSERT| Q[("claude_queue<br/>Build wish #N")]
     Q --> C{Claude:<br/>danger / downside?}
     C -->|no| B[build organ<br/>read-only, --selftest,<br/>scheduler-core every 6h]
     C -->|yes| D[wish declined<br/>+ reason + note to Jordan]
