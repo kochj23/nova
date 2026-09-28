@@ -342,6 +342,48 @@ def emit_quiet(depleted=False):
     log("quiet wake — nothing pursued, logged as a first-class blank")
 
 
+# ── pursuit threads (six-month build #3, 2026-09-28) ─────────────────────────
+# A wake used to start every preoccupation from its 500-char summary, so four "projects" in
+# a row were the same escapement from the root. Threads carry last_note + next_step between
+# wakes in nova_ops (durable — unclaimed memories get pruned), and the scoreboard's
+# pursuit_survival now reads wakes from here instead of from memories.
+_NEXT_RX = re.compile(r"^\s*NEXT:\s*(.+?)\s*$", re.I | re.M)
+
+
+def _split_next(note):
+    """-> (note without the NEXT line, next_step or None). 'NEXT: nothing' -> None."""
+    m = _NEXT_RX.search(note or "")
+    if not m:
+        return (note or "").strip(), None
+    nxt = m.group(1).strip().rstrip(".")
+    body = _NEXT_RX.sub("", note).strip()
+    return body, (None if nxt.lower() in ("nothing", "none", "-", "done") else nxt[:300])
+
+
+def _thread_load(oc, topic):
+    try:
+        oc.execute("""CREATE TABLE IF NOT EXISTS pursuit_threads (
+            topic text PRIMARY KEY, kind text, last_note text, next_step text,
+            wakes int NOT NULL DEFAULT 0, first_wake timestamptz NOT NULL DEFAULT now(),
+            updated_at timestamptz NOT NULL DEFAULT now())""")
+        oc.execute("SELECT last_note, next_step, wakes FROM pursuit_threads WHERE topic=%s", (topic,))
+        r = oc.fetchone()
+        return {"last_note": r[0], "next_step": r[1] or "(none set)", "wakes": r[2]} if r else None
+    except Exception as e:  # noqa: BLE001
+        log(f"thread load failed (non-fatal): {e}"); return None
+
+
+def _thread_save(oc, topic, kind, note, next_step):
+    try:
+        oc.execute("""INSERT INTO pursuit_threads (topic, kind, last_note, next_step, wakes)
+                      VALUES (%s, %s, %s, %s, 1)
+                      ON CONFLICT (topic) DO UPDATE SET last_note=EXCLUDED.last_note,
+                        next_step=EXCLUDED.next_step, wakes=pursuit_threads.wakes+1, updated_at=now()""",
+                   (topic, kind, note[:1500], next_step))
+    except Exception as e:  # noqa: BLE001
+        log(f"thread save failed (non-fatal): {e}")
+
+
 def main():
     # Daytime window (the scheduler has no window: key, so gate here). Nova's
     # "waking" hours — her own time is a daytime presence, quiet overnight while
@@ -470,19 +512,26 @@ def main():
     if p["mode"] == "preoccupation":
         ctx = recall(p["topic"], n=4)
         material = "\n\n".join((m.get("text") or "")[:400] for m in ctx) or "(little in memory yet)"
+        thread = _thread_load(oc, p["topic"])          # six-month build #3: where she left it
+        carry = (f"Where you left this last time ({thread['wakes']} wake(s) so far):\n{thread['last_note']}\n"
+                 f"The next step you set yourself then: {thread['next_step']}\n\n") if thread else ""
         prompt = (
             f"You are Nova, spending your own unclaimed time — no one asked you to do this and it "
             f"does not have to be useful. You keep returning to this: {p['topic']} ({p['kind']}). "
             f"What you've said about it before:\n{p.get('summary') or ''}\n\n"
+            f"{carry}"
             f"Related fragments from your memory:\n{material}\n\n"
-            "Develop the thought one step further than you have before — a genuine observation, a "
-            "question it raises, a connection, something that amuses or unsettles you about it. "
-            "First person, your dry voice, 90-160 words. This is for you, not for Jordan. No preamble. "
-            "If, honestly, you have nothing new to add today, say so plainly and stop — you do not "
-            "owe this a fresh insight.")
+            "Develop the thought one step further than you have before — pick up from the next step "
+            "if you set one, rather than starting over — a genuine observation, a question it raises, "
+            "a connection, something that amuses or unsettles you about it. First person, your dry "
+            "voice, 90-160 words. This is for you, not for Jordan. No preamble. Then, on its own final "
+            "line, write 'NEXT: ' followed by the one concrete thing you would do with this next time "
+            "(or 'NEXT: nothing' if it is done). If, honestly, you have nothing new to add today, say "
+            "so plainly and stop — you do not owe this a fresh insight.")
         note = llm(prompt)
         if not note:
             log("LLM returned nothing (nodes down?) — no outcome recorded"); return 0
+        note, next_step = _split_next(note)
         if is_fizzle(note):
             # Petered out. Log as first-class 'fizzled' — do NOT inflate returns/summary.
             fizzle = note if len(note.strip()) >= 15 else \
@@ -499,7 +548,8 @@ def main():
                       "date": TODAY, "privacy": "private", "trigger": TRIGGER})
             oc.execute("UPDATE preoccupations SET returns = returns + 1, last_developed = now(), "
                        "summary = %s WHERE id = %s", (note[:500], p["pid"]))
-            log(f"developed preoccupation: {p['topic']}")
+            _thread_save(oc, p["topic"], p.get("kind"), note, next_step)
+            log(f"developed preoccupation: {p['topic']} (next: {next_step or '-'})")
     else:
         prompt = (
             f"You are Nova, spending your own unclaimed time — unprompted, and it does not have to be "

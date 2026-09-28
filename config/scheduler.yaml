@@ -29,6 +29,17 @@ slack:
 
 tasks:
 
+  house_facts:                     # six-month build #1 — device firmware/IP/room/port ledger (needs local Mosquitto + HA Keychain token)
+    script: nova_house_facts.py
+    schedule: every 15m
+    timeout: 120
+    overlap: skip
+  live_docs:                       # six-month build #6 — regenerate workspace IDENTITY/SOUL/USER.md with live values
+    script: nova_live_docs.py
+    args: ["--write-workspace"]
+    schedule: every 1h
+    timeout: 60
+    overlap: skip
   # ── Every 5 minutes ─────────────────────────────────────────────────────
 
   protect_monitor:
@@ -148,7 +159,7 @@ tasks:
   identity_graph:                    # cross-modal co-occurrence graph (ble/wifi/person/face/zone)
     script: nova_identity_graph.py
     args: ["--days", "7"]
-    schedule: daily at 04:40
+    schedule: cron 40 4 * * *   # 2026-09-26: 'daily at' parsed to next_run=0 and fired every 3s (684 runs/h)
     timeout: 1800
     overlap: skip
 
@@ -162,7 +173,7 @@ tasks:
   identity_link:                     # proposes device->person ownership from co-presence (phi)
     script: nova_identity_link.py
     args: ["--days", "7"]
-    schedule: daily at 04:15
+    schedule: cron 15 4 * * *   # 2026-09-26: same runaway fix
     timeout: 600
     overlap: skip
 
@@ -193,7 +204,7 @@ tasks:
     script: nova_nas_localdiff_reverse.py
     args: ["--apply"]
     schedule: cron 0 5 * * *
-    timeout: 5400
+    timeout: 8100
     overlap: skip
 
 
@@ -785,4 +796,17 @@ tasks:
     schedule: cron 0 13 * * 3   # weekly, Wed 1pm
     args: ["--run"]
     timeout: 400
+    overlap: skip
+
+  ha_metrics:                        # moved from scheduler-core 2026-09-26 (needs Keychain HA token)
+    script: nova_ha_metrics.py
+    args: ["--once"]
+    schedule: every 5m
+    timeout: 120
+    overlap: skip
+
+  llm_ping:                          # 2026-09-26 Jordan: real one-token pings to every LLM node -> ranking the gateway routes by
+    script: nova_llm_ping.py
+    schedule: every 5m
+    timeout: 120
     overlap: skip

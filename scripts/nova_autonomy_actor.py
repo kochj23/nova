@@ -92,31 +92,12 @@ def audit(oc, action, target, mode, executed, verified, result, blocked=False):
 
 
 def restart_service(node, svc):
-    """Restart via the node's mechanism, correctly whether we're ON that node or remote.
-    .6 = launchd (Mac); Linux cores = systemd. The scheduler runs on .2, so a target on
-    the .6 Mac must be reached over SSH — never assume we're co-located with the target
-    (that assumption is what made 'launchctl not found' fail on the Linux box)."""
-    import os, shutil
-    try:
-        is_mac = node in ("mac-studio", "Office-M4-2", "192.168.1.6", "nova-mac-studio")
-        if is_mac:
-            label = f"net.digitalnoise.{svc}"
-            if shutil.which("launchctl"):                 # we ARE on the Mac → local
-                cmd = ["launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{label}"]
-                r = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-            else:                                         # remote → SSH to the Mac, run there
-                r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
-                                    "kochj@192.168.1.6",
-                                    f"launchctl kickstart -k gui/$(id -u)/{label}"],
-                                   capture_output=True, text=True, timeout=40)
-        else:
-            host = node if "." in node else f"{node}"
-            r = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
-                                f"kochj@{host}", f"sudo -n systemctl restart {svc}"],
-                               capture_output=True, text=True, timeout=40)
-        return (r.returncode == 0, (r.stderr or r.stdout or "")[:200])
-    except Exception as e:
-        return (False, str(e)[:200])
+    """Restart via the node's own service manager, wherever we happen to be running.
+    Delegates to nova_fleet_exec (six-month build #5): launchd on Macs, systemd on Linux,
+    local call if co-located, forced-command SSH key if not. The 2026-09-16 'launchctl not
+    found' failure and the 2026-09-27 'no key to the Mac' follow-up both live there now."""
+    import nova_fleet_exec
+    return nova_fleet_exec.restart_service(node, svc)
 
 
 def main():

@@ -367,7 +367,46 @@ def recent_lettings(n: int = 3) -> list:
 
 # ── Modes ────────────────────────────────────────────────────────────────────────────
 
+GOAL_STALE_FACTOR = 10        # a goal untouched for 10x its own check-in cadence is a retirement candidate
+GOAL_STALE_MIN_DAYS = 60      # ...and never sooner than this
+
+
+def propose_goal_retirements(oc):
+    """Six-month build #7 (2026-09-28): letting go with teeth. Jordan's goals are his, so the
+    LLM gate does not decide them — a goal past its own cadence by a wide margin becomes a
+    co-agency proposal he can approve with one reply. Dedup: one open proposal per goal."""
+    try:
+        import nova_coagency
+    except Exception as e:  # noqa: BLE001
+        log(f"co-agency unavailable ({e}); no goal proposals"); return 0
+    oc.execute("SELECT id, title, check_in_days, "
+               "EXTRACT(EPOCH FROM now() - COALESCE(last_activity, created_at))/86400 "
+               "FROM goals WHERE status='active'")
+    filed = 0
+    for gid, title, cadence, days in oc.fetchall():
+        days = int(days or 0)
+        if days < max(GOAL_STALE_MIN_DAYS, GOAL_STALE_FACTOR * int(cadence or 7)):
+            continue
+        action = f"retire goal '{title}' ({gid}): untouched {days}d, check-in every {cadence}d"
+        oc.execute("SELECT 1 FROM coagency_proposals WHERE origin='letting_go' AND proposed_action=%s "
+                   "AND status IN ('pending_human','approved')", (action,))
+        if oc.fetchone():
+            continue
+        rationale = (f"This goal was entered on {gid[:8]}… day one and has had no activity in {days} days, "
+                     f"{days // max(int(cadence or 7), 1)}x its own check-in cadence. I am not dropping it; "
+                     f"I am asking whether it is still a goal. Approve to mark it dropped, reject to keep it.")
+        try:
+            nova_coagency.file_proposal(oc, "letting_go", action, rationale=rationale, target_service=None,
+                                        context=f"goal_id={gid}")
+            filed += 1
+        except Exception as e:  # noqa: BLE001
+            log(f"file_proposal failed for {gid}: {e}")
+    log(f"goal retirement proposals filed: {filed}")
+    return filed
+
+
 def run_review(oc, mc):
+    propose_goal_retirements(oc)
     cands = nominate_preoccupations(oc, mc) + nominate_projects(oc) + nominate_taste(oc)
     log(f"nominated {len(cands)} candidate(s) by heuristic")
     if not cands:

@@ -234,7 +234,7 @@ def mode_start(oc):
         "across days and weeks, not an afternoon's whim. It must grow out of a real "
         "preoccupation or taste you already hold (below), and you must name which one, and "
         "why it has a grip on you. Aim for a concrete, finishable body of work — e.g. "
-        "'Understand and write up the history and mechanics of the coaxial escapement'.\n\n"
+        "'Transcribe and classify a hundred hours of rail radio', 'Trace where every alert in the house is born'.\n\n"
         f"=== MY PREOCCUPATIONS (what I keep returning to) ===\n{p_block}\n\n"
         f"=== MY TASTE ===\n{t_block}\n\n"
         "Return ONLY compact JSON, no markdown, no preamble:\n"

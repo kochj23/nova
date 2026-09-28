@@ -271,8 +271,12 @@ def build_predict_prompt(sig):
         "Form 2 to 4 forecasts about the NEAR future (hours to a few days). Each must "
         "be a single falsifiable claim, with a calibrated confidence and a CONCRETE, "
         "checkable resolution criterion. Good examples: 'the bambu telemetry stream "
-        "stays active over the next 12h', 'Jordan asks about the printer again within "
-        "3 days', 'my next self-model will be less failure-heavy'.\n\n"
+        "stays active over the next 12h', 'the scheduler will finish the night with "
+        "fewer than 5 failed runs', 'my next self-model will be less failure-heavy'.\n\n"
+        "Do NOT forecast Jordan's private feelings or what he will ask or do: you cannot "
+        "resolve those from your own records, and every such bet so far has lost. If "
+        "you want to know something about him, ask him instead (that is a question, not "
+        "a forecast).\n\n"
         "When a forecast is about whether a named memory STREAM stays active or silent "
         "(you can see the source names and volumes above), include a machine check so "
         "it resolves deterministically. Use ONLY source names that appear above.\n\n"
@@ -308,6 +312,12 @@ def do_predict(oc, mc, limit=4):
             domain = (c.get("domain") or "self").strip().lower()
             if domain not in DOMAINS:
                 domain = "self"
+            # six-month build #4 (2026-09-28): a relationship bet with no machine check is
+            # unresolvable by construction (0/7 so far). Drop it; ask him instead.
+            chk0 = c.get("check")
+            if domain == "relationship" and not (isinstance(chk0, dict) and chk0.get("type")):
+                log(f"predict: dropped unresolvable relationship bet: {statement[:80]!r}")
+                continue
             conf = clamp01(c.get("confidence"))
             # Soft Certainty (feature_wishes #1, granted 2026-09-16): calibrate the stated
             # confidence toward her realized accuracy before storing — she asked to be less

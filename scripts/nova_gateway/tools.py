@@ -153,9 +153,9 @@ TOOL_REGISTRY: dict[str, dict] = {
         "required": ["command"],
     },
     "ops_query": {
-        "description": "Query Nova's home and infrastructure data. Use this for ANY question about: temperature/climate (domain=climate or weather), who's on the network (domain=network or devices), power/energy usage (domain=energy), server health/CPU/RAM/disk (domain=capacity), what music/TV is playing (domain=av_state), task list (domain=queue), BLE devices nearby (domain=bluetooth), room occupancy (domain=presence), or who's home (domain=who_is_home). Pick the right domain and answer conversationally.",
+        "description": "Query Nova's home and infrastructure data. Use this for ANY question about: temperature/climate (domain=climate or weather), who's on the network (domain=network or devices), device firmware/IP/room/port inventory (domain=house_facts), power/energy usage (domain=energy), server health/CPU/RAM/disk (domain=capacity), what music/TV is playing (domain=av_state), task list (domain=queue), BLE devices nearby (domain=bluetooth), room occupancy (domain=presence), or who's home (domain=who_is_home). Pick the right domain and answer conversationally.",
         "parameters": {
-            "domain": {"type": "string", "enum": ["observations", "network", "weather", "av_state", "energy", "climate", "meta", "queue", "devices", "bluetooth", "presence", "capacity", "who_is_home"], "description": "Which data domain to query"},
+            "domain": {"type": "string", "enum": ["observations", "network", "weather", "av_state", "energy", "climate", "meta", "queue", "devices", "house_facts", "bluetooth", "presence", "capacity", "who_is_home"], "description": "Which data domain to query"},
             "query": {"type": "string", "description": "Optional: natural-language filter or specific question (e.g. 'last 24 hours', 'critical only', 'living room')"},
             "limit": {"type": "integer", "description": "Max rows to return (default 10)"},
         },
@@ -780,6 +780,11 @@ _OPS_QUERIES = {
         FROM claude_queue
         WHERE status IN ('queued', 'in_progress')
         ORDER BY priority DESC, created_at LIMIT {limit}
+    """,
+    "house_facts": """
+        SELECT entity, string_agg(attr || '=' || value, ', ' ORDER BY attr) AS facts,
+               max(observed_at)::text AS as_of
+        FROM house_facts GROUP BY entity ORDER BY entity LIMIT {limit}
     """,
     "devices": """
         SELECT DISTINCT ON (client_name) client_name, ip, client_mac, signal_dbm, is_wired,

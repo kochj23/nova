@@ -215,16 +215,26 @@ async def _load_agent_docs(ctx: GatewayContext, agent_id: str) -> str:
         # boots understanding the whole system. The bulky reference how-tos
         # (services-launchd/scripts/data-platform/fleet-integrations) are EXCLUDED
         # here — they would blow the chat agent's 8k context; query them on demand.
+        # Six-month build #6 (2026-09-28): the persona docs MUST survive the 8k cut below —
+        # ordered by doc_type alone, identity/soul/user sorted after 'agents'/'architecture-*'
+        # and were silently dropped, so Nova chatted for months without her own soul loaded.
         rows = await pool.fetch(
             """SELECT doc_type, content FROM agent_docs
                WHERE (agent_id = $1 OR agent_id = 'all')
                  AND doc_type NOT IN
                      ('services-launchd','scripts','data-platform','fleet-integrations')
-               ORDER BY doc_type""",
+               ORDER BY CASE doc_type WHEN 'identity' THEN 0 WHEN 'soul' THEN 1 WHEN 'user' THEN 2
+                                      WHEN 'nova-system-map' THEN 3 ELSE 9 END, doc_type""",
             agent_id,
         )
         if rows:
-            return "\n\n---\n\n".join(r["content"] for r in rows)
+            joined = "\n\n---\n\n".join(r["content"] for r in rows)
+            try:
+                from nova_live_docs import render          # {{memory_count}} etc. -> live values
+                joined = render(joined)
+            except Exception as e:
+                log.warning(f"live-doc render skipped: {e}")
+            return joined
     except Exception:
         pass
 
@@ -374,6 +384,35 @@ async def _remember_exchange(ctx: GatewayContext, session_id: str, agent_id: str
         log.debug(f"reflect-after write failed (non-fatal): {e}")
 
 
+async def _house_facts(ctx: GatewayContext, question: str) -> str:
+    """Rank house_facts entities by token overlap with the question; format the top hits."""
+    import re as _re
+    stop = {"the", "and", "for", "what", "which", "does", "run", "running", "version", "firmware",
+            "is", "are", "on", "in", "my", "our", "of", "to", "device", "unit", "thing", "does"}
+    toks = [w for w in _re.findall(r"[a-z0-9]+", question.lower()) if len(w) >= 3 and w not in stop]
+    if not toks:
+        return ""
+    pool = await get_pg(ctx)
+    rows = await pool.fetch("SELECT entity, attr, value, observed_at FROM house_facts")
+    by: dict = {}
+    for r in rows:
+        by.setdefault(r["entity"], [{}, r["observed_at"]])[0][r["attr"]] = r["value"]
+        if r["observed_at"] > by[r["entity"]][1]:
+            by[r["entity"]][1] = r["observed_at"]
+    def _score(ent):
+        parts = set(_re.findall(r"[a-z0-9]+", ent.lower()))
+        return sum(1 for t in toks if t in parts or any(t in p for p in parts if len(t) >= 4))
+    ranked = sorted(((_score(e), e) for e in by), reverse=True)
+    hits = [(e, by[e][0], by[e][1]) for sc, e in ranked[:4] if sc > 0]
+    if not hits:
+        return ""
+    lines = [f"{e}: " + ", ".join(f"{a}={v}" for a, v in sorted(attrs.items())) + f"  (as of {seen:%Y-%m-%d %H:%M})"
+             for e, attrs, seen in hits]
+    return ("Answer from the live house inventory below before anything else; these values are "
+            "measured, not remembered.\n\n[House facts — live inventory]\n" + "\n".join(lines) +
+            "\n[End house facts]\n\n")
+
+
 async def _inject_memory(ctx: GatewayContext, question: str) -> str:
     """Run nova_memory_first.py and return result to prepend to context.
 
@@ -386,6 +425,23 @@ async def _inject_memory(ctx: GatewayContext, question: str) -> str:
     # conversation makes Nova weaponize them (e.g. needling Jordan with a 2002 email she
     # was fed). For everything else — greetings, banter, opinions — inject nothing.
     q = question.strip().lower()
+    # House questions (six-month build #1, 2026-09-28): consult the structured house_facts
+    # ledger BEFORE any vector recall. Firmware, IPs, rooms, ports, service endpoints live
+    # there, refreshed every 15 minutes from Zigbee2MQTT / Home Assistant / UniFi / registry.
+    _HOUSE_INTENT = ("firmware", "version", "ip address", "what ip", "which port", "switch port",
+                     "zigbee", "z2m", "plug", "bulb", "sensor", "coordinator", "slzb", "router",
+                     "access point", " ap ", "camera", "nas", "unas", "synology", "printer",
+                     "mac address", "last seen", "online", "offline", "which node", "what node",
+                     "which machine", "endpoint", "what room", "which room", "bedroom", "garage",
+                     "kitchen", "living room", "office", "patio", "carport", "hue", "lutron")
+    if any(k in q for k in _HOUSE_INTENT):
+        try:
+            block = await _house_facts(ctx, question)
+            if block:
+                log.info(f"House facts injected ({len(block)} chars)")
+                return block
+        except Exception as e:
+            log.warning(f"House facts lookup failed (degraded): {e}")
     # Traffic/commute questions: inject the freshest live-camera digest directly from the
     # traffic_cams source (nova_traffic_watch). General semantic recall is useless here — it
     # returns car trivia for "the 134" — so query the source explicitly. Public data, safe.

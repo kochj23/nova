@@ -304,6 +304,16 @@ def metric_pursuit_survival(mc, oc):
         "GROUP BY 1 ORDER BY 2 DESC", (days,))
     rows = mc.fetchall()
     topics = [{"topic": t, "developments": int(d), "distinct_days": int(dd)} for t, d, dd in rows]
+    # Six-month build #3 (2026-09-28): unclaimed memories get pruned (29 left, oldest 09-26), so
+    # counting them pinned this metric at 0 regardless of behaviour. pursuit_threads is durable.
+    try:
+        oc.execute("SELECT topic, wakes, EXTRACT(DAY FROM now()-first_wake)::int FROM pursuit_threads "
+                   "WHERE updated_at > now() - (%s || ' days')::interval", (days,))
+        th = oc.fetchall()
+        if th:
+            topics = [{"topic": t, "developments": int(w), "distinct_days": max(1, int(dd))} for t, w, dd in th]
+    except Exception:
+        pass
     distinct = len(topics)
     survived = [t for t in topics if t["developments"] >= 2]  # returned to in a later wake
     one_and_done = [t for t in topics if t["developments"] == 1]
@@ -325,7 +335,7 @@ def metric_pursuit_survival(mc, oc):
                        "days": t["distinct_days"]} for t in survived],
         "preoccupation_ledger_recurring": recurring,
         "window_days": days,
-        "method": "source=unclaimed preoccupation pursuits grouped by topic; a topic "
+        "method": "pursuit_threads (durable, nova_ops) when present, else source=unclaimed pursuits grouped by topic; a topic "
                   "developed in >=2 distinct wakes SURVIVED, else one-and-done. rate = "
                   "survived/distinct. Corroborated by preoccupations.returns>1."}
     _store(oc, "pursuit_survival", round(rate, 4), detail)
