@@ -550,6 +550,27 @@ def mode_decide(oc, mode, pid, decision, note, by):
     return 0
 
 
+def hand_to_claude(oc, pid, action):
+    """File an approved non-restart proposal as a claude_queue item. Returns the queue id or None."""
+    try:
+        oc.execute("SELECT origin, rationale FROM coagency_proposals WHERE id=%s", (pid,))
+        origin, rationale = oc.fetchone()
+        oc.execute("SELECT 1 FROM claude_queue WHERE description LIKE %s", (f"Execute approved co-agency proposal #{pid}:%",))
+        if oc.fetchone():
+            return None
+        oc.execute("SELECT session_id FROM claude_sessions ORDER BY started_at DESC LIMIT 1")
+        sid = (oc.fetchone() or [None])[0]
+        oc.execute("""INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context)
+                      VALUES (%s, now(), now(), 'queued', 4, %s, %s) RETURNING id""",
+                   (sid, f"Execute approved co-agency proposal #{pid}: {action}",
+                    f"origin: {origin}\nrationale: {rationale or ''}\napproved by Jordan; do it if it is safe and worth "
+                    f"doing, otherwise close it with a one-line reason. Never anything that touches credentials, deletes, "
+                    f"reboots, networking or self-preservation."))
+        return oc.fetchone()[0]
+    except Exception as e:  # noqa: BLE001
+        log(f"hand_to_claude failed for #{pid}: {e}"); return None
+
+
 def mode_execute(oc, mode, pid):
     """Attempt execution. Passes through assert_executable(), the single gate.
     In this build mode ships 'off', so this refuses before doing anything."""
@@ -564,11 +585,14 @@ def mode_execute(oc, mode, pid):
     # approved observation/goal ("monitor motion events") is a note, not an action —
     # acknowledge it, never force a restart of its target_service. ──
     if _safety is not None and not _safety.is_restart_action(row["proposed_action"]):
+        # 2026-09-29: an approved observation/goal/tinker/reach proposal is work for CLAUDE (she never
+        # self-builds) — hand it over through claude_queue instead of a silent no-op ("Have Claude do it.")
+        qid = hand_to_claude(oc, pid, row["proposed_action"])
         oc.execute("""UPDATE coagency_proposals SET status='acknowledged', executed_at=now(),
                       execution_result=%s WHERE id=%s""",
-                   ("approved, but this is an observation/goal — not a restart. Nothing to "
-                    "execute in v1 (co-agency can only restart a SAFE service).", pid))
-        clog(oc, mode, "acknowledged", f"#{pid}: non-restart action — no-op (not executed)")
+                   (f"approved; not a restart, so handed to Claude as claude_queue #{qid}" if qid else
+                    "approved, but this is an observation/goal — not a restart, and the queue hand-off failed.", pid))
+        clog(oc, mode, "acknowledged", f"#{pid}: non-restart action -> claude_queue #{qid}")
         return 0
     try:
         assert_executable(mode, row)

@@ -36,7 +36,9 @@ HUMANS = {"U049EPC2W"}            # Jordan. ONLY these users can answer or decid
                                   # gateway replied "Yes" in her proposal threads and got counted as him).
 PROPOSALS_PER_DAY = 3             # was per RUN every 10m -> 24 posts overnight. Now a daily allowance,
 POST_HOURS = range(9, 18)         # posted only during his working hours.
-YES_RE = re.compile(r"^\s*(yes|y|yep|yeah|approve|approved|ok|okay|sure|do it|go|👍|:\+1:|:thumbsup:)(?=\W|$)", re.I)
+YES_RE = re.compile(r"^\s*(all\s+(approved|good|yes)|approve(d)?\s+all|yes|y|yep|yeah|approve|approved|ok|okay|sure|do it|go|👍|:\+1:|:thumbsup:)(?=\W|$)", re.I)
+BLANKET_RE = re.compile(r"^\s*(all\s+(approved|good|yes)|approve(d)?\s+all)\b", re.I)
+BLANKET_WINDOW_MIN = 30           # a top-level "All approved" covers the prompts posted in the 30 min before it
 NO_RE = re.compile(r"^\s*(no|n|nope|reject|rejected|keep|don'?t|leave it|👎|:-1:|:thumbsdown:)(?=\W|$)", re.I)
 SCRIPTS = Path(__file__).resolve().parent
 
@@ -132,6 +134,41 @@ def record_question(cur, qid, answer, dry):
         cur.execute("UPDATE reflection_questions SET answer=%s, answered_at=now() WHERE id=%s", (answer, int(qid)))
 
 
+def confirm(channel, ts, text, dry):
+    """One short line in the thread so he knows it was recorded (and the chat agent stays out of it)."""
+    if dry:
+        print(f"   (would confirm in thread {ts}: {text})"); return
+    try:
+        slack("chat.postMessage", channel=channel, thread_ts=ts, text=text)
+    except Exception as e:  # noqa: BLE001
+        log(f"confirm failed: {e}")
+
+
+def blanket_approvals(cur, dry):
+    """Jordan's top-level 'All approved' in the channel approves every open proposal prompt posted in
+    the BLANKET_WINDOW_MIN before it (2026-09-28 11:58 — four proposals stayed open because the parser
+    wanted the word first)."""
+    import time as _t
+    try:
+        hist = slack("conversations.history", channel=CHANNEL, oldest=str(_t.time() - 48 * 3600), limit=200)
+    except Exception as e:  # noqa: BLE001
+        log(f"history failed: {e}"); return 0
+    n = 0
+    for m in hist.get("messages", []):
+        if m.get("user") not in HUMANS or m.get("thread_ts") not in (None, m.get("ts")) or not BLANKET_RE.search(m.get("text") or ""):
+            continue
+        cur.execute("SELECT id, ref_id, ts FROM slack_prompts WHERE kind='proposal' AND resolved_at IS NULL "
+                    "AND posted_at <= to_timestamp(%s) AND posted_at > to_timestamp(%s) - (%s || ' minutes')::interval",
+                    (float(m["ts"]), float(m["ts"]), str(BLANKET_WINDOW_MIN)))
+        for sid, ref, ts in cur.fetchall():
+            if decide_proposal(ref, "yes", "All approved (blanket, top-level)", dry):
+                if not dry:
+                    cur.execute("UPDATE slack_prompts SET resolved_at=now(), result=%s WHERE id=%s", ("All approved (blanket)", sid))
+                confirm(CHANNEL, ts, f"Recorded: approved #{ref} via your \"All approved\". Handed to Claude.", dry)
+                n += 1
+    return n
+
+
 def decide_proposal(pid, v, note, dry):
     mode = "approve" if v == "yes" else "reject"
     if dry:
@@ -182,15 +219,20 @@ def main():
             continue
         if kind == "question":
             record_question(cur, ref, answer, dry); ok = True
+            confirm(ch, ts, f"Recorded your answer to Q#{ref}. Thank you.", dry)
         elif kind == "proposal":
             if not v:
                 continue            # a comment, not a decision — leave it open
             ok = decide_proposal(ref, v, answer, dry)
+            if ok:
+                confirm(ch, ts, f"Recorded: {'approved' if v == 'yes' else 'rejected'} #{ref}."
+                                + (" Handed to Claude." if v == "yes" else ""), dry)
         else:
             continue
         if ok and not dry:
             cur.execute("UPDATE slack_prompts SET resolved_at=now(), result=%s WHERE id=%s", (answer[:300], sid))
         closed += 1
+    closed += blanket_approvals(cur, dry)
     post_pending_proposals(cur, dry)
     log(f"closed {closed} prompt(s)")
     return 0
@@ -198,6 +240,8 @@ def main():
 
 def demo():
     assert verdict("Yes, go ahead") == "yes" and verdict("nope") == "no" and verdict("the ex") is None
+    assert verdict("All approved") == "yes" and verdict("approve all of them") == "yes" and BLANKET_RE.search("All approved")
+    assert verdict("All of these need work") is None
     assert verdict("👍") == "yes" and verdict("keep it") == "no"
     msgs = [{"user": "U1", "text": "root"}, {"user": BOT_USER, "text": "bot noise"},
             {"user": "U0GATEWAY", "text": "Yes"},                       # another bot/app account: ignored

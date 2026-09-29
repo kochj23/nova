@@ -229,6 +229,22 @@ async def _slack_handle_event(ctx: GatewayContext, event: dict, bot_user_id: str
     if channel == SLACK_NOTIFY_CHANNEL:
         return
 
+    # 2026-09-29: replies inside a question/proposal thread (slack_prompts) and top-level "All approved"
+    # are answers for nova_slack_answers.py, not conversation — the chat agent answering "Yes" with
+    # "How can I assist you today?" was confusing Jordan and burying the record.
+    try:
+        import re as _re
+        root_ts = event.get("thread_ts")
+        pool = await get_pg(ctx)
+        if root_ts and await pool.fetchval("SELECT 1 FROM slack_prompts WHERE ts = $1", root_ts):
+            log.info(f"Slack: reply in prompt thread {root_ts} — left to the answers harvester")
+            return
+        if _re.match(r"^\s*(all\s+(approved|good|yes)|approve(d)?\s+all)\b", text, _re.I):
+            log.info("Slack: blanket approval — left to the answers harvester")
+            return
+    except Exception as e:
+        log.warning(f"prompt-thread check skipped: {e}")
+
     trace_id = gen_trace_id()
     log.info(f"[{trace_id}] Slack: message from {event.get('user', '?')}: {text[:60]}")
 

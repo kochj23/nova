@@ -63,6 +63,13 @@ class TestPrivacy(unittest.TestCase):
         self.assertIsNone(a.pick(rows))
         self.assertNotIn("email", _src("nova_ask_one.py").lower().split("skip_sources")[0][-400:])
 
+    def test_blanket_and_thread_approvals_parse(self):
+        sa = _load("nova_slack_answers")
+        self.assertEqual(sa.verdict("All approved"), "yes"); self.assertIsNotNone(sa.BLANKET_RE.search("all good"))
+        self.assertIsNone(sa.verdict("All of these are wrong"))
+        self.assertIn("SELECT 1 FROM slack_prompts", _src("nova_gateway/channels/slack.py"))
+        self.assertIn("hand_to_claude", _src("nova_coagency.py"))
+
     def test_answers_ignore_bot_and_system_messages(self):
         sa = _load("nova_slack_answers")
         msgs = [{"user": "U1", "text": "root"}, {"user": sa.BOT_USER, "text": "me"},
