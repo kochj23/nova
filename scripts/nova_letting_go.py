@@ -405,7 +405,36 @@ def propose_goal_retirements(oc):
     return filed
 
 
+def apply_goal_retirements(oc):
+    """Six-month build #7, second half (2026-09-29): a retirement proposal he approved actually retires the
+    goal. Approved/acknowledged letting_go proposals whose goal is still active -> goals.status='dropped'."""
+    oc.execute("SELECT id, lineage->>'context', proposed_action FROM coagency_proposals "
+               "WHERE origin='letting_go' AND status IN ('approved','acknowledged','executed')")
+    rows = oc.fetchall()
+    done = 0
+    for pid, ctx, action in rows:
+        gid = (ctx or "").replace("goal_id=", "").strip() if ctx else None
+        if not gid:
+            import re
+            m = re.search(r"\(([0-9a-f]{8})\)", action or "")
+            gid = m.group(1) if m else None
+        if not gid:
+            continue
+        oc.execute("SELECT id, title FROM goals WHERE id LIKE %s AND status='active'", (gid + "%",))
+        g = oc.fetchone()
+        if not g:
+            continue
+        oc.execute("UPDATE goals SET status='dropped', updated_at=now() WHERE id=%s", (g[0],))
+        oc.execute("INSERT INTO goal_log (id, goal_id, timestamp, event_type, note) VALUES (%s, %s, now(), 'dropped', %s)",
+                   (f"{g[0][:8]}-drop-{pid}", g[0], f"retired via co-agency proposal #{pid}, approved by Jordan"))
+        log(f"RETIRED goal '{g[1]}' ({g[0]}) per approved proposal #{pid}")
+        done += 1
+    log(f"goal retirements applied: {done}")
+    return done
+
+
 def run_review(oc, mc):
+    apply_goal_retirements(oc)
     propose_goal_retirements(oc)
     cands = nominate_preoccupations(oc, mc) + nominate_projects(oc) + nominate_taste(oc)
     log(f"nominated {len(cands)} candidate(s) by heuristic")
@@ -538,9 +567,11 @@ def main():
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
     if mode == "selftest":
         return run_selftest(oc, mc)
+    if mode == "apply":
+        return 0 if apply_goal_retirements(oc) >= 0 else 1
     if mode == "review":
         return run_review(oc, mc)
-    log(f"unknown mode {mode!r} (use review|report|selftest)")
+    log(f"unknown mode {mode!r} (use review|report|apply|selftest)")
     return 2
 
 

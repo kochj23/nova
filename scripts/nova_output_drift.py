@@ -175,7 +175,14 @@ def main():
         return 0
     if findings:
         import nova_notify
+        # self-dedup on the bus: one event per key per day (the notifier dedups delivery, but the
+        # hourly run was still writing ~9 rows an hour into telemetry.events)
+        cur.execute("SELECT dedup_key FROM telemetry.events WHERE source='nova_output_drift' "
+                    "AND ts > now() - interval '24 hours'")
+        seen = {r[0] for r in cur.fetchall()}
         for lvl, key, title, body in findings:
+            if key in seen:
+                continue
             nova_notify.notify(title, body, level=lvl, category="output_drift",
                                source="nova_output_drift", dedup_key=key)
     return 0

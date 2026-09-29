@@ -32,7 +32,10 @@ import psycopg2
 OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 CHANNEL = "C0AMNQ5GX70"
 BOT_USER = "U0ANKLR3SUQ"
-PROPOSALS_PER_RUN = 3
+HUMANS = {"U049EPC2W"}            # Jordan. ONLY these users can answer or decide (2026-09-29: Nova's own
+                                  # gateway replied "Yes" in her proposal threads and got counted as him).
+PROPOSALS_PER_DAY = 3             # was per RUN every 10m -> 24 posts overnight. Now a daily allowance,
+POST_HOURS = range(9, 18)         # posted only during his working hours.
 YES_RE = re.compile(r"^\s*(yes|y|yep|yeah|approve|approved|ok|okay|sure|do it|go|👍|:\+1:|:thumbsup:)(?=\W|$)", re.I)
 NO_RE = re.compile(r"^\s*(no|n|nope|reject|rejected|keep|don'?t|leave it|👎|:-1:|:thumbsdown:)(?=\W|$)", re.I)
 SCRIPTS = Path(__file__).resolve().parent
@@ -75,18 +78,19 @@ def verdict(text):
     return None
 
 
-def first_human_reply(messages, bot_user=BOT_USER):
-    """messages: conversations.replies list (root first). First reply not from the bot."""
+def first_human_reply(messages, bot_user=BOT_USER, humans=HUMANS):
+    """messages: conversations.replies list (root first). First reply from an allowlisted human —
+    not the bot, not any other bot or app, not an unknown user."""
     for m in messages[1:]:
-        if m.get("user") == bot_user or m.get("bot_id") or m.get("subtype"):
+        if m.get("user") == bot_user or m.get("bot_id") or m.get("subtype") or m.get("user") not in humans:
             continue
         if (m.get("text") or "").strip():
             return m
     return None
 
 
-def reaction_verdict(reactions):
-    names = {r.get("name") for r in (reactions or [])}
+def reaction_verdict(reactions, humans=HUMANS):
+    names = {r.get("name") for r in (reactions or []) if set(r.get("users") or []) & humans}
     if names & {"+1", "thumbsup", "white_check_mark", "heavy_check_mark"}:
         return "yes"
     if names & {"-1", "thumbsdown", "x"}:
@@ -140,10 +144,16 @@ def decide_proposal(pid, v, note, dry):
 
 
 def post_pending_proposals(cur, dry):
+    if datetime.now().hour not in POST_HOURS:
+        return
+    cur.execute("SELECT count(*) FROM slack_prompts WHERE kind='proposal' AND posted_at > now() - interval '24 hours'")
+    room = PROPOSALS_PER_DAY - cur.fetchone()[0]
+    if room <= 0:
+        return
     cur.execute("SELECT id, origin, proposed_action, left(rationale, 220) FROM coagency_proposals "
                 "WHERE status='pending_human' AND id::text NOT IN "
                 "(SELECT ref_id FROM slack_prompts WHERE kind='proposal') ORDER BY created_at LIMIT %s",
-                (PROPOSALS_PER_RUN,))
+                (room,))
     for pid, origin, action, why in cur.fetchall():
         text = (f"Proposal #{pid} ({origin}): {action}\n_{why}_\n"
                 f"_Reply *yes* or *no* in this thread._")
@@ -190,11 +200,13 @@ def demo():
     assert verdict("Yes, go ahead") == "yes" and verdict("nope") == "no" and verdict("the ex") is None
     assert verdict("👍") == "yes" and verdict("keep it") == "no"
     msgs = [{"user": "U1", "text": "root"}, {"user": BOT_USER, "text": "bot noise"},
+            {"user": "U0GATEWAY", "text": "Yes"},                       # another bot/app account: ignored
             {"user": "U049EPC2W", "text": "  Tricia  "}, {"user": "U049EPC2W", "text": "later"}]
     assert first_human_reply(msgs)["text"].strip() == "Tricia"
-    assert first_human_reply(msgs[:2]) is None
-    assert reaction_verdict([{"name": "+1"}]) == "yes" and reaction_verdict([{"name": "x"}]) == "no"
-    assert reaction_verdict([{"name": "eyes"}]) is None
+    assert first_human_reply(msgs[:3]) is None
+    assert reaction_verdict([{"name": "+1", "users": ["U049EPC2W"]}]) == "yes"
+    assert reaction_verdict([{"name": "+1", "users": ["U0GATEWAY"]}]) is None
+    assert reaction_verdict([{"name": "x", "users": ["U049EPC2W"]}]) == "no"
     print("all slack-answers assertions passed")
 
 
