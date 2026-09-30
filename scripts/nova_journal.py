@@ -233,7 +233,7 @@ def get_available_sources(min_count: int = 50) -> list[str]:
 def fetch_memories_by_source(source: str, n: int = 25) -> list[dict]:
     """Fetch random memories from a specific source via DB with metadata."""
     result = subprocess.run(
-        ["psql", "-h", "pg-primary.digitalnoise.net", "-U", "kochj", "-d", "nova_memories", "-tA", "-F", "\x1f", "-c",
+        ["psql", "-h", "pg-primary.digitalnoise.net", "-U", "kochj", "-d", "nova_memories", "-tA", "-F", "\x1f", "-R", "\x1e", "-c",
          f"SELECT text, source, metadata::text FROM memories WHERE source = '{source}' "
          f"AND tier != 'scratchpad' ORDER BY random() LIMIT {n};"],
         capture_output=True, text=True, timeout=30
@@ -241,7 +241,9 @@ def fetch_memories_by_source(source: str, n: int = 25) -> list[dict]:
     if result.returncode != 0:
         return []
     memories = []
-    for line in result.stdout.strip().split("\n"):
+    # Records split on \x1e (psql -R), not newline: memory texts contain newlines, and a
+    # newline split turned one 25-row draw into ~240 fragments (pre-existing; fixed 2026-09-30).
+    for line in result.stdout.strip().split("\x1e"):
         if not line.strip():
             continue
         parts = line.split("\x1f")
