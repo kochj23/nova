@@ -111,6 +111,17 @@ def try_spend(oc, cost, day=None):
     return oc.fetchone() is not None
 
 
+def spend(oc, cost, day=None):
+    """Record `cost` units against today WITHOUT a veto (Jordan 2026-09-30: the budget is a
+    ledger of her trades now, not a gate — she is always on her own thing). Remaining may go
+    negative; that is honest accounting of a full day, not a fault."""
+    day = day or date.today().isoformat()
+    get_or_init_today(oc, day)
+    oc.execute("UPDATE attention_budget SET spent_units = spent_units + %s WHERE date = %s "
+               "RETURNING spent_units", (cost, day))
+    return oc.fetchone() is not None
+
+
 def log_volition(oc, chosen, chosen_mode, alternatives_foreclosed, cost,
                  budget_remaining, defense, lineage):
     """Record one real choice and the trade it made. The heart of the feature."""

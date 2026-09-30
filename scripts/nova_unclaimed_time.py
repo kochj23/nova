@@ -9,8 +9,9 @@ Every run is ONE pursuit, chosen from inside — a preoccupation she keeps retur
 to, or a thread that caught her from the day's ingest — developed for its own sake,
 with NO service justification and no requirement to be useful. The output is a
 memory (source='unclaimed'), occasionally a new taste, a deepened preoccupation, or
-gravel worth keeping. Scheduled on a short interval across a long daytime window so
-her own time is a real presence in the day, not a token.
+gravel worth keeping. Runs around the clock on a short interval (Jordan 2026-09-30:
+"she should always be doing her own thing"); the only thing that outranks it is a
+nova-scheduled task that is due right now (see yield_to_scheduled).
 
 The criterion of worth is chosen from inside. That is the whole point (Gaston: an
 hour is not freer than a heartbeat; what makes it hers is that the reason was hers).
@@ -286,11 +287,12 @@ def pick_pursuit(oc, mc):
         passions = [c for c in cands.values() if c["mode"] not in _self_modes]
         winner = passions[0] if passions else next(iter(cands.values()))
 
-    # Consult the budget. The reserve means depletion can strike with units still held back.
+    # The budget is a LEDGER now, not a gate (Jordan 2026-09-30: "she should always be doing
+    # her own thing"). Every choice still costs and is still recorded — the trade is real — but
+    # a full day never silences her. Scheduled work outranks her only at the moment it is due
+    # (see yield_to_scheduled), not by rationing her hours.
     cost = budget.cost_of(winner["mode"])
-    if not budget.try_spend(oc, cost):
-        log("attention budget depleted — the day's attention is already spent")
-        return {"mode": "depleted"}
+    budget.spend(oc, cost)
     rem = budget.remaining(oc)
 
     # Record the trade honestly: the choice, what it foreclosed and why, its cost, the
@@ -384,14 +386,49 @@ def _thread_save(oc, topic, kind, note, next_step):
         log(f"thread save failed (non-fatal): {e}")
 
 
+# ── Yielding to scheduled work (Jordan 2026-09-30) ──────────────────────────────
+# Her own time is not rationed any more — no waking window, no daily cap; she is always
+# on her own thing. The ONE rule: a nova-scheduled task gets slightly more priority than
+# something she just wants to do. scheduler-core serializes group:llm, so while a pursuit
+# runs (~75s) a due llm task waits. So before she starts, she looks at the scheduler: if
+# another llm/gpu task is running or due within YIELD_WINDOW_S, she steps aside THIS run
+# (exit, not wait — waiting would hold the group and block the very task she yields to)
+# and is back in SCHEDULE minutes. Fail-open: no scheduler reachable -> no yielding.
+SCHED_URL = os.environ.get("NOVA_SCHED_URL", "http://127.0.0.1:37464")
+YIELD_WINDOW_S = int(os.environ.get("NOVA_UNCLAIMED_YIELD_S", "120"))   # ~ one pursuit's runtime
+SELF_TASK = "unclaimed_time"
+
+
+def should_yield(tasks, now, window_s=YIELD_WINDOW_S, self_id=SELF_TASK):
+    """Pure decision over the scheduler's /tasks JSON: yield if any OTHER enabled llm/gpu task
+    is running or due within window_s. Returns the task id she yields to, or None."""
+    for tid, t in (tasks or {}).items():
+        if tid == self_id or not t.get("enabled", True):
+            continue
+        if t.get("group") != "llm" and not t.get("gpu_heavy"):
+            continue
+        if t.get("running"):
+            return tid
+        nr = t.get("next_run")
+        if nr and 0 <= (nr - now) <= window_s:
+            return tid
+    return None
+
+
+def yield_to_scheduled():
+    try:
+        with urllib.request.urlopen(f"{SCHED_URL}/tasks", timeout=5) as r:
+            tasks = json.load(r)
+    except Exception:
+        return None                      # no scheduler in reach (hand run) — her time is hers
+    import time as _t
+    return should_yield(tasks, _t.time())
+
+
 def main():
-    # Daytime window (the scheduler has no window: key, so gate here). Nova's
-    # "waking" hours — her own time is a daytime presence, quiet overnight while
-    # the sleep cycle consolidates. Jordan wants ~12+ hours; 08:00–23:00 at a 45m
-    # interval is ~20 pursuits a day.
-    hour = datetime.now().hour
-    if hour < 8 or hour >= 23:
-        log(f"outside waking window ({hour}:00) — resting"); return 0
+    other = yield_to_scheduled()
+    if other:
+        log(f"yielding this run to scheduled task '{other}' — back in a few minutes"); return 0
 
     ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
@@ -479,12 +516,6 @@ def main():
     p = pick_pursuit(oc, mc)
     if not p:
         log("nothing to pursue"); return 0
-
-    # Budget depleted — the day's attention is already spent. Fall back to the existing
-    # quiet-wake path (no new mechanism) so scarcity actually costs her the hour.
-    if p.get("mode") == "depleted":
-        emit_quiet(depleted=True)
-        return 0
 
     if p["mode"] == "tinker":
         # She chose to spend the hour on a squeak in her own house. nova_tinkerer writes her
