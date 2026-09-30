@@ -169,13 +169,26 @@ def _fizzle_stats(mc, topic):
         return 0, 0
 
 
+def _anchored_preoccupations(oc):
+    """Wish #38 Memory Anchor (2026-09-30): preoccupations she has decided to HOLD are never
+    nominated for release while the anchor stands. Fail-open: no table / any error -> none."""
+    try:
+        oc.execute("SELECT key FROM memory_anchors WHERE released_at IS NULL AND key LIKE 'preocc:%'")
+        return {int(k.split(":", 1)[1]) for (k,) in oc.fetchall()}
+    except Exception:
+        return set()
+
+
 def nominate_preoccupations(oc, mc):
+    anchored = _anchored_preoccupations(oc)
     oc.execute("""SELECT id, topic, kind, summary, returns,
                          (now()::date - last_developed::date) AS since_dev,
                          (now()::date - first_noticed::date) AS age
                   FROM preoccupations WHERE status='active'""")
     out = []
     for pid, topic, kind, summary, returns, since_dev, age in oc.fetchall():
+        if pid in anchored:
+            continue                      # held on purpose — not hers to let go of right now
         since_dev = since_dev or 0
         fizzles, pursuits = _fizzle_stats(mc, topic)
         stale = since_dev >= PREOCC_STALE_DAYS
