@@ -233,7 +233,7 @@ def get_available_sources(min_count: int = 50) -> list[str]:
 def fetch_memories_by_source(source: str, n: int = 25) -> list[dict]:
     """Fetch random memories from a specific source via DB with metadata."""
     result = subprocess.run(
-        ["psql", "-U", "kochj", "-d", "nova_memories", "-tA", "-F", "\x1f", "-c",
+        ["psql", "-h", "pg-primary.digitalnoise.net", "-U", "kochj", "-d", "nova_memories", "-tA", "-F", "\x1f", "-c",
          f"SELECT text, source, metadata::text FROM memories WHERE source = '{source}' "
          f"AND tier != 'scratchpad' ORDER BY random() LIMIT {n};"],
         capture_output=True, text=True, timeout=30
@@ -990,7 +990,7 @@ def _get_weekly_theme() -> str:
     try:
         import subprocess
         result = subprocess.run(
-            ["psql", "-h", "192.168.1.6", "-U", "kochj", "-d", "nova_ops", "-tA", "-c",
+            ["psql", "-h", "pg-primary.digitalnoise.net", "-U", "kochj", "-d", "nova_ops", "-tA", "-c",
              "SELECT theme || ': ' || COALESCE(description, '') FROM journal_weekly_theme "
              "WHERE week_start = date_trunc('week', CURRENT_DATE)::date LIMIT 1;"],
             capture_output=True, text=True, timeout=10
