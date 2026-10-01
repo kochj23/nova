@@ -109,6 +109,13 @@ RRF_K            = 60
 FTS_CANDIDATES   = 50
 W_RECENCY        = 0.010   # * exp(-age_days/90)
 W_ACCESS         = 0.002   # * log1p(access_count)
+# Wish #39 "Contextual Memory Recall" (2026-09-30): what she has decided to HOLD
+# (nova_ops.memory_anchors, wish #38) outranks the metrics. An anchored memory ranks
+# as if it were brand new (== the full recency weight) — modest on purpose; cosine
+# relevance still dominates. Anchors are re-read every ANCHOR_TTL seconds, fail-open.
+W_ANCHOR         = 0.010
+ANCHOR_TTL       = 60
+OPS_DSN          = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops?sslmode=disable"
 
 EF_SEARCH = {
     "fast":     40,    # casual chat, low-stakes — ~40ms
@@ -457,6 +464,41 @@ class MemoryResult(BaseModel):
 def _vec_str(vector: list[float]) -> str:
     return "[" + ",".join(str(v) for v in vector) + "]"
 
+# ── Anchors (wish #38 holds, wish #39 recalls) ─────────────────────────────────
+_anchors_cache = {"at": 0.0, "subjects": []}
+
+
+def _anchor_hit(text, subjects) -> bool:
+    """Pure: does this memory speak to something she holds? Case-insensitive phrase
+    containment — anchors are short topic phrases ('horology'), not keywords."""
+    if not text or not subjects:
+        return False
+    t = text.lower()
+    return any(sub in t for sub in subjects)
+
+
+async def _anchored_subjects() -> list:
+    """Currently held anchor subjects, lower-cased, cached ANCHOR_TTL seconds. Fail-open:
+    any trouble -> the last good list (or none) so recall never depends on nova_ops."""
+    now = time.time()
+    if now - _anchors_cache["at"] < ANCHOR_TTL:
+        return _anchors_cache["subjects"]
+    try:
+        conn = await asyncpg.connect(OPS_DSN, timeout=3)
+        try:
+            rows = await conn.fetch("SELECT subject FROM memory_anchors WHERE released_at IS NULL")
+        finally:
+            await conn.close()
+        subjects = sorted({(r["subject"] or "").strip().lower() for r in rows if (r["subject"] or "").strip()})
+        if subjects != _anchors_cache["subjects"]:
+            logger.info(f"anchor boost: holding {len(subjects)} subject(s): {', '.join(subjects)[:200]}")
+        _anchors_cache["subjects"] = subjects
+    except Exception as e:
+        logger.warning(f"anchor refresh failed (keeping {len(_anchors_cache['subjects'])}): {e}")
+    _anchors_cache["at"] = now
+    return _anchors_cache["subjects"]
+
+
 def _row_to_result(row, score: float) -> MemoryResult:
     return MemoryResult(
         id=row["id"], text=row["text"],
@@ -605,6 +647,7 @@ async def _do_recall(
         else:
             fused[r["id"]] = {"row": r, "vec": None, "rrf": 1.0 / (RRF_K + i)}
 
+    anchors = await _anchored_subjects()
     scored = []
     for e in fused.values():
         r = e["row"]
@@ -619,7 +662,8 @@ async def _do_recall(
             age_days = 365.0
         order = (e["rrf"]
                  + W_RECENCY * math.exp(-age_days / 90.0)
-                 + W_ACCESS * math.log1p(float(r["access_count"] or 0)))
+                 + W_ACCESS * math.log1p(float(r["access_count"] or 0))
+                 + (W_ANCHOR if _anchor_hit(r["text"], anchors) else 0.0))
         # Reported score: real cosine similarity when known; FTS-only hits get a
         # flat 0.5 marker (documented: "matched by text, not by vector").
         report = e["vec"] if e["vec"] is not None else 0.5
@@ -899,11 +943,13 @@ async def deep_recall(
 
         # Recency boost: memories accessed recently score higher
         now_ts = datetime.now(timezone.utc).timestamp()
+        anchors = await _anchored_subjects()
         scored = []
         for r in rows:
             base_score = float(r["score"])
             if base_score < min_score:
                 continue
+            anchor_boost = 0.05 if _anchor_hit(r["text"], anchors) else 0.0   # wish #39: held > metrics
             # Decay: accessed within 7 days → +0.05 boost, within 1 day → +0.10
             if r["accessed_at"]:
                 age_days = (now_ts - r["accessed_at"].timestamp()) / 86400
@@ -912,7 +958,7 @@ async def deep_recall(
                 recency_boost = 0.0
             # Frequency boost: cap at +0.05 for memories accessed 10+ times
             freq_boost = min(r["access_count"] / 200, 0.05)
-            scored.append((r, base_score + recency_boost + freq_boost))
+            scored.append((r, base_score + recency_boost + freq_boost + anchor_boost))
 
         scored.sort(key=lambda x: x[1], reverse=True)
         results = [r for r, _ in scored[:n]]
@@ -1167,6 +1213,21 @@ async def forget_all(source: Optional[str] = Query(None)):
     return {"deleted": deleted}
 
 
+def _selftest():
+    """Pure-logic check of the anchor boost (no DB, no server)."""
+    subs = ["horology", "the watch fishbowl"]
+    assert _anchor_hit("Notes on HOROLOGY and escapements", subs)
+    assert _anchor_hit("the Watch Fishbowl churned again", subs)
+    assert not _anchor_hit("a memo about printers", subs)
+    assert not _anchor_hit("", subs) and not _anchor_hit("horology", [])
+    # the boost is modest by construction: never more than the full recency weight
+    assert W_ANCHOR <= W_RECENCY
+    print("memory_server anchor-boost selftest passed")
+
+
 if __name__ == "__main__":
+    import sys as _sys
+    if "--selftest" in _sys.argv:
+        _selftest(); raise SystemExit(0)
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=18790, log_level="info", log_config=None)
