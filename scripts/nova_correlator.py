@@ -97,6 +97,14 @@ def _is_symptom_of(root_cat, sym_cat):
     return "*" in syms or sym_cat in syms
 
 
+META_CATEGORIES = frozenset({"incident_recurring", "incident"})
+
+
+def is_meta_category(category) -> bool:
+    """Pure: is this event a report ABOUT incidents rather than a symptom of one?"""
+    return (category or "") in META_CATEGORIES
+
+
 def correlate(conn, ev):
     """Decide how event `ev` (a dict row) folds into the incident picture.
 
@@ -112,6 +120,12 @@ def correlate(conn, ev):
 
     # Only warnings/criticals with a host are incident-worthy; info is just FYI.
     if level == "info" or not host:
+        return {"action": "standalone", "incident_id": None, "role": None, "suppress": False}
+    # 2026-10-01: events that are themselves REPORTS about incidents (the lifecycle's
+    # "Recurring incident pattern" warnings, its stale/auto-close notices) must never open
+    # or join an incident — otherwise the detector feeds on its own output. Incident #3100
+    # ("Office-M4-2:incident_recurring") ran 14 days and swallowed 2,479 of its own warnings.
+    if is_meta_category(category):
         return {"action": "standalone", "incident_id": None, "role": None, "suppress": False}
 
     cur = _tuple_cur(conn)

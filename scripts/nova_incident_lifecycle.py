@@ -238,6 +238,10 @@ def detect_recurrence(conn, incident_id: int) -> str | None:
             if not row:
                 return None
             host, root_cat = row
+            if root_cat in ("incident_recurring", "incident"):
+                # 2026-10-01: an incident rooted in one of OUR OWN notifications is the loop
+                # (detector -> warning -> event -> incident -> detector). Never key on it.
+                return None
             key = f"{host or 'unknown'}:{root_cat or 'uncategorized'}"
 
             cur.execute(

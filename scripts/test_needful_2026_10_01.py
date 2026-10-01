@@ -188,6 +188,18 @@ class TestIntegration(unittest.TestCase):
 
 # ── 6. REGRESSION ──────────────────────────────────────────────────────────────
 class TestRegression(unittest.TestCase):
+    def test_private_notebook_loop_guard(self):
+        prev = ["[Private] I\u2019m keyed-up but even, parsing the Coaxial Escapement\u2019s sonic signature. The gap..."]
+        self.assertTrue(unclaimed.looks_looped("I'm keyed-up but even, parsing the Coaxial Escapement's sonic signature. Again.", prev))
+        self.assertFalse(unclaimed.looks_looped("The rail static has a grammar.", prev))
+
+    def test_incident_reports_are_never_incidents(self):
+        import nova_correlator as corr
+        self.assertTrue(corr.is_meta_category("incident_recurring")); self.assertTrue(corr.is_meta_category("incident"))
+        self.assertFalse(corr.is_meta_category("gpu")); self.assertFalse(corr.is_meta_category(None))
+        res = corr.correlate(None, {"level": "warning", "category": "incident_recurring", "host": "Office-M4-2", "title": "x"})
+        self.assertEqual(res["action"], "standalone")        # never opens, never attaches — no DB touched
+
     def test_silence_baseline_ignores_intra_conversation_gaps(self):
         now = datetime.now(timezone.utc)
         burst = [(now - timedelta(hours=49) - timedelta(seconds=s),) for s in (0, 5, 10, 15)]   # one sitting
