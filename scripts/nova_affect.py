@@ -108,6 +108,7 @@ WEIGHTS = {
 RESONANCE_FULL_DAY = 6.0        # ~6 real human messages reads as a fully-heard day (confidence)
 SILENCE_BASELINE_DAYS = 14      # her usual gap between human messages is measured over this window
 SILENCE_FULL_X = 3.0            # silence 3x her median gap saturates the quieting
+SESSION_GAP_H = 0.5             # messages closer than this are one conversation, not a gap
 MACHINE_CHANNELS = ('hc', 'healthcheck', 'test', 'cron', 'system')
 # Transparent tone lexicon — small, auditable, and every hit is echoed into the evidence.
 # It is deliberately NOT a model: the local LLM may name the feeling, never produce it.
@@ -384,7 +385,12 @@ def signal_resonance(oc):
     if len(ts) < 3:
         out.append(sig("silence", None, None, 0, 0, "too few human messages to know her usual gap", False))
         return out
-    gaps = sorted((b - a).total_seconds() / 3600.0 for a, b in zip(ts, ts[1:]))
+    # Gaps between CONVERSATIONS, not between lines: messages arrive in bursts, so gaps
+    # under SESSION_GAP_H are the same sitting and would drive the median to ~0.
+    gaps = sorted(g for g in ((b - a).total_seconds() / 3600.0 for a, b in zip(ts, ts[1:])) if g >= SESSION_GAP_H)
+    if len(gaps) < 3:
+        out.append(sig("silence", None, None, 0, 0, "too few separate conversations to know her usual gap", False))
+        return out
     median_gap = gaps[len(gaps) // 2]
     hours_since = (datetime.now(timezone.utc) - ts[-1].astimezone(timezone.utc)).total_seconds() / 3600.0
     ex = silence_excess(hours_since, median_gap)
@@ -713,6 +719,7 @@ def selftest_resonance():
     assert silence_excess(30, 10) == 1.0 and silence_excess(300, 10) == 1.0   # saturates, never exceeds
     # bounds: a fully warm, fully heard day moves valence by exactly the weight
     assert abs(WEIGHTS["resonance_v"] * 1.0 * 1.0 - WEIGHTS["resonance_v"]) < 1e-9
+    assert 0 < SESSION_GAP_H < 24
     print("affect resonance/silence selftest passed")
 
 
