@@ -208,19 +208,13 @@ def main():
     if content.startswith("NO_MAIL"):
         msg = f"*Nova Morning Mail Summary — {datetime.now().strftime('%A, %B %d %Y')}*\n📭 No new mail in the last 24 hours."
         slack_post(msg)
-        send_email(f"Nova Morning Mail Summary -- {datetime.now().strftime('%Y-%m-%d')}", "No new mail in the last 24 hours.")
-        log("No mail — sent empty summary.")
+        # Email delivery dropped 2026-10-01 (Jordan: trashed it daily) — Slack only.
+        log("No mail — posted empty summary to Slack.")
         return
 
     summary = build_summary(content)
     log("Posting to Slack...")
     slack_post(summary)
-
-    log("Sending email...")
-    send_email(
-        f"Nova Morning Mail Summary -- {datetime.now().strftime('%Y-%m-%d')}",
-        summary.replace("*", "").replace("_", "")
-    )
 
     log("Storing important emails in vector memory...")
     today_str = datetime.now().strftime("%Y-%m-%d")
