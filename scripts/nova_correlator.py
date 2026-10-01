@@ -98,6 +98,10 @@ def _is_symptom_of(root_cat, sym_cat):
 
 
 META_CATEGORIES = frozenset({"incident_recurring", "incident"})
+# Public-safety feeds (CHP freeway smoke/fire/closures, local situation posts) describe the
+# WORLD, not the fleet. Their events carry host=<poller host>, which made a Pasadena off-ramp
+# fire an "open critical on Office-M4-2" for Nova's attention organ (1,709 such events/week).
+PUBLIC_SAFETY_CATEGORIES = frozenset({"traffic_watch", "local", "chp", "public_safety", "airwaves"})
 
 
 def is_meta_category(category) -> bool:
@@ -125,7 +129,7 @@ def correlate(conn, ev):
     # "Recurring incident pattern" warnings, its stale/auto-close notices) must never open
     # or join an incident — otherwise the detector feeds on its own output. Incident #3100
     # ("Office-M4-2:incident_recurring") ran 14 days and swallowed 2,479 of its own warnings.
-    if is_meta_category(category):
+    if is_meta_category(category) or (category or "") in PUBLIC_SAFETY_CATEGORIES:
         return {"action": "standalone", "incident_id": None, "role": None, "suppress": False}
 
     cur = _tuple_cur(conn)

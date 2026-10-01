@@ -6,7 +6,8 @@ Two passes, both idempotent:
   1. DELETE terminal rows (resolved/completed/aged_out/superseded/cancelled)
      not touched in 7 days — they've been actioned; keep the queue lean.
   2. Mark status='aged_out' any still-'queued' AUTO-GENERATED alerts
-     (TASK FAILING: / OVERNIGHT: / MAINTENANCE: prefixes) older than 14 days —
+     (TASK FAILING: / OVERNIGHT: / MAINTENANCE: / SECURITY: / STALE DAEMON: / SYSTEMIC: /
+     CORE LIVENESS: prefixes) older than 14 days —
      if nobody picked them up in two weeks they're stale noise, not work.
 
 Prints counts; exit 0 on success. Runs on nova-core (.2), Mondays 07:00.
@@ -31,7 +32,11 @@ UPDATE claude_queue
  WHERE status = 'queued'
    AND (description LIKE 'TASK FAILING:%'
         OR description LIKE 'OVERNIGHT:%'
-        OR description LIKE 'MAINTENANCE:%')
+        OR description LIKE 'MAINTENANCE:%'
+        OR description LIKE 'SECURITY:%'        -- 2026-10-01: the scanner re-files anything still true
+        OR description LIKE 'STALE DAEMON:%'
+        OR description LIKE 'SYSTEMIC:%'
+        OR description LIKE 'CORE LIVENESS:%')
    AND created_at < now() - interval '14 days'
 """
 

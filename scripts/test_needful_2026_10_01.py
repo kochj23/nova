@@ -193,6 +193,25 @@ class TestRegression(unittest.TestCase):
         self.assertTrue(unclaimed.looks_looped("I'm keyed-up but even, parsing the Coaxial Escapement's sonic signature. Again.", prev))
         self.assertFalse(unclaimed.looks_looped("The rail static has a grammar.", prev))
 
+    def test_public_safety_feed_events_are_never_incidents(self):
+        import nova_correlator as corr
+        for cat in ("traffic_watch", "local", "chp"):
+            r = corr.correlate(None, {"level": "critical", "category": cat, "host": "Office-M4-2", "title": "FIRE — I-210"})
+            self.assertEqual(r["action"], "standalone")
+
+    def test_identity_jobs_retry_the_db_connect(self):
+        import psycopg2, nova_identity_link as il
+        calls = []
+        def boom(dsn, connect_timeout=0): calls.append(1); raise psycopg2.OperationalError("timed out")
+        with mock.patch.object(psycopg2, "connect", boom), mock.patch("time.sleep", lambda s: None):
+            with self.assertRaises(psycopg2.OperationalError):
+                il._connect("x")
+        self.assertEqual(len(calls), 3)
+
+    def test_chp_feed_outage_is_a_soft_skip(self):
+        src = _src("nova_chp_traffic.py")
+        self.assertIn("feed outage, soft-skip", src)
+
     def test_incident_reports_are_never_incidents(self):
         import nova_correlator as corr
         self.assertTrue(corr.is_meta_category("incident_recurring")); self.assertTrue(corr.is_meta_category("incident"))

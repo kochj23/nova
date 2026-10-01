@@ -28,6 +28,21 @@ sys.path.insert(0, str(Path(__file__).parent))
 import psycopg2
 
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+
+
+def _connect(dsn, tries=3):
+    """House rule: external calls retry. The PG primary sits across the LAN; a transient
+    'Operation timed out' (629 of these in September) must not fail the whole run."""
+    import time as _t
+    last = None
+    for i in range(tries):
+        try:
+            return psycopg2.connect(dsn, connect_timeout=10)
+        except psycopg2.OperationalError as e:
+            last = e
+            if i < tries - 1:
+                _t.sleep(5 * (i + 1))
+    raise last
 SLOT_MINUTES = 5
 MIN_SLOTS = 6          # a node seen fewer times than this proves nothing
 MIN_PHI = 0.30
@@ -88,7 +103,7 @@ def collect(cur, days):
 
 
 def main(days, dry_run):
-    conn = psycopg2.connect(DSN)
+    conn = _connect(DSN)
     conn.autocommit = True
     cur = conn.cursor()
     cur.execute("""

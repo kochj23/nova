@@ -280,8 +280,11 @@ def main(argv=None):
             log(f"fetch/parse attempt {attempt + 1}/3 failed: {last_err}")
             time.sleep(2)
     if incidents is None:
-        log(f"giving up after 3 attempts: {last_err}")
-        return 1
+        # 2026-10-01: a feed outage is the CHP's problem, not this task's. Exiting 1 here
+        # got the task dead-lettered after 22 straight "no element found" (empty body)
+        # responses during a morning the feed was down; the next 5-minute run is the retry.
+        log(f"giving up after 3 attempts (feed outage, soft-skip): {last_err}")
+        return 0
 
     if not incidents:
         log("no LA-area incidents in feed this cycle")
