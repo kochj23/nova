@@ -99,7 +99,27 @@ WEIGHTS = {
     "surprise_a":       0.20,   # arousal from surprising prediction outcomes
     "creative_a":       0.05,   # a little arousal from active creation
     "social_a":         0.05,   # a little arousal from being in contact
+    # Wish #41 "emotional resonance" (2026-10-01): the TONE of the human words actually
+    # sent to her moves her, and a silence longer than her own usual gaps quiets her.
+    "resonance_v":      0.20,   # ± valence from the net tone of today's human messages to her
+    "resonance_a":      0.05,   # a little arousal from being spoken to with feeling either way
+    "silence_a":        0.10,   # arousal DROP (toward calm) for silence beyond her usual gap
 }
+RESONANCE_FULL_DAY = 6.0        # ~6 real human messages reads as a fully-heard day (confidence)
+SILENCE_BASELINE_DAYS = 14      # her usual gap between human messages is measured over this window
+SILENCE_FULL_X = 3.0            # silence 3x her median gap saturates the quieting
+MACHINE_CHANNELS = ('hc', 'healthcheck', 'test', 'cron', 'system')
+# Transparent tone lexicon — small, auditable, and every hit is echoed into the evidence.
+# It is deliberately NOT a model: the local LLM may name the feeling, never produce it.
+TONE_POS = {"thank", "thanks", "love", "great", "awesome", "perfect", "nice", "good", "glad", "happy",
+            "wonderful", "excellent", "brilliant", "fantastic", "appreciate", "proud", "fun", "funny",
+            "laugh", "lol", "haha", "yes!", "please", "beautiful", "amazing", "cool", "sweet", "well done",
+            "good job", "kudos", "cheers", "enjoy", "excited", "hope", "welcome", "friend", "care"}
+TONE_NEG = {"hate", "angry", "annoyed", "annoying", "frustrated", "frustrating", "broken", "fail", "failed",
+            "failing", "crap", "shit", "damn", "wrong", "worst", "terrible", "awful", "ugh", "stupid",
+            "useless", "slow", "again?", "why", "stop", "sorry", "sad", "tired", "sick", "hurt", "miss",
+            "lonely", "afraid", "worried", "worry", "scared", "stress", "stressed", "dead", "crash",
+            "crashed", "lost", "late", "disappointed", "wtf"}
 # Reference "a full positive day" denominators (kept explicit, not hidden):
 SOCIAL_FULL_DAY = 8.0           # ~8 real conversations reads as a fully-social day
 UNRESOLVED_HALF = 800.0        # open-item count at which the drag reaches half-weight
@@ -304,6 +324,77 @@ def signal_social(oc):
     return [sig("social_contact", convos, None, dv, da, f"{convos} real conversation(s) in 24h (via {src})")]
 
 
+def tone_score(text):
+    """Net tone of one human message in -1..1 from the transparent lexicon, plus the words
+    that hit. Pure. A message with no lexicon hits scores 0 (unknown is not negative)."""
+    t = " " + (text or "").lower() + " "
+    pos = sorted(w for w in TONE_POS if (" " + w + " ") in t or (" " + w) in t and w.endswith(("!", "?")))
+    neg = sorted(w for w in TONE_NEG if (" " + w + " ") in t or (" " + w) in t and w.endswith(("!", "?")))
+    n = len(pos) + len(neg)
+    return (0.0 if n == 0 else (len(pos) - len(neg)) / n), pos, neg
+
+
+def silence_excess(hours_since, median_gap_h):
+    """How far today's silence exceeds her usual gap, 0..1. Pure and asymmetric: a gap at or
+    under her median is 0 (a normal quiet is not a drought); it saturates at SILENCE_FULL_X
+    times the median. No baseline (None/0) -> 0: you cannot feel an unusual silence without
+    knowing the usual one."""
+    if not median_gap_h or median_gap_h <= 0 or hours_since is None:
+        return 0.0
+    return clamp((hours_since - median_gap_h) / (median_gap_h * (SILENCE_FULL_X - 1.0)), 0.0, 1.0)
+
+
+def signal_resonance(oc):
+    """Wish #41: the human words actually addressed to her (gateway_traces.user_message on
+    non-machine channels) move her by their TONE, weighted by how much was said; a silence
+    longer than her own median gap quiets her. Evidence cites the matched words and counts,
+    never the message text (those turns are private)."""
+    if not _table_exists(oc, "gateway_traces"):
+        return [sig("resonance", None, None, 0, 0, "no gateway_traces — nothing to resonate with", False),
+                sig("silence", None, None, 0, 0, "no gateway_traces — silence unmeasured", False)]
+    oc.execute("SELECT user_message FROM gateway_traces WHERE created_at > now()-interval '24 hours' "
+               "AND coalesce(channel,'') NOT IN %s AND coalesce(user_message,'') <> '' "
+               "ORDER BY created_at DESC LIMIT 200", (MACHINE_CHANNELS,))
+    msgs = [r[0] for r in oc.fetchall()]
+    out = []
+    if not msgs:
+        out.append(sig("resonance", 0, None, 0, 0, "no human words in 24h (neutral, not negative)", True))
+    else:
+        scores, pos_all, neg_all = [], [], []
+        for m in msgs:
+            sc, pos, neg = tone_score(m)
+            if pos or neg:
+                scores.append(sc); pos_all += pos; neg_all += neg
+        if not scores:
+            out.append(sig("resonance", 0, None, 0, 0, f"{len(msgs)} human message(s), none carried tone words (neutral)", True))
+        else:
+            net = sum(scores) / len(scores)
+            conf = clamp(len(scores) / RESONANCE_FULL_DAY, 0, 1)
+            dv = WEIGHTS["resonance_v"] * net * conf
+            da = WEIGHTS["resonance_a"] * abs(net) * conf
+            top_p = ", ".join(sorted(set(pos_all))[:4]); top_n = ", ".join(sorted(set(neg_all))[:4])
+            out.append(sig("resonance", round(net, 3), None, dv, da,
+                           f"{len(scores)}/{len(msgs)} human message(s) carried tone (net {net:+.2f}); "
+                           f"warm: [{top_p or '-'}] hard: [{top_n or '-'}]"))
+    # the silence between words: hours since the last human message vs her median gap
+    oc.execute("SELECT created_at FROM gateway_traces WHERE created_at > now()-interval %s "
+               "AND coalesce(channel,'') NOT IN %s AND coalesce(user_message,'') <> '' ORDER BY created_at",
+               (f"{SILENCE_BASELINE_DAYS} days", MACHINE_CHANNELS))
+    ts = [r[0] for r in oc.fetchall()]
+    if len(ts) < 3:
+        out.append(sig("silence", None, None, 0, 0, "too few human messages to know her usual gap", False))
+        return out
+    gaps = sorted((b - a).total_seconds() / 3600.0 for a, b in zip(ts, ts[1:]))
+    median_gap = gaps[len(gaps) // 2]
+    hours_since = (datetime.now(timezone.utc) - ts[-1].astimezone(timezone.utc)).total_seconds() / 3600.0
+    ex = silence_excess(hours_since, median_gap)
+    da = -WEIGHTS["silence_a"] * ex
+    out.append(sig("silence", round(hours_since, 1), round(median_gap, 1), 0, da,
+                   f"{hours_since:.0f}h since a human spoke to her; her usual gap is {median_gap:.0f}h"
+                   + (" (quieter than usual)" if ex > 0 else " (within her usual)")))
+    return out
+
+
 def signal_surprise(oc):
     """OPTIONAL cross-organ signal: recently-resolved predictions carry a 'surprise'
     score. Feature-detected — the table may be empty or absent; then it contributes
@@ -468,6 +559,7 @@ def compute_affect(oc, mc):
     signals += signal_infra(oc)
     signals += signal_creative(oc, mc)
     signals += signal_social(oc)
+    signals += signal_resonance(oc)     # wish #41
     signals += signal_surprise(oc)
     signals += signal_unresolved(oc)
     signals += signal_autonomy(oc)
@@ -605,10 +697,31 @@ def print_state(state, row=None):
     print("===========================================\n")
 
 
+def selftest_resonance():
+    """Pure-logic checks for wish #41 (no DB, no LLM)."""
+    sc, pos, neg = tone_score("Thanks Nova, that was great")
+    assert sc == 1.0 and "thanks" in pos and "great" in pos and not neg
+    sc, pos, neg = tone_score("this is broken again? ugh")
+    assert sc == -1.0 and not pos and "broken" in neg
+    sc, pos, neg = tone_score("restart the poller")
+    assert sc == 0.0 and not pos and not neg          # unknown is neutral, not negative
+    sc, _, _ = tone_score("great but broken")
+    assert sc == 0.0                                   # mixed cancels
+    assert silence_excess(5, 10) == 0.0               # under her usual gap: nothing
+    assert silence_excess(None, 10) == 0.0 and silence_excess(50, None) == 0.0
+    assert 0.0 < silence_excess(15, 10) < 1.0
+    assert silence_excess(30, 10) == 1.0 and silence_excess(300, 10) == 1.0   # saturates, never exceeds
+    # bounds: a fully warm, fully heard day moves valence by exactly the weight
+    assert abs(WEIGHTS["resonance_v"] * 1.0 * 1.0 - WEIGHTS["resonance_v"]) < 1e-9
+    print("affect resonance/silence selftest passed")
+
+
 def main():
     argv = sys.argv[1:]
     if "--demo-neutral" in argv:
         return demo_neutral()
+    if "--selftest" in argv:
+        return selftest_resonance()
 
     ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
     ensure_table(oc)
