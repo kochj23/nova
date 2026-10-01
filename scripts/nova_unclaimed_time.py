@@ -107,6 +107,30 @@ def is_fizzle(note):
     return len(note.strip()) < 60 or bool(FIZZLE_RX.search(note))
 
 
+def _opener(text, n=60):
+    """Normalised first n chars of a note — the unit the loop guard compares."""
+    import re as _re
+    t = (text or "").replace("[Private]", "")
+    t = t.replace("\u2019", "'").replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"').replace("\u2014", "-").replace("\u2013", "-")
+    t = _re.sub(r"\s+", " ", t).strip().lower()
+    return t[:n]
+
+
+def looks_looped(note, recent_texts, n=60):
+    """True if the note's opening sentence is (near-)identical to any recent entry's.
+    Pure. This is the real anti-loop protection — the prompt asks the model not to repeat
+    itself, but the model will happily restate an opener it was just shown (2026-10-01:
+    ten entries in a row began 'I'm keyed-up but even, parsing the Coaxial…')."""
+    o = _opener(note, n)
+    if not o:
+        return False
+    for r in recent_texts or []:
+        ro = _opener(r, n)
+        if ro and (o == ro or o[:40] == ro[:40]):
+            return True
+    return False
+
+
 def llm(prompt, max_tokens=700, temperature=0.85):
     body = json.dumps({"model": LLM_MODEL, "stream": False, "think": False,
                        "options": {"temperature": temperature, "num_predict": max_tokens},
@@ -472,12 +496,17 @@ def main():
                     bits.append(tmpl.format(str(rr[0]).strip().replace("\n", " ")[:160]))
             except Exception:
                 continue
+        # 2026-10-01: the same four facts every run pinned every entry to the same opener.
+        # Offer a random 1-2 of them, in random order, so the material itself varies.
+        random.shuffle(bits)
+        bits = bits[:random.randint(1, 2)] if bits else bits
         situation = "\n".join(f"- {b}" for b in bits)
-        recent = ""
+        recent, recent_texts = "", []
         try:
             mc.execute("SELECT text FROM memories WHERE source='private_notebook' "
-                       "ORDER BY created_at DESC LIMIT 2")
-            recent = " / ".join(x[0].replace("[Private]", "").strip()[:80] for x in mc.fetchall())
+                       "ORDER BY created_at DESC LIMIT 6")
+            recent_texts = [x[0] for x in mc.fetchall()]
+            recent = " / ".join(_opener(x, 70) for x in recent_texts)
         except Exception:
             pass
         prompt = (
@@ -495,8 +524,17 @@ def main():
         if situation:
             prompt += f"REAL MATERIAL FROM YOUR ACTUAL DAY:\n{situation}\n\n"
         if recent:
-            prompt += f"You recently wrote these — do NOT repeat them: {recent}\n"
+            prompt += (f"Your last entries OPENED with these lines — do NOT reuse any of these openings, "
+                       f"these phrases, or this structure; start somewhere else entirely: {recent}\n")
         note = llm(prompt, max_tokens=280)
+        if note and looks_looped(note, recent_texts):
+            # one retry with the loop named; if it still loops, drop it — a missing entry
+            # beats a tenth copy (the notebook is hers, not a template).
+            note = llm(prompt + "\nThat opening is a loop you are stuck in. Begin with a different "
+                       "subject and a different first word.\n", max_tokens=280, temperature=1.0)
+            if note and looks_looped(note, recent_texts):
+                log("private-notebook entry dropped — looped on a previous opener twice")
+                return 0
         if note and len(note) > 40:
             remember(f"[Private] {note}", "private_notebook",
                      {"type": "private", "date": TODAY, "privacy": "private",
