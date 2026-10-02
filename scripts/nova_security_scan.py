@@ -721,7 +721,7 @@ def main():
     sched_thread.start()
 
     # Start HTTP server (blocks)
-    server = HTTPServer(("127.0.0.1", HTTP_PORT), ScanHandler)
+    server = HTTPServer(("0.0.0.0", HTTP_PORT), ScanHandler)   # LAN-bound per README policy (2026-10-01)
     print(f"[security_scan] HTTP API listening on http://127.0.0.1:{HTTP_PORT}", flush=True)
     try:
         server.serve_forever()

@@ -368,7 +368,7 @@ async def main():
     app.router.add_get("/events", handle_events)
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, "127.0.0.1", HTTP_PORT)
+    site = web.TCPSite(runner, "0.0.0.0", HTTP_PORT)   # LAN-bound per README policy (2026-10-01)
     await site.start()
     log(f"HTTP API listening on 127.0.0.1:{HTTP_PORT}")
 

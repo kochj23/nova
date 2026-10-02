@@ -1578,7 +1578,7 @@ All services bind to `192.168.1.6` (LAN-accessible). Exceptions bind to `127.0.0
 | Gateway v2 Management | 18792 | 0.0.0.0 | /health, POST /reload (hot-reload config) |
 | Memory Server | 18790 | 192.168.1.6 | FastAPI + pgvector |
 | Scheduler API | 37460 | 0.0.0.0 | /runs /stats /tasks |
-| Big Brother API | 37461 | 192.168.1.6 | /bb/status /bb/events /bb/gpu |
+| Big Brother API | 37461 | 0.0.0.0 | /bb/status /bb/events /bb/gpu (was loopback-only until 2026-10-01 — the three LAN callers had been failing) |
 | **Chatroom** | **37480** | **0.0.0.0** | **3-way real-time chat (Jordan/Nova/Claude Code)** |
 | PostgreSQL | 5432 | pg-primary.digitalnoise.net → nova-core .2 (pgbouncer shim on .6 for stragglers) | nova_memories + nova_ops |
 | PgBouncer | 6432 | 192.168.1.6 | Connection pool |
@@ -1586,10 +1586,15 @@ All services bind to `192.168.1.6` (LAN-accessible). Exceptions bind to `127.0.0
 | Ollama | 11434 | 0.0.0.0 | qwen3:30b-a3b, deepseek-r1:8b, qwen3-vl:4b |
 | llama.cpp | 11435 | 0.0.0.0 | Standby: qwen3-coder 30B (failover from Ollama) |
 | MLX Server | 5050 | 0.0.0.0 | Qwen2.5-32B (speculative decoding) |
-| signal-cli HTTP | 8080 | 127.0.0.1 | Outbound send |
-| signal-cli TCP | 7583 | 127.0.0.1 | Streaming receive |
+| signal-cli HTTP | 8080 | 192.168.1.6 | Outbound send (LAN: the ACTIVE gateway on .2 sends through it) |
+| signal-cli TCP | 7583 | 192.168.1.6 | Streaming receive |
 | NovaControl | 37400 | 127.0.0.1 | macOS app |
 | OpenWebUI | 3000 | 192.168.1.6 | |
+| SwarmUI | 7801 | 0.0.0.0 | image generation front-end (Settings.fds `Host: 0.0.0.0`, was `localhost` until 2026-10-01) |
+| ComfyUI | 8188 | 0.0.0.0 | image backend (`--listen 0.0.0.0` in ~/bin/start-comfyui.sh); `generate_image.sh` targets 192.168.1.6:8188 so the journal on .2 can render covers locally |
+| Endpoint monitor / request router / security scan | 37469 / 37473 / 37474 | 0.0.0.0 | LAN-bound 2026-10-01 (were loopback) |
+| Relay | 37479 | 127.0.0.1 | deliberately loopback: it trusts loopback peers (see nova_relay.py) |
+| NovaHomeKit | 37433 | 127.0.0.1 | macOS app |
 | TinyChat | 8000 | 192.168.1.6 | |
 
 ### PostgreSQL Configuration

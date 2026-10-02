@@ -48,9 +48,9 @@ MEMSRV = "http://memory-server.digitalnoise.net:18790"
 LLM_MODEL = "qwen3:8b"
 # Native ollama, think:false, first-non-empty-wins failover (copied from
 # nova_unclaimed_time.py per spec — resilient across the fleet).
-OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434",
-                "http://192.168.1.252:11434", "http://192.168.1.7:11434",
-                "http://192.168.1.6:11434"]
+OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # batch pool: idle 24-thread Ryzens first (2026-10-01)
+                "http://192.168.1.86:11434", "http://192.168.1.77:11434",
+                "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
 TODAY = date.today().isoformat()
 
 # ── Throttle (env-overridable, mainly for deterministic testing) ────────────────

@@ -221,4 +221,4 @@ if __name__ == "__main__":
             pass
 
     print(f"Request Router listening on port {PORT}")
-    HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+    HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()   # LAN-bound per README policy (2026-10-01)

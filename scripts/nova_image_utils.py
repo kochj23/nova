@@ -19,7 +19,7 @@ GENERATE_IMAGE_SH = Path.home() / ".openclaw/scripts/generate_image.sh"
 SWARMUI_URL = "http://192.168.1.6:7801"
 MAX_RETRIES = 2
 RETRY_DELAY = 10
-TIMEOUT = 300
+TIMEOUT = 600   # 2026-10-01: FLUX on MPS needs more than 300s; covers use the Hyper SDXL model anyway
 
 # ── OpenRouter Image Models (primary — no PII in prompts) ─────────────────────
 # Matched by mood/quality tier. All support text→image generation.
@@ -285,7 +285,7 @@ def apply_image_safety(prompt: str) -> str:
 
 def generate_image(prompt: str, width: int = 1024, height: int = 768, steps: int = 12,
                     model: str = None, section: str = "default") -> str | None:
-    """Generate an image. OpenRouter primary, local ComfyUI fallback.
+    """Generate an image. Local ComfyUI (SwarmUI) primary, OpenRouter fallback.
 
     Args:
         prompt: Image generation prompt (no PII — creative/descriptive only)
@@ -300,14 +300,15 @@ def generate_image(prompt: str, width: int = 1024, height: int = 768, steps: int
     # people-free scenes (server rooms, landscapes); decisive when a person is depicted.
     prompt = apply_image_safety(prompt)
 
-    # ── Primary: OpenRouter (fast, reliable, no GPU contention) ────────────────
-    result = _openrouter_generate(prompt, section)
+    # ── Primary: local SwarmUI/ComfyUI on the Studio's GPU (2026-10-01, Jordan: the
+    # 80-core M3 Ultra is idle and the cloud path ran dry on 2026-07-17; local keeps the
+    # images private and free). OpenRouter stays as the fallback, not the default.
+    result = _local_comfyui_generate(prompt, width, height, steps, model, section)
     if result:
         return result
 
-    # ── Fallback: Local ComfyUI ───────────────────────────────────────────────
-    _log("OpenRouter failed — falling back to local ComfyUI...")
-    return _local_comfyui_generate(prompt, width, height, steps, model)
+    _log("local ComfyUI failed — falling back to OpenRouter...")
+    return _openrouter_generate(prompt, section)
 
 
 def _openrouter_generate(prompt: str, section: str = "default") -> str | None:
@@ -419,7 +420,7 @@ def _openrouter_generate(prompt: str, section: str = "default") -> str | None:
 
 
 def _local_comfyui_generate(prompt: str, width: int = 1024, height: int = 768,
-                             steps: int = 12, model: str = None) -> str | None:
+                             steps: int = 12, model: str = None, section: str = "default") -> str | None:
     """Fallback: generate image locally via ComfyUI/SwarmUI."""
     if not ensure_backend():
         _log("Local fallback: SwarmUI not available")
@@ -427,8 +428,10 @@ def _local_comfyui_generate(prompt: str, width: int = 1024, height: int = 768,
 
     if model:
         model_key = model
+    elif section == "art":
+        model_key = get_random_model()          # Art Corner keeps its rotation (FLUX etc.)
     else:
-        model_key = get_random_model()
+        model_key = DEFAULT_MODEL               # covers: Juggernaut Hyper, ~20s on MPS (2026-10-01)
 
     model_info = MODELS.get(model_key, MODELS[DEFAULT_MODEL])
     model_file = model_info["file"]

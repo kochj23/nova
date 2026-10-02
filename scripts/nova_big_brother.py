@@ -4595,9 +4595,9 @@ class BBHandler(BaseHTTPRequestHandler):
 
 def _api_server_thread():
     try:
-        server = HTTPServer(("127.0.0.1", API_PORT), BBHandler)
+        server = HTTPServer(("0.0.0.0", API_PORT), BBHandler)   # LAN-bound per README policy (2026-10-01)
         server.timeout = 1
-        log(f"Diagnostics API on 127.0.0.1:{API_PORT}", level=LOG_INFO, source="big-brother")
+        log(f"Diagnostics API on 0.0.0.0:{API_PORT}", level=LOG_INFO, source="big-brother")
         while not _shutdown.is_set():
             server.handle_request()
         server.server_close()

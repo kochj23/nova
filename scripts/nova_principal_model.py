@@ -53,9 +53,9 @@ MEMSRV = "http://memory-server.digitalnoise.net:18790"
 # Native ollama failover — first non-empty wins (copied from nova_unclaimed_time.py).
 # .6 thrashes models and the router shim returns empty for qwen3's thinking output,
 # so hit the nodes natively; the fleet covers mac-mini's DHCP drift.
-OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434",
-                "http://192.168.1.252:11434", "http://192.168.1.7:11434",
-                "http://192.168.1.6:11434"]
+OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # batch pool: idle 24-thread Ryzens first (2026-10-01)
+                "http://192.168.1.86:11434", "http://192.168.1.77:11434",
+                "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
 LLM_MODEL = "qwen3:8b"
 WINDOW_DAYS = 30          # look-back; his direct traffic is sparse, so err wider
 INJECT_MAX = 1200         # concise injection cap for the gateway prompt

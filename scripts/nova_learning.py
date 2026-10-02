@@ -65,9 +65,9 @@ LLM_MODEL = "qwen3:8b"
 # Resilient inference: native ollama across failover nodes, first non-empty wins.
 # The .6 router shim returns empty for qwen3's thinking output, so hit ollama
 # natively. (Verbatim node list from nova_unclaimed_time.py, per the build brief.)
-OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434",
-                "http://192.168.1.252:11434", "http://192.168.1.7:11434",
-                "http://192.168.1.6:11434"]
+OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # batch pool: idle 24-thread Ryzens first (2026-10-01)
+                "http://192.168.1.86:11434", "http://192.168.1.77:11434",
+                "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
 
 STEPS_MIN, STEPS_MAX = 3, 5     # a curriculum item has 3-5 concrete study steps
 GAP_DEDUP_DAYS = 30             # don't re-record an identical gap within this window

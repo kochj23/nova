@@ -56,9 +56,9 @@ LLM_MODEL = "qwen3:8b"
 # Resilient inference: native ollama across failover nodes, first non-empty wins.
 # The .6 router shim returns empty for qwen3's thinking output, so hit ollama
 # natively. (Verbatim node list from nova_unclaimed_time.py, per the build brief.)
-OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434",
-                "http://192.168.1.252:11434", "http://192.168.1.7:11434",
-                "http://192.168.1.6:11434"]
+OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # batch pool: idle 24-thread Ryzens first (2026-10-01)
+                "http://192.168.1.86:11434", "http://192.168.1.77:11434",
+                "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
 
 REVIEW_DAYS = 14            # default horizon a commitment is given before re-measure
 MIN_SAMPLE = 3             # a re-measure needs at least this many rows to be honest

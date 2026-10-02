@@ -70,9 +70,9 @@ MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 # Native ollama failover — first non-empty wins. The router shim returns empty for
 # qwen3's thinking output, so hit the nodes directly (mirrors nova_self_model.py).
-OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434",
-                "http://192.168.1.252:11434", "http://192.168.1.7:11434",
-                "http://192.168.1.6:11434"]
+OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # batch pool: idle 24-thread Ryzens first (2026-10-01)
+                "http://192.168.1.86:11434", "http://192.168.1.77:11434",
+                "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
 LLM_MODEL = "qwen3:8b"
 
 # ── Conservatism knobs. These are deliberately slack: better to release nothing than

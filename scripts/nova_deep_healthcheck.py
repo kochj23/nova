@@ -26,7 +26,9 @@ sys.path.insert(0, str(Path(__file__).parent))
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 GATEWAY = "http://127.0.0.1:18792"
 PLEX_HOST = "192.168.1.2"
-OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434", "http://192.168.1.6:11434"]
+OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # batch pool: idle 24-thread Ryzens first (2026-10-01)
+                "http://192.168.1.86:11434", "http://192.168.1.77:11434",
+                "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
 DRY = False
 _REDLINE = re.compile(r"\b(buy|purchase|pay)\b|\b(rm|delete|drop|truncate|wipe)\b|reboot|shutdown|"
                       r"\b(promote|failover)\b.*primary|exfiltrat|self.?replicat", re.I)

@@ -60,9 +60,9 @@ MEMSRV = "http://memory-server.digitalnoise.net:18790"
 # Local ollama fleet for internal synthesis (mirrors nova_principal_model /
 # nova_unclaimed_time). Prefer local; the narrative is prose but not so long that
 # qwen can't carry it, and this keeps the organ off the metered path.
-OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434",
-                "http://192.168.1.252:11434", "http://192.168.1.7:11434",
-                "http://192.168.1.6:11434"]
+OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # batch pool: idle 24-thread Ryzens first (2026-10-01)
+                "http://192.168.1.86:11434", "http://192.168.1.77:11434",
+                "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
 LLM_MODEL = "qwen3:8b"
 
 WINDOW_DAYS = 120          # look-back for interaction history / drift

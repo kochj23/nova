@@ -50,9 +50,9 @@ LLM_MODEL = "qwen3:8b"
 # shim returns empty for qwen3's thinking output — so hit ollama natively across
 # nodes, first non-empty wins. mac-mini is DHCP (may drift off .251); the fleet
 # nodes cover it. (Resolving by IP here rather than a possibly-stale hostname.)
-OLLAMA_NODES = ["http://192.168.1.251:11434", "http://192.168.1.86:11434",
-                "http://192.168.1.252:11434", "http://192.168.1.7:11434",
-                "http://192.168.1.6:11434"]
+OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # batch pool: idle 24-thread Ryzens first (2026-10-01)
+                "http://192.168.1.86:11434", "http://192.168.1.77:11434",
+                "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
 TODAY = date.today().isoformat()
 
 # Tunable fractions (env-overridable, mainly for deterministic testing). Defaults
