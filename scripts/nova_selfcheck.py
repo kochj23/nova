@@ -29,7 +29,8 @@ PSQL = ["/opt/homebrew/bin/psql", "-h", "localhost", "-U", "kochj", "-tA"]
 STATE_DIR = Path.home() / ".openclaw" / "state"
 LOG = Path.home() / ".openclaw" / "logs" / "nova_selfcheck.log"
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
-PRIMARY = "192.168.1.10"  # EMERGENCY FAILOVER 2026-09-17: nova-core (.2) died hard, promoted nova-core5 (.10). .2 fenced pending pg_basebackup rebuild.
+PRIMARY = "192.168.1.2"  # SWITCHOVER 2026-09-28 14:07: back to nova-core (.2). Native PG on :5434; :5432 is the socat shim -> :5434 (what we use). Standbys .10/.7/.125 — see agent_docs db-topology.
+PG_REBUILD_PENDING = STATE_DIR / "pg_rebuild_pending.json"  # {"ips":[...],"note":...}; standbys listed here are being re-seeded — do not auto-restart, do not escalate (ignored after 48h)
 SLACK_DIGEST_CHANNEL = "C0BLJLKQMMZ"   # #nova-digest
 SLACK_ALERT_CHANNEL = "C0BMK83BLFJ"    # #nova-alerts
 CLAUDE = "/opt/homebrew/bin/claude"
@@ -97,7 +98,7 @@ def check_primary():
     record("pg-primary", "CRITICAL", None,
            f"primary {PRIMARY}:5432 unreachable — manual failover required (see agent_docs data-platform)")
     slack(SLACK_ALERT_CHANNEL,
-          ":rotating_light: *selfcheck: PG PRIMARY UNREACHABLE* — nova-core5 (.10) is down. "
+          f":rotating_light: *selfcheck: PG PRIMARY UNREACHABLE* — {PRIMARY} (nova-core) is down. "
           "No auto-failover configured; promote a replica per the data-platform runbook.")
     return False
 
@@ -112,28 +113,46 @@ def check_replication():
     if int(count) >= 2 and int(lag) < 900:
         record("replication", "ok", None, f"{count} replicas, max lag {lag}s")
         return
-    # Which replica is missing? core7 (.125) runs the pg17-replica container; .7 shows .7.
-    # Updated 2026-09-18: post-failover standbys are .7 + core7/.125, NOT the old .2.
+    # Topology since the 2026-09-28 switchover: primary .2, standbys .10 (native postgresql-17.service),
+    # .7 (LaunchDaemon com.kochj.postgresql17-replica), .125 (docker pg17-replica).
+    STANDBYS = (
+        ("192.168.1.10", "nova-core5/.10 native postgresql-17", SSH + ["kochj@192.168.1.10", "sudo -n systemctl restart postgresql-17"], 60),
+        ("192.168.1.7", ".7 tv_movies LaunchDaemon", SSH + ["kochj@192.168.1.7", "sudo -n launchctl kickstart -k system/com.kochj.postgresql17-replica"], 60),
+        ("192.168.1.125", "core7/.125 pg17-replica container", SSH + ["kochj@192.168.1.125", "docker restart pg17-replica"], 90),
+    )
+    pending = set()
+    try:
+        if PG_REBUILD_PENDING.exists() and time.time() - PG_REBUILD_PENDING.stat().st_mtime < 48 * 3600:
+            pending = set(json.loads(PG_REBUILD_PENDING.read_text()).get("ips", []))
+    except Exception as e:  # noqa: BLE001
+        log(f"pg_rebuild_pending unreadable: {e}")
     addrs = pg("SELECT COALESCE(string_agg(client_addr::text, ','), '') FROM pg_stat_replication", host=PRIMARY) or ""
     fixes = []
-    if "192.168.1.125" not in addrs:
-        sh(SSH + ["kochj@192.168.1.125", "docker restart pg17-replica"], 90)
-        fixes.append("restarted pg17-replica container on core7 (.125)")
-    if "192.168.1.7" not in addrs:
-        sh(SSH + ["kochj@192.168.1.7", "sudo -n launchctl kickstart -k system/com.kochj.postgresql17-replica"], 60)
-        fixes.append("kickstarted postgres daemon on .7")
-    time.sleep(20)
+    for ip, name, cmd, tmo in STANDBYS:
+        if ip in addrs or ip in pending:
+            continue
+        sh(cmd, tmo)
+        fixes.append(f"restarted {name}")
+    if fixes:
+        time.sleep(20)
     addrs2 = pg("SELECT COALESCE(string_agg(client_addr::text, ','), '') FROM pg_stat_replication", host=PRIMARY) or ""
-    out2 = str(len([a for a in addrs2.split(",") if a]))
-    status = "fixed" if int(out2) >= 2 else "FAIL"
-    missing = [n for ip, n in (("192.168.1.125", "core7/.125 pg17-replica container"),
-                               ("192.168.1.7", ".7 tv_movies LaunchDaemon")) if ip not in addrs2]
-    detail = f"was {count} replicas (lag {lag}s), now {out2} [{addrs2 or 'none'}]. MISSING: {', '.join(missing) or 'none'}."
-    if "192.168.1.125" in missing:
+    present = [a for a in addrs2.split(",") if a]
+    missing = [name for ip, name, _, _ in STANDBYS if ip not in addrs2]
+    missing_pending = [name for ip, name, _, _ in STANDBYS if ip not in addrs2 and ip in pending]
+    detail = f"was {count} replicas (lag {lag}s), now {len(present)} [{addrs2 or 'none'}]. MISSING: {', '.join(missing) or 'none'}."
+    if missing_pending:
+        detail += f" REBUILD PENDING (not auto-restarted): {', '.join(missing_pending)}."
+    if any(ip == "192.168.1.125" for ip, n, _, _ in STANDBYS if n in missing):
         detail += " core7 history: OOM-killed 2026-09-19 when shared_buffers exceeded the docker memory cap — check `docker events`/`docker stats`."
-    if "192.168.1.7" in missing:
+    if any(ip == "192.168.1.7" for ip, n, _, _ in STANDBYS if n in missing):
         detail += " NOTE .7 dies if macOS re-revokes Local Network — needs a GUI login via vnc://192.168.1.7 to re-approve."
-    record("replication", status, "; ".join(fixes) or "none", detail)
+    if len(present) >= 2:
+        status = "fixed" if fixes else "ok"
+    elif missing and len(missing) == len(missing_pending):
+        status = "PENDING"  # every missing standby is a known rebuild — no escalation
+    else:
+        status = "FAIL"
+    record("replication", status, ", ".join(fixes) or None, detail)
 
 
 def check_backups():
