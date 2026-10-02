@@ -55,7 +55,10 @@ SEARXNG_URL = resolve_url("searxng", "/search")
 SLACK_CHANNEL = nova_config.SLACK_NOTIFY
 STATE_DIR     = Path.home() / ".openclaw/workspace/state/ingest"
 LOG_FILE      = Path.home() / ".openclaw/logs/nova_ingest.log"
-WORK_DIR      = Path("/Volumes/Data/nova-ingest-work")
+# Jordan 2026-10-01: scratch never goes on the Studio's USB disks or root drive — the NAS,
+# whichever mount this host has (.2 = /mnt/nas, Macs = /Volumes/nas). mkdir fails loudly if neither.
+WORK_DIR      = next((Path(m) / "nova-ingest-work" for m in ("/mnt/nas", "/Volumes/nas") if Path(m).is_dir()),
+                     Path("/Volumes/nas/nova-ingest-work"))
 VIDEO_BASE    = Path("/Volumes/external/videos/youtube")
 MUSIC_DIR     = Path("/Volumes/external/music/YouTube")
 COOKIES_FILE  = Path.home() / ".openclaw/cache/yt_cookies.txt"
