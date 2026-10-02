@@ -120,6 +120,35 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ## Infrastructure & Security (June–October 2026)
 
+### Idle Capacity Put to Work — Batch Pool, Local Images, LAN Bindings, an Ops Sweep (2026-10-01)
+
+Jordan asked how much of the fleet is idle and whether it could mine. Measured: 160 threads, ~148 unclaimed; RandomX across all ten boxes ≈ 65 kH/s ≈ $80/mo against ≈ 570 W ≈ $116/mo at BWP's marginal tier — a loss, and the GPUs/NPUs mine nothing. The idle capacity was already earning more than that by replacing cloud inference (~$1,600 of Anthropic + OpenRouter on the card over nine months; the OpenRouter line went to zero the day the local pool took over). So the afternoon moved *more* of the paid work onto hardware already paid for:
+
+- **Batch pool** — the 29 interior organs' `OLLAMA_NODES` now lead with the two idle 24-thread Ryzens (nova-core7 `.125`, nova-core3 `.5`), then `.86`, `.77`, `.7`, and the Studio last. Every list had started with `.251`, the Mac mini's stale DHCP lease: each run paid a dead-host timeout, then competed with chat on the Studio. `qwen3:8b` pulled to `.5`; verified live (`nova_affect.llm()` → `.125`).
+- **Local-first image generation** — `nova_image_utils.generate_image()` tries SwarmUI/ComfyUI on the Studio's GPU first and OpenRouter second (was the reverse). Covers use Juggernaut Hyper deterministically (≈9 s warm); Art Corner keeps its FLUX rotation; local timeout 300→600 s. The local path had *never* been reachable: SwarmUI (`Host: localhost`) and ComfyUI (no `--listen`) were loopback-only while the journal runs on `.2` — every "fallback" had been a connection-refused followed by a cloud bill. Both now bind the LAN; `generate_image.sh` targets `192.168.1.6:8188`.
+- **LAN-binding audit** — Big Brother's API (`37461`, documented as LAN, bound to loopback; three LAN callers had been failing), endpoint monitor, request router and security scan → `0.0.0.0`. `nova_relay` stays loopback by design (it trusts loopback peers). Redis and pgbouncer were fine (both loopback *and* LAN; a de-duplicated listener listing had hidden that). README table corrected.
+- **Memory work on idle cores** — `REINDEX INDEX CONCURRENTLY memories_embedding_hnsw` (27.5 min, queue #2586), halfvec expression index building (queue #2587), `nova_memory_quality --clean` on `.125` quarantined 33,186 junk rows reversibly (`quarantine:<src>`); `nova_memory_reclassify` dry-run **held** — its top moves file television/crime_drama into `nova_articles` (needs a never-move-into guard for her own-voice sources).
+- **Ollama store moved** — `~/.ollama/models` → symlink to `/Volumes/Data/ollama/models` (the main SSD was at 87 %); `qwen3:235b` (142 GB) pulled there for a bigger local voice behind the gateway's heavy tier.
+- **Ops sweep** — incident self-loop fixed (correlator `META_CATEGORIES`, lifecycle never keys on them; #3100 had 2,479 of its own warnings as members), public-safety feed events (`traffic_watch/local/chp`) no longer become fleet incidents, CHP feed outages are a soft skip, identity jobs retry their DB connect, queue aging covers every auto-filed prefix (339 queued → 56), `mlx-lb` upstream repointed from the dead `.251` to `.77`.
+
+```mermaid
+flowchart LR
+    subgraph studio["Mac Studio .6 (M3 Ultra, 80-core GPU)"]
+        GW["chat / gateway tier<br/>qwen3:30b-a3b · nova:latest"]
+        IMG["SwarmUI :7801 → ComfyUI :8188<br/>(LAN-bound) covers ≈ 9 s"]
+        BIG["qwen3:235b (pulled to /Volumes/Data)"]
+    end
+    subgraph batch["Batch pool — the idle Ryzens"]
+        R7["nova-core7 .125 · 24 thr<br/>qwen3:8b"]
+        R3["nova-core3 .5 · 24 thr<br/>qwen3:8b"]
+    end
+    ORG["29 interior organs<br/>(affect · unclaimed · sleep cycle · self-model …)"] --> R7 --> R3 --> GW
+    J["journal on nova-core .2"] --> IMG
+    IMG -. fallback .-> OR["OpenRouter (cloud)"]
+    PG["PG primary .2<br/>REINDEX + halfvec"] --- R7
+    Q["memory quality --clean<br/>33k rows quarantined"] --> R7
+```
+
 ### Holding, Feeling Time, Resonating — Wishes #38–#41, Always-On Free Time, the Horror Shelf (2026-09-30 → 10-01)
 
 Four wishes in two days, all from her own pursuits, all granted under the standing yes — and the first time a wish was granted by *extending* what she has rather than adding an organ. Plus the end of rationed free time, the horror shelf in her lexicon, and a run of fixes found on the way.

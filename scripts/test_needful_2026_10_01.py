@@ -243,6 +243,54 @@ class TestRegression(unittest.TestCase):
         self.assertNotIn('return {"mode": "depleted"}', src)
 
 
+# ── 6b. REGRESSION: the afternoon's fleet changes ──────────────────────────────
+class TestFleetCapacity(unittest.TestCase):
+    ORGANS = ["nova_affect.py", "nova_unclaimed_time.py", "nova_sleep_cycle.py", "nova_self_model.py",
+              "nova_letting_go.py", "nova_imagination.py", "nova_predictions.py", "nova_values.py"]
+
+    def test_organs_use_the_batch_pool_first_and_never_the_dead_lease(self):
+        import re
+        for name in self.ORGANS:
+            src = _src(name)
+            m = re.search(r"^OLLAMA_NODES\s*=\s*\[(.*?)\]", src, re.S | re.M); self.assertIsNotNone(m, name)
+            urls = re.findall(r"http://[\d.]+:\d+", m.group(1))
+            self.assertEqual(urls[:2], ["http://192.168.1.125:11434", "http://192.168.1.5:11434"], name)
+            self.assertNotIn("http://192.168.1.251:11434", urls, name)
+
+    def test_image_generation_is_local_first_with_cloud_fallback(self):
+        import nova_image_utils as iu
+        calls = []
+        with mock.patch.object(iu, "apply_image_safety", lambda p: p), \
+             mock.patch.object(iu, "_local_comfyui_generate", lambda *a, **k: calls.append("local") or "/tmp/x.png"), \
+             mock.patch.object(iu, "_openrouter_generate", lambda *a, **k: calls.append("cloud") or "/tmp/y.png"):
+            self.assertEqual(iu.generate_image("x", section="operations"), "/tmp/x.png")
+        self.assertEqual(calls, ["local"])
+        calls.clear()
+        with mock.patch.object(iu, "apply_image_safety", lambda p: p), \
+             mock.patch.object(iu, "_local_comfyui_generate", lambda *a, **k: calls.append("local") or None), \
+             mock.patch.object(iu, "_openrouter_generate", lambda *a, **k: calls.append("cloud") or "/tmp/y.png"):
+            self.assertEqual(iu.generate_image("x", section="operations"), "/tmp/y.png")
+        self.assertEqual(calls, ["local", "cloud"])
+
+    def test_covers_use_the_fast_model_and_art_keeps_its_rotation(self):
+        src = _src("nova_image_utils.py")
+        self.assertIn('elif section == "art":', src)
+        self.assertIn("model_key = DEFAULT_MODEL", src)
+        self.assertIn("TIMEOUT = 600", src)
+        self.assertIn('COMFY_URL="${COMFY_URL:-http://192.168.1.6:8188}"', _src("generate_image.sh"))
+
+    def test_lan_bound_services_no_longer_pin_loopback(self):
+        for name in ("nova_big_brother.py", "nova_endpoint_monitor.py", "nova_request_router.py", "nova_security_scan.py"):
+            src = _src(name)
+            self.assertNotRegex(src, r'(HTTPServer|TCPSite)\((runner, )?\("?127\.0\.0\.1"?', name)
+        self.assertRegex(_src("nova_relay.py"), r'ThreadingHTTPServer\(\("127\.0\.0\.1"')   # deliberate loopback
+
+    def test_queue_aging_covers_every_auto_prefix(self):
+        src = _src("nova_queue_aging.py")
+        for pfx in ("SECURITY:", "STALE DAEMON:", "SYSTEMIC:", "CORE LIVENESS:", "TASK FAILING:", "OVERNIGHT:", "MAINTENANCE:"):
+            self.assertIn(f"description LIKE '{pfx}%'", src)
+
+
 # ── 7. EDGE CASES / DOCUMENTATION ──────────────────────────────────────────────
 class TestEdgesAndDocs(unittest.TestCase):
     def test_boosts_stay_modest(self):
