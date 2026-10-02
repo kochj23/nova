@@ -1254,6 +1254,11 @@ def topic_tech_today(state: dict) -> tuple[str, list[dict]]:
 
     topic = random.choice(candidates[:5])
     memories = recall_memories(topic, n=15)
+    try:                                               # 2026-10-01: injection screen at the boundary
+        import nova_untrusted
+        results = nova_untrusted.scan_results(results, key="content", title_key="title")
+    except Exception as e:
+        log(f"untrusted screen unavailable ({e}) — using raw results")
     web_context = [{"text": f"[Web] {r.get('title', '')}: {r.get('content', '')[:200]}",
                     "source": "web",
                     "metadata": {"url": r.get("url", ""), "title": r.get("title", ""), "engine": r.get("engine", "")}}

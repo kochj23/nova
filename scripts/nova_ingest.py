@@ -551,6 +551,9 @@ def page_relevance_check(text, seed_query, vector_name):
     hits = sum(1 for w in check_words if w in sample and len(w) > 3)
     return hits >= 1
 
+_INJECTION_DROPS = [0]   # chunks dropped by the prompt-injection screen this run (logged at exit)
+
+
 def remember(text, source, meta, done_hashes, dry_run=False):
     h = text_hash(text)
     if h in done_hashes:
@@ -558,12 +561,26 @@ def remember(text, source, meta, done_hashes, dry_run=False):
     if _FORBIDDEN_INGEST_RE.search(text or ""):
         done_hashes.add(h)
         return False  # explicit content blocked from memory
+    # 2026-10-01: prompt-injection screen. A chunk that reads as instructions to an AI is dropped;
+    # a merely suspect one is kept but tagged so recall can fence it.
+    injection = None
+    try:
+        import nova_untrusted
+        v = nova_untrusted.scan(text or "")
+        if v["verdict"] == "hostile":
+            done_hashes.add(h)
+            _INJECTION_DROPS[0] += 1
+            return False
+        if v["verdict"] == "suspect":
+            injection = {"injection_score": v["score"], "injection_hits": v["hits"]}
+    except Exception:
+        pass
     if dry_run:
         done_hashes.add(h)
         return True
     payload = json.dumps({
         "text": truncate_at_boundary(text), "source": source, "tier": "long_term",
-        "metadata": {**meta, "ingested_by": "nova_ingest.py", "privacy": "public"},
+        "metadata": {**meta, **(injection or {}), "ingested_by": "nova_ingest.py", "privacy": "public"},
     }).encode()
     for attempt in range(3):
         try:

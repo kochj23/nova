@@ -175,10 +175,33 @@ async def health_server(ctx: GatewayContext):
             log.error(f"Chat API error: {e}")
             return web.json_response({"ok": False, "error": str(e)}, status=500)
 
+    async def autonomy_pending(request):
+        from nova_gateway.autonomy import get_pending_approvals
+        rows = await get_pending_approvals(ctx.pg_pool, limit=20) if ctx.pg_pool else []
+        return web.json_response({"ok": True, "pending": rows}, dumps=lambda o: json.dumps(o, default=str))
+
+    async def autonomy_resolve(request):
+        """POST /autonomy/resolve {"pending_id": "...", "approved": true|false, "by": "jordan"}"""
+        try:
+            data = await request.json()
+        except Exception:
+            return web.json_response({"ok": False, "error": "Invalid JSON"}, status=400)
+        pid = str(data.get("pending_id", "")).strip()
+        if not pid:
+            return web.json_response({"ok": False, "error": "pending_id required"}, status=400)
+        from nova_gateway.tools import resolve_and_run
+        try:
+            out = await resolve_and_run(ctx, pid, bool(data.get("approved")), by=str(data.get("by") or "jordan"))
+            return web.json_response({"ok": True, "result": out})
+        except Exception as e:
+            return web.json_response({"ok": False, "error": str(e)}, status=500)
+
     app = web.Application()
     app.router.add_get("/health", health)
     app.router.add_post("/reload", reload)
     app.router.add_post("/api/chat", chat_api)
+    app.router.add_get("/autonomy/pending", autonomy_pending)
+    app.router.add_post("/autonomy/resolve", autonomy_resolve)
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", 18792)

@@ -233,13 +233,19 @@ class DuckDuckGoSearch:
                 data = json.loads(result.stdout)
                 results = []
 
-                for item in data.get("results", [])[:count]:
+                for item in data.get("results", [])[:count * 2]:
                     results.append({
                         "title": item.get("title", ""),
                         "url": item.get("url", ""),
                         "snippet": item.get("content", ""),
                         "source": item.get("engine", "searxng"),
                     })
+                try:                                   # 2026-10-01: injection screen at the boundary
+                    import nova_untrusted
+                    results = nova_untrusted.scan_results(results, key="snippet", title_key="title")
+                except Exception:
+                    pass
+                results = results[:count]
 
                 if results:
                     return results

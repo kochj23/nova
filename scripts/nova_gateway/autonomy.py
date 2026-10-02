@@ -11,6 +11,7 @@ Written by Jordan Koch (via Claude).
 
 import asyncio
 import logging
+import re
 import time
 from typing import Optional
 
@@ -25,11 +26,23 @@ async def load_autonomy_cache(pool) -> dict:
     """Load all autonomy rules into memory cache."""
     global _cache, _cache_ts
     try:
-        rows = await pool.fetch("SELECT action_type, channel, level FROM autonomy_rules")
+        rows = await pool.fetch("SELECT action_type, channel, level, arg_pattern, priority FROM autonomy_rules")
         new_cache = {}
         for row in rows:
-            key = (row["action_type"], row["channel"])
-            new_cache[key] = row["level"]
+            # 2026-10-01: rules may be argument-scoped. Plain rules keep the old (tool, channel)
+            # key; scoped rules live in a list under ("__scoped__", tool) and are tested by regex
+            # against the call's JSON arguments. Most specific match wins (see check_autonomy).
+            pat = row["arg_pattern"] if "arg_pattern" in row.keys() else None
+            if pat:
+                try:
+                    rx = re.compile(pat, re.IGNORECASE)
+                except re.error as e:
+                    log.warning(f"[autonomy] bad arg_pattern for {row['action_type']}: {e}")
+                    continue
+                new_cache.setdefault(("__scoped__", row["action_type"]), []).append(
+                    (row["channel"], rx, row["level"], int(row["priority"] or 0) if "priority" in row.keys() else 0))
+            else:
+                new_cache[(row["action_type"], row["channel"])] = row["level"]
         _cache = new_cache
         _cache_ts = time.time()
         log.info(f"[autonomy] Loaded {len(_cache)} rules")
@@ -38,12 +51,40 @@ async def load_autonomy_cache(pool) -> dict:
     return _cache
 
 
-async def check_autonomy(pool, tool_name: str, channel: str = "*") -> str:
-    """Check autonomy level for a tool on a channel. Returns 'auto'|'notify'|'approve'."""
+def channel_of(session_id: str) -> str:
+    """'gw2:slack:C123' -> 'slack'; anything else -> '*'."""
+    parts = (session_id or "").split(":")
+    return parts[1] if len(parts) >= 3 and parts[0] == "gw2" and parts[1] else "*"
+
+
+def scoped_level(tool_name: str, channel: str, params: dict | None) -> str | None:
+    """Argument-scoped rule lookup against the in-memory cache (pure; used by check_autonomy)."""
+    import json as _json
+    rules = _cache.get(("__scoped__", tool_name)) or []
+    if not rules:
+        return None
+    blob = _json.dumps(params or {}, sort_keys=True, default=str)
+    best = None
+    for ch, rx, level, prio in rules:
+        if ch not in (channel, "*") or not rx.search(blob):
+            continue
+        score = (2 if ch == channel and ch != "*" else 0) + prio
+        if best is None or score > best[0]:
+            best = (score, level)
+    return best[1] if best else None
+
+
+async def check_autonomy(pool, tool_name: str, channel: str = "*", params: dict | None = None) -> str:
+    """Check autonomy level for a tool on a channel. Returns 'auto'|'notify'|'approve'.
+    Precedence: argument-scoped rule (exact channel beats wildcard, then priority) >
+    exact tool+channel > tool+'*' > default 'notify'."""
     global _cache, _cache_ts
 
     if time.time() - _cache_ts > _CACHE_TTL:
         await load_autonomy_cache(pool)
+    scoped = scoped_level(tool_name, channel, params)
+    if scoped:
+        return scoped
 
     # Most specific match: exact tool + exact channel
     level = _cache.get((tool_name, channel))
@@ -125,16 +166,16 @@ async def get_pending_approvals(pool, limit: int = 10) -> list:
 
 
 async def update_rule(pool, action_type: str, channel: str, level: str,
-                      reason: str = "", set_by: str = "jordan"):
+                      reason: str = "", set_by: str = "jordan", arg_pattern: str | None = None):
     """Create or update an autonomy rule."""
     global _cache_ts
     try:
         await pool.execute(
-            """INSERT INTO autonomy_rules (action_type, channel, level, reason, set_by)
-               VALUES ($1, $2, $3, $4, $5)
-               ON CONFLICT (action_type, channel)
+            """INSERT INTO autonomy_rules (action_type, channel, level, reason, set_by, arg_pattern)
+               VALUES ($1, $2, $3, $4, $5, $6)
+               ON CONFLICT (action_type, channel, (coalesce(arg_pattern, '')))
                DO UPDATE SET level = $3, reason = $4, set_by = $5, updated_at = now()""",
-            action_type, channel, level, reason, set_by
+            action_type, channel, level, reason, set_by, arg_pattern
         )
         _cache_ts = 0  # Force cache refresh
     except Exception as e:

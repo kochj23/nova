@@ -205,6 +205,44 @@ Every prior layer let Nova *think, want, and propose* — but two dials kept her
 - **Rung 2 — Supervised execution (LIVE).** Human-**approved** proposals actually execute (`--mode execute-approved`), still individually approved, `SAFE_SERVICES`-only, redline+value-gated. Only genuine *restart* actions run; approved observations are **acknowledged**, never force-restarted (a bug caught live on night one — that, plus a `launchctl`-on-Linux cross-host bug, both fixed same day).
 - **Rung 3 — Earned autonomy (LIVE, split bar since 2026-10-01).** An action-**class** graduates to standing pre-approval after **clean human approvals with zero vetoes** *and* while `prediction_calibration_error <= 0.20`. The bar is **3** for classes that change no state (an observation note, a draft, a herd message, `ingest:gutenberg`) and **5** for anything that restarts, adjusts, retires or reinitialises (`nova_autonomy_safety.min_correct_for`). Calibration crossed under the gate on 2026-09-30 (0.192); five classes hold grants. An earned *executable* class (restart, Gutenberg ingest) acts with a **veto window** (`--mode auto`); an earned *non-executable* class is self-approved and handed straight to Claude's queue instead of waiting days for a yes. A veto still revokes the grant and poisons the class.
 
+### Four Things the Other Harnesses Had (2026-10-01)
+
+Jordan asked what OpenClaw 2.0 and Hermes Agent had shipped that Nova lacked. Four things, now in:
+
+| Addition | Where | What it is |
+|---|---|---|
+| **Skill distillation** (Hermes' procedural-memory loop) | `nova_skill_distill.py`, nova-core daily 07:20, table `nova_skills` | Repeated work — the same co-agency action ≥3×, the same Claude hand-off ≥3×, a pursuit woken ≥3×, an action class executed ≥5× in 60 days — is written up by the on-box model as a skill card (trigger, 3–7 steps, inputs, success check, rollback, risk), stored `proposed`, and filed as a co-agency proposal `adopt skill '<slug>'`. Approval hands it to Claude to implement; she never builds it herself. |
+| **Prompt-injection screening** (Hermes' safe-by-default) | `nova_untrusted.py`, wired into the gateway `web_search`/`browse_page` tools, `nova_web_search.search`, `nova_journal` web context, `nova_ingest.remember`, and the browser service | Deterministic regex scoring: `clean` passes, `suspect` is fenced as quoted data, `hostile` is dropped (and a hostile ingest chunk never becomes a memory). |
+| **Argument-scoped tool permissions, enforced** (OpenClaw 2.0) | `nova_gateway/autonomy.py` + `tools.py` + `health.py` + `agent.py`; `autonomy_rules.arg_pattern`, `autonomy_pending` | The rules table had existed since 09-16 with nothing consulting it. `dispatch_tool` now resolves auto/notify/approve per call — a scoped rule (regex over the JSON arguments) beats a plain one — runs or parks accordingly, and `approve` posts to Slack; Jordan settles it with `approve <id>` / `deny <id>` in any Nova channel or `POST /autonomy/resolve`. Seeds: reference scripts auto, outbound email approve, hand-off to Claude auto, browsing notify. |
+| **Read-only headless browser** (OpenClaw's live browser) | `nova_browser_service.py` on the Studio, launchd `net.digitalnoise.nova-browser`, `0.0.0.0:37482`, registry `browser`; gateway tool `browse_page` | Playwright Chromium, fresh context per request, images/media blocked, dialogs dismissed, no clicks/forms/cookies/downloads, private and LAN targets refused unless allowlisted, 30 s and 2 MB caps, output screened by `nova_untrusted`. |
+
+```mermaid
+flowchart LR
+  subgraph Outside["untrusted outside"]
+    W[web search snippets]
+    P[fetched pages]
+    B[books / mail / transcripts]
+  end
+  U{{nova_untrusted<br/>clean · suspect→fenced · hostile→dropped}}
+  W --> U
+  P --> U
+  B --> U
+  U --> M[(memory)]
+  U --> L[model prompts]
+  subgraph Gateway["gateway tool call"]
+    T[tool + JSON args] --> R{autonomy_rules<br/>arg_pattern first}
+    R -- auto --> X[run]
+    R -- notify --> X --> S[Slack note]
+    R -- approve --> Q[(autonomy_pending)] --> J[Jordan: approve id] --> X
+  end
+  X -. browse_page .-> BR[nova_browser_service<br/>Studio, read-only]
+  BR --> U
+  subgraph Skills["procedural memory"]
+    REP[repeats in proposals / hand-offs / pursuits / ledger] --> SK[skill card → nova_skills]
+    SK --> CO[co-agency proposal: adopt skill] --> J
+  end
+```
+
 **Seeing her own dashboards, and not lying about herself (2026-10-01).** Her tech-today column had shipped sixteen reruns of one stock topic because SearXNG's general engines (Brave, DuckDuckGo, Startpage) CAPTCHA a home IP and every caller swallowed the empty list. Fixed in three places: SearXNG on .2 and .86 now runs home-IP-safe engines only (wikipedia, wikinews, wikidata, hackernews, arxiv, bing, bing news, yahoo news — settings archived on the NAS); `nova_journal._searxng_search` raises a deduped warning when the backend answers with nothing, and `topic_tech_today` raises `SkipArticle` instead of inventing a topic (run_profile logs SKIP and exits 0). `nova_journal.self_inventory_block()` is appended to the system prompt of every tech-today piece and of any opinion/essay whose topic matches `_AI_TOPIC_RE`: what she is (system map), what is live right now (gateway backends, Studio models, memory count, calibration, earned classes), and `agent_docs current-model-landscape` (the Claude 5 family and her own stack), with a rule never to describe a capability she already has as future tense. New organ `nova_dashboard_look.py` (Studio, every 2h): renders each target Grafana dashboard to PNG in memory, asks `qwen3-vl:4b` for strict JSON (ok/watch/alarm + findings + numbers), alerts via nova_notify on a new alarm (6h dedupe), stores a private memory on watch/alarm, and is read-only against everything.
 
 **Her own reading (2026-10-01).** Nova may propose `ingest gutenberg #<id> into <vector> — <title>`: one public-domain book that serves a goal or growth commitment. It is an executable co-agency class (`ingest:gutenberg`) with no service target: the gate refuses one that names a service, the executor fetches the plain-text edition to the NAS (`/mnt/nas` or `/Volumes/nas`, never the Studio's own disks), size-caps it at 15 MB, runs `nova_ingest.py file` into the named vector, and records the rollback (delete that job's memories) in the ledger without ever running it. Supervised when Jordan approves; on earned trust she reads up to the class's daily limit (3) on her own and tells him.

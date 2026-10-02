@@ -21,6 +21,10 @@ from nova_gateway.config import (
 )
 from nova_gateway.context import GatewayContext
 from nova_gateway.session import log_tool_execution
+try:
+    import nova_untrusted as _untrusted          # prompt-injection screen (scripts dir is on sys.path)
+except Exception:                                # pragma: no cover
+    _untrusted = None
 
 log = logging.getLogger("nova_gateway_v2")
 
@@ -70,6 +74,16 @@ TOOL_REGISTRY: dict[str, dict] = {
             "query": {"type": "string", "description": "Search query"},
         },
         "required": ["query"],
+    },
+    "browse_page": {
+        "description": "Read one web page (JavaScript rendered, read-only) and return its title, text and "
+                       "links. Use after web_search when you need the actual content of a page. "
+                       "Public sites only; nothing on the LAN.",
+        "parameters": {
+            "url": {"type": "string", "description": "http(s) URL to read"},
+            "max_chars": {"type": "integer", "description": "Text cap (default 6000, max 20000)"},
+        },
+        "required": ["url"],
     },
     "homekit_scene": {
         "description": "Execute a HomeKit scene via Shortcuts CLI",
@@ -179,12 +193,76 @@ TOOL_REGISTRY: dict[str, dict] = {
 
 # ── Tool dispatch ────────────────────────────────────────────────────────────
 
-async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict) -> str:
-    """Execute a single structured tool call. Returns the tool output string."""
+async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict,
+                        session_id: str = "", enforce: bool = True) -> str:
+    """Execute a single structured tool call, THROUGH the autonomy rules (2026-10-01: the rules
+    table existed since 09-16 but nothing consulted it). auto → run; notify → run and tell
+    Jordan; approve → park it in autonomy_pending, tell Jordan how to approve, run nothing."""
     if tool_name not in TOOL_REGISTRY:
         return f"[error: unknown tool '{tool_name}']"
+    level = "auto"
+    if enforce and ctx.pg_pool is not None:
+        try:
+            from nova_gateway.autonomy import check_autonomy, channel_of, request_approval
+            channel = channel_of(session_id)
+            level = await check_autonomy(ctx.pg_pool, tool_name, channel, tool_params)
+        except Exception as e:
+            log.warning(f"[autonomy] check failed for {tool_name}: {e} — treating as notify")
+            level = "notify"
+        if level == "approve":
+            pid = await request_approval(ctx.pg_pool, "", session_id, tool_name, tool_params,
+                                         context=f"channel={channel}")
+            await _slack_notify(ctx, f":closed_lock_with_key: *Nova wants to run* `{tool_name}` "
+                                     f"`{json.dumps(tool_params)[:300]}` (from {channel}).\n"
+                                     f"Reply `approve {pid}` or `deny {pid}` in any Nova channel.")
+            log.info(f"[autonomy] {tool_name} parked for approval ({pid})")
+            return (f"[awaiting Jordan's approval — request {pid} is queued. Tell him it's waiting for his "
+                    f"'approve {pid}'; do not retry or pretend it ran.]")
+    out = await _dispatch_now(ctx, tool_name, tool_params)
+    if level == "notify":
+        asyncio.create_task(_slack_notify(ctx, f":gear: *Auto-executed* `{tool_name}` "
+                                               f"`{json.dumps(tool_params)[:200]}`\n{out[:200]}"))
+    return out
 
+
+async def _slack_notify(ctx: GatewayContext, text: str) -> None:
     try:
+        from nova_gateway.config import keychain
+        token = keychain("nova-slack-bot-token")
+        if not token:
+            return
+        from nova_gateway.channels.slack import slack_post_message
+        await slack_post_message(ctx, token, SLACK_NOTIFY_CHANNEL, text)
+    except Exception as e:
+        log.warning(f"[autonomy] slack notify failed: {e}")
+
+
+async def resolve_and_run(ctx: GatewayContext, pending_id: str, approved: bool, by: str = "jordan") -> str:
+    """Jordan said 'approve <id>' / 'deny <id>' (chat) or POSTed /autonomy/resolve: settle the
+    pending call and, if approved, run it now with the rules bypassed (he IS the rule)."""
+    if ctx.pg_pool is None:
+        return "[autonomy: database unavailable]"
+    from nova_gateway.autonomy import resolve_pending
+    row = await resolve_pending(ctx.pg_pool, pending_id, approved, resolved_by=by)
+    if row is None and not approved:
+        # resolve_pending returns the row only on approval; check existence so 'deny' is honest
+        try:
+            exists = await ctx.pg_pool.fetchval("SELECT 1 FROM autonomy_pending WHERE pending_id=$1", pending_id)
+        except Exception:
+            exists = True
+        return f"Denied {pending_id}. I won't run it." if exists else f"Nothing pending under {pending_id}."
+    if row is None:
+        return f"Nothing pending under {pending_id} (already resolved, or unknown id)."
+    out = await _dispatch_now(ctx, row["action_type"], row["tool_params"])
+    await _slack_notify(ctx, f":white_check_mark: Approved `{row['action_type']}` ({pending_id}) ran:\n{out[:400]}")
+    return f"Approved and ran `{row['action_type']}`:\n{out[:1500]}"
+
+
+async def _dispatch_now(ctx: GatewayContext, tool_name: str, tool_params: dict) -> str:
+    """The actual tool switch. Only dispatch_tool/resolve_and_run call this."""
+    try:
+        if tool_name == "browse_page":
+            return await _tool_browse_page(ctx, tool_params)
         if tool_name == "run_script":
             return await _tool_run_script(ctx, tool_params)
         elif tool_name == "memory_search":
@@ -346,7 +424,10 @@ async def _tool_web_search(ctx: GatewayContext, params: dict) -> str:
         )
         resp.raise_for_status()
         data = resp.json()
-        results = data.get("results", [])[:5]
+        results = data.get("results", [])[:8]
+        if _untrusted is not None:                       # 2026-10-01: injection screen at the boundary
+            results = _untrusted.scan_results(results, key="content", title_key="title")
+        results = results[:5]
         if not results:
             return f"[no web results for '{query}']"
         formatted = []
@@ -355,6 +436,30 @@ async def _tool_web_search(ctx: GatewayContext, params: dict) -> str:
         return "\n".join(formatted)
     except Exception as e:
         return f"[web search error: {e}]"
+
+
+async def _tool_browse_page(ctx: GatewayContext, params: dict) -> str:
+    """Read-only headless fetch through nova_browser_service (Studio). The service refuses
+    private targets and fences/drops prompt-injection; we cap what reaches the model."""
+    url = (params.get("url") or "").strip()
+    if not url:
+        return "[error: no url specified]"
+    try:
+        max_chars = max(500, min(int(params.get("max_chars") or 6000), 20000))
+    except Exception:
+        max_chars = 6000
+    try:
+        resp = await ctx.http.get(resolve_url("browser", "/fetch"),
+                                  params={"url": url, "max_chars": max_chars, "links": 20}, timeout=60)
+        data = resp.json()
+    except Exception as e:
+        return f"[browse error: {e}]"
+    if not data.get("ok"):
+        return f"[browse refused: {data.get('error', 'unknown')}]"
+    links = "\n".join(f"- {l.get('text', '')[:60]} — {l.get('href', '')}" for l in (data.get("links") or [])[:12])
+    note = " (content dropped: prompt-injection pattern)" if data.get("verdict") == "hostile" else ""
+    return (f"# {data.get('title', '')}\n{data.get('url', url)}{note}\n\n{data.get('text', '')}"
+            + (f"\n\nLinks:\n{links}" if links else ""))
 
 
 async def _tool_homekit_scene(ctx: GatewayContext, params: dict) -> str:
@@ -580,7 +685,7 @@ async def execute_tool_calls(ctx: GatewayContext, response_data: dict, session_i
 
         # Execute with timing
         t0 = time.time()
-        output = await dispatch_tool(ctx, tool_name, tool_params)
+        output = await dispatch_tool(ctx, tool_name, tool_params, session_id=session_id)
         duration_ms = int((time.time() - t0) * 1000)
 
         log.info(f"Tool result: {tool_name} completed in {duration_ms}ms ({len(output)} chars)")
@@ -722,7 +827,7 @@ async def execute_spoken_tool_calls(ctx: GatewayContext, text: str, session_id: 
         log.info(f"Spoken tool call: {tool_name}({json.dumps(tool_params)[:100]})")
 
         t0 = time.time()
-        output = await dispatch_tool(ctx, tool_name, tool_params)
+        output = await dispatch_tool(ctx, tool_name, tool_params, session_id=session_id)
         duration_ms = int((time.time() - t0) * 1000)
 
         log.info(f"Spoken tool result: {tool_name} completed in {duration_ms}ms ({len(output)} chars)")

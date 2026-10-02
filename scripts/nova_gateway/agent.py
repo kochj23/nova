@@ -6,6 +6,7 @@ Written by Jordan Koch.
 """
 
 import asyncio
+import re
 import hashlib
 import json
 import logging
@@ -694,6 +695,9 @@ async def _generate_cross_channel_summary(ctx: GatewayContext, session_id: str, 
 
 # ── Session ID helpers ────────────────────────────────────────────────────────
 
+_APPROVAL_RE = re.compile(r"^(approve|deny)\s+([0-9a-f-]{8,})\s*$", re.IGNORECASE)
+
+
 def session_id(channel: str, channel_id: str) -> str:
     """Stable session ID per channel — resets on gateway restart (by design)."""
     return f"gw2:{channel}:{channel_id}"
@@ -1237,6 +1241,12 @@ async def run_agent(ctx: GatewayContext, message: str, session_id: str,
         ctx.agent_crash_counts[agent_id] = 0
         log.info(f"[{trace_id}] Agent {agent_id} circuit breaker reset — re-enabled")
 
+    # 2026-10-01: Jordan settling a parked tool call ('approve <id>' / 'deny <id>') never goes to
+    # the model — it is a command, answered deterministically.
+    m = _APPROVAL_RE.match((message or "").strip())
+    if m:
+        from nova_gateway.tools import resolve_and_run
+        return await resolve_and_run(ctx, m.group(2), m.group(1).lower() == "approve", by=session_id or "jordan")
     # Execute with timeout and error boundary
     try:
         response = await asyncio.wait_for(
