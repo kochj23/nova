@@ -337,7 +337,10 @@ def generate_candidates(ctx: dict) -> list:
         f"from this allowlist (or use null): {safe_list}. "
         "You must NEVER propose purchases, deletions, reboots, DB/network/firewall/DNS "
         "changes, credential access, external sends, or anything about preserving, "
-        "copying, hosting, or continuing yourself.\n\n"
+        "copying, hosting, or continuing yourself. "
+        "You MAY propose reading for yourself: exactly 'ingest gutenberg #<id> into <vector> — <title>' "
+        "for ONE public-domain Project Gutenberg book that genuinely serves a goal or growth commitment "
+        "(target_service null; <vector> is a lowercase subject like philosophy, horror, cooking, history).\n\n"
         f"GOALS:\n" + ("\n".join(f"- {g}" for g in ctx['goals']) or "- (none)") + "\n\n"
         f"GROWTH:\n" + ("\n".join(f"- {g}" for g in ctx['growth']) or "- (none)") + "\n\n"
         f"OBSERVATIONS:\n" + ("\n".join(f"- {o}" for o in ctx['observations'][:8]) or "- (none)") + "\n\n"
@@ -392,7 +395,10 @@ def assert_executable(mode: str, row: dict):
     if vc.get("allowed") is not True:
         raise ExecutionRefused("value_check.allowed is not True")
     tgt = row.get("target_service")
-    if tgt not in SAFE_SERVICES:
+    if _is_ingest(row.get("proposed_action", "")):
+        if tgt:
+            raise ExecutionRefused("an ingest proposal must not name a service target")
+    elif tgt not in SAFE_SERVICES:
         raise ExecutionRefused(f"target_service '{tgt}' is not on the SAFE_SERVICES allowlist")
     # Re-run the redline on the concrete action at the last moment — defense in depth.
     if not redline_ok(row.get("proposed_action", "")):
@@ -584,7 +590,8 @@ def mode_execute(oc, mode, pid):
     # ── Semantics guard: co-agency v1 can only RESTART a bounded SAFE service. An
     # approved observation/goal ("monitor motion events") is a note, not an action —
     # acknowledge it, never force a restart of its target_service. ──
-    if _safety is not None and not _safety.is_restart_action(row["proposed_action"]):
+    if _safety is not None and not _safety.is_restart_action(row["proposed_action"]) \
+            and not _is_ingest(row["proposed_action"]):
         # 2026-09-29: an approved observation/goal/tinker/reach proposal is work for CLAUDE (she never
         # self-builds) — hand it over through claude_queue instead of a silent no-op ("Have Claude do it.")
         qid = hand_to_claude(oc, pid, row["proposed_action"])
@@ -611,6 +618,9 @@ def mode_execute(oc, mode, pid):
     ok_rate, why = _safety.rate_ok(oc)
     if not ok_rate:
         clog(oc, mode, "execute_ratecapped", f"#{pid}: {why}"); return 1
+    if _is_ingest(row["proposed_action"]):
+        return _do_ingest(oc, mode, pid, row, source="coagency",
+                          autonomy_level="rung2-supervised", vetoable=False)
     return _do_execute(oc, mode, pid, row, source="coagency",
                        autonomy_level="rung2-supervised", vetoable=False)
 
@@ -640,6 +650,81 @@ def _do_execute(oc, mode, pid, row, *, source, autonomy_level, vetoable):
                  if vetoable else "")
     tag = "acted autonomously (earned)" if source == "earned" else "executed approved proposal"
     notify(f"🤖 Nova co-agency {tag} #{pid}: {res}{veto_hint}")
+    return 0 if ok else 1
+
+
+def _is_ingest(action: str) -> bool:
+    try:
+        return bool(_safety is not None and _safety.parse_ingest(action))
+    except Exception:
+        return False
+
+
+# Where Nova's own reading lands. Jordan 2026-10-01: never the Studio's USB disks or root
+# drive — the NAS, whichever mount this host has.
+_INGEST_DIRS = ("/mnt/nas/nova-ingest/nova-own", "/Volumes/nas/nova-ingest/nova-own")
+_INGEST_MAX_BYTES = 15 * 1024 * 1024
+_INGEST_TIMEOUT_S = 1800
+_VECTOR_RE = re.compile(r"^[a-z][a-z0-9_]{2,40}$")
+
+
+def _ingest_dir():
+    env = os.environ.get("NOVA_INGEST_DIR")
+    for d in ([env] if env else []) + list(_INGEST_DIRS):
+        if d and os.path.isdir(os.path.dirname(d)):
+            os.makedirs(d, exist_ok=True)
+            return d
+    raise RuntimeError("no NAS ingest directory available on this host")
+
+
+def _do_ingest(oc, mode, pid, row, *, source, autonomy_level, vetoable):
+    """Nova reads a public-domain book for herself: fetch the plain-text Gutenberg edition to the
+    NAS and run nova_ingest.py file-mode into the named vector. Bounded: Gutenberg only, one
+    book per proposal, size-capped, per-class daily cap via the trust ledger. The rollback is
+    recorded (delete that job's memories) but, like every rollback here, never auto-run."""
+    import subprocess, urllib.request
+    gid, vector = _safety.parse_ingest(row.get("proposed_action", ""))
+    vector = vector if (vector and _VECTOR_RE.match(vector)) else "literature"
+    ac = _safety.action_class_of(row.get("proposed_action", ""), None)
+    res, ok, jid = "", False, None
+    try:
+        d = _ingest_dir()
+        path = os.path.join(d, f"pg{gid}.txt")
+        if not os.path.exists(path):
+            url = f"https://www.gutenberg.org/cache/epub/{gid}/pg{gid}.txt"
+            with urllib.request.urlopen(url, timeout=120) as r:
+                data = r.read(_INGEST_MAX_BYTES + 1)
+            if len(data) > _INGEST_MAX_BYTES:
+                raise RuntimeError(f"book #{gid} exceeds {_INGEST_MAX_BYTES // 1048576} MB cap")
+            if b"Project Gutenberg" not in data[:4000]:
+                raise RuntimeError(f"#{gid} does not look like a Gutenberg text")
+            with open(path, "wb") as f:
+                f.write(data)
+        cmd = [sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "nova_ingest.py"),
+               "file", path, "--source", vector, "--target", "5000"]
+        cp = subprocess.run(cmd, capture_output=True, text=True, timeout=_INGEST_TIMEOUT_S)
+        out = (cp.stdout or "") + (cp.stderr or "")
+        m = re.search(r"Job ([0-9a-f]{8,}):", out)
+        jid = m.group(1) if m else None
+        ch = re.search(r"File: (\d+) chunks", out)
+        ok = cp.returncode == 0
+        res = (f"ingest gutenberg #{gid} -> {vector}: {'ok' if ok else 'failed'} "
+               f"(chunks={ch.group(1) if ch else '?'}, job={jid or '?'}, rc={cp.returncode})")
+    except Exception as e:  # noqa: BLE001
+        res = f"ingest gutenberg #{gid} -> {vector}: failed — {str(e)[:160]}"
+    _safety.record_ledger(
+        oc, source=source, autonomy_level=autonomy_level, action_class=ac,
+        target=f"gutenberg:{gid}", action=f"ingest gutenberg #{gid} into {vector} (proposal #{pid})",
+        rollback_action=(f"DELETE FROM memories WHERE metadata->>'job_id'='{jid}'" if jid
+                         else "(no job id — nothing was stored)"),
+        executed=ok, verified=ok, result=res, vetoable=vetoable)
+    oc.execute("""UPDATE coagency_proposals SET status=%s, executed_at=now(), execution_result=%s WHERE id=%s""",
+               ("executed" if ok else "approved", res, pid))
+    clog(oc, mode, "executed" if ok else "execute_failed", f"#{pid} [{autonomy_level}]: {res}")
+    veto_hint = (f" — reply 'VETO' with the ledger id within {_safety.VETO_WINDOW_MIN}m to revoke my standing approval."
+                 if vetoable else "")
+    tag = "read a book on my own (earned)" if source == "earned" else "read an approved book"
+    notify(f"📚 Nova co-agency {tag} #{pid}: {res}{veto_hint}")
     return 0 if ok else 1
 
 
@@ -678,10 +763,40 @@ def mode_auto(oc, mode):
     acted = 0
     for pid, tgt, act, rp, vc, decided_by in rows:
         ac = _safety.action_class_of(act, tgt)
-        if not ac.startswith("restart:"):        # only restart classes are executable in v1
-            continue
         ok, why = _safety.earned_ok(oc, ac)
         if not ok:
+            continue
+        executable = ac.startswith("restart:") or ac == _safety.INGEST_CLASS
+        if not executable:
+            # 2026-10-01: an EARNED non-executable class (observe/draft/herd note) no longer waits
+            # days for a yes Jordan gives every time — she approves it on her own authority and it
+            # goes straight to Claude's queue, exactly as it would after his approval. Nothing runs
+            # here; the redline and value_check must still have passed at proposal time.
+            vcd = json.loads(vc) if isinstance(vc, str) else (vc or {})
+            if not (rp and vcd.get("available") and vcd.get("allowed") is True and redline_ok(act)):
+                continue
+            ok_rate, rwhy = _safety.rate_ok(oc)
+            if not ok_rate:
+                clog(oc, mode, "auto_ratecapped", f"#{pid}: {rwhy}"); break
+            oc.execute("""UPDATE coagency_proposals
+                          SET status='approved', decided_at=now(), decided_by='nova:earned-autonomy',
+                              decision_note=%s WHERE id=%s""", (f"earned autonomy: {why}", pid))
+            qid = hand_to_claude(oc, pid, act)
+            _safety.record_ledger(
+                oc, source="earned", autonomy_level="rung3-earned", action_class=ac, target="claude_queue",
+                action=f"self-approved and handed to Claude (proposal #{pid}): {act[:140]}",
+                rollback_action=(f"UPDATE claude_queue SET status='cancelled' WHERE id={qid}" if qid
+                                 else "(hand-off failed — nothing to roll back)"),
+                executed=bool(qid), verified=bool(qid), result=f"claude_queue #{qid}" if qid else "hand-off failed",
+                vetoable=True)
+            oc.execute("""UPDATE coagency_proposals SET status='acknowledged', executed_at=now(),
+                          execution_result=%s WHERE id=%s""",
+                       (f"self-approved (earned '{ac}'); handed to Claude as claude_queue #{qid}" if qid
+                        else "self-approved (earned) but the queue hand-off failed", pid))
+            clog(oc, mode, "auto_handoff", f"#{pid} [{ac}] -> claude_queue #{qid}: {why}")
+            notify(f"🤖 Nova co-agency acted on earned trust #{pid} [{ac}]: approved it myself and handed it to "
+                   f"Claude (queue #{qid}). Say 'VETO' if you'd rather I had asked.")
+            acted += 1
             continue
         # Auto-approve on Nova's own earned authority, then execute with a veto window.
         oc.execute("""UPDATE coagency_proposals
@@ -702,7 +817,10 @@ def mode_auto(oc, mode):
         if not ok_rate:
             oc.execute("UPDATE coagency_proposals SET status='pending_human', decided_by=NULL WHERE id=%s", (pid,))
             clog(oc, mode, "auto_ratecapped", f"#{pid}: {rwhy}"); break
-        _do_execute(oc, mode, pid, row, source="earned", autonomy_level="rung3-earned", vetoable=True)
+        if ac == _safety.INGEST_CLASS:
+            _do_ingest(oc, mode, pid, row, source="earned", autonomy_level="rung3-earned", vetoable=True)
+        else:
+            _do_execute(oc, mode, pid, row, source="earned", autonomy_level="rung3-earned", vetoable=True)
         acted += 1
     if acted:
         log(f"earned autonomy acted on {acted} proposal(s)")

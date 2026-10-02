@@ -43,6 +43,40 @@ KILL_FILE = os.path.expanduser("~/.openclaw/.autonomy-kill")   # offline tripwir
 DEFAULT_CAPS = {"per_hour": 6, "per_day": 20}                  # autonomous executions
 MIN_CORRECT = 5           # human approvals of a class before it may graduate
 MAX_CALIB = 0.20          # earned autonomy only while calibration_error <= this
+# 2026-10-01 (Jordan: "do what you suggest"): split the bar. A class that changes NO state —
+# an observation note, a draft, a herd message, reading a public-domain book — graduates
+# after MIN_CORRECT_REVERSIBLE clean approvals. Anything that restarts/adjusts/retires keeps
+# the full MIN_CORRECT. The calibration gate and the one-veto poison rule apply to both.
+MIN_CORRECT_REVERSIBLE = 3
+_STATE_VERBS = frozenset({
+    "adjust", "reboot", "restart", "reinitialize", "reinit", "retire", "clear", "rebuild",
+    "reset", "delete", "remove", "disable", "enable", "set", "change", "modify", "update",
+    "kill", "stop", "start", "rotate", "migrate", "move", "rename", "install", "uninstall",
+})
+# Nova may read for herself: "ingest gutenberg #<id> [into <vector>] — <title>"
+_INGEST_RE = re.compile(r"^\s*ingest\s+(?:project\s+)?gutenberg\s+#?\s*(\d{1,6})(?!\d)"
+                        r"(?:\s+into\s+(?-i:([a-z][a-z0-9_]{2,40}))(?![A-Za-z0-9_]))?", re.IGNORECASE)
+INGEST_CLASS = "ingest:gutenberg"
+
+
+def min_correct_for(action_class: str) -> int:
+    """How many clean human approvals this CLASS needs before it may graduate.
+    restart:* and any observe:<state-verb...> keep the full bar; everything else is
+    reversible and takes the lower one."""
+    ac = (action_class or "").lower()
+    if ac.startswith("restart:"):
+        return MIN_CORRECT
+    tail = ac.split(":", 1)[1] if ":" in ac else ac
+    head = re.split(r"[^a-z]", tail, maxsplit=1)[0]
+    if tail in _STATE_VERBS or head in _STATE_VERBS:
+        return MIN_CORRECT
+    return MIN_CORRECT_REVERSIBLE
+
+
+def parse_ingest(action: str):
+    """('<gutenberg id>', '<vector or None>') if the action is a Gutenberg ingest, else None."""
+    m = _INGEST_RE.match(action or "")
+    return (m.group(1), (m.group(2) or None)) if m else None
 VETO_WINDOW_MIN = 60      # minutes a human has to VETO an earned action
 
 
@@ -181,6 +215,8 @@ def action_class_of(action: str, target: str | None = None) -> str:
             return f"restart:{target}"
         m = re.search(r"(?:restart|relaunch|kickstart|bounce)\s+([a-z0-9\-\._]+)", a)
         return f"restart:{m.group(1)}" if m else "restart:unknown"
+    if _INGEST_RE.match(a):
+        return INGEST_CLASS
     verb = a.split()[0] if a.split() else "note"
     return f"observe:{target or verb}"
 
@@ -264,7 +300,8 @@ def _maybe_grant(oc, action_class: str) -> None:
     if not r:
         return
     correct, wrong, granted = r
-    qualifies = (wrong == 0 and correct >= MIN_CORRECT and ce is not None and ce <= MAX_CALIB)
+    need = min_correct_for(action_class)
+    qualifies = (wrong == 0 and correct >= need and ce is not None and ce <= MAX_CALIB)
     if qualifies and not granted:
         oc.execute("""UPDATE autonomy_trust SET granted=true, granted_at=now(),
                       notes=%s, updated_at=now() WHERE action_class=%s""",
@@ -294,7 +331,7 @@ def earned_ok(oc, action_class: str) -> tuple[bool, str]:
     if wrong > 0:
         return False, f"class is distrusted (wrong_count={wrong})"
     if not granted:
-        return False, f"not yet earned (correct={correct}/{MIN_CORRECT})"
+        return False, f"not yet earned (correct={correct}/{min_correct_for(action_class)})"
     ok, why = rate_ok(oc)
     if not ok:
         return False, why
@@ -356,7 +393,15 @@ if __name__ == "__main__":
     conn = psycopg2.connect(OPS_DSN); conn.autocommit = True; oc = conn.cursor()
     ensure_schema(oc)
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
-    if cmd == "kill":
+    if cmd == "regrade":
+        # Re-run the grant test for every ungranted class (used once after a bar change).
+        oc.execute("SELECT action_class FROM autonomy_trust WHERE NOT granted ORDER BY 1")
+        for (ac,) in oc.fetchall():
+            _maybe_grant(oc, ac)
+        oc.execute("SELECT action_class, correct_count, granted FROM autonomy_trust ORDER BY granted DESC, 1")
+        for ac, c, g in oc.fetchall():
+            print(f"{'GRANTED ' if g else '        '}{ac}  correct={c} need={min_correct_for(ac)}")
+    elif cmd == "kill":
         engage_kill(oc, note=" ".join(sys.argv[2:]) or "cli")
         print("KILL SWITCH ENGAGED — all autonomy halted.")
     elif cmd == "unkill":

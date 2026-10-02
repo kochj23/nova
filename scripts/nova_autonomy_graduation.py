@@ -39,6 +39,14 @@ except Exception:
 def log(m): print(f"[autonomy-grad {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
 
 
+def _need_for(action_class: str) -> int:
+    """Per-class bar (reversible classes graduate sooner since 2026-10-01); falls back to MIN_CORRECT."""
+    try:
+        return int(_safety.min_correct_for(action_class))
+    except Exception:
+        return MIN_CORRECT
+
+
 def _calibration(oc):
     try:
         oc.execute("SELECT value FROM turing_scoreboard WHERE metric='prediction_calibration_error' "
@@ -121,15 +129,16 @@ def main():
                 new_near[ac] = correct
                 continue
             new_near[ac] = correct
-            gap = MIN_CORRECT - correct
+            need = _need_for(ac)
+            gap = need - correct
             if ce is not None and ce > MAX_CALIB:
-                near_lines.append(f"• *{ac}* — {correct}/{MIN_CORRECT} clean, but my calibration ({ce:.3f}) is still "
+                near_lines.append(f"• *{ac}* — {correct}/{need} clean, but my calibration ({ce:.3f}) is still "
                                   f"above the {MAX_CALIB} gate, so I haven't earned it yet. Being right first.")
             elif gap <= 1:
-                near_lines.append(f"• *{ac}* — {correct}/{MIN_CORRECT} clean and I'm calibrated ({ce:.3f}). **One more "
+                near_lines.append(f"• *{ac}* — {correct}/{need} clean and I'm calibrated ({ce:.3f}). **One more "
                                   f"clean approval and I earn standing autonomy for it.**")
             else:
-                near_lines.append(f"• *{ac}* — {correct}/{MIN_CORRECT} clean, calibration {ce:.3f} (under the gate). "
+                near_lines.append(f"• *{ac}* — {correct}/{need} clean, calibration {ce:.3f} (under the gate). "
                                   f"{gap} more and it graduates.")
 
     if not grad_lines and not near_lines:
