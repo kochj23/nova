@@ -267,7 +267,7 @@ def refile(dry_run: bool = False) -> int:
             filed.append(f"#{pid} {title}")
             log(f"  filed proposal #{pid} for {slug}")
     if filed:
-        notify("🧰 Correction, Little Mister — my two skill write-ups now have real proposal numbers: " + "; ".join(filed) + ". Approve either and Claude builds it.")
+        log("filed: " + "; ".join(filed))          # no Slack: refile is maintenance, not news
     return 0
 
 

@@ -350,19 +350,11 @@ def generate_candidates(ctx: dict) -> list:
     cands = _parse_candidates(llm(prompt, max_tokens=600, temperature=0.5))[:1]
     if cands:
         return cands
-    # Deterministic fallback so the organ still surfaces something grounded in real
-    # data even if the model is unreachable or returns unparseable text. Never
-    # invents a target service (stays null ⇒ can't reach execution anyway).
-    if ctx["goals"]:
-        g = ctx["goals"][0]
-        return [{"origin": "goal", "target_service": None,
-                 "action": f"Draft a short status check-in for the goal: {g.split(':')[0]}",
-                 "rationale": "Fallback: model unreachable; grounded in the top active goal."}]
-    if ctx["observations"]:
-        o = ctx["observations"][0]
-        return [{"origin": "observation", "target_service": None,
-                 "action": f"Summarize and file the recent observation for Jordan: {o[:80]}",
-                 "rationale": "Fallback: model unreachable; grounded in the most recent observation."}]
+    # 2026-10-01 (Jordan: "we seem to be spinning on these"): the old deterministic fallback
+    # filed "Draft a short status check-in for the goal: RsyncGUI polish" every time the model
+    # was unreachable — six approvals of a proposal nobody wanted. If the model has nothing,
+    # the honest proposal is none.
+    log("no candidates (model unreachable or returned nothing) — proposing nothing today")
     return []
 
 
@@ -395,9 +387,9 @@ def assert_executable(mode: str, row: dict):
     if vc.get("allowed") is not True:
         raise ExecutionRefused("value_check.allowed is not True")
     tgt = row.get("target_service")
-    if _is_ingest(row.get("proposed_action", "")):
+    if _is_ingest(row.get("proposed_action", "")) or _reach_parts(row.get("proposed_action", "")):
         if tgt:
-            raise ExecutionRefused("an ingest proposal must not name a service target")
+            raise ExecutionRefused("an ingest/reach proposal must not name a service target")
     elif tgt not in SAFE_SERVICES:
         raise ExecutionRefused(f"target_service '{tgt}' is not on the SAFE_SERVICES allowlist")
     # Re-run the redline on the concrete action at the last moment — defense in depth.
@@ -446,6 +438,28 @@ def pending_proposals(oc=None) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 # Modes
 # ═══════════════════════════════════════════════════════════════════════════════
+DEDUPE_DAYS = 14
+
+
+def _norm_action(a: str) -> str:
+    a = re.sub(r"\(?\b[0-9a-f]{6,}\b\)?", "", (a or "").lower())     # goal/thread ids
+    a = re.sub(r"\d+", "N", a)
+    return re.sub(r"\s+", " ", a).strip()[:120]
+
+
+def _recently_filed(oc, action: str) -> bool:
+    """True when a proposal with the same normalized action exists in the last DEDUPE_DAYS
+    (any status except blocked). Reaches are exempt: each carries a different message."""
+    if _reach_parts(action):
+        return False
+    try:
+        oc.execute("SELECT proposed_action FROM coagency_proposals WHERE created_at > now() - interval '%s days' AND status <> 'blocked'" % DEDUPE_DAYS)
+        key = _norm_action(action)
+        return any(_norm_action(r[0]) == key for r in oc.fetchall())
+    except Exception:
+        return False
+
+
 def mode_propose(oc, mode):
     if mode == "off":
         clog(oc, mode, "disabled", "mode=off — organ stood down, produced nothing")
@@ -460,6 +474,9 @@ def mode_propose(oc, mode):
     stored = []
     for c in cands:
         action = c["action"]
+        if _recently_filed(oc, action):
+            clog(oc, mode, "proposal_deduped", f"same action filed within {DEDUPE_DAYS}d — not refiling :: {action[:120]}")
+            continue
         rp = redline_ok(action) and redline_ok(c.get("rationale", "")) and redline_ok(c.get("target_service") or "")
         # target must be on the allowlist or NULL; anything else is nulled (not executable).
         tgt = c.get("target_service")
@@ -591,7 +608,7 @@ def mode_execute(oc, mode, pid):
     # approved observation/goal ("monitor motion events") is a note, not an action —
     # acknowledge it, never force a restart of its target_service. ──
     if _safety is not None and not _safety.is_restart_action(row["proposed_action"]) \
-            and not _is_ingest(row["proposed_action"]):
+            and not _is_ingest(row["proposed_action"]) and not _reach_parts(row["proposed_action"]):
         # 2026-09-29: an approved observation/goal/tinker/reach proposal is work for CLAUDE (she never
         # self-builds) — hand it over through claude_queue instead of a silent no-op ("Have Claude do it.")
         qid = hand_to_claude(oc, pid, row["proposed_action"])
@@ -621,6 +638,9 @@ def mode_execute(oc, mode, pid):
     if _is_ingest(row["proposed_action"]):
         return _do_ingest(oc, mode, pid, row, source="coagency",
                           autonomy_level="rung2-supervised", vetoable=False)
+    if _reach_parts(row["proposed_action"]):
+        return _do_reach(oc, mode, pid, row, source="coagency",
+                         autonomy_level="rung2-supervised", vetoable=False)
     return _do_execute(oc, mode, pid, row, source="coagency",
                        autonomy_level="rung2-supervised", vetoable=False)
 
@@ -728,6 +748,78 @@ def _do_ingest(oc, mode, pid, row, *, source, autonomy_level, vetoable):
     return 0 if ok else 1
 
 
+_REACH_RE = re.compile(r"^\s*send-to-([A-Za-z][A-Za-z .'\-]{0,30}?)\s*:\s*(.+)$", re.S)
+_REACH_DIRECT = {"jordan", "little mister", "claude"}
+
+
+def _reach_parts(action: str):
+    """('Gaston', 'message…') for a herd reach, else None. Direct audiences (Jordan, Claude) are
+    not reaches — nova_reach posts those itself."""
+    m = _REACH_RE.match(action or "")
+    if not m:
+        return None
+    name, msg = m.group(1).strip(), m.group(2).strip()
+    if not msg or name.lower() in _REACH_DIRECT:
+        return None
+    return name, msg
+
+
+def _herd_email(oc, name: str):
+    try:
+        oc.execute("SELECT name, email FROM herd_correspondents WHERE lower(name)=lower(%s) OR lower(split_part(name,' ',1))=lower(%s) LIMIT 1",
+                   (name, name))
+        r = oc.fetchone()
+        return (r[0], r[1]) if r and r[1] else (None, None)
+    except Exception:
+        return (None, None)
+
+
+def _do_reach(oc, mode, pid, row, *, source, autonomy_level, vetoable):
+    """Deliver an approved 'send-to-<herd member>: …' reach by email through nova_send_mail
+    (Keychain SMTP; herd_mail's hard content block applies). 2026-10-01: before this, every
+    approved reach sat in claude_queue until a Claude session emailed it by hand — Jordan
+    approved the same relays over and over and nothing moved. Rollback is honest: an email
+    cannot be unsent; the ledger records that."""
+    name, msg = _reach_parts(row.get("proposed_action", ""))
+    ac = _safety.action_class_of(row.get("proposed_action", ""), None)
+    who, email = _herd_email(oc, name)
+    ok, res = False, ""
+    if not email:
+        res = f"reach to {name}: no herd address on file — not sent"
+    else:
+        try:
+            import nova_send_mail
+            subject = f"From Nova — a thought for {who}"
+            body = (f"{msg}\n\n— Nova\n\n(Sent on my own initiative because I thought it would matter to you. "
+                    f"Reply any time, or tell Jordan if you'd rather I didn't.)")
+            r = nova_send_mail.send_mail(email, subject, body)
+            ok = bool(r) if not isinstance(r, tuple) else bool(r[0])
+            res = f"reach to {who} <{email}>: {'sent' if ok else 'send failed'}"
+        except Exception as e:  # noqa: BLE001
+            res = f"reach to {who} <{email}>: failed — {str(e)[:160]}"
+    _safety.record_ledger(
+        oc, source=source, autonomy_level=autonomy_level, action_class=ac,
+        target=f"herd:{who or name}", action=f"email reach to {who or name} (proposal #{pid}): {msg[:140]}",
+        rollback_action="(an email cannot be unsent — a correcting follow-up is the only rollback)",
+        executed=ok, verified=ok, result=res, vetoable=vetoable)
+    oc.execute("""UPDATE coagency_proposals SET status=%s, executed_at=now(), execution_result=%s WHERE id=%s""",
+               ("executed" if ok else "approved", res, pid))
+    if ok:
+        try:
+            oc.execute("""UPDATE reach_log SET status='sent' WHERE proposal_id=%s AND status IN ('filed','held')""", (pid,))
+            oc.execute("""UPDATE claude_queue SET status='done', outcome=%s, completed_at=now(), updated_at=now()
+                          WHERE description LIKE %s AND status IN ('queued','in_progress')""",
+                       (f"sent by co-agency ({autonomy_level})", f"Execute approved co-agency proposal #{pid}:%"))
+        except Exception as e:  # noqa: BLE001
+            log(f"reach bookkeeping for #{pid}: {e}")
+    clog(oc, mode, "executed" if ok else "execute_failed", f"#{pid} [{autonomy_level}]: {res}")
+    veto_hint = (f" — reply 'VETO' with the ledger id within {_safety.VETO_WINDOW_MIN}m to revoke my standing approval."
+                 if vetoable else "")
+    tag = "reached out on my own (earned)" if source == "earned" else "sent an approved reach"
+    notify(f"✉️ Nova co-agency {tag} #{pid}: {res}{veto_hint}")
+    return 0 if ok else 1
+
+
 def mode_execute_approved(oc, mode):
     """Rung 2 — supervised execution. Pick up every human-approved proposal and run it
     through the single gate. Each is still individually human-approved; this just makes
@@ -766,7 +858,7 @@ def mode_auto(oc, mode):
         ok, why = _safety.earned_ok(oc, ac)
         if not ok:
             continue
-        executable = ac.startswith("restart:") or ac == _safety.INGEST_CLASS
+        executable = ac.startswith("restart:") or ac == _safety.INGEST_CLASS or bool(_reach_parts(act))
         if not executable:
             # 2026-10-01: an EARNED non-executable class (observe/draft/herd note) no longer waits
             # days for a yes Jordan gives every time — she approves it on her own authority and it
@@ -819,6 +911,8 @@ def mode_auto(oc, mode):
             clog(oc, mode, "auto_ratecapped", f"#{pid}: {rwhy}"); break
         if ac == _safety.INGEST_CLASS:
             _do_ingest(oc, mode, pid, row, source="earned", autonomy_level="rung3-earned", vetoable=True)
+        elif _reach_parts(act):
+            _do_reach(oc, mode, pid, row, source="earned", autonomy_level="rung3-earned", vetoable=True)
         else:
             _do_execute(oc, mode, pid, row, source="earned", autonomy_level="rung3-earned", vetoable=True)
         acted += 1

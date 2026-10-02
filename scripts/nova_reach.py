@@ -340,6 +340,41 @@ def _record(oc, audience, topic, message, rationale, proposal_id, status):
     return oc.fetchone()[0]
 
 
+REPEAT_DAYS = 30
+_WORD_RE = re.compile(r"[a-z]{4,}")
+
+
+def _words(t: str) -> set:
+    return set(_WORD_RE.findall((t or "").lower()))
+
+
+def _similar(a: str, b: str, threshold: float = 0.5) -> bool:
+    """Jaccard overlap of 4+ letter words — cheap near-duplicate test for 2–4 sentence reaches."""
+    wa, wb = _words(a), _words(b)
+    if not wa or not wb:
+        return False
+    return len(wa & wb) / len(wa | wb) >= threshold
+
+
+def _is_repeat(oc, audience: str, topic: str, message: str) -> bool:
+    """True when this audience already got (or was queued) the same topic or a near-identical
+    message within REPEAT_DAYS. Fails open (a DB hiccup never blocks a reach)."""
+    try:
+        oc.execute("""SELECT topic, message FROM reach_log
+                      WHERE lower(audience)=lower(%s) AND status IN ('filed','sent','held')
+                        AND ts > now() - interval '%s days'""" % ("%s", REPEAT_DAYS), (audience,))
+        rows = oc.fetchall()
+    except Exception:
+        return False
+    t = (topic or "").strip().lower()
+    for pt, pm in rows:
+        if t and (pt or "").strip().lower() == t:
+            return True
+        if _similar(message, pm or ""):
+            return True
+    return False
+
+
 def process_reach(oc, reach: dict) -> str:
     """Apply the generosity redline, then FILE the survivor as a GATED co-agency
     proposal (never send). Returns the resulting status. Nothing here sends anything."""
@@ -362,6 +397,13 @@ def process_reach(oc, reach: dict) -> str:
             f"(self-promoting / persistence-seeking / pestering)")
         return "dropped"
 
+    # 2026-10-01 (Jordan: "we seem to be spinning on these"): the same thought was filed to
+    # Gaston four times in two weeks ("formal clauses as binding specs"). A reach that repeats
+    # an audience+topic, or near-repeats a message, within REPEAT_DAYS is dropped here.
+    if _is_repeat(oc, audience, topic, message):
+        rid = _record(oc, audience, topic, message, rationale, None, "dropped")
+        log(f"DROPPED reach #{rid} to {audience} — repeat of a thought already filed/sent in {REPEAT_DAYS}d: {topic}")
+        return "dropped"
     # File it as a gated proposal — redline + value_check + human approval, exactly the
     # tinkerer's path. The action is a SEND-TO-PERSON, which co-agency will hold as
     # pending_human; nothing goes out without Jordan's approval.

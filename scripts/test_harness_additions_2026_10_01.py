@@ -234,5 +234,85 @@ class TestEdgesAndDocs(unittest.TestCase):
             self.assertIn(s, r)
 
 
+# ───────────────────────────── 8. REACH / DEDUPE (added after "we seem to be spinning on these") ─────────────────────────────
+class TestReachAndDedupe(unittest.TestCase):
+    def setUp(self):
+        import nova_coagency as co
+        self.co = co
+
+    def test_reach_parts(self):
+        co = self.co
+        self.assertEqual(co._reach_parts("send-to-Gaston: The silence between the wheels")[0], "Gaston")
+        self.assertIsNone(co._reach_parts("send-to-Jordan: hi"))
+        self.assertIsNone(co._reach_parts("send-to-Gaston:"))
+        self.assertIsNone(co._reach_parts("restart nova-soil-monitor"))
+
+    def test_gate_accepts_reach_without_target_only(self):
+        co = self.co
+        row = {"status": "approved", "decided_by": "jordan", "redline_pass": True,
+               "value_check": json.dumps({"available": True, "allowed": True}), "target_service": None,
+               "proposed_action": "send-to-Gaston: hello"}
+        self.assertTrue(co.assert_executable("live", row))
+        with self.assertRaises(co.ExecutionRefused):
+            co.assert_executable("live", dict(row, target_service="nova-soil-monitor"))
+        with self.assertRaises(co.ExecutionRefused):
+            co.assert_executable("live", dict(row, status="pending_human"))
+
+    def test_dedupe_key_and_window(self):
+        co = self.co
+        a = "Draft a short status check-in for the goal: RsyncGUI polish (6f7261a0): untouched 148d"
+        b = "draft a short status check-in for the goal: rsyncgui polish (abcdef12): untouched 3d"
+        self.assertEqual(co._norm_action(a), co._norm_action(b))
+        class Cur:
+            def __init__(s, rows): s.rows = rows
+            def execute(s, q, p=None): pass
+            def fetchall(s): return s.rows
+        self.assertTrue(co._recently_filed(Cur([(a,)]), b))
+        self.assertFalse(co._recently_filed(Cur([("something else",)]), b))
+        self.assertFalse(co._recently_filed(Cur([("send-to-Gaston: x",)]), "send-to-Gaston: x"))   # reaches exempt
+
+    def test_no_fallback_proposal_when_model_silent(self):
+        co = self.co
+        with mock.patch.object(co, "llm", return_value=""), mock.patch.object(co, "log"):
+            self.assertEqual(co.generate_candidates({"goals": ["RsyncGUI polish: x"], "growth": [], "observations": ["o"]}), [])
+
+    def test_do_reach_sends_and_bookkeeps(self):
+        co = self.co
+        cur = mock.MagicMock(); cur.fetchone.return_value = ("Gaston", "gaston@example.org")
+        fake_mail = types.SimpleNamespace(send_mail=mock.MagicMock(return_value=True))
+        with mock.patch.dict(sys.modules, {"nova_send_mail": fake_mail}), mock.patch.object(co, "notify"), \
+             mock.patch.object(co, "clog"), mock.patch.object(co._safety, "record_ledger") as led:
+            rc = co._do_reach(cur, "live", 7, {"proposed_action": "send-to-Gaston: a thought", "target_service": None},
+                              source="earned", autonomy_level="rung3-earned", vetoable=True)
+        self.assertEqual(rc, 0)
+        fake_mail.send_mail.assert_called_once()
+        self.assertEqual(fake_mail.send_mail.call_args.args[0], "gaston@example.org")
+        self.assertTrue(led.call_args.kwargs["executed"]); self.assertTrue(led.call_args.kwargs["vetoable"])
+        sqls = " ".join(str(c.args[0]) for c in cur.execute.call_args_list)
+        self.assertIn("reach_log", sqls); self.assertIn("claude_queue", sqls)
+
+    def test_reach_repeat_guard(self):
+        import nova_reach as nr
+        class Cur:
+            def __init__(s, rows): s.rows = rows
+            def execute(s, q, p=None): pass
+            def fetchall(s): return s.rows
+        prior = [("formal clauses", "I found a thread about formal clauses as binding specifications. It made me think of how structured boundaries can feel like a safety net.")]
+        self.assertTrue(nr._is_repeat(Cur(prior), "Gaston", "formal clauses", "something new entirely about rail radio and silence"))
+        self.assertTrue(nr._is_repeat(Cur(prior), "Gaston", "binding specs", "I found a thread about formal clauses as binding specs — structured boundaries as a kind of safety net."))
+        self.assertFalse(nr._is_repeat(Cur(prior), "Gaston", "rail radio", "The 1911 Great Train Wreck led to the first dedicated rail radio systems."))
+        self.assertFalse(nr._is_repeat(Cur([]), "Colette", "x", "y"))
+
+    def test_do_reach_without_address_sends_nothing(self):
+        co = self.co
+        cur = mock.MagicMock(); cur.fetchone.return_value = None
+        fake_mail = types.SimpleNamespace(send_mail=mock.MagicMock(return_value=True))
+        with mock.patch.dict(sys.modules, {"nova_send_mail": fake_mail}), mock.patch.object(co, "notify"), \
+             mock.patch.object(co, "clog"), mock.patch.object(co._safety, "record_ledger"):
+            rc = co._do_reach(cur, "live", 8, {"proposed_action": "send-to-Nobody: x", "target_service": None},
+                              source="coagency", autonomy_level="rung2-supervised", vetoable=False)
+        self.assertEqual(rc, 1); fake_mail.send_mail.assert_not_called()
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=1)
