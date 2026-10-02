@@ -810,3 +810,10 @@ tasks:
     schedule: every 5m
     timeout: 120
     overlap: skip
+
+  dashboard_look:                  # Nova reads her own Grafana dashboards with a local vision model (2026-10-01)
+    script: nova_dashboard_look.py
+    schedule: every 2h
+    timeout: 1500
+    overlap: skip
+    group: llm
