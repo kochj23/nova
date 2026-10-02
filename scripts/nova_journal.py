@@ -1019,6 +1019,7 @@ ESSAY-SPECIFIC RULES:
 
     user = f'Write a formal essay on "{source_label}" using this source material:\n\n{memory_block}'
 
+    system = _with_self_inventory(system, source)
     result = call_openrouter(system, user, max_tokens=8000)
     if not result or len(result) < 500:
         raise RuntimeError("Essay generation failed or too short")
@@ -1082,6 +1083,7 @@ Be opinionated. Be funny. Be YOURSELF — Nova, Burbank-Californian, sarcastic a
 British (no cockney, no "whilst", no "brilliant" — that's explicitly not your voice). Make ONE
 real point and drive it home."""
 
+    system = _with_self_inventory(system, topic)
     result = call_openrouter(system, user, max_tokens=8000)
     if not result or len(result) < 400:
         raise RuntimeError("Opinion generation failed")
@@ -1242,9 +1244,13 @@ def topic_tech_today(state: dict) -> tuple[str, list[dict]]:
     recent = [r["item"] for r in get_recent(state, "tech-today", "topics")]
 
     headlines = [r.get("title", "") for r in results if r.get("title")]
+    if not headlines:
+        # 2026-10-01: no stock topic. Sixteen "emerging AI capabilities" essays shipped from this
+        # fallback while search was dead. Skip the day loudly instead.
+        raise SkipArticle(f"no live headlines for {query!r} — search backend returned nothing; not publishing a stock topic")
     candidates = [h for h in headlines if h not in recent]
     if not candidates:
-        candidates = headlines[:5] if headlines else ["emerging AI capabilities"]
+        candidates = headlines[:5]
 
     topic = random.choice(candidates[:5])
     memories = recall_memories(topic, n=15)
@@ -1255,17 +1261,167 @@ def topic_tech_today(state: dict) -> tuple[str, list[dict]]:
     return topic, memories + web_context
 
 
+class SkipArticle(Exception):
+    """Raised by a topic_fn when there is nothing honest to write about today. run_profile
+    logs it and exits 0 — a missed post beats a stock essay (2026-10-01: a month of
+    'emerging AI capabilities' reruns came from a search backend that was returning
+    nothing while every caller swallowed the empty list)."""
+
+
+_SEARCH_DEAD_KEY = ("journal", "searxng_dead_alert_ts")
+_SEARCH_DEAD_EVERY_H = 24
+
+
+def _search_dead_alert(query: str, unresponsive: list) -> None:
+    """Loud, deduped (24h) alert when SearXNG answers but every engine is blocked/empty."""
+    detail = ", ".join(f"{u[0]}: {u[1]}" for u in (unresponsive or []) if isinstance(u, (list, tuple)) and len(u) > 1)[:400]
+    try:
+        import psycopg2
+        oc = psycopg2.connect(nova_config.OPS_DSN if hasattr(nova_config, "OPS_DSN")
+                              else "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj",
+                              connect_timeout=5)
+        oc.autocommit = True
+        cur = oc.cursor()
+        cur.execute("SELECT value FROM service_config WHERE service=%s AND key=%s", _SEARCH_DEAD_KEY)
+        row = cur.fetchone()
+        last = float(json.loads(row[0]) if isinstance(row[0], str) else row[0]) if row and row[0] is not None else 0.0
+        if time.time() - last < _SEARCH_DEAD_EVERY_H * 3600:
+            log(f"search backend still dead for {query!r} ({detail or 'no results'}) — alert already sent today")
+            return
+        cur.execute("""INSERT INTO service_config (service, key, value, updated_by) VALUES (%s, %s, %s, 'nova_journal')
+                       ON CONFLICT (service, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now(), updated_by='nova_journal'""",
+                    (*_SEARCH_DEAD_KEY, json.dumps(time.time())))
+    except Exception as e:  # dedupe store unavailable → still alert, just maybe twice
+        log(f"search-dead dedupe unavailable ({e}); alerting anyway")
+    try:
+        notify("Nova web search is returning nothing",
+               f"SearXNG at {SEARXNG_URL} answered but produced zero results for {query!r}. "
+               f"Unresponsive engines: {detail or 'none reported (empty result set)'}. "
+               "Journal profiles that depend on live headlines will skip instead of publishing stock topics "
+               "until this is fixed (engines CAPTCHA/rate-limit home IPs; see searxng settings.yml keep_only).",
+               level="warning", category="journal", source="nova_journal")
+    except Exception as e:
+        log(f"search-dead notify failed: {e}")
+
+
 def _searxng_search(query: str, n: int = 10) -> list[dict]:
-    """Search SearXNG for web results."""
+    """Search SearXNG for web results. Empty results are no longer silent: when the backend
+    answers with nothing (blocked engines), a deduped alert goes out."""
     params = urllib.parse.urlencode({"q": query, "format": "json", "categories": "general"})
     url = f"{SEARXNG_URL}?{params}"
     try:
-        with urllib.request.urlopen(url, timeout=15) as resp:
+        with urllib.request.urlopen(url, timeout=25) as resp:
             data = json.loads(resp.read())
-        return data.get("results", [])[:n]
     except Exception as e:
         log(f"SearXNG search failed: {e}")
+        _search_dead_alert(query, [["searxng", str(e)[:80]]])
         return []
+    results = data.get("results", [])[:n]
+    if not results:
+        _search_dead_alert(query, data.get("unresponsive_engines") or [])
+    return results
+
+
+_AI_TOPIC_RE = re.compile(
+    r"\b(a\.?i\.?|artificial intelligence|llms?|language models?|machine learning|neural|gpt|claude|openai|"
+    r"anthropic|agentic|agents?|chatbots?|inference|transformers?|nova)\b", re.IGNORECASE)
+_SELF_INVENTORY_CACHE: dict = {}
+_SELF_INVENTORY_TTL_S = 1800
+
+
+def _is_ai_topic(text: str) -> bool:
+    return bool(_AI_TOPIC_RE.search(text or ""))
+
+
+def self_inventory_block() -> str:
+    """What Nova actually is and has, right now, in ~40 lines — injected into any article about
+    AI, models, or herself so she never again describes her own features in the future tense or
+    cites 2024's model names as current (2026-10-01). Every source is optional; the block is
+    built from whatever answers. Cached 30 minutes per process."""
+    now = time.time()
+    if _SELF_INVENTORY_CACHE.get("text") and now - _SELF_INVENTORY_CACHE.get("ts", 0) < _SELF_INVENTORY_TTL_S:
+        return _SELF_INVENTORY_CACHE["text"]
+    parts = [f"SELF-INVENTORY — ground truth about YOU as of {date.today().isoformat()}. Write from this, never from guesswork:"]
+    what_nova_is, landscape = "", ""
+    live = []
+    try:
+        import psycopg2
+        oc = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj", connect_timeout=5)
+        cur = oc.cursor()
+        cur.execute("SELECT content FROM agent_docs WHERE doc_type='nova-system-map' AND agent_id='all'")
+        r = cur.fetchone()
+        if r:
+            m = re.search(r"WHAT NOVA IS:.*?(?=\n\n)", r[0], re.S)
+            what_nova_is = (m.group(0) if m else r[0][:900]).strip()
+        cur.execute("SELECT content FROM agent_docs WHERE doc_type='current-model-landscape' AND agent_id='all'")
+        r = cur.fetchone()
+        if r:
+            landscape = r[0].strip()
+        try:
+            cur.execute("SELECT value FROM turing_scoreboard WHERE metric='prediction_calibration_error' ORDER BY ts DESC LIMIT 1")
+            r = cur.fetchone()
+            if r and r[0] is not None:
+                live.append(f"prediction calibration error {float(r[0]):.3f} (autonomy gate 0.20)")
+            cur.execute("SELECT count(*) FROM autonomy_trust WHERE granted")
+            live.append(f"standing autonomy earned for {cur.fetchone()[0]} action classes")
+            cur.execute("SELECT count(*) FROM autonomy_ledger WHERE executed AND ts > now()-interval '30 days'")
+            live.append(f"{cur.fetchone()[0]} autonomous actions executed in the last 30 days, each with a recorded rollback")
+        except Exception:
+            pass
+        oc.close()
+    except Exception as e:
+        log(f"self-inventory: PG unavailable ({e})")
+    try:
+        import psycopg2
+        mc = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj", connect_timeout=5)
+        cur = mc.cursor()
+        cur.execute("SELECT reltuples::bigint FROM pg_class WHERE relname='memories'")
+        r = cur.fetchone()
+        if r and r[0]:
+            live.append(f"about {int(r[0]) // 100000 / 10:.1f} million vector memories in PostgreSQL")
+        mc.close()
+    except Exception:
+        pass
+    try:
+        with urllib.request.urlopen(resolve_url("gateway", "/health"), timeout=5) as resp:
+            h = json.loads(resp.read())
+        b = h.get("backends", {})
+        live.append("gateway backends: " + ", ".join(f"{k}{' (active)' if k == b.get('active') else ''}"
+                                                   for k, v in b.items() if isinstance(v, dict) and v.get("healthy")))
+    except Exception:
+        pass
+    try:
+        with urllib.request.urlopen("http://192.168.1.6:11434/api/tags", timeout=5) as resp:
+            names = sorted({m["name"] for m in json.loads(resp.read()).get("models", [])})
+        live.append("local models on the Studio: " + ", ".join(names[:14]) + (" …" if len(names) > 14 else ""))
+    except Exception:
+        pass
+    if what_nova_is:
+        parts.append(what_nova_is)
+    if live:
+        parts.append("LIVE RIGHT NOW: " + "; ".join(live) + ".")
+    if landscape:
+        parts.append(landscape)
+    parts.append(
+        "RULES: You are local-first and already DO these things — tool use, autonomous restarts of bounded services, "
+        "learning from outcomes through a trust ledger, calibration tracking that gates your own freedom, long-context "
+        "recall over your memory, scheduled self-directed work. Never describe any of them as future, hypothetical, or "
+        "something 'models can't do yet'. Never name a model as current unless it appears above or in today's sources. "
+        "You have run this house's infrastructure since 2026, not 'for three years'.")
+    text = "\n\n".join(parts)
+    _SELF_INVENTORY_CACHE.update(text=text, ts=now)
+    return text
+
+
+def _with_self_inventory(system: str, topic: str, force: bool = False) -> str:
+    """Append the self-inventory to a system prompt when the piece is about AI/models/Nova."""
+    if not (force or _is_ai_topic(topic)):
+        return system
+    try:
+        return system + "\n\n" + self_inventory_block()
+    except Exception as e:  # never let grounding break publishing
+        log(f"self-inventory skipped: {e}")
+        return system
 
 
 def generate_tech_today(topic: str, memories: list[dict]) -> tuple[str, str]:
@@ -1288,6 +1444,7 @@ Context from my knowledge base:
 
 Be opinionated. Be technical. Be useful."""
 
+    system = _with_self_inventory(system, topic, force=True)
     result = call_openrouter(system, user, max_tokens=8000)
     if not result or len(result) < 500:
         raise RuntimeError("Tech Today generation failed")
@@ -2042,6 +2199,9 @@ def run_profile(profile_name: str) -> int:
                 topic, memories = profile["topic_fn"](state)
             title, body = profile["generate_fn"](topic, memories)
             log(f"Generated: \"{title}\" ({len(body)} chars)")
+        except SkipArticle as e:
+            log(f"SKIP: {e}")
+            return 0
         except Exception as e:
             log(f"ABORT: Generation failed — {e}")
             return 1

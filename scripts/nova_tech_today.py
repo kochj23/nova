@@ -25,6 +25,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+from nova_resolve import resolve_url
 import nova_journal as nj
 from nova_notify import notify
 from nova_image_utils import ensure_backend, generate_image
@@ -43,7 +44,7 @@ else:
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
-SEARXNG_URL = "http://192.168.1.7:8080/search"
+SEARXNG_URL = resolve_url("searxng", "/search")  # 2026-10-01: .7 no longer hosts it
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 MODEL = "anthropic/claude-haiku-4.5"
 
