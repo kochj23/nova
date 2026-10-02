@@ -65,6 +65,15 @@ MAX_HERD = int(os.environ.get("NOVA_REACH_MAX_HERD", "2"))      # herd members w
 # are sent DIRECTLY (no daily cap, no cooldown, no co-agency proposal, no generosity
 # redline). Herd correspondents keep the gated path.
 DIRECT_AUDIENCES = set(a.strip().lower() for a in os.environ.get("NOVA_REACH_DIRECT", "jordan").split(",") if a.strip())
+WINDOW_HOURS = os.environ.get("NOVA_REACH_WINDOW", "10-13")   # Jordan's band per nova_human_insight: 10:00–12:59
+
+
+def in_window(now=None) -> bool:
+    lo, hi = (int(x) for x in WINDOW_HOURS.split("-"))
+    h = (now or datetime.now()).hour
+    return lo <= h < hi
+
+
 def _post_direct(message: str) -> bool:
     import nova_config
     for attempt in range(3):
@@ -384,6 +393,12 @@ def process_reach(oc, reach: dict) -> str:
 
     if audience.lower() in DIRECT_AUDIENCES:
         # Ungated by Jordan's request: post to #nova-chat and record it as sent.
+        # 2026-10-02 (skill #118 notify-jordan-of-system-observations): outside his attention window
+        # it is HELD, and nova_notify_jordan.py delivers the drawer as one bundle inside the window.
+        if not in_window():
+            rid = _record(oc, audience, topic, message, rationale, None, "held")
+            log(f"HELD direct reach #{rid} to {audience} until the {WINDOW_HOURS} window: {topic}")
+            return "held"
         ok = _post_direct(message)
         rid = _record(oc, audience, topic, message, rationale, None, "sent" if ok else "held")
         log(f"{'SENT' if ok else 'HELD (post failed)'} direct reach #{rid} to {audience}: {topic}")

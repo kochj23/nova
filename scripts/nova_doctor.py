@@ -57,10 +57,12 @@ def http_json(url, timeout=6):
 # Each returns (status, detail).
 
 def check_volumes():
-    missing = [v for v in ("/Volumes/Data", "/Volumes/MoreData") if not os.path.ismount(v)]
-    if missing:
-        return FAIL, f"not mounted: {', '.join(missing)}"
-    return OK, "Data + MoreData mounted"
+    """Present AND working: right server, not read-only, writable (shared with nova_selfcheck)."""
+    from nova_selfcheck import MOUNTS, mount_problem   # ponytail: one definition of 'working', two callers
+    bad = {m: r for m, want in MOUNTS.items() if (r := mount_problem(m, want))}
+    if bad:
+        return FAIL, "; ".join(f"{m}: {r}" for m, r in bad.items())
+    return OK, "Data + MoreData + nas + external mounted, right server, writable"
 
 
 def check_postgres():

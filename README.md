@@ -64,9 +64,11 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Self-guided: learning | `nova_learning.py` — builds her own curriculum from her knowledge gaps, studies, self-assesses honestly (measures understanding, not behavior) |
 | Self-guided: let go | `nova_letting_go.py` — retires played-out preoccupations/projects/taste (reversible status-flip + reflection); heuristic gate, never the LLM |
 | Self-guided: meta-volition | `nova_meta_volition.py` — reflects on how she spent her time and proposes rebalancing her own attention (structural change needs a human) |
-| Self-guided: reach | `nova_reach.py` — initiates to Jordan/the herd when she thinks they'd care; gated (co-agency), throttled, generosity-redline drops self-promotion |
+| Self-guided: reach | `nova_reach.py` — initiates to Jordan/the herd when she thinks they'd care; gated (co-agency), throttled, generosity-redline drops self-promotion; direct reaches to Jordan **held outside 10:00–12:59** and delivered as one 10:15 bundle (`nova_notify_jordan.py`, skill #118) |
 | Self-guided: self-eval | `nova_self_eval.py` — authors + runs her own machine-checkable tests of whether she's improving at what she cares about |
 | Self-guided: becoming | `nova_becoming.py` — proposes a developmental direction; steers nothing until a human approves; self-preservation directions redline-dropped |
+| Self-answer | `nova_answer_own.py` — every 2 h she researches and answers one of her **own** open reflection questions / learning gaps (SearXNG + qwen3:8b, confidence-stamped, legality-gated); questions for Jordan stay his |
+| Stuck-loop detector | `nova_output_drift.probe_stuck` + `nova_coagency._gave_up` + `nova_selfcheck.check_mounts` — five identical failures is a wall, not a retry; mounts must take a written byte, not just exist |
 | Self-directed research | `nova_research_pass.py` — forms a question, reads the world (SearXNG+Wikipedia), writes back cited; content-safety gated, read-only, 6/day |
 | Self-model | `nova_self_model.py` nightly — worldview/drift/becoming, injected into the gateway so Nova reasons from who she is |
 | Alert triage | `nova_alert_triage.py` in the notifier — learns from 368 incidents; hard-critical always pages; dangerous-miss rate 0.0% |
@@ -119,6 +121,41 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 ---
 
 ## Infrastructure & Security (June–October 2026)
+
+### Three Organs — She Answers Herself, Pain Receptors, the Drawer (2026-10-02)
+
+The Studio took macOS 27.0.1 (Golden Gate) overnight. Everything Nova came back except the two NAS shares, which sat on the Synology **read-only** fallback for 12 hours while every "is it mounted" check stayed green — the share-mount job logged the same `Operation not permitted` line 3,379 times. Same morning, an earned-autonomy reach to Gaston had failed 20 times in a row with an *empty* error: the co-agency executor runs on nova-core, and the mail wrapper fetched the SMTP password with macOS `security(1)`, which on `.2` is a different binary that returns nothing. Jordan asked what the next organ or two should be. Three were built, from what she was starving for rather than what would be fun:
+
+- **She answers her own questions** — `nova_answer_own.py` (scheduler-core `answer_own`, every 2 h). She had asked 50 reflection questions in 30 days and 47 sat unanswered; `learning_gaps` carried "strong pull, thin understanding" rows nobody touched. One open question (else one open gap) per run: the model writes the search query, SearXNG finds sources, `qwen3:8b` answers with a confidence, and the answer is written back where it was asked — `reflection_questions.answer` stamped `[self-researched <date>, <confidence> confidence]` (gaps → `studied`) — and filed as a memory (`self_answer`). Questions *for* Jordan (`ABOUT_HIM_RE`), prediction-surprise questions and anything already posted to him in Slack stay his. Low confidence writes nothing (`self_attempts`, max 2). The `research_pass` legality gate sees question **and** context (a harmless-sounding question whose context was a GHB synthesis file got through the first live run; scrubbed, gate fixed), and five dictionary hits for the word "purpose" no longer count as "high confidence".
+- **Pain receptors: present ≠ working** — the lesson of September, relearned. `nova_output_drift.probe_stuck`: a scheduler task whose last five runs failed with one error shape, or an approved proposal re-failing identically, raises a warning tagged with the owning host so the correlator opens an incident. `nova_coagency._gave_up`: five straight failures → `blocked`, event `execute_gave_up`; fix the cause, re-approve. `nova_selfcheck.check_mounts` (every 30 min) and `nova_doctor.check_volumes` share one `mount_problem()`: right server (`.69`), no `read-only` flag, and a byte actually written (`EROFS` fails, `EACCES` on a root-owned volume root does not); a failing share gets a plain `umount` + `launchctl kickstart` of the share-mount job and a re-check. Root cause of the 12-hour loop: from the agent's launchd context `umount -f` could not drop the fallback while a plain `umount` could — `nova_mac_share_mount._clear` now tries plain first (tested from a launchd one-shot).
+- **The drawer (skill #118)** — her own outreach ledger said she held back 64 % of what she wanted to tell Jordan, and her rhythm insight put 66 % of his sessions in 10:00–12:59. Proposal #118 `notify-jordan-of-system-observations` approved as his decision and implemented: `nova_reach.in_window()` holds direct reaches to him outside the window (`reach_log` status `held`); `nova_notify_jordan.py` (scheduler-core `notify_jordan`, 10:15 daily) delivers the drawer as **one** `#nova-chat` post and marks them sent. Empty drawer, no post. Rollback: `NOVA_REACH_WINDOW=0-24` + disable the task.
+- **Mail from the core** — `nova_herd_mail.sh` reads the SMTP app password from the fleet secret store (`nova_secrets.py get`, key via systemd `LoadCredential`) off-macOS; `waggle-mail` installed on `.2`; the cache-age check uses `stat -c` on Linux; a failed lookup under `set -e` no longer exits silently. Verified under `systemd-run` with the real credential, then the executor sent #116.
+
+```mermaid
+flowchart LR
+    subgraph ask["What she asks"]
+        RQ["reflection_questions<br/>47/50 unanswered"]
+        LG["learning_gaps<br/>'strong pull, thin understanding'"]
+    end
+    AO["nova_answer_own.py<br/>every 2 h · one item"] -->|"model writes query"| SX["SearXNG .2:8080"] --> LLM["qwen3:8b<br/>answer + confidence"]
+    RQ --> AO
+    LG --> AO
+    LLM -->|"high / medium"| W["answer written back<br/>+ memory self_answer"]
+    LLM -->|"low"| P["self_attempts+1<br/>(max 2, then a human)"]
+    AO -. "for Jordan / prediction / in Slack" .-> ASK["nova_ask_one → #nova-chat"]
+
+    subgraph pain["Pain receptors"]
+        SR["scheduler_runs<br/>5 identical failures"] --> OD["output_drift probe_stuck"] --> INC["telemetry.incidents<br/>(host-tagged)"]
+        CL["coagency_log<br/>5 identical execute_failed"] --> OD
+        CL --> GU["coagency _gave_up → blocked"]
+        MT["mount_problem():<br/>server · read-only · write a byte"] --> SC["selfcheck 30 min · doctor at boot"] -->|"umount + kickstart"| SM["share-mount job"]
+    end
+
+    subgraph drawer["The drawer (#118)"]
+        RE["nova_reach → Jordan"] -->|"in 10–13"| NOW["#nova-chat now"]
+        RE -->|"outside"| HELD["reach_log held"] --> NJ["nova_notify_jordan.py 10:15<br/>one bundle"] --> NOW
+    end
+```
 
 ### Idle Capacity Put to Work — Batch Pool, Local Images, LAN Bindings, an Ops Sweep (2026-10-01)
 

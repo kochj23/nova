@@ -18,6 +18,7 @@ the failure in selfcheck_runs for the digest.
 """
 
 import json
+import os
 import subprocess
 import sys
 import time
@@ -284,6 +285,65 @@ def check_disks():
         record("disk", "ok")
 
 
+MOUNTS = {"/Volumes/nas": "192.168.1.69", "/Volumes/external": "192.168.1.69",   # want: server the share must come from
+          "/Volumes/Data": None, "/Volumes/MoreData": None}
+SHARE_MOUNT_JOB = "net.digitalnoise.nova-mac-share-mount"
+
+
+def mount_state(path):
+    """(source, options) from `mount`, or (None, '') if not mounted. The mount table is honest in
+    launchd/TCC contexts where `ls` is not."""
+    rc, out = sh(["/sbin/mount"], 10)
+    for line in (out or "").splitlines():
+        if f" on {path} (" in line:
+            src, _, rest = line.partition(" on ")
+            return src.strip(), rest[rest.find("(") + 1:rest.rfind(")")]
+    return None, ""
+
+
+def mount_problem(path, want_src):
+    """None when the mount is present AND working; else a short reason. 'Working' = right server,
+    not read-only, and a byte can be written (EROFS counts, EACCES on a root-owned dir does not)."""
+    import errno, os
+    src, opts = mount_state(path)
+    if src is None:
+        return "not mounted"
+    if want_src and want_src not in src:
+        return f"on {src} (want {want_src})"
+    if "read-only" in opts:
+        return f"read-only ({src})"
+    probe = os.path.join(path, ".nova_write_probe")
+    try:
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.remove(probe)
+    except OSError as e:
+        if e.errno != errno.EACCES:          # root-owned volume root is fine; a server refusing writes is not
+            return f"write failed: {e.strerror} ({src})"
+    return None
+
+
+def check_mounts():
+    """2026-10-02: both NAS shares sat on the Synology READ-ONLY fallback for 12h after the macOS
+    27 reboot while every 'is it mounted' check stayed green. Present is not working."""
+    bad = {m: r for m, want in MOUNTS.items() if (r := mount_problem(m, want))}
+    if not bad:
+        record("mounts", "ok"); return
+    detail = "; ".join(f"{m}: {r}" for m, r in bad.items())
+    shares = [m for m in bad if MOUNTS[m]]
+    if not shares:
+        record("mounts", "FAIL", None, detail); return
+    # the share-mount job's own umount -f could not drop the fallback from its launchd context, but a
+    # plain umount from a sibling context did (this morning's fix) — try that, then let the job remount.
+    for m in shares:
+        sh(["/sbin/umount", m], 20)
+    sh(["/bin/launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{SHARE_MOUNT_JOB}"], 20)
+    time.sleep(40)
+    still = {m: r for m in shares if (r := mount_problem(m, MOUNTS[m]))}
+    record("mounts", "FAIL" if still else "fixed", f"umount + kickstart {SHARE_MOUNT_JOB}",
+           "; ".join(f"{m}: {r}" for m, r in still.items()) or detail)
+
+
 # ── Escalation & digest ───────────────────────────────────────────────────────
 
 def escalate(failures):
@@ -359,6 +419,7 @@ def main():
         check_ingest()
         check_disks()
     check_services()
+    check_mounts()
 
     # persist results (best effort — PG may be the thing that is down)
     for check, status, action, detail in results:

@@ -192,6 +192,9 @@ def _smb_url(host, share):
 
 
 def _clear(mount):
+    # 2026-10-02: from this agent's launchd context `umount -f` could not drop the Synology fallback
+    # (12h of EPERM every 2 min after the macOS 27 reboot) while a PLAIN umount could — try it first.
+    run(["umount", mount], timeout=15)
     run(["umount", "-f", mount], timeout=15)
     run(["sudo", "-n", "umount", "-f", mount], timeout=15)
 

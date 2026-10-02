@@ -26,16 +26,22 @@ CACHE_TTL=300  # seconds
 _get_password() {
     # Check cache first
     if [ -f "$CACHE_FILE" ]; then
-        CACHE_AGE=$(( $(date +%s) - $(stat -f %m "$CACHE_FILE") ))
+        if [ "$(uname -s)" = "Darwin" ]; then CACHE_MTIME=$(stat -f %m "$CACHE_FILE"); else CACHE_MTIME=$(stat -c %Y "$CACHE_FILE"); fi   # Linux stat -f = filesystem info, not mtime
+        CACHE_AGE=$(( $(date +%s) - CACHE_MTIME ))
         if [ "$CACHE_AGE" -lt "$CACHE_TTL" ]; then
             cat "$CACHE_FILE"
             return 0
         fi
         rm -f "$CACHE_FILE"
     fi
-    # Fetch from Keychain with timeout
+    # Fetch from Keychain (macOS) or the fleet secret store (Linux: nova.secrets via nova_secrets.py,
+    # key from systemd LoadCredential). 2026-10-02: coagency reaches run on nova-core and failed silently here.
     local pw
-    pw=$(timeout 10 security find-generic-password -a "nova@digitalnoise.net" -s "nova-smtp-app-password" -w 2>/dev/null || true)
+    if [ "$(uname -s)" = "Darwin" ]; then   # nova-core has a non-Keychain `security` binary on PATH
+        pw=$(timeout 10 security find-generic-password -a "nova@digitalnoise.net" -s "nova-smtp-app-password" -w 2>/dev/null || true)
+    else
+        pw=$(timeout 15 python3 "$SCRIPT_DIR/nova_secrets.py" get nova-smtp-app-password 2>/dev/null || true)
+    fi
     if [ -n "$pw" ]; then
         # Cache it (mode 600, owner only)
         umask 077
@@ -46,7 +52,7 @@ _get_password() {
     return 1
 }
 
-APP_PASS=$(_get_password)
+APP_PASS=$(_get_password || true)   # `|| true`: under set -e a failed lookup exited silently with no ERROR line
 
 if [ -z "$APP_PASS" ]; then
     echo "ERROR: nova-smtp-app-password not found in Keychain (or Keychain timed out)" >&2

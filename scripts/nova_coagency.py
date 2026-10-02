@@ -833,8 +833,28 @@ def mode_execute_approved(oc, mode):
     log(f"executing {len(ids)} approved proposal(s): {ids}")
     rc = 0
     for pid in ids:
+        if _gave_up(oc, mode, pid):
+            continue
         rc |= mode_execute(oc, mode, pid)
     return rc
+
+
+GIVE_UP_AFTER = 5   # 2026-10-02: reach #116 re-failed every 15 min for 9 hours with an empty error; a wall, not a retry
+
+
+def _gave_up(oc, mode, pid) -> bool:
+    """An approved proposal whose last GIVE_UP_AFTER executor attempts all failed goes to 'blocked'
+    (a human re-approves after fixing the cause) instead of being retried forever."""
+    oc.execute("SELECT event, detail FROM coagency_log WHERE event IN ('executed','execute_failed') "
+               "AND detail LIKE %s ORDER BY ts DESC LIMIT %s", (f"#{pid} %", GIVE_UP_AFTER))
+    rows = oc.fetchall()
+    if len(rows) < GIVE_UP_AFTER or any(ev != "execute_failed" for ev, _ in rows):
+        return False
+    res = f"gave up after {GIVE_UP_AFTER} failed attempts; fix the cause and re-approve. Last: {rows[0][1][:200]}"
+    oc.execute("UPDATE coagency_proposals SET status='blocked', execution_result=%s WHERE id=%s", (res, pid))
+    clog(oc, mode, "execute_gave_up", f"#{pid}: {res}")
+    log(f"#{pid}: {res}")
+    return True
 
 
 def mode_auto(oc, mode):
