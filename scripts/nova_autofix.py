@@ -423,9 +423,10 @@ def seed_patterns():
         },
         {
             "pattern_name": "snmp_poller_restart",
-            "trigger_condition": {"service_down": "snmp-poller", "port": 37463},
+            # 2026-10-03: poller lives on nova-core (.2, systemd nova-snmp-poller.service)
+            "trigger_condition": {"service_down": "snmp-poller", "port": 37463, "host": "192.168.1.2"},
             "fix_action": {"type": "restart", "service": "net.digitalnoise.nova-snmp-poller",
-                          "health_check_url": "http://127.0.0.1:37463/health"},
+                          "health_check_url": "http://192.168.1.2:37463/health"},
             "confidence": 0.9,
             "created_by": "claude",
         },

@@ -104,8 +104,7 @@ COMPONENTS = [
      "proc": "mlx"},
 
     # ── Pollers / monitors with known output tables (silent-failure detection) ──
-    {"name": "snmp_poller", "host": "127.0.0.1", "port": 37463, "health_path": "/health",
-     "proc": "nova_snmp_poller.py",
+    {"name": "snmp_poller", "host": "192.168.1.2", "port": 37463, "health_path": "/health",   # 2026-10-03: runs on nova-core (systemd), not .6
      "write_sql": "SELECT EXTRACT(EPOCH FROM (now()-max(timestamp))) FROM snmp_metrics",
      "stale_sla_s": 600},
     {"name": "weather_receiver", "host": "127.0.0.1", "port": 8087, "health_path": None,

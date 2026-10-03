@@ -71,6 +71,7 @@ LATERAL_EXCLUDE_SOURCES = {
     "192.168.1.68",   # TP-Link Kasa smart plug
     "192.168.1.64",   # TP-Link Kasa smart plug
     "192.168.1.89",   # Silicondust HDHomeRun
+    "192.168.1.9",    # UniFi Protect NVR — client fingerprinting probes (2026-10-03 false "lateral movement" vs .138)
 }
 
 # Nova's own fleet nodes. Traffic BETWEEN two of these (intra-fleet) is the cluster's
@@ -88,7 +89,10 @@ FLEET_NODES = {
     "192.168.1.86",                   # nova-core2
     "192.168.1.5", "192.168.1.88",    # nova-core3 (wired / wifi)
     "192.168.1.250",                  # nova-core4
-    "192.168.1.92", "192.168.1.190",  # mac-mini (current / prior)
+    "192.168.1.92", "192.168.1.190",  # mac-mini (prior leases)
+    "192.168.1.77", "192.168.1.251",  # mac-mini / nova-core10 (wired / wifi, 2026-10-03)
+    "192.168.1.125",                  # nova-core7
+    "192.168.1.252",                  # nova-core6
 }
 
 # Source ports that indicate normal service responses, not scan probes
@@ -145,7 +149,12 @@ C2_PORTS = {4444, 5555, 6666, 1337, 31337, 8443, 9001, 4443, 3333, 7777, 6667, 6
 
 SUSPICIOUS_TLDS = {".tk", ".top", ".xyz", ".cc", ".pw", ".gq", ".ml", ".cf", ".ga", ".buzz", ".work"}
 
-CRASH_EXCLUDE_RE = re.compile(r"SIMCRASH|DFSFileProvider|FileProvider.*simulated", re.IGNORECASE)
+CRASH_EXCLUDE_RE = re.compile(
+    r"SIMCRASH|DFSFileProvider|FileProvider.*simulated"
+    # ReportCrash's own XPC/lifecycle chatter is not a crash (2026-10-03: 140 such lines after a
+    # TV-Movies-3 reboot paged a bogus "Crash Storm")
+    r"|ReportCrash\[\d+:\w+\] (\[com\.apple\.xpc:connection\]|ReportCrash \(unified\) launched|post-exception thread qos|Re-initialization successful)",
+    re.IGNORECASE)
 
 SENSITIVE_PATHS_RE = re.compile(
     r"/etc/shadow|/etc/passwd|\.ssh/|id_rsa|keychain|Keychain|"

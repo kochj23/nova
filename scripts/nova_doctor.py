@@ -151,7 +151,7 @@ def check_face_stack():
     env = dict(os.environ, PYTHONPATH=PKG_PATH)
     try:
         out = subprocess.run([sys.executable, "-c", code], env=env,
-                             capture_output=True, text=True, timeout=60)
+                             capture_output=True, text=True, timeout=120)   # 2026-10-03: cold import took >60s right after login
         if out.returncode == 0:
             return OK, f"imports clean ({out.stdout.strip()})"
         return FAIL, f"import error: {out.stderr.strip().splitlines()[-1][:120]}"

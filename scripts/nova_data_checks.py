@@ -39,7 +39,8 @@ PG_USER           = "kochj"
 MEMORY_SERVER_URL  = "http://127.0.0.1:18790/health"
 MQTT_HOST, MQTT_PORT = "192.168.1.6", 1883
 JOURNAL_REPO       = os.path.expanduser("~/nova-journal")
-BACKUP_DIRS        = [os.path.expanduser("~/db_backups"), "/Volumes/nas/nova/db_backups"]
+BACKUP_DIRS        = ["/Volumes/Data/backups/postgres", "/Volumes/nas/backups/postgres",
+                      "/mnt/nas/backups/postgres"]   # 2026-10-03: where nova_pg_backup.sh actually writes
 
 EMAIL_MAX_AGE_S    = 24 * 3600      # email_archive must gain a memory within 24h
 ENERGY_MAX_AGE_S   = 15 * 60        # energy_readings must get a row within 15 min
@@ -77,7 +78,7 @@ def _check_email():
     try:
         age = _scalar("nova_memories",
                       "SELECT EXTRACT(EPOCH FROM (now() - max(created_at))) "
-                      "FROM memories WHERE source='email_archive'")
+                      "FROM memories WHERE source IN ('email','email_archive')")   # 2026-10-03: mail agent stores source='email'
         if age is None:
             return False, ":x: email ingestion: no email_archive memories exist"
         if age > EMAIL_MAX_AGE_S:
@@ -90,10 +91,11 @@ def _check_email():
 def _check_ingest():
     """The ingest pipeline must have stored memories in the last window."""
     try:
-        n = _scalar("nova_ops",
-                    f"SELECT COALESCE(sum(memories_stored),0) FROM ingest_jobs "
-                    f"WHERE created_at > now() - interval '{INGEST_WINDOW}' "
-                    f"AND status IN ('completed','done','success')")
+        # 2026-10-03: ingest_jobs is only the bulk-file queue (idle most days); the real
+        # signal is whether ANY memories landed in the vector store in the window.
+        n = _scalar("nova_memories",
+                    f"SELECT count(*) FROM memories "
+                    f"WHERE created_at > now() - interval '{INGEST_WINDOW}'")
         if not n or n <= 0:
             return False, f":x: ingest pipeline idle — 0 memories stored in last {INGEST_WINDOW}"
         return True, ""

@@ -48,7 +48,7 @@ _STATIC_MAP = {
     "novacontrol":      ("192.168.1.6", 37400),
     "novacontrol_web":  ("192.168.1.6", 37450),
     "syslog":           ("192.168.1.2", 37462),
-    "snmp_poller":      ("192.168.1.6", 37463),
+    "snmp_poller":      ("192.168.1.2", 37463),   # 2026-10-03: systemd poller on nova-core; .6 LaunchAgent retired (was double-polling)
     "endpoint_monitor": ("192.168.1.6", 37469),
     "presence_engine":  ("192.168.1.6", 37465),
     "hue":              ("192.168.1.6", 37476),

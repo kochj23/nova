@@ -21,8 +21,19 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_notify import notify
 
-LOCAL_DIR = Path("/Volumes/Data/backups/postgres")
-NAS_DIR   = Path("/Volumes/nas/backups/postgres")
+def _first_existing(*cands):
+    for c in cands:
+        if Path(c).exists():
+            return Path(c)
+    return Path(cands[0])
+
+# 2026-10-03: .6 no longer keeps a local dump dir or a local Postgres (primary is .2:5434,
+# 127.0.0.1:5432 is the pgbouncer shim which cannot createdb). Use the NAS copy wherever we
+# run, and talk to the primary directly unless the caller set PGHOST/PGPORT.
+LOCAL_DIR = _first_existing("/Volumes/Data/backups/postgres", "/Volumes/nas/backups/postgres", "/mnt/nas/backups/postgres")
+NAS_DIR   = _first_existing("/Volumes/nas/backups/postgres", "/mnt/nas/backups/postgres")
+os.environ.setdefault("PGHOST", "pg-primary.digitalnoise.net")
+os.environ.setdefault("PGPORT", "5434")
 DB_USER   = "kochj"
 SCRATCH   = "nova_memories_restoretest"
 TOLERANCE = 0.10           # restored count must be within ±10% of live
