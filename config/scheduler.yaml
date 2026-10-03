@@ -552,6 +552,14 @@ tasks:
   # doesn't auto-refresh its OAuth token, so it logs out ~12h after each login and silently
   # kills every content task that shells out to `claude`. .6 stays fresh, so we push .6's
   # credential to .2 every 4h — well ahead of the ~12h token lifetime. See nova_claude_cred_sync.
+  # 1Password vault 'Nova' is where humans create/rotate secrets; the fleet reads nova.secrets.
+  # Mirror hourly so the fleet keeps working when the WAN or 1Password is down. 2026-10-03.
+  op_sync:
+    script: nova_op_sync.py
+    schedule: every 1h
+    timeout: 120
+    overlap: skip
+
   claude_cred_sync:
     script: nova_claude_cred_sync.py
     schedule: every 4h
