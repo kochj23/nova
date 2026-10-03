@@ -40,7 +40,30 @@ def _load(name):
     v = os.environ.get(name)                               # Linux: EnvironmentFile (e.g. nova-core5)
     if v:
         return v
-    return _keychain(name)                                 # macOS: Keychain
+    if sys.platform != "darwin":
+        return _linux_sealed(name)                         # Linux, outside systemd: sealed cred via sudo
+    return _keychain(name)                                 # macOS: Keychain (login or System)
+
+
+def _linux_sealed(name):
+    """Linux fallback for processes NOT started by systemd with LoadCredential (cron, ssh shells,
+    the `security` shim, Claude hooks): decrypt /etc/nova/<kebab>.cred with systemd-creds, or read
+    /etc/nova/<kebab>.env. Both are root-only; kochj has passwordless sudo fleet-wide, so this grants
+    nothing sudo did not already grant. 2026-10-03."""
+    import subprocess
+    kebab = name.lower().replace("_", "-")
+    cred = f"/etc/nova/{kebab}.cred"
+    r = subprocess.run(["sudo", "-n", "systemd-creds", "decrypt", f"--name={kebab}", cred, "-"],
+                       capture_output=True, text=True)
+    if r.returncode == 0 and r.stdout:
+        return r.stdout.rstrip("\n")
+    for env in (f"/etc/nova/{kebab}.env", "/etc/nova/nova-secret.env"):
+        r = subprocess.run(["sudo", "-n", "cat", env], capture_output=True, text=True)
+        if r.returncode == 0:
+            for line in r.stdout.splitlines():
+                if line.startswith(name + "="):
+                    return line.split("=", 1)[1].strip().strip('"')
+    return None
 
 def _env(name):
     v = _load(name)
