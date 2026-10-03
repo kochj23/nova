@@ -114,8 +114,48 @@ def get_secret(name):
         raise KeyError(f"secret not found: {name}")
     return row[0]
 
+def _vault_token_rw():
+    """Read-WRITE 1Password service-account token (vault Nova only). Present on .6 (System keychain
+    item nova-op-token-rw) so Nova can create/rotate secrets herself; absent elsewhere -> no vault write."""
+    t = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN_RW") or _load("OP_TOKEN_RW")
+    if not t and sys.platform == "darwin":
+        t = _keychain("nova-op-token-rw")
+    return t
+
+
+def _vault_put(name, value, note=None):
+    """Mirror a secret INTO the 1Password vault "Nova" (item title = name) so 1Password stays the
+    source of truth when Nova writes a secret. Silently no-op without the rw token or `op`.
+    ponytail: value crosses argv on `op item edit` (brief, local); use --template if that ever matters."""
+    import json, shutil, subprocess, tempfile
+    tok = _vault_token_rw()
+    if not tok or not shutil.which("op"):
+        return False
+    env = {**os.environ, "OP_SERVICE_ACCOUNT_TOKEN": tok}
+    r = subprocess.run(["op", "item", "get", name, "--vault", "Nova", "--format=json"],
+                       capture_output=True, text=True, env=env, timeout=60)
+    if r.returncode == 0:
+        item_id = json.loads(r.stdout)["id"]
+        r = subprocess.run(["op", "item", "edit", item_id, "--vault", "Nova", f"password={value}"],
+                           capture_output=True, text=True, env=env, timeout=60)
+    else:
+        tpl = {"title": name, "category": "PASSWORD", "tags": ["nova", "nova-written"],
+               "fields": [{"id": "password", "type": "CONCEALED", "purpose": "PASSWORD", "label": "password", "value": value}]}
+        if note:
+            tpl["fields"].append({"id": "notesPlain", "type": "STRING", "purpose": "NOTES", "label": "notesPlain", "value": note})
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            os.chmod(f.name, 0o600); json.dump(tpl, f); path = f.name
+        try:
+            r = subprocess.run(["op", "item", "create", "--vault", "Nova", "--template", path],
+                               capture_output=True, text=True, env=env, timeout=60)
+        finally:
+            os.unlink(path)
+    return r.returncode == 0
+
+
 def set_secret(name, value, note=None):
-    """Upsert ciphertext for `name`. `value` is encrypted in the query via bound params."""
+    """Upsert ciphertext for `name` in nova.secrets AND mirror it into the 1Password vault (if this
+    host holds the rw token). `value` is encrypted in the query via bound params."""
     key = _env("NOVA_SECRET_KEY")
     with _connect(admin=True) as c, c.cursor() as cur:
         cur.execute(
@@ -125,6 +165,8 @@ def set_secret(name, value, note=None):
             "note=COALESCE(EXCLUDED.note, nova.secrets.note), updated_at=now(), updated_by=current_user",
             {"n": name, "v": value, "k": key, "note": note})
         c.commit()
+    if not (note or "").startswith("1Password:"):      # don't echo the vault->store mirror back into the vault
+        _vault_put(name, value, note)
 
 def list_secrets():
     with _connect() as c, c.cursor() as cur:
