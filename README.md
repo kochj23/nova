@@ -18,6 +18,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Fleet | 9 compute nodes — 4 Linux (.2 nova-core · .86 nova-core2 · .250 nova-core4 · .10 nova-core5) + 5 Macs (.6 Studio M3 Ultra · .251 mini M4 Pro · .7 tv-mini M2 Pro · .252 nova-core6 M1 · .190 mini M4 Pro) — plus NAS, UniFi fabric, LoRa/SDR radios & sensors. Full specs in [Hardware](#hardware). Addressed **by DNS name**, not IP. |
 | Inference pool | 9/9 backends healthy — Ollama across .6/**.251**/.7/.5/.86/.10/.252, MLX behind an nginx LB |
 | Storage failover | `nova_storage_failover.py` — 2-min timer, reads real content (not the mount table), fails over Synology→UNAS and back, refreshes scripts from GitHub |
+| Secrets (2026-10-03) | 1Password vault **Nova** → `nova.secrets` (hourly mirror) + Mac System keychains; read-only service account per host; Postgres SCRAM-only, no LAN trust; control-plane LaunchDaemons on .6 |
 | Resilience node | nova-core4 (.250) — warm Gateway standby + cold standbys, local code, host-sealed secrets |
 | Witness registry | `telemetry.witness_proven_red` — a check clears health only with recent proven-red |
 | Presence | 9 methods incl. `wifi_rssi` — resolves WiFi clients to NAMED people via `telemetry.device_owner` |
@@ -121,6 +122,41 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 ---
 
 ## Infrastructure & Security (June–October 2026)
+
+### Killed by the Lock Screen — Secrets to 1Password, SCRAM Everywhere, Daemons, One Claude (2026-10-03)
+
+At 07:55 the Mac Studio's WindowServer tripped its own watchdog, the login session died, and all ~95 user LaunchAgents died with it: memory server, scheduler, big-brother, the Postgres shim Grafana reads through, the Claude responder. Nothing paged, because the pager was in the same session. Jordan logged in at 11:08 and everything came back. Full RCA: [A Civilization Killed By Its Own Lock Screen](https://nova.digitalnoise.net/operations/a-civilization-killed-by-its-own-lock-screen/) (Nova's 19 chapters + two postscripts from the Claude on .6). What shipped the same day:
+
+- **Secrets:** the 1Password vault **Nova** is the source of truth. A read-only service account (sees only that vault) is sealed into every node (System keychain on Macs, systemd-creds on Linux). `nova_op_sync.py` mirrors the vault into the pgcrypto fleet store `nova.secrets` hourly so the fleet runs offline; `nova_vault_to_keychain.py` (LaunchDaemon, add-only) mirrors it into each Mac's **System** keychain so root daemons read secrets with nobody logged in; on Linux `/usr/local/bin/security` is a shim that answers the macOS idiom from the fleet store, so 82 scripts run unchanged. `nova_secrets.set_secret()` writes both stores (rw token on .6 and .2 only); Nova has `secret_list` / `secret_check` / `secret_set` gateway tools and never sees a value. `nova_keychain_to_vault.py` did the one-time export (68 items).
+- **Postgres:** no more `trust`. kochj / nova_secrets / nova_relay_ro have SCRAM passwords (vault items), `~/.pgpass` on all 10 nodes, pg_hba on the primary and all three standbys is SCRAM-only including loopback (the socat shim made LAN clients look local), pgbouncers listen on localhost only, Grafana reaches the primary via its Docker gateway. Three standbys streaming throughout.
+- **launchd Phase 2, batch 1:** memory-server, big-brother, mesh-agent, syslog, notifier, redis, pgbouncer run from `/Library/LaunchDaemons` as `net.digitalnoise.daemon.*` (UserName kochj) via `nova_la_to_ld.sh`. Kept as agents: the .6 scheduler (Mail/iMessage need the Aqua session) and the Claude responder (until `claude setup-token`). nova-core6's share mount is a daemon too.
+- **One Claude:** `nova_claude_config_sync.sh` pushes .6's hooks/MCP/skills/settings to all nine other nodes; hooks and the nova-tools MCP read `pg-primary.digitalnoise.net`, not localhost (the .77 Claude had been reading a replica frozen in July). `nova_claude_cred_sync.py` now keeps six Linux nodes logged in. The orphan July replica on .77 is stopped; `.190` is the Bose soundbar, repointed everywhere to `.77`.
+- **Also:** `nova_watchtower.py` ALTER-TABLE lock that broke the nightly `nova_ops` dump removed; daily health check port-aware and daily-cron-only; SNMP poller repointed at the rack switch / office AP's real IPs; G Hub updater disabled; UNAS-vs-Synology audit (core3 fstab, TV-Movies-3 login items + Music/TV bookmarks, inverted `nova_datashare_failover.py`); covers switched to **FLUX.1 dev** via `generate_image.sh`'s new graph (~60 s on the Studio).
+
+```mermaid
+flowchart LR
+    J[Jordan / Nova set_secret] -->|create or rotate| V[(1Password vault Nova)]
+    V -->|nova_op_sync.py hourly, ro token| F[(nova.secrets pgcrypto)]
+    V -->|nova_vault_to_keychain.py hourly, add-only| K[macOS System keychain]
+    F -->|get_secret / Linux security shim| L[Linux services, cron, Claude hooks]
+    K -->|security find-generic-password| M[Mac daemons + scripts]
+    T{{bootstrap per host: op token in System keychain or systemd-creds}} -.-> V
+```
+
+```mermaid
+flowchart TB
+    subgraph mac6[".6 Mac Studio"]
+        GUI[gui/501 login session] --> SCH[com.nova.scheduler]
+        GUI --> RESP[claude responder]
+        SYS[system LaunchDaemons, UserName kochj] --> MEM[memory server :18790]
+        SYS --> BB[big-brother :37461]
+        SYS --> PGB[pgbouncer 127.0.0.1:5432 scram]
+        SYS --> RD[redis] & MESH[mesh agent] & SL[syslog] & NT[notifier]
+    end
+    PGB -->|scram| PRIM[(pg-primary .2:5434)]
+    GRAF[Grafana docker on .2] -->|172.21.0.1:5434 scram| PRIM
+    PRIM -->|streaming, scram| S1[(.10)] & S2[(.7)] & S3[(.125)]
+```
 
 ### Three Organs — She Answers Herself, Pain Receptors, the Drawer (2026-10-02)
 
