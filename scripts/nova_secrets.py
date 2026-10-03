@@ -137,7 +137,7 @@ def _vault_put(name, value, note=None):
     if r.returncode == 0:
         item_id = json.loads(r.stdout)["id"]
         r = subprocess.run(["op", "item", "edit", item_id, "--vault", "Nova", f"password={value}"],
-                           capture_output=True, text=True, env=env, timeout=60)
+                           capture_output=True, text=True, env=env, timeout=60, stdin=subprocess.DEVNULL)
     else:
         tpl = {"title": name, "category": "PASSWORD", "tags": ["nova", "nova-written"],
                "fields": [{"id": "password", "type": "CONCEALED", "purpose": "PASSWORD", "label": "password", "value": value}]}
@@ -145,9 +145,11 @@ def _vault_put(name, value, note=None):
             os.chmod(f.name, 0o600); json.dump(tpl, f); path = f.name
         try:
             r = subprocess.run(["op", "item", "create", "--vault", "Nova", "--template", path],
-                               capture_output=True, text=True, env=env, timeout=60)
+                               capture_output=True, text=True, env=env, timeout=60, stdin=subprocess.DEVNULL)  # op refuses template+piped stdin
         finally:
             os.unlink(path)
+    if r.returncode != 0:
+        sys.stderr.write(f"[nova_secrets] vault write failed for {name}: {(r.stderr or r.stdout).strip()[:200]}\n")
     return r.returncode == 0
 
 
