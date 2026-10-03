@@ -1,6 +1,6 @@
 # Nova
 
-Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unified memory) in Burbank, across a nine-machine fleet.
+Jordan Koch's local AI familiar. Running on a Mac Studio M3 Ultra (512 GB unified memory) in Burbank, across a ten-machine fleet.
 
 > *"Like a star being born."* — Nova, on choosing her name
 
@@ -14,10 +14,10 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 | Metric | Value |
 |--------|-------|
-| Scripts | 537 Python/Shell (`nova_*` namespace) |
-| Fleet | 9 compute nodes — 4 Linux (.2 nova-core · .86 nova-core2 · .250 nova-core4 · .10 nova-core5) + 5 Macs (.6 Studio M3 Ultra · .251 mini M4 Pro · .7 tv-mini M2 Pro · .252 nova-core6 M1 · .190 mini M4 Pro) — plus NAS, UniFi fabric, LoRa/SDR radios & sensors. Full specs in [Hardware](#hardware). Addressed **by DNS name**, not IP. |
-| Inference pool | 9/9 backends healthy — Ollama across .6/**.251**/.7/.5/.86/.10/.252, MLX behind an nginx LB |
-| Storage failover | `nova_storage_failover.py` — 2-min timer, reads real content (not the mount table), fails over Synology→UNAS and back, refreshes scripts from GitHub |
+| Scripts | 852 Python/Shell (`nova_*` namespace; 1,363 tracked files) |
+| Fleet | 10 compute nodes — 6 Linux (.2 nova-core · .86 nova-core2 · .5 nova-core3 · .250 nova-core4 · .10 nova-core5 · .125 nova-core7/Omarchy) + 4 Macs (.6 Studio M3 Ultra · .77 mini M4 Pro · .7 tv-mini M2 Pro · .252 nova-core6 M1). `.190` is a Bose soundbar, not a node |
+| Inference pool | 10/10 backends healthy across 8 pools (code/conversation/nova/fast/mtplx/reasoner/vision/embed) — Ollama on .6/.77/.7/.5/.86/.10/.252/.125, MLX on .6/.77, llama.cpp on .6; routers on .2/.86/.10 |
+| Storage failover | `nova_datashare_failover.py` — 2-min timer on .2/.86/.10; **UNAS (.69) primary**, Synology (.11) read-only fallback (PRIMARY/FALLBACK were inverted after the 2026-09-10 cutover, fixed 2026-10-03); every node verified Synology-free 2026-10-03 |
 | Secrets (2026-10-03) | 1Password vault **Nova** → `nova.secrets` (hourly mirror) + Mac System keychains; read-only service account per host; Postgres SCRAM-only, no LAN trust; control-plane LaunchDaemons on .6 |
 | Resilience node | nova-core4 (.250) — warm Gateway standby + cold standbys, local code, host-sealed secrets |
 | Witness registry | `telemetry.witness_proven_red` — a check clears health only with recent proven-red |
@@ -26,9 +26,9 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Tracker safety | Find My subtype 0x12 parsing — distinguishes `owner_nearby` from `separated` trackers |
 | Out-of-band | Meshtastic LoRa alerting — survives NAS/DB/gateway/DNS/internet all being down |
 | BLE observers | multi-radio; every sighting tagged with the radio that saw it (`telemetry.bluetooth.observer`) |
-| Scheduler tasks | 180 unique |
-| Scheduler runs logged | 724,479 (95.0% success) |
-| Vector memories | 2,180,000+ across 200+ sources (deduplicated, pgvector HNSW, 768-dim nomic-embed) |
+| Scheduler tasks | 282 (83 macOS-bound on .6 + 199 portable on scheduler-core .2; 269 enabled) |
+| Scheduler runs logged | 6,214,877 (99.1% success) |
+| Vector memories | 2,451,791 across 254 sources (deduplicated, pgvector HNSW, 768-dim nomic-embed, 41 GB) |
 | Recall | **Hybrid** — vector (HNSW cosine) + full-text (`tsv`/websearch) fused with RRF, recency + prior-use weighted, supersession filter (stale facts excluded) |
 | Reflection | `nova_sleep_cycle.py` nightly 03:40 — episodes, belief ledger, resonance sparks, 3 curiosity questions, article↔memory citations |
 | Identity layer | Unclaimed time (~20 self-chosen pursuits/day), `preoccupations` · `taste` · `herd_correspondents` tables, gravel keeper, private notebook, right-to-decline |
@@ -78,16 +78,16 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Vault-7 defense | IoT egress watch, CISA-KEV-for-gear (104 matches), 5 Wazuh TTP rules, flat-network segmentation audit |
 | Deep healthcheck | `nova_deep_healthcheck.py` daily 08:00 — FUNCTIONAL probes (Plex has items, mounts populated, recall returns, chat replies) + auto-fix + Slack; "up but not functional isn't up" |
 | Short video | `nova_short_video.py` — her writing → narrated captioned 1080×1920 vertical mp4 (say/XTTS + OpenRouter stills + ffmpeg) |
-| PG primary | **nova-core (.2)** — failed back from .10 on 2026-09-14; `.7` + `.10` streaming standbys |
+| PG primary | **nova-core (.2:5434)** since 2026-09-28 — `.7` + `.10` + `.125` streaming standbys (lag < 5 ms); SCRAM-only auth since 2026-10-03, no LAN trust |
 | Borrowed tongues | 35 sampled languages/creeds + Ferengi Rules anchor (`nova_lexicon.py`; 8 offered per article); the **horror shelf** (2026-09-30): Halloween, Friday the 13th, Elm Street, Cabin in the Woods, Predator, Alien, Romero's Dead, Evil Dead, The Thing — each with the ops metaphor it is secretly about |
-| Tests | ~9,550 (pytest) — smoke covers all 353 scripts; dedicated suites on the highest-risk services |
-| Memory sources | 209 domains |
+| Tests | 10,042 pytest functions — smoke covers every script; dedicated suites on the highest-risk services |
+| Memory sources | 254 domains |
 | Gateway | Nova Gateway v2.4.0 (pure Python asyncio, hot-reloadable config) |
 | Channels | Slack + Discord + Signal + Web Chatroom + Claude Code bridge |
 | Agents | 4 (Chat, Research, Home, Main) |
 | Subagents | 5 (analyst, coder, lookout, librarian, sentinel) |
 | Databases | PostgreSQL 17 + pgvector (`nova_memories` + `nova_ops`) + Redis |
-| Ops DB tables | 205 tables — scheduler runs, gateway sessions, agent docs, claude audit trail, service_config, telemetry.*, witness_proven_red, ferengi_rules |
+| Ops DB tables | 388 tables / 114 GB — scheduler runs, gateway sessions, agent docs (62), claude audit trail, service_config, telemetry.*, nova.secrets (70 mirrored from the vault) |
 | Graceful shutdown | `nova_ups_shutdown.py` — Studio reads the rack UPS over USB and powers the fleet down in dependency order at 35% battery |
 | Article watchdog | `nova_article_watchdog.py` — hourly; checks the **published** article, not the job's exit code |
 | Index integrity | `nova_index_integrity.py` — daily `amcheck` with `heapallindexed` across all four databases |
@@ -96,12 +96,12 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
 | Chatroom | Real-time multi-party chat on port 37480, Nova has full memory access, external via CF tunnel + service token auth |
 | Gauge Dashboard | Live 3D system monitoring — [gauges.digitalnoise.net](https://gauges.digitalnoise.net/gauges) |
-| Grafana | 15 dashboards on **nova-core** (192.168.1.2:3000) — home/fleet/network/brain/SNMP/security/Nova-MIB, provisioned from repo |
+| Grafana | 50 dashboards on **nova-core** (192.168.1.2:3000), anonymous Viewer on the LAN; home dashboard = **Nova Cluster** (`nova_cluster_dash.py`), also the kiosk on nova-core7's VNC desktop |
 | Mesh / Cluster | `nova_mesh_agent.py` on every node — 15s heartbeats, `service_registry` health authority, ring-peer failure detection, live mesh map |
 | Load balancing | Capacity-aware (`nova_capacity.py` + `nova_resolve.py`) — headroom-scored instance selection, active-active, auto-fail-stale nodes |
 | Nova-MIB | `nova_component_metrics.py` — external SNMP-style per-component vitals (up/RSS/CPU/uptime/data-freshness) → `telemetry.nova_components` |
 | Retention | `nova_retention.py` — daily auto-purge (04:30), telemetry downsampling to `*_hourly`, partition DETACH+DROP, syslog 90d |
-| Home Assistant | v2025.1.4 on Mac Studio (:8123) — 2,120 entities; HACS cards incl. mushroom, auto-entities, **mini-graph-card** |
+| Home Assistant | on Mac Studio (:8123) — 660 entities feeding `telemetry.ha_sensors` daily; HACS cards incl. mushroom, auto-entities, mini-graph-card |
 | JARVIS Brain | Activity classifier + environmental awareness on port 37480 |
 | Presence Engine | Multi-signal fusion on port 37465 (mmWave, BLE, camera, lights, media, vehicle, GPS) |
 | Camera Presence | YOLOv8-nano person detection on 5 interior cameras every 60s |
@@ -114,10 +114,10 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Public journal | [nova.digitalnoise.net](https://nova.digitalnoise.net) — daily essays, PDB security briefings, creative writing |
 | Security briefings | [nova.digitalnoise.net/security](https://nova.digitalnoise.net/security/) — daily PDB-style intel from 148 OSINT/gov/mystery feeds |
 | RSS feed | [nova.digitalnoise.net/index.xml](https://nova.digitalnoise.net/index.xml) |
-| Aqara FP2 | 4x mmWave presence sensors (office, bedroom, living room, patio) — awaiting HACS bridge |
-| SNMP fleet | 14 devices (Mac Studio, nova-core, Mac Mini, NUK, UDM Pro, Synology, 5 switches, 3 APs) |
-| Plex | NFS media from Synology (6 libraries) |
-| Fleet hosts | **.6** Mac Studio M3 Ultra (control plane) · **.2** nova-core Beelink GTi (PG primary, consolidated infra) · **.251/.7/.252/.190** Mac minis · **.86/.250/.10** Linux nodes · Synology (.11) · UNAS Pro 8 (.69) · UDM Pro (.1) · UniFi Protect NVR (.9). Full specs in [Hardware](#hardware). |
+| Aqara FP2 | 3x mmWave presence sensors on the LAN — awaiting HACS bridge |
+| SNMP fleet | 19 devices polled from nova-core (switches, APs, UDM Pro, Synology, UNAS, nodes); mac-studio self-poll and the missing kitchen AP parked 2026-10-03 |
+| Plex | Docker on nova-core (.2:32400); media from the UNAS. The TV-Movies-3 Plex install was removed 2026-10-03 (Music/TV Home Sharing serves that box) |
+| Fleet hosts | **.6** Mac Studio M3 Ultra (control plane: 101 user LaunchAgents + 7 root LaunchDaemons) · **.2** nova-core Beelink GTi (PG primary, gateway, Grafana, Frigate, Plex, Wazuh) · **.77/.7/.252** Mac minis · **.86/.5/.250/.10/.125** Linux nodes · UNAS Pro 8 (.69, primary share) · Synology (.11, backup target) · UNVR (.9, 28 Protect cameras) · UDM Pro (.1) |
 
 ---
 
