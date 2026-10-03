@@ -55,50 +55,70 @@ PROMPT, MODEL, WIDTH, HEIGHT, STEPS, OUTPUT_BASE, WORKSPACE, TIMEOUT = sys.argv[
 COMFY = "http://127.0.0.1:8188"
 client_id = str(uuid.uuid4())
 
-workflow = {
+# FLUX.1 (dev/schnell, BF16 — MPS ok) needs its own graph: UNET + dual CLIP (t5xxl + clip_l) + Flux VAE,
+# cfg 1.0 with FluxGuidance. 2026-10-03: this is the fix for the SDXL "video-game render" covers.
+if MODEL.startswith("flux"):
+    is_schnell = "schnell" in MODEL
+    workflow = {
+        "4": {"class_type": "UNETLoader", "inputs": {"unet_name": MODEL, "weight_dtype": "default"}},
+        "11": {"class_type": "DualCLIPLoader", "inputs": {"clip_name1": "t5xxl_fp16.safetensors", "clip_name2": "clip_l.safetensors", "type": "flux"}},
+        "12": {"class_type": "VAELoader", "inputs": {"vae_name": "Flux/ae.safetensors"}},
+        "5": {"class_type": "EmptySD3LatentImage", "inputs": {"width": int(WIDTH), "height": int(HEIGHT), "batch_size": 1}},
+        "6": {"class_type": "CLIPTextEncode", "inputs": {"text": PROMPT, "clip": ["11", 0]}},
+        "7": {"class_type": "CLIPTextEncode", "inputs": {"text": "", "clip": ["11", 0]}},
+        "13": {"class_type": "FluxGuidance", "inputs": {"conditioning": ["6", 0], "guidance": 3.5}},
+        "8": {"class_type": "KSampler", "inputs": {
+            "model": ["4", 0], "positive": ["13", 0], "negative": ["7", 0], "latent_image": ["5", 0],
+            "seed": int(time.time()) % 2**31, "steps": int(STEPS), "cfg": 1.0,
+            "sampler_name": "euler", "scheduler": "simple", "denoise": 1.0}},
+        "9": {"class_type": "VAEDecode", "inputs": {"samples": ["8", 0], "vae": ["12", 0]}},
+        "10": {"class_type": "SaveImage", "inputs": {"images": ["9", 0], "filename_prefix": datetime.now().strftime("%H%M")}},
+    }
+else:
+  workflow = {
     "4": {
         "class_type": "CheckpointLoaderSimple",
-        "inputs": {"ckpt_name": MODEL}
-    },
-    "5": {
-        "class_type": "EmptyLatentImage",
-        "inputs": {"width": int(WIDTH), "height": int(HEIGHT), "batch_size": 1}
-    },
-    "6": {
-        "class_type": "CLIPTextEncode",
-        "inputs": {"text": PROMPT, "clip": ["4", 1]}
-    },
-    "7": {
-        "class_type": "CLIPTextEncode",
-        "inputs": {"text": "blurry, low quality, distorted, watermark, text, logo, nudity, nude, nsfw, explicit, nipples, sexual content, bare skin, revealing clothing, dark, underexposed, too dark, black image, nearly black, dim, murky, low light, pitch black, unlit", "clip": ["4", 1]}
-    },
-    "8": {
-        "class_type": "KSampler",
-        "inputs": {
-            "model": ["4", 0],
-            "positive": ["6", 0],
-            "negative": ["7", 0],
-            "latent_image": ["5", 0],
-            "seed": int(time.time()) % 2**31,
-            "steps": int(STEPS),
-            "cfg": 7.0,
-            "sampler_name": "euler",
-            "scheduler": "normal",
-            "denoise": 1.0
-        }
-    },
-    "9": {
-        "class_type": "VAEDecode",
-        "inputs": {"samples": ["8", 0], "vae": ["4", 2]}
-    },
-    "10": {
-        "class_type": "SaveImage",
-        "inputs": {
-            "images": ["9", 0],
-            "filename_prefix": datetime.now().strftime("%H%M")
-        }
-    }
-}
+          "inputs": {"ckpt_name": MODEL}
+      },
+      "5": {
+          "class_type": "EmptyLatentImage",
+          "inputs": {"width": int(WIDTH), "height": int(HEIGHT), "batch_size": 1}
+      },
+      "6": {
+          "class_type": "CLIPTextEncode",
+          "inputs": {"text": PROMPT, "clip": ["4", 1]}
+      },
+      "7": {
+          "class_type": "CLIPTextEncode",
+          "inputs": {"text": "blurry, low quality, distorted, watermark, text, logo, nudity, nude, nsfw, explicit, nipples, sexual content, bare skin, revealing clothing, dark, underexposed, too dark, black image, nearly black, dim, murky, low light, pitch black, unlit", "clip": ["4", 1]}
+      },
+      "8": {
+          "class_type": "KSampler",
+          "inputs": {
+              "model": ["4", 0],
+              "positive": ["6", 0],
+              "negative": ["7", 0],
+              "latent_image": ["5", 0],
+              "seed": int(time.time()) % 2**31,
+              "steps": int(STEPS),
+              "cfg": 7.0,
+              "sampler_name": "euler",
+              "scheduler": "normal",
+              "denoise": 1.0
+          }
+      },
+      "9": {
+          "class_type": "VAEDecode",
+          "inputs": {"samples": ["8", 0], "vae": ["4", 2]}
+      },
+      "10": {
+          "class_type": "SaveImage",
+          "inputs": {
+              "images": ["9", 0],
+              "filename_prefix": datetime.now().strftime("%H%M")
+          }
+      }
+  }
 
 # Submit to ComfyUI
 payload = json.dumps({"prompt": workflow, "client_id": client_id}).encode()

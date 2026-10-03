@@ -93,12 +93,11 @@ IMAGE_QUALITY_SUFFIX = (
 OPENROUTER_IMAGE_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # Available models with their optimal settings
-# NOTE: FP8 models (flux1-dev-fp8, flux1-schnell-fp8, ZImage FP8Mix) are BROKEN on
-# macOS MPS as of 2026-05-10 — ComfyUI throws:
-#   "Trying to convert Float8_e4m3fn to the MPS backend but it does not have support for that dtype"
-# BF16 replacements need to be downloaded from HuggingFace (requires login — gated repos).
-# Pending download: flux1-dev.safetensors, flux1-schnell.safetensors (BF16, ~23GB each)
-# Interim: all slots use Juggernaut or LongCat until BF16 models are downloaded.
+# NOTE: FP8 models (flux1-dev-fp8, flux1-schnell-fp8, ZImage FP8Mix) are BROKEN on macOS MPS
+# (Float8_e4m3fn unsupported). The BF16 FLUX.1 dev/schnell files are present under
+# SwarmUI/Models/Stable-Diffusion (symlinked into Models/unet), the t5xxl_fp16 + clip_l encoders
+# live in Models/clip and Flux/ae.safetensors in Models/VAE — downloaded 2026-10-03.
+# generate_image.sh builds the FLUX graph (UNET + DualCLIP + FluxGuidance, cfg 1) for flux* models.
 MODELS = {
     "juggernaut": {
         "file": "Juggernaut_X_RunDiffusion_Hyper.safetensors",
@@ -115,7 +114,6 @@ MODELS = {
         "optimal_steps": 6,
         "max_steps": 12,
     },
-    # FLUX models need T5 encoder workflow — generate_image.sh doesn't support them yet
     "flux_schnell": {
         "file": "flux1-schnell.safetensors",
         "name": "FLUX.1 schnell (BF16 — MPS compatible)",
@@ -142,7 +140,7 @@ MODELS = {
 }
 
 # Default model for quick generation (covers, thumbnails)
-DEFAULT_MODEL = "juggernaut"
+DEFAULT_MODEL = "flux_dev"   # 2026-10-03: FLUX.1 dev BF16, ~60s per 1024x768 on the M3 Ultra; Juggernaut covers looked like game renders
 
 # Art Corner rotation — matches day-of-week styles to models
 # RESTORED: BF16 FLUX models downloaded 2026-05-10, FP8 models replaced.
