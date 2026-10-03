@@ -53,10 +53,11 @@ def _linux_sealed(name):
     import subprocess
     kebab = name.lower().replace("_", "-")
     cred = f"/etc/nova/{kebab}.cred"
-    r = subprocess.run(["sudo", "-n", "systemd-creds", "decrypt", f"--name={kebab}", cred, "-"],
-                       capture_output=True, text=True)
-    if r.returncode == 0 and r.stdout:
-        return r.stdout.rstrip("\n")
+    for embedded in (name, kebab):            # .2/.86 were sealed with --name=NOVA_SECRET_KEY, newer nodes with the kebab
+        r = subprocess.run(["sudo", "-n", "systemd-creds", "decrypt", f"--name={embedded}", cred, "-"],
+                           capture_output=True, text=True)
+        if r.returncode == 0 and r.stdout:
+            return r.stdout.rstrip("\n")
     for env in (f"/etc/nova/{kebab}.env", "/etc/nova/nova-secret.env"):
         r = subprocess.run(["sudo", "-n", "cat", env], capture_output=True, text=True)
         if r.returncode == 0:
