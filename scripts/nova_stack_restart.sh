@@ -37,7 +37,7 @@ fi
 # Step 2: Ensure Postgres and Redis are up
 echo ""
 echo "[2/5] Checking Postgres + Redis..."
-if /usr/bin/nc -z 192.168.1.6 5432 2>/dev/null; then
+if /usr/bin/nc -z 127.0.0.1 5432 2>/dev/null; then
     echo "  ✓ Postgres on 5432"
 else
     echo "  Starting Postgres..."

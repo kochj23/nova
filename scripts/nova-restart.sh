@@ -117,7 +117,7 @@ done
 
 info "Step 2: Clearing stuck queries on nova_memories..."
 
-STUCK=$(psql -h 192.168.1.6 -d nova_memories -U kochj -t -c "
+STUCK=$(psql -h 127.0.0.1 -d nova_memories -U kochj -t -c "
     SELECT count(*) FROM pg_stat_activity
     WHERE datname = 'nova_memories' AND state = 'active'
       AND (query ILIKE '%count%from memories%' OR query LIKE 'ANALYZE%')
@@ -127,7 +127,7 @@ STUCK=$(psql -h 192.168.1.6 -d nova_memories -U kochj -t -c "
 
 if [[ "$STUCK" -gt 0 ]]; then
     warn "Found $STUCK stuck queries — killing them..."
-    psql -h 192.168.1.6 -d nova_memories -U kochj -c "
+    psql -h 127.0.0.1 -d nova_memories -U kochj -c "
         SELECT pg_terminate_backend(pid) FROM pg_stat_activity
         WHERE datname = 'nova_memories' AND state = 'active'
           AND (query ILIKE '%count%from memories%' OR query LIKE 'ANALYZE%')

@@ -188,7 +188,7 @@ MESH_FIX = {
     "nova-core4": (SSH + ["kochj@192.168.1.250", "sudo -n systemctl restart nova-mesh-agent"]),
     "nuk": (SSH + ["kochj@192.168.1.10", "sudo -n systemctl restart nova-mesh-agent"]),
     "tv-movies-mini": (SSH + ["kochj@192.168.1.7", "sudo -n launchctl kickstart -k system/net.digitalnoise.nova-mesh-agent"]),
-    "mac-mini": (SSH + ["kochj@192.168.1.251", "sudo -n launchctl kickstart -k system/net.digitalnoise.nova-mesh-agent"]),
+    "mac-mini": (SSH + ["kochj@192.168.1.77", "launchctl kickstart -k gui/501/net.digitalnoise.nova-mesh-agent"]),  # .77 = wired (.251 is Wi-Fi); agent is a GUI LaunchAgent, not system/
     "mac-studio": ["launchctl", "kickstart", "-k", "gui/501/net.digitalnoise.nova-mesh-agent"],
 }
 

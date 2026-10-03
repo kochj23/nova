@@ -36,7 +36,7 @@ _DEFAULT_HEADROOM = 0.1
 _HEARTBEAT_STALE_SECS = 120
 
 _STATIC_MAP = {
-    "postgresql":       ("192.168.1.6", 5432),
+    "postgresql":       ("127.0.0.1", 5432),   # localhost-only shim since 2026-10-03
     "pgbouncer":        ("192.168.1.6", 6432),
     "redis":            ("192.168.1.6", 6379),
     "ollama":           ("192.168.1.6", 11434),

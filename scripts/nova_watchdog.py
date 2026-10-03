@@ -48,7 +48,7 @@ CHECKS = [
     # /api/version is a cheap liveness endpoint; /api/tags enumerates every model
     # and can take seconds (and time out) on a loaded box even when ollama is fine.
     ("mac-studio (.6) ollama",    "http", "http://192.168.1.6:11434/api/version"),
-    ("mac-studio (.6) postgres",  "tcp",  ("192.168.1.6", 5432)),
+    ("pg-primary (.2) postgres",  "tcp",  ("192.168.1.2", 5434)),   # .6:5432 is a localhost-only pgbouncer shim since 2026-10-03
     ("mac-studio (.6) nova-gw",   "tcp",  ("192.168.1.6", 18792)),
     ("mac-studio (.6) mqtt",      "tcp",  ("192.168.1.6", 1883)),
     ("nova-core (.2) host",       "tcp",  ("192.168.1.2", 22)),
