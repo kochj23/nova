@@ -20,8 +20,16 @@ DESIGN (inherited from nova_storage_failover, same hard-won lessons):
   * Fail BACK to the Synology primary automatically when it returns.
 
 It does NOT create the steady-state primary mount — fstab does that at boot,
-read-write, to the Synology. This daemon only intervenes on failure (mount the
-UNAS replica read-only) and on recovery (restore the Synology primary).
+read-write. This daemon only intervenes on failure (mount the replica read-only)
+and on recovery (restore the fstab primary).
+
+UNAS-PRIMARY CUTOVER (2026-09-10, logic fixed 2026-10-03): the UNAS (192.168.1.69)
+is the read-write PRIMARY (what fstab mounts) and the Synology (192.168.1.11) is the
+read-only FALLBACK. Everything above that says "Synology primary / UNAS replica" is
+the original design; read it with the roles swapped. Before 2026-10-03 only the
+MANAGED UNCs had been flipped while the detection logic still treated a UNAS mount
+as "the fallback" — which would have unmounted/remounted every healthy share every
+2 min as soon as the Synology answered on :445.
 
 Host-aware: only acts on mounts that actually exist on the host it runs on.
 Runs from a systemd timer on the nova-cores (.2/.10/.86), same as the /nova one.
@@ -38,6 +46,11 @@ from pathlib import Path
 SYNOLOGY = "192.168.1.11"
 UNAS = "192.168.1.69"
 UNAS_CREDS = "/etc/cifs-unas.creds"
+SYNOLOGY_CREDS = "/etc/cifs-nas.creds"
+# Roles since the 2026-09-10 cutover. primary_unc below is what fstab mounts (UNAS);
+# secondary_unc is the read-only fallback (Synology). Flip these two to go back.
+PRIMARY, FALLBACK = UNAS, SYNOLOGY
+FALLBACK_CREDS = SYNOLOGY_CREDS if FALLBACK == SYNOLOGY else UNAS_CREDS
 
 # Every bulk data share we know how to fail over. `mount` points differ per host
 # (.2/.86 use /mnt/nas, .10 uses /nas) — we skip any whose mount point isn't
@@ -55,7 +68,7 @@ MANAGED = [
     # (CIFS) above, had zero consumers (no repo/cron/systemd refs, no open handles),
     # and both fail over to the same UNAS 'External' share. Collapsed to just /external.
 ]
-RO_OPTS = "credentials=%s,ro,uid=kochj,gid=kochj,iocharset=utf8,vers=3.0,_netdev" % UNAS_CREDS
+RO_OPTS = "credentials=%s,ro,uid=kochj,gid=kochj,iocharset=utf8,vers=3.0,_netdev" % FALLBACK_CREDS
 
 
 def log(msg):
@@ -109,7 +122,7 @@ def current_source(mount):
 
 def on_secondary(mount, spec):
     src = current_source(mount) or ""
-    return UNAS in src
+    return FALLBACK in src
 
 
 def clear_mount(mount):
@@ -118,20 +131,20 @@ def clear_mount(mount):
 
 
 def mount_secondary_ro(spec):
-    """Mount the UNAS replica READ-ONLY at the share's mount point."""
+    """Mount the FALLBACK replica (Synology since the cutover) READ-ONLY at the share's mount point."""
     run(["sudo", "-n", "mkdir", "-p", spec["mount"]], timeout=10)
     r = run(["sudo", "-n", "mount", "-t", "cifs", spec["secondary_unc"], spec["mount"],
              "-o", RO_OPTS], timeout=45)
     if r.returncode != 0:
-        log(f"{spec['mount']}: UNAS ro mount FAILED: {(r.stderr or '').strip()[:150]}")
+        log(f"{spec['mount']}: FALLBACK ro mount FAILED: {(r.stderr or '').strip()[:150]}")
         return False
     return readable(spec["mount"])
 
 
 def restore_primary(spec):
-    """Fail back: drop the UNAS fallback and let fstab remount the Synology primary."""
+    """Fail back: drop the fallback and let fstab remount the PRIMARY (UNAS, read-write)."""
     clear_mount(spec["mount"])
-    # `mount <mountpoint>` uses the fstab entry (Synology, read-write) if present.
+    # `mount <mountpoint>` uses the fstab entry (UNAS primary, read-write) if present.
     r = run(["sudo", "-n", "mount", spec["mount"]], timeout=45)
     return r.returncode == 0 and readable(spec["mount"])
 
@@ -213,46 +226,46 @@ def handle(spec, check_only):
     # None, so this won't misfire), it is NOT healthy — force recovery.
     if not src:
         healthy = False
-    syn_up = reachable(SYNOLOGY)
-    # "On the fallback" is the only positively-identifiable state (our ro UNAS mount
-    # shows the UNAS UNC). Everything else that's readable — a direct-CIFS Synology
-    # mount, an NFS mount, or an autofs placeholder ('systemd-1') — is the primary.
+    primary_up = reachable(PRIMARY)
+    # "On the fallback" is the only positively-identifiable state (our ro fallback mount
+    # shows the FALLBACK host's UNC). Everything else that's readable — a direct-CIFS
+    # primary mount, an NFS mount, or an autofs placeholder ('systemd-1') — is the primary.
     # Keying on NOT-fallback avoids the autofs trap where /proc/mounts hides the real
     # source behind 'systemd-1'.
-    fallback = bool(src and UNAS in src)
+    fallback = bool(src and FALLBACK in src)
 
-    # Healthy on the Synology primary (the common case) — nothing to do.
+    # Healthy on the UNAS primary (the common case) — nothing to do.
     if healthy and not fallback:
         return "ok", f"healthy on primary ({src})"
 
-    # Healthy on the UNAS fallback — fail BACK when the Synology returns.
+    # Healthy on the Synology fallback — fail BACK when the UNAS primary returns.
     if healthy and fallback:
-        if syn_up:
+        if primary_up:
             if check_only:
-                return "would-failback", "synology is back; would restore primary"
+                return "would-failback", "UNAS primary is back; would restore primary"
             if restore_primary(spec):
-                notify(f"{mount} failed BACK to synology (read-write)", "info")
-                return "failback", "restored synology primary"
-            return "failback-failed", "restore failed; leaving UNAS ro fallback"
-        return "ok", "synology still down; serving read-only from UNAS"
+                notify(f"{mount} failed BACK to UNAS primary (read-write)", "info")
+                return "failback", "restored UNAS primary"
+            return "failback-failed", "restore failed; leaving Synology ro fallback"
+        return "ok", "UNAS primary still down; serving read-only from Synology"
 
-    # Unreadable (mount table may lie). Recover: prefer Synology, else UNAS read-only.
-    if syn_up:
+    # Unreadable (mount table may lie). Recover: prefer UNAS primary, else Synology read-only.
+    if primary_up:
         if check_only:
-            return "would-recover", "synology up; would restore primary"
+            return "would-recover", "UNAS primary up; would restore primary"
         clear_mount(mount)
         if restore_primary(spec):
-            return "recovered", "restored synology primary"
-        return "recover-failed", "synology up but primary mount failed"
-    # Synology down — fail over to UNAS read-only so reads keep working.
+            return "recovered", "restored UNAS primary"
+        return "recover-failed", "UNAS primary up but primary mount failed"
+    # UNAS down — fail over to the Synology read-only so reads keep working.
     if check_only:
-        return "would-failover", f"synology down; would mount {spec['secondary_unc']} read-only"
+        return "would-failover", f"UNAS down; would mount {spec['secondary_unc']} read-only"
     clear_mount(mount)
     if mount_secondary_ro(spec):
-        notify(f"{mount} FAILED OVER to UNAS (READ-ONLY) — synology is down. "
+        notify(f"{mount} FAILED OVER to Synology (READ-ONLY) — UNAS primary is down. "
                f"Writes will fail until it returns; that is intentional (no split-brain).", "warning")
-        return "failover", f"read-only on UNAS ({spec['secondary_unc']})"
-    notify(f"{mount} DOWN — neither synology nor UNAS mountable", "critical")
+        return "failover", f"read-only on Synology ({spec['secondary_unc']})"
+    notify(f"{mount} DOWN — neither UNAS nor Synology mountable", "critical")
     return "down", "no target mountable"
 
 
