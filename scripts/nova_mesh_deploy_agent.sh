@@ -30,10 +30,12 @@ echo "[1/4] Creating remote directory and copying agent..."
 ssh "$NODE_IP" "sudo mkdir -p $REMOTE_DIR && sudo chown \$(whoami) $REMOTE_DIR"
 scp "$AGENT_SCRIPT" "$NODE_IP:$REMOTE_DIR/nova_mesh_agent.py"
 
+# 2026-10-03: the nova_mesh password comes from the fleet secret store (vault item nova-mesh-pg-password), never from this file
+MESH_PW=$(python3 "$(dirname "$0")/nova_secrets.py" get nova-mesh-pg-password) || { echo "cannot read nova-mesh-pg-password from the secret store" >&2; exit 1; }
 echo "[2/4] Writing config..."
 ssh "$NODE_IP" "cat > $REMOTE_DIR/mesh-agent.yaml << EOF
 node_name: $NODE_NAME
-pg_dsn: \"dbname=nova_ops user=nova_mesh host=192.168.1.6 password=nova_mesh_2026\"
+pg_dsn: \"dbname=nova_ops user=nova_mesh host=pg-primary.digitalnoise.net port=5432 password=$MESH_PW\"
 heartbeat_interval: 15
 port: 37470
 peer: $PEER_IP

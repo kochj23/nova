@@ -25,11 +25,13 @@ echo "[3/5] Running pg_basebackup from primary..."
 ssh "$REPLICA_USER@$REPLICA_HOST" "rm -rf $PG_DATA && pg_basebackup -h $PRIMARY_HOST -U nova_replication -D $PG_DATA -Fp -Xs -P -R"
 
 # Step 4: Configure standby
+# 2026-10-03: replication password from the fleet secret store (vault item nova-replication-pg-password)
+REPL_PW=$(python3 "$(dirname "$0")/nova_secrets.py" get nova-replication-pg-password) || { echo "cannot read nova-replication-pg-password" >&2; exit 1; }
 echo "[4/5] Configuring standby settings..."
-ssh "$REPLICA_USER@$REPLICA_HOST" "cat >> $PG_DATA/postgresql.auto.conf << 'EOF'
+ssh "$REPLICA_USER@$REPLICA_HOST" "cat >> $PG_DATA/postgresql.auto.conf << EOF
 # Nova Mesh: Streaming Replica Config
 hot_standby = on
-primary_conninfo = 'host=$PRIMARY_HOST port=5432 user=nova_replication password=nova_replica_2026'
+primary_conninfo = 'host=$PRIMARY_HOST port=5432 user=nova_replication password=$REPL_PW'
 EOF"
 
 # Step 5: Start replica
