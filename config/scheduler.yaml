@@ -565,6 +565,7 @@ tasks:
     schedule: every 4h
     timeout: 60
     overlap: skip
+    enabled: false   # 2026-10-03: every node now exports the long-lived CLAUDE_CODE_OAUTH_TOKEN (vault item claude-code-oauth-token); copying .6's short-lived creds is redundant
 
   # Early warning before .6's Claude token expires (~8h life, doesn't auto-refresh headless).
   # Pages BEFORE articles fail instead of after. Permanent fix is `claude setup-token`.
