@@ -25,7 +25,7 @@ DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 HOSTS = {
     "mac-studio": {"ip": "192.168.1.6", "min_cpu": 20, "min_mem": 20, "min_disk": 15},
     "nova-core5": {"ip": "192.168.1.10", "min_cpu": 30, "min_mem": 25, "min_disk": 20},
-    "mac-mini": {"ip": "192.168.1.190", "min_cpu": 20, "min_mem": 20, "min_disk": 15},
+    "mac-mini": {"ip": "192.168.1.77", "min_cpu": 20, "min_mem": 20, "min_disk": 15},
     "nova-core": {"ip": "192.168.1.2", "min_cpu": 30, "min_mem": 25, "min_disk": 20},
 }
 

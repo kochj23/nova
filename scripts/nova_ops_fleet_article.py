@@ -19,7 +19,7 @@ THE SEVEN NODES (hardware / role / what we just optimized / the plan):
    ROLE: The Brain. Heavy LLM inference (70B+), embeddings, the ~1.66M-memory vector store, most of Nova's own services.
    PLAN: shed the database — it currently lives here and is the fleet's single point of failure — so the Brain does nothing but think. Anchors the heavy-inference tier, with the M4 mac-mini as failover.
 
-2. mac-mini (192.168.1.190) — Apple M4 Pro, 14 cores (10P+4E), 64 GB. Also Jordan's personal desk machine.
+2. mac-mini (192.168.1.77) — Apple M4 Pro, 14 cores (10P+4E), 64 GB. Also Jordan's personal desk machine.
    ROLE: mid-tier MLX inference (14-32B), the fastest per-core silicon in the house.
    PLAN: mid-inference tier active-active with nova-core3, plus quantized-70B failover for the Brain.
 

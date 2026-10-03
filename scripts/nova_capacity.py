@@ -54,7 +54,7 @@ HOST_CORES = {
 
 MACOS_HOSTS = {
     "mac-studio": {"ip": "127.0.0.1", "local": True},
-    "mac-mini": {"ip": "192.168.1.190", "local": False},
+    "mac-mini": {"ip": "192.168.1.77", "local": False},
     "tv-movies-mini": {"ip": "192.168.1.7", "local": False},
 }
 
@@ -482,7 +482,7 @@ async def evaluate_alerts(snapshot):
 
 MONITORED_HOSTS = [
     {"name": "mac-studio", "ip": "127.0.0.1"},
-    {"name": "mac-mini", "ip": "192.168.1.190"},
+    {"name": "mac-mini", "ip": "192.168.1.77"},
     {"name": "tv-movies-mini", "ip": "192.168.1.7"},
     {"name": "udm-pro", "ip": "192.168.1.1"},
     {"name": "synology-nas", "ip": "192.168.1.11"},

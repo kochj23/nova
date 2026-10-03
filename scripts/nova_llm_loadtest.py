@@ -23,7 +23,7 @@ CONCURRENCY = 4
 TARGETS = [
     (".6 ollama qwen3:30b",  "http://192.168.1.6:11434/v1/chat/completions",  "qwen3:30b-a3b"),
     (".6 MTPLX 27B",         "http://127.0.0.1:5050/v1/chat/completions",     "mtplx-qwen36-27b-optimized-speed"),
-    (".190 ollama qwen3:30b","http://192.168.1.190:11434/v1/chat/completions","qwen3:30b-a3b"),
+    (".190 ollama qwen3:30b","http://192.168.1.77:11434/v1/chat/completions","qwen3:30b-a3b"),
     (".7 llama3.2:3b (fast)","http://192.168.1.7:11434/v1/chat/completions",  "llama3.2:3b"),
     ("FABRIC conversation",  "http://192.168.1.2:37475/v1/chat/completions",  "conversation"),
     ("FABRIC fast→.7",       "http://192.168.1.2:37475/v1/chat/completions",  "fast"),

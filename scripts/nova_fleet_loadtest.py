@@ -18,7 +18,7 @@ MAX_TOK = 128
 # (label, url, model, kind)  kind in {chat, embed}
 CHAT = [
     (".6 ollama",   "http://192.168.1.6:11434/v1/chat/completions",   "qwen3:8b",     "chat"),
-    (".190 ollama",  "http://192.168.1.190:11434/v1/chat/completions", "qwen3:8b",     "chat"),
+    (".190 ollama",  "http://192.168.1.77:11434/v1/chat/completions", "qwen3:8b",     "chat"),
     (".7 ollama",    "http://192.168.1.7:11434/v1/chat/completions",   "qwen3:8b",     "chat"),
     (".86 ROCm",     "http://192.168.1.86:11434/v1/chat/completions",  "qwen3:8b",     "chat"),
     (".5 NPU",       "http://192.168.1.5:11434/v1/chat/completions",   "llama3.2:3b",  "chat"),
@@ -26,7 +26,7 @@ CHAT = [
     ("FABRIC fast",  "http://192.168.1.2:37475/v1/chat/completions",   "fast",         "chat"),
 ]
 EMBED = [(f".{h.split('.')[-1]} embed", f"http://{h}:11434/api/embeddings", "nomic-embed-text", "embed")
-         for h in ["192.168.1.6", "192.168.1.190", "192.168.1.7", "192.168.1.86", "192.168.1.5", "192.168.1.10"]]
+         for h in ["192.168.1.6", "192.168.1.77", "192.168.1.7", "192.168.1.86", "192.168.1.5", "192.168.1.10"]]
 
 
 def _one(url, model, kind, timeout=120):

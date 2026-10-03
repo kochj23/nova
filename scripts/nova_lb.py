@@ -10,7 +10,7 @@ Usage:
     from nova_lb import pick_node, get_pool_status
 
     # Get the best node for a task
-    node = pick_node()  # returns {"name": "mac-mini", "ip": "192.168.1.190", "latency_ms": 12}
+    node = pick_node()  # returns {"name": "mac-mini", "ip": "192.168.1.77", "latency_ms": 12}
 
     # Or filter by capability
     node = pick_node(require_gpu=True)

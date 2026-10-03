@@ -21,7 +21,7 @@ import sys
 import time
 
 KEYCHAIN_SERVICE = "Claude Code-credentials"
-HOSTS = ["kochj@192.168.1.2"]          # Linux nodes whose claude CLI needs keeping-alive
+HOSTS = ["kochj@192.168.1.2", "kochj@192.168.1.86", "kochj@192.168.1.5", "kochj@192.168.1.250", "kochj@192.168.1.10", "kochj@192.168.1.125"]  # every Linux node with a claude CLI (2026-10-03)
 REMOTE_PATH = "~/.claude/.credentials.json"
 MIN_REMAINING_MS = 30 * 60 * 1000      # don't bother pushing a token with <30m left
 
