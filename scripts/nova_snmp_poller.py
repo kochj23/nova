@@ -61,7 +61,7 @@ DEVICES = [
         "version": "v2c",
         "community_keychain": "nova-snmp-community",
         "port": 161,
-        "enabled": True,
+        "enabled": False,
     },
     {
         "ip": "192.168.1.1",
@@ -104,7 +104,7 @@ DEVICES = [
         "enabled": True,
     },
     {
-        "ip": "192.168.1.251",  # static Ethernet — .190 is its WiFi (private MAC, drops inbound while idle)
+        "ip": "192.168.1.77",   # 2026-10-03: .77 is the WIRED address (UDM); .251 is its Wi-Fi private-MAC lease, .190 is the Bose soundbar
         "name": "mac-mini",
         "version": "v2c",
         "community_keychain": "nova-snmp-community",
@@ -127,7 +127,7 @@ DEVICES = [
     {"ip": "192.168.1.193", "name": "sw-garage-8p-150w", "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     # ── UniFi Access Points ───────────────────────────────────────────────────
     {"ip": "192.168.1.151", "name": "ap-office-u6e",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
-    {"ip": "192.168.1.106", "name": "ap-kitchen-u6e",    "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.106", "name": "ap-kitchen-u6e",    "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": False},  # 2026-10-03: not in the UDM device list at all (offline/unadopted); .106 is now an iPhone lease
     {"ip": "192.168.1.161", "name": "ap-garage-u6e",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     # ── NAS ───────────────────────────────────────────────────────────────────
     # UNAS Pro 8 — SNMP enabled 2026-06-20. Exposes system + IF-MIB (per-interface
