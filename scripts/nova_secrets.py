@@ -141,8 +141,6 @@ def _vault_put(name, value, note=None):
     else:
         tpl = {"title": name, "category": "PASSWORD", "tags": ["nova", "nova-written"],
                "fields": [{"id": "password", "type": "CONCEALED", "purpose": "PASSWORD", "label": "password", "value": value}]}
-        if note:
-            tpl["fields"].append({"id": "notesPlain", "type": "STRING", "purpose": "NOTES", "label": "notesPlain", "value": note})
         with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
             os.chmod(f.name, 0o600); json.dump(tpl, f); path = f.name
         try:
