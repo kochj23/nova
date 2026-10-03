@@ -77,8 +77,6 @@ def ensure_schema():
                     sw_port int, first_seen timestamptz DEFAULT now(),
                     last_seen timestamptz, last_online timestamptz,
                     last_classified timestamptz DEFAULT now());
-                ALTER TABLE telemetry.net_inventory ADD COLUMN IF NOT EXISTS sw_port int;
-                ALTER TABLE telemetry.net_inventory ADD COLUMN IF NOT EXISTS last_online timestamptz;
                 CREATE TABLE IF NOT EXISTS telemetry.net_liveness (
                     ts timestamptz DEFAULT now(), mac text, name text, tier text,
                     online boolean, reachable boolean, poe_power numeric);

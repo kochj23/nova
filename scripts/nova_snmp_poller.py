@@ -121,12 +121,12 @@ DEVICES = [
     # 2026-07-20: sw-rack13-16p (.78) and sw-rack15-agg-8p (.122) physically
     # removed, replaced by this one 48-port aggregation switch (confirmed via
     # live UniFi controller: 192.168.1.24, USW Pro 48 PoE, adopted+online).
-    {"ip": "192.168.1.24",  "name": "sw-rack-agg-48p",   "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.75",  "name": "sw-rack-agg-48p",   "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.155", "name": "sw-jordan-poe-8p",  "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.174", "name": "sw-jordan-16p",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.193", "name": "sw-garage-8p-150w", "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     # ── UniFi Access Points ───────────────────────────────────────────────────
-    {"ip": "192.168.1.31",  "name": "ap-office-u6e",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
+    {"ip": "192.168.1.151", "name": "ap-office-u6e",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.106", "name": "ap-kitchen-u6e",    "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     {"ip": "192.168.1.161", "name": "ap-garage-u6e",     "version": "v2c", "community_keychain": "nova-snmp-community", "port": 161, "enabled": True},
     # ── NAS ───────────────────────────────────────────────────────────────────

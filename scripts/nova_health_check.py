@@ -24,7 +24,9 @@ SLACK_CHANNEL = "C0ATAF7NZG9"
 JOBS_FILE     = Path.home() / ".openclaw/cron/jobs.json"
 LOG_DIR       = Path.home() / ".openclaw/logs"
 NOVA_BOT_ID   = "U0ANKLR3SUQ"   # novaslackintegation bot user ID
-SCHEDULER_API = "http://127.0.0.1:37460/tasks"
+import sys as _sys
+# ponytail: .6 scheduler is :37460, scheduler-core on Linux is :37464 — same /tasks shape
+SCHEDULER_API = "http://127.0.0.1:%d/tasks" % (37460 if _sys.platform == "darwin" else 37464)
 
 # Thresholds
 MAX_CONSECUTIVE_ERRORS  = 2       # alert after this many consecutive failures
@@ -249,6 +251,9 @@ def audit_jobs() -> list[dict]:
             # Suspiciously fast (empty promise) — only for cron tasks
             dur_ms = int(last_dur * 1000)
             is_cron = "cron" in task.get("schedule", "")
+            # ponytail: only daily crons can be "stale after 26h"; weekly/monthly (day fields set) are skipped
+            _f = task.get("schedule", "").split()[1:]
+            is_daily = is_cron and len(_f) == 5 and _f[2] == "*" and _f[4] == "*"
             if (is_cron
                     and last_exit == 0
                     and dur_ms < FAST_RUN_THRESHOLD_MS
@@ -261,7 +266,7 @@ def audit_jobs() -> list[dict]:
                 })
 
             # Stale — daily cron that hasn't run in 26+ hours (skip weekly tasks)
-            if (is_cron and hours_since > STALE_HOURS and last_run > 0
+            if (is_daily and hours_since > STALE_HOURS and last_run > 0
                     and task_id not in WEEKLY_TASKS):
                 issues.append({
                     "severity": "warning",
