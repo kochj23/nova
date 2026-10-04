@@ -388,8 +388,14 @@ def _query_mlx(prompt, model_info, intent="", system=None, options=None) -> dict
         messages.append({"role": "system", "content": system})
     messages.append({"role": "user", "content": prompt})
 
+    # 2026-10-04: the 32B's id is a path that differs per MLX box; ask the server which id it serves and match by name
+    try:
+        _ids = [m.get("id") for m in json.loads(urllib.request.urlopen(f"{MLX_URL}/v1/models", timeout=5).read()).get("data", [])]
+        _mlx_model = next((i for i in _ids if "qwen2.5-32b-4bit" in (i or "")), _ids[0] if _ids else "/Volumes/Data/mlx-models/qwen2.5-32b-4bit")
+    except Exception:
+        _mlx_model = "/Volumes/Data/mlx-models/qwen2.5-32b-4bit"
     payload = {
-        "model": "/Volumes/Data/mlx-models/qwen2.5-32b-4bit",   # 2026-10-04: the id both MLX servers expose (same real path on the Studio and the mini)
+        "model": _mlx_model,
         "messages": messages,
         "max_tokens": 2048,
         "stream": False,
