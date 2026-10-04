@@ -554,6 +554,14 @@ tasks:
   # credential to .2 every 4h — well ahead of the ~12h token lifetime. See nova_claude_cred_sync.
   # 1Password vault 'Nova' is where humans create/rotate secrets; the fleet reads nova.secrets.
   # Mirror hourly so the fleet keeps working when the WAN or 1Password is down. 2026-10-03.
+  # Jordan 2026-10-03: every article written to the journal gets a 'Nova Speaks' video for his approval.
+  # One render at a time on the Studio GPU; state in nova_ops.nova_speaks_renders; done -> #nova-claude.
+  nova_speaks_sweep:
+    script: nova_speaks_sweep.py
+    schedule: every 10m
+    timeout: 300
+    overlap: skip
+
   op_sync:
     script: nova_op_sync.py
     schedule: every 1h

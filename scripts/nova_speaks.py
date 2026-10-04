@@ -24,7 +24,7 @@ OUT_DIR = Path(os.environ.get("NOVA_SPEAKS_OUT", "/Volumes/nas/nova-fs/videos/re
 VOICE = os.environ.get("NOVA_SPEAKS_VOICE", "Gracie Wise")   # XTTS speaker name, or a path to a reference .wav
 TTS_HOME = "/Volumes/Data/AI/tts"
 W, H = 1920, 1080
-FONT = next((f for f in ["/System/Library/Fonts/Supplemental/Avenir Next.ttc", "/System/Library/Fonts/HelveticaNeue.ttc", "/System/Library/Fonts/Supplemental/Arial.ttf"] if os.path.exists(f)), None)
+FONT = next((f for f in ["/System/Library/Fonts/Supplemental/Avenir Next.ttc", "/System/Library/Fonts/HelveticaNeue.ttc", "/System/Library/Fonts/Supplemental/Arial.ttf", "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/usr/share/fonts/TTF/DejaVuSans.ttf", "/usr/share/fonts/dejavu/DejaVuSans.ttf", "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf"] if os.path.exists(f)), None)
 
 
 def log(m): print(f"[nova-speaks {time.strftime('%H:%M:%S')}] {m}", flush=True)
@@ -75,8 +75,10 @@ def load_tts():
     if hasattr(xm, "torchaudio"): xm.torchaudio.load = _load
     from TTS.api import TTS
     tts = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
-    try: tts.to("mps")
+    dev = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
+    try: tts.to(dev)
     except Exception: tts.to("cpu")
+    log(f"tts device: {dev}")
     return tts
 
 
