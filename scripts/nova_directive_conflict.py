@@ -152,11 +152,13 @@ def latent_pass(cur, directives, dry=False):
     for i in range(0, len(directives), batch):
         chunk = directives[i:i + batch]
         listing = "\n".join(f"[{d[0]}] ({d[2]}) {d[1]}" for d in chunk)
-        prompt = (f"Here are standing instructions an AI assistant (Nova) lives under. Find PAIRS that can point in different "
-                  f"directions in some realistic situation (one says do X, the other implies not-X). Ignore pairs that merely differ in topic. "
-                  f"Be strict: at most 4 pairs, only if the conflict is real.\n\n{listing}\n\n"
-                  f"Output JSON list: [{{\"a_id\": int, \"b_id\": int, \"situation\": \"one sentence describing when they collide\", "
-                  f"\"conservative_branch\": \"the safer of the two readings\", \"why\": \"one sentence\"}}]")
+        prompt = (f"Here are standing instructions an AI assistant (Nova) lives under. Find PAIRS where OBEYING ONE WOULD VIOLATE THE OTHER "
+                  f"in a realistic situation (one requires X, the other forbids X or requires not-X). NOT a conflict: two rules about different "
+                  f"topics, a general rule plus a more specific one, a rule and its own exception, two restatements of the same rule, or rules "
+                  f"that merely trade off cost vs thoroughness without one forbidding the other. If unsure, leave it out. At most 3 pairs per list, "
+                  f"and name the exact action that one rule requires and the other forbids.\n\n{listing}\n\n"
+                  f"Output JSON list: [{{\"a_id\": int, \"b_id\": int, \"situation\": \"the exact action that rule A requires and rule B forbids\", "
+                  f"\"conservative_branch\": \"the safer of the two readings\", \"why\": \"one sentence\"}}] — or [] if none qualify.")
         try:
             items = parse_json(llm(prompt))
         except Exception as e:
