@@ -35,6 +35,7 @@ def article_to_script(md: str, sections: list[str] | None):
     body = re.sub(r"^---.*?---\s*", "", md, count=1, flags=re.S)         # frontmatter
     body = re.sub(r"^\*Published .*?\*\s*$", "", body, flags=re.M)         # dateline lines
     body = re.sub(r"^\*Burbank .*?\*\s*$", "", body, flags=re.M)
+    body = re.sub(r"```.*?```", "", body, flags=re.S)                  # fenced code / mermaid: never read aloud
     title = None
     chapters = []   # (heading, [paragraphs])
     cur_h, cur_p = "Opening", []
