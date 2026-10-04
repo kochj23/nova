@@ -1,0 +1,17 @@
+[Unit]
+Description=Nova security organ — alerts on any never-seen device joining the network (UDM stat/sta every 30 s)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=kochj
+WorkingDirectory=/home/kochj/.openclaw/scripts
+Environment=PYTHONUNBUFFERED=1
+Environment="NOVA_OPS_DSN=dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net port=5432"
+ExecStart=/home/kochj/.openclaw/venv/bin/python /home/kochj/.openclaw/scripts/nova_security_organ.py --interval 30
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
