@@ -52,6 +52,7 @@ def _strip_thinking(text: str) -> str:
 # working with models running"). Best node per kind from service_config, cached 60 s; on any
 # failure fall back to the static URL from config.py. ─────────────────────────────────────
 _RANK_CACHE = {"ts": 0.0, "val": None}
+_MLX_ID_CACHE: dict = {}   # base_url -> (model id, ts)
 
 def _best_url(kind: str, default: str) -> str:
     try:
@@ -321,9 +322,24 @@ class ModelRouter:
 
         elif name == "mlx":
             base_url = _best_url("mlx", base_url)
-            # MLX LM Server — OpenAI-compatible (2026-09-26: model = what both MLX nodes actually serve)
+            # MLX LM Server — OpenAI-compatible. 2026-10-04: the 32B both MLX servers are started with has a
+            # PATH id that differs per box (Studio /Volumes/Data/..., mini its home dir). Ask the server and match
+            # by name; asking for any other id forces an 18 GB model swap on a single-threaded server (that is
+            # what wedged MLX for weeks). Cached 60 s per base_url.
+            mlx_model = model_override
+            if not mlx_model:
+                try:
+                    _c = _MLX_ID_CACHE.get(base_url)
+                    if not _c or time.time() - _c[1] > 60:
+                        _r = await http.get(f"{base_url}/v1/models", timeout=5.0)
+                        _ids = [m.get("id") for m in _r.json().get("data", [])]
+                        _c = (next((i for i in _ids if "qwen2.5-32b-4bit" in (i or "")), _ids[0] if _ids else None), time.time())
+                        _MLX_ID_CACHE[base_url] = _c
+                    mlx_model = _c[0]
+                except Exception:
+                    mlx_model = None
             payload = {
-                "model":      model_override or "mlx-community/Qwen3-8B-4bit",
+                "model":      mlx_model or "/Volumes/Data/mlx-models/qwen2.5-32b-4bit",
                 "messages":   msgs,
                 "max_tokens": max_tokens,
                 "temperature": 0.7,
@@ -396,7 +412,7 @@ class ModelRouter:
     # instead of the placeholder "default".
     _DEFAULT_MODELS = {
         "ollama":     "qwen3:8b",
-        "mlx":        "/Volumes/Data/mlx-models/qwen2.5-32b-4bit",
+        "mlx":        "qwen2.5-32b-4bit",
         "llamacpp":   "llamacpp",
         "openrouter": "qwen/qwen3-235b-a22b-2507",
     }
