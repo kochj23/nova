@@ -84,9 +84,25 @@ def load_tts():
 
 def speak(tts, text, path):
     # XTTS handles sentence splitting; keep chunks < ~600 chars to stay well inside its window
+    def pieces(sent, limit=230):
+        # XTTS asserts < 400 tokens per call; a single run-on sentence (lists, ledgers) can exceed it. Split long
+        # sentences at clause boundaries, then hard-wrap at a word boundary as a last resort.
+        if len(sent) <= limit: return [sent]
+        out, cur = [], ""
+        for cl in re.split(r"(?<=[;:,])\s+|\s+[—–]\s+", sent):
+            if len(cur) + len(cl) > limit and cur: out.append(cur); cur = cl
+            else: cur = (cur + " " + cl).strip()
+        if cur: out.append(cur)
+        final = []
+        for o in out:
+            while len(o) > limit:
+                cut = o.rfind(" ", 0, limit); cut = cut if cut > 40 else limit
+                final.append(o[:cut].strip()); o = o[cut:].strip()
+            if o: final.append(o)
+        return final
     parts, cur = [], ""
-    for sent in re.split(r"(?<=[.!?])\s+", text):
-        if len(cur) + len(sent) > 600 and cur: parts.append(cur); cur = sent
+    for sent in (pc for s0 in re.split(r"(?<=[.!?])\s+", text) for pc in pieces(s0)):
+        if len(cur) + len(sent) > 400 and cur: parts.append(cur); cur = sent
         else: cur = (cur + " " + sent).strip()
     if cur: parts.append(cur)
     wavs = []
