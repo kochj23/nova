@@ -143,8 +143,11 @@ def dispatch(cur, hosts):
         try:
             rart = f"{h['journal_dir']}/content/{section}/{slug}.md"
             copy_to(h, art, rart)
-            cover = JOURNAL / "static/images" / section / f"{slug}.webp"
-            if cover.exists(): copy_to(h, str(cover), f"{h['journal_dir']}/static/images/{section}/{slug}.webp")
+            # the article's cover plus a few recent covers from its section, so the Ken Burns rotation has variety on every host
+            sec_dir = JOURNAL / "static/images" / section
+            covers = sorted(sec_dir.glob("*.webp"), key=lambda f: f.stat().st_mtime)[-6:]
+            if (sec_dir / f"{slug}.webp").exists() and (sec_dir / f"{slug}.webp") not in covers: covers.append(sec_dir / f"{slug}.webp")
+            for cv in covers: copy_to(h, str(cv), f"{h['journal_dir']}/static/images/{section}/{cv.name}")
             copy_to(h, str(SCRIPTS / "nova_speaks.py"), f"{h['scripts_dir']}/nova_speaks.py")   # keep the renderer current
             lp = f"{h['tts_home']}/logs/{slug}.log"
             cmd = (f"mkdir -p {shlex.quote(os.path.dirname(lp))} && cd {shlex.quote(h['scripts_dir'])} && "
