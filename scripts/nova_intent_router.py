@@ -389,7 +389,7 @@ def _query_mlx(prompt, model_info, intent="", system=None, options=None) -> dict
     messages.append({"role": "user", "content": prompt})
 
     payload = {
-        "model": "/Volumes/Data/mlx-models/qwen2.5-32b-4bit",
+        "model": "/Volumes/Data/mlx-models/qwen2.5-32b-4bit",   # 2026-10-04: the id both MLX servers expose (same real path on the Studio and the mini)
         "messages": messages,
         "max_tokens": 2048,
         "stream": False,

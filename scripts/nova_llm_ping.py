@@ -29,6 +29,7 @@ from datetime import datetime
 OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 CHECKED_BY = "nova_llm_ping"
 CHAT_MODEL = "qwen3:8b"          # what the gateway asks Ollama for (router.py _DEFAULT_MODELS)
+MLX_CHAT_MODEL = "/Volumes/Data/mlx-models/qwen2.5-32b-4bit"   # the --model both MLX servers run (real dir on both boxes; mlx_lm reports the resolved path)
 SLOW_MS = 8000
 DEAD_MS = 30000
 TAGS_TIMEOUT = 5
@@ -147,7 +148,10 @@ def probe(ep):
                     raise
         else:
             models = _get(f"{url}/v1/models", TAGS_TIMEOUT).get("data", [])
-            model = (models[0].get("id") if models else None)
+            ids = [m.get("id") for m in models]
+            # 2026-10-04: probe the model the server was STARTED with, not models[0]. mlx_lm.server lists every
+            # HF-cached model too; pinging a different one forced a full model swap every 10 min and wedged chat.
+            model = MLX_CHAT_MODEL if MLX_CHAT_MODEL in ids else (ids[0] if ids else None)
             if not model:
                 r["error"] = "no models"; r["status"] = "down"; return r
             r["model"] = model; r["has_chat_model"] = True; r["loaded"] = [model]
