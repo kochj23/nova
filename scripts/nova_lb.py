@@ -56,7 +56,7 @@ NODES = [
     {"name": "tv-movies-mini", "ip": "192.168.1.7", "port": 37470, "gpu": True,
      "protocols": {"ollama": 11434, "mlx": 5050}},
     {"name": "mac-studio", "ip": "192.168.1.6", "port": 37470, "gpu": True,
-     "protocols": {"mlx": 5050, "llamacpp": 11435}},   # ollama removed 2026-09-18: chat-wedged; re-add when fixed
+     "protocols": {"ollama": 11434, "mlx": 5050, "llamacpp": 11435}},   # ollama re-added 2026-10-04: /api/chat answers in ~1.3 s again (qwen3:30b-a3b loaded)
 ]
 
 # ── Pool State ────────────────────────────────────────────────────────────────

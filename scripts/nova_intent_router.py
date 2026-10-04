@@ -7,8 +7,8 @@ OpenRouter removed from all routing. Every intent runs on local hardware.
 M3 Ultra (512GB RAM, 80 GPU cores) handles everything.
 
 Model roster (right model for the right job):
-  qwen3-next:80b    — Nova's voice: conversation, Slack, Discord, Signal
-                      82GB, 131K context. The personality model.
+  qwen3:30b-a3b     — Nova's voice: conversation, Slack, Discord, Signal
+                      18GB MoE, 3B active. (qwen3-next:80b was listed here but never installed; fixed 2026-10-04)
   MLX Qwen2.5-32B   — Fast general: email, memory, summaries, reports
                       18GB 4-bit via Apple Neural Engine. Speed king.
   qwen3-coder:30b   — Code: review, generation, debugging, Swift
@@ -109,7 +109,9 @@ MODELS = {
     #   Ollama (port 11434)  — qwen3-next 80B conversation, qwen3-coder 64-88 tok/s, deepseek-r1 reasoning, qwen3-vl vision
     #   TinyChat (port 8000) — lightweight OpenAI-compat chat, fast for quick tasks
     #   OpenWebUI (port 3000)— RAG pipeline, document grounding, web search
-    "conversation": LocalModel("qwen3-next:80b",     "80B params — high-quality conversation, Nova's voice",         ctx=131072, speed="medium"),
+    # 2026-10-04: qwen3-next:80b was never installed on any node (dead pointer since April); qwen3:30b-a3b is the
+    # 30B MoE actually loaded on the Studio and the mini, and what the inference fabric's "conversation" pool serves.
+    "conversation": LocalModel("qwen3:30b-a3b",      "30B MoE (3B active), Q4_K_M — high-quality conversation, Nova's voice", ctx=32768, speed="fast"),
     "mlx_general":  LocalModel("mlx:qwen2.5-32b",   "32B params, 4-bit MLX — fast general via Apple Neural Engine", ctx=32768,  speed="fast"),
     "coder":        LocalModel("qwen3-coder:30b",    "30B params, Q4_K_M — code review, generation, debugging",     ctx=32768,  speed="fast"),
     "reasoner":     LocalModel("deepseek-r1:8b",     "8B params, Q4_K_M — chain-of-thought, logic, architecture",   ctx=32768,  speed="medium"),

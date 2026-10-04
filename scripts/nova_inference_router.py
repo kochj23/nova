@@ -65,21 +65,21 @@ BANDIT = os.environ.get("NOVA_ROUTER_BANDIT", "") not in ("", "0", "false", "no"
 # kind: "ollama" (:11434), "mtplx"/"mlx" (OpenAI on :5050), "tinychat" (:8000).
 # Models are PER-NODE and need not match across nodes. A backend only serves a
 # class once its health probe confirms the model is present (Ollama) / up (MLX).
-# NMINI was called NMINI, then pointed at .101, and is now .251 — a static OUTSIDE the
-# DHCP pool (.20-.200) so it stops moving. Named for the box, not the address.
-N6, NMINI, N7, N2 = "192.168.1.6", "192.168.1.251", "192.168.1.7", "192.168.1.2"
-N10 = "192.168.1.10"   # nova-core5 — no GPU, idle; serves CPU embeddings to offload the GPU nodes
-N5, N86 = "192.168.1.5", "192.168.1.86"   # nova-core3 (NPU), nova-core2 (ROCm) — fast-tier backups
+N252 = "nova-core6"
+N125 = "nova-core7"
+N6, N190, N7, N2 = "nova-core8", "nova-core10", "nova-core9", "nova-core1"
+N10 = "nova-core5"   # nuk — no GPU, idle; serves CPU embeddings to offload the GPU nodes
+N5, N86 = "nova-core3", "nova-core2"   # nova-core3 (NPU), nova-core2 (ROCm) — fast-tier backups
 
 POOLS = {
     # code: qwen3:30b-a3b (fast MoE) on both big nodes. qwen3-coder:30b is broken
     # (loads but hangs generation, 2026-06-23) — routed around until re-pulled.
     "code":         [(N6, 11434, "ollama", "qwen3:30b-a3b"),
-                     (NMINI, 11434, "ollama", "qwen3:30b-a3b")],
+                     (N190, 11434, "ollama", "qwen3:30b-a3b")],
     # quality general chat — the two fast 30B nodes only (kept .7 OUT so a 3B
     # never answers a quality-chat request; .7 serves the 'fast' tier instead)
     "conversation": [(N6, 11434, "ollama", "qwen3:30b-a3b"),
-                     (NMINI, 11434, "ollama", "qwen3:30b-a3b")],
+                     (N190, 11434, "ollama", "qwen3:30b-a3b")],
     # Nova's persona voice
     "nova":         [(N6, 11434, "ollama", "nova:latest")],
     # fast / cheap chat — .7's light tier. llama3.2:3b (~25 tok/s on the M2 Pro);
@@ -87,12 +87,16 @@ POOLS = {
     # not an API — removed.)
     # fast / cheap chat. .7 is primary; .5 (NPU) + .86 (ROCm) are backups so a sustained
     # burst spreads instead of collapsing .7 (load test 2026-07-14). All run llama3.2:3b.
-    "fast":         [(N7, 11434, "ollama", "llama3.2:3b"),
+    # nova-core6 (.252, M1 mini 16GB) joined 2026-07-27 — inference-only by design.
+    # 16GB cannot host the 30B MoE models, so it serves the fast tier alongside .7/.5/.86.
+    "fast":         [(N252, 11434, "ollama", "llama3.2:3b"),
+                     (N7, 11434, "ollama", "llama3.2:3b"),
                      (N5, 11434, "ollama", "llama3.2:3b"),
-                     (N86, 11434, "ollama", "llama3.2:3b")],
+                     (N86, 11434, "ollama", "llama3.2:3b"),
+                     (N125, 11434, "ollama", "llama3.2:3b")],
     # low-latency single-stream — MTPLX speculative decoding
     "mtplx":        [(N6, 5050, "mtplx", "mtplx-qwen36-27b-optimized-speed"),
-                     (NMINI, 5050, "mtplx", "mtplx-qwen36-27b-optimized-speed")],
+                     (N190, 5050, "mtplx", "mtplx-qwen36-27b-optimized-speed")],
     # reasoning — deepseek-r1 on .6
     "reasoner":     [(N6, 11434, "ollama", "deepseek-r1:8b")],
     # vision
@@ -101,7 +105,8 @@ POOLS = {
     # GPUs entirely, keeping .6/.190/.7 free for generation. nomic is tiny and
     # fast on CPU. (.10 is reliable always-on infra; if it's ever down the
     # watchdog alerts.)
-    "embed":        [(N10, 11434, "ollama", "nomic-embed-text:latest")],
+    "embed":        [(N10, 11434, "ollama", "nomic-embed-text:latest"),
+                     (N125, 11434, "ollama", "nomic-embed-text:latest")],
 }
 
 # Per-backend inflight ceiling. .7 (M2 Pro) collapses past ~2 concurrent (load test
