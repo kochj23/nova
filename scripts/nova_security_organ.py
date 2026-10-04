@@ -48,17 +48,21 @@ def describe(c: dict) -> tuple[str, str]:
     ip = c.get("ip") or "no IP yet"
     oui = c.get("oui") or "unknown vendor"
     wired = c.get("is_wired")
-    via = f"wired, switch {c.get('sw_mac') or '?'} port {c.get('sw_port') or '?'}" if wired else \
-          f"Wi-Fi '{c.get('essid') or '?'}', AP {c.get('ap_mac') or '?'}"
+    if c.get("_source") == "arp":
+        via = "seen in nova-core's ARP table only (not fingerprinted by UniFi yet)"
+    else:
+        via = f"wired, switch {c.get('sw_mac') or '?'} port {c.get('sw_port') or '?'}" if wired else \
+              f"Wi-Fi '{c.get('essid') or '?'}', AP {c.get('ap_mac') or '?'}"
     fp = ", ".join(str(c[k]) for k in ("dev_cat_name", "os_name", "dev_family_name") if c.get(k))
     fs = c.get("first_seen")
     age = f"{(time.time() - fs) / 60:.0f} min ago" if fs else "unknown"
     rand = " (RANDOMIZED MAC — a phone/laptop with private address, or someone hiding)" if is_randomized(c.get("mac", "")) else ""
-    title = f"🆕 NEW DEVICE on the network: {name} ({ip}) via {'wired' if wired else 'Wi-Fi ' + str(c.get('essid') or '?')}"
+    how = "ARP only" if c.get("_source") == "arp" else ("wired" if wired else "Wi-Fi " + str(c.get("essid") or "?"))
+    title = f"🆕 NEW DEVICE on the network: {name} ({ip}) via {how}"
     body = (f"MAC {c.get('mac')}{rand}\nVendor: {oui}\nHostname: {c.get('hostname') or '-'}\n"
             f"Path: {via}\nUniFi fingerprint: {fp or '-'}\nUniFi first saw it: {age}\n"
             f"Never seen by Nova before (known_devices had {KNOWN_COUNT} devices).\n"
-            f"If this is yours, name it in UniFi. If not: UniFi > Clients > block, or ask Nova to quarantine (gated).")
+            f"If this is yours, name it in UniFi. If not, tell Nova: quarantine {c.get('mac')}  (she blocks it at the UDM; undo with unquarantine).")
     return title, body
 
 
@@ -75,12 +79,33 @@ def heartbeat(cur, status="ok", err=None):
                 "VALUES ('security_organ', %s, 'self', %s, %s, now())", (NODE, status, err))
 
 
+def neighbor_clients() -> list[dict]:
+    """Second source (2026-10-03, Jordan said yes): the local ARP/neighbor table. Catches a device
+    that talks on the segment but has not (yet) been fingerprinted by UniFi. Linux only; empty on macOS."""
+    import subprocess, re as _re
+    try:
+        out = subprocess.run(["ip", "-4", "neigh", "show"], capture_output=True, text=True, timeout=5).stdout
+    except Exception:
+        return []
+    res = []
+    for line in out.splitlines():
+        m = _re.match(r"(\S+) dev (\S+) lladdr (\S+) (REACHABLE|STALE|DELAY|PROBE)", line)
+        if m and m.group(1).startswith("192.168.1."):
+            res.append({"mac": m.group(3).lower(), "ip": m.group(1), "hostname": None, "name": None,
+                        "oui": None, "is_wired": None, "essid": None, "first_seen": None, "_source": "arp"})
+    return res
+
+
 def cycle(conn, dry_run=False, seed=False) -> int:
     global KNOWN_COUNT
     clients = unifi._fetch_clients()
     if clients is None:
         if unifi._unifi_login():
             clients = unifi._fetch_clients()
+    if clients is not None:
+        seen = {(c.get("mac") or "").lower() for c in clients}
+        seen |= {(d.get("mac") or "").lower() for d in (unifi._fetch_devices() or [])}   # UniFi's own switches/APs are not intruders
+        clients = clients + [n for n in neighbor_clients() if n["mac"] not in seen]
     if clients is None:
         with conn.cursor() as cur:
             heartbeat(cur, "degraded", "UniFi client fetch failed")
@@ -120,6 +145,22 @@ def cycle(conn, dry_run=False, seed=False) -> int:
     return new
 
 
+def digest():
+    """Daily roll-up of newcomers (info -> #nova-digest), so criticals stay rare but the long tail is visible."""
+    conn = psycopg2.connect(DSN)
+    with conn.cursor() as cur:
+        cur.execute("SELECT client_mac, coalesce(client_name,'-'), coalesce(ip,'-'), first_seen FROM telemetry.known_devices "
+                    "WHERE first_seen > now() - interval '24 hours' ORDER BY first_seen")
+        rows = cur.fetchall()
+        cur.execute("SELECT count(*) FROM telemetry.known_devices")
+        total = cur.fetchone()[0]
+    lines = [f"• {fs:%H:%M} {mac} {name} {ip}" for mac, name, ip, fs in rows]
+    body = (f"{len(rows)} device(s) first seen in the last 24 h (of {total} known):\n" + "\n".join(lines)) if rows else f"No new devices in the last 24 h ({total} known)."
+    notify("🛡️ Security organ — daily newcomers", body, level="info", category="security", source="nova_security_organ",
+           dedup_key=f"newdev-digest:{datetime.now():%Y-%m-%d}", meta={"new_24h": len(rows), "known": total})
+    log(f"digest sent: {len(rows)} new / {total} known")
+
+
 def test_alert():
     fake = {"mac": "02:de:ad:be:ef:01", "name": "TEST-DEVICE (security organ self-test)", "ip": "192.168.1.254",
             "oui": "Nova Test", "is_wired": False, "essid": "TEST-SSID", "ap_mac": "00:00:00:00:00:00",
@@ -135,10 +176,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--once", action="store_true"); ap.add_argument("--seed", action="store_true")
     ap.add_argument("--dry-run", action="store_true"); ap.add_argument("--test-alert", action="store_true")
-    ap.add_argument("--interval", type=int, default=30)
+    ap.add_argument("--interval", type=int, default=30); ap.add_argument("--digest", action="store_true")
     a = ap.parse_args()
     if a.test_alert:
         test_alert(); return
+    if a.digest:
+        digest(); return
     if not unifi._unifi_login():
         sys.exit("[security-organ] UniFi login failed")
     conn = psycopg2.connect(DSN)
