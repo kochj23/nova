@@ -188,6 +188,10 @@ def main():
             p = generate_image(f"cinematic illustration for a chapter titled '{h}' of an essay by an AI about {subject}; painterly, dark navy and violet and cyan, no text, no logos", 1024, 768, section=section)
             if p: imgs.append(p)
     if len(imgs) < 3:
+        # other recent covers from the same journal section (works on every render host, not just the Studio)
+        others = [f for f in sorted(glob.glob(f"{HOME}/nova-journal/static/images/{section}/*.webp"), key=os.path.getmtime)[-16:] if f not in imgs]
+        random.shuffle(others); imgs += others[: max(0, 5 - len(imgs))]
+    if len(imgs) < 3:
         recent = sorted(glob.glob(f"{HOME}/.openclaw/workspace/*.png"), key=os.path.getmtime)[-12:]
         random.shuffle(recent); imgs += recent[: max(0, 5 - len(imgs))]
     stills = []
