@@ -150,9 +150,11 @@ def dispatch(cur, hosts):
             for cv in covers: copy_to(h, str(cv), f"{h['journal_dir']}/static/images/{section}/{cv.name}")
             copy_to(h, str(SCRIPTS / "nova_speaks.py"), f"{h['scripts_dir']}/nova_speaks.py")   # keep the renderer current
             lp = f"{h['tts_home']}/logs/{slug}.log"
-            cmd = (f"mkdir -p {shlex.quote(os.path.dirname(lp))} && cd {shlex.quote(h['scripts_dir'])} && "
-                   f"TTS_HOME={shlex.quote(h['tts_home'])} COQUI_TOS_AGREED=1 NOVA_SPEAKS_OUT={shlex.quote(h['out_dir'])} {h['env'] or ''} "
-                   f"nohup {shlex.quote(h['python'])} nova_speaks.py --article {shlex.quote(rart)} --url {shlex.quote(url)} > {shlex.quote(lp)} 2>&1 < /dev/null & echo $!")
+            inner = (f"cd {shlex.quote(h['scripts_dir'])} && exec env TTS_HOME={shlex.quote(h['tts_home'])} COQUI_TOS_AGREED=1 "
+                     f"NOVA_SPEAKS_OUT={shlex.quote(h['out_dir'])} {h['env'] or ''} {shlex.quote(h['python'])} nova_speaks.py "
+                     f"--article {shlex.quote(rart)} --url {shlex.quote(url)}")
+            # fully detached: nothing in the background job keeps the ssh channel open, so this returns at once with the pid
+            cmd = (f"mkdir -p {shlex.quote(os.path.dirname(lp))}; nohup bash -c {shlex.quote(inner)} > {shlex.quote(lp)} 2>&1 < /dev/null & echo $!")
             rc, out = sh(h, cmd, timeout=120)
             pid = int(out.strip().splitlines()[-1])
             cur.execute("UPDATE nova_speaks_renders SET status='rendering', host=%s, pid=%s, log_path=%s, started_at=now() WHERE slug=%s", (h["host"], pid, lp, slug))
