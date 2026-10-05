@@ -195,6 +195,8 @@ def main():
     # images: cover + given/generated/random recent renders
     imgs = []
     cover = glob.glob(f"{HOME}/nova-journal/static/images/{section}/{slug}.webp")
+    fm_cover = re.search(r'^\s*image:\s*"?(/images/[^"\s]+)', md, re.M)       # frontmatter cover when its name != slug
+    if fm_cover: cover += glob.glob(f"{HOME}/nova-journal/static{fm_cover.group(1)}")
     if cover: imgs.append(cover[0])
     if a.images: imgs += a.images
     if a.generate_images:

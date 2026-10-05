@@ -147,6 +147,8 @@ def dispatch(cur, hosts):
             sec_dir = JOURNAL / "static/images" / section
             covers = sorted(sec_dir.glob("*.webp"), key=lambda f: f.stat().st_mtime)[-6:]
             if (sec_dir / f"{slug}.webp").exists() and (sec_dir / f"{slug}.webp") not in covers: covers.append(sec_dir / f"{slug}.webp")
+            fm = re.search(r'^\s*image:\s*"?(/images/[^"\s]+)', pathlib.Path(art).read_text(), re.M)   # frontmatter cover when its name != slug
+            if fm and (JOURNAL / "static" / fm.group(1).lstrip("/")).exists(): covers.append(JOURNAL / "static" / fm.group(1).lstrip("/"))
             for cv in covers: copy_to(h, str(cv), f"{h['journal_dir']}/static/images/{section}/{cv.name}")
             copy_to(h, str(SCRIPTS / "nova_speaks.py"), f"{h['scripts_dir']}/nova_speaks.py")   # keep the renderer current
             lp = f"{h['tts_home']}/logs/{slug}.log"
