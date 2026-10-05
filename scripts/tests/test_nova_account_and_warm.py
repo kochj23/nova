@@ -142,3 +142,27 @@ def test_scripts_help_run():
     for s in ("nova_account.py", "nova_model_warm.py"):
         r = subprocess.run([sys.executable, str(SCRIPTS / s), "--help"], capture_output=True, text=True, timeout=30)
         assert r.returncode == 0, s
+
+
+# ── intent classification (the gateway consults the ledger BEFORE the model answers) ─────
+def test_classify_questions_about_nova():
+    c = acct.classify_question
+    assert c("What did you learn in school today?") == "learned"
+    assert c("What has Nova done in her free time today?") == "free"
+    assert c("What is the status of the various ingests from today") == "pipelines"
+    assert c("What is the ETA on the video for today's local burbank video") == "pipelines"
+    assert c("What happened to the 10am local burbank article?") == "article"
+    assert c("Where is the 10am Burbank article today, and why was it late?") == "article"
+    assert c("Did I never present you with the script to Conan The Barbarian?") is None
+    assert c("How can I unblock you?") is None
+
+
+def test_question_to_article_query():
+    assert acct.question_to_article_query("What happened to the 10am local burbank article?") == "10:00"
+    assert acct.question_to_article_query("why was the 9:15 pm digest late") == "21:15"
+    assert acct.question_to_article_query("did the heat dome burbank post go out") == "heat dome burbank"
+
+
+def test_article_free_text_scores_title_overlap(journal):
+    r = acct.article("heat dome burbank", acct.date(2026, 10, 5))
+    assert r["found"] and r["slug"] == "2026-10-05-heat-dome"

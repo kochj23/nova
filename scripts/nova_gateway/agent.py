@@ -426,6 +426,31 @@ async def _inject_memory(ctx: GatewayContext, question: str) -> str:
     # conversation makes Nova weaponize them (e.g. needling Jordan with a 2002 email she
     # was fed). For everything else — greetings, banter, opinions — inject nothing.
     q = question.strip().lower()
+    # Questions about NOVA HERSELF (account organ, 2026-10-05): what did you learn / do, what's running, where is
+    # the article. The 8B chat model does not reliably pick the nova_* tools on its own and then invents an
+    # answer ("scheduled for 8:36 AM"), so — like house/traffic/printer — the ledger is consulted FIRST and the
+    # facts are injected. nova_account.py is read-only; --brief keeps it under the tool cap.
+    try:
+        import nova_account as _acct
+        _what = _acct.classify_question(question)
+    except Exception as e:
+        _what = None; log.warning(f"account classify failed (degraded): {e}")
+    if _what:
+        try:
+            _args = [sys.executable, str(SCRIPTS_DIR / "nova_account.py"), _what]
+            if _what == "article": _args.append(_acct.question_to_article_query(question))
+            _args.append("--brief")
+            _proc = await asyncio.create_subprocess_exec(*_args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.DEVNULL, cwd=str(SCRIPTS_DIR))
+            _out, _ = await asyncio.wait_for(_proc.communicate(), timeout=40)
+            _facts = _out.decode(errors="replace").strip()
+            if _facts.startswith("{"):
+                log.info(f"Account ledger injected ({_what}, {len(_facts)} chars)")
+                return ("Answer from Nova's OWN LEDGER below — these are the facts about what she learned, did, is running, "
+                        "or where an article is. Narrate them in her voice; do not invent times, counts or events that are "
+                        "not in the ledger, and if a field says error, say that ledger was unreachable.\n\n"
+                        f"[Nova's ledger — {_what}]\n{_facts}\n[End ledger]\n\n")
+        except Exception as e:
+            log.warning(f"Account ledger lookup failed (degraded): {e}")
     # House questions (six-month build #1, 2026-09-28): consult the structured house_facts
     # ledger BEFORE any vector recall. Firmware, IPs, rooms, ports, service endpoints live
     # there, refreshed every 15 minutes from Zigbee2MQTT / Home Assistant / UniFi / registry.

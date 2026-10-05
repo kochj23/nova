@@ -98,6 +98,38 @@ def pipelines() -> dict:
     }
 
 
+# ── intent: which report answers a question ABOUT Nova (used by the gateway before the model sees it) ──
+_INTENTS = [
+    ("article",   ("article", "post", "piece", "dispatch", "essay", "journal entry", "blog"),
+                  ("where is", "where's", "why was", "why is", "late", "go out", "went out", "publish", "on the site", "live yet", "missing", "didn't", "did the", "status of the", "happened to", "what about", "update on", "when will", "is it up", "is it live")),
+    ("pipelines", ("status", "eta", "running", "pipeline", "render", "upload", "ingests", "ingest done", "batch", "queue", "failing", "anything broken", "what's going on", "whats going on", "how are the"), ()),
+    ("learned",   ("learn", "school", "new memories", "ingested", "ingest today", "what did you read", "what came in", "vectors"), ()),
+    ("free",      ("free time", "your own time", "unclaimed", "what did you do", "what have you been doing", "what have you been up to", "been up to", "working on", "pursu", "tinker", "your day", "how was your day"), ()),
+]
+
+
+def classify_question(q: str):
+    """Return 'learned' | 'free' | 'pipelines' | 'article' | None for a question about Nova herself."""
+    ql = " " + re.sub(r"\s+", " ", q.lower().strip()) + " "
+    for what, needs, also in _INTENTS:
+        if any(k in ql for k in needs) and (not also or any(k in ql for k in also)):
+            return what
+    return None
+
+
+_STOP = set("the a an of to is in on at for and or what where why when how did was were it its that this today yesterday "
+            "article post piece dispatch essay blog entry journal nova you your late out go went about tell me please status".split())
+
+
+def question_to_article_query(q: str) -> str:
+    """'where is the 10am burbank article' -> '10:00' if a clock time is present, else the content words."""
+    m = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", q.lower())
+    if m and (m.group(2) or m.group(3)):
+        h = int(m.group(1)) % 12 + (12 if m.group(3) == "pm" else 0); return f"{h:02d}:{m.group(2) or '00'}"
+    words = [w for w in re.findall(r"[a-z0-9'-]+", q.lower()) if w not in _STOP and len(w) > 2]
+    return " ".join(words[:6])
+
+
 # ── article ──────────────────────────────────────────────────────────────────────────────
 def _git(args, cwd=JOURNAL, timeout=30):
     try: return subprocess.run(["git"] + args, cwd=cwd, capture_output=True, text=True, timeout=timeout).stdout.strip()
@@ -126,12 +158,18 @@ def article(query: str, day: date | None = None) -> dict:
         fdate, ftime = (m.group(1), m.group(2)) if m else ("", "")
         title = (re.search(r'^title:\s*"?(.+?)"?\s*$', head, re.M) or [None, slug])[1]
         if re.fullmatch(r"\d{1,2}:\d{2}", q):
-            if fdate == str(day) and ftime == q.zfill(5): hits.append((f, slug, section, title, fdate, ftime))
+            if fdate == str(day) and ftime == q.zfill(5): hits.append((f, slug, section, title, fdate, ftime, 100))
         elif q in slug.lower() or all(w in title.lower() for w in q.split()):
-            hits.append((f, slug, section, title, fdate, ftime))
+            hits.append((f, slug, section, title, fdate, ftime, 100))
+        else:                                                       # free text: score by word overlap with title+slug, recent first
+            words = [w for w in q.split() if w not in _STOP]
+            hay = (title + " " + slug.replace("-", " ")).lower()
+            score = sum(1 for w in words if w in hay)
+            if words and score >= max(1, min(2, len(words))): hits.append((f, slug, section, title, fdate, ftime, score))
     if not hits: return {"query": query, "found": False}
-    hits.sort(key=lambda h: h[4], reverse=True)
-    f, slug, section, title, fdate, ftime = hits[0]
+    hits = [h if len(h) == 7 else h + (100,) for h in hits]
+    hits.sort(key=lambda h: (h[6], h[4]), reverse=True)
+    f, slug, section, title, fdate, ftime, _score = hits[0]
     url = f"{SITE}/{section}/{slug}/"
     rel = str(f.relative_to(JOURNAL))
     committed = _git(["log", "-1", "--format=%h %ci", "--", rel])
