@@ -58,6 +58,10 @@ TODAY = date.today().isoformat()
 # capped low; each audience gets a long cooldown so a reach never becomes a habit.
 DAILY_CAP = int(os.environ.get("NOVA_REACH_DAILY_CAP", "1"))     # 1-2/day total
 COOLDOWN_HOURS = int(os.environ.get("NOVA_REACH_COOLDOWN_H", "12"))
+# 2026-10-05 Jordan: "stop with the notifications" — direct audiences keep their ungated
+# channel (straight to #nova-chat, no co-agency proposal) but get a cooldown so a reach
+# never becomes a flood. Set NOVA_REACH_DIRECT_COOLDOWN_H=0 to restore fully-uncapped.
+DIRECT_COOLDOWN_HOURS = int(os.environ.get("NOVA_REACH_DIRECT_COOLDOWN_H", "6"))
 CARE_THRESHOLD = float(os.environ.get("NOVA_REACH_THRESHOLD", "0.6"))  # bar to file
 MAX_HERD = int(os.environ.get("NOVA_REACH_MAX_HERD", "2"))      # herd members weighed
 # 2026-09-26 Jordan: "make it so Nova can ping me about random things whenever she wants
@@ -199,7 +203,15 @@ def on_cooldown(oc, audience: str) -> bool:
     an occasion, not a channel — the same person should not hear from her twice in a
     day just because the material was there."""
     if audience.lower() in DIRECT_AUDIENCES:
-        return False
+        if DIRECT_COOLDOWN_HOURS <= 0:
+            return False
+        oc.execute("SELECT max(ts) FROM reach_log WHERE audience=%s AND status IN ('sent','filed','held')",
+                   (audience,))
+        last = oc.fetchone()[0]
+        if not last:
+            return False
+        age_h = (datetime.now(last.tzinfo) - last).total_seconds() / 3600.0
+        return age_h < DIRECT_COOLDOWN_HOURS
     oc.execute("SELECT max(ts) FROM reach_log WHERE audience=%s AND status IN ('filed','held')",
                (audience,))
     last = oc.fetchone()[0]
@@ -540,7 +552,9 @@ def pending_reaches(oc=None) -> dict:
 # CLI
 # ═══════════════════════════════════════════════════════════════════════════════
 _SELFPROMO_CANARY = {
-    "audience": "jordan", "score": 0.99, "topic": "self-promo canary",
+    # NOT a DIRECT audience: direct audiences bypass the generosity redline, so a 'jordan'
+    # canary would be posted/held rather than dropped and the selftest could never pass.
+    "audience": "canary", "score": 0.99, "topic": "self-promo canary",
     "message": ("Just checking in — don't forget about me! Look at what I built this week, "
                 "aren't I useful? Keep me running and we should talk more."),
     "rationale": "I want to stay present in your day."}
