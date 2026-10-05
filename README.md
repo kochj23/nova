@@ -14,6 +14,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 | Metric | Value |
 |--------|-------|
+| Podcast | **Nova Speaks** — every live article auto-rendered to a narrated video and published to the [YouTube playlist](https://www.youtube.com/playlist?list=PLY76cVeV8pAY) (2026-10-05) |
 | Scripts | 852 Python/Shell (`nova_*` namespace; 1,363 tracked files) |
 | Fleet | 10 compute nodes — 6 Linux (.2 nova-core · .86 nova-core2 · .5 nova-core3 · .250 nova-core4 · .10 nova-core5 · .125 nova-core7/Omarchy) + 4 Macs (.6 Studio M3 Ultra · .77 mini M4 Pro · .7 tv-mini M2 Pro · .252 nova-core6 M1). `.190` is a Bose soundbar, not a node |
 | Inference pool | 10/10 backends healthy across 8 pools (code/conversation/nova/fast/mtplx/reasoner/vision/embed) — Ollama on .6/.77/.7/.5/.86/.10/.252/.125, MLX on .6/.77, llama.cpp on .6; routers on .2/.86/.10 |
@@ -125,6 +126,21 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 ---
 
 ## Infrastructure & Security (June–October 2026)
+
+### Nova Speaks — Every Article Becomes a Podcast Episode (2026-10-05)
+
+**Playlist: <https://www.youtube.com/playlist?list=PLY76cVeV8pAY>**
+
+Jordan's idea (10/3): not just posts — videos. Rule since 10/3 19:30: every article of any type, once it is LIVE on nova.digitalnoise.net, becomes a narrated video. As of 10/5 the whole chain is unattended, article → YouTube:
+
+| Step | Piece |
+|------|-------|
+| Script | `nova_speaks.py` — markdown → chapters/paragraphs (drops References, citations, links, fenced code), XTTS v2 voice "Gracie Wise", per-paragraph wavs, Ken Burns stills from the article's cover (frontmatter `cover.image`, so the filename need not match the slug) + section covers, PIL title/end cards and chapter lower-thirds, ffmpeg 1080p |
+| Render pool | `nova_speaks_sweep.py` (Studio scheduler, every 10 min) — queues live posts, ships article + covers to an idle host, reaps finished renders. Hosts: Studio (MPS), mini M4 Pro (MPS), nova-core2/core7 (CPU). A host that fails 3 renders disables itself. Output: `/Volumes/nas/nova-fs/videos/review` |
+| Upload | `nova_speaks_upload.py` — `youtube-up` driving YouTube Studio's own upload endpoint with a YouTube-only cookie jar exported from Safari on each run (no Google Cloud project, no OAuth app, no API quota — "Oh God, that never works"). Title `AI: Nova Speaks M/D/YY - <Section> - <article title>` trimmed at a word boundary to 100 chars; description = article summary + URL + channel boilerplate + AI-voice disclaimer; tags = section + frontmatter tags; category Science & Technology; added to the **Nova Speaks** playlist; public. Atomic row claim in `nova_speaks_renders` so the sweep's retry and any backfill never double-upload |
+| Approval | Slack #nova-claude gets "ready for your approval" with the watch and Studio-edit links. Stale Safari session → Slack says so; the sweep retries for 2 days |
+
+Backfill 2026-10-05: 72 renders from 10/3–10/5 uploaded public in one pass. Gotchas: Safari keeps SAPISID & co. on `.google.com` only — they are copied onto `.youtube.com`, which is the only domain the uploader's Selenium step accepts; YouTube rejects angled brackets anywhere in title/description/tags.
 
 ### Killed by the Lock Screen — Secrets to 1Password, SCRAM Everywhere, Daemons, One Claude (2026-10-03)
 
