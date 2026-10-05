@@ -39,10 +39,13 @@ def pg_connect():
 
 
 def ssh_cmd(host, user, cmd, timeout=60):
-    """Run command on remote host via SSH."""
+    """Run command on remote host via SSH (locally for the host CINC runs on: an ssh session
+    into ourselves has no GUI launchd domain, so `launchctl list` reported com.nova.scheduler
+    as missing every night — 2026-10-05)."""
+    local = host in ("127.0.0.1", "localhost", "192.168.1.6")
     try:
         r = subprocess.run(
-            ["ssh"] + SSH_OPTS + [f"{user}@{host}", cmd],
+            ["bash", "-lc", cmd] if local else ["ssh"] + SSH_OPTS + [f"{user}@{host}", cmd],
             capture_output=True, text=True, timeout=timeout
         )
         return r.returncode, r.stdout, r.stderr
