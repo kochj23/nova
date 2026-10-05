@@ -185,3 +185,8 @@ def test_podcast_index_builds_json_newest_first_and_pushes_once(tmp_path, monkey
     assert "<" not in eps[0]["title"] and "⚡" not in eps[0]["title"]
     assert pushes == ["Nova Speaks index: 2 episodes"]
     assert sw.podcast_index(cur) == 0 and len(pushes) == 1                           # unchanged -> no second push
+
+
+def test_art_renders_use_only_the_artwork():
+    src = (SCRIPTS / "nova_speaks.py").read_text()
+    assert 'section == "art" and imgs' in src and src.count('section != "art"') == 2

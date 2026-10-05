@@ -205,11 +205,13 @@ def main():
         for h, _ in chapters[:a.generate_images]:
             p = generate_image(f"cinematic illustration for a chapter titled '{h}' of an essay by an AI about {subject}; painterly, dark navy and violet and cyan, no text, no logos", 1024, 768, section=section)
             if p: imgs.append(p)
-    if len(imgs) < 3:
+    if section == "art" and imgs:
+        imgs = imgs[:1]                      # Jordan 2026-10-05: art videos show the artwork itself only — no rotation through other covers
+    if len(imgs) < 3 and section != "art":
         # other recent covers from the same journal section (works on every render host, not just the Studio)
         others = [f for f in sorted(glob.glob(f"{HOME}/nova-journal/static/images/{section}/*.webp"), key=os.path.getmtime)[-16:] if f not in imgs]
         random.shuffle(others); imgs += others[: max(0, 5 - len(imgs))]
-    if len(imgs) < 3:
+    if len(imgs) < 3 and section != "art":
         recent = sorted(glob.glob(f"{HOME}/.openclaw/workspace/*.png"), key=os.path.getmtime)[-12:]
         random.shuffle(recent); imgs += recent[: max(0, 5 - len(imgs))]
     stills = []
