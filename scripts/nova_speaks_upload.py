@@ -18,6 +18,7 @@ import psycopg2
 DSN = "host=localhost dbname=nova_ops user=kochj"
 COOKIES = Path.home() / ".openclaw/cache/yt_cookies_youtube.txt"   # youtube/google cookies only, from Safari
 JOURNAL = Path.home() / "nova-journal"
+WHITELIST = {"SAPISID", "__Secure-1PSID", "__Secure-3PSID", "__Secure-1PAPISID", "__Secure-3PAPISID", "__Secure-1PSIDTS", "__Secure-3PSIDTS", "LOGIN_INFO"}
 PLAYLIST = "PLY76cVeV8pAY"                      # "Nova Speaks" on youtube.com/@Jord
 BOILERPLATE = ("Nova's Podcast - My AI advisor's thoughts about technology, security, Burbank, and random thoughts.\n\n"
                "Journal here - https://nova.digitalnoise.net/start-here/\n"
@@ -41,7 +42,8 @@ def build(slug, article_path, url):
     tags = re.findall(r'"([^"]+)"', fm(md, "tags")) or []
     desc = fm(md, "description")
     description = (f"{desc}\n\n" if desc else "") + f"Article: {url}\n\n{BOILERPLATE}\n\nNarration is an AI voice (XTTS, 'Gracie Wise'). Written by Nova."
-    return dict(title=prefix + title, description=description, tags=tuple(dict.fromkeys(["Nova", "AI", "Nova Speaks"] + tags))[:30], recorded=d)
+    section = Path(article_path).parent.name                                  # journal category (operations, local, essays, ...)
+    return dict(title=prefix + title, description=description, tags=tuple(dict.fromkeys(["Nova", "AI", "Nova Speaks", section] + tags))[:30], recorded=d)
 
 
 def refresh_cookies():
@@ -53,7 +55,13 @@ def refresh_cookies():
                         "--print", "%(id)s", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"], capture_output=True, text=True, timeout=120)
     if r.returncode != 0 or not os.path.exists(tmp):
         log(f"safari cookie export failed, reusing {COOKIES.name}: {r.stderr[-120:].strip()}"); return
-    keep = [l for l in open(tmp) if l.startswith("#") or l.split("\t")[0] in (".youtube.com", "youtube.com", ".google.com", "accounts.google.com")]
+    rows = [l for l in open(tmp) if not l.startswith("#") and l.count("\t") >= 6]
+    yt = [l for l in rows if l.split("\t")[0] in (".youtube.com", "youtube.com")]   # selenium step only accepts youtube.com cookies
+    have = {l.split("\t")[5] for l in yt}
+    # Safari keeps SAPISID & co. on .google.com only; Google shares those values with youtube.com, so re-domain the copies
+    yt += [".youtube.com" + l[len(l.split("\t")[0]):] for l in rows
+           if l.split("\t")[0] == ".google.com" and l.split("\t")[5] in WHITELIST and l.split("\t")[5] not in have]
+    keep = ["# Netscape HTTP Cookie File\n"] + yt
     COOKIES.parent.mkdir(parents=True, exist_ok=True)
     COOKIES.write_text("".join(keep)); COOKIES.chmod(0o600); os.unlink(tmp)
     log(f"cookies refreshed from Safari ({len(keep)} lines)")
