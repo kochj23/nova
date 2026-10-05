@@ -51,7 +51,14 @@ def journal(tmp_path, monkeypatch):
     (tmp_path / "content" / "local" / "2026-10-05-heat-dome.md").write_text('---\ntitle: "Heat Dome Leaves"\ndate: 2026-10-05T10:00:00-07:00\n---\nbody\n')
     (tmp_path / "content" / "local" / "2026-10-04-fall.md").write_text('---\ntitle: "Fall Moved to Oregon"\ndate: 2026-10-04T10:00:00-07:00\n---\nbody\n')
     monkeypatch.setattr(acct, "JOURNAL", tmp_path)
-    monkeypatch.setattr(acct, "_git", lambda args, cwd=None, timeout=30: "abc1234 2026-10-05 10:54:04 -0700" if "%ci" in " ".join(args) else ("2026-10-05 10:03:55 -0700" if "%ai" in " ".join(args) else "abc1234"))
+    def _fake_git(args, cwd=None, timeout=30):
+        j = " ".join(args)
+        if "ls-tree" in j: return ""                              # origin tree empty in the fake: local files only
+        if "fetch" in j: return ""
+        if "%ci" in j: return "abc1234 2026-10-05 10:54:04 -0700"
+        if "%ai" in j: return "2026-10-05 10:03:55 -0700"
+        return "abc1234"
+    monkeypatch.setattr(acct, "_git", _fake_git)
     monkeypatch.setattr(acct, "_http", lambda url: 200)
     monkeypatch.setattr(acct.shutil, "which", lambda x: None)
     return tmp_path
@@ -160,8 +167,8 @@ def test_classify_questions_about_nova():
 
 
 def test_question_to_article_query():
-    assert acct.question_to_article_query("What happened to the 10am local burbank article?") == "10:00"
-    assert acct.question_to_article_query("why was the 9:15 pm digest late") == "21:15"
+    assert acct.question_to_article_query("What happened to the 10am local burbank article?") == "10:00 local burbank"
+    assert acct.question_to_article_query("why was the 9:15 pm digest late") == "21:15 digest"
     assert acct.question_to_article_query("did the heat dome burbank post go out") == "heat dome burbank"
 
 

@@ -117,7 +117,7 @@ def classify_question(q: str):
     return None
 
 
-_STOP = set("the a an of to is in on at for and or what where why when how did was were it its that this today yesterday "
+_STOP = set("the a an of to is in on at for and or what where why when how did was were it its that this today yesterday happened happen "
             "article post piece dispatch essay blog entry journal nova you your late out go went about tell me please status".split())
 
 
@@ -148,14 +148,21 @@ def _http(url):
 def article(query: str, day: date | None = None) -> dict:
     """Find one article by slug fragment, title words, or a scheduled time like 10:00 (on `day`), then trace it."""
     day = day or date.today()
-    files = sorted((JOURNAL / "content").glob("*/*.md"))
+    _git(["fetch", "-q", "origin", "main"], timeout=60)
+    local = {str(f.relative_to(JOURNAL)): f for f in (JOURNAL / "content").glob("*/*.md")}
+    remote = [l for l in _git(["ls-tree", "-r", "--name-only", "origin/main", "content"]).splitlines() if l.endswith(".md")]
+    files = []                                                  # (relpath, reader) over local ∪ origin/main
+    for rel in sorted(set(local) | set(remote)):
+        if rel in local: files.append((rel, (lambda f: lambda: f.read_text(errors="replace"))(local[rel])))
+        else: files.append((rel, (lambda r: lambda: _git(["show", f"origin/main:{r}"]))(rel)))
     q = query.strip().lower()
     tm = re.match(r"(\d{1,2}:\d{2})\b\s*(.*)$", q)                 # "10:00 local burbank" -> time + tie-break words
     want_time, q = (tm.group(1).zfill(5), tm.group(2).strip()) if tm else (None, q)
     hits = []
-    for f in files:
+    for rel, read in files:
+        f = Path(rel)
         if f.name == "_index.md": continue
-        head = f.read_text(errors="replace")[:1500]
+        head = read()[:1500]
         slug, section = f.stem, f.parent.name
         m = re.search(r'^date:\s*"?(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})', head, re.M)
         fdate, ftime = (m.group(1), m.group(2)) if m else ("", "")
@@ -176,12 +183,11 @@ def article(query: str, day: date | None = None) -> dict:
     hits.sort(key=lambda h: (h[6], h[4]), reverse=True)
     f, slug, section, title, fdate, ftime, _score = hits[0]
     url = f"{SITE}/{section}/{slug}/"
-    rel = str(f.relative_to(JOURNAL))
+    rel = str(f)
     committed = _git(["log", "-1", "--format=%h %ci", "--", rel])
     author_ts = _git(["log", "-1", "--format=%ai", "--", rel])
-    pushed_sha = _git(["log", "-1", "--format=%h", "origin/main", "--", rel]) if committed else ""
-    _git(["fetch", "-q", "origin", "main"], timeout=60)
     on_origin = bool(_git(["log", "-1", "--format=%h", "origin/main", "--", rel]))
+    in_this_clone = rel in local
     live = _http(url)
     deploy = "unknown (gh not installed here)"
     if shutil.which("gh"):
@@ -200,10 +206,11 @@ def article(query: str, day: date | None = None) -> dict:
     why = []
     if committed and author_ts and committed.split(" ", 1)[1][:16] != author_ts[:16]:
         why.append(f"committed at {author_ts[:16]} but only pushed/rebased at {committed.split(' ',1)[1][:16]} — the push failed in between (see push_log)")
-    if not on_origin: why.append("not on origin/main yet — the push has not happened")
+    if not on_origin: why.append(f"not on origin/main yet — committed in the {os.uname().nodename} clone but the push has not happened")
+    if on_origin and not in_this_clone: why.append(f"(note: this clone on {os.uname().nodename} is behind origin; trace used origin/main)")
     if on_origin and live != 200: why.append("pushed but not live — the GitHub Pages deploy has not completed (see deploy)")
     return {"query": query, "found": True, "title": title, "section": section, "slug": slug, "scheduled": f"{fdate} {ftime}",
-            "file": rel, "committed": committed or "not committed", "on_origin_main": on_origin, "live_http": live, "url": url,
+            "file": rel, "committed": committed or "not committed", "on_origin_main": on_origin, "in_this_clone": in_this_clone, "live_http": live, "url": url,
             "deploy_runs": deploy, "push_log": push_log, "why_late": why or ["on time as far as the ledgers show"]}
 
 
