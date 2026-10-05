@@ -117,7 +117,7 @@ def reap(cur, hosts):
             cur.execute("UPDATE nova_speaks_hosts SET fails=0 WHERE host=%s", (hname,))
             yt = upload(slug)
             post_approval(f"🎬 *Nova Speaks — ready for your approval, Little Mister:* {title}\n`{mp4}`\n{info} · rendered on {hname} · voice Gracie Wise\n"
-                          + (f"Uploaded PRIVATE to YouTube: https://studio.youtube.com/video/{yt}/edit — watch, then flip it public." if yt
+                          + (f"Published to YouTube: https://youtu.be/{yt} (edit: https://studio.youtube.com/video/{yt}/edit)" if yt
                              else "YouTube upload failed (cookies stale?) — sign into YouTube in Safari and I'll retry next sweep."))
             log(f"done: {slug} on {hname}")
         else:
@@ -191,14 +191,13 @@ def main():
     n = scan_new(cur)
     if n: log(f"queued {n} new article(s)")
     reap(cur, hosts)
-    # retry one YouTube upload that failed earlier (stale cookies); only renders made after the uploader
-    # shipped (2026-10-05 12:00) — everything before that Jordan uploaded by hand.
+    # retry one YouTube upload that failed earlier (stale cookies); a row that keeps failing ages out after 2 days.
     cur.execute("ALTER TABLE nova_speaks_renders ADD COLUMN IF NOT EXISTS youtube_id text, ADD COLUMN IF NOT EXISTS youtube_uploaded_at timestamptz")
     cur.execute("SELECT slug, title FROM nova_speaks_renders WHERE status='done' AND youtube_id IS NULL "
-                "AND finished_at > '2026-10-05 12:00-07' ORDER BY finished_at LIMIT 1")
+                "AND finished_at > now() - interval '2 days' ORDER BY finished_at LIMIT 1")
     for slug, title in cur.fetchall():
         yt = upload(slug)
-        if yt: post_approval(f"🎬 YouTube upload retry succeeded for *{title}*: https://studio.youtube.com/video/{yt}/edit (PRIVATE)")
+        if yt: post_approval(f"🎬 YouTube upload retry succeeded for *{title}*: https://youtu.be/{yt}")
     dispatch(cur, hosts)
     cur.execute("SELECT status, count(*) FROM nova_speaks_renders GROUP BY 1 ORDER BY 1")
     log("state: " + ", ".join(f"{s}={k}" for s, k in cur.fetchall()) + f" · hosts: {', '.join(h for h, v in hosts.items() if v['enabled'])}")

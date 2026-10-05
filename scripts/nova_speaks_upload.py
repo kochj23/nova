@@ -1,6 +1,6 @@
 #!/usr/bin/env /Volumes/Data/AI/youtube-up/venv/bin/python
-"""nova_speaks_upload.py — upload a finished Nova Speaks render to Jordan's YouTube channel, PRIVATE,
-in his title format, into the "Nova Speaks" playlist. He flips it public after watching.
+"""nova_speaks_upload.py — upload a finished Nova Speaks render to Jordan's YouTube channel, PUBLIC (his call,
+2026-10-05: "Upload them as public"), in his title format, into the "Nova Speaks" playlist.
 
 Uses youtube-up with a YouTube-only cookie jar exported from Safari on each run, so no
 Google Cloud Console, no OAuth app, no API quota (Jordan, 2026-10-05: "Oh God, that never works").
@@ -36,13 +36,13 @@ def build(slug, article_path, url):
     md = Path(article_path).read_text()
     title = re.sub(r"[*_`]", "", fm(md, "title")); title = re.sub(r"^[^\w\"']+", "", title).strip()
     d = date.fromisoformat(fm(md, "date")[:10])
-    prefix = f"AI: Nova Speaks {d.month}/{d.day}/{d.year % 100} - "
+    section = Path(article_path).parent.name                                  # journal category (operations, local, essays, ...)
+    prefix = f"AI: Nova Speaks {d.month}/{d.day}/{d.year % 100} - {section.replace('-', ' ').title()} - "
     room = 100 - len(prefix)
     if len(title) > room: title = title[:room].rsplit(" ", 1)[0].rstrip(" ,;:-")
     tags = re.findall(r'"([^"]+)"', fm(md, "tags")) or []
     desc = fm(md, "description")
     description = (f"{desc}\n\n" if desc else "") + f"Article: {url}\n\n{BOILERPLATE}\n\nNarration is an AI voice (XTTS, 'Gracie Wise'). Written by Nova."
-    section = Path(article_path).parent.name                                  # journal category (operations, local, essays, ...)
     return dict(title=prefix + title, description=description, tags=tuple(dict.fromkeys(["Nova", "AI", "Nova Speaks", section] + tags))[:30], recorded=d)
 
 
@@ -77,7 +77,7 @@ def session():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--slug"); ap.add_argument("--dry-run", action="store_true"); ap.add_argument("--check", action="store_true")
-    ap.add_argument("--privacy", default="PRIVATE", choices=["PRIVATE", "UNLISTED", "PUBLIC"])
+    ap.add_argument("--privacy", default="PUBLIC", choices=["PRIVATE", "UNLISTED", "PUBLIC"])
     a = ap.parse_args()
     if a.check:
         ok = session().has_valid_cookies(); log(f"cookies valid: {ok}"); return 0 if ok else 1
@@ -87,14 +87,20 @@ def main():
     row = cur.fetchone()
     if not row: log(f"no done render for {a.slug}"); return 1
     article, url, mp4, yid = row
-    if yid: log(f"already uploaded: https://youtu.be/{yid}"); return 0
+    if yid: log(f"already uploaded or in progress: {yid}"); return 0
     m = build(a.slug, article, url)
     log(f"title ({len(m['title'])}): {m['title']}"); log(f"tags: {m['tags']}"); log(f"file: {mp4}")
     if a.dry_run: print(m["description"]); return 0
     from youtube_up import Metadata, PrivacyEnum, CategoryEnum
+    # claim the row so the sweep's retry and a backfill can't upload the same video twice
+    cur.execute("UPDATE nova_speaks_renders SET youtube_id='uploading' WHERE slug=%s AND youtube_id IS NULL", (a.slug,))
+    if cur.rowcount != 1: log("claimed by another uploader"); return 0
     meta = Metadata(title=m["title"], description=m["description"], privacy=PrivacyEnum[a.privacy], tags=m["tags"],
                     playlist_ids=[PLAYLIST], category=CategoryEnum.SCIENCE_TECH, recorded_date=m["recorded"], made_for_kids=False)
-    vid = session().upload(mp4, meta, progress_callback=lambda step, pct: log(f"{step} {pct:.0f}%") if pct in (0, 100) else None)
+    try:
+        vid = session().upload(mp4, meta, progress_callback=lambda step, pct: log(f"{step} {pct:.0f}%") if pct in (0, 100) else None)
+    except BaseException:
+        cur.execute("UPDATE nova_speaks_renders SET youtube_id=NULL WHERE slug=%s AND youtube_id='uploading'", (a.slug,)); raise
     cur.execute("UPDATE nova_speaks_renders SET youtube_id=%s, youtube_uploaded_at=now() WHERE slug=%s", (vid, a.slug))
     log(f"DONE https://youtu.be/{vid} ({a.privacy})"); print(vid); return 0
 
