@@ -14,6 +14,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 | Metric | Value |
 |--------|-------|
+| Chat latency | Resident models fleet-wide since 2026-10-05 (placement table + warmer + Studio on Ollama 0.34.4): chat no longer pays a model load per turn; gateway sticks to a warm node |
 | Podcast | **Nova Speaks** — every live article auto-rendered to a narrated video and published to the [YouTube playlist](https://www.youtube.com/playlist?list=PLY76cVeV8pAY) (2026-10-05) |
 | Scripts | 852 Python/Shell (`nova_*` namespace; 1,363 tracked files) |
 | Fleet | 10 compute nodes — 6 Linux (.2 nova-core · .86 nova-core2 · .5 nova-core3 · .250 nova-core4 · .10 nova-core5 · .125 nova-core7/Omarchy) + 4 Macs (.6 Studio M3 Ultra · .77 mini M4 Pro · .7 tv-mini M2 Pro · .252 nova-core6 M1). `.190` is a Bose soundbar, not a node |
@@ -126,6 +127,26 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 ---
 
 ## Infrastructure & Security (June–October 2026)
+
+### The Account Organ, Resident Models, and Evidence Check (2026-10-05)
+
+Jordan: "What is the next organ? Think about how I really use Nova." The ops DB answered: in 30 days he sent Nova 54 direct messages (10 came back "Something went wrong"), sent Claude 1,113 queue items (426 reliability, 325 security), and every question he asked that day was *about* Nova — what did you learn, what did you do in your free time, where is the 10am article, how are the renders. Three builds followed.
+
+**1. `account` — Nova answers questions about herself from her ledgers** (`nova_account.py`, four gateway tools: `nova_learned`, `nova_free_time`, `nova_pipelines`, `nova_article_status`; autonomy level `auto`, read-only). Each returns typed facts the chat agent narrates: memories by vector + every ingest and its outcome; projects/pursuits/tinkering/reaches/self-directed memories/growth; renders, uploads, running ingests, scheduler failures, open incidents; and one article traced written → committed → pushed → deployed → live with *why late* ("committed 10:03, pushed 10:54 — the push failed in between"). `--brief` keeps every answer under the gateway's 3,000-char tool cap. Same CLI serves Claude sessions and her reaches.
+
+**2. Resident models — no more reloads dressed up as "model switches."** Chat TTFT p50 was **31.8 s** on ollama, 73.7 s on MLX. Root causes, all fixed:
+
+| Cause | Fix |
+|-------|-----|
+| Ollama's default 5-min `keep_alive` expired `qwen3:8b` on .6/.77/.252/.125/.7 between turns | `nova_model_warm.py` (Studio scheduler, every 10 min) re-asserts `keep_alive=-1` for a **placement table** in `service_config(nova_model_warm.placement)`; `OLLAMA_KEEP_ALIVE=-1` in every node's service env |
+| Models loaded with a 262,144-token context → one 18 GB model "predicted" at 29 GiB → evicted everything else (M4 mini log: `predicted to exceed available memory, evicting`) | `OLLAMA_CONTEXT_LENGTH` ceiling per node: 32k (Studio, .77, .125), 16k (.5/.86/.7), 8k (.252 16 GB) |
+| Default cap of 3 resident models per node | `OLLAMA_MAX_LOADED_MODELS` 8 (Studio) / 4 (.77) / 3 (rest) |
+| Studio ran **Ollama.app 0.31.1** (ignored the env) | replaced by the official **0.34.4** as `net.digitalnoise.ollama` LaunchDaemon under `/Volumes/Data/ollama/bin`, models at `/Volumes/Data/ollama/models` |
+| Gateway routed each turn to whichever node pinged fastest — usually one where the model had just gone cold | `nova_gateway/router._best_url` prefers a node whose `/api/ps` (via `nova_llm_ping` ranking) shows the chat model **resident**, and stays on it while it is up |
+
+Placement now resident: Studio = qwen3:8b, nova:latest, qwen3:30b-a3b, deepseek-r1:8b, qwen3-vl:4b, nomic (6, ~95 GB of 512); M4 mini = qwen3:8b, nova:latest, nomic; M2 mini/M1 mini/core3 = llama3.2:3b + qwen3:8b; core2/core7 = + nomic; core5 = nomic only. The chat model is warm on **7 nodes**, the persona voice on 2, the fast tier on 5, embeddings on 4. TinyChat is a UI, not a model host (see agent_docs `nova-inference`).
+
+**3. Evidence Check** (`nova_evidence_check.py`, the other Claude instance, same day) — look at the evidence before an alert is believed. Incident #3675 ("Suspicious DNS — nova-core", 6×/7d, "isolate the host") was a substring bug: `.ga` inside `attester.gateway.icloud.com`; triage, the correlator and the LLM each trusted the stage before. The organ fetches the RAW source rows, RE-CHECKS the detector's own claim deterministically, resolves WHO (every IP via net_inventory), reads 14 days of HISTORY, and gives one ADVICE line; verdicts `detector_fault | supported | unverified`. A detector fault says "fix the rule, not the host" and files a claude_queue item once per rule per week. Fail-open. Wired into `nova_alert_triage` (decision + annotation) and `nova_correlator.llm_summarize`. Tests: `tests/test_nova_evidence_check.py`.
 
 ### Nova Speaks — Every Article Becomes a Podcast Episode (2026-10-05)
 

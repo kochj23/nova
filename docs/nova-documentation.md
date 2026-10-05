@@ -752,6 +752,12 @@ Every article that goes live on nova.digitalnoise.net becomes a narrated 1080p v
 
 **Gotchas:** Safari keeps SAPISID/PSID cookies on `.google.com` only — the uploader copies them onto `.youtube.com` (the only domain youtube-up's Selenium step accepts). YouTube rejects `<` `>` anywhere in title/description/tags. Pin coqui-tts 0.27.5 / torch 2.11.0 on render hosts.
 
+### 11.y Account organ + resident inference (2026-10-05)
+
+- **Account organ** — `nova_account.py learned|free|pipelines|article <q> [--date] [--brief]`; gateway tools `nova_learned`, `nova_free_time`, `nova_pipelines`, `nova_article_status` (autonomy `auto`, read-only). Nova answers "what did you learn / do / where is the article / what's running" from claude_queue, ingest_jobs, memories-by-vector, pursuit_threads, tinker_log, project_log, reach_log, growth_commitments, nova_speaks_renders, scheduler_runs, incidents and the journal git log. Runs on .2 (gateway) and .6.
+- **Resident models** — placement in `service_config(nova_model_warm.placement)`; `nova_model_warm.py` every 10 min (Studio scheduler) pins with keep_alive=-1; per-node env `OLLAMA_KEEP_ALIVE=-1`, `OLLAMA_MAX_LOADED_MODELS`, `OLLAMA_CONTEXT_LENGTH` (32k/16k/8k by RAM). Studio Ollama = 0.34.4 LaunchDaemon `net.digitalnoise.ollama` (`/Volumes/Data/ollama/bin`, log `~/.openclaw/logs/ollama.log`); Ollama.app retired. Gateway `_best_url` prefers/sticks to nodes where the chat model is resident. Check: `nova_model_warm.py --status`.
+- **Evidence Check** — `nova_evidence_check.py --event <id>`; raw rows → deterministic re-check → who → history → advice; verdict detector_fault/supported/unverified; used by alert triage and the correlator.
+
 ## 12. Script Reference (Key Scripts)
 
 ### 12.1 Startup/Shutdown/Restart

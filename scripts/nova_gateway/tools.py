@@ -51,6 +51,33 @@ TOOL_REGISTRY: dict[str, dict] = {
                        "place-types are available.",
         "parameters": {},
     },
+    # ── account organ (2026-10-05): Nova answers questions about HERSELF from her ledgers ──
+    "nova_learned": {
+        "description": "What Nova learned / ingested on a day: new memories by vector, every ingest request and its "
+                       "outcome, and ingests that stored nothing. Use for 'what did you learn today', 'how was school', "
+                       "'what new memories did you get', 'did the X ingest work'. Facts from the ledgers, not recall.",
+        "parameters": {"date": {"type": "string", "description": "YYYY-MM-DD (default today)"}},
+    },
+    "nova_free_time": {
+        "description": "What Nova did in her own time on a day: projects worked, pursuit threads, tinkering, proposals, "
+                       "reaches to Jordan, self-directed memories (unclaimed/gravel/research/self-answers), growth. "
+                       "Use for 'what did you do today', 'free time', 'what have you been up to', 'what are you working on'.",
+        "parameters": {"date": {"type": "string", "description": "YYYY-MM-DD (default today)"}},
+    },
+    "nova_pipelines": {
+        "description": "Live status of Nova's pipelines right now: Nova Speaks renders and YouTube uploads, running ingests, "
+                       "open claude_queue work, scheduler failures today, open incidents. Use for 'status', 'ETA on the "
+                       "video', 'are the ingests done', 'what's running', 'anything failing'.",
+        "parameters": {},
+    },
+    "nova_article_status": {
+        "description": "Trace one journal article end to end: written -> committed -> pushed -> deployed -> live, with the "
+                       "reason it is late if it is. query = slug fragment, title words, or a scheduled time like '10:00'. "
+                       "Use for 'where is the 10am article', 'did the Burbank post go out', 'why isn't X on the site'.",
+        "parameters": {"query": {"type": "string", "description": "slug fragment, title words, or HH:MM"},
+                       "date": {"type": "string", "description": "YYYY-MM-DD the article was scheduled (default today)"}},
+        "required": ["query"],
+    },
     "run_script": {
         "description": "Execute a Nova script by name",
         "parameters": {
@@ -261,6 +288,11 @@ async def resolve_and_run(ctx: GatewayContext, pending_id: str, approved: bool, 
 async def _dispatch_now(ctx: GatewayContext, tool_name: str, tool_params: dict) -> str:
     """The actual tool switch. Only dispatch_tool/resolve_and_run call this."""
     try:
+        if tool_name in ("nova_learned", "nova_free_time", "nova_pipelines", "nova_article_status"):
+            what = {"nova_learned": "learned", "nova_free_time": "free", "nova_pipelines": "pipelines", "nova_article_status": "article"}[tool_name]
+            args = [what] + ([str(tool_params.get("query", ""))] if what == "article" else []) \
+                   + (["--date", str(tool_params["date"])] if tool_params.get("date") else []) + ["--brief"]
+            return await _tool_run_script(ctx, {"script": "nova_account.py", "args": args})
         if tool_name == "browse_page":
             return await _tool_browse_page(ctx, tool_params)
         if tool_name == "run_script":

@@ -7,6 +7,7 @@ Written by Jordan Koch.
 """
 
 import asyncio
+import os
 import logging
 import re
 import sys
@@ -54,6 +55,9 @@ def _strip_thinking(text: str) -> str:
 _RANK_CACHE = {"ts": 0.0, "val": None}
 _MLX_ID_CACHE: dict = {}   # base_url -> (model id, ts)
 
+CHAT_MODEL = os.environ.get("NOVA_CHAT_MODEL", "qwen3:8b")   # the model _call_backend asks ollama for
+
+
 def _best_url(kind: str, default: str) -> str:
     try:
         import time as _t
@@ -66,9 +70,19 @@ def _best_url(kind: str, default: str) -> str:
             v = row[0] if row else None
             _RANK_CACHE["val"] = (v if isinstance(v, dict) else (_j.loads(v) if v else None)); _RANK_CACHE["ts"] = _t.time()
         rows = (_RANK_CACHE["val"] or {}).get(kind) or []
-        for r in rows:
-            if r.get("status") == "up" and (kind != "ollama" or r.get("has_chat_model")):
-                return r["url"]
+        up = [r for r in rows if r.get("status") == "up" and (kind != "ollama" or r.get("has_chat_model"))]
+        # 2026-10-05: prefer a node that already has the chat model RESIDENT (ranking carries /api/ps), and stay on
+        # the node we used last turn while it is still up+warm. Chat TTFT p50 was 31.8 s: each turn went to whichever
+        # node pinged fastest, usually one where the model had just expired — a reload, not a switch.
+        if kind == "ollama":
+            warm = [r for r in up if CHAT_MODEL in (r.get("loaded") or [])]
+            last = _RANK_CACHE.get("last_ollama")
+            if last and any(r["url"] == last for r in warm):
+                return last
+            if warm:
+                _RANK_CACHE["last_ollama"] = warm[0]["url"]; return warm[0]["url"]
+        if up:
+            return up[0]["url"]
     except Exception:
         pass
     return default
@@ -293,7 +307,7 @@ class ModelRouter:
             base_url = _best_url("ollama", base_url)
             # Use Ollama's native API with think:true — thinking goes to
             # separate field, we only return content.
-            model = model_override or "qwen3:8b"   # 2026-09-18: 30b only on wedged .6 / cold .77; 8b is reliable on the working nodes
+            model = model_override or CHAT_MODEL   # 2026-09-18: 30b only on wedged .6 / cold .77; 8b is reliable on the working nodes
             payload = {
                 "model":   model,
                 "messages": msgs,
