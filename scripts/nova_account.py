@@ -124,9 +124,10 @@ _STOP = set("the a an of to is in on at for and or what where why when how did w
 def question_to_article_query(q: str) -> str:
     """'where is the 10am burbank article' -> '10:00' if a clock time is present, else the content words."""
     m = re.search(r"\b(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\b", q.lower())
+    words = [w for w in re.findall(r"[a-z'-]+", q.lower()) if w not in _STOP and len(w) > 2]
     if m and (m.group(2) or m.group(3)):
-        h = int(m.group(1)) % 12 + (12 if m.group(3) == "pm" else 0); return f"{h:02d}:{m.group(2) or '00'}"
-    words = [w for w in re.findall(r"[a-z0-9'-]+", q.lower()) if w not in _STOP and len(w) > 2]
+        h = int(m.group(1)) % 12 + (12 if m.group(3) == "pm" else 0)
+        return f"{h:02d}:{m.group(2) or '00'} " + " ".join(words[:5])        # time first, then words to break ties
     return " ".join(words[:6])
 
 
@@ -149,6 +150,8 @@ def article(query: str, day: date | None = None) -> dict:
     day = day or date.today()
     files = sorted((JOURNAL / "content").glob("*/*.md"))
     q = query.strip().lower()
+    tm = re.match(r"(\d{1,2}:\d{2})\b\s*(.*)$", q)                 # "10:00 local burbank" -> time + tie-break words
+    want_time, q = (tm.group(1).zfill(5), tm.group(2).strip()) if tm else (None, q)
     hits = []
     for f in files:
         if f.name == "_index.md": continue
@@ -157,8 +160,10 @@ def article(query: str, day: date | None = None) -> dict:
         m = re.search(r'^date:\s*"?(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2})', head, re.M)
         fdate, ftime = (m.group(1), m.group(2)) if m else ("", "")
         title = (re.search(r'^title:\s*"?(.+?)"?\s*$', head, re.M) or [None, slug])[1]
-        if re.fullmatch(r"\d{1,2}:\d{2}", q):
-            if fdate == str(day) and ftime == q.zfill(5): hits.append((f, slug, section, title, fdate, ftime, 100))
+        if want_time:
+            if fdate == str(day) and ftime == want_time:
+                hay = (title + " " + slug.replace("-", " ") + " " + section).lower()
+                hits.append((f, slug, section, title, fdate, ftime, 100 + sum(1 for w in q.split() if w in hay)))
         elif q in slug.lower() or all(w in title.lower() for w in q.split()):
             hits.append((f, slug, section, title, fdate, ftime, 100))
         else:                                                       # free text: score by word overlap with title+slug, recent first

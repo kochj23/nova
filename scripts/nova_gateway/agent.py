@@ -1016,9 +1016,16 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
     except Exception as e:
         log.warning(f"[{trace_id}] Memory injection failed (degraded): {e}")
         exp_ctx, memory_ctx = "", ""
-    if exp_ctx:
-        log.info(f"[{trace_id}] experiential recall injected ({len(exp_ctx)} chars)")
-    user_content = f"{exp_ctx}{memory_ctx}{message}" if (exp_ctx or memory_ctx) else message
+    if memory_ctx.startswith("Answer from Nova's OWN LEDGER"):
+        # account organ (2026-10-05): the ledger is authoritative for questions about Nova herself —
+        # drop the experiential lane (it re-surfaced her previous riff instead of the facts) and put
+        # the facts AFTER the question so they are the most recent thing the model reads.
+        exp_ctx = ""
+        user_content = f"{message}\n\n{memory_ctx}"
+    else:
+        if exp_ctx:
+            log.info(f"[{trace_id}] experiential recall injected ({len(exp_ctx)} chars)")
+        user_content = f"{exp_ctx}{memory_ctx}{message}" if (exp_ctx or memory_ctx) else message
 
     # Build message history (wrapped in try/except for session isolation)
     try:
@@ -1231,7 +1238,11 @@ async def run_agent(ctx: GatewayContext, message: str, session_id: str,
 
     # ── Degraded mode: startup grace period ──────────────────────────────────
     if await _is_degraded(ctx):
-        log.info(f"[{trace_id}] Degraded mode: direct LLM call (startup grace, {STARTUP_GRACE}s window)")
+        # 2026-10-05: during the startup grace the bare model answered as a generic assistant ("I don't have
+        # access to real-time news beyond October 2023") — not Nova, and wrong. Say what is true instead.
+        log.info(f"[{trace_id}] Degraded mode: startup grace ({STARTUP_GRACE}s window) — honest hold, no model call")
+        return ("I'm just coming back up, Little Mister — memory and tools are still loading. "
+                "Give me thirty seconds and ask again.")
         try:
             response = await ctx.router.route(
                 messages=[{"role": "user", "content": message}],

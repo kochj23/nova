@@ -56,6 +56,7 @@ _RANK_CACHE = {"ts": 0.0, "val": None}
 _MLX_ID_CACHE: dict = {}   # base_url -> (model id, ts)
 
 CHAT_MODEL = os.environ.get("NOVA_CHAT_MODEL", "qwen3:8b")   # the model _call_backend asks ollama for
+CHAT_NODE_ORDER = os.environ.get("NOVA_CHAT_NODE_ORDER", "192.168.1.6,192.168.1.77,192.168.1.7,192.168.1.125,192.168.1.5,192.168.1.86,192.168.1.252").split(",")
 
 
 def _best_url(kind: str, default: str) -> str:
@@ -75,7 +76,11 @@ def _best_url(kind: str, default: str) -> str:
         # the node we used last turn while it is still up+warm. Chat TTFT p50 was 31.8 s: each turn went to whichever
         # node pinged fastest, usually one where the model had just expired — a reload, not a switch.
         if kind == "ollama":
-            warm = [r for r in up if CHAT_MODEL in (r.get("loaded") or [])]
+            # warm nodes in HARDWARE order, not ping order: nova-core2 (.86, AMD iGPU) pinged fastest but timed out at
+            # 45 s on a real prompt (15:42 2026-10-05) while the Studio/M4 mini sat idle. Ping latency is not prefill speed.
+            order = {ip: i for i, ip in enumerate(CHAT_NODE_ORDER)}
+            def _rank(r): return order.get(r["url"].split("//")[-1].split(":")[0], 99)
+            warm = sorted([r for r in up if CHAT_MODEL in (r.get("loaded") or [])], key=_rank)
             last = _RANK_CACHE.get("last_ollama")
             if last and any(r["url"] == last for r in warm):
                 return last

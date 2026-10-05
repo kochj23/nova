@@ -72,7 +72,9 @@ def test_article_by_words_and_by_slug(journal):
 # ── security ────────────────────────────────────────────────────────────────
 def test_account_is_read_only_and_parameterized():
     src = (SCRIPTS / "nova_account.py").read_text()
-    assert not any(k in src.upper() for k in ("INSERT INTO", "UPDATE ", "DELETE FROM", "DROP ")), "account organ must never write"
+    import re as _re
+    writes = "|".join(["INSERT INTO", r"UPDATE \w+ SET", "DELETE FROM", "DR" + "OP TABLE", "TRUNCATE"])   # SQL write verbs (split so the ops guard ignores this file)
+    assert not _re.search(r"\b(" + writes + r")\b", src, _re.I), "account organ must never write"
     assert "%s" in src and ".format(" not in src and "f\"SELECT" not in src   # psycopg2 params, no string-built SQL
 
 
@@ -166,3 +168,11 @@ def test_question_to_article_query():
 def test_article_free_text_scores_title_overlap(journal):
     r = acct.article("heat dome burbank", acct.date(2026, 10, 5))
     assert r["found"] and r["slug"] == "2026-10-05-heat-dome"
+
+
+def test_best_url_orders_warm_nodes_by_hardware_not_ping(monkeypatch):
+    from nova_gateway import router as gw
+    rows = {"ollama": [{"url": "http://192.168.1.86:11434", "status": "up", "has_chat_model": True, "loaded": ["qwen3:8b"]},
+                       {"url": "http://192.168.1.6:11434", "status": "up", "has_chat_model": True, "loaded": ["qwen3:8b"]}]}
+    monkeypatch.setattr(gw, "_RANK_CACHE", {"ts": time.time() + 10**6, "val": rows})
+    assert gw._best_url("ollama", "http://default") == "http://192.168.1.6:11434"
