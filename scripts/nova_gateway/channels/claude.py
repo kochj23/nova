@@ -62,6 +62,28 @@ async def run_claude_channel(ctx: GatewayContext):
             )
 
             for row in rows:
+
+                # 2026-10-05: test fixtures (tests/test_claude_nova_bridge.py sends "test_ping_from_tests") landed in
+
+                # production and Nova answered each one into #nova-claude every minute. Tests are not conversations.
+
+                _mtxt = (row["message"] or "").strip().lower()
+
+                try:
+
+                    _mmeta = json.loads(row["metadata"]) if isinstance(row["metadata"], str) else (row["metadata"] or {})
+
+                except Exception:
+
+                    _mmeta = {}
+
+                if _mtxt.startswith("test_ping") or _mtxt == "ping_from_tests" or (isinstance(_mmeta, dict) and _mmeta.get("test")):
+
+                    last_processed_id = row["id"]
+
+                    log.debug(f"Claude channel: ignoring test message #{row['id']}")
+
+                    continue
                 msg_id = row["id"]
                 message_text = row["message"]
                 metadata = json.loads(row["metadata"]) if row["metadata"] else {}
