@@ -281,9 +281,26 @@ def test_anomaly_sensitive_path_after_three_hits():
 
 
 def test_anomaly_suspicious_dns_tld():
-    t = m.detect_anomaly(_ev("dns query for badhost.tk resolved"))
+    # BIND query log (nova-core resolver) and dnsmasq/pi-hole formats both carry the name
+    t = m.detect_anomaly(_ev("client @0x1 192.168.1.43#5555 (badhost.tk): query: badhost.tk IN A + (192.168.1.138)"))
     assert t["threat_type"] == "suspicious_dns"
     assert t["dst_port"] == 53
+    assert "badhost.tk" in t["signature"]
+    assert m.detect_anomaly(_ev("query[A] beacon-c2-check.xyz from 192.168.1.9"))["threat_type"] == "suspicious_dns"
+
+
+@pytest.mark.parametrize("line", [
+    # incident #3675 (2026-10-05): ".ga" inside ".gateway", not a TLD — 2,142 pages in 14 days
+    "client @0x1 192.168.1.43#54948 (attester.gateway.fe2.apple-dns.net): query: attester.gateway.fe2.apple-dns.net IN HTTPS + (192.168.1.138)",
+    "query: carbon-cdn.ccgateway.net IN A",          # .cc inside ccgateway
+    "query: assets.mlcdn.com IN A",                  # .ml inside mlcdn
+    "query: api.pwnedpasswords.com IN A",            # .pw inside pwned
+    # postgres STATEMENT logs quoting an investigator's own query text are not DNS
+    "2026-10-05 15:03:09 PDT [2848746] STATEMENT: SELECT ... WHERE detail::text ILIKE '%.ga%' OR event_type ILIKE '%dns%'",
+    "dns query for badhost.tk resolved",             # prose, no queried name -> nothing to judge
+])
+def test_anomaly_suspicious_dns_requires_the_tld_to_end_the_name(line):
+    assert m.detect_anomaly(_ev(line)) is None
 
 
 def test_anomaly_crash_storm_fires_when_confirmed(monkeypatch):

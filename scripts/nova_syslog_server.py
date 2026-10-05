@@ -148,6 +148,8 @@ PORT_RE = re.compile(r"SPT=(\d+).*DPT=(\d+)")
 C2_PORTS = {4444, 5555, 6666, 1337, 31337, 8443, 9001, 4443, 3333, 7777, 6667, 6697}
 
 SUSPICIOUS_TLDS = {".tk", ".top", ".xyz", ".cc", ".pw", ".gq", ".ml", ".cf", ".ga", ".buzz", ".work"}
+# BIND "query: name IN A", dnsmasq/pi-hole "query[A] name from ...", unbound "info: ... name. A IN"
+DNS_QUERY_RE = re.compile(r"query(?:\[[A-Z0-9]+\])?:?\s+([a-z0-9][a-z0-9.-]*\.[a-z]{2,})\.?\b", re.IGNORECASE)
 
 CRASH_EXCLUDE_RE = re.compile(
     r"SIMCRASH|DFSFileProvider|FileProvider.*simulated"
@@ -535,21 +537,27 @@ def detect_anomaly(event: dict) -> dict | None:
                 "severity_level": "warning",
             }
 
-    # 5. Suspicious DNS — queries to known-bad TLDs
-    if "query" in msg.lower() or "dns" in msg.lower():
-        for tld in SUSPICIOUS_TLDS:
-            if tld in msg.lower():
-                return {
-                    "threat_type": "suspicious_dns",
-                    "signature": f"DNS query to suspicious TLD ({tld}) from {hostname}",
-                    "action": "detected",
-                    "direction": "outbound",
-                    "src_addr": event.get("source_ip"),
-                    "dst_addr": None,
-                    "src_port": None,
-                    "dst_port": 53,
-                    "severity_level": "warning",
-                }
+    # 5. Suspicious DNS — queries to known-bad TLDs. The queried NAME must end in the TLD:
+    # a bare substring test paged 3,900 times in 14 days on ".ga" in attester.gateway.icloud.com,
+    # ".cc" in ccgateway.net, ".ml" in mlcdn.com and on postgres STATEMENT logs quoting '%.ga%'
+    # (incident #3675, 2026-10-05). The resolver on nova-core logs the LAN's queries, so the
+    # "source" host is the resolver, not the client — the client is in the message.
+    qm = DNS_QUERY_RE.search(msg)
+    if qm:
+        qname = qm.group(1).lower().rstrip(".")
+        tld = "." + qname.rsplit(".", 1)[-1]
+        if tld in SUSPICIOUS_TLDS:
+            return {
+                "threat_type": "suspicious_dns",
+                "signature": f"DNS query to suspicious TLD ({tld}) from {hostname}: {qname}",
+                "action": "detected",
+                "direction": "outbound",
+                "src_addr": event.get("source_ip"),
+                "dst_addr": None,
+                "src_port": None,
+                "dst_port": 53,
+                "severity_level": "warning",
+            }
 
     # 6. Time-of-day anomaly — auth events between 1am-5am local
     local_hour = datetime.now().hour
