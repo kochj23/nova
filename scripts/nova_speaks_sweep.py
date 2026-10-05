@@ -115,7 +115,10 @@ def reap(cur, hosts):
                 mp4 = REVIEW + mp4[len(h["out_dir"]):]
             cur.execute("UPDATE nova_speaks_renders SET status='done', mp4_path=%s, finished_at=now(), note=%s WHERE slug=%s", (mp4, f"{hname}: {info}", slug))
             cur.execute("UPDATE nova_speaks_hosts SET fails=0 WHERE host=%s", (hname,))
-            post_approval(f"🎬 *Nova Speaks — ready for your approval, Little Mister:* {title}\n`{mp4}`\n{info} · rendered on {hname} · voice Gracie Wise · reply here with approve / redo / skip.")
+            yt = upload(slug)
+            post_approval(f"🎬 *Nova Speaks — ready for your approval, Little Mister:* {title}\n`{mp4}`\n{info} · rendered on {hname} · voice Gracie Wise\n"
+                          + (f"Uploaded PRIVATE to YouTube: https://studio.youtube.com/video/{yt}/edit — watch, then flip it public." if yt
+                             else "YouTube upload failed (cookies stale?) — sign into YouTube in Safari and I'll retry next sweep."))
             log(f"done: {slug} on {hname}")
         else:
             tail = txt[-400:].replace("\n", " ")
@@ -123,6 +126,17 @@ def reap(cur, hosts):
             cur.execute("UPDATE nova_speaks_hosts SET fails=fails+1, enabled=(fails+1<3) WHERE host=%s", (hname,))
             post_approval(f"⚠️ Nova Speaks render FAILED for *{title}* on {hname} — log `{lp}`")
             log(f"failed: {slug} on {hname}")
+
+def upload(slug):
+    """Private YouTube upload in Jordan's title format (nova_speaks_upload.py). Returns the video id or None."""
+    try:
+        r = subprocess.run([str(SCRIPTS / "nova_speaks_upload.py"), "--slug", slug], capture_output=True, text=True, timeout=1800)
+        vid = (r.stdout.strip().splitlines() or [""])[-1]
+        if r.returncode == 0 and re.fullmatch(r"[\w-]{11}", vid): return vid
+        log(f"upload failed for {slug}: {(r.stderr or r.stdout)[-200:].strip()}")
+    except Exception as e:
+        log(f"upload failed for {slug}: {e}")
+    return None
 
 # ── 3. dispatch ─────────────────────────────────────────────────────────────────────────
 def idle(h):
@@ -177,6 +191,14 @@ def main():
     n = scan_new(cur)
     if n: log(f"queued {n} new article(s)")
     reap(cur, hosts)
+    # retry one YouTube upload that failed earlier (stale cookies); only renders made after the uploader
+    # shipped (2026-10-05 12:00) — everything before that Jordan uploaded by hand.
+    cur.execute("ALTER TABLE nova_speaks_renders ADD COLUMN IF NOT EXISTS youtube_id text, ADD COLUMN IF NOT EXISTS youtube_uploaded_at timestamptz")
+    cur.execute("SELECT slug, title FROM nova_speaks_renders WHERE status='done' AND youtube_id IS NULL "
+                "AND finished_at > '2026-10-05 12:00-07' ORDER BY finished_at LIMIT 1")
+    for slug, title in cur.fetchall():
+        yt = upload(slug)
+        if yt: post_approval(f"🎬 YouTube upload retry succeeded for *{title}*: https://studio.youtube.com/video/{yt}/edit (PRIVATE)")
     dispatch(cur, hosts)
     cur.execute("SELECT status, count(*) FROM nova_speaks_renders GROUP BY 1 ORDER BY 1")
     log("state: " + ", ".join(f"{s}={k}" for s, k in cur.fetchall()) + f" · hosts: {', '.join(h for h, v in hosts.items() if v['enabled'])}")
