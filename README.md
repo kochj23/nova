@@ -140,6 +140,24 @@ Jordan's idea (10/3): not just posts — videos. Rule since 10/3 19:30: every ar
 | Upload | `nova_speaks_upload.py` — `youtube-up` driving YouTube Studio's own upload endpoint with a YouTube-only cookie jar exported from Safari on each run (no Google Cloud project, no OAuth app, no API quota — "Oh God, that never works"). Title `AI: Nova Speaks M/D/YY - <Section> - <article title>` trimmed at a word boundary to 100 chars; description = article summary + URL + channel boilerplate + AI-voice disclaimer; tags = section + frontmatter tags; category Science & Technology; added to the **Nova Speaks** playlist; public. Atomic row claim in `nova_speaks_renders` so the sweep's retry and any backfill never double-upload |
 | Approval | Slack #nova-claude gets "ready for your approval" with the watch and Studio-edit links. Stale Safari session → Slack says so; the sweep retries for 2 days |
 
+```mermaid
+flowchart LR
+    A[Article goes LIVE<br/>nova.digitalnoise.net] -->|every 10 min| B[nova_speaks_sweep.py<br/>Studio scheduler]
+    B -->|queue row| C[(nova_speaks_renders)]
+    B -->|scp article + covers<br/>dispatch to idle host| D{Render pool}
+    D --> D1[Studio M4 Max · MPS]
+    D --> D2[mini M4 Pro · MPS]
+    D --> D3[nova-core2 · CPU]
+    D --> D4[nova-core7 · CPU]
+    D1 & D2 & D3 & D4 -->|nova_speaks.py<br/>XTTS Gracie Wise + Ken Burns + ffmpeg| E[/nas/nova-fs/videos/review/*.mp4/]
+    B -->|reap DONE| E
+    E --> F[nova_speaks_upload.py<br/>youtube-up · Safari cookie jar]
+    F -->|claim row, PUBLIC,<br/>AI: Nova Speaks M/D/YY - Section - Title| G[YouTube · Nova Speaks playlist]
+    F -->|youtube_id| C
+    B -->|watch + Studio links| H[Slack #nova-claude]
+    F -.stale cookies.-> H
+```
+
 Backfill 2026-10-05: 72 renders from 10/3–10/5 uploaded public in one pass. Gotchas: Safari keeps SAPISID & co. on `.google.com` only — they are copied onto `.youtube.com`, which is the only domain the uploader's Selenium step accepts; YouTube rejects angled brackets anywhere in title/description/tags.
 
 ### Killed by the Lock Screen — Secrets to 1Password, SCRAM Everywhere, Daemons, One Claude (2026-10-03)

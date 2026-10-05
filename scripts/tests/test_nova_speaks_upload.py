@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""
+test_nova_speaks_upload.py — tests for the Nova Speaks YouTube publisher (nova_speaks_upload.py),
+the render sweep's upload hook (nova_speaks_sweep.py) and the frontmatter-cover fix (nova_speaks.py).
+
+Categories: security, performance, retry, unit, integration, functional, frame.
+Run: python3 -m pytest tests/test_nova_speaks_upload.py -v
+"""
+import os, re, subprocess, sys, time
+from pathlib import Path
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+SCRIPTS = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(SCRIPTS))
+import nova_speaks_upload as up  # noqa: E402
+
+ARTICLE = '''---
+title: "⚡ **Heat Dome <Leaves> Like Bad Roommate**"
+date: 2026-10-05T10:00:00-07:00
+draft: false
+tags: ["burbank", "local-news", "burbank"]
+description: "Nova's daily dispatch <b>from</b> Burbank."
+cover:
+  image: "/images/local/2026-10-05-heat-dome.webp"
+---
+Body.
+'''
+
+
+@pytest.fixture
+def article(tmp_path):
+    d = tmp_path / "content" / "local"; d.mkdir(parents=True)
+    p = d / "2026-10-05-heat-dome.md"; p.write_text(ARTICLE); return p
+
+
+# ── unit ────────────────────────────────────────────────────────────────────
+def test_title_format_has_date_then_section(article):
+    m = up.build("2026-10-05-heat-dome", str(article), "https://nova.digitalnoise.net/local/x/")
+    assert m["title"].startswith("AI: Nova Speaks 10/5/26 - Local - Heat Dome")
+
+
+def test_title_strips_emoji_markdown_and_brackets(article):
+    m = up.build("s", str(article), "u")
+    assert "⚡" not in m["title"] and "*" not in m["title"] and "<" not in m["title"] and ">" not in m["title"]
+    assert "<" not in m["description"] and ">" not in m["description"]
+
+
+def test_title_trimmed_at_word_boundary_under_100(tmp_path):
+    d = tmp_path / "content" / "operations"; d.mkdir(parents=True)
+    p = d / "long.md"; p.write_text(ARTICLE.replace("Heat Dome <Leaves> Like Bad Roommate", "Word " * 60))
+    m = up.build("long", str(p), "u")
+    assert len(m["title"]) <= 100 and not m["title"].endswith(" ") and m["title"].split(" - ", 2)[1] == "Operations"
+
+
+def test_tags_include_section_and_dedupe(article):
+    m = up.build("s", str(article), "u")
+    assert m["tags"][:4] == ("Nova", "AI", "Nova Speaks", "local") and m["tags"].count("burbank") == 1
+
+
+def test_description_has_article_url_boilerplate_and_disclaimer(article):
+    m = up.build("s", str(article), "https://nova.digitalnoise.net/local/x/")
+    assert "Article: https://nova.digitalnoise.net/local/x/" in m["description"]
+    assert "start-here" in m["description"] and "AI voice" in m["description"]
+
+
+# ── security ────────────────────────────────────────────────────────────────
+def test_cookie_jar_keeps_only_youtube_and_redomains_whitelist(tmp_path, monkeypatch):
+    raw = tmp_path / "raw.txt"
+    raw.write_text("# Netscape HTTP Cookie File\n"
+                   ".google.com\tTRUE\t/\tTRUE\t0\tSAPISID\tsecret1\n"
+                   ".google.com\tTRUE\t/\tTRUE\t0\tNID\tjunk\n"
+                   ".pornhub.com\tTRUE\t/\tTRUE\t0\tsess\tnope\n"
+                   ".youtube.com\tTRUE\t/\tTRUE\t0\tLOGIN_INFO\tli\n"
+                   "accounts.google.com\tTRUE\t/\tTRUE\t0\t__Secure-3PSID\tx\n")
+    out = tmp_path / "jar.txt"; monkeypatch.setattr(up, "COOKIES", out)
+    monkeypatch.setattr(up.tempfile, "mktemp", lambda suffix="": str(raw)) if hasattr(up, "tempfile") else None
+    with patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")), \
+         patch("tempfile.mktemp", return_value=str(raw)):
+        up.refresh_cookies()
+    body = out.read_text()
+    assert ".pornhub.com" not in body and "NID" not in body and "accounts.google.com" not in body
+    assert ".youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tsecret1" in body and "LOGIN_INFO" in body
+    assert oct(out.stat().st_mode & 0o777) == "0o600"
+
+
+def test_no_hardcoded_secrets_in_source():
+    src = (SCRIPTS / "nova_speaks_upload.py").read_text()
+    assert not re.search(r"xox[bpoas]-|AKIA[A-Z0-9]{16}|sk-[A-Za-z0-9]{20,}|ghp_[A-Za-z0-9]{36}", src)
+
+
+# ── performance ─────────────────────────────────────────────────────────────
+def test_build_is_fast_on_large_article(tmp_path):
+    d = tmp_path / "content" / "essays"; d.mkdir(parents=True)
+    p = d / "big.md"; p.write_text(ARTICLE + ("lorem ipsum " * 50000))
+    t0 = time.time(); up.build("big", str(p), "u"); assert time.time() - t0 < 1.0
+
+
+# ── retry ───────────────────────────────────────────────────────────────────
+def test_sweep_upload_returns_none_on_failure_and_only_accepts_video_ids():
+    import nova_speaks_sweep as sw
+    with patch("subprocess.run", return_value=MagicMock(returncode=1, stdout="", stderr="boom")):
+        assert sw.upload("slug") is None
+    with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="uploading\n", stderr="")):
+        assert sw.upload("slug") is None                      # a claim marker is not a video id
+    with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="[log]\nxDOTDX-xOd4\n", stderr="")):
+        assert sw.upload("slug") == "xDOTDX-xOd4"
+
+
+def test_sweep_retries_only_recent_unuploaded_rows():
+    src = (SCRIPTS / "nova_speaks_sweep.py").read_text()
+    assert "youtube_id IS NULL" in src and "interval '2 days'" in src and "LIMIT 1" in src
+
+
+# ── integration ─────────────────────────────────────────────────────────────
+def test_claim_happens_after_metadata_validation_and_is_released_on_failure():
+    src = (SCRIPTS / "nova_speaks_upload.py").read_text()
+    assert src.index("meta = Metadata(") < src.index("SET youtube_id='uploading'")
+    assert "SET youtube_id=NULL WHERE slug=%s AND youtube_id='uploading'" in src
+
+
+def test_renderer_and_sweep_honor_frontmatter_cover():
+    pat = r"image:\\s"
+    assert re.search(pat, (SCRIPTS / "nova_speaks.py").read_text())
+    assert re.search(pat, (SCRIPTS / "nova_speaks_sweep.py").read_text())
+
+
+def test_cinc_probes_local_host_without_ssh():
+    import nova_cinc_daily as c
+    with patch("subprocess.run", return_value=MagicMock(returncode=0, stdout="ok", stderr="")) as r:
+        c.ssh_cmd("127.0.0.1", "kochj", "true")
+        assert r.call_args[0][0][0] == "bash"
+        c.ssh_cmd("192.168.1.86", "kochj", "true")
+        assert r.call_args[0][0][0] == "ssh"
+
+
+# ── functional ──────────────────────────────────────────────────────────────
+def test_dry_run_prints_metadata_without_uploading(article, monkeypatch, capsys):
+    cur = MagicMock(); cur.fetchone.return_value = (str(article), "https://nova.digitalnoise.net/local/x/", "/tmp/x.mp4", None)
+    conn = MagicMock(); conn.cursor.return_value = cur
+    monkeypatch.setattr(up.psycopg2, "connect", lambda dsn: conn)
+    monkeypatch.setattr(sys, "argv", ["nova_speaks_upload.py", "--slug", "2026-10-05-heat-dome", "--dry-run"])
+    assert up.main() == 0
+    out = capsys.readouterr().out
+    assert "AI: Nova Speaks 10/5/26 - Local - Heat Dome" in out and "Article: https://nova.digitalnoise.net/local/x/" in out
+    assert not any("uploading" in str(c) for c in cur.execute.call_args_list)
+
+
+def test_already_uploaded_row_is_skipped(article, monkeypatch):
+    cur = MagicMock(); cur.fetchone.return_value = (str(article), "u", "/tmp/x.mp4", "xDOTDX-xOd4")
+    conn = MagicMock(); conn.cursor.return_value = cur
+    monkeypatch.setattr(up.psycopg2, "connect", lambda dsn: conn)
+    monkeypatch.setattr(sys, "argv", ["nova_speaks_upload.py", "--slug", "s"])
+    assert up.main() == 0
+
+
+# ── frame ───────────────────────────────────────────────────────────────────
+def test_script_help_runs():
+    r = subprocess.run([sys.executable, str(SCRIPTS / "nova_speaks_upload.py"), "--help"], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0 and "--privacy" in r.stdout and "PUBLIC" in r.stdout
+
+
+def test_default_privacy_is_public():
+    assert 'default="PUBLIC"' in (SCRIPTS / "nova_speaks_upload.py").read_text()

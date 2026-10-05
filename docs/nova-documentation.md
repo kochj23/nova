@@ -738,6 +738,20 @@ SwarmUI at `~/AI/SwarmUI` (symlink → `/Volumes/Data/AI/SwarmUI`):
 
 ---
 
+### 11.x Nova Speaks — Narrated Video + YouTube (2026-10-05)
+
+Every article that goes live on nova.digitalnoise.net becomes a narrated 1080p video and is published to YouTube without a human step.
+
+| Piece | Where | Role |
+|-------|-------|------|
+| `nova_speaks.py` | scripts | markdown → chapters → XTTS v2 ("Gracie Wise") per paragraph → Ken Burns stills (cover from frontmatter `cover.image` + section covers) → PIL cards/lower-thirds → ffmpeg 1080p. Output `/Volumes/nas/nova-fs/videos/review/NovaSpeaks-<slug>.mp4` |
+| `nova_speaks_sweep.py` | Studio scheduler, every 10 min | `nova_speaks_renders` queue: queue live posts → dispatch to an idle host in `nova_speaks_hosts` (Studio, mini, nova-core2, nova-core7; 3 failures disable a host) → reap finished renders → upload → Slack #nova-claude |
+| `nova_speaks_upload.py` | venv `/Volumes/Data/AI/youtube-up/venv` | `youtube-up` against YouTube Studio's upload endpoint using a YouTube-only cookie jar exported from Safari each run (`~/.openclaw/cache/yt_cookies_youtube.txt`, 0600). Title `AI: Nova Speaks M/D/YY - <Section> - <title>` (≤100 chars, word boundary), description = summary + article URL + boilerplate + AI-voice disclaimer, tags = section + frontmatter tags, category Science & Technology, playlist **Nova Speaks** (`PLY76cVeV8pAY`), PUBLIC. Atomic claim (`youtube_id='uploading'`) prevents double uploads; sweep retries unuploaded rows for 2 days |
+
+**Operate:** `./nova_speaks_upload.py --check` (is the Safari session still logged in?) · `--slug <slug> --dry-run` (metadata only) · `--slug <slug>` (upload). Stale session → sign into YouTube in Safari; nothing else to rotate. No Google Cloud project or OAuth app is involved.
+
+**Gotchas:** Safari keeps SAPISID/PSID cookies on `.google.com` only — the uploader copies them onto `.youtube.com` (the only domain youtube-up's Selenium step accepts). YouTube rejects `<` `>` anywhere in title/description/tags. Pin coqui-tts 0.27.5 / torch 2.11.0 on render hosts.
+
 ## 12. Script Reference (Key Scripts)
 
 ### 12.1 Startup/Shutdown/Restart
