@@ -190,3 +190,21 @@ def test_podcast_index_builds_json_newest_first_and_pushes_once(tmp_path, monkey
 def test_art_renders_use_only_the_artwork():
     src = (SCRIPTS / "nova_speaks.py").read_text()
     assert 'section == "art" and imgs' in src and src.count('section != "art"') == 2
+
+
+# ── screenplay ingest helper ────────────────────────────────────────────────
+def test_screenplay_reflow_joins_cues_and_raises_alpha_ratio():
+    import nova_screenplay_ingest as sp
+    raw = "          ANNIE\n\n     You dirty bird.\n\n\n          PAUL\n\n     What?\n\n     INT. BEDROOM - NIGHT\n"
+    out = sp.reflow(raw)
+    assert "ANNIE: You dirty bird." in out and "PAUL: What?" in out
+    assert sum(c.isalpha() for c in out) / len(out) > 0.6
+
+
+def test_screenplay_extract_skips_site_name_headings():
+    import nova_screenplay_ingest as sp
+    page = "<html><head><title>Jaws Script at IMSDb.</title></head><body><h1>The Internet Movie Script Database (IMSDb)</h1><h1>Jaws</h1><pre>FADE IN</pre></body></html>"
+    title, body = sp.extract(page)
+    assert title == "Jaws" and "FADE IN" in body
+    t2, _ = sp.extract("<html><title>Misery - by William Goldman</title><pre>x</pre></html>")
+    assert t2 == "Misery - by William Goldman"
