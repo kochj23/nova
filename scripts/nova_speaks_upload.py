@@ -94,11 +94,12 @@ def main():
     log(f"title ({len(m['title'])}): {m['title']}"); log(f"tags: {m['tags']}"); log(f"file: {mp4}")
     if a.dry_run: print(m["description"]); return 0
     from youtube_up import Metadata, PrivacyEnum, CategoryEnum
-    # claim the row so the sweep's retry and a backfill can't upload the same video twice
-    cur.execute("UPDATE nova_speaks_renders SET youtube_id='uploading' WHERE slug=%s AND youtube_id IS NULL", (a.slug,))
-    if cur.rowcount != 1: log("claimed by another uploader"); return 0
     meta = Metadata(title=m["title"], description=m["description"], privacy=PrivacyEnum[a.privacy], tags=m["tags"],
                     playlist_ids=[PLAYLIST], category=CategoryEnum.SCIENCE_TECH, recorded_date=m["recorded"], made_for_kids=False)
+    # claim the row so the sweep's retry and a backfill can't upload the same video twice (after Metadata
+    # validation, so a rejected title never leaves the row stuck at 'uploading')
+    cur.execute("UPDATE nova_speaks_renders SET youtube_id='uploading' WHERE slug=%s AND youtube_id IS NULL", (a.slug,))
+    if cur.rowcount != 1: log("claimed by another uploader"); return 0
     try:
         vid = session().upload(mp4, meta, progress_callback=lambda step, pct: log(f"{step} {pct:.0f}%") if pct in (0, 100) else None)
     except BaseException:
