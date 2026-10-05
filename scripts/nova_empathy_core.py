@@ -177,13 +177,13 @@ def empathy_text(weighed, cares, today):
 
 # ── memory + state (mirror nova_attention_focus.py) ───────────────────────────
 
-def remember(text, metadata, _tries=3, _sleep=None):
+def remember(text, metadata, _tries=3, _sleep=None, source=SOURCE):
     """POST to the memory server; 3 attempts with backoff (house rule: external calls retry)."""
     import time as _t
     import urllib.request
     req = urllib.request.Request(
         f"{MEMSRV}/remember", method="POST", headers={"Content-Type": "application/json"},
-        data=json.dumps({"text": text, "source": SOURCE, "metadata": metadata}).encode())
+        data=json.dumps({"text": text, "source": source, "metadata": metadata}).encode())
     sleep = _sleep or _t.sleep
     last = None
     for attempt in range(_tries):

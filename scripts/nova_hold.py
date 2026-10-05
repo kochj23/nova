@@ -205,7 +205,7 @@ def main():
         print(text); return 0
     meta = {"organ": STATE_SERVICE, "kind": "hold", "sig": sig, "held": sorted(held), "lost": sorted(lost),
             **({"lineage": ec._stamp()} if ec._stamp() else {})}
-    ec.remember(text, meta)
+    ec.remember(text, meta, source=SOURCE)
     seen[sig] = today.isoformat()
     ec.save_seen(cur, seen, STATE_SERVICE)
     # the held set carries forward: what she has now, dated, plus what she lost (so a loss is said once, not forever)

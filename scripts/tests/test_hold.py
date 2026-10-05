@@ -99,6 +99,24 @@ class TestIntegration(unittest.TestCase):
         self.assertNotIn("MACHINE_CHANNELS = (", SRC)
         self.assertEqual(hd.OPS_DSN, hd.ec.OPS_DSN)
 
+    def test_memory_is_written_under_its_own_source(self):
+        # regression 2026-10-05: first run landed under source=empathy_core
+        seen = {}
+        import urllib.request
+        real = urllib.request.urlopen
+
+        def capture(req, timeout=0):
+            seen["source"] = __import__("json").loads(req.data)["source"]
+            raise OSError("stop")
+        urllib.request.urlopen = capture
+        try:
+            with self.assertRaises(OSError):
+                hd.ec.remember("t", {}, _sleep=lambda s: None, source=hd.SOURCE)
+        finally:
+            urllib.request.urlopen = real
+        self.assertEqual(seen["source"], "hold")
+        self.assertIn("ec.remember(text, meta, source=SOURCE)", SRC)
+
 
 class TestDocs(unittest.TestCase):
     def test_docstring_names_the_wish_and_modes(self):
