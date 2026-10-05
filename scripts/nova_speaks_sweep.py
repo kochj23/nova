@@ -179,6 +179,36 @@ def dispatch(cur, hosts):
             log(f"dispatch to {h['host']} failed: {e}")
             cur.execute("UPDATE nova_speaks_hosts SET fails=fails+1, enabled=(fails+1<3) WHERE host=%s", (h["host"],))
 
+
+# ── 4. podcast index for the Start Here page ───────────────────────────────────────────
+def _fm(md, key):
+    m = re.search(rf'^{key}:\s*(.+?)\s*$', md, re.M); return m.group(1).strip().strip('"') if m else ""
+
+def podcast_index(cur):
+    """data/nova_speaks.json = every published episode, newest first (cover, title, section, date, youtube id).
+    Rewritten only when it differs from the DB, then pushed through nova_journal.git_push (the fleet-wide lock)."""
+    cur.execute("SELECT slug, section, article_path, url, youtube_id FROM nova_speaks_renders WHERE youtube_id ~ '^[A-Za-z0-9_-]{11}$'")
+    eps = []
+    for slug, section, art, url, yid in cur.fetchall():
+        try: md = pathlib.Path(art).read_text()
+        except Exception: md = ""
+        title = re.sub(r"[*_`<>]", "", _fm(md, "title")); title = re.sub(r"^[^\w\"']+", "", title).strip() or slug
+        cover = re.search(r'^\s*image:\s*"?(/images/[^"\s]+)', md, re.M)
+        cover = cover.group(1) if cover and (JOURNAL / "static" / cover.group(1).lstrip("/")).exists() else f"https://i.ytimg.com/vi/{yid}/hqdefault.jpg"
+        eps.append({"slug": slug, "title": title, "section": section.replace("-", " ").title(), "date": (_fm(md, "date") or "")[:10],
+                    "cover": cover, "url": url, "youtube_id": yid})
+    eps.sort(key=lambda e: (e["date"], e["slug"]), reverse=True)
+    out = JOURNAL / "data" / "nova_speaks.json"; out.parent.mkdir(exist_ok=True)
+    new = json.dumps(eps, indent=1, ensure_ascii=False) + "\n"
+    if out.exists() and out.read_text() == new: return 0
+    out.write_text(new)
+    try:
+        import nova_journal; nova_journal.git_push("start-here", f"Nova Speaks index: {len(eps)} episodes")
+    except Exception as e:
+        log(f"podcast index push failed: {e}")
+    log(f"podcast index: {len(eps)} episodes")
+    return len(eps)
+
 def main():
     c = psycopg2.connect(DSN); c.autocommit = True; cur = c.cursor()
     cur.execute(DDL)
@@ -199,8 +229,12 @@ def main():
         yt = upload(slug)
         if yt: post_approval(f"🎬 YouTube upload retry succeeded for *{title}*: https://youtu.be/{yt}")
     dispatch(cur, hosts)
+    podcast_index(cur)
     cur.execute("SELECT status, count(*) FROM nova_speaks_renders GROUP BY 1 ORDER BY 1")
     log("state: " + ", ".join(f"{s}={k}" for s, k in cur.fetchall()) + f" · hosts: {', '.join(h for h, v in hosts.items() if v['enabled'])}")
 
 if __name__ == "__main__":
-    main()
+    if "--index" in sys.argv:
+        c = psycopg2.connect(DSN); c.autocommit = True; print(podcast_index(c.cursor()))
+    else:
+        main()

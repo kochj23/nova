@@ -163,3 +163,25 @@ def test_script_help_runs():
 
 def test_default_privacy_is_public():
     assert 'default="PUBLIC"' in (SCRIPTS / "nova_speaks_upload.py").read_text()
+
+
+# ── podcast index (Start Here grid) ─────────────────────────────────────────
+def test_podcast_index_builds_json_newest_first_and_pushes_once(tmp_path, monkeypatch):
+    import types, json
+    import nova_speaks_sweep as sw
+    j = tmp_path / "journal"; (j / "content" / "local").mkdir(parents=True); (j / "static" / "images" / "local").mkdir(parents=True)
+    a = j / "content" / "local" / "a.md"; a.write_text(ARTICLE)
+    b = j / "content" / "local" / "b.md"; b.write_text(ARTICLE.replace("2026-10-05", "2026-10-04").replace("cover:\n  image: \"/images/local/2026-10-05-heat-dome.webp\"\n", ""))
+    (j / "static" / "images" / "local" / "2026-10-05-heat-dome.webp").write_bytes(b"x")
+    monkeypatch.setattr(sw, "JOURNAL", j)
+    pushes = []
+    monkeypatch.setitem(sys.modules, "nova_journal", types.SimpleNamespace(git_push=lambda s, t: pushes.append(t)))
+    cur = MagicMock(); cur.fetchall.return_value = [("b", "local", str(b), "ub", "BBBBBBBBBBB"), ("a", "local", str(a), "ua", "AAAAAAAAAAA")]
+    assert sw.podcast_index(cur) == 2
+    eps = json.loads((j / "data" / "nova_speaks.json").read_text())
+    assert [e["youtube_id"] for e in eps] == ["AAAAAAAAAAA", "BBBBBBBBBBB"]          # newest first
+    assert eps[0]["cover"] == "/images/local/2026-10-05-heat-dome.webp" and eps[0]["section"] == "Local"
+    assert eps[1]["cover"].startswith("https://i.ytimg.com/vi/BBBBBBBBBBB/")        # no cover file -> YouTube thumb
+    assert "<" not in eps[0]["title"] and "⚡" not in eps[0]["title"]
+    assert pushes == ["Nova Speaks index: 2 episodes"]
+    assert sw.podcast_index(cur) == 0 and len(pushes) == 1                           # unchanged -> no second push
