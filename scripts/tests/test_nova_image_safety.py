@@ -75,6 +75,9 @@ def test_performance_fast():
 # ── Integration (generate_image routes through the safety clause) ────────────────
 def test_integration_generate_image_applies_safety(monkeypatch):
     seen = {}
+    # generate_image tries the local ComfyUI backend first (526a71c); without this stub the test
+    # reaches 127.0.0.1:8188 and times out. The safety wrapper is what is under test, not the backend.
+    monkeypatch.setattr(u, "_local_comfyui_generate", lambda *a, **k: None)
     monkeypatch.setattr(u, "_openrouter_generate", lambda prompt, section="default": seen.setdefault("p", prompt) or "/tmp/x.png")
     u.generate_image("a young AI kid", section="operations")
     assert u._SAFETY_SENTINEL in seen["p"]

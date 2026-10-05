@@ -56,7 +56,9 @@ class _Conn:
 
 def _rows(entered=None, conf=0.8):
     return [("affect", NOW, "calm", {"valence": 0.2, "arousal": 0.1}),
-            ("presence", NOW, "jordan@office", {"confidence": conf, "entered_at": entered or (NOW - timedelta(minutes=3)).isoformat()}),
+            # entered_at is measured against the wall clock inside someone_just_arrived(), so it must be
+            # computed at call time — a module-level NOW drifted to 6 min by the end of a full-suite run.
+            ("presence", NOW, "jordan@office", {"confidence": conf, "entered_at": entered or (datetime.now(timezone.utc) - timedelta(minutes=3)).isoformat()}),
             ("contact_sense", NOW, "quiet", None)]
 
 
@@ -106,7 +108,7 @@ class TestUnit(unittest.TestCase):
     def test_arrival_edges(self):
         b = ob.board(_Cur(_rows()))
         self.assertEqual(ob.someone_just_arrived(b), ("jordan", 3))              # ISO string entered_at parses
-        self.assertIsNone(ob.someone_just_arrived(ob.board(_Cur(_rows(entered=(NOW + timedelta(minutes=5)).isoformat())))))   # future = clock skew, not an arrival
+        self.assertIsNone(ob.someone_just_arrived(ob.board(_Cur(_rows(entered=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat())))))   # future = clock skew, not an arrival
         self.assertIsNone(ob.someone_just_arrived(ob.board(_Cur(_rows(conf=None)))))
         self.assertIsNone(ob.someone_just_arrived({"presence": {"ts": NOW, "state": "x", "detail": {}}}))
         self.assertEqual(ob.someone_just_arrived(b, within_min=1), None)

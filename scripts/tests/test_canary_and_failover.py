@@ -12,6 +12,8 @@ Written by Jordan Koch.
 """
 
 import json
+import unittest
+import os
 import socket
 import sys
 import time
@@ -153,6 +155,7 @@ class TestModelRouterFailover:
         assert data["backends"]["llamacpp"]["healthy"] is True
 
     @pytest.mark.integration
+    @unittest.skipUnless(os.environ.get("NOVA_LIVE_TESTS"), "live Ollama inference canary (needs a warm local model and a quiet box) — set NOVA_LIVE_TESTS=1")
     def test_ollama_responds_to_inference(self):
         """Ollama should generate at least 1 token within 15s."""
         payload = json.dumps({

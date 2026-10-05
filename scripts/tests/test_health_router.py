@@ -369,7 +369,9 @@ class TestIntentRouterModels:
 
     def test_conversation_model_has_large_context(self):
         from nova_intent_router import MODELS
-        assert MODELS["conversation"].ctx >= 131072
+        # 2026-10-04: conversation = qwen3:30b-a3b at 32k (the resident-model ceiling on the Studio and the
+        # mini); the 131k expectation tracked the never-installed qwen3-next:80b pointer.
+        assert MODELS["conversation"].ctx >= 32768
 
     def test_mlx_model_name_prefix(self):
         from nova_intent_router import MODELS
@@ -624,7 +626,10 @@ class TestMemoryFirstRecall:
     @patch("nova_memory_first.urllib.request.urlopen", side_effect=Exception("timeout"))
     def test_recall_returns_empty_on_error(self, mock_urlopen):
         from nova_memory_first import recall
-        result = recall("test")
+        # recall() consults the Redis cache before the HTTP call; keep the test offline.
+        with patch("nova_memory_first._cache_get", return_value=None), patch("nova_memory_first._cache_set"):
+            mock_urlopen.side_effect = OSError("memory server down")
+            result = recall("test")
         assert result == []
 
     @patch("nova_memory_first.urllib.request.urlopen")

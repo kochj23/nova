@@ -107,7 +107,8 @@ class TestSecurity(unittest.TestCase):
         self.assertIn('WINDOW_DAYS = int(', SRC)                         # the only % injection is an int-cast env value
         self.assertIsInstance(mv.WINDOW_DAYS, int)
         oc = _oc()
-        with patch.object(mv, "llm", lambda *a, **k: "note'); DROP TABLE attention_policy; --"), redirect_stdout(io.StringIO()):
+        with patch.object(mv, "llm", lambda *a, **k: "note'); DROP TABLE attention_policy; --"), \
+             patch.object(mv, "_post_both", MagicMock()), redirect_stdout(io.StringIO()):  # unmocked, this posted the injection string to #nova-chat on every run (2026-10-05)
             mv.mode_review(oc, _mc(CROWDED))
         sql, params = oc.ran("INSERT INTO attention_policy")[0]
         self.assertNotIn("DROP", sql); self.assertIn("DROP", params[2])

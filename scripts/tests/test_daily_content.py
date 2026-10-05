@@ -37,7 +37,7 @@ opinion_removed = pytest.mark.skipif(
 
 
 @pytest.fixture
-def essay_module(mock_nova_config):
+def essay_module(mock_nova_config, monkeypatch):
     """Import nova_daily_essay fresh."""
     for mod in list(sys.modules.keys()):
         if "nova_daily_essay" in mod:
@@ -46,7 +46,7 @@ def essay_module(mock_nova_config):
     # MagicMock returns a truthy Mock, which would filter out *every* source.
     mock_nova_config.is_private_source.return_value = False
     # Mock herd_config and subprocess calls for Keychain
-    sys.modules["herd_config"] = MagicMock(HERD=[{"name": "Test", "email": "test@example.com"}])
+    monkeypatch.setitem(sys.modules, "herd_config", MagicMock(HERD=[{"name": "Test", "email": "test@example.com"}]))  # restored after the test — a bare assignment leaked a MagicMock into test_herd_config/test_dream_pipeline (2026-10-05)
     with patch("subprocess.run") as mock_sub:
         mock_sub.return_value = MagicMock(returncode=1, stdout="", stderr="")
         import nova_daily_essay
@@ -54,12 +54,12 @@ def essay_module(mock_nova_config):
 
 
 @pytest.fixture
-def opinion_module(mock_nova_config):
+def opinion_module(mock_nova_config, monkeypatch):
     """Import nova_daily_opinion fresh."""
     for mod in list(sys.modules.keys()):
         if "nova_daily_opinion" in mod:
             del sys.modules[mod]
-    sys.modules["herd_config"] = MagicMock(HERD=[{"name": "Test", "email": "test@example.com"}])
+    monkeypatch.setitem(sys.modules, "herd_config", MagicMock(HERD=[{"name": "Test", "email": "test@example.com"}]))  # restored after the test — a bare assignment leaked a MagicMock into test_herd_config/test_dream_pipeline (2026-10-05)
     with patch("subprocess.run") as mock_sub:
         mock_sub.return_value = MagicMock(returncode=1, stdout="", stderr="")
         import nova_daily_opinion
@@ -67,12 +67,12 @@ def opinion_module(mock_nova_config):
 
 
 @pytest.fixture
-def digest_module(mock_nova_config):
+def digest_module(mock_nova_config, monkeypatch):
     """Import nova_weekly_digest fresh."""
     for mod in list(sys.modules.keys()):
         if "nova_weekly_digest" in mod:
             del sys.modules[mod]
-    sys.modules["herd_config"] = MagicMock(HERD=[{"name": "Test", "email": "test@example.com"}])
+    monkeypatch.setitem(sys.modules, "herd_config", MagicMock(HERD=[{"name": "Test", "email": "test@example.com"}]))  # restored after the test — a bare assignment leaked a MagicMock into test_herd_config/test_dream_pipeline (2026-10-05)
     with patch("subprocess.run") as mock_sub:
         mock_sub.return_value = MagicMock(returncode=1, stdout="", stderr="")
         import nova_weekly_digest
