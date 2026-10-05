@@ -218,3 +218,9 @@ def test_screenplay_pdf_link_and_og_title():
     assert sp.pdf_link("https://imsdb.com/scripts/Jaws.html", "<pre>x</pre>") is None
     title, _ = sp.extract(page)
     assert title.startswith("The Texas Chain Saw Massacre (1974)")
+
+
+def test_screenplay_alpha_ratio_gate_for_reocr():
+    import nova_screenplay_ingest as sp
+    assert sp.alpha_ratio("HOSTEI.: Wr~t:en & Cire~ted ty ~:.}:; r:ERVE - 'Soaz") < 0.62      # garbage text layer -> re-OCR
+    assert sp.alpha_ratio("PAXTON: We should get out of here before it gets dark.") > 0.62

@@ -53,10 +53,27 @@ def pdf_link(url: str, page: str):
     return m.group(0) if m else None
 
 
+def alpha_ratio(t: str) -> float:
+    return sum(c.isalpha() for c in t) / max(1, len(t))
+
+
+def ocr_pdf(pdf_path: str, dpi: int = 300) -> str:
+    """pdftoppm -> tesseract per page. ~1-2 s/page on the Studio; a 100-page script is a couple of minutes."""
+    import subprocess as sp, tempfile, glob, os
+    d = tempfile.mkdtemp(prefix="ocr-")
+    sp.run(["pdftoppm", "-r", str(dpi), "-gray", pdf_path, f"{d}/p"], check=True, timeout=600)
+    pages = []
+    for png in sorted(glob.glob(f"{d}/p-*.pgm") + glob.glob(f"{d}/p-*.png")):
+        r = sp.run(["tesseract", png, "-", "--psm", "6", "-l", "eng"], capture_output=True, text=True, timeout=120)
+        pages.append(r.stdout); os.unlink(png)
+    os.rmdir(d)
+    return "\n\n".join(pages)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("url"); ap.add_argument("--source", required=True); ap.add_argument("--title", default=None)
-    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--dry-run", action="store_true"); ap.add_argument("--ocr", action="store_true", help="force tesseract OCR of the PDF")
     a = ap.parse_args()
     page = fetch(a.url).decode("utf-8", "replace")
     title, body = extract(page)
@@ -66,8 +83,11 @@ def main():
         tmp = tempfile.mktemp(suffix=".pdf"); Path(tmp).write_bytes(fetch(pdf))
         body = sp.run(["pdftotext", "-layout", tmp, "-"], capture_output=True, text=True, timeout=300).stdout
         body = re.sub(r"\f", "\n\n", body)             # page breaks -> paragraph breaks
-        Path(tmp).unlink(missing_ok=True)
         print(f"[screenplay] PDF {pdf.split('?')[0].rsplit('/', 1)[-1]}: {len(body)} chars")
+        if alpha_ratio(body) < 0.62 or a.ocr:            # scanned script with a garbage text layer (Hostel 2005: 0.53) -> re-OCR
+            body = ocr_pdf(tmp)
+            print(f"[screenplay] re-OCR with tesseract: {len(body)} chars, alpha {alpha_ratio(body):.2f}")
+        Path(tmp).unlink(missing_ok=True)
     text = reflow(body)
     head = a.title or title or re.sub(r"[_-]+", " ", Path(a.url.split("?")[0]).stem).strip() or "screenplay"
     text = f"{head} ({a.url.split('://')[-1]})\n\n{text}"
