@@ -113,7 +113,7 @@ tasks:
   proactive_peace:
     script: nova_proactive_peace.py
     schedule: every 15m
-    timeout: 60
+    timeout: 90
     overlap: skip
 
 
@@ -834,3 +834,22 @@ tasks:
     timeout: 1500
     overlap: skip
     group: llm
+
+  # ---- 2026-10-04 ----
+  cluster_render:                  # wish #60 / queue #3113 tier 1 — Grafana nova-cluster kiosk -> PNG on the UNAS for the Apple TVs (via .7 Photos)
+    script: nova_cluster_render.py
+    schedule: every 5m
+    timeout: 120
+    overlap: skip
+  yt_liked_download:               # SPOF plan 6c — moved back from scheduler-core (.2): writes /Volumes/external, a macOS path; it never ran there
+    script: nova_yt_liked_download.py
+    schedule: cron 0 1 * * 6
+    timeout: 43200
+    overlap: skip
+
+  # ---- 2026-10-05 ----
+  model_warm:                      # keep the placement in service_config(nova_model_warm.placement) RESIDENT fleet-wide — chat TTFT was 31 s of model reloads
+    script: nova_model_warm.py
+    schedule: every 10m
+    timeout: 900
+    overlap: skip
