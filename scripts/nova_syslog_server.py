@@ -115,17 +115,19 @@ SEVERITY_NAMES = {
 
 # ── Threat Detection Rules ────────────────────────────────────────────────────
 
+# Signature families at WORD boundaries: 'ET DNS' used to match 'fleET DNS' in
+# 'Nova fleet DNS sync' (594 fake IPS blocks in 3 days, 2026-10-05).
 IPS_RULES = [
-    (re.compile(r"ET WORM", re.IGNORECASE), "worm", "critical"),
-    (re.compile(r"ET TROJAN", re.IGNORECASE), "trojan", "critical"),
-    (re.compile(r"ET EXPLOIT", re.IGNORECASE), "exploit", "critical"),
-    (re.compile(r"ET MALWARE", re.IGNORECASE), "malware", "critical"),
-    (re.compile(r"ET ATTACK_RESPONSE", re.IGNORECASE), "attack_response", "critical"),
-    (re.compile(r"GPL EXPLOIT", re.IGNORECASE), "exploit", "critical"),
-    (re.compile(r"ET SCAN", re.IGNORECASE), "scan", "warning"),
-    (re.compile(r"ET DNS", re.IGNORECASE), "dns_anomaly", "warning"),
-    (re.compile(r"ET POLICY", re.IGNORECASE), "policy", "info"),
-    (re.compile(r"ET INFO", re.IGNORECASE), "info", "info"),
+    (re.compile(r"(?<![A-Za-z])ET WORM(?![A-Za-z])", re.IGNORECASE), "worm", "critical"),
+    (re.compile(r"(?<![A-Za-z])ET TROJAN(?![A-Za-z])", re.IGNORECASE), "trojan", "critical"),
+    (re.compile(r"(?<![A-Za-z])ET EXPLOIT(?![A-Za-z])", re.IGNORECASE), "exploit", "critical"),
+    (re.compile(r"(?<![A-Za-z])ET MALWARE(?![A-Za-z])", re.IGNORECASE), "malware", "critical"),
+    (re.compile(r"(?<![A-Za-z])ET ATTACK_RESPONSE(?![A-Za-z])", re.IGNORECASE), "attack_response", "critical"),
+    (re.compile(r"(?<![A-Za-z])GPL EXPLOIT(?![A-Za-z])", re.IGNORECASE), "exploit", "critical"),
+    (re.compile(r"(?<![A-Za-z])ET SCAN(?![A-Za-z])", re.IGNORECASE), "scan", "warning"),
+    (re.compile(r"(?<![A-Za-z])ET DNS(?![A-Za-z])", re.IGNORECASE), "dns_anomaly", "warning"),
+    (re.compile(r"(?<![A-Za-z])ET POLICY(?![A-Za-z])", re.IGNORECASE), "policy", "info"),
+    (re.compile(r"(?<![A-Za-z])ET INFO(?![A-Za-z])", re.IGNORECASE), "info", "info"),
 ]
 
 FIREWALL_RE = re.compile(

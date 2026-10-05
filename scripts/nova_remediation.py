@@ -46,7 +46,9 @@ DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 # False -> engine PROPOSES only and executes NOTHING (not even 'safe' steps).
 # The lead flips this to True after reviewing the runbooks. Even when True, only
 # 'safe' steps auto-execute; 'impactful' steps always require approve().
-REMEDIATION_ENABLED = False
+# 2026-10-05 Jordan: "have her fix the problem based on her own advice" — SAFE steps now run;
+# IMPACTFUL steps are still proposed + approval-gated, and reboot_host is still a no-op.
+REMEDIATION_ENABLED = True
 
 # Don't re-propose / re-run the same action for the same incident within this.
 COOLDOWN_S = 1800  # 30 minutes

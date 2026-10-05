@@ -49,7 +49,20 @@ _HARD_CRITICAL = re.compile(
     r"unauthorized|compromise|breach|exposed secret|leaked", re.I)
 
 _VERDICTS = {"real_actionable", "known_self_healing", "expected_change",
-             "duplicate", "learned_normal"}
+             "duplicate", "learned_normal", "detector_fault"}
+
+
+def apply_evidence(evidence, hard, level):
+    """EVIDENCE CHECK (2026-10-05, incident #3675). When the raw source row contradicts the
+    detector's own claim, the alert is a detector fault: suppress it and file the bug, never
+    page a human about a rule. Pure; returns (verdict, conf, decision, reason) or None.
+    Hard-critical and critical still page (annotated) — the safety contract stands."""
+    if not isinstance(evidence, dict) or evidence.get("verdict") != "detector_fault":
+        return None
+    if hard or level == "critical":
+        return None
+    return ("detector_fault", 0.95, "suppress",
+            ("evidence contradicts detector: " + (evidence.get("note") or ""))[:200])
 
 
 def _log(m): print(f"[alert-triage {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
@@ -130,37 +143,55 @@ def _recent_changes(oc):
         return []
 
 
-def triage(title, body="", level="info", category=None, source=None, dedup_key=None):
+def triage(title, body="", level="info", category=None, source=None, dedup_key=None, ev=None):
     """Return a decision dict. Conservative: pages unless confidently benign."""
     text = f"{title}. {body or ''}".strip()
     hard = bool(_HARD_CRITICAL.search(f"{text} {category or ''}"))
     ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
+
+    # EVIDENCE first: raw source rows, deterministic re-check, who, 14-day history, advice.
+    evidence = None
+    try:
+        import nova_evidence_check
+        evidence = nova_evidence_check.check(oc, title=title, body=body, level=level, category=category,
+                                             source=source, dedup_key=dedup_key, ts=(ev or {}).get("ts"))
+    except Exception as e:  # noqa: BLE001 — fail open to the old path
+        _log(f"evidence check unavailable ({e})")
+    ev_decided = apply_evidence(evidence, hard, level)
 
     similar = _recall(text, n=4, source="incident")
     baselines = _recall(text, n=3)  # any memory that establishes what's normal here
     changes = _recent_changes(oc)
     sim_ids = [str(m.get("id")) for m in similar]
 
-    annotation, likely, verdict, conf, reason = "", "", "real_actionable", 0.5, ""
+    annotation, likely, verdict, conf, reason, next_action = "", "", "real_actionable", 0.5, "", ""
 
     if hard:
         decision, verdict, conf = "page", "real_actionable", 1.0
         reason = "hard-critical signature — always pages"
+    elif ev_decided:
+        verdict, conf, decision, reason = ev_decided
+        likely = (evidence.get("note") or "")[:200]
     else:
+        evid_block = (evidence or {}).get("text") or "(no source rows / no re-check for this category)"
         sim_block = "\n".join(f"- {(m.get('text') or '')[:200]}" for m in similar) or "(none)"
         base_block = "\n".join(f"- {(m.get('text') or '')[:160]}" for m in baselines) or "(none)"
         chg_block = "\n".join(f"- {c}" for c in changes) or "(no recent maintenance)"
         raw = llm(
             "You are Nova's alert triage. Classify this alert given context. Output ONLY JSON: "
             '{"verdict":"real_actionable|known_self_healing|expected_change|duplicate|learned_normal",'
-            '"confidence":0.0-1.0,"likely_cause":"<one line>","reason":"<one line>"}.\n'
+            '"confidence":0.0-1.0,"likely_cause":"<one line>","reason":"<one line>",'
+            '"next_action":"<one concrete thing to do first, or empty>"}.\n'
             "verdict meanings: real_actionable = a genuine problem needing a human; "
             "known_self_healing = this pattern recovers on its own (per past incidents); "
             "expected_change = explained by recent maintenance below; "
             "duplicate = same ongoing condition already known; "
             "learned_normal = matches an established normal baseline.\n"
-            "Be conservative: if unsure, verdict=real_actionable.\n\n"
+            "Be conservative: if unsure, verdict=real_actionable. Reason from the EVIDENCE block "
+            "(raw source rows and a deterministic re-check of the detector's claim) before anything "
+            "else; never assert compromise, exfiltration or malware beyond what the evidence shows.\n\n"
             f"ALERT [{level}/{category}]: {text}\n\n"
+            f"EVIDENCE:\n{evid_block}\n\n"
             f"SIMILAR PAST INCIDENTS (what it turned out to be):\n{sim_block}\n\n"
             f"KNOWN-NORMAL BASELINES:\n{base_block}\n\n"
             f"RECENT MAINTENANCE (last 12h):\n{chg_block}")
@@ -170,6 +201,7 @@ def triage(title, body="", level="info", category=None, source=None, dedup_key=N
             conf = float(j.get("confidence", 0.5))
             likely = (j.get("likely_cause") or "")[:200]
             reason = (j.get("reason") or "")[:200]
+            next_action = (j.get("next_action") or "")[:240]
         except Exception as e:
             verdict, conf, reason = "real_actionable", 0.5, f"triage parse failed ({e}) — paging"
 
@@ -198,13 +230,19 @@ def triage(title, body="", level="info", category=None, source=None, dedup_key=N
             if _bo:
                 decision, reason = "suppress", _bo_reason
 
+    ann = []
+    if likely:
+        ann.append(f"🔎 Likely: {likely}")
+    if evidence and (evidence.get("raw") or evidence.get("who")):
+        r0 = evidence["raw"][0]["message"][:160] if evidence.get("raw") else ""
+        who = ", ".join(f"{ip} = {n}" for ip, n in (evidence.get("who") or {}).items())
+        ann.append("🧾 Evidence: " + " · ".join(x for x in (r0, who) if x))
+    do = (evidence or {}).get("advice") or next_action
+    if do:
+        ann.append(f"🛠 Do: {do}")
     if similar:
-        top = (similar[0].get("text") or "")[:160]
-        annotation = f"🔎 Similar past incident: {top}"
-        if likely:
-            annotation = f"🔎 Likely: {likely}\n{annotation}"
-    elif likely:
-        annotation = f"🔎 Likely: {likely}"
+        ann.append(f"🔎 Similar past incident: {(similar[0].get('text') or '')[:160]}")
+    annotation = "\n".join(ann)
 
     try:
         oc.execute(

@@ -200,7 +200,23 @@ def llm_summarize(conn, incident_id):
     bullet = "\n".join(f"- [{m[0]}/{m[1] or '?'}] ({m[4]}) {m[2]}" + (f" — {m[3][:120]}" if m[3] else "")
                        for m in members)
     fallback = f"{title} on {host}: {mcount} correlated events. Root + symptoms:\n{bullet}"
-    prompt = (f"Host: {host}\nSeverity: {sev}\nCorrelated events:\n{bullet}\n\n"
+    # EVIDENCE for the root event (2026-10-05, incident #3675): raw source rows, who, 14-day
+    # history and a deterministic re-check, so the narrative is written from the row, not the
+    # signature. Fail-open: no evidence block, same prompt as before.
+    evidence = ""
+    try:
+        import nova_evidence_check
+        cur.execute("SELECT e.title, e.body, e.level, e.category, e.source, e.dedup_key, e.ts "
+                    "FROM telemetry.incidents i JOIN telemetry.events e ON e.id = i.root_event WHERE i.id=%s",
+                    (incident_id,))
+        r = cur.fetchone()
+        if r:
+            b = nova_evidence_check.check(conn.cursor(), title=r[0], body=r[1], level=r[2], category=r[3],
+                                          source=r[4], dedup_key=r[5], ts=r[6], file_bug_row=False)
+            evidence = "\nEVIDENCE for the root event (raw rows, who, history, re-check):\n" + b["text"] + "\n"
+    except Exception:  # noqa: BLE001
+        evidence = ""
+    prompt = (f"Host: {host}\nSeverity: {sev}\nCorrelated events:\n{bullet}\n{evidence}\n"
               "Write the incident summary.")
     try:
         # /api/chat (not /api/generate) so the chat template applies and think:false
@@ -212,7 +228,12 @@ def llm_summarize(conn, incident_id):
                  "You are Nova's SRE correlation engine. Given a correlated incident, "
                  "reply with ONLY 2-3 tight sentences for an on-call engineer: the likely "
                  "ROOT CAUSE, the SYMPTOMS that follow from it, and ONE concrete next "
-                 "action. No preamble, no reasoning, no lists — just the summary."},
+                 "action. Reason from the EVIDENCE block when present: if its re-check "
+                 "contradicts the detector, the root cause is a detector fault and the next "
+                 "action is to fix the rule; never assert compromise, exfiltration or malware "
+                 "beyond what the evidence shows. The attributed host may be the resolver or "
+                 "the log collector — the real client is in the raw line. No preamble, no "
+                 "reasoning, no lists — just the summary."},
                 {"role": "user", "content": prompt},
             ],
             "stream": False, "think": False,

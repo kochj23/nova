@@ -46,7 +46,7 @@ def _triage_event(ev: dict):
             box["v"] = nova_alert_triage.triage(
                 ev.get("title") or "", ev.get("body") or "",
                 ev.get("level") or "info", ev.get("category"),
-                ev.get("source"), ev.get("dedup_key"))
+                ev.get("source"), ev.get("dedup_key"), ev=dict(ev))
         except Exception as e:  # noqa: BLE001 — fail open
             box["err"] = e
 
@@ -232,6 +232,17 @@ def drain(verbose=False, only_source=None) -> int:
                         if verbose:
                             print(f"  suppressed #{ev['id']} (dedup of #{prior['id']})")
                         continue
+                # 1.5) EVIDENCE CHECK before anything is believed (2026-10-05, incident #3675):
+                #      triage runs here, BEFORE correlation, so a detector fault never opens an
+                #      incident, never gets a qwen narrative and never recurs. Every other
+                #      decision is kept and applied at delivery (3.5) exactly as before.
+                t = _triage_event(ev)
+                if isinstance(t, dict) and t.get("verdict") == "detector_fault" and t.get("decision") == "suppress":
+                    cur.execute("UPDATE telemetry.events SET status='suppressed', "
+                                "channel='detector-fault', sent_at=now() WHERE id=%s", (ev["id"],))
+                    if verbose:
+                        print(f"  detector-fault #{ev['id']} [{ev['category']}] — {t.get('reason')}")
+                    continue
                 # 2) Correlate: fold symptoms into incidents (deterministic + LLM).
                 try:
                     corr = nova_correlator.correlate(conn, dict(ev))
@@ -265,7 +276,6 @@ def drain(verbose=False, only_source=None) -> int:
                 # 3.5) AI triage — fail-open to paging (see _triage_event above).
                 #      suppress -> don't post; downgrade -> post to #nova-feed w/ note;
                 #      page/downgrade -> append likely-cause + similar-incident context.
-                t = _triage_event(ev)
                 if isinstance(t, dict) and t.get("decision") in ("page", "downgrade", "suppress"):
                     decision = t["decision"]
                     if decision == "suppress":

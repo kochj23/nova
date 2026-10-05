@@ -328,6 +328,10 @@ def _grade(conn, row):
     ts = row["ts"]
     src, cat, title = row["source"], row["category"], row["title"]
     ns = norm_sig(title)
+    # A detector fault was suppressed on EVIDENCE (the raw row contradicted the rule). The
+    # signature keeps firing until the rule is fixed, which must not read as a dangerous miss.
+    if row.get("verdict") == "detector_fault":
+        return "detector_fault", "evidence contradicted the detector; bug filed to claude_queue"
 
     # (a) Did an incident get ROOTED on the same source+category after the decision?
     cur.execute("""
@@ -383,7 +387,7 @@ def cmd_feedback(conn, args):
     """)
     todo = cur.fetchall()
     _log(f"feedback: grading {len(todo)} decision(s) older than {args.min_age_hours}h")
-    counts = {"was_real": 0, "was_noise": 0, "unknown": 0}
+    counts = {"was_real": 0, "was_noise": 0, "unknown": 0, "detector_fault": 0}
     for row in todo:
         try:
             outcome, why = _grade(conn, row)

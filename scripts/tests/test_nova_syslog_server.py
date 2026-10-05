@@ -280,6 +280,21 @@ def test_anomaly_sensitive_path_after_three_hits():
     assert t["severity_level"] == "warning"
 
 
+@pytest.mark.parametrize("line", [
+    # 594 fake IPS blocks in 3 days (2026-10-05): 'ET DNS' matched the tail of 'fleET DNS'
+    "Starting nova-dns-sync.service - Nova fleet DNS sync (UniFi -> BIND)...",
+    "Failed to start nova-dns-sync.service - Nova fleet DNS sync (UniFi -> BIND).",
+    "reset info: cabinet policy applied",          # 'SET INFO' / 'ET POLICY' inside words
+])
+def test_ips_signature_families_need_word_boundaries(line):
+    assert m.detect_threat(_ev(line)) is None
+
+
+def test_ips_real_signature_still_fires():
+    t = m.detect_threat(_ev("ET TROJAN Win32/Agent CnC checkin SRC=203.0.113.5 DST=192.168.1.9"))
+    assert t["threat_type"] == "ips" and t["signature"].startswith("trojan")
+
+
 def test_anomaly_suspicious_dns_tld():
     # BIND query log (nova-core resolver) and dnsmasq/pi-hole formats both carry the name
     t = m.detect_anomaly(_ev("client @0x1 192.168.1.43#5555 (badhost.tk): query: badhost.tk IN A + (192.168.1.138)"))
