@@ -53,6 +53,51 @@ def pdf_link(url: str, page: str):
     return m.group(0) if m else None
 
 
+SCRIBD_PY = "/Volumes/Data/AI/youtube-up/venv/bin/python"      # has selenium + Firefox via selenium-manager
+SCRIBD_JS = r"""
+from selenium import webdriver
+from selenium.webdriver.firefox.options import Options
+import sys, time, json, re
+o = Options(); o.add_argument("--headless"); d = webdriver.Firefox(options=o); d.set_page_load_timeout(90)
+try:
+    d.get(sys.argv[1])
+    for _ in range(15):
+        time.sleep(3)
+        if "Client Challenge" not in d.title: break
+    d.execute_script("for (const b of document.querySelectorAll('button')) if (/I Understand|Accept/i.test(b.textContent)) b.click();")
+    pages = d.execute_script("return document.querySelectorAll('.outer_page, [class*=outer_page]').length")
+    seen = {}
+    for i in range(80):
+        d.execute_script(f"window.scrollTo(0, {i*1500});"); time.sleep(0.6)
+        for p in d.execute_script("return Array.from(document.querySelectorAll('.outer_page, [class*=outer_page]')).map((p,i)=>({i, text:(p.innerText||'').trim()}))"):
+            if p["text"] and len(p["text"]) > len(seen.get(p["i"], "")): seen[p["i"]] = p["text"]
+        if len(seen) >= pages: break
+    print(json.dumps({"title": re.sub(r"\s*\|\s*PDF.*$", "", d.title), "pages": pages, "text": "\n\n".join(seen[k] for k in sorted(seen))}))
+finally:
+    d.quit()
+"""
+
+
+def scribd_text(url: str) -> tuple[str, str]:
+    import subprocess as sp, json
+    r = sp.run([SCRIBD_PY, "-c", SCRIBD_JS, url], capture_output=True, text=True, timeout=900)
+    data = json.loads(r.stdout.strip().splitlines()[-1])
+    lines, seen = [], set()
+    for l in data["text"].split("\n"):
+        s = l.strip()
+        if not s: lines.append(""); continue
+        if re.fullmatch(r"\(CONTINUED\)|CONTINUED:?|\d{1,3}\.?|Download to read ad-free|Ad", s): continue
+        if alpha_ratio(s) < 0.5 and len(s) > 3: continue       # font-garbled title cards
+        lines.append(re.sub(r"\s\*$", "", s))
+    body = "\n".join(lines)
+    # Scribd's text layer repeats ~40% of paragraphs; drop exact repeats (the memory server would dedupe anyway)
+    out, had = [], set()
+    for para in re.split(r"\n\s*\n", body):
+        k = re.sub(r"\s+", " ", para).strip()
+        if k and k not in had: had.add(k); out.append(para)
+    return data["title"], "\n\n".join(out)
+
+
 def alpha_ratio(t: str) -> float:
     return sum(c.isalpha() for c in t) / max(1, len(t))
 
@@ -75,9 +120,14 @@ def main():
     ap.add_argument("url"); ap.add_argument("--source", required=True); ap.add_argument("--title", default=None)
     ap.add_argument("--dry-run", action="store_true"); ap.add_argument("--ocr", action="store_true", help="force tesseract OCR of the PDF")
     a = ap.parse_args()
-    page = fetch(a.url).decode("utf-8", "replace")
-    title, body = extract(page)
-    pdf = pdf_link(a.url, page)
+    if "scribd.com/" in a.url:                        # JS challenge + lazy-rendered text layers -> drive a headless browser
+        title, body = scribd_text(a.url)
+        print(f"[screenplay] scribd: {len(body)} chars")
+        pdf = None
+    else:
+        page = fetch(a.url).decode("utf-8", "replace")
+        title, body = extract(page)
+        pdf = pdf_link(a.url, page)
     if pdf:                                           # Script Slug & co. serve the script as a PDF, the page is just a wrapper
         import subprocess as sp, tempfile
         tmp = tempfile.mktemp(suffix=".pdf"); Path(tmp).write_bytes(fetch(pdf))
@@ -91,6 +141,10 @@ def main():
     text = reflow(body)
     head = a.title or title or re.sub(r"[_-]+", " ", Path(a.url.split("?")[0]).stem).strip() or "screenplay"
     text = f"{head} ({a.url.split('://')[-1]})\n\n{text}"
+    if not pdf and "scribd.com/" not in a.url and not re.search(r"<pre[^>]*>", page, re.I):
+        print(f"[screenplay] SKIP {a.url}: no <pre> script block and no PDF link (wrapper page / reader widget)", file=sys.stderr); return 2
+    if len(text) < 5000:
+        print(f"[screenplay] SKIP {head!r}: only {len(text)} chars of text (image-only or paywalled pages)", file=sys.stderr); return 2
     alpha = sum(c.isalpha() for c in text) / max(1, len(text))
     STAGING.mkdir(parents=True, exist_ok=True)
     out = STAGING / (re.sub(r"[^\w]+", "_", head.lower()).strip("_")[:80] + ".txt")
