@@ -208,3 +208,13 @@ def test_screenplay_extract_skips_site_name_headings():
     assert title == "Jaws" and "FADE IN" in body
     t2, _ = sp.extract("<html><title>Misery - by William Goldman</title><pre>x</pre></html>")
     assert t2 == "Misery - by William Goldman"
+
+
+def test_screenplay_pdf_link_and_og_title():
+    import nova_screenplay_ingest as sp
+    page = '<meta property="og:title" content="The Texas Chain Saw Massacre (1974) - Movie Script"><title></title><a href="https://assets.example.com/live/pdf/x.pdf?v=1">PDF</a>'
+    assert sp.pdf_link("https://www.scriptslug.com/script/x", page) == "https://assets.example.com/live/pdf/x.pdf?v=1"
+    assert sp.pdf_link("https://host/script.pdf", "") == "https://host/script.pdf"
+    assert sp.pdf_link("https://imsdb.com/scripts/Jaws.html", "<pre>x</pre>") is None
+    title, _ = sp.extract(page)
+    assert title.startswith("The Texas Chain Saw Massacre (1974)")
