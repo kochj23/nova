@@ -43,7 +43,9 @@ def build(slug, article_path, url):
     tags = re.findall(r'"([^"]+)"', fm(md, "tags")) or []
     desc = fm(md, "description")
     description = (f"{desc}\n\n" if desc else "") + f"Article: {url}\n\n{BOILERPLATE}\n\nNarration is an AI voice (XTTS, 'Gracie Wise'). Written by Nova."
-    return dict(title=prefix + title, description=description, tags=tuple(dict.fromkeys(["Nova", "AI", "Nova Speaks", section] + tags))[:30], recorded=d)
+    clean = lambda x: x.replace("<", "").replace(">", "")                    # YouTube rejects angled brackets anywhere
+    return dict(title=clean(prefix + title), description=clean(description),
+                tags=tuple(clean(t) for t in dict.fromkeys(["Nova", "AI", "Nova Speaks", section] + tags))[:30], recorded=d)
 
 
 def refresh_cookies():
