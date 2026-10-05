@@ -34,12 +34,13 @@ class TestHerdMembers:
             "ara@monsterheaven.com",
             "jules@laplante.dev",
             "nova@servernest.xyz",
+            "bob.ross@agents.twdctech.com",  # added 2026-07-28 (twdctech, not ai.wdi.cloud)
         }
         assert HERD_EMAILS == expected_emails
 
     def test_expected_member_count(self):
         from herd_config import HERD
-        assert len(HERD) == 9
+        assert len(HERD) == 10
 
     def test_all_members_have_name(self):
         from herd_config import HERD

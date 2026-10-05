@@ -13,6 +13,7 @@ Written by Jordan Koch.
 import asyncio
 import json
 import re
+import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,33 +29,36 @@ import pytest_asyncio
 # ---------------------------------------------------------------------------
 
 # Minimal stubs so the module loads without a live Postgres / Redis / psutil.
-_PATCHES = []
+#
+# NOTE: do NOT use unittest.mock.patch.dict("sys.modules", ...) here. Its stop()
+# does sys.modules.clear() + update(snapshot), which (a) evicts every module that
+# was first imported while the patch was active -- including asyncpg's Cython
+# extension modules pulled in by server.py -- so a later test file re-imports
+# asyncpg against already-initialised C state and segfaults in
+# BaseProtocol.__init__; and (b) with several stacked patches, stopping them in
+# start order re-installs the earlier stubs, leaving MagicMocks in sys.modules
+# for the rest of the session. Save and restore only the keys we touch instead.
+_STUB_NAMES = ("psycopg2", "psutil", "redis", "redis.asyncio", "aiohttp", "uvicorn")
+_SAVED_MODULES = {}
+_MISSING = object()
 
 
 def _start_patches():
-    """Patch heavy imports so server.py can be imported safely."""
-    global _PATCHES
-    stubs = {
-        "psycopg2": MagicMock(),
-        "psutil": MagicMock(),
-        "redis": MagicMock(),
-        "redis.asyncio": MagicMock(),
-        "aiohttp": MagicMock(),
-        "uvicorn": MagicMock(),
-    }
-    for mod_name, stub in stubs.items():
-        p = patch.dict("sys.modules", {mod_name: stub})
-        p.start()
-        _PATCHES.append(p)
+    """Install MagicMock stubs for heavy deps so server.py can be imported safely."""
+    for mod_name in _STUB_NAMES:
+        _SAVED_MODULES[mod_name] = sys.modules.get(mod_name, _MISSING)
+        sys.modules[mod_name] = MagicMock()
 
 
 def _stop_patches():
-    for p in _PATCHES:
-        p.stop()
-    _PATCHES.clear()
+    """Restore exactly the sys.modules entries _start_patches replaced."""
+    for mod_name, original in _SAVED_MODULES.items():
+        if original is _MISSING:
+            sys.modules.pop(mod_name, None)
+        else:
+            sys.modules[mod_name] = original
+    _SAVED_MODULES.clear()
 
-
-import sys
 
 _start_patches()
 
@@ -256,7 +260,10 @@ class TestCollectAppWatchdog:
         # Reset cache so we get a fresh result
         server._app_watchdog_ts = 0
 
-        with patch.object(server, "APP_WATCHDOG_STATE", state_file):
+        # collect_app_watchdog() also polls the live NovaControl app (:37400), whose
+        # "online" verdict overrides the port check. Keep the unit test hermetic.
+        with patch.object(server, "APP_WATCHDOG_STATE", state_file), \
+             patch("urllib.request.urlopen", side_effect=OSError("NovaControl not mocked")):
             result = await server.collect_app_watchdog()
 
         assert result["status"] == "degraded"  # 2 up, 1 down
@@ -293,7 +300,10 @@ class TestCollectAppWatchdog:
         state_file = tmp_state_files / "nova_app_watchdog_state.json"
         state_file.write_text(json.dumps(state_data))
         server._app_watchdog_ts = 0
-        with patch.object(server, "APP_WATCHDOG_STATE", state_file):
+        # collect_app_watchdog() also polls the live NovaControl app (:37400), whose
+        # "online" verdict overrides the port check. Keep the unit test hermetic.
+        with patch.object(server, "APP_WATCHDOG_STATE", state_file), \
+             patch("urllib.request.urlopen", side_effect=OSError("NovaControl not mocked")):
             result = await server.collect_app_watchdog()
         assert result["status"] == "ok"
         assert result["up_count"] == 2
@@ -310,7 +320,10 @@ class TestCollectAppWatchdog:
         state_file = tmp_state_files / "nova_app_watchdog_state.json"
         state_file.write_text(json.dumps(state_data))
         server._app_watchdog_ts = 0
-        with patch.object(server, "APP_WATCHDOG_STATE", state_file):
+        # collect_app_watchdog() also polls the live NovaControl app (:37400), whose
+        # "online" verdict overrides the port check. Keep the unit test hermetic.
+        with patch.object(server, "APP_WATCHDOG_STATE", state_file), \
+             patch("urllib.request.urlopen", side_effect=OSError("NovaControl not mocked")):
             result = await server.collect_app_watchdog()
         assert result["status"] == "down"
         assert result["up_count"] == 0
@@ -638,18 +651,21 @@ class TestCollectHomebridgeStatus:
 # ======================================================================
 
 class TestWriteHistorySnapshot:
-    """Test the write_history_snapshot() function that inserts into nova_ops."""
+    """Test write_history_snapshot(): asyncpg pool writes into nova_ops, and the
+    pool-recreate path on failure (replaced psycopg2 cursor/commit/rollback, 1b9d734)."""
+
+    @staticmethod
+    def _pool(conn):
+        """asyncpg-style pool: `async with pool.acquire() as conn`."""
+        pool = MagicMock()
+        pool.acquire.return_value.__aenter__.return_value = conn
+        return pool
 
     @pytest.mark.asyncio
     async def test_writes_system_snapshot(self):
-        """Verify snapshot inserts into dashboard_snapshots."""
-        mock_cur = MagicMock()
-        mock_db = MagicMock()
-        mock_db.cursor.return_value = mock_cur
-
-        # Temporarily replace app.state.history_db
-        mock_app_state = MagicMock()
-        mock_app_state.history_db = mock_db
+        """Verify snapshot inserts into dashboard_snapshots and the history tables."""
+        conn = MagicMock()
+        conn.execute = AsyncMock()
 
         state = {
             "system": {
@@ -674,30 +690,38 @@ class TestWriteHistorySnapshot:
         }
 
         with patch.object(server, "app") as mock_app:
-            mock_app.state = mock_app_state
+            mock_app.state.history_pool = self._pool(conn)
             await server.write_history_snapshot(state)
 
-        # Verify cursor.execute was called multiple times
-        assert mock_cur.execute.call_count >= 1
-        mock_db.commit.assert_called_once()
-        mock_cur.close.assert_called_once()
-
-        # Check the first call is the snapshot insert
-        first_call = mock_cur.execute.call_args_list[0]
-        assert "dashboard_snapshots" in first_call[0][0]
+        sqls = [c.args[0] for c in conn.execute.await_args_list]
+        assert len(sqls) >= 1
+        # First write is the system snapshot
+        assert "dashboard_snapshots" in sqls[0]
+        assert conn.execute.await_args_list[0].args[2] == 25.0  # cpu_percent
+        # One row per disk, per-service latency + SLA, memory count, cost upsert
+        assert sum("dashboard_disk_history" in q for q in sqls) == 2
+        assert sum("dashboard_latency_history" in q for q in sqls) == 2
+        assert sum("sla_snapshots" in q for q in sqls) == 2
+        assert any("dashboard_memory_count_history" in q for q in sqls)
+        assert any("dashboard_cost_history" in q for q in sqls)
 
     @pytest.mark.asyncio
-    async def test_rollback_on_error(self):
-        """Verify rollback is called when a write error occurs."""
-        mock_db = MagicMock()
-        mock_db.cursor.side_effect = Exception("cursor creation failed")
+    async def test_recreates_pool_on_error(self):
+        """A failed write must not raise; it logs and swaps in a fresh pool
+        (post-failover the pooled conns point at the dead primary)."""
+        old_pool = MagicMock()
+        old_pool.acquire.side_effect = Exception("pool wedged")
+        new_pool = MagicMock()
 
-        with patch.object(server, "app") as mock_app:
-            mock_app.state.history_db = mock_db
+        with patch.object(server, "app") as mock_app, \
+             patch.object(server.asyncpg, "create_pool", AsyncMock(return_value=new_pool)) as create_pool:
+            mock_app.state.history_pool = old_pool
             # Should not raise
             await server.write_history_snapshot({"system": {}})
+            create_pool.assert_awaited_once()
+            assert mock_app.state.history_pool is new_pool
 
-        mock_db.rollback.assert_called_once()
+        old_pool.terminate.assert_called_once()
 
 
 # ======================================================================

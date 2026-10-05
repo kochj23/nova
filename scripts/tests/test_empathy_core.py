@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Tests for nova_empathy_core.py (wish #67 "empathy_core"), one per house category:
-functional, security, privacy, performance, regression, integration, docs.
+"""Tests for nova_empathy_core.py — the 7 house categories (Security, Performance, Retry, Unit,
+Integration, Functional, Frame) plus the wish #67 privacy/regression/docs checks.
 Written by Jordan Koch (via Claude)."""
 import importlib.util
+import json
 import re
+import sys
 import time
 import unittest
 from datetime import date
@@ -122,6 +124,160 @@ class TestDocs(unittest.TestCase):
         self.assertIn("wish #67", SRC)
         for flag in ("--dry-run", "--selftest"):
             self.assertIn(flag, SRC)
+
+
+# ── house categories added 2026-10-05 (Retry / Unit / Frame) ───────────────────
+
+class _Resp:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def read(self):
+        return json.dumps(self.payload).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class _Cur:
+    def __init__(self, answers=()):
+        self.answers = list(answers); self.sql = []; self.params = []
+
+    def execute(self, sql, params=None):
+        self.sql.append(" ".join(sql.split())); self.params.append(params)
+
+    def fetchone(self):
+        return self.answers.pop(0) if self.answers else None
+
+    def fetchall(self):
+        return self.answers.pop(0) if self.answers else []
+
+
+class TestRetry(unittest.TestCase):
+    def test_remember_fails_twice_then_succeeds_with_backoff(self):
+        import urllib.request
+        calls, sleeps = [], []
+        real = urllib.request.urlopen
+
+        def flaky(req, timeout=0):
+            calls.append(1)
+            if len(calls) < 3:
+                raise OSError("down")
+            return _Resp({"id": 9})
+        urllib.request.urlopen = flaky
+        try:
+            out = ec.remember("t", {}, _sleep=sleeps.append)
+        finally:
+            urllib.request.urlopen = real
+        self.assertEqual(out, {"id": 9})
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(sleeps, [2, 4])          # linear backoff, no sleep after the success
+
+    def test_pg_connect_has_no_retry_but_fails_open(self):
+        # RETRY GAP: main()/psycopg2.connect — one attempt, then "nothing to do" with exit 0
+        import types
+        attempts = []
+
+        def boom(*a, **k):
+            attempts.append(1); raise OSError("pg down")
+        real_pg, real_argv = ec.psycopg2, sys.argv
+        ec.psycopg2 = types.SimpleNamespace(connect=boom); sys.argv = ["nova_empathy_core.py"]
+        try:
+            self.assertEqual(ec.main(), 0)
+        finally:
+            ec.psycopg2, sys.argv = real_pg, real_argv
+        self.assertEqual(len(attempts), 1)
+
+    def test_gather_failure_is_fail_open(self):
+        # RETRY GAP: gather()/gateway_traces read — one attempt; a failure ends the run cleanly
+        import types
+
+        class Boom:
+            def execute(self, *a): raise RuntimeError("relation missing")
+
+        class Conn:
+            autocommit = False
+
+            def cursor(self): return Boom()
+        real_pg, real_argv = ec.psycopg2, sys.argv
+        ec.psycopg2 = types.SimpleNamespace(connect=lambda *a, **k: Conn()); sys.argv = ["x"]
+        try:
+            self.assertEqual(ec.main(), 0)
+        finally:
+            ec.psycopg2, sys.argv = real_pg, real_argv
+
+
+class TestUnit(unittest.TestCase):
+    def test_selftest_runs_clean(self):
+        ec.demo()
+
+    def test_scrub_edges(self):
+        self.assertEqual(ec.scrub(""), "")
+        self.assertEqual(ec.scrub("  a   b \n c "), "a b c")
+        self.assertEqual(ec.scrub("<mailto:kochj@example.com> and https://x.y/z?q=1"), "[email] and [link]")
+
+    def test_stem_and_topics(self):
+        self.assertEqual(ec._stem("memories"), "memory")
+        self.assertEqual(ec._stem("sensors"), "sensor")
+        for untouched in ("status", "bus", "analysis", "zigbee"):
+            self.assertEqual(ec._stem(untouched), untouched)
+        self.assertEqual(ec.topics(""), set())
+        self.assertEqual(ec.topics(None), set())
+        self.assertEqual(ec.topics("the and for Nova Jordan"), set())      # all stoplist
+        self.assertEqual(ec.topics("Zigbee ZIGBEE zigbee!"), {"zigbee"})   # one message counts once
+
+    def test_weigh_and_cares_on_empty_and_acks(self):
+        self.assertEqual(ec.weigh([], TODAY), [])
+        self.assertEqual(ec.stated_cares([]), [])
+        self.assertEqual(ec.weigh([(TODAY, "Yes", "ok")] * 9, TODAY), [])
+        self.assertEqual(ec.weigh([(TODAY, None, None)], TODAY), [])
+        self.assertEqual(ec.stated_cares([(TODAY, "All approved!", "ok")]), [])   # an ack is not a care
+
+    def test_weigh_top_n_and_ordering(self):
+        rows = _rows("zigbee", (1, 2, 3, 4)) + _rows("printer", (1, 2, 3)) + _rows("garage", (5, 6, 7))
+        w = ec.weigh(rows, TODAY, n=2)
+        self.assertEqual(len(w), 2)
+        self.assertEqual(w[0]["topic"], "zigbee")
+        self.assertEqual(w[0]["since_days"], (TODAY - date(2026, 9, 4)).days)
+
+    def test_sig_and_text_edges(self):
+        self.assertEqual(ec.empathy_sig([], []), ec.empathy_sig([], []))
+        self.assertEqual(len(ec.empathy_sig([], [])), 16)
+        self.assertIn("quiet is his", ec.empathy_text([], [], TODAY))
+        t = ec.empathy_text(ec.weigh(_rows("zigbee", (1, 2, 3), resp="error: no"), TODAY), [], TODAY)
+        self.assertIn("brushed it off 3 of 3", t)
+
+    def test_state_helpers(self):
+        self.assertEqual(ec.load_seen(_Cur([None])), {})
+        self.assertEqual(ec.load_seen(_Cur([('{"seen": {"a": "2026-10-01"}}',)])), {"a": "2026-10-01"})
+        self.assertEqual(ec.load_seen(_Cur([({"seen": {"b": "x"}},)])), {"b": "x"})
+        cur = _Cur()
+        ec.save_seen(cur, {"a": "2026-10-01"})
+        self.assertIn("INSERT INTO service_config", cur.sql[0])
+        self.assertEqual(cur.params[0][0], ec.STATE_SERVICE)
+        self.assertTrue(ec._fresh({"s": "not-a-date"}, "s", TODAY))     # unreadable state never blocks
+
+
+class TestFrame(unittest.TestCase):
+    def test_selftest_exits_zero(self):
+        import os
+        import subprocess
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_empathy_core.py"), "--selftest"],
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("all empathy-core assertions passed", r.stdout)
+
+    def test_import_never_runs_main(self):
+        import os
+        import subprocess
+        self.assertIn('if __name__ == "__main__":', SRC)
+        r = subprocess.run([sys.executable, "-c", "import nova_empathy_core"], cwd=str(SCRIPTS),
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("[empathy-core", r.stdout)
 
 
 if __name__ == "__main__":

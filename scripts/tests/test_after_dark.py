@@ -166,9 +166,29 @@ class TestRecallMemories:
         mock_resp = MagicMock()
         mock_resp.read.return_value = json.dumps(response_data).encode()
         mock_urlopen.return_value = mock_resp
+        # recall_memories routes every hit through nova_config.filter_private_memories
+        # (DLP gate, commit 5e640b7). The fixture's nova_config is a MagicMock, so give
+        # the gate a pass-through body or it returns an empty MagicMock iterable.
+        after_dark_module.nova_config.filter_private_memories.side_effect = lambda ms: list(ms)
         memories = after_dark_module.recall_memories("moon landing")
         assert len(memories) == 2
         assert "space exploration" in memories[0]
+        after_dark_module.nova_config.filter_private_memories.assert_called_once()
+
+    @patch("urllib.request.urlopen")
+    def test_private_memories_are_dropped(self, mock_urlopen, after_dark_module):
+        """Whatever the DLP gate removes must never reach the monologue prompt."""
+        response_data = {"memories": [
+            {"text": "Public memory about the moon.", "source": "wiki"},
+            {"text": "Private work memory.", "source": "work-email"},
+        ]}
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps(response_data).encode()
+        mock_urlopen.return_value = mock_resp
+        after_dark_module.nova_config.filter_private_memories.side_effect = (
+            lambda ms: [m for m in ms if m.get("source") != "work-email"])
+        memories = after_dark_module.recall_memories("moon landing")
+        assert memories == ["Public memory about the moon."]
 
     @patch("urllib.request.urlopen")
     def test_handles_failure(self, mock_urlopen, after_dark_module):
@@ -211,24 +231,33 @@ class TestGenerateMonologue:
 
 
 class TestImageGeneration:
-    """Tests for image generation."""
+    """Tests for image generation.
 
-    @patch("subprocess.run")
-    def test_retries_on_failure(self, mock_run, after_dark_module):
-        mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="error")
+    Since commit 4aead36 After Dark no longer runs its own subprocess retry loop:
+    it delegates to nova_image_utils.generate_image (local ComfyUI with MAX_RETRIES
+    attempts, then OpenRouter fallback). The shared retry/fallback behaviour is
+    covered in tests/test_content_schedule.py; here we only check the delegation.
+    """
+
+    @patch("nova_image_utils.generate_image", return_value=None)
+    def test_returns_none_when_generator_fails(self, mock_gen, after_dark_module):
         event = {"year": 1969, "text": "Moon landing"}
         result = after_dark_module.generate_image(event)
         assert result is None
-        assert mock_run.call_count == 3  # 3 retries
+        mock_gen.assert_called_once()
+        assert mock_gen.call_args.kwargs.get("section") == "after-dark"
 
-    @patch("subprocess.run")
-    def test_returns_path_on_success(self, mock_run, after_dark_module, tmp_path):
+    @patch("nova_image_utils.generate_image")
+    def test_returns_path_on_success(self, mock_gen, after_dark_module, tmp_path):
         img_path = tmp_path / "image.png"
         img_path.write_bytes(b"fake png")
-        mock_run.return_value = MagicMock(returncode=0, stdout=str(img_path), stderr="")
+        mock_gen.return_value = str(img_path)
         event = {"year": 1969, "text": "Moon landing"}
         result = after_dark_module.generate_image(event)
         assert result == str(img_path)
+        prompt = mock_gen.call_args.args[0]
+        assert "Moon landing" in prompt
+        assert "1969" in prompt
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -247,10 +276,25 @@ class TestSecurity:
         assert "xoxb-" not in source
         assert "Bearer " not in source or "Bearer {" in source or 'f"Bearer ' in source
 
-    def test_services_are_localhost(self, after_dark_module):
+    def test_services_are_private_network(self, after_dark_module):
+        """Ollama stays on loopback; SearXNG/memory-server resolve via the fleet
+        service registry / internal DNS (commit e1759ed), so they may be a LAN
+        address or a *.digitalnoise.net name -- never a public host."""
+        import ipaddress
+        from urllib.parse import urlparse
+
+        def is_internal(url: str) -> bool:
+            host = urlparse(url).hostname or ""
+            if host in ("localhost",) or host.endswith(".digitalnoise.net"):
+                return True
+            try:
+                return ipaddress.ip_address(host).is_private
+            except ValueError:
+                return False
+
         assert "127.0.0.1" in after_dark_module.OLLAMA_URL
-        assert "127.0.0.1" in after_dark_module.SEARXNG_URL
-        assert "127.0.0.1" in after_dark_module.MEMORY_SERVER
+        assert is_internal(after_dark_module.SEARXNG_URL), after_dark_module.SEARXNG_URL
+        assert is_internal(after_dark_module.MEMORY_SERVER), after_dark_module.MEMORY_SERVER
 
     def test_no_pii_in_prompts(self, after_dark_module):
         """The comedy system prompt should not contain personal info."""

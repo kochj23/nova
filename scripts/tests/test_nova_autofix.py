@@ -201,9 +201,9 @@ class TestSecurityRestartUsesArgvNotShell:
         assert args[0][:3] == ["launchctl", "kickstart", "-k"]
 
     def test_command_branch_does_not_interpolate_trigger_reason(self, quiet_side_effects):
-        """The shell=True 'command' branch executes only the static pattern
-        command. Runtime trigger reasons (derived from service/log values)
-        must never be interpolated into the shell string."""
+        """The 'command' branch executes only the static pattern command, through
+        an explicit `sh -c` argv (never shell=True). Runtime trigger reasons
+        (derived from service/log values) must never be interpolated into it."""
         static_cmd = "pkill ollama; sleep 3; open -a Ollama"
         pattern = {
             "id": 2,
@@ -218,10 +218,10 @@ class TestSecurityRestartUsesArgvNotShell:
 
         srun.assert_called_once()
         args, kwargs = srun.call_args
-        assert args[0] == static_cmd            # exactly the static command
-        assert injected not in args[0]          # crafted reason never reaches shell
-        assert kwargs.get("shell") is True      # this branch does use a shell...
-        # ...but only on the operator-seeded static command, not runtime input.
+        assert args[0] == ["/bin/sh", "-c", static_cmd]   # exactly the static command, as argv
+        assert injected not in " ".join(args[0])          # crafted reason never reaches the shell
+        assert kwargs.get("shell") is not True            # never shell=True
+        # The sh -c argv runs only the operator-seeded static command, not runtime input.
 
 
 # ── Confidence learning + apply_fix outcome paths ────────────────────────────

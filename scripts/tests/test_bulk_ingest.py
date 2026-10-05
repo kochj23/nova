@@ -21,6 +21,17 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# nova_bulk_ingest.py was deliberately deleted in commit 997504e (2026-05-08, "Deleted old
+# one-off ingest scripts: ... bulk ..."). Its successor pipeline is nova_tv_ingest.py, which
+# has a different API and is covered by tests/test_nova_tv_ingest.py. These tests are kept
+# intact and re-enable automatically if the script is ever restored.
+_BULK_SCRIPT = Path(__file__).parent.parent / "nova_bulk_ingest.py"
+pytestmark = pytest.mark.skipif(
+    not _BULK_SCRIPT.exists(),
+    reason="nova_bulk_ingest.py deleted in commit 997504e (superseded by nova_tv_ingest.py, "
+           "see tests/test_nova_tv_ingest.py)",
+)
+
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
 

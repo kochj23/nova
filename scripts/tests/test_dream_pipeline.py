@@ -22,43 +22,52 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # ── dream_generate.py tests ──────────────────────────────────────────────────
 
-class TestQueryRecentIngests:
-    """Tests for query_recent_ingests() — PostgreSQL memory retrieval."""
+class TestQueryRecentMemoriesForTheme:
+    """Tests for query_recent_memories_for_theme() — PostgreSQL memory retrieval.
 
-    def test_returns_one_memory_per_source(self):
-        """Live test: verify each source gets exactly one memory."""
-        from dream_generate import query_recent_ingests
-        text, inspirations = query_recent_ingests()
+    Dream journal v2 (fb9aeba, 2026-05-03) replaced query_recent_ingests() with
+    query_recent_memories_for_theme(): a random 7-day sample (up to 20 rows, several
+    per source allowed) used only to derive the night's theme.
+    """
 
-        # Should have at least a few sources with recent content
-        assert len(inspirations) > 0
-        # Each inspiration must have the required fields
-        for i in inspirations:
-            assert "source" in i
-            assert "label" in i
-            assert "memory" in i
-            assert len(i["memory"]) > 0
-        # No duplicate sources
-        sources = [i["source"] for i in inspirations]
-        assert len(sources) == len(set(sources)), "Duplicate sources found"
+    def test_returns_recent_records_with_required_fields(self):
+        """Live test: every record carries source/label/memory."""
+        from dream_generate import query_recent_memories_for_theme
+        text, records = query_recent_memories_for_theme()
+
+        assert isinstance(text, str)
+        assert isinstance(records, list)
+        assert len(records) <= 20
+        for r in records:
+            assert "source" in r
+            assert "label" in r
+            assert "memory" in r
+            assert len(r["memory"]) > 0
+        # The theme text block is built from the same records
+        if records:
+            assert text
+            assert records[0]["memory"][:50] in text
 
     def test_excludes_noise_sources(self):
-        """Verify noise sources don't appear in results."""
-        from dream_generate import query_recent_ingests
+        """Verify EXCLUDE_SOURCES never appear in results."""
+        from dream_generate import query_recent_memories_for_theme, EXCLUDE_SOURCES
 
-        noise = {"private_document", "email_archive", "imessage",
-                 "slack_general", "security", "dream", "system"}
-        _, inspirations = query_recent_ingests()
-        returned_sources = {i["source"] for i in inspirations}
+        noise = set(EXCLUDE_SOURCES) | {"private_document", "email_archive", "imessage",
+                                        "slack_general", "security", "dream", "system"}
+        _, records = query_recent_memories_for_theme()
+        returned_sources = {r["source"] for r in records}
         leaked = returned_sources & noise
         assert not leaked, f"Noise sources leaked through: {leaked}"
 
-    @patch("dream_generate.HAS_PG", False)
-    def test_graceful_without_postgres(self):
-        from dream_generate import query_recent_ingests
-        text, inspirations = query_recent_ingests()
+    @patch("dream_generate.recall", return_value=[])
+    @patch("dream_generate._pg_connect", return_value=None)
+    def test_graceful_without_postgres(self, mock_pg, mock_recall):
+        """Without a PostgreSQL driver it falls back to vector recall and returns no records."""
+        from dream_generate import query_recent_memories_for_theme
+        text, records = query_recent_memories_for_theme()
         assert text == ""
-        assert inspirations == []
+        assert records == []
+        mock_recall.assert_called_once()
 
 
 class TestWriteJournal:
@@ -246,6 +255,7 @@ class TestHerdConfig:
             "colette@pilatesmuse.co", "rockbot@makehorses.org",
             "ara@monsterheaven.com", "jules@laplante.dev",
             "nova@servernest.xyz",
+            "bob.ross@agents.twdctech.com",  # added 2026-07-28
         }
         assert HERD_EMAILS == expected
 
@@ -277,16 +287,23 @@ class TestHerdConfig:
 # ── generate_image.sh tests ──────────────────────────────────────────────────
 
 class TestGenerateImage:
-    """Tests for generate_image.sh — port and retry logic."""
+    """Tests for generate_image.sh — ComfyUI endpoint and poll/retry logic.
+
+    2026-10-01 (526a71c): the script talks to ComfyUI directly (port 8188, LAN address
+    so nova-core can reach the Studio) instead of the SwarmUI API on 7801.
+    """
 
     def test_uses_correct_port(self):
         source = (Path(__file__).parent.parent / "generate_image.sh").read_text()
-        assert 'SWARM_URL="http://localhost:7801"' in source
-        assert 'http://localhost:7802' not in source
+        assert 'COMFY_URL="${COMFY_URL:-http://192.168.1.6:8188}"' in source
+        assert "http://localhost:7801" not in source
+        assert "http://localhost:7802" not in source
 
     def test_has_retry_logic(self):
+        """Submission is polled until a deadline rather than read once."""
         source = (Path(__file__).parent.parent / "generate_image.sh").read_text()
-        assert "sleep 1" in source  # retry wait
+        assert "while time.time() < deadline:" in source
+        assert "time.sleep(3)" in source  # poll wait
 
 
 # ── Integration test ─────────────────────────────────────────────────────────
@@ -309,15 +326,23 @@ class TestPipelineIntegration:
         ann = sig.return_annotation
         assert ann == tuple[str, list[dict]] or "tuple" in str(ann).lower() or ann == inspect.Parameter.empty
 
-    def test_scheduler_has_single_dream_job(self):
+    def test_scheduler_has_no_duplicate_dream_job(self):
+        """The dream generator must not be scheduled twice.
+
+        The old dream_pipeline task became journal_dream (01b4241, 2026-05-16), which
+        moved to nova-core (.2) in Wave B (2026-07-14) and was pruned from this host's
+        scheduler.yaml (2754348). The only remaining 'dream' entry here is the live-TV
+        dream-surf job, which is not the dream journal.
+        """
         import yaml
         with open(Path.home() / ".openclaw/config/scheduler.yaml") as f:
             config = yaml.safe_load(f)
         tasks = config.get("tasks", {})
         dream_jobs = [k for k in tasks if "dream" in k.lower()]
-        assert dream_jobs == ["dream_pipeline"], f"Expected single dream_pipeline, got: {dream_jobs}"
-        assert tasks["dream_pipeline"]["schedule"] == "cron 0 5 * * *"
-        assert tasks["dream_pipeline"]["timeout"] == 900
+        for legacy in ("dream_pipeline", "journal_dream"):
+            assert legacy not in tasks, f"{legacy} re-added locally — it runs on nova-core now"
+        assert dream_jobs == ["livetv_dream_surf"], f"Unexpected dream tasks: {dream_jobs}"
+        assert tasks["livetv_dream_surf"]["args"] == ["dream-surf"]
 
 
 if __name__ == "__main__":

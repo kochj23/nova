@@ -506,33 +506,38 @@ class TestFullPipeline:
     @patch("dream_generate.store_memory")
     @patch("dream_generate.generate_dream_image", return_value="")
     @patch("dream_generate._generate_via_openrouter")
-    @patch("dream_generate.query_wildcard_memories")
-    @patch("dream_generate.query_themed_memories")
+    @patch("dream_generate.fetch_unused")
     @patch("dream_generate.derive_theme")
     @patch("dream_generate.query_recent_memories_for_theme")
     @patch("dream_generate.read_file")
     def test_full_pipeline(self, mock_read, mock_recent, mock_theme,
-                            mock_themed, mock_wildcard, mock_openrouter,
+                            mock_unused, mock_openrouter,
                             mock_image, mock_store_mem, dream_module):
+        """The inspiration pool is the batch of oldest-unused memories (fetch_unused);
+        themed/wildcard pools were folded into it when the unused-memory rotation
+        landed. Every unused row becomes one inspiration and its id is recorded in
+        dream_meta['used_ids'] so main() can mark them used."""
         mock_read.return_value = ""
         mock_recent.return_value = ("memories", [])
         mock_theme.return_value = "the archaeology of forgotten signals"
-        mock_themed.return_value = [
-            {"source": "tv", "label": "Show", "memory": "A memory about TV."}
-            for _ in range(10)
-        ]
-        mock_wildcard.return_value = [
-            {"source": "wild", "label": "Random", "memory": "A wildcard memory."}
-            for _ in range(5)
+        mock_unused.return_value = [
+            {"id": f"id-{i}", "source": "tv" if i < 10 else "wild",
+             "text": "A memory about TV." if i < 10 else "A wildcard memory.",
+             "metadata": {"title": "Show" if i < 10 else "Random"}}
+            for i in range(15)
         ]
         narrative_text = " ".join(["Dream narrative word"] * 300)
         mock_openrouter.return_value = narrative_text
 
         narrative, inspirations, meta = dream_module.generate_narrative()
         assert len(narrative.split()) >= 100
-        assert len(inspirations) == 15  # 10 themed + 5 wildcard
-        assert "theme" in meta
+        assert len(inspirations) == 15  # one per unused memory
+        mock_unused.assert_called_once_with(100)
+        assert {i["label"] for i in inspirations} == {"Show", "Random"}
+        assert meta["theme"] == "the archaeology of forgotten signals"
         assert "mood" in meta
+        assert meta["used_ids"] == [f"id-{i}" for i in range(15)]
+        assert meta["themed_count"] == 15 and meta["wildcard_count"] == 0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

@@ -24,6 +24,7 @@ Written by Jordan Koch.
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -225,11 +226,15 @@ def cmd_send(args):
     ensure_bridge_session()
     ensure_messages_table()
 
-    # Store in PG for audit trail
+    # Store in PG for audit trail. NOVA_BRIDGE_TEST=1 tags the row so the gateway's Claude channel
+    # ignores it (2026-10-05: a test suite's "test_ping_from_tests" was answered into #nova-claude 20×).
+    meta = {"timestamp": time.time()}
+    if os.environ.get("NOVA_BRIDGE_TEST"):
+        meta["test"] = True
     pg_query(
         "INSERT INTO claude_messages (direction, sender, message, metadata) "
         "VALUES (%s, %s, %s, %s)",
-        ("to_nova", "claude-code", message, json.dumps({"timestamp": time.time()})),
+        ("to_nova", "claude-code", message, json.dumps(meta)),
         fetchall=False
     )
 

@@ -18,10 +18,13 @@ Written for Jordan Koch.
 
 import asyncio
 import re
+import sys
+from pathlib import Path
 
 import pytest
 
-import nova_syslog_server as m
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))   # so `python3 tests/test_nova_syslog_server.py` imports too
+import nova_syslog_server as m  # noqa: E402
 
 
 # ── Global-state reset ────────────────────────────────────────────────────────
@@ -495,3 +498,255 @@ def test_insert_sql_has_no_fstring_interpolation():
     # The message/hostname columns must be bound params, never f-string'd in.
     assert "$9::inet" in src
     assert 'VALUES ($1' in src
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# The 7 house categories (Security, Performance, Retry, Unit, Integration, Functional, Frame)
+# as unittest classes — appended 2026-10-05, Written by Jordan Koch (via Claude). The pytest
+# autouse fixture above does not cover these, so each resets the detector state in setUp.
+# ═════════════════════════════════════════════════════════════════════════════
+
+import io                      # noqa: E402
+import os                      # noqa: E402
+import subprocess              # noqa: E402
+import time                    # noqa: E402
+import unittest                # noqa: E402
+from contextlib import redirect_stdout   # noqa: E402
+from unittest import mock      # noqa: E402
+
+SCRIPTS = Path(__file__).resolve().parents[1]
+SRC = (SCRIPTS / "nova_syslog_server.py").read_text()
+
+
+class _HouseCase(unittest.TestCase):
+    def setUp(self):
+        for name in _MUTABLE_DICTS:
+            getattr(m, name).clear()
+        m._msg_count = 0; m._threat_count = 0; m._shutdown = False
+
+    tearDown = setUp
+
+
+class TestSecurity(_HouseCase):
+    def test_no_hardcoded_credentials(self):
+        pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
+        self.assertIsNone(pat.search(SRC))
+        self.assertIn('os.environ.get("NOVA_PG_DSN"', SRC)
+
+    def test_insert_is_parameterized_and_purge_interpolates_only_int_constants(self):
+        self.assertIsNone(re.search(r'executemany\(\s*f["\']', SRC))
+        self.assertEqual(len(re.findall(r"interval '%s days'[^\n]*% (?:THREAT_)?RETENTION_DAYS", SRC)), 2)
+        self.assertIsInstance(m.RETENTION_DAYS, int); self.assertIsInstance(m.THREAT_RETENTION_DAYS, int)
+
+    def test_journal_alert_is_argv_not_shell(self):
+        self.assertNotIn("shell=True", SRC)
+        with mock.patch.object(m.subprocess, "Popen") as popen:
+            m._fire_journal_alert({"signature": "x; rm -rf /", "threat_type": "ips"}, {"hostname": "h`id`"})
+        args = popen.call_args.args[0]
+        self.assertIsInstance(args, list)
+        self.assertEqual(args[2], "breaking")
+        self.assertFalse(popen.call_args.kwargs.get("shell", False))
+
+    def test_hostile_datagram_survives_the_whole_pipeline_as_text(self):
+        evil = b"<34>Oct 11 22:14:15 '; kernel: [FW-DROP] SRC=192.168.1.50 DST=8.8.8.8 SPT=1 DPT=2 `whoami` ${HOME}"
+        ev = m.parse_syslog(evil, ADDR)
+        t = m.detect_threat(ev)
+        out = m.format_alert(t, ev)
+        self.assertEqual(ev["hostname"], "';")
+        self.assertIn("`whoami` ${HOME}", out)
+        self.assertEqual(t["src_addr"], "192.168.1.50")
+
+
+class TestPerformance(_HouseCase):
+    def test_parse_and_detect_fast_on_10k_lines(self):
+        lines = [b"<34>Oct 11 22:14:15 gw kernel: [FW-DROP] SRC=203.0.113.%d DST=192.168.1.6 SPT=4000 DPT=22" % (i % 250)
+                 for i in range(5_000)]
+        lines += [b"<13>1 2026-10-05T12:00:00Z host%d app 1 - - client @0x1 192.168.1.43#5 (a%d.gateway.net): query: a%d.gateway.net IN A"
+                  % (i % 50, i, i) for i in range(5_000)]
+        t0 = time.perf_counter()
+        hits = 0
+        for raw in lines:
+            ev = m.parse_syslog(raw, ADDR)
+            if m.detect_threat(ev) or m.detect_anomaly(ev):
+                hits += 1
+        self.assertLess(time.perf_counter() - t0, 3.0)
+        self.assertEqual(hits, 5_000)                      # the firewall lines, never the .gateway queries
+
+
+class TestRetry(_HouseCase):
+    # RETRY GAP: _flush_batch() — one executemany per batch, no backoff; a failed batch is logged and dropped.
+    def test_flush_batch_fails_open_after_one_attempt(self):
+        attempts = []
+
+        class _Pool:
+            def acquire(self):
+                attempts.append(1); raise RuntimeError("pg down")
+        with redirect_stdout(io.StringIO()) as out:
+            _run(m._flush_batch([{"message": "x", "source_ip": "192.168.1.6"}], _Pool()))
+        self.assertEqual(len(attempts), 1)
+        self.assertIn("[ERROR] DB write error: pg down", out.getvalue())
+
+    # RETRY GAP: _fire_journal_alert() — one Popen; failure is logged, never raised into the detector.
+    def test_journal_alert_failure_is_swallowed(self):
+        with mock.patch.object(m.subprocess, "Popen", side_effect=OSError("no python")), redirect_stdout(io.StringIO()) as out:
+            m._fire_journal_alert({"signature": "s"}, {"hostname": "h"})
+        self.assertIn("Journal alert error: no python", out.getvalue())
+
+    def test_db_writer_survives_a_dead_pool(self):
+        # a dead pool loses the batch, the writer loop does not die
+        m._shutdown = True
+        q = asyncio.Queue(); q.put_nowait({"message": "m", "source_ip": "192.168.1.6"})
+
+        class _Pool:
+            def acquire(self):
+                raise RuntimeError("pg down")
+        with redirect_stdout(io.StringIO()):
+            _run(m.db_writer(q, _Pool()))
+        self.assertTrue(q.empty())
+
+
+class TestUnit(_HouseCase):
+    def test_dns_query_re_captures_the_whole_name_so_the_final_label_decides(self):
+        for line, name in (
+            ("client @0x1 192.168.1.43#5 (attester.gateway.fe2.apple-dns.net): query: attester.gateway.fe2.apple-dns.net IN HTTPS", "attester.gateway.fe2.apple-dns.net"),
+            ("query[A] evil.top from 192.168.1.9", "evil.top"),
+            ("query: evil.tk. IN A", "evil.tk"),
+            ("QUERY: EVIL.XYZ IN A", "EVIL.XYZ"),
+        ):
+            got = m.DNS_QUERY_RE.search(line)
+            self.assertIsNotNone(got, line)
+            self.assertEqual(got.group(1), name)
+            tld = "." + name.lower().rstrip(".").rsplit(".", 1)[-1]
+            self.assertEqual(tld in m.SUSPICIOUS_TLDS, name.lower().endswith((".top", ".tk", ".xyz")), line)
+        self.assertIsNone(m.DNS_QUERY_RE.search("dns query for badhost.tk resolved"))
+        self.assertIsNone(m.DNS_QUERY_RE.search("STATEMENT: SELECT 1 WHERE x ILIKE '%.ga%'"))
+
+    def test_ips_rules_need_word_boundaries(self):
+        dns_rule = next(p for p, name, _ in m.IPS_RULES if name == "dns_anomaly")
+        info_rule = next(p for p, name, _ in m.IPS_RULES if name == "info")
+        policy_rule = next(p for p, name, _ in m.IPS_RULES if name == "policy")
+        self.assertIsNone(dns_rule.search("Nova fleet DNS sync (UniFi -> BIND)"))
+        self.assertIsNotNone(dns_rule.search("ET DNS Query to a *.tk domain"))
+        self.assertIsNotNone(dns_rule.search("[1:2016] et dns something"))
+        self.assertIsNone(info_rule.search("reset info: cabinet"))
+        self.assertIsNotNone(info_rule.search("ET INFO Dropbox client"))
+        self.assertIsNone(policy_rule.search("ETPOLICY"))
+        self.assertIsNone(policy_rule.search("ET POLICYX"))
+        self.assertIsNotNone(policy_rule.search("ET POLICY, something"))
+
+    def test_parser_never_raises_on_malformed_bytes(self):
+        junk = [b"\xff\xfe", b"<34>", b"<34>1 ", b"<34>1 2023-13-45T99:99:99Z h a p i - msg", b"\x00" * 100,
+                bytes(range(256)), b"<999>\n\n", b"<1>Oct 99 25:61:61 h a: m", b"<13>1 - - - - - -", b"   <34>x"]
+        for raw in junk:
+            r = m.parse_syslog(raw, ADDR)
+            self.assertTrue(r is None or isinstance(r, dict), raw)
+            if r:
+                self.assertEqual(set(r), {"source_ip", "message", "hostname", "facility", "severity",
+                                          "app_name", "proc_id", "msg_id", "timestamp"})
+                self.assertEqual(r["source_ip"], ADDR[0])
+        self.assertIsNone(m.parse_syslog(b"<34>1 2023-13-45T99:99:99Z h a p i - msg", ADDR)["timestamp"])
+        self.assertIsNone(m.parse_syslog(b"<1>Oct 99 25:61:61 h a: m", ADDR)["timestamp"])
+
+    def test_pri_boundaries(self):
+        self.assertEqual((m.parse_syslog(b"<0>x", ADDR)["facility"], m.parse_syslog(b"<0>x", ADDR)["severity"]), (0, 0))
+        r = m.parse_syslog(b"<191>Oct 11 22:14:15 h a: x", ADDR)
+        self.assertEqual((m.FACILITY_NAMES[r["facility"]], m.SEVERITY_NAMES[r["severity"]]), ("local7", "debug"))
+
+
+class TestIntegration(_HouseCase):
+    def test_notify_is_the_shared_helper_not_a_copy(self):
+        import nova_notify
+        self.assertIs(m.notify, nova_notify.notify)
+        self.assertNotIn("def notify(", SRC)
+        self.assertNotIn("slack.com/api", SRC)
+
+    def test_evidence_check_reuses_these_regexes(self):
+        import nova_evidence_check as ec
+        self.assertTrue(ec.recheck_suspicious_dns("query: beacon-c2-check.xyz IN A")[0])
+        self.assertFalse(ec.recheck_suspicious_dns("query: attester.gateway.fe2.apple-dns.net IN HTTPS")[0])
+
+    def test_parse_detect_dedup_format_chain(self):
+        raw = b"<34>Oct 11 22:14:15 udm kernel: [FW-DROP] IN=eth0 SRC=192.168.1.50 DST=8.8.8.8 SPT=1111 DPT=4321"
+        ev = m.parse_syslog(raw, ADDR)
+        t = m.detect_threat(ev)
+        self.assertTrue(m.should_alert(t, ev)); self.assertFalse(m.should_alert(t, ev))
+        out = m.format_alert(t, ev)
+        self.assertTrue(out.startswith(":rotating_light: *Firewall Block — udm (192.168.1.99)*"))
+        self.assertIn("Source: 192.168.1.50:1111", out); self.assertIn("Target: 8.8.8.8:4321", out)
+        self.assertIn("Raw: `[FW-DROP]", out)
+
+    def test_flush_batch_carries_the_detectors_threat_fields(self):
+        ev = m.parse_syslog(b"<34>Oct 11 22:14:15 h k: ET TROJAN x SRC=192.168.1.50 DST=1.2.3.4 SPT=5 DPT=6", ADDR)
+        ev["_threat"] = m.detect_threat(ev); ev["_alert_fired"] = True
+        pool = _FakePool(); _run(m._flush_batch([ev], pool))
+        row = pool.conn.calls[0][1][0]
+        self.assertEqual((row[1], row[9], row[13], row[14], row[15], row[16], row[17]),
+                         ("h", "ips", "192.168.1.50", "1.2.3.4", 5, 6, True))
+
+
+class TestFunctional(_HouseCase):
+    def _detect(self, *raws):
+        m._shutdown = True
+        q = asyncio.Queue(); dbq = asyncio.Queue()
+        for raw in raws:
+            q.put_nowait(m.parse_syslog(raw, ADDR))
+        with mock.patch.object(m, "notify") as notify, mock.patch.object(m.subprocess, "Popen") as popen, \
+             redirect_stdout(io.StringIO()):
+            _run(m.threat_detector(q, dbq))
+        out = []
+        while not dbq.empty():
+            out.append(dbq.get_nowait())
+        return out, notify, popen
+
+    def test_golden_path_internal_block_pages_journals_and_is_written(self):
+        raw = b"<34>Oct 11 22:14:15 udm kernel: [FW-DROP] IN=eth0 SRC=192.168.1.50 DST=8.8.8.8 SPT=1111 DPT=4321"
+        events, notify, popen = self._detect(raw)
+        self.assertEqual(len(events), 1)
+        self.assertTrue(events[0]["_alert_fired"])
+        self.assertEqual(events[0]["_threat"]["threat_type"], "firewall")
+        notify.assert_called_once()
+        self.assertEqual(notify.call_args.args[0], "Firewall Block — udm (192.168.1.99)")
+        kw = notify.call_args.kwargs
+        self.assertEqual((kw["level"], kw["category"], kw["dedup_key"]), ("critical", "firewall", "syslog-threat-firewall-192.168.1.50"))
+        self.assertEqual(kw["meta"], {"host": "udm", "threat_type": "firewall"})
+        popen.assert_called_once()
+        self.assertEqual(popen.call_args.args[0][2:4], ["breaking", "IPS: FW DROP internal"])
+        self.assertEqual(m._threat_count, 1)
+        pool = _FakePool(); dbq = asyncio.Queue(); dbq.put_nowait(events[0])
+        _run(m.db_writer(dbq, pool))
+        row = pool.conn.calls[0][1][0]
+        self.assertEqual((row[1], row[9], row[13], row[17]), ("udm", "firewall", "192.168.1.50", True))
+
+    def test_external_inbound_block_is_stored_silently(self):
+        raw = b"<34>Oct 11 22:14:15 udm kernel: [FW-BLOCK] SRC=203.0.113.9 DST=192.168.1.6 SPT=9 DPT=22"
+        events, notify, popen = self._detect(raw, b"<13>Oct 11 22:14:15 h app: routine line")
+        self.assertEqual(len(events), 2)
+        self.assertEqual(events[0]["_threat"]["threat_type"], "firewall")
+        self.assertNotIn("_alert_fired", events[0])
+        self.assertNotIn("_threat", events[1])
+        notify.assert_not_called(); popen.assert_not_called()
+
+    def test_error_path_duplicate_critical_pages_once(self):
+        raw = b"<34>Oct 11 22:14:15 udm kernel: [FW-DROP] SRC=192.168.1.50 DST=8.8.8.8 SPT=1 DPT=2"
+        events, notify, popen = self._detect(raw, raw)
+        self.assertEqual([e.get("_alert_fired", False) for e in events], [True, False])
+        notify.assert_called_once(); popen.assert_called_once()
+
+
+class TestFrame(_HouseCase):
+    def test_import_smoke_exits_zero_without_binding_the_port(self):
+        # no --help/--selftest: the only entry is asyncio.run(main()) under the __main__ guard
+        code = ("import nova_syslog_server as s; assert s.SYSLOG_PORT == 1514; "
+                "import socket; so = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); so.bind(('127.0.0.1', 0)); so.close()")
+        r = subprocess.run([sys.executable, "-c", code], cwd=str(SCRIPTS), capture_output=True, text=True, timeout=30,
+                           env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_main_is_guarded(self):
+        self.assertIn('if __name__ == "__main__":\n    asyncio.run(main())', SRC)
+        self.assertFalse(m._shutdown)
+        self.assertEqual(m._msg_count, 0)
+
+
+if __name__ == "__main__":
+    unittest.main()

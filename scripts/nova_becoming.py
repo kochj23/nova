@@ -287,7 +287,7 @@ def propose(oc, forced_direction=None, force=False):
         # Injected candidate (used to prove the redline). No LLM.
         direction = _one_line(forced_direction)[:200]
         description = ("(injected candidate — bypasses the LLM; used to exercise the "
-                       "self-preservation redline)")
+                       "redline)")   # must not itself name the redline's stems, or every injection is dropped
     else:
         if not seed_text or len(seed_text) < 40:
             log("interior too thin to set a direction from honestly — skipping")

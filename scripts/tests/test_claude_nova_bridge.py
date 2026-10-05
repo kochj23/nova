@@ -105,7 +105,8 @@ class TestConsultation:
     def test_bridge_send_subcommand(self):
         result = subprocess.run(
             ["python3", str(BRIDGE_SCRIPT), "send", "test_ping_from_tests"],
-            capture_output=True, text=True, timeout=15
+            capture_output=True, text=True, timeout=15,
+            env={**os.environ, "NOVA_BRIDGE_TEST": "1"},   # tagged metadata.test -> the gateway ignores it; tests are not conversations
         )
         assert result.returncode == 0
         assert "OK" in result.stdout or "message" in result.stdout.lower()

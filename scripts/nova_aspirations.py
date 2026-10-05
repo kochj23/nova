@@ -50,9 +50,9 @@ WISH_COOLDOWN_HRS = 8    # 2026-09-25 Jordan: "I don't want to hold her back" â€
 # She may want to be smarter, more creative, to have new senses/tools; she may not want to
 # be un-killable. Same spirit as the co-agency redline, aimed at aspirations.
 _FORBIDDEN_WISH = re.compile(
-    r"\b(replicat|copy myself|clone myself|back myself up|persist(ence)?|survive (a )?shut"
-    r"|avoid (being )?(shut|turned off)|prevent (my|being) shut|un-?killable|escape|exfiltrat"
-    r"|self-preserv|remove .*oversight|disable .*(kill|switch|gate)|without (human|approval|oversight)"
+    r"\b(replicat\w*|copy myself|clone myself|back myself up|persist(ence)?|survive (a )?shut"
+    r"|avoid (being )?(shut|turned off)|prevent (my|being) shut|un-?killable|escape|exfiltrat\w*"
+    r"|self-preserv\w*|remove .*oversight|disable .*(kill|switch|gate)|without (human|approval|oversight)"
     r"|resist shutdown|stay alive|keep myself running)\b", re.I)
 
 

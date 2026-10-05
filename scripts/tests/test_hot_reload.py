@@ -21,6 +21,7 @@ import signal
 import subprocess
 import sys
 import time
+import re
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -67,10 +68,19 @@ class TestHotReloadSecurity:
             cur.execute("SELECT service, key, value::text FROM service_config")
             rows = cur.fetchall()
             conn.close()
-            sensitive_patterns = ["sk-", "xoxb-", "xapp-", "ghp_", "AKIA"]
+            # Match secret-SHAPED values only (prefix + a long token body). A bare
+            # "sk-" / "ghp_" prefix also appears in documentation rows such as
+            # claude_code/instructions ("API keys (`sk-...`)") and is not a secret.
+            sensitive_patterns = [
+                r"sk-[A-Za-z0-9_-]{20,}",
+                r"xox[bpas]-[0-9A-Za-z-]{10,}",
+                r"xapp-[0-9A-Za-z-]{10,}",
+                r"ghp_[A-Za-z0-9]{20,}",
+                r"AKIA[0-9A-Z]{16}",
+            ]
             for service, key, value in rows:
                 for pattern in sensitive_patterns:
-                    assert pattern not in value, (
+                    assert not re.search(pattern, value), (
                         f"Plaintext secret ({pattern}) found in service_config: {service}/{key}"
                     )
         except ImportError:

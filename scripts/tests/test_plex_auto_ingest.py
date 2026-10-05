@@ -443,7 +443,8 @@ class TestProcessItem:
             "Media": [{"Part": [{"file": "/mnt/media/test.mkv"}]}],
         }
         result = plex_ingest.process_item(item, "TV Shows")
-        assert result is True
+        # process_item returns the vector actually used (adf1671) so callers report the same one
+        assert result == "comedy"
 
     def test_no_file_path_returns_false(self, plex_ingest):
         item = {
@@ -558,8 +559,11 @@ class TestSecurityPlexIngest:
         assert "nova-plex-token" in content
 
     def test_memory_server_is_localhost_only(self, plex_ingest):
-        assert "127.0.0.1" in plex_ingest.MEMORY_URL
-        assert "localhost" in plex_ingest.MEMORY_URL or "127.0.0.1" in plex_ingest.MEMORY_URL
+        # Since the DSN sweep (#501) the memory server is addressed by its internal service
+        # name; it must stay on the private digitalnoise.net domain or loopback, never public.
+        host = plex_ingest.MEMORY_URL.split("://", 1)[1].split("/", 1)[0].split(":")[0]
+        assert host in ("127.0.0.1", "localhost") or host.endswith(".digitalnoise.net"), host
+        assert ":18790" in plex_ingest.MEMORY_URL
 
     def test_plex_server_is_local_network(self, plex_ingest):
         assert "192.168." in plex_ingest.PLEX_URL
@@ -661,7 +665,7 @@ class TestFullPipelinePlex:
         item = mock_plex_get.return_value["MediaContainer"]["Metadata"][0]
         result = plex_ingest.process_item(item, "TV Shows")
 
-        assert result is True
+        assert result == "comedy"  # returns the vector used (adf1671)
         # Verify memory server was called
         assert mock_urlopen.called
         # Verify correct vector classification

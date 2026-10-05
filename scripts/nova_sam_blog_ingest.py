@@ -75,12 +75,16 @@ class HTMLStripper(HTMLParser):
         self.skip = False
         self._data = []
 
+    # nav restored 2026-10-05: the .pyc-restored copy (72dfb83) dropped it, so site
+    # menus were being stored as blog prose. Matches the original 997504e~1 set.
+    SKIP_TAGS = ("script", "style", "nav", "header", "footer")
+
     def handle_starttag(self, tag, attrs):
-        if tag in ("script", "style", "header", "footer"):
+        if tag in self.SKIP_TAGS:
             self.skip = True
 
     def handle_endtag(self, tag):
-        if tag in ("script", "style", "header", "footer"):
+        if tag in self.SKIP_TAGS:
             self.skip = False
 
     def handle_data(self, data):

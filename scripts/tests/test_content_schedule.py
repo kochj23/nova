@@ -2,10 +2,13 @@
 test_content_schedule.py — Tests for the content generation schedule changes.
 
 Covers:
-  - Scheduler YAML has correct cron expressions for each content task
+  - Content generation is unified in nova_journal.py (commit 01b4241) and the
+    journal_* schedule migrated off this node (prune 2754348): this node's
+    scheduler.yaml must not resurrect the retired per-script generators
   - No hardcoded credentials in any content script
-  - Image generation retry logic fires alerts when image is None
-  - Retry logic calls ensure_backend()
+  - Image generation failure is non-fatal and alerts/logs when image is None
+  - Image retry + SwarmUI ensure_backend() live in nova_image_utils.generate_image
+    (local ComfyUI first, OpenRouter fallback) and the content scripts delegate to it
 
 Written by Jordan Koch.
 """
@@ -23,11 +26,34 @@ CONFIG_DIR = Path.home() / ".openclaw/config"
 sys.path.insert(0, str(SCRIPTS_DIR))
 
 
-# ── Unit Tests: Scheduler YAML has correct cron expressions ─────────────────
+# ── Unit Tests: content scheduling contract ─────────────────────────────────
+
+# Per-script generators that commit 01b4241 folded into nova_journal.py. None of them
+# may be scheduled on this node again (the journal_* tasks run on .2; see prune 2754348).
+RETIRED_CONTENT_SCRIPTS = [
+    "nova_daily_opinion.py", "nova_daily_essay.py", "nova_after_dark.py",
+    "nova_research_paper.py", "nova_weekly_digest.py", "dream_generate.py",
+]
+
+# nova_journal.py <profile> subcommands that replaced the old content tasks.
+JOURNAL_PROFILES = ["essay", "opinion", "after-dark", "research", "digest", "dream", "art"]
 
 
-class TestSchedulerCronExpressions:
-    """Verify scheduler.yaml has the correct times for each content task."""
+def _journal_profile_keys() -> list[str]:
+    """Top-level keys of the PROFILES dict in nova_journal.py, read via ast so the
+    test never imports the script (module import resolves services from PG)."""
+    import ast
+    tree = ast.parse((SCRIPTS_DIR / "nova_journal.py").read_text())
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and any(
+            isinstance(t, ast.Name) and t.id == "PROFILES" for t in node.targets
+        ) and isinstance(node.value, ast.Dict):
+            return [k.value for k in node.value.keys if isinstance(k, ast.Constant)]
+    raise AssertionError("PROFILES dict not found in nova_journal.py")
+
+
+class TestContentScheduling:
+    """Content generation runs through nova_journal.py profiles, not the old scripts."""
 
     @pytest.fixture
     def scheduler_config(self):
@@ -36,37 +62,34 @@ class TestSchedulerCronExpressions:
         assert config_path.exists(), "scheduler.yaml not found"
         return yaml.safe_load(config_path.read_text())
 
-    def test_dream_pipeline_at_6am(self, scheduler_config):
-        task = scheduler_config["tasks"]["dream_pipeline"]
-        assert task["schedule"] == "cron 0 6 * * *", f"Expected 6 AM, got {task['schedule']}"
+    def test_retired_generators_not_scheduled_here(self, scheduler_config):
+        scheduled = {t.get("script") for t in scheduler_config["tasks"].values()}
+        resurrected = scheduled & set(RETIRED_CONTENT_SCRIPTS)
+        assert not resurrected, f"retired content scripts back in scheduler.yaml: {resurrected}"
 
-    def test_daily_essay_at_9am(self, scheduler_config):
-        task = scheduler_config["tasks"]["daily_essay"]
-        assert task["schedule"] == "cron 0 9 * * *", f"Expected 9 AM, got {task['schedule']}"
+    def test_no_journal_stubs_left_on_this_node(self, scheduler_config):
+        """Prune 2754348 removed every disabled journal_* stub; a journal_* task on this
+        node must therefore be a real, enabled task -- never a dormant stub."""
+        for name, task in scheduler_config["tasks"].items():
+            if task.get("script") == "nova_journal.py":
+                assert task.get("enabled", True) is True, f"{name} is a disabled stub"
+                assert task.get("args"), f"{name} has no profile arg"
 
-    def test_daily_opinion_at_noon(self, scheduler_config):
-        task = scheduler_config["tasks"]["daily_opinion"]
-        assert task["schedule"] == "cron 0 12 * * *", f"Expected 12 PM, got {task['schedule']}"
+    def test_journal_profiles_exist(self):
+        keys = _journal_profile_keys()
+        missing = [p for p in JOURNAL_PROFILES if p not in keys]
+        assert not missing, f"nova_journal.py PROFILES missing: {missing}"
 
-    def test_daily_digest_at_5pm(self, scheduler_config):
-        task = scheduler_config["tasks"]["daily_digest"]
-        assert task["schedule"] == "cron 0 17 * * *", f"Expected 5 PM, got {task['schedule']}"
+    def test_journal_takes_profile_subcommand(self):
+        content = (SCRIPTS_DIR / "nova_journal.py").read_text()
+        assert "profile_name = sys.argv[1].lower().strip()" in content
 
-    def test_after_dark_at_8pm(self, scheduler_config):
-        task = scheduler_config["tasks"]["after_dark"]
-        assert task["schedule"] == "cron 0 20 * * *", f"Expected 8 PM, got {task['schedule']}"
-
-    def test_research_paper_at_1150pm_daily(self, scheduler_config):
-        task = scheduler_config["tasks"]["research_paper"]
-        assert task["schedule"] == "cron 50 23 * * *", f"Expected 11:50 PM daily, got {task['schedule']}"
-
-    def test_all_content_tasks_exist(self, scheduler_config):
-        required_tasks = [
-            "dream_pipeline", "daily_essay", "daily_opinion",
-            "daily_digest", "after_dark", "research_paper"
-        ]
-        for task_name in required_tasks:
-            assert task_name in scheduler_config["tasks"], f"Missing task: {task_name}"
+    def test_all_content_profiles_documented(self):
+        """The module docstring is the operator-facing usage line; keep it in sync."""
+        content = (SCRIPTS_DIR / "nova_journal.py").read_text()
+        head = content[:800]
+        for profile in JOURNAL_PROFILES:
+            assert profile in head, f"profile {profile!r} missing from nova_journal.py usage docstring"
 
 
 # ── Security Tests: No hardcoded credentials in content scripts ─────────────
@@ -76,8 +99,8 @@ class TestNoHardcodedCredentials:
     """Verify no API keys, tokens, or passwords are hardcoded in content scripts."""
 
     CONTENT_SCRIPTS = [
+        "nova_journal.py",          # unified generator (essay/opinion/after-dark/...)
         "nova_daily_essay.py",
-        "nova_daily_opinion.py",
         "nova_weekly_digest.py",
         "nova_after_dark.py",
         "dream_generate.py",
@@ -139,37 +162,32 @@ class TestNoHardcodedCredentials:
             )
 
 
-# ── Functional Tests: Image failure alert fires when image is None ──────────
+# ── Functional Tests: image failure is non-fatal and surfaces an alert ─────────
 
 
 class TestImageFailureAlerts:
-    """Verify that when image generation returns None, an alert is posted."""
+    """Verify that when image generation returns None, the article still ships and
+    an alert/log line points at SwarmUI."""
 
-    @patch("nova_config.post_both")
-    @patch("subprocess.run")
-    def test_opinion_posts_alert_on_image_failure(self, mock_run, mock_post):
-        """Test nova_daily_opinion posts alert when image is None."""
-        # We can't easily run main() due to all the dependencies, so test the pattern
-        # by checking the source code contains the alert logic
-        content = (SCRIPTS_DIR / "nova_daily_opinion.py").read_text()
-        assert ":warning: *Image generation failed*" in content
-        assert "SwarmUI may need attention" in content
-        assert "C0ATAF7NZG9" in content  # nova-notifications channel
+    def test_journal_image_failure_is_non_fatal(self):
+        """nova_journal.py (essay/opinion/after-dark/...) publishes without a cover
+        and logs a WARNING rather than aborting the article."""
+        content = (SCRIPTS_DIR / "nova_journal.py").read_text()
+        assert "Image generation error (non-fatal)" in content
+        assert "No cover image" in content
+        assert "publishing without one" in content
 
-    @patch("nova_config.post_both")
-    def test_essay_posts_alert_on_image_failure(self, mock_post):
+    def test_essay_posts_alert_on_image_failure(self):
         content = (SCRIPTS_DIR / "nova_daily_essay.py").read_text()
         assert ":warning: *Image generation failed*" in content
         assert "SwarmUI may need attention" in content
 
-    @patch("nova_config.post_both")
-    def test_after_dark_posts_alert_on_image_failure(self, mock_post):
+    def test_after_dark_posts_alert_on_image_failure(self):
         content = (SCRIPTS_DIR / "nova_after_dark.py").read_text()
         assert ":warning: *Image generation failed*" in content
         assert "SwarmUI may need attention" in content
 
-    @patch("nova_config.post_both")
-    def test_digest_posts_alert_on_image_failure(self, mock_post):
+    def test_digest_posts_alert_on_image_failure(self):
         content = (SCRIPTS_DIR / "nova_weekly_digest.py").read_text()
         assert ":warning: *Image generation failed*" in content
         assert "SwarmUI may need attention" in content
@@ -180,66 +198,108 @@ class TestImageFailureAlerts:
         assert "SwarmUI may need attention" in content
 
     def test_research_posts_alert_on_image_failure(self):
+        """Research paper alerts through nova_notify.notify(...) (level=warning)."""
         content = (SCRIPTS_DIR / "nova_research_paper.py").read_text()
-        assert ":warning: *Image generation failed*" in content
+        assert 'notify(\n            "Image generation failed"' in content
         assert "SwarmUI may need attention" in content
+        assert 'level="warning"' in content
 
 
-# ── Framework Tests: Retry logic calls ensure_backend() ─────────────────────
+# ── Framework Tests: retry + ensure_backend() live in nova_image_utils ─────────
+
+
+def _image_utils():
+    """Import nova_image_utils once; the module has no side effects at import."""
+    import nova_image_utils
+    return nova_image_utils
 
 
 class TestRetryLogicUsesEnsureBackend:
-    """Verify that content scripts with image generation use ensure_backend()."""
+    """Content scripts delegate to nova_image_utils.generate_image, which checks the
+    SwarmUI backend, retries the local ComfyUI path MAX_RETRIES times and only then
+    falls back to OpenRouter."""
 
-    def test_opinion_imports_ensure_backend(self):
-        content = (SCRIPTS_DIR / "nova_daily_opinion.py").read_text()
-        assert "from nova_image_utils import ensure_backend" in content
-        assert "ensure_backend()" in content
+    def test_journal_delegates_to_image_utils(self):
+        content = (SCRIPTS_DIR / "nova_journal.py").read_text()
+        assert "from nova_image_utils import generate_image" in content
+        assert "generate_image(img_prompt, section=" in content
 
     def test_digest_imports_ensure_backend(self):
         content = (SCRIPTS_DIR / "nova_weekly_digest.py").read_text()
         assert "from nova_image_utils import ensure_backend" in content
         assert "ensure_backend()" in content
 
-    def test_after_dark_uses_ensure_backend(self):
+    def test_after_dark_delegates_to_image_utils(self):
+        """After Dark dropped its own subprocess loop in 4aead36; the health check
+        now happens inside nova_image_utils."""
         content = (SCRIPTS_DIR / "nova_after_dark.py").read_text()
-        assert "ensure_backend" in content
+        assert "from nova_image_utils import generate_image as _gen_image" in content
+        assert 'section="after-dark"' in content
 
     def test_essay_uses_ensure_backend(self):
         """Essay uses its own _ensure_swarmui_backend() which is equivalent."""
         content = (SCRIPTS_DIR / "nova_daily_essay.py").read_text()
         assert "_ensure_swarmui_backend" in content or "ensure_backend" in content
 
-    def test_opinion_has_3_retries(self):
-        content = (SCRIPTS_DIR / "nova_daily_opinion.py").read_text()
-        assert "for attempt in range(3):" in content
-
     def test_digest_has_3_retries(self):
         content = (SCRIPTS_DIR / "nova_weekly_digest.py").read_text()
         assert "for attempt in range(3):" in content
 
-    def test_after_dark_has_3_retries(self):
-        content = (SCRIPTS_DIR / "nova_after_dark.py").read_text()
-        assert "for attempt in range(3):" in content
+    def test_image_utils_retries_local_backend(self):
+        iu = _image_utils()
+        content = (SCRIPTS_DIR / "nova_image_utils.py").read_text()
+        assert "for attempt in range(MAX_RETRIES):" in content
+        assert iu.MAX_RETRIES >= 2, "local ComfyUI must get at least one retry"
+        assert iu.RETRY_DELAY > 0
 
+    @patch("nova_image_utils.time.sleep")
+    @patch("nova_image_utils._openrouter_generate", return_value=None)
+    @patch("nova_image_utils._model_available_via_api", return_value=True)
     @patch("nova_image_utils.ensure_backend", return_value=True)
-    @patch("subprocess.run")
-    def test_ensure_backend_called_before_generation(self, mock_run, mock_ensure):
-        """Verify ensure_backend is called in nova_image_utils.generate_image."""
-        from nova_image_utils import generate_image
-
+    @patch("nova_image_utils.subprocess.run")
+    def test_ensure_backend_called_before_generation(
+        self, mock_run, mock_ensure, mock_avail, mock_openrouter, mock_sleep
+    ):
+        """ensure_backend gates the local path; every local attempt is used before
+        falling back to OpenRouter exactly once."""
+        iu = _image_utils()
         mock_run.return_value = MagicMock(returncode=1, stdout="", stderr="")
-        result = generate_image("test prompt")
 
-        mock_ensure.assert_called()
+        result = iu.generate_image("test prompt")
 
-    @patch("nova_image_utils.ensure_backend", return_value=False)
-    def test_generate_image_returns_none_when_backend_down(self, mock_ensure):
-        """Verify generate_image returns None when ensure_backend returns False."""
-        from nova_image_utils import generate_image
-
-        result = generate_image("test prompt")
         assert result is None
+        mock_ensure.assert_called_once()
+        assert mock_run.call_count == iu.MAX_RETRIES
+        assert mock_sleep.call_count == iu.MAX_RETRIES - 1
+        mock_openrouter.assert_called_once()
+
+    @patch("nova_image_utils._openrouter_generate", return_value=None)
+    @patch("nova_image_utils.ensure_backend", return_value=False)
+    @patch("nova_image_utils.subprocess.run")
+    def test_generate_image_returns_none_when_backend_down(
+        self, mock_run, mock_ensure, mock_openrouter
+    ):
+        """SwarmUI down: no local attempts, OpenRouter fallback tried once, None if
+        that fails too."""
+        iu = _image_utils()
+        result = iu.generate_image("test prompt")
+        assert result is None
+        mock_run.assert_not_called()
+        mock_openrouter.assert_called_once()
+
+    @patch("nova_image_utils._openrouter_generate", return_value="/tmp/or.png")
+    @patch("nova_image_utils.ensure_backend", return_value=False)
+    def test_openrouter_fallback_when_backend_down(self, mock_ensure, mock_openrouter):
+        iu = _image_utils()
+        assert iu.generate_image("test prompt", section="after-dark") == "/tmp/or.png"
+        assert mock_openrouter.call_args.args[1] == "after-dark"
+
+    @patch("nova_image_utils._openrouter_generate")
+    @patch("nova_image_utils._local_comfyui_generate", return_value="/tmp/local.png")
+    def test_local_success_skips_openrouter(self, mock_local, mock_openrouter):
+        iu = _image_utils()
+        assert iu.generate_image("test prompt") == "/tmp/local.png"
+        mock_openrouter.assert_not_called()
 
 
 # ── Test: After Dark humor boost ────────────────────────────────────────────

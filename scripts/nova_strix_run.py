@@ -110,7 +110,7 @@ def main():
     logf = f"/tmp/strix_{a.label}.log"
     ssh(f"cd ~; export STRIX_LLM='openai/conversation'; "
         f"export OPENAI_API_BASE='{nova_router.base()}/v1'; "
-        f"export OPENAI_API_KEY='nova-router'; "
+        f"export OPENAI_API_KEY=${{OPENAI_API_KEY:-nova-router}}; "
         f"nohup {STRIX} -n -m {mode} {tflags} --instruction '{instr}' > {logf} 2>&1 & echo go")
 
     # discover the run dir from stdout

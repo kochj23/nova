@@ -259,7 +259,10 @@ class TestIngestChunksNews:
         )
         req = mock_urlopen.call_args[0][0]
         payload = json.loads(req.data)
-        assert payload["metadata"]["source"] == "daily_news"
+        # KABC is LA-local news: since df3f88f it rides the local_news tier, and the
+        # TOP-LEVEL source is what the memory server actually stores.
+        assert payload["source"] == "local_news"
+        assert payload["metadata"]["source"] == "local_news"
         assert payload["metadata"]["channel"] == news_module.CHANNEL
         assert payload["metadata"]["channel_name"] == news_module.CHANNEL_NAME
         assert payload["metadata"]["type"] == "news_broadcast"
@@ -355,7 +358,12 @@ class TestSecurityDailyNews:
         assert "ghp_" not in content
 
     def test_memory_server_is_localhost(self, news_module):
-        assert "127.0.0.1" in news_module.MEMORY_URL
+        # e1759ed: memory-server refs use the internal DSN hostname; still port 18790,
+        # never a public host.
+        from urllib.parse import urlparse
+        host = urlparse(news_module.MEMORY_URL).hostname
+        assert host in ("127.0.0.1", "localhost", "memory-server.digitalnoise.net")
+        assert urlparse(news_module.MEMORY_URL).port == 18790
 
     def test_ollama_is_localhost(self):
         source = Path(__file__).parent.parent / "nova_daily_news_ingest.py"
@@ -439,15 +447,17 @@ class TestFullPipelineNews:
         # Verify ingestion happened
         assert mock_urlopen.called
 
+    @patch("nova_daily_news_ingest._bus_notify")
     @patch("nova_daily_news_ingest.record_audio", return_value=None)
-    def test_recording_failure_aborts_gracefully(self, mock_record, news_module,
+    def test_recording_failure_aborts_gracefully(self, mock_record, mock_bus, news_module,
                                                  tmp_path, mock_nova_config_for_news):
         news_module.WORK_DIR = tmp_path
         news_module.main()
-        # Should notify about failure
-        notify_calls = mock_nova_config_for_news.post_both.call_args_list
-        failure_notified = any("Failed" in str(c) or "failed" in str(c) for c in notify_calls)
-        assert failure_notified
+        # Alerts go through the central nova_notify bus (not nova_config.post_both);
+        # a recording failure must be raised at warning level.
+        failure_calls = [c for c in mock_bus.call_args_list
+                         if "Failed" in str(c.args[0]) and c.kwargs.get("level") == "warning"]
+        assert failure_calls
 
     @patch("nova_daily_news_ingest.transcribe", return_value="")
     @patch("nova_daily_news_ingest.record_audio")
@@ -512,8 +522,10 @@ class TestFrameworkDailyNews:
         assert 500 <= news_module.CHUNK_SIZE <= 5000
 
     def test_memory_url_uses_async(self, news_module):
-        """Memory URL should use async mode for non-blocking ingestion."""
-        assert "async=1" in news_module.MEMORY_URL
+        """Memory URL must use the SYNC endpoint (df3f88f): the ?async=1 path drops the
+        top-level `source`, which landed KABC chunks under source='unknown'."""
+        assert "async=1" not in news_module.MEMORY_URL
+        assert news_module.MEMORY_URL.endswith("/remember")
 
     def test_logging_configured(self, news_module):
         assert news_module.log is not None

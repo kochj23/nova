@@ -135,10 +135,11 @@ def slack_alert(msg):
 # ── Command Execution ─────────────────────────────────────────────────────────
 
 def run_local(cmd, timeout=300):
-    """Run a command locally (for mac-studio)."""
+    """Run one of the static COMMANDS lines locally (for mac-studio).
+    Explicit sh -c argv (no shell=True): the lines use $(command -v ...) and 2>&1."""
     try:
         result = subprocess.run(
-            cmd, shell=True,
+            ["/bin/sh", "-c", cmd],
             capture_output=True, text=True, timeout=timeout
         )
         return result.stdout + result.stderr, result.returncode
@@ -152,13 +153,14 @@ def run_remote(host, cmd, timeout=300):
     """Run a command on a remote host via SSH."""
     user = host.get("user", "kochj")
     ip = host["ip"]
-    ssh_cmd = (
-        f"ssh -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new "
-        f"{user}@{ip} '{cmd}'"
-    )
+    # argv ssh (no local shell); the command line is a single remote argument
+    ssh_cmd = [
+        "ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+        "-o", "StrictHostKeyChecking=accept-new", f"{user}@{ip}", cmd,
+    ]
     try:
         result = subprocess.run(
-            ssh_cmd, shell=True,
+            ssh_cmd,
             capture_output=True, text=True, timeout=timeout
         )
         return result.stdout + result.stderr, result.returncode

@@ -117,7 +117,8 @@ class TestSchedulerParsing:
         now = datetime(2026, 5, 1, 10, 0, 0, tzinfo=ZoneInfo(tz)).timestamp()
         next_t = self.mod.next_cron_time("0 9 * * 1", now, tz)
         dt = datetime.fromtimestamp(next_t, tz=ZoneInfo(tz))
-        assert dt.weekday() == 1  # Monday
+        assert dt.weekday() == 0  # Python weekday(): Monday == 0 (cron '1' == Monday)
+        assert (dt.year, dt.month, dt.day, dt.hour) == (2026, 5, 4, 9)
 
     def test_next_cron_time_comma_separated(self):
         """Cron '0 7,19 * * *' matches 7am and 7pm."""
@@ -827,26 +828,40 @@ tasks:
         assert result is False
 
     def test_audit_scripts_missing_from_disk(self, tmp_path):
-        """Scripts in MEMORY.md but not on disk are flagged."""
-        memory = tmp_path / "MEMORY.md"
-        memory.write_text("Uses nova_fake_script.py for testing")
+        """Scheduler tasks whose script is missing on disk are flagged; present ones are not.
 
-        original_memory = self.mod.MEMORY_MD
+        MEMORY.md was retired as a script source (b61fe79 — memories live in PG), so the
+        scheduler YAML is the only reference list and mem_count is always 0."""
+        assert not hasattr(self.mod, "MEMORY_MD")
+        scripts_dir = tmp_path / "scripts"
+        scripts_dir.mkdir()
+        (scripts_dir / "nova_present.py").write_text("# ok\n")
+        yaml_file = tmp_path / "scheduler.yaml"
+        yaml_file.write_text("""
+tasks:
+  good_task:
+    script: nova_present.py
+    schedule: cron 0 7 * * *
+  bad_task:
+    script: nova_fake_script.py
+    schedule: cron 0 8 * * *
+""")
+
         original_scripts = self.mod.SCRIPTS_DIR
         original_scheduler = self.mod.SCHEDULER_YAML
-
-        self.mod.MEMORY_MD = memory
-        self.mod.SCRIPTS_DIR = tmp_path / "scripts"
-        self.mod.SCRIPTS_DIR.mkdir()
-        self.mod.SCHEDULER_YAML = tmp_path / "nonexistent.yaml"
-
-        issues, info, disk_count, mem_count, sched_count = self.mod.audit_scripts()
-
-        self.mod.MEMORY_MD = original_memory
-        self.mod.SCRIPTS_DIR = original_scripts
-        self.mod.SCHEDULER_YAML = original_scheduler
+        self.mod.SCRIPTS_DIR = scripts_dir
+        self.mod.SCHEDULER_YAML = yaml_file
+        try:
+            issues, info, disk_count, mem_count, sched_count = self.mod.audit_scripts()
+        finally:
+            self.mod.SCRIPTS_DIR = original_scripts
+            self.mod.SCHEDULER_YAML = original_scheduler
 
         assert any("nova_fake_script.py" in i and "doesn't exist" in i for i in issues)
+        assert not any("nova_present.py" in i for i in issues)
+        assert mem_count == 0
+        assert sched_count == 2
+        assert disk_count == 1
 
     def test_audit_scripts_missing_scheduler_script(self, tmp_path):
         """Scheduler referencing non-existent scripts is flagged."""
@@ -860,25 +875,22 @@ tasks:
         scripts_dir = tmp_path / "scripts"
         scripts_dir.mkdir()
 
-        original_memory = self.mod.MEMORY_MD
         original_scripts = self.mod.SCRIPTS_DIR
         original_scheduler = self.mod.SCHEDULER_YAML
 
-        self.mod.MEMORY_MD = tmp_path / "nonexistent.md"
         self.mod.SCRIPTS_DIR = scripts_dir
         self.mod.SCHEDULER_YAML = yaml_file
-
-        issues, info, _, _, _ = self.mod.audit_scripts()
-
-        self.mod.MEMORY_MD = original_memory
-        self.mod.SCRIPTS_DIR = original_scripts
-        self.mod.SCHEDULER_YAML = original_scheduler
+        try:
+            issues, info, _, _, _ = self.mod.audit_scripts()
+        finally:
+            self.mod.SCRIPTS_DIR = original_scripts
+            self.mod.SCHEDULER_YAML = original_scheduler
 
         assert any("nova_missing.py" in i and "doesn't exist" in i for i in issues)
 
     def test_audit_services(self):
         """audit_services correctly identifies up/down services."""
-        def mock_port_listening(port):
+        def mock_port_listening(port, host="127.0.0.1"):
             return port != 99999
 
         with patch.object(self.mod, "_port_listening", side_effect=mock_port_listening):
@@ -904,27 +916,22 @@ tasks:
         assert any("FakeProc" in i for i in issues)
 
     def test_audit_docs_missing_memory(self, tmp_path):
-        """Missing MEMORY.md is flagged."""
-        original = self.mod.MEMORY_MD
-        self.mod.MEMORY_MD = tmp_path / "nonexistent.md"
-
+        """Flat-file docs (MEMORY.md / IDENTITY.md) are no longer audited — memories and
+        persona live in PostgreSQL (b61fe79), so audit_docs() never flags a missing file."""
+        assert not hasattr(self.mod, "MEMORY_MD")
+        assert not hasattr(self.mod, "IDENTITY_MD")
         issues = self.mod.audit_docs()
-
-        self.mod.MEMORY_MD = original
-        assert any("MEMORY.md" in i for i in issues)
+        assert issues == []
+        assert not any("MEMORY.md" in i for i in issues)
 
     def test_audit_docs_empty_memory(self, tmp_path):
-        """Nearly empty MEMORY.md is flagged."""
+        """audit_docs() is filesystem-independent: an empty MEMORY.md on disk is never flagged."""
         memory = tmp_path / "MEMORY.md"
         memory.write_text("short")
-
-        original = self.mod.MEMORY_MD
-        self.mod.MEMORY_MD = memory
-
-        issues = self.mod.audit_docs()
-
-        self.mod.MEMORY_MD = original
-        assert any("empty" in i.lower() or "minimal" in i.lower() for i in issues)
+        with patch.object(self.mod.Path, "home", return_value=tmp_path):
+            issues = self.mod.audit_docs()
+        assert isinstance(issues, list)
+        assert not any("empty" in i.lower() or "minimal" in i.lower() for i in issues)
 
     def test_audit_state_persistence(self, tmp_path):
         """Audit state saves and loads correctly for dedup."""

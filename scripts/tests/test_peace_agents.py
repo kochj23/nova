@@ -319,7 +319,10 @@ class TestDetectBurnoutSignals:
     @patch("nova_proactive_peace.subprocess.run")
     @patch("nova_proactive_peace.urllib.request.urlopen")
     def test_weekend_commits_detected(self, mock_urlopen, mock_run, mock_nova_config):
-        """Git log finding recent commits on Saturday during focus hours -> 'weekend_commits'."""
+        """Recent commits on Saturday during focus hours must NOT produce 'weekend_commits'.
+
+        The nudge was deliberately disabled (1e8b273, 2026-05-16 — Jordan doesn't want it);
+        the git scan still runs but never adds a signal."""
         import importlib
         import nova_proactive_peace as npp
         importlib.reload(npp)
@@ -350,7 +353,8 @@ class TestDetectBurnoutSignals:
             mock_run.return_value = _make_subprocess_result(stdout="abc1234 fix something")
 
             signals = npp.detect_burnout_signals()
-            assert "weekend_commits" in signals
+            assert "weekend_commits" not in signals
+            assert signals == []
 
     @patch("nova_proactive_peace.subprocess.run")
     @patch("nova_proactive_peace.urllib.request.urlopen")

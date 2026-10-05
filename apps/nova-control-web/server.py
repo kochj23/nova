@@ -5029,7 +5029,7 @@ async def poll_loop():
                 await asyncio.wait_for(ws.send_json(state), timeout=5)
             except Exception:
                 dead.add(ws)
-        connected_clients -= dead
+        connected_clients.difference_update(dead)  # NOT `-=`: augmented assign made it a LOCAL -> UnboundLocalError on the for-loop above, killing poll_loop after cycle 1 (2026-10-05)
         print(f"[pl] cycle {cyc} D-done", flush=True)
 
         elapsed = time.monotonic() - start

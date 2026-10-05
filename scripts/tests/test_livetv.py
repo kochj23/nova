@@ -348,17 +348,20 @@ class TestBreakingFunctional:
     @patch("nova_livetv.record_and_transcribe")
     @patch("nova_livetv.check_tuner_or_bail")
     @patch("nova_livetv.ensure_dirs")
-    def test_breaking_with_keyword_triggers_alert(self, mock_dirs, mock_tuner,
+    def test_breaking_disabled_even_with_keyword(self, mock_dirs, mock_tuner,
                                                    mock_record, mock_ingest,
                                                    mock_post, mock_dm, livetv):
-        """Breaking news with matching keyword triggers DM alert."""
+        """Breaking-news detection is DISABLED (cmd_breaking returns before
+        recording) — even a keyword-laden transcript must not alert or tune.
+        The keyword logic is retained in the script for reference only."""
         mock_record.return_value = "This is breaking news from the KABC newsroom"
         args = MagicMock()
         livetv.QUIET = False
-        livetv.cmd_breaking(args)
-        mock_dm.assert_called()
-        msg = mock_dm.call_args[0][0]
-        assert "BREAKING NEWS" in msg
+        assert livetv.cmd_breaking(args) is None
+        mock_dm.assert_not_called()
+        mock_post.assert_not_called()
+        mock_record.assert_not_called()
+        mock_tuner.assert_not_called()
 
     @patch("nova_livetv.post_dm")
     @patch("nova_livetv.post")

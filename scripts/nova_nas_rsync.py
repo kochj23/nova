@@ -124,8 +124,8 @@ def preflight_checks():
     # Check SSH to Synology
     try:
         r = subprocess.run(
-            f"ssh {SSH_OPTS} {SYNOLOGY_USER}@{SYNOLOGY_IP} 'echo OK'",
-            shell=True, capture_output=True, text=True, timeout=15)
+            ["ssh", *SSH_OPTS.split(), f"{SYNOLOGY_USER}@{SYNOLOGY_IP}", "echo OK"],
+            capture_output=True, text=True, timeout=15)
         if "OK" not in r.stdout:
             errors.append(f"SSH to Synology ({SYNOLOGY_IP}) failed: {r.stderr[:100]}")
     except subprocess.TimeoutExpired:
@@ -138,8 +138,9 @@ def preflight_checks():
         remote_path = share["source"].split(":", 1)[1]
         try:
             r = subprocess.run(
-                f"ssh {SSH_OPTS} {SYNOLOGY_USER}@{SYNOLOGY_IP} 'test -d \"{remote_path}\" && echo EXISTS'",
-                shell=True, capture_output=True, text=True, timeout=15)
+                ["ssh", *SSH_OPTS.split(), f"{SYNOLOGY_USER}@{SYNOLOGY_IP}",
+                 f'test -d "{remote_path}" && echo EXISTS'],
+                capture_output=True, text=True, timeout=15)
             if "EXISTS" not in r.stdout:
                 errors.append(f"{share['name']}: remote source not found ({remote_path})")
         except Exception as e:
@@ -148,7 +149,7 @@ def preflight_checks():
     # Check disk space on destination (don't sync if < 5% free)
     for share in SHARES:
         try:
-            r = subprocess.run(f"df -P '{share['dest']}'", shell=True, capture_output=True, text=True, timeout=10)
+            r = subprocess.run(["df", "-P", share["dest"]], capture_output=True, text=True, timeout=10)
             for line in r.stdout.splitlines()[1:]:
                 parts = line.split()
                 if len(parts) >= 5:
@@ -182,18 +183,18 @@ def rsync_share(share):
     log(f"Syncing {name}: {source} → {dest}")
     start = time.time()
 
-    cmd = (
-        f"rsync -av --progress --stats "
-        f"--exclude='.DS_Store' "
-        f"--exclude='@eaDir/' "
-        f"--exclude='.Spotlight-V100/' "
-        f"--exclude='.Trashes/' "
-        f"-e 'ssh {SSH_OPTS}' "
-        f"'{source}' '{dest}' 2>&1"
-    )
+    cmd = [
+        "rsync", "-av", "--progress", "--stats",
+        "--exclude=.DS_Store",
+        "--exclude=@eaDir/",
+        "--exclude=.Spotlight-V100/",
+        "--exclude=.Trashes/",
+        "-e", f"ssh {SSH_OPTS}",
+        source, dest,
+    ]
 
     try:
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=14400)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=14400)
         output = result.stdout + result.stderr
         duration = time.time() - start
     except subprocess.TimeoutExpired:
@@ -334,14 +335,15 @@ if __name__ == "__main__":
             if args.share and share["name"] != args.share:
                 continue
             log(f"DRY RUN: {share['source']} → {share['dest']}")
-            cmd = (
-                f"rsync -an --stats "
-                f"--exclude='.DS_Store' --exclude='@eaDir/' "
-                f"-e 'ssh {SSH_OPTS}' "
-                f"'{share['source']}' '{share['dest']}' 2>&1"
-            )
-            result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=600)
-            print(result.stdout[-500:] if result.stdout else "No output")
+            cmd = [
+                "rsync", "-an", "--stats",
+                "--exclude=.DS_Store", "--exclude=@eaDir/",
+                "-e", f"ssh {SSH_OPTS}",
+                share["source"], share["dest"],
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
+            out = result.stdout + result.stderr
+            print(out[-500:] if out else "No output")
     else:
         if args.share:
             SHARES[:] = [s for s in SHARES if s["name"] == args.share]

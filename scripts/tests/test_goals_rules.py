@@ -1577,8 +1577,18 @@ class TestRecordApplication:
 # ============================================================================
 
 
+
+def _row(*fields):
+    """Build one psql result row the way nova_rules._query returns it (\x1f-delimited)."""
+    return "\x1f".join(fields)
+
+
 class TestGetActiveRules:
-    """Tests for get_active_rules() query and parsing."""
+    """Tests for get_active_rules() query and parsing.
+
+    Rows come back from psql as unit-separator (\\x1f) delimited fields since
+    4523512 (2026-05-06) — a pipe inside rule text no longer splits a row.
+    """
 
     @pytest.fixture(autouse=True)
     def setup_module(self, mock_nova_config, mock_nova_logger, monkeypatch):
@@ -1591,9 +1601,9 @@ class TestGetActiveRules:
 
     @patch("nova_rules._query")
     def test_parse_full_row(self, mock_query):
-        """get_active_rules() parses a complete pipe-delimited row."""
+        """get_active_rules() parses a complete \\x1f-delimited row."""
         mock_query.return_value = [
-            "abc123|Never say buddy|global|1.0|5|2026-05-01T10:00:00"
+            _row("abc123", "Never say buddy", "global", "1.0", "5", "2026-05-01T10:00:00")
         ]
         rules = self.mod.get_active_rules()
         assert len(rules) == 1
@@ -1633,8 +1643,8 @@ class TestGetActiveRules:
     def test_malformed_row_skipped(self, mock_query):
         """Rows with fewer than 6 fields are skipped."""
         mock_query.return_value = [
-            "abc|Too Short",
-            "def|Good Rule|global|0.9|3|2026-05-01T10:00:00",
+            _row("abc", "Too Short"),
+            _row("def", "Good Rule", "global", "0.9", "3", "2026-05-01T10:00:00"),
         ]
         rules = self.mod.get_active_rules()
         assert len(rules) == 1
@@ -1644,12 +1654,12 @@ class TestGetActiveRules:
     def test_empty_confidence_defaults(self, mock_query):
         """Empty confidence field defaults to 1.0."""
         mock_query.return_value = [
-            "abc|Rule||global||0|2026-05-01T10:00:00"
+            _row("abc", "Rule", "", "global", "", "0", "2026-05-01T10:00:00")
         ]
         # This row has 7 fields but parts[3] is empty
         # Actually let me construct a proper 6-field row with empty confidence
         mock_query.return_value = [
-            "abc|Rule|global||0|2026-05-01T10:00:00"
+            _row("abc", "Rule", "global", "", "0", "2026-05-01T10:00:00")
         ]
         rules = self.mod.get_active_rules()
         assert len(rules) == 1
@@ -1659,7 +1669,7 @@ class TestGetActiveRules:
     def test_empty_times_applied_defaults(self, mock_query):
         """Empty times_applied field defaults to 0."""
         mock_query.return_value = [
-            "abc|Rule|global|0.9||2026-05-01T10:00:00"
+            _row("abc", "Rule", "global", "0.9", "", "2026-05-01T10:00:00")
         ]
         rules = self.mod.get_active_rules()
         assert len(rules) == 1
@@ -1687,7 +1697,7 @@ class TestGetAllRules:
     def test_parse_all_fields(self, mock_query):
         """get_all_rules() parses all 7 fields including status and source_type."""
         mock_query.return_value = [
-            "abc|Rule text|global|active|1.0|5|correction"
+            _row("abc", "Rule text", "global", "active", "1.0", "5", "correction")
         ]
         rules = self.mod.get_all_rules()
         assert len(rules) == 1
@@ -1699,8 +1709,8 @@ class TestGetAllRules:
     def test_includes_retired(self, mock_query):
         """get_all_rules() includes retired rules."""
         mock_query.return_value = [
-            "abc|Active Rule|global|active|1.0|5|correction",
-            "def|Retired Rule|people|retired|0.8|2|preference",
+            _row("abc", "Active Rule", "global", "active", "1.0", "5", "correction"),
+            _row("def", "Retired Rule", "people", "retired", "0.8", "2", "preference"),
         ]
         rules = self.mod.get_all_rules()
         assert len(rules) == 2
@@ -1710,8 +1720,8 @@ class TestGetAllRules:
     def test_malformed_row_skipped(self, mock_query):
         """Rows with fewer than 7 fields are skipped."""
         mock_query.return_value = [
-            "abc|Short",
-            "def|Good Rule|global|active|1.0|3|preference",
+            _row("abc", "Short"),
+            _row("def", "Good Rule", "global", "active", "1.0", "3", "preference"),
         ]
         rules = self.mod.get_all_rules()
         assert len(rules) == 1
@@ -2139,6 +2149,15 @@ class TestGoalCheckMain:
         import nova_goal_check
         self.mod = nova_goal_check
         self.mock_config = mock_nova_config
+        # Goal check reports go through the central notification bus (da2f61c),
+        # not nova_config.post_both — capture the emit instead of hitting PG.
+        self.notify = MagicMock(return_value=True)
+        monkeypatch.setattr(nova_goal_check, "notify", self.notify)
+
+    def _emitted(self):
+        """Title + body of the single bus emit, as one text block."""
+        args, kwargs = self.notify.call_args
+        return args[0] + "\n" + (kwargs.get("body") or "")
 
     @patch("nova_goal_check.get_active_rules", return_value=[])
     @patch("nova_goal_check.promote_corrections", return_value=0)
@@ -2152,10 +2171,10 @@ class TestGoalCheckMain:
     def test_all_on_track_silent(self, mock_g_schema, mock_r_schema, mock_detect,
                                   mock_stale, mock_overdue, mock_active,
                                   mock_summary, mock_promote, mock_rules):
-        """All goals on track: no Slack post, return 0."""
+        """All goals on track: nothing emitted, return 0."""
         result = self.mod.main()
         assert result == 0
-        self.mock_config.post_both.assert_not_called()
+        self.notify.assert_not_called()
 
     @patch("nova_goal_check.get_active_rules", return_value=[])
     @patch("nova_goal_check.promote_corrections", return_value=0)
@@ -2169,13 +2188,13 @@ class TestGoalCheckMain:
     def test_overdue_posts_to_slack(self, mock_g_schema, mock_r_schema, mock_detect,
                                      mock_stale, mock_overdue, mock_active,
                                      mock_summary, mock_promote, mock_rules):
-        """Overdue goals trigger a Slack post."""
+        """Overdue goals trigger a bus emit."""
         mock_overdue.return_value = [
             {"id": "o1", "title": "Late Task", "deadline": "2026-04-01"},
         ]
         self.mod.main()
-        self.mock_config.post_both.assert_called_once()
-        msg = self.mock_config.post_both.call_args[0][0]
+        self.notify.assert_called_once()
+        msg = self._emitted()
         assert "Overdue" in msg
         assert "Late Task" in msg
 
@@ -2191,13 +2210,13 @@ class TestGoalCheckMain:
     def test_stale_posts_to_slack(self, mock_g_schema, mock_r_schema, mock_detect,
                                    mock_stale, mock_overdue, mock_active,
                                    mock_summary, mock_promote, mock_rules):
-        """Stale goals trigger a Slack post."""
+        """Stale goals trigger a bus emit."""
         mock_stale.return_value = [
             {"id": "s1", "title": "Neglected", "days_idle": 14},
         ]
         self.mod.main()
-        self.mock_config.post_both.assert_called_once()
-        msg = self.mock_config.post_both.call_args[0][0]
+        self.notify.assert_called_once()
+        msg = self._emitted()
         assert "Stale" in msg
         assert "Neglected" in msg
         assert "14d" in msg
@@ -2217,8 +2236,8 @@ class TestGoalCheckMain:
         """More than 4 active goals triggers a focus warning."""
         mock_active.return_value = [{"id": str(i)} for i in range(6)]
         self.mod.main()
-        self.mock_config.post_both.assert_called_once()
-        msg = self.mock_config.post_both.call_args[0][0]
+        self.notify.assert_called_once()
+        msg = self._emitted()
         assert "6 active goals" in msg
         assert "3-4 max" in msg
 
@@ -2238,7 +2257,7 @@ class TestGoalCheckMain:
         mock_active.return_value = [{"id": str(i)} for i in range(4)]
         result = self.mod.main()
         assert result == 0
-        self.mock_config.post_both.assert_not_called()
+        self.notify.assert_not_called()
 
     @patch("nova_goal_check.get_active_rules")
     @patch("nova_goal_check.promote_corrections")
@@ -2252,13 +2271,13 @@ class TestGoalCheckMain:
     def test_promoted_corrections_in_message(self, mock_g_schema, mock_r_schema, mock_detect,
                                               mock_stale, mock_overdue, mock_active,
                                               mock_summary, mock_promote, mock_rules):
-        """Promoted corrections are mentioned in Slack post."""
+        """Promoted corrections are mentioned in the emit."""
         mock_stale.return_value = [{"id": "s1", "title": "Stale", "days_idle": 10}]
         mock_overdue.return_value = []
         mock_promote.return_value = 2
         mock_rules.return_value = [{"id": "r1"}, {"id": "r2"}, {"id": "r3"}]
         self.mod.main()
-        msg = self.mock_config.post_both.call_args[0][0]
+        msg = self._emitted()
         assert "2 new rule(s)" in msg
         assert "3 total active rules" in msg
 
@@ -2278,7 +2297,7 @@ class TestGoalCheckMain:
         mock_stale.return_value = [{"id": "s1", "title": "Stale Goal", "days_idle": 8}]
         mock_overdue.return_value = [{"id": "o1", "title": "Late Goal", "deadline": "2026-03-01"}]
         self.mod.main()
-        msg = self.mock_config.post_both.call_args[0][0]
+        msg = self._emitted()
         assert "Overdue" in msg
         assert "Stale" in msg
 
@@ -2340,16 +2359,22 @@ class TestGoalCheckMain:
     @patch("nova_goal_check.detect_activity_from_git")
     @patch("nova_goal_check.ensure_rules_schema")
     @patch("nova_goal_check.ensure_goals_schema")
-    def test_slack_channel_is_notify(self, mock_g_schema, mock_r_schema, mock_detect,
-                                      mock_stale, mock_overdue, mock_active,
-                                      mock_summary, mock_promote, mock_rules):
-        """Slack posts go to the SLACK_NOTIFY channel."""
+    def test_emit_is_scheduler_warning_with_dedup(self, mock_g_schema, mock_r_schema, mock_detect,
+                                                  mock_stale, mock_overdue, mock_active,
+                                                  mock_summary, mock_promote, mock_rules):
+        """The report is a warning-level scheduler event, deduped as 'goal-check'
+        (the bus routes it to #nova-notifications; no channel is chosen here)."""
         mock_stale.return_value = [{"id": "s1", "title": "Stale", "days_idle": 10}]
         mock_overdue.return_value = []
         mock_active.return_value = [{"id": "a"}, {"id": "b"}]
         self.mod.main()
-        kwargs = self.mock_config.post_both.call_args[1]
-        assert kwargs["slack_channel"] == self.mock_config.SLACK_NOTIFY
+        args, kwargs = self.notify.call_args
+        assert args[0].startswith("Goal Check")
+        assert kwargs["level"] == "warning"
+        assert kwargs["category"] == "scheduler"
+        assert kwargs["dedup_key"] == "goal-check"
+        assert "Stale" in kwargs["body"]
+        self.mock_config.post_both.assert_not_called()
 
 
 # ============================================================================

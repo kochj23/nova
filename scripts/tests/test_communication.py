@@ -15,6 +15,24 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+
+
+def _requires_script(name: str):
+    """Skip when a one-off ingest script no longer exists on disk.
+
+    nova_slack_ingest.py, nova_slack_conversation_ingest.py and
+    nova_slack_memory_ingest.py were deliberately deleted in commit 997504e
+    ("Deleted old one-off ingest scripts ... slack (4 variants)"). No current
+    module exports their API, so these tests can only run if the script is
+    restored.
+    """
+    return pytest.mark.skipif(
+        not (_SCRIPTS_DIR / f"{name}.py").exists(),
+        reason=f"{name}.py was deleted in 997504e (one-off Slack ingest scripts pruned); "
+               f"no replacement module exports this API",
+    )
+
 
 # ============================================================================
 # Fixtures
@@ -648,6 +666,7 @@ class TestSlackPreprocessorMemoryInjection:
 # 4. nova_slack_ingest.py — File processing, deduplication, Slack API
 # ============================================================================
 
+@_requires_script("nova_slack_ingest")
 class TestSlackIngestProcessedLog:
     """Tests for processed file tracking in nova_slack_ingest.py."""
 
@@ -684,6 +703,7 @@ class TestSlackIngestProcessedLog:
             assert len(raw) == 1000
 
 
+@_requires_script("nova_slack_ingest")
 class TestSlackIngestFileDetection:
     """Tests for file detection in nova_slack_ingest.py."""
 
@@ -746,6 +766,7 @@ class TestSlackIngestFileDetection:
         assert mod.get_recent_files() == []
 
 
+@_requires_script("nova_slack_ingest")
 class TestSlackIngestSkipTypes:
     """Tests for file type filtering in nova_slack_ingest.py main()."""
 
@@ -779,6 +800,7 @@ class TestSlackIngestSkipTypes:
 # 5. nova_slack_conversation_ingest.py — Chunking, formatting, day grouping
 # ============================================================================
 
+@_requires_script("nova_slack_conversation_ingest")
 class TestConversationIngestFormatting:
     """Tests for message formatting in nova_slack_conversation_ingest.py."""
 
@@ -841,6 +863,7 @@ class TestConversationIngestFormatting:
         assert mod.format_message(msg) is None
 
 
+@_requires_script("nova_slack_conversation_ingest")
 class TestConversationIngestChunking:
     """Tests for chunk_by_day and ingest_day."""
 
@@ -881,6 +904,7 @@ class TestConversationIngestChunking:
         assert chunks > 1  # Should be split into multiple chunks
 
 
+@_requires_script("nova_slack_conversation_ingest")
 class TestConversationIngestVectorStore:
     """Tests for vector memory storage."""
 
@@ -989,6 +1013,7 @@ class TestSlackImageAnalysis:
 # 7. nova_slack_memory_ingest.py — Channel history, memory storage, dream log
 # ============================================================================
 
+@_requires_script("nova_slack_memory_ingest")
 class TestSlackMemoryIngest:
     """Tests for nova_slack_memory_ingest.py."""
 
@@ -1051,6 +1076,7 @@ class TestSlackMemoryIngest:
         assert mod.remember("test", {}) is None
 
 
+@_requires_script("nova_slack_memory_ingest")
 class TestSlackMemoryDreamLog:
     """Tests for dream journal logging."""
 
@@ -1985,10 +2011,9 @@ class TestMailDeliverWorkflow:
     """End-to-end: Email fetched -> categorized -> summary posted."""
 
     def test_no_mail_workflow(self, tmp_path):
-        """No-mail scenario posts empty summary to Slack."""
+        """No-mail scenario posts empty summary via the notification bus (Slack only; email copy dropped in 9a7782f)."""
         mock_nc = MagicMock()
         mock_nc.SLACK_NOTIFY = "C_TEST"
-        mock_nc.post_both = MagicMock()
         with patch.dict("sys.modules", {"nova_config": mock_nc}):
             if "nova_mail_deliver" in sys.modules:
                 del sys.modules["nova_mail_deliver"]
@@ -2000,13 +2025,20 @@ class TestMailDeliverWorkflow:
         with patch.object(mod, "SUMMARY_FILE", summary_file):
             with patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")):
                 with patch.object(mod, "SCRIPTS", tmp_path):
-                    mod.main()
-                    mock_nc.post_both.assert_called()
-                    posted_text = mock_nc.post_both.call_args[0][0]
-                    assert "No new mail" in posted_text
+                    with patch.object(mod, "nova_notify") as mock_notify:
+                        with patch.object(mod, "send_email") as mock_email:
+                            mod.main()
+                            mock_notify.assert_called_once()
+                            title = mock_notify.call_args[0][0]
+                            body = mock_notify.call_args[1]["body"]
+                            assert "Mail Summary" in title
+                            assert "No new mail" in body
+                            assert mock_notify.call_args[1]["category"] == "email"
+                            mock_email.assert_not_called()
 
 
 @pytest.mark.functional
+@_requires_script("nova_slack_memory_ingest")
 class TestSlackMemoryIngestWorkflow:
     """End-to-end: Slack messages -> stored in memory + dream log."""
 
@@ -2149,6 +2181,7 @@ class TestErrorHandling:
             messages = mod.get_recent_messages(hours=4)
             assert messages == []
 
+    @_requires_script("nova_slack_memory_ingest")
     @patch("subprocess.run", return_value=MagicMock(stdout="xoxb-test", returncode=0))
     def test_slack_memory_ingest_no_token(self, mock_run):
         """Memory ingest exits cleanly when no token is available."""
@@ -2195,7 +2228,7 @@ class TestErrorHandling:
         mock_resp.__exit__ = MagicMock(return_value=False)
         mock_urlopen.return_value = mock_resp
 
-        result = generate_reply("Sam", "Hello", "Hey Nova", "sam@example.com")
+        result = generate_reply("Sam", "Hello", "Hey Nova", "sam@example.com", {"nova_replies": 0})
         # Should strip the "Okay so..." reasoning prefix
         assert not result.startswith("Okay")
         assert "Sam" in result
@@ -2207,7 +2240,7 @@ class TestErrorHandling:
         if "nova_mail_agent" in sys.modules:
             del sys.modules["nova_mail_agent"]
         from nova_mail_agent import generate_reply
-        result = generate_reply("Sam", "Hello", "Hey Nova", "sam@example.com")
+        result = generate_reply("Sam", "Hello", "Hey Nova", "sam@example.com", {"nova_replies": 0})
         assert result == ""
 
 

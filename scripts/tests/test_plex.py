@@ -326,7 +326,7 @@ class TestCmdPlaying:
 class TestCmdStats:
     """Tests for the stats subcommand."""
 
-    @patch("nova_plex.post")
+    @patch("nova_plex.alert")  # stats goes to the alert bus, not SLACK_NOTIFY
     @patch("nova_plex.plex_get")
     def test_stats_calculates_hours(self, mock_get, mock_post, plex_module, sample_history_xml):
         mock_get.return_value = sample_history_xml
@@ -337,7 +337,7 @@ class TestCmdStats:
         assert "Plex Weekly Digest" in msg
         assert "hours" in msg
 
-    @patch("nova_plex.post")
+    @patch("nova_plex.alert")
     @patch("nova_plex.plex_get")
     def test_stats_no_history(self, mock_get, mock_post, plex_module):
         mock_get.return_value = ET.fromstring("<MediaContainer size='0'/>")
@@ -567,7 +567,7 @@ class TestShameFlow:
 class TestStatsFlow:
     """Full stats flow calculates hours correctly."""
 
-    @patch("nova_plex.post")
+    @patch("nova_plex.alert")
     @patch("nova_plex.plex_get")
     def test_stats_hour_calculation(self, mock_get, mock_post, plex_module, sample_history_xml):
         mock_get.return_value = sample_history_xml

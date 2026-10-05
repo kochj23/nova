@@ -34,60 +34,94 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 # ── dream_generate.py — generate_narrative ────────────────────────────────────
 
 class TestGenerateNarrative:
-    """Tests for generate_narrative() — Ollama-backed dream text generation."""
+    """Tests for generate_narrative() — OpenRouter-first with Ollama fallback.
+
+    Dream journal v2 (fb9aeba): the inspiration pool is the oldest-unused memory
+    batch (fetch_unused), the theme comes from a 7-day sample, OpenRouter is tried
+    first and local Ollama (circuit-breaker guarded) is the fallback. The function
+    returns (narrative, inspirations, dream_meta).
+    """
+
+    _UNUSED = [{"id": "m1", "source": "tv", "text": "Memory text", "metadata": {"title": "Show"}}]
 
     @patch("dream_generate._ollama_circuit_open", return_value=False)
     @patch("dream_generate.get_available_model", return_value="qwen3-coder:30b")
-    @patch("dream_generate.query_rolling_learnings")
+    @patch("dream_generate._generate_via_openrouter", side_effect=Exception("no key"))
+    @patch("dream_generate.fetch_unused")
+    @patch("dream_generate.derive_theme", return_value="rolling context")
+    @patch("dream_generate.query_recent_memories_for_theme", return_value=("Rolling context text", []))
     @patch("dream_generate.read_file", return_value="identity stub")
     @patch("dream_generate._generate_via_ollama")
     def test_returns_narrative_and_inspirations(
-        self, mock_ollama, mock_read, mock_rolling, mock_model, mock_circuit
+        self, mock_ollama, mock_read, mock_recent, mock_theme, mock_unused,
+        mock_openrouter, mock_model, mock_circuit
     ):
-        """generate_narrative returns a (str, list) tuple on success."""
-        mock_rolling.return_value = ("Rolling context text", [{"source": "tv", "label": "Show", "memory": "Memory text"}])
+        """generate_narrative returns (str, list, dict); Ollama is the fallback when OpenRouter fails."""
+        mock_unused.return_value = list(self._UNUSED)
         mock_ollama.return_value = " ".join(["word"] * 400)
 
         from dream_generate import generate_narrative
-        narrative, inspirations = generate_narrative()
+        narrative, inspirations, meta = generate_narrative()
 
         assert len(narrative.split()) >= 150
         assert len(inspirations) == 1
         assert inspirations[0]["source"] == "tv"
+        assert inspirations[0]["label"] == "Show"
+        assert meta["used_ids"] == ["m1"]
+        assert meta["theme"] == "rolling context"
+        mock_openrouter.assert_called_once()
         mock_ollama.assert_called_once()
 
     @patch("dream_generate._ollama_circuit_open", return_value=False)
     @patch("dream_generate.get_available_model", return_value="qwen3-coder:30b")
-    @patch("dream_generate.query_rolling_learnings", return_value=("context", []))
+    @patch("dream_generate._generate_via_openrouter", side_effect=Exception("no key"))
+    @patch("dream_generate.fetch_unused", return_value=[])
+    @patch("dream_generate.derive_theme", return_value="context")
+    @patch("dream_generate.query_recent_memories_for_theme", return_value=("context", []))
     @patch("dream_generate.read_file", return_value="identity")
     @patch("dream_generate._generate_via_ollama", side_effect=Exception("connection refused"))
     def test_returns_empty_on_all_failures(
-        self, mock_ollama, mock_read, mock_rolling, mock_model, mock_circuit
+        self, mock_ollama, mock_read, mock_recent, mock_theme, mock_unused,
+        mock_openrouter, mock_model, mock_circuit
     ):
-        """If all Ollama calls fail, returns empty narrative."""
-        from dream_generate import generate_narrative
-        narrative, inspirations = generate_narrative()
+        """If OpenRouter, Ollama and every fallback model fail, returns empty narrative."""
+        from dream_generate import generate_narrative, FALLBACK_MODELS
+        narrative, inspirations, meta = generate_narrative()
 
         assert narrative == ""
+        assert inspirations == []
+        # primary model + every fallback model was attempted
+        assert mock_ollama.call_count == 1 + len(FALLBACK_MODELS)
 
     @patch("dream_generate._ollama_circuit_open", return_value=True)
-    @patch("dream_generate.query_rolling_learnings", return_value=("context", []))
+    @patch("dream_generate._generate_via_openrouter", side_effect=Exception("no key"))
+    @patch("dream_generate.fetch_unused", return_value=[])
+    @patch("dream_generate.derive_theme", return_value="context")
+    @patch("dream_generate.query_recent_memories_for_theme", return_value=("context", []))
     @patch("dream_generate.read_file", return_value="identity")
-    def test_skips_ollama_when_circuit_open(self, mock_read, mock_rolling, mock_circuit):
+    @patch("dream_generate._generate_via_ollama")
+    def test_skips_ollama_when_circuit_open(self, mock_ollama, mock_read, mock_recent,
+                                             mock_theme, mock_unused, mock_openrouter, mock_circuit):
         """When the circuit breaker is open, Ollama is not called."""
         from dream_generate import generate_narrative
-        narrative, inspirations = generate_narrative()
+        narrative, inspirations, meta = generate_narrative()
 
         assert narrative == ""
+        mock_ollama.assert_not_called()
 
     @patch("dream_generate._ollama_circuit_open", return_value=False)
     @patch("dream_generate.get_available_model", return_value="qwen3-coder:30b")
-    @patch("dream_generate.query_rolling_learnings", return_value=("ctx", []))
+    @patch("dream_generate._generate_via_openrouter", side_effect=Exception("no key"))
+    @patch("dream_generate.fetch_unused", return_value=[])
+    @patch("dream_generate.derive_theme", return_value="ctx")
+    @patch("dream_generate.query_recent_memories_for_theme", return_value=("ctx", []))
     @patch("dream_generate.read_file", return_value="id")
     @patch("dream_generate._generate_via_ollama")
-    def test_strips_thinking_blocks(self, mock_ollama, mock_read, mock_rolling, mock_model, mock_circuit):
+    def test_strips_thinking_blocks(self, mock_ollama, mock_read, mock_recent, mock_theme,
+                                    mock_unused, mock_openrouter, mock_model, mock_circuit):
         """Thinking block artefacts from local models are stripped."""
-        raw = "<think>planning dream...</think>The dream begins on a quiet street."
+        body = " ".join(["The dream begins on a quiet street."] * 30)
+        raw = "<think>planning dream...</think>" + body
         mock_ollama.return_value = raw
 
         # The strip_thinking import happens inside a try/except in generate_narrative.
@@ -98,15 +132,20 @@ class TestGenerateNarrative:
 
         with patch.dict("sys.modules", {"nova_strip_thinking": mock_module}):
             from dream_generate import generate_narrative
-            narrative, _ = generate_narrative()
+            narrative, _, _ = generate_narrative()
             assert "<think>" not in narrative
+            mock_strip_fn.assert_called_once()
 
     @patch("dream_generate._ollama_circuit_open", return_value=False)
     @patch("dream_generate.get_available_model", return_value="qwen3-coder:30b")
-    @patch("dream_generate.query_rolling_learnings", return_value=("ctx", []))
+    @patch("dream_generate._generate_via_openrouter", side_effect=Exception("no key"))
+    @patch("dream_generate.fetch_unused", return_value=[])
+    @patch("dream_generate.derive_theme", return_value="ctx")
+    @patch("dream_generate.query_recent_memories_for_theme", return_value=("ctx", []))
     @patch("dream_generate.read_file", return_value="id")
     @patch("dream_generate._generate_via_ollama")
-    def test_trims_repetition_loops(self, mock_ollama, mock_read, mock_rolling, mock_model, mock_circuit):
+    def test_trims_repetition_loops(self, mock_ollama, mock_read, mock_recent, mock_theme,
+                                    mock_unused, mock_openrouter, mock_model, mock_circuit):
         """Repetitive output from local models is trimmed."""
         # Build text: 200 unique words, then a 6-word phrase repeated 4 times
         unique_part = [f"word{i}" for i in range(200)]
@@ -116,10 +155,11 @@ class TestGenerateNarrative:
         mock_ollama.return_value = raw
 
         from dream_generate import generate_narrative
-        narrative, _ = generate_narrative()
+        narrative, _, _ = generate_narrative()
 
-        # Should be trimmed, but never below 150 words
+        # Trimmed at the first repeat, but never below 150 words
         assert len(narrative.split()) >= 150
+        assert narrative.count(repeated_phrase) < 4
 
 
 # ── dream_generate.py — generate_dream_image ─────────────────────────────────
@@ -664,55 +704,53 @@ class TestNarrativeStripping:
         assert "![Dream](/tmp/dream.png)" in cleaned
 
 
-# ── dream_generate.py — _extract_interesting_sections ────────────────────────
+# ── dream_generate.py — sanitize_inspirations (privacy gate) ─────────────────
+# _extract_interesting_sections() (markdown section ranking) was removed with dream
+# journal v2 (fb9aeba): memories are now selected from PostgreSQL and the stage that
+# filters what reaches the cloud prompt is sanitize_inspirations().
 
-class TestExtractInterestingSections:
-    """Tests for the section extraction and prioritization logic."""
+class TestSanitizeInspirations:
+    """Tests for the privacy gate that filters/scrubs memory records before the prompt."""
 
-    def test_skips_no_activity_sections(self):
-        """Sections containing 'no activity' type messages are filtered out."""
-        from dream_generate import _extract_interesting_sections
+    def test_drops_private_source_records(self):
+        """Records from private sources (work calendar, employer data) never reach the prompt."""
+        from dream_generate import sanitize_inspirations
 
-        content = """## What Reddit is talking about
-Great discussion about new park opening.
+        records = [
+            {"source": "reddit_burbank", "label": "r/burbank", "memory": "Great discussion about new park opening."},
+            {"source": "calendar", "label": "Office 365", "memory": "Coworker PTO and internal project names."},
+            {"source": "work_internal", "label": "work", "memory": "Internal roadmap review."},
+        ]
+        result = sanitize_inspirations(records)
+        memories = [r["memory"] for r in result]
+        assert any("Great discussion" in m for m in memories)
+        assert not any("Coworker PTO" in m for m in memories)
+        assert not any("Internal roadmap" in m for m in memories)
 
-## Packages in transit
-No package notifications found.
+    def test_scrubs_residual_pii(self):
+        """Personal e-mail addresses and home paths are redacted; the public sources survive."""
+        from dream_generate import sanitize_inspirations
+        from pathlib import Path
 
-## Nova's activity today
-No activity logged."""
+        home = str(Path.home())
+        records = [
+            {"source": "reddit_burbank", "label": "r/burbank",
+             "memory": f"Fascinating post about lucid dreaming, mail someone@example.com from {home}/notes."},
+            {"source": "on_this_day", "label": "history", "memory": "1969: Apollo 11 landed on the moon."},
+        ]
+        result = sanitize_inspirations(records)
+        assert len(result) == 2
+        scrubbed = result[0]["memory"]
+        assert "Fascinating post" in scrubbed
+        assert "someone@example.com" not in scrubbed
+        assert f"{home}/" not in scrubbed
+        assert "[redacted]" in scrubbed
+        assert "1969" in result[1]["memory"]
 
-        result = _extract_interesting_sections(content)
-        assert "Great discussion" in result
-        assert "No package notifications" not in result
-        assert "No activity logged" not in result
-
-    def test_prioritizes_dreamlike_sections(self):
-        """Reddit and history sections appear before operational sections."""
-        from dream_generate import _extract_interesting_sections
-
-        content = """## Nova's activity today
-Slack messages: 42
-
-## What Reddit is talking about
-Fascinating post about lucid dreaming.
-
-## On This Day in History
-1969: Apollo 11 landed on the moon."""
-
-        result = _extract_interesting_sections(content)
-        reddit_pos = result.find("Fascinating post")
-        history_pos = result.find("1969")
-        activity_pos = result.find("Slack messages")
-
-        assert reddit_pos < history_pos
-        assert history_pos < activity_pos
-
-    def test_returns_empty_for_blank_content(self):
-        """Empty or whitespace-only content returns empty string."""
-        from dream_generate import _extract_interesting_sections
-        assert _extract_interesting_sections("") == ""
-        assert _extract_interesting_sections("   \n\n  ") == ""
+    def test_returns_empty_for_no_records(self):
+        """Empty input yields an empty, well-typed result."""
+        from dream_generate import sanitize_inspirations
+        assert sanitize_inspirations([]) == []
 
 
 # ── dream_deliver.py — retry and dead-letter logic ───────────────────────────

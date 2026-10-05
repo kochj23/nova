@@ -32,12 +32,17 @@ def log(m):
 
 
 def _run(cmd, ip=None, timeout=90):
-    """Run a shell command locally (LOCAL_IPS) or over ssh. Returns (rc, stdout) or (-1, '')."""
-    full = cmd if (ip in LOCAL_IPS) else (
-        f"ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new "
-        f"kochj@{ip} '{cmd}'")
+    """Run one of this file's static shell lines locally (LOCAL_IPS) or over ssh.
+    Returns (rc, stdout) or (-1, ''). No shell=True: local runs go through an explicit
+    sh -c argv (the commands are in-file constants with pipes/redirects), remote runs pass
+    the line as a single ssh argument for the remote shell."""
+    if ip in LOCAL_IPS:
+        argv = ["/bin/sh", "-c", cmd]
+    else:
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+                "-o", "StrictHostKeyChecking=accept-new", f"kochj@{ip}", cmd]
     try:
-        r = subprocess.run(full, shell=True, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
         return r.returncode, (r.stdout or "")
     except Exception:
         return -1, ""

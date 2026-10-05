@@ -60,23 +60,29 @@ class TestServiceConfig(unittest.TestCase):
             self.assertIsInstance(host, str)
             self.assertIsInstance(port, int)
             self.assertIsInstance(critical, bool)
-            self.assertIn(host, ("127.0.0.1",),
-                          f"{name} must use loopback address only")
+            # Fleet is distributed since the nova-core (.2) migration: loopback for
+            # local services, 192.168.1.x for LAN nodes. Never a public address.
+            self.assertRegex(host, r"^(127\.0\.0\.1|192\.168\.1\.\d{1,3})$",
+                             f"{name} host {host!r} must be loopback or LAN (192.168.1.x)")
 
     def test_critical_services_identified(self):
         from nova_big_brother import SERVICES
         critical = {s[0] for s in SERVICES if s[4]}
-        expected_critical = {"PostgreSQL", "Redis", "Ollama", "Memory Server",
-                              "Gateway", "Scheduler"}
+        # PostgreSQL is split into the local pgbouncer hop + the .2 primary.
+        # Gateway v2 moved to nova-core (.2) as a systemd unit (2026-07-13) and is
+        # deliberately NOT in SERVICES — .2's own watchdog owns it (see nova_big_brother.py).
+        expected_critical = {"DB access (→.2)", "DB primary (.2 Beelink)", "Redis",
+                              "Ollama", "Memory Server", "Scheduler"}
         for svc in expected_critical:
             self.assertIn(svc, critical,
                           f"{svc} must be marked critical")
 
-    def test_no_external_ips_in_services(self):
+    def test_no_public_ips_in_services(self):
+        """Every probe target is loopback or RFC1918 LAN — never a public IP/hostname."""
         from nova_big_brother import SERVICES
         for name, host, *_ in SERVICES:
-            self.assertEqual(host, "127.0.0.1",
-                             f"{name} must bind to loopback only")
+            self.assertRegex(host, r"^(127\.0\.0\.1|192\.168\.1\.\d{1,3})$",
+                             f"{name} host {host!r} must be loopback or 192.168.1.x")
 
     def test_subagents_list(self):
         from nova_big_brother import SUBAGENTS
@@ -136,12 +142,14 @@ class TestSecurityNoBigBrotherCredentials(unittest.TestCase):
             "nova_big_brother.py must load secrets from Keychain via nova_config"
         )
 
-    def test_api_binds_to_loopback_only(self):
-        # HTTPServer must bind to 127.0.0.1
-        self.assertIn('"127.0.0.1"', self.source,
-                      "API server must bind to loopback only")
-        self.assertNotIn('"0.0.0.0"', self.source,
-                         "API server must not bind to all interfaces")
+    def test_api_binds_lan_per_policy(self):
+        # Diagnostics API is LAN-bound on purpose (README policy 2026-10-01, commit 526a71c)
+        # so the other fleet nodes can scrape it. Pin the exact bind so a silent
+        # regression to loopback (or a stray second listener) is caught.
+        self.assertIn('HTTPServer(("0.0.0.0", API_PORT), BBHandler)', self.source,
+                      "Diagnostics API must bind 0.0.0.0:API_PORT per LAN policy")
+        self.assertEqual(self.source.count("HTTPServer(("), 1,
+                         "Exactly one HTTP listener expected")
 
     def test_no_personal_paths_hardcoded(self):
         # /Users/kochj hardcoded paths are not present (use Path.home() instead)
@@ -157,13 +165,14 @@ class TestSecurityNoBigBrotherCredentials(unittest.TestCase):
 class TestPrivateSourcesFilter(unittest.TestCase):
     """Security: private/work memory sources are filtered out of public journal content."""
 
-    def test_opinion_script_has_private_sources(self):
-        source = (SCRIPTS_DIR / "nova_daily_opinion.py").read_text()
-        self.assertIn("PRIVATE_SOURCES", source,
-                      "nova_daily_opinion.py must define PRIVATE_SOURCES")
-        self.assertIn("work_internal", source)
-        self.assertIn("cloud_governance", source)
-        self.assertIn("safari_history", source)
+    def test_config_defines_private_sources(self):
+        # nova_daily_opinion.py was removed as dead code (adf1671, superseded by
+        # nova_journal.py). The canonical PRIVATE_SOURCES set now lives in nova_config.
+        import nova_config
+        self.assertIsInstance(nova_config.PRIVATE_SOURCES, set)
+        for src in ("work_internal", "cloud_governance", "safari_history"):
+            self.assertIn(src, nova_config.PRIVATE_SOURCES,
+                          f"nova_config.PRIVATE_SOURCES must include {src}")
 
     def test_essay_script_has_private_sources(self):
         source = (SCRIPTS_DIR / "nova_daily_essay.py").read_text()
@@ -183,13 +192,12 @@ class TestPrivateSourcesFilter(unittest.TestCase):
         self.assertGreater(choice_idx, private_idx,
                            "PRIVATE_SOURCES filter must appear before random.choice in pick_subject")
 
-    def test_opinion_filters_sources_in_format_sources(self):
-        source = (SCRIPTS_DIR / "nova_daily_opinion.py").read_text()
-        # format_sources must filter against PRIVATE_SOURCES
-        fmt_idx = source.find("def format_sources")
-        private_idx = source.find("PRIVATE_SOURCES", fmt_idx)
-        self.assertNotEqual(private_idx, -1,
-                            "format_sources must reference PRIVATE_SOURCES for filtering")
+    def test_journal_filters_private_sources(self):
+        # nova_journal.py (the opinion/journal successor) must route every memory
+        # fetch through nova_config.filter_private_memories before any public output.
+        source = (SCRIPTS_DIR / "nova_journal.py").read_text()
+        self.assertIn("nova_config.filter_private_memories(", source,
+                      "nova_journal.py must filter memories via nova_config.filter_private_memories")
 
 
 # ── Functional Tests ──────────────────────────────────────────────────────────
@@ -500,7 +508,7 @@ class TestFrameworkIntegration(unittest.TestCase):
         source = (SCRIPTS_DIR / "nova_big_brother.py").read_text()
         self.assertIn("import nova_config", source)
         self.assertIn("nova_config.post_both", source)
-        self.assertIn("nova_config.SLACK_NOTIFY", source)
+        self.assertIn("nova_config.SLACK_BB", source)   # was SLACK_NOTIFY; rerouted to #nova-critical (3d8b45d)
         self.assertIn("nova_config.NOVA_SIGNAL", source)
         self.assertIn("nova_config.JORDAN_SIGNAL", source)
 
@@ -583,16 +591,17 @@ class TestFrameworkIntegration(unittest.TestCase):
                          "Big Brother API must be on port 37461")
 
     def test_sweep_interval_constant(self):
-        """SWEEP_INTERVAL must be 60s."""
+        """SWEEP_INTERVAL is 90s (raised from 60 in 54e0fc8 to cut alert spam)."""
         from nova_big_brother import SWEEP_INTERVAL
-        self.assertEqual(SWEEP_INTERVAL, 60)
+        self.assertEqual(SWEEP_INTERVAL, 90)
 
     def test_kqueue_log_files_exist_or_creatable(self):
-        """All log files that kqueue watches must be in ~/.openclaw/logs."""
+        """kqueue-watched logs live in ~/.openclaw/logs or /tmp (canary/livetv/channel-scan
+        write there, 997504e) — never on an external volume (TCC)."""
         from nova_big_brother import LOG_FILES_TO_WATCH
         for lf in LOG_FILES_TO_WATCH:
-            self.assertIn(".openclaw/logs", str(lf),
-                          f"Watched log {lf} must be in ~/.openclaw/logs")
+            self.assertTrue(".openclaw/logs" in str(lf) or str(lf).startswith("/tmp/"),
+                            f"Watched log {lf} must be in ~/.openclaw/logs or /tmp")
             self.assertNotIn("/Volumes/", str(lf),
                              f"Watched log {lf} must not be on external volume (TCC)")
 

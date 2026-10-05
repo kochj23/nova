@@ -224,7 +224,10 @@ def execute_deploy(deploy):
         if rollback:
             try:
                 log(f"Rolling back: {rollback}")
-                subprocess.run(rollback, shell=True, timeout=30,
+                # rollback_action is an operator-authored shell line stored in
+                # deploy_requests (may use && / ;). Run it through an explicit
+                # sh -c argv — nothing from the failure path is interpolated.
+                subprocess.run(["/bin/sh", "-c", rollback], timeout=30,
                                capture_output=True, text=True)
                 update_status(deploy_id, "rolled_back", error=error_msg)
                 notify_slack(f"Deploy #{deploy_id} failed + rolled back: `{service}` — {error_msg}", level="warning")

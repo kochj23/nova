@@ -66,9 +66,16 @@ def check_share_sync(share):
 
     # Count local files (UNAS via AFP mount)
     try:
-        r = subprocess.run(
-            f"find '{local}' -type f 2>/dev/null | wc -l",
-            shell=True, capture_output=True, text=True, timeout=600)
+        # find | wc -l as a real pipeline (no shell): streams, so huge shares don't
+        # buffer the whole file list in Python.
+        find = subprocess.Popen(["find", local, "-type", "f"],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        try:
+            r = subprocess.run(["wc", "-l"], stdin=find.stdout,
+                               capture_output=True, text=True, timeout=600)
+        finally:
+            find.stdout.close()
+            find.wait(timeout=30)
         local_count = int(r.stdout.strip())
     except Exception as e:
         return {"name": name, "status": "error", "error": f"Local count failed: {e}"}
@@ -77,9 +84,9 @@ def check_share_sync(share):
     remote_path = remote.split(":", 1)[1]
     try:
         r = subprocess.run(
-            f"ssh {SSH_OPTS} {SYNOLOGY_USER}@{SYNOLOGY_IP} "
-            f"\"find '{remote_path}' -type f 2>/dev/null | wc -l\"",
-            shell=True, capture_output=True, text=True, timeout=600)
+            ["ssh", *SSH_OPTS.split(), f"{SYNOLOGY_USER}@{SYNOLOGY_IP}",
+             f"find '{remote_path}' -type f 2>/dev/null | wc -l"],
+            capture_output=True, text=True, timeout=600)
         remote_count = int(r.stdout.strip())
     except Exception as e:
         return {"name": name, "status": "error", "error": f"Remote count failed: {e}"}

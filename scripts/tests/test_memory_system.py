@@ -280,6 +280,14 @@ class TestMemoryLookup:
 class TestRecallAndSearch:
     """Tests for the recall() and search() HTTP wrapper functions."""
 
+    @pytest.fixture(autouse=True)
+    def _no_redis_cache(self):
+        # recall() consults a live Redis cache (5-min TTL) before the HTTP call.
+        # Bypass it so results never leak between tests or from a prior run.
+        with patch("nova_memory_first._cache_get", return_value=None), \
+             patch("nova_memory_first._cache_set"):
+            yield
+
     @patch("nova_memory_first.urllib.request.urlopen")
     def test_recall_returns_memories_list(self, mock_urlopen):
         """recall() parses the memories list from the response."""

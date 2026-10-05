@@ -117,12 +117,12 @@ class TestAppWatchdog:
         assert loaded["apps"]["37421"]["alive"] is True
 
     def test_state_transition_up_to_down(self, tmp_path):
-        """Alert fires on transition from alive to dead."""
+        """Alert fires (critical, via the nova_notify bus) on transition from alive to dead."""
         self.mod.STATE_FILE = tmp_path / "state.json"
-        # Seed initial state: app was alive
+        # Seed initial state: NovaControl (:37400, critical/auto-restart) was alive
         initial_state = {
             "apps": {
-                "37421": {"alive": True, "info": "ok", "last_seen": time.time(), "last_alert": 0}
+                "37400": {"alive": True, "info": "ok", "last_seen": time.time(), "last_alert": 0}
             },
             "restarts": []
         }
@@ -132,20 +132,25 @@ class TestAppWatchdog:
         with patch.object(self.mod, "check_port", return_value=(False, "connection refused", 0.1)), \
              patch.object(self.mod, "check_infra_port", return_value=(True, "ok")), \
              patch.object(self.mod, "vector_remember"), \
-             patch.object(self.mod, "slack_post") as mock_slack, \
+             patch.object(self.mod, "notify") as mock_notify, \
              patch.object(self.mod, "restart_app", return_value=False), \
              patch.object(self.mod, "capture_diagnostics", return_value="/tmp/diag.txt"):
             self.mod.main()
 
-        # Should have posted an alert
-        assert mock_slack.called
+        # Should have posted a critical alert naming NovaControl
+        assert mock_notify.called
+        kwargs = mock_notify.call_args.kwargs
+        assert kwargs["level"] == "critical"
+        assert "NovaControl" in kwargs["body"]
+        state = self.mod.load_state()
+        assert state["apps"]["37400"]["alive"] is False
 
     def test_state_transition_down_to_up_recovery(self, tmp_path):
         """Recovery notification fires when app comes back up."""
         self.mod.STATE_FILE = tmp_path / "state.json"
         initial_state = {
             "apps": {
-                "37421": {"alive": False, "info": "down", "last_seen": 0, "last_alert": time.time() - 700}
+                "37400": {"alive": False, "info": "down", "last_seen": 0, "last_alert": time.time() - 700}
             },
             "restarts": []
         }
@@ -155,13 +160,15 @@ class TestAppWatchdog:
         with patch.object(self.mod, "check_port", return_value=(True, "v1.0", 0.1)), \
              patch.object(self.mod, "check_infra_port", return_value=(True, "ok")), \
              patch.object(self.mod, "vector_remember"), \
-             patch.object(self.mod, "slack_post") as mock_slack:
+             patch.object(self.mod, "notify") as mock_notify:
             self.mod.main()
 
-        # Should have posted a recovery
-        if mock_slack.called:
-            msg = mock_slack.call_args[0][0]
-            assert "Recovery" in msg or "back up" in msg
+        # Should have posted an info-level recovery
+        assert mock_notify.called
+        title, kwargs = mock_notify.call_args.args[0], mock_notify.call_args.kwargs
+        assert "Recovery" in title
+        assert kwargs["level"] == "info"
+        assert "back up" in kwargs["body"]
 
     def test_count_recent_restarts_prunes_old(self):
         """Restarts older than 1 hour are pruned."""
@@ -178,13 +185,12 @@ class TestAppWatchdog:
     def test_alert_cooldown_prevents_duplicate_alerts(self, tmp_path):
         """No alert fires if cooldown hasn't expired."""
         self.mod.STATE_FILE = tmp_path / "state.json"
+        now = time.time()
+        # EVERY monitored app already down + alerted 100s ago (within 600s cooldown)
         initial_state = {
             "apps": {
-                "37421": {
-                    "alive": False, "info": "down",
-                    "last_seen": 0,
-                    "last_alert": time.time() - 100  # within 600s cooldown
-                }
+                str(port): {"alive": False, "info": "down", "last_seen": 0, "last_alert": now - 100}
+                for port, *_ in self.mod.MONITORED_APPS
             },
             "restarts": []
         }
@@ -193,36 +199,43 @@ class TestAppWatchdog:
         with patch.object(self.mod, "check_port", return_value=(False, "connection refused", 0.1)), \
              patch.object(self.mod, "check_infra_port", return_value=(True, "ok")), \
              patch.object(self.mod, "vector_remember"), \
-             patch.object(self.mod, "slack_post") as mock_slack:
+             patch.object(self.mod, "notify") as mock_notify:
             self.mod.main()
 
-        # Slack should NOT be called because cooldown hasn't expired and state was already False
-        # (no transition, no cooldown expiry)
-        if mock_slack.called:
-            msg = mock_slack.call_args[0][0]
-            # If called, it should only be for infra/other apps, not OneOnOne (37421)
-            # The key point: no new alert for 37421 because cooldown hasn't expired
+        # No transition and no cooldown expiry -> nothing re-alerted
+        mock_notify.assert_not_called()
+        state = self.mod.load_state()
+        for port, *_ in self.mod.MONITORED_APPS:
+            assert state["apps"][str(port)]["last_alert"] == pytest.approx(now - 100)
 
     def test_infra_confirm_checks_prevents_flapping(self, tmp_path):
         """Infra services need consecutive down checks before alerting."""
         self.mod.STATE_FILE = tmp_path / "state.json"
+        # Only Ollama (:11434) is watched here now — gateway/memory/PG/Redis moved to
+        # Big Brother to stop double-alerts.
+        infra_port = self.mod.INFRA_SERVICES[0][0]
+        key = f"infra_{infra_port}"
         initial_state = {
-            "apps": {"infra_18789": {"alive": True, "last_seen": time.time(), "last_alert": 0, "down_checks": 0}},
+            "apps": {key: {"alive": True, "last_seen": time.time(), "last_alert": 0, "down_checks": 0}},
             "restarts": []
         }
         self.mod.save_state(initial_state)
 
-        # First check: down but only down_checks=1 (needs 2)
+        # First check: down but only down_checks=1 (needs INFRA_CONFIRM_CHECKS)
         with patch.object(self.mod, "check_port", return_value=(True, "ok", 0.1)), \
              patch.object(self.mod, "check_infra_port", return_value=(False, "down")), \
              patch.object(self.mod, "vector_remember"), \
-             patch.object(self.mod, "slack_post") as mock_slack:
+             patch.object(self.mod, "restart_infra") as mock_restart, \
+             patch.object(self.mod, "notify") as mock_notify:
             self.mod.main()
 
         state = self.mod.load_state()
-        infra_state = state["apps"].get("infra_18789", {})
+        infra_state = state["apps"].get(key, {})
         # down_checks should be 1, not enough for alert
         assert infra_state.get("down_checks", 0) == 1
+        assert self.mod.INFRA_CONFIRM_CHECKS > 1
+        mock_notify.assert_not_called()
+        mock_restart.assert_not_called()
 
     def test_restart_app_success(self):
         """restart_app returns True on successful subprocess call."""
@@ -1307,10 +1320,16 @@ class TestHomeWatchdog:
 # ============================================================================
 
 class TestWatchdog:
-    """Tests for nova_watchdog.py gateway/infra health monitoring."""
+    """Tests for nova_watchdog.py — the independent OFF-BOX fleet watchdog.
+
+    Rewritten 2026-06: it no longer babysits local launchd services (check_port /
+    check_scheduler / restart_launchd / check_gateway_eperm are gone — Big Brother
+    owns that). It probes the fleet from nova-core5 with pure stdlib and posts to
+    Slack directly, with zero dependency on mac-studio.
+    """
 
     @pytest.fixture(autouse=True)
-    def setup_module(self, mock_nova_config, mock_nova_logger, monkeypatch):
+    def setup_module(self, mock_nova_config, mock_nova_logger, monkeypatch, tmp_path):
         self.mock_config = mock_nova_config
         monkeypatch.setitem(sys.modules, "nova_config", mock_nova_config)
         monkeypatch.setitem(sys.modules, "nova_logger", mock_nova_logger)
@@ -1318,122 +1337,152 @@ class TestWatchdog:
             del sys.modules["nova_watchdog"]
         import nova_watchdog
         self.mod = nova_watchdog
+        # never touch the real state file / never sleep between probe retries
+        monkeypatch.setattr(nova_watchdog, "STATE_DIR", str(tmp_path))
+        monkeypatch.setattr(nova_watchdog, "STATE_FILE", str(tmp_path / "watchdog_state.json"))
+        monkeypatch.setattr(nova_watchdog.time, "sleep", lambda *_: None)
 
-    def test_check_port_alive_http(self):
-        """check_port returns True when HTTP /health responds 200."""
-        mock_resp = MagicMock()
-        mock_resp.status = 200
-        with patch("urllib.request.urlopen", return_value=mock_resp):
-            result = self.mod.check_port("127.0.0.1", 37460)
-        assert result is True
+    # -- probes --------------------------------------------------------------
+    def test_check_tcp_alive(self):
+        with patch("socket.create_connection") as cc:
+            cc.return_value.__enter__ = MagicMock()
+            cc.return_value.__exit__ = MagicMock(return_value=False)
+            ok, detail = self.mod.check_tcp("192.168.1.6", 22)
+        assert ok is True and detail == ""
 
-    def test_check_port_alive_socket_fallback(self):
-        """check_port falls back to socket check when HTTP fails."""
-        with patch("urllib.request.urlopen", side_effect=Exception("timeout")), \
-             patch("socket.socket") as mock_socket_cls:
-            mock_sock = MagicMock()
-            mock_socket_cls.return_value = mock_sock
-            result = self.mod.check_port("127.0.0.1", 37460)
-        assert result is True
+    def test_check_tcp_dead(self):
+        with patch("socket.create_connection", side_effect=ConnectionRefusedError()):
+            ok, detail = self.mod.check_tcp("192.168.1.6", 22)
+        assert ok is False and detail == "ConnectionRefusedError"
 
-    def test_check_port_dead(self):
-        """check_port returns False when nothing is listening."""
-        with patch("urllib.request.urlopen", side_effect=Exception("refused")), \
-             patch("socket.socket") as mock_socket_cls:
-            mock_sock = MagicMock()
-            mock_sock.connect.side_effect = ConnectionRefusedError()
-            mock_socket_cls.return_value = mock_sock
-            result = self.mod.check_port("127.0.0.1", 99999)
-        assert result is False
+    def test_check_http_200(self):
+        resp = MagicMock(); resp.getcode.return_value = 200
+        resp.__enter__ = MagicMock(return_value=resp); resp.__exit__ = MagicMock(return_value=False)
+        with patch("urllib.request.urlopen", return_value=resp):
+            ok, detail = self.mod.check_http("http://192.168.1.6:11434/api/version")
+        assert ok is True and detail == ""
 
-    def test_check_scheduler_healthy(self):
-        """check_scheduler returns True when API reports running."""
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps({"status": "running"}).encode()
-        with patch("urllib.request.urlopen", return_value=mock_resp):
-            ok, data = self.mod.check_scheduler()
-        assert ok is True
-        assert data["status"] == "running"
+    def test_check_http_error_status(self):
+        import urllib.error
+        err = urllib.error.HTTPError("http://x", 503, "unavailable", None, None)
+        with patch("urllib.request.urlopen", side_effect=err):
+            ok, detail = self.mod.check_http("http://x")
+        assert ok is False and detail == "HTTP 503"
 
-    def test_check_scheduler_down(self):
-        """check_scheduler returns False when API is unreachable."""
-        with patch("urllib.request.urlopen", side_effect=Exception("refused")):
-            ok, data = self.mod.check_scheduler()
-        assert ok is False
+    def test_check_http_unreachable(self):
+        with patch("urllib.request.urlopen", side_effect=TimeoutError()):
+            ok, detail = self.mod.check_http("http://x")
+        assert ok is False and detail == "TimeoutError"
 
-    def test_check_scheduler_staleness_triggers_restart(self, tmp_path):
-        """Stale heartbeat (>10min) triggers force restart."""
-        heartbeat_file = tmp_path / "scheduler_heartbeat"
-        heartbeat_file.write_text(str(time.time() - 700))  # 700s > 600s threshold
+    def test_run_check_retries_transient_probe_failure(self):
+        """One dropped probe inside a sweep must NOT count as a failure."""
+        with patch.object(self.mod, "check_tcp", side_effect=[(False, "OSError"), (True, "")]) as tcp:
+            ok, detail = self.mod.run_check("tcp", ("h", 22))
+        assert ok is True and detail == ""
+        assert tcp.call_count == 2
 
-        original = self.mod.check_scheduler_staleness.__code__
-        # Patch the heartbeat file path
-        with patch.object(Path, "home", return_value=tmp_path.parent), \
-             patch("subprocess.run") as mock_run:
-            # Need to set up path correctly
-            issues = []
-            fixes = []
-            # Directly test with patched heartbeat file
-            import types
-            original_func = self.mod.check_scheduler_staleness
+    def test_run_check_reports_sustained_failure(self):
+        with patch.object(self.mod, "check_http", return_value=(False, "HTTP 500")) as http:
+            ok, detail = self.mod.run_check("http", "http://x")
+        assert ok is False and detail == "HTTP 500"
+        assert http.call_count == self.mod.PROBE_ATTEMPTS
 
-            # Monkey-patch the function's heartbeat_file reference
-            stale_path = tmp_path / "scheduler_heartbeat"
-            stale_path.write_text(str(time.time() - 700))
+    # -- slack (independent path) -------------------------------------------
+    def test_slack_post_without_token_returns_false(self, monkeypatch):
+        monkeypatch.delenv("NOVA_SLACK_BOT_TOKEN", raising=False)
+        with patch("urllib.request.urlopen") as uo:
+            assert self.mod.slack_post(self.mod.CH_INFO, "hi") is False
+        uo.assert_not_called()
 
-            # Simplified: test the logic directly
-            ts = float(stale_path.read_text().strip())
-            age = time.time() - ts
-            assert age > 600
+    def test_slack_post_uses_bearer_from_env(self, monkeypatch):
+        monkeypatch.setenv("NOVA_SLACK_BOT_TOKEN", "xoxb-test")
+        resp = MagicMock(); resp.read.return_value = b'{"ok": true}'
+        resp.__enter__ = MagicMock(return_value=resp); resp.__exit__ = MagicMock(return_value=False)
+        with patch("urllib.request.urlopen", return_value=resp) as uo:
+            assert self.mod.slack_post(self.mod.CH_CRITICAL, "down") is True
+        req = uo.call_args[0][0]
+        assert req.get_header("Authorization") == "Bearer xoxb-test"
+        assert json.loads(req.data)["channel"] == self.mod.CH_CRITICAL
 
-    def test_restart_launchd(self):
-        """restart_launchd calls launchctl kickstart."""
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
-            result = self.mod.restart_launchd("com.nova.scheduler")
-        assert result is True
-        assert mock_run.called
+    def test_slack_post_failure_never_raises(self, monkeypatch):
+        monkeypatch.setenv("NOVA_SLACK_BOT_TOKEN", "xoxb-test")
+        with patch("urllib.request.urlopen", side_effect=Exception("boom")):
+            assert self.mod.slack_post(self.mod.CH_INFO, "x") is False
 
-    def test_restart_launchd_failure_fallback(self):
-        """restart_launchd falls back to stop+start on kickstart failure."""
-        call_count = [0]
+    def test_no_hardcoded_slack_token(self):
+        import inspect
+        src = inspect.getsource(self.mod)
+        assert "xoxb-" not in src
+        assert "NOVA_SLACK_BOT_TOKEN" in src
 
-        def side_effect(*args, **kwargs):
-            call_count[0] += 1
-            if call_count[0] == 1:
-                raise Exception("kickstart failed")
-            return MagicMock(returncode=0)
+    # -- state ---------------------------------------------------------------
+    def test_load_state_missing_file(self):
+        assert self.mod.load_state() == {}
 
-        with patch("subprocess.run", side_effect=side_effect), \
-             patch("time.sleep"):
-            result = self.mod.restart_launchd("com.nova.scheduler")
-        assert result is True
+    def test_save_and_load_state_roundtrip(self):
+        self.mod.save_state({"x": {"state": "down", "fails": 3}})
+        assert self.mod.load_state() == {"x": {"state": "down", "fails": 3}}
 
-    def test_main_all_healthy(self):
-        """main() with all services healthy posts no alerts."""
-        with patch.object(self.mod, "check_scheduler_staleness"), \
-             patch.object(self.mod, "check_port", return_value=True), \
-             patch.object(self.mod, "check_subagent_heartbeats", return_value=[]), \
-             patch.object(self.mod, "cleanup_postgres_idle"), \
-             patch.object(self.mod, "check_gateway_eperm", return_value=False), \
-             patch.object(self.mod, "slack_post") as mock_slack, \
-             patch("subprocess.run") as mock_run:
-            # Mock Redis
-            mock_redis = MagicMock()
-            with patch.dict(sys.modules, {"redis": mock_redis}):
-                mock_redis.from_url.return_value.ping.return_value = True
-                # Mock pg_isready
-                mock_run.return_value = MagicMock(returncode=0)
-                self.mod.main()
+    # -- sweep / debounce ----------------------------------------------------
+    def test_sweep_all_up_no_transitions(self):
+        with patch.object(self.mod, "run_check", return_value=(True, "")):
+            state = {}
+            trans, up, total = self.mod.sweep(state)
+        assert trans == []
+        assert up == total == len(self.mod.CHECKS)
+        assert all(v == {"state": "up", "fails": 0} for v in state.values())
 
-        mock_slack.assert_not_called()
+    def test_sweep_declares_down_only_after_fail_threshold(self):
+        """FAIL_THRESHOLD consecutive failed sweeps before DOWN (flap debounce)."""
+        state = {}
+        with patch.object(self.mod, "run_check", return_value=(False, "ConnectionRefusedError")):
+            for i in range(1, self.mod.FAIL_THRESHOLD):
+                trans, up, total = self.mod.sweep(state)
+                assert trans == [], f"declared DOWN too early on sweep {i}"
+                assert up == 0
+            trans, up, total = self.mod.sweep(state)
+        assert len(trans) == len(self.mod.CHECKS)
+        assert all(kind == "down" and detail == "ConnectionRefusedError" for kind, _, detail in trans)
+        assert all(v["state"] == "down" for v in state.values())
 
-    def test_check_gateway_eperm_no_log(self, tmp_path):
-        """check_gateway_eperm returns False when no log file exists."""
-        # The function checks a specific log path in /tmp/openclaw/
-        with patch("pathlib.Path.exists", return_value=False):
-            result = self.mod.check_gateway_eperm()
-        assert result is False
+    def test_sweep_recovery_transition(self):
+        label = self.mod.CHECKS[0][0]
+        state = {label: {"state": "down", "fails": 5}}
+        with patch.object(self.mod, "run_check", return_value=(True, "")):
+            trans, up, total = self.mod.sweep(state)
+        assert ("recovered", label, "") in trans
+        assert len(trans) == 1
+        assert state[label] == {"state": "up", "fails": 0}
+
+    def test_sweep_single_flap_resets_fail_counter(self):
+        label = self.mod.CHECKS[0][0]
+        state = {label: {"state": "up", "fails": self.mod.FAIL_THRESHOLD - 1}}
+        with patch.object(self.mod, "run_check", return_value=(True, "")):
+            self.mod.sweep(state)
+        assert state[label]["fails"] == 0 and state[label]["state"] == "up"
+
+    # -- config sanity -------------------------------------------------------
+    def test_checks_are_well_formed(self):
+        labels = [c[0] for c in self.mod.CHECKS]
+        assert len(labels) == len(set(labels)), "duplicate check labels"
+        for label, kind, target in self.mod.CHECKS:
+            assert kind in ("tcp", "http")
+            if kind == "tcp":
+                host, port = target
+                assert host.startswith("192.168.") and 0 < port < 65536
+            else:
+                assert target.startswith("http://192.168.")
+
+    def test_watches_the_studio_and_itself(self):
+        """The point of the watchdog: catch .6 dying, and a second watcher catches .10."""
+        targets = {str(t) for _, _, t in self.mod.CHECKS}
+        assert any("192.168.1.6" in t for t in targets)
+        assert any("192.168.1.10" in t for t in targets)
+
+    def test_thresholds_sane(self):
+        assert self.mod.FAIL_THRESHOLD >= 2
+        assert self.mod.PROBE_ATTEMPTS >= 2
+        assert self.mod.CHECK_INTERVAL * self.mod.FAIL_THRESHOLD <= 600
 
 
 # ============================================================================

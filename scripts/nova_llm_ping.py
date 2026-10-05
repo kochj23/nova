@@ -47,6 +47,7 @@ ENDPOINTS = [
     ("nova-core6/.252", "ollama",   "http://192.168.1.252:11434"),
     ("nova-core8/.6",   "mlx",      "http://192.168.1.6:5050"),
     ("nova-core10/.77", "mlx",      "http://192.168.1.77:5050"),
+    ("nova-core9/.7",   "mlx",      "http://192.168.1.7:5050"),    # 2026-10-05: Qwen3-8B-4bit, LaunchAgent net.digitalnoise.mlx-server
     ("nova-core8/.6",   "llamacpp", "http://192.168.1.6:11435"),
 ]
 

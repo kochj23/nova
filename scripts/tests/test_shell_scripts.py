@@ -584,9 +584,9 @@ class TestTinychatStart:
         assert "/Volumes/Data/tinychat/venv/bin/python3" in content
 
     def test_clears_pythonpath(self):
-        """PYTHONPATH should be cleared to avoid conflicts."""
+        """PYTHONPATH should be cleared (unset or emptied) to avoid conflicts."""
         content = (SCRIPTS_DIR / "tinychat_start.sh").read_text()
-        assert 'PYTHONPATH=""' in content
+        assert 'PYTHONPATH=""' in content or "unset PYTHONPATH" in content
 
 
 class TestNovaPgBackup:
@@ -641,15 +641,22 @@ class TestNovaPgBackup:
         assert "nova_pg_backup.log" in content
 
     def test_backup_database_name(self):
-        """Should back up the nova_memories database."""
+        """Backs up ALL user databases (generalized from nova_memories-only on 2026-06-24):
+        auto-discovers them from pg_database, with CLI args as an override."""
         content = (SCRIPTS_DIR / "nova_pg_backup.sh").read_text()
-        assert 'DB_NAME="nova_memories"' in content
+        assert 'DB_USER="kochj"' in content
+        assert "DATABASES=(" in content
+        assert "SELECT datname FROM pg_database" in content
+        assert 'DATABASES=("$@")' in content
 
     def test_reports_row_count(self):
-        """Final report should include row count for verification."""
+        """Each dump is verified before it counts: a size floor (empty dump == failure)
+        and a readable, non-empty archive TOC via pg_restore --list."""
         content = (SCRIPTS_DIR / "nova_pg_backup.sh").read_text()
-        assert "ROW_COUNT" in content
-        assert "SELECT count(*) FROM memories" in content
+        assert "MIN_KB" in content
+        assert "du -sk" in content
+        assert "pg_restore --list" in content
+        assert "TOC entries" in content
 
 
 class TestNovaOllamaPreload:
@@ -673,7 +680,8 @@ class TestNovaOllamaPreload:
     def test_uses_minimal_predict(self):
         """Warmup calls should use num_predict=1 to minimize overhead."""
         content = (SCRIPTS_DIR / "nova_ollama_preload.sh").read_text()
-        assert '"num_predict":1' in content or '"num_predict": 1' in content
+        # the JSON body lives inside a double-quoted shell string, so the quotes are escaped
+        assert re.search(r'\\?"num_predict\\?":\s*1\b', content), "num_predict:1 not found"
 
     def test_aborts_after_60s(self):
         """Should abort if Ollama not reachable after 60s."""
@@ -756,21 +764,28 @@ class TestGenerateImage:
         assert 'STEPS="${4:-8}"' in content
 
     def test_connects_to_swarmui(self):
-        """Should connect to SwarmUI at localhost:7801."""
+        """Talks to ComfyUI directly on :8188 (not the SwarmUI :7801 API — 526a71c,
+        2026-10-01 local-first image gen), at a LAN address overridable via COMFY_URL."""
         content = (SCRIPTS_DIR / "generate_image.sh").read_text()
-        assert "localhost:7801" in content
+        assert "7801" not in content
+        assert 'COMFY_URL="${COMFY_URL:-http://192.168.1.6:8188}"' in content
+        assert "$COMFY_URL/system_stats" in content
 
     def test_copies_to_workspace(self):
-        """Should copy the generated image to Nova's workspace."""
+        """Should copy the generated image to Nova's workspace and print the copy's path."""
         content = (SCRIPTS_DIR / "generate_image.sh").read_text()
         assert ".openclaw/workspace" in content
-        assert "cp " in content
+        assert "cp " in content or "shutil.copy" in content
+        assert "Workspace copy:" in content
 
     def test_waits_for_async_file(self):
-        """Should wait for the image file to appear (async flush)."""
+        """Should poll ComfyUI history until the image is produced, with a hard timeout,
+        and refuse to exit 0 unless the workspace copy really exists."""
         content = (SCRIPTS_DIR / "generate_image.sh").read_text()
-        # Loop checking for file existence
-        assert '[ -f "$FULL_PATH" ]' in content or '[ ! -f "$FULL_PATH" ]' in content
+        assert "TIMEOUT=" in content
+        assert "/history/" in content
+        assert "timed out" in content
+        assert '[ ! -f "$DEST_PATH" ]' in content
 
 
 class TestNovaSubagentCtl:
@@ -940,9 +955,12 @@ class TestMlxServerStart:
         assert "--draft-model" in content
 
     def test_binds_to_lan_ip(self):
-        """Should bind to LAN IP (192.168.1.6), not localhost."""
+        """Must be reachable from the LAN, never loopback-only. It listens on all interfaces
+        (ff2eb4d, 2026-05-17): loopback consumers on the same box (nova_subagent, nova_doctor)
+        and LAN consumers both need it, and the same script runs on more than one node."""
         content = (SCRIPTS_DIR / "mlx_server_start.sh").read_text()
-        assert "192.168.1.6" in content
+        assert "--host 0.0.0.0" in content or "--host 192.168.1.6" in content
+        assert "--host 127.0.0.1" not in content and "--host localhost" not in content
 
     def test_port_5050(self):
         """Should run on port 5050."""
@@ -1200,7 +1218,10 @@ class TestOutputFormats:
         """Backup notification should include DB name, size, and duration."""
         content = (SCRIPTS_DIR / "nova_pg_backup.sh").read_text()
         assert "Postgres Backup" in content
-        assert "Size:" in content or "$DUMP_SIZE" in content
+        # per-DB result line carries name, human size and duration; the digest carries total time
+        assert "du -sh" in content
+        assert '"✓ $DB — $size, ${dur}s, $nas"' in content
+        assert "${TOTAL}s" in content
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1462,20 +1483,26 @@ class TestPgBackupWorkflow:
         )
         rsync_line = next(
             i for i, l in enumerate(lines)
-            if l.strip().startswith("rsync") and not l.strip().startswith("#")
+            if "rsync -a" in l and not l.strip().startswith("#")
         )
+        # rotation is an inline per-DB `find ... -mtime +RETENTION_DAYS -exec rm -rf`
         rotate_line = next(
             i for i, l in enumerate(lines)
-            if l.startswith("_rotate") and not l.strip().startswith("#")
+            if "find " in l and "-mtime +${RETENTION_DAYS}" in l and not l.strip().startswith("#")
         )
         assert pg_check_line < dump_line < verify_line < rsync_line < rotate_line
 
     def test_rotation_applies_to_both_local_and_nas(self):
         """Rotation should clean up both local and NAS directories."""
         content = (SCRIPTS_DIR / "nova_pg_backup.sh").read_text()
-        # _rotate is called for both LOCAL_DIR and NAS_DIR
-        rotate_calls = content.count('_rotate "$')
-        assert rotate_calls >= 2, f"Expected at least 2 rotation calls, found {rotate_calls}"
+        # one `find <dir> ... -mtime +RETENTION_DAYS ... rm -rf` for LOCAL_DIR and one for NAS_DIR
+        rotate_lines = [
+            l for l in content.splitlines()
+            if "-mtime +${RETENTION_DAYS}" in l and "rm -rf" in l and not l.strip().startswith("#")
+        ]
+        assert len(rotate_lines) >= 2, f"Expected at least 2 rotation calls, found {len(rotate_lines)}"
+        assert any('find "$LOCAL_DIR"' in l for l in rotate_lines)
+        assert any('find "$NAS_DIR"' in l for l in rotate_lines)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

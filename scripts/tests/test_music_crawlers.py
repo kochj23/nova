@@ -25,6 +25,17 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# nova_hardcore_edm_ingest.py was a one-off Wikipedia BFS crawl, deliberately deleted
+# in commit 997504e ("Deleted old one-off ingest scripts") once the hardcore-EDM corpus
+# was in memory. Nothing in the tree replaced its API, so every test here is kept
+# intact and gated on the script's presence: drop it back in and the suite runs.
+_EDM_SCRIPT = Path(__file__).parent.parent / "nova_hardcore_edm_ingest.py"
+pytestmark = pytest.mark.skipif(
+    not _EDM_SCRIPT.exists(),
+    reason="nova_hardcore_edm_ingest.py is missing: deleted in commit 997504e (one-off "
+           "hardcore-EDM Wikipedia crawl completed); restore the script to run these tests",
+)
+
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 

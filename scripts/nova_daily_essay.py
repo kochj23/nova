@@ -667,7 +667,7 @@ def main():
     MAX_TOPIC_ATTEMPTS = 5
     from nova_journal_guard import is_publishable
 
-    essay = source = source_label = None
+    essay = source = source_label = memories = None
     tried = []
     for attempt in range(1, MAX_TOPIC_ATTEMPTS + 1):
         cand = pick_subject(state, exclude=tried) if _pick_takes_exclude() else pick_subject(state)
@@ -695,7 +695,7 @@ def main():
             log(f"  REJECTED ({why}) — topic has no meat, looping to another subject")
             continue
 
-        essay, source, source_label = candidate, cand, label
+        essay, source, source_label, memories = candidate, cand, label, mems
         break
 
     if not essay:

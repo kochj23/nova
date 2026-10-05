@@ -22,6 +22,36 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 
+
+# ── Deleted one-off ingest scripts ────────────────────────────────────────────
+# 997504e (2026-05-08, "Deleted old one-off ingest scripts") removed these from
+# scripts/. nova_reddit_ingest was briefly restored from .pyc (72dfb83) and then
+# archived to _archive/ (0adc04e); nothing live shares their contracts. The tests
+# stay and re-arm automatically if a script is restored to scripts/.
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+_REMOVED_SCRIPTS = {
+    "nova_reddit_ingest": "archived to _archive/nova_reddit_ingest.py in 0adc04e (2026-05-13); "
+                          "the live Reddit crawler is nova_reddit_rss_ingest.py (different API)",
+    "nova_safari_ingest": "deleted in 997504e (2026-05-08), no successor",
+    "nova_youtube_ingest": "deleted in 997504e (2026-05-08); YouTube now flows through nova_ingest.py video mode",
+    "nova_youtube_channel_ingest": "deleted in 997504e (2026-05-08); see nova_yt_ingest_watch.py",
+    "nova_youtube_playlist_ingest": "deleted in 997504e (2026-05-08); one-off copies live in _ingest/",
+    "nova_email_ingest": "deleted in 997504e (2026-05-08); EMLX ingest is nova_ingest_emlx.py (covered below)",
+    "nova_video_ingest": "deleted in 997504e (2026-05-08); recordings go through nova_ingest.py recording mode",
+    "nova_gdrive_ingest": "deleted in 997504e (2026-05-08), no successor",
+    "nova_slack_export_ingest": "deleted in 997504e (2026-05-08), no successor",
+    "nova_slack_ingest": "deleted in 997504e (2026-05-08), no successor",
+}
+
+
+def _requires_script(name):
+    """Skip (with the deletion history) when a one-off ingest script is absent."""
+    return pytest.mark.skipif(
+        not (_SCRIPTS_DIR / f"{name}.py").exists(),
+        reason=f"{name}.py is not in scripts/ — {_REMOVED_SCRIPTS[name]}",
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Helpers for mocking module imports
 # ══════════════════════════════════════════════════════════════════════════════
@@ -65,6 +95,7 @@ def _reload_module_with_logger(module_name):
 # nova_reddit_ingest.py — Additional tests beyond test_ingestion.py
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_requires_script("nova_reddit_ingest")
 class TestRedditFetchComments:
     """Tests for fetch_comments in nova_reddit_ingest.py (not covered in test_ingestion.py)."""
 
@@ -132,6 +163,7 @@ class TestRedditFetchComments:
             assert len(comments[0]["body"]) <= 500
 
 
+@_requires_script("nova_reddit_ingest")
 class TestRedditVectorRemember:
     """Tests for vector_remember in nova_reddit_ingest.py."""
 
@@ -152,6 +184,7 @@ class TestRedditVectorRemember:
             assert result is False
 
 
+@_requires_script("nova_reddit_ingest")
 class TestRedditGenerateDreamContext:
     """Tests for generate_dream_context in nova_reddit_ingest.py."""
 
@@ -205,6 +238,7 @@ class TestRedditGenerateDreamContext:
                 # (the function checks for empty today_posts)
 
 
+@_requires_script("nova_reddit_ingest")
 class TestRedditIngestSubredditMemoryFormat:
     """Tests verifying the memory text structure produced by ingest_subreddit."""
 
@@ -268,6 +302,7 @@ class TestRedditIngestSubredditMemoryFormat:
 # nova_youtube_channel_ingest.py — Channel enumeration, chunking, process_video
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_requires_script("nova_youtube_channel_ingest")
 class TestYouTubeChannelChunkText:
     """Tests for chunk_text in nova_youtube_channel_ingest.py."""
 
@@ -298,6 +333,7 @@ class TestYouTubeChannelChunkText:
         assert result == [""]
 
 
+@_requires_script("nova_youtube_channel_ingest")
 class TestYouTubeChannelGetChannelVideos:
     """Tests for get_channel_videos in nova_youtube_channel_ingest.py."""
 
@@ -337,6 +373,7 @@ class TestYouTubeChannelGetChannelVideos:
         assert name == "unknown"
 
 
+@_requires_script("nova_youtube_channel_ingest")
 class TestYouTubeChannelRemember:
     """Tests for remember in nova_youtube_channel_ingest.py."""
 
@@ -359,6 +396,7 @@ class TestYouTubeChannelRemember:
             assert stored >= 2
 
 
+@_requires_script("nova_youtube_channel_ingest")
 class TestYouTubeChannelSignalPost:
     """Tests for post_signal markdown stripping."""
 
@@ -381,6 +419,7 @@ class TestYouTubeChannelSignalPost:
 # nova_youtube_playlist_ingest.py — Additional playlist-specific tests
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_requires_script("nova_youtube_playlist_ingest")
 class TestYouTubePlaylistVectorRemember:
     """Tests for vector_remember in nova_youtube_playlist_ingest.py."""
 
@@ -401,6 +440,7 @@ class TestYouTubePlaylistVectorRemember:
             assert result is False
 
 
+@_requires_script("nova_youtube_playlist_ingest")
 class TestYouTubePlaylistIngestVideo:
     """Tests for ingest_video transcript chunking in nova_youtube_playlist_ingest.py."""
 
@@ -434,6 +474,7 @@ class TestYouTubePlaylistIngestVideo:
 # nova_email_ingest.py — EMLX parsing, exclusion logic, memory text formation
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_requires_script("nova_email_ingest")
 class TestEmailIngestParseEmlx:
     """Tests for parse_emlx in nova_email_ingest.py."""
 
@@ -514,6 +555,7 @@ class TestEmailIngestParseEmlx:
         # The function catches exceptions and returns None
 
 
+@_requires_script("nova_email_ingest")
 class TestEmailIngestShouldExclude:
     """Tests for should_exclude in nova_email_ingest.py."""
 
@@ -542,6 +584,7 @@ class TestEmailIngestShouldExclude:
             assert mod.should_exclude(parsed) is False
 
 
+@_requires_script("nova_email_ingest")
 class TestEmailIngestMakeMemoryText:
     """Tests for make_memory_text in nova_email_ingest.py."""
 
@@ -785,6 +828,7 @@ class TestEmlxParseEmlx:
 # nova_video_ingest.py — Video metadata, frame extraction, chunking
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_requires_script("nova_video_ingest")
 class TestVideoGetMetadata:
     """Tests for get_metadata in nova_video_ingest.py."""
 
@@ -817,6 +861,7 @@ class TestVideoGetMetadata:
         assert result["duration"] == 0
 
 
+@_requires_script("nova_video_ingest")
 class TestVideoDescribeFrame:
     """Tests for describe_frame in nova_video_ingest.py."""
 
@@ -880,6 +925,7 @@ class TestVideoTranscriptChunking:
 # nova_gdrive_ingest.py — Google Drive chunking, file processing
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_requires_script("nova_gdrive_ingest")
 class TestGDriveChunkText:
     """Tests for chunk_text in nova_gdrive_ingest.py."""
 
@@ -919,6 +965,7 @@ class TestGDriveChunkText:
         assert result == [""]
 
 
+@_requires_script("nova_gdrive_ingest")
 class TestGDriveRemember:
     """Tests for remember in nova_gdrive_ingest.py."""
 
@@ -959,6 +1006,7 @@ class TestGDriveRemember:
 # nova_slack_export_ingest.py — Slack export parsing
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_requires_script("nova_slack_export_ingest")
 class TestSlackExportLoadUsers:
     """Tests for load_users in nova_slack_export_ingest.py."""
 
@@ -985,6 +1033,7 @@ class TestSlackExportLoadUsers:
             assert user_map["U049EPC2W"] == "Jordan"
 
 
+@_requires_script("nova_slack_export_ingest")
 class TestSlackExportFormatMessage:
     """Tests for format_message in nova_slack_export_ingest.py."""
 
@@ -1025,6 +1074,7 @@ class TestSlackExportFormatMessage:
         assert result is None
 
 
+@_requires_script("nova_slack_export_ingest")
 class TestSlackExportIngestChannel:
     """Tests for ingest_channel in nova_slack_export_ingest.py."""
 
@@ -1061,133 +1111,203 @@ class TestSlackExportIngestChannel:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# nova_ingest.py — General ingestion framework: extractors, chunking, store
+# nova_ingest.py — Unified ingest engine: clean_text/html_text, chunk_prose, remember, run_file
+# (4954ca9, 2026-05-13 rewrote the single-format file ingestor; chunk_text/extract_text/
+#  store_chunks/ingest became chunk_prose/clean_text+html_text/remember/run_file)
 # ══════════════════════════════════════════════════════════════════════════════
 
-class TestNovaIngestChunkText:
-    """Tests for chunk_text in nova_ingest.py."""
+_PARA = ("Paragraph {i} of the document carries enough words and characters "
+         "to survive the sentence filter and the thirty character paragraph floor.")
+# A single paragraph that clears is_garbage()'s MIN_WORDS (30) chunk floor.
+_LONG = ("{lead} with enough distinct words to clear the thirty word chunk floor of the "
+         "ingest gate, so the paragraph survives cleaning, chunking and the garbage filter "
+         "before it reaches the memory server for storage.")
 
-    def test_empty_text(self):
-        mod = _reload_module("nova_ingest")
-        result = mod.chunk_text("", "test.md")
-        assert result == []
 
-    def test_short_text_single_chunk(self):
-        mod = _reload_module("nova_ingest")
-        result = mod.chunk_text("Short paragraph.", "test.md")
-        assert len(result) == 1
-        assert "[From: test.md]" in result[0]
+def _ingest_module(tmp_path):
+    """nova_ingest with its log file and Slack/bus side effects pointed away from prod."""
+    mod = _reload_module("nova_ingest")
+    mod.LOG_FILE = tmp_path / "nova_ingest.log"
+    mod.notify = MagicMock()
+    mod.random_mem = MagicMock(return_value=None)
+    mod._record_discard = MagicMock()  # discard audit trail writes to PostgreSQL
+    return mod
 
-    def test_chunk_overlap(self):
-        """Verify overlapping chunks share the last paragraph."""
-        mod = _reload_module("nova_ingest")
-        # Build text with paragraph breaks that force multiple chunks
-        paragraphs = [f"Paragraph {i} with enough text to fill up space." for i in range(20)]
-        text = "\n\n".join(paragraphs)
-        chunks = mod.chunk_text(text, "overlap.md")
-        if len(chunks) >= 2:
-            # The second chunk should start with content from end of first chunk (overlap)
-            # because chunk_text keeps the last paragraph for overlap
-            last_para_first_chunk = chunks[0].split("\n\n")[-1]
-            assert last_para_first_chunk.strip() in chunks[1]
 
-    def test_chunk_has_filename_header(self):
-        mod = _reload_module("nova_ingest")
-        result = mod.chunk_text("Some content here.", "report.pdf")
-        assert len(result) == 1
-        assert "[From: report.pdf]" in result[0]
+class TestNovaIngestChunkProse:
+    """Tests for chunk_prose(): paragraph-aware chunking up to CHUNK_CHARS."""
+
+    def test_empty_text(self, tmp_path):
+        mod = _ingest_module(tmp_path)
+        assert mod.chunk_prose("") == []
+
+    def test_short_paragraph_single_chunk(self, tmp_path):
+        mod = _ingest_module(tmp_path)
+        text = _PARA.format(i=1)
+        assert mod.chunk_prose(text) == [text]
+
+    def test_drops_fragments_under_30_chars(self, tmp_path):
+        """Stray sub-30-char lines (headings, captions) are not chunk material."""
+        mod = _ingest_module(tmp_path)
+        text = "Short paragraph.\n\n" + _PARA.format(i=1)
+        assert mod.chunk_prose(text) == [_PARA.format(i=1)]
+
+    def test_splits_on_paragraph_boundaries_within_size(self, tmp_path):
+        """Paragraphs are packed up to `size` chars, never split mid-paragraph, none lost."""
+        mod = _ingest_module(tmp_path)
+        paras = [_PARA.format(i=i) for i in range(20)]
+        chunks = mod.chunk_prose("\n\n".join(paras), size=400)
+        assert len(chunks) > 1
+        for c in chunks:
+            assert len(c) <= 400 or "\n\n" not in c  # one oversize paragraph may stand alone
+        assert "\n\n".join(chunks) == "\n\n".join(paras)
+        # Default size is CHUNK_CHARS (1500)
+        assert all(len(c) <= mod.CHUNK_CHARS for c in mod.chunk_prose("\n\n".join(paras)))
 
 
 class TestNovaIngestExtractText:
-    """Tests for extract_text routing in nova_ingest.py."""
+    """Tests for the extraction stage: run_file reads any file as UTF-8 text through
+    clean_text(); html_text() is the HTML extractor for URL mode."""
 
-    def test_extract_text_file(self):
-        mod = _reload_module("nova_ingest")
-        with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as f:
-            f.write("Hello, this is a text file.")
-            f.flush()
-            result = mod.extract_text(f.name, ".txt")
-        os.unlink(f.name)
-        assert "Hello, this is a text file." in result
+    def _run(self, mod, path):
+        captured = []
+        mod.remember = MagicMock(side_effect=lambda text, src, meta, dh, dry_run=False: captured.append(text) or True)
+        mod.run_file(str(path), "test_vector", {}, dry_run=False)
+        return captured
 
-    def test_extract_markdown_file(self):
-        mod = _reload_module("nova_ingest")
-        with tempfile.NamedTemporaryFile(suffix=".md", mode="w", delete=False) as f:
-            f.write("# Header\n\nContent here.")
-            f.flush()
-            result = mod.extract_text(f.name, ".md")
-        os.unlink(f.name)
-        assert "# Header" in result
+    def test_extract_text_file(self, tmp_path):
+        mod = _ingest_module(tmp_path)
+        f = tmp_path / "doc.txt"
+        f.write_text(_LONG.format(lead="Hello, this is a text file"))
+        chunks = self._run(mod, f)
+        assert len(chunks) == 1
+        assert "Hello, this is a text file" in chunks[0]
 
-    def test_extract_rtf_calls_textutil(self):
-        mod = _reload_module("nova_ingest")
-        with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="Extracted RTF text", returncode=0)
-            result = mod.extract_rtf("/fake/doc.rtf")
-            assert result == "Extracted RTF text"
+    def test_extract_markdown_file(self, tmp_path):
+        """Markdown body survives; a bare '# Header' line is sentence-filtered as noise."""
+        mod = _ingest_module(tmp_path)
+        f = tmp_path / "doc.md"
+        f.write_text("# Header\n\n" + _LONG.format(lead="Content here is a full sentence"))
+        chunks = self._run(mod, f)
+        assert len(chunks) == 1
+        assert "Content here is a full sentence" in chunks[0]
+        assert "# Header" not in chunks[0]
 
-    def test_extract_unknown_extension_fallback(self):
-        mod = _reload_module("nova_ingest")
-        with tempfile.NamedTemporaryFile(suffix=".xyz", mode="w", delete=False) as f:
-            f.write("Fallback content")
-            f.flush()
-            result = mod.extract_text(f.name, ".xyz")
-        os.unlink(f.name)
-        assert "Fallback content" in result
+    def test_html_text_strips_markup_and_scripts(self, tmp_path):
+        """html_text() keeps body copy and drops script/style/nav/footer content."""
+        mod = _ingest_module(tmp_path)
+        html = ("<html><head><style>p{}</style></head><body><nav>Menu</nav>"
+                "<p>Hello World</p><script>evil();</script><footer>Legal</footer></body></html>")
+        text = mod.html_text(html)
+        assert "Hello World" in text
+        for junk in ("evil", "Menu", "Legal", "p{}", "<p>"):
+            assert junk not in text
+
+    def test_extract_unknown_extension_fallback(self, tmp_path):
+        """Unknown extensions are still read as plain text."""
+        mod = _ingest_module(tmp_path)
+        f = tmp_path / "doc.xyz"
+        f.write_text(_LONG.format(lead="Fallback content is read as plain text regardless of extension"))
+        chunks = self._run(mod, f)
+        assert len(chunks) == 1
+        assert "Fallback content" in chunks[0]
+
+    def test_clean_text_collapses_transcript_newlines(self, tmp_path):
+        """Single newlines (Whisper line breaks) become spaces; blank lines stay paragraph breaks."""
+        mod = _ingest_module(tmp_path)
+        raw = "the first line of a transcript\ncontinues on the next line here\n\nsecond paragraph has enough words too"
+        cleaned = mod.clean_text(raw)
+        assert "\n\n" in cleaned
+        assert "transcript continues" in cleaned
 
 
-class TestNovaIngestStoreChunks:
-    """Tests for store_chunks in nova_ingest.py."""
+class TestNovaIngestRemember:
+    """Tests for remember(): POST to the memory server with hash dedup and retries."""
 
-    def test_stores_all_chunks(self):
-        mod = _reload_module("nova_ingest")
-        chunks = ["chunk1", "chunk2", "chunk3"]
-        with patch("urllib.request.urlopen") as mock_urlopen:
+    def _ok_urlopen(self, captured):
+        def _open(req, **kwargs):
+            captured.append(json.loads(req.data))
             mock_resp = MagicMock()
             mock_resp.__enter__ = MagicMock(return_value=mock_resp)
             mock_resp.__exit__ = MagicMock(return_value=False)
-            mock_urlopen.return_value = mock_resp
-            with patch("time.sleep"):
-                stored = mod.store_chunks(chunks, "test_source", "test_topic")
-        assert stored == 3
+            return mock_resp
+        return _open
 
-    def test_handles_store_error(self):
-        mod = _reload_module("nova_ingest")
-        chunks = ["chunk1"]
-        with patch("urllib.request.urlopen", side_effect=Exception("fail")):
-            with patch("time.sleep"):
-                stored = mod.store_chunks(chunks, "test_source")
-        assert stored == 0
+    def test_stores_chunk_with_metadata(self, tmp_path):
+        mod = _ingest_module(tmp_path)
+        captured, done = [], set()
+        with patch("urllib.request.urlopen", side_effect=self._ok_urlopen(captured)):
+            assert mod.remember("chunk one of plain content", "test_source", {"k": "v"}, done) is True
+        assert len(captured) == 1
+        payload = captured[0]
+        assert payload["source"] == "test_source"
+        assert payload["text"] == "chunk one of plain content"
+        assert payload["tier"] == "long_term"
+        assert payload["metadata"]["k"] == "v"
+        assert payload["metadata"]["ingested_by"] == "nova_ingest.py"
+        assert mod.text_hash("chunk one of plain content") in done
+
+    def test_dedups_by_text_hash(self, tmp_path):
+        """A chunk whose hash is already in done_hashes is not re-sent."""
+        mod = _ingest_module(tmp_path)
+        captured = []
+        done = {mod.text_hash("already stored chunk")}
+        with patch("urllib.request.urlopen", side_effect=self._ok_urlopen(captured)):
+            assert mod.remember("already stored chunk", "src", {}, done) is False
+        assert captured == []
+
+    def test_handles_store_error_after_retries(self, tmp_path):
+        mod = _ingest_module(tmp_path)
+        done = set()
+        with patch("urllib.request.urlopen", side_effect=Exception("fail")) as mock_open, \
+             patch("time.sleep"):
+            assert mod.remember("chunk one of plain content", "src", {}, done) is False
+        assert mock_open.call_count == 3
+        assert done == set()
+
+    def test_dry_run_skips_http(self, tmp_path):
+        mod = _ingest_module(tmp_path)
+        done = set()
+        with patch("urllib.request.urlopen") as mock_open:
+            assert mod.remember("dry run chunk text", "src", {}, done, dry_run=True) is True
+        mock_open.assert_not_called()
+        assert len(done) == 1
 
 
-class TestNovaIngestE2E:
-    """Tests for the full ingest function in nova_ingest.py."""
+class TestNovaIngestRunFile:
+    """Tests for run_file(): the file -> clean -> chunk -> remember pipeline."""
 
-    def test_ingest_text_file(self):
-        mod = _reload_module("nova_ingest")
-        with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as f:
-            f.write("This is test content with enough words to be meaningful.")
-            f.flush()
-            with patch("urllib.request.urlopen") as mock_urlopen:
-                mock_resp = MagicMock()
-                mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-                mock_resp.__exit__ = MagicMock(return_value=False)
-                mock_urlopen.return_value = mock_resp
-                with patch("time.sleep"):
-                    result = mod.ingest(f.name, "test.txt", topic="test")
-        os.unlink(f.name)
-        assert result["ok"] is True
-        assert result["words"] > 0
-        assert result["stored"] >= 1
+    def test_ingest_text_file(self, tmp_path):
+        mod = _ingest_module(tmp_path)
+        f = tmp_path / "test.txt"
+        f.write_text(_LONG.format(lead="This is test content"))
+        calls = []
+        mod.remember = MagicMock(side_effect=lambda text, src, meta, dh, dry_run=False: calls.append((text, src, meta)) or True)
+        mod.run_file(str(f), "test_vector", {}, dry_run=False)
+        assert len(calls) >= 1
+        text, src, meta = calls[0]
+        assert "This is test content" in text
+        assert src == "test_vector"
+        assert meta == {"path": str(f), "type": "local_file"}
+        mod.notify.assert_called_once()
+        assert "1 chunks" in mod.notify.call_args[0][0]
 
-    def test_ingest_empty_file(self):
-        mod = _reload_module("nova_ingest")
-        with tempfile.NamedTemporaryFile(suffix=".txt", mode="w", delete=False) as f:
-            f.write("")
-            f.flush()
-            result = mod.ingest(f.name, "empty.txt")
-        os.unlink(f.name)
-        assert result["ok"] is False
+    def test_ingest_empty_file(self, tmp_path):
+        mod = _ingest_module(tmp_path)
+        f = tmp_path / "empty.txt"
+        f.write_text("")
+        mod.remember = MagicMock()
+        mod.run_file(str(f), "test_vector", {}, dry_run=False)
+        mod.remember.assert_not_called()
+        assert "0 chunks" in mod.notify.call_args[0][0]
+
+    def test_missing_file_is_logged_not_raised(self, tmp_path):
+        mod = _ingest_module(tmp_path)
+        mod.remember = MagicMock()
+        mod.run_file(str(tmp_path / "nope.txt"), "test_vector", {}, dry_run=False)
+        mod.remember.assert_not_called()
+        mod.notify.assert_not_called()
+        assert "File not found" in (tmp_path / "nova_ingest.log").read_text()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1195,27 +1315,30 @@ class TestNovaIngestE2E:
 # ══════════════════════════════════════════════════════════════════════════════
 
 class TestSamBlogFetchPage:
-    """Tests for fetch_page in nova_sam_blog_ingest.py."""
+    """Tests for fetch_page in nova_sam_blog_ingest.py — returns (raw_html, stripped_text)."""
 
     def test_fetch_page_strips_html(self):
         mod = _reload_module("nova_sam_blog_ingest")
-        html = "<html><body><p>Hello World</p><script>evil();</script></body></html>"
+        html = ("<html><body><nav>Menu</nav><p>Hello World</p><script>evil();</script>"
+                "<footer>Legal</footer></body></html>")
         with patch("urllib.request.urlopen") as mock_urlopen:
             mock_resp = MagicMock()
             mock_resp.read.return_value = html.encode("utf-8")
             mock_resp.__enter__ = MagicMock(return_value=mock_resp)
             mock_resp.__exit__ = MagicMock(return_value=False)
             mock_urlopen.return_value = mock_resp
-            text, raw_html = mod.fetch_page("https://example.com")
+            raw_html, text = mod.fetch_page("https://example.com")
+        assert raw_html == html
         assert "Hello World" in text
-        assert "evil" not in text
+        for junk in ("evil", "Menu", "Legal"):
+            assert junk not in text
 
     def test_fetch_page_handles_error(self):
         mod = _reload_module("nova_sam_blog_ingest")
         with patch("urllib.request.urlopen", side_effect=Exception("404")):
-            text, html = mod.fetch_page("https://bad-url.com")
-        assert text == ""
-        assert html == ""
+            raw_html, text = mod.fetch_page("https://bad-url.com")
+        assert raw_html is None
+        assert text is None
 
 
 class TestSamBlogChunking:
@@ -1223,31 +1346,45 @@ class TestSamBlogChunking:
 
     @pytest.mark.frame
     def test_long_post_produces_continuation_chunks(self):
-        """Blog posts > 2000 chars should produce continuation chunks."""
+        """Posts longer than 1500 chars are split on word boundaries; chunk 0 is the
+        titled 'herd_blog' memory and every later chunk is a '(continued)' memory
+        stored under source blog_post_chunk."""
         mod = _reload_module("nova_sam_blog_ingest")
         captured = []
 
-        def capture_remember(text, metadata=None):
-            captured.append({"text": text, "metadata": metadata})
+        def capture_remember(text, source="herd_blog", metadata=None):
+            captured.append({"text": text, "source": source, "metadata": metadata})
+
+        content = " ".join(f"word{i}" for i in range(700))  # ~4.5k chars of prose
+        post_html = "<html><h1>Long Post</h1><p>" + content + "</p></html>"
+        index_html = '<a href="https://jasonacox-sam.github.io/posts/long-one">x</a>'
 
         with patch.object(mod, "vector_remember", side_effect=capture_remember):
-            with patch.object(mod, "find_post_links", return_value=["https://example.com/posts/long-one"]):
-                html_content = "<html><h1>Long Post</h1>" + "<p>" + "x" * 5000 + "</p></html>"
-                with patch.object(mod, "fetch_page") as mock_fetch:
-                    # First call is index, second is posts page, third is the post itself
-                    mock_fetch.side_effect = [
-                        ("", "<html></html>"),
-                        ("", "<html></html>"),
-                        ("x" * 5000, html_content),
-                    ]
-                    with patch.object(mod, "load_state", return_value={"ingested_urls": [], "last_check": ""}):
-                        with patch.object(mod, "save_state"):
-                            with patch.object(mod, "slack_post"):
-                                mod.main()
+            with patch.object(mod, "fetch_page") as mock_fetch:
+                # main() fetches: index -> (html, text); post -> (_, content); post again -> (html, _)
+                mock_fetch.side_effect = [
+                    (index_html, ""),
+                    (post_html, content),
+                    (post_html, content),
+                ]
+                with patch.object(mod, "load_state", return_value={"ingested_urls": [], "last_check": None}):
+                    with patch.object(mod, "save_state") as mock_save:
+                        with patch.object(mod, "slack_post") as mock_slack:
+                            mod.main()
 
-        # Should have the main chunk + continuation chunks
-        continuations = [c for c in captured if "continued" in c["text"].lower()]
-        assert len(continuations) >= 1
+        assert len(captured) >= 3
+        assert captured[0]["text"].startswith('Sam\'s blog post: "Long Post"')
+        assert captured[0]["source"] == "herd_blog"
+        continuations = [c for c in captured[1:] if "(continued)" in c["text"]]
+        assert len(continuations) == len(captured) - 1
+        assert all(c["source"] == "blog_post_chunk" for c in continuations)
+        assert all(c["metadata"]["title"] == "Long Post" for c in captured)
+        # every word stored exactly once across the chunks
+        stored = " ".join(c["text"].split("\n", 1)[1] for c in captured).split()
+        assert stored == content.split()
+        mock_slack.assert_called_once()
+        assert "Long Post" in mock_slack.call_args[0][0]
+        assert "https://jasonacox-sam.github.io/posts/long-one" in mock_save.call_args[0][0]["ingested_urls"]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -1634,6 +1771,7 @@ class TestReembedEmbed:
 class TestChunkingConsistency:
     """Verify all chunk_text implementations preserve text content."""
 
+    @_requires_script("nova_youtube_ingest")
     def test_youtube_ingest_chunk_preserves_all_text(self):
         from nova_youtube_ingest import chunk_text
         text = "Sentence one. Sentence two. Sentence three. " * 50
@@ -1642,6 +1780,7 @@ class TestChunkingConsistency:
         # All words should be present
         assert len(reassembled) >= len(text.strip()) * 0.95  # Allow minor whitespace diff
 
+    @_requires_script("nova_youtube_channel_ingest")
     def test_youtube_channel_chunk_preserves_all_text(self):
         mod = _reload_module("nova_youtube_channel_ingest")
         text = "Word. " * 500
@@ -1650,6 +1789,7 @@ class TestChunkingConsistency:
         for word in ["Word."]:
             assert word in reassembled
 
+    @_requires_script("nova_gdrive_ingest")
     def test_gdrive_chunk_preserves_all_text(self):
         mod = _reload_module("nova_gdrive_ingest")
         text = "Para one.\n\nPara two.\n\nPara three." * 100
@@ -1665,12 +1805,14 @@ class TestChunkingConsistency:
 class TestSourceTagging:
     """Verify each ingest script uses unique, consistent source tags."""
 
+    @_requires_script("nova_reddit_ingest")
     @pytest.mark.frame
     def test_reddit_source_tags(self):
         mod = _reload_module_with_logger("nova_reddit_ingest")
         for name, config in mod.SUBREDDITS.items():
             assert config["source"], f"Subreddit {name} has empty source"
 
+    @_requires_script("nova_youtube_ingest")
     @pytest.mark.frame
     def test_youtube_ingest_source_tag(self):
         """youtube ingest uses 'youtube-ingest' source."""
@@ -1684,6 +1826,7 @@ class TestSourceTagging:
             call_data = json.loads(mock_urlopen.call_args[0][0].data)
         assert call_data["source"] == "youtube-ingest"
 
+    @_requires_script("nova_gdrive_ingest")
     @pytest.mark.frame
     def test_gdrive_source_tag(self):
         mod = _reload_module("nova_gdrive_ingest")
@@ -1699,6 +1842,7 @@ class TestSourceTagging:
             mod.remember("A" * 100, "File", "path.txt", ".txt")
         assert captured[0]["source"] == "gdrive-ingest"
 
+    @_requires_script("nova_slack_export_ingest")
     @pytest.mark.frame
     def test_slack_export_source_map(self):
         from nova_slack_export_ingest import SOURCE_MAP
@@ -1713,12 +1857,14 @@ class TestSourceTagging:
 class TestErrorHandling:
     """Cross-script error handling tests."""
 
+    @_requires_script("nova_reddit_ingest")
     def test_reddit_fetch_subreddit_timeout(self):
         mod = _reload_module_with_logger("nova_reddit_ingest")
         with patch("urllib.request.urlopen", side_effect=TimeoutError("timed out")):
             posts = mod.fetch_subreddit("test", limit=5)
         assert posts == []
 
+    @_requires_script("nova_youtube_ingest")
     def test_youtube_ingest_remember_partial_failure(self):
         """If some chunks fail to store, the total should reflect partial success."""
         from nova_youtube_ingest import remember
@@ -1747,6 +1893,7 @@ class TestErrorHandling:
         text = stripper.get_text()
         assert "Unclosed tag" in text
 
+    @_requires_script("nova_email_ingest")
     def test_email_ingest_corrupt_emlx(self):
         mod = _reload_module("nova_email_ingest")
         with tempfile.NamedTemporaryFile(suffix=".emlx", delete=False, mode="wb") as f:
@@ -1757,6 +1904,7 @@ class TestErrorHandling:
         # Should handle gracefully
 
 
+@_requires_script("nova_video_ingest")
 class TestVideoExtensions:
     """Verify VIDEO_EXTENSIONS set in nova_video_ingest.py."""
 
@@ -1813,6 +1961,7 @@ class TestMemoryBreakdownIntegration:
 # ══════════════════════════════════════════════════════════════════════════════
 
 @pytest.mark.functional
+@_requires_script("nova_slack_export_ingest")
 class TestSlackExportFullPipeline:
     """Full pipeline test: parse export dir -> chunk -> store."""
 
@@ -1875,39 +2024,44 @@ class TestMboxFullPipeline:
 
 @pytest.mark.functional
 class TestNovaIngestFullPipeline:
-    """Full pipeline test: file -> extract -> chunk -> store."""
+    """Full pipeline test: file -> clean_text -> chunk_prose -> remember (HTTP mocked)."""
 
-    def test_full_ingest_markdown_file(self):
-        mod = _reload_module("nova_ingest")
-        with tempfile.NamedTemporaryFile(suffix=".md", mode="w", delete=False) as f:
-            f.write("# Test Document\n\nThis is paragraph one with meaningful content.\n\n"
-                    "This is paragraph two with more content to ensure chunking works correctly.\n\n"
-                    "And a third paragraph for good measure with additional detail.")
-            f.flush()
+    def test_full_ingest_markdown_file(self, tmp_path):
+        mod = _ingest_module(tmp_path)
+        f = tmp_path / "test.md"
+        f.write_text("# Test Document\n\nThis is paragraph one with meaningful content for the test.\n\n"
+                     "This is paragraph two with more content to ensure chunking works correctly.\n\n"
+                     "And a third paragraph for good measure with additional detail inside.")
+        stored_chunks = []
 
-            stored_chunks = []
+        def capture_urlopen(req, **kwargs):
+            stored_chunks.append(json.loads(req.data))
+            mock_resp = MagicMock()
+            mock_resp.__enter__ = MagicMock(return_value=mock_resp)
+            mock_resp.__exit__ = MagicMock(return_value=False)
+            return mock_resp
 
-            def capture_urlopen(req, **kwargs):
-                stored_chunks.append(json.loads(req.data))
-                mock_resp = MagicMock()
-                mock_resp.__enter__ = MagicMock(return_value=mock_resp)
-                mock_resp.__exit__ = MagicMock(return_value=False)
-                return mock_resp
+        with patch("urllib.request.urlopen", side_effect=capture_urlopen):
+            with patch("time.sleep"):
+                mod.run_file(str(f), "test_vector", {}, dry_run=False)
 
-            with patch("urllib.request.urlopen", side_effect=capture_urlopen):
-                with patch("time.sleep"):
-                    result = mod.ingest(f.name, "test.md", topic="testing", source="test")
-
-        os.unlink(f.name)
-        assert result["ok"] is True
-        assert result["stored"] >= 1
-        assert all("[From: test.md]" in c["text"] for c in stored_chunks)
+        assert len(stored_chunks) >= 1
+        joined = " ".join(c["text"] for c in stored_chunks)
+        for para in ("paragraph one", "paragraph two", "third paragraph"):
+            assert para in joined
+        for c in stored_chunks:
+            assert c["source"] == "test_vector"
+            assert c["metadata"]["type"] == "local_file"
+            assert c["metadata"]["path"] == str(f)
+            assert c["metadata"]["ingested_by"] == "nova_ingest.py"
+        assert "1 chunks" in mod.notify.call_args[0][0]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Safari additional tests (not in test_ingestion.py)
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_requires_script("nova_safari_ingest")
 class TestSafariMacTimestamp:
     """Tests for mac_timestamp_to_datetime in nova_safari_ingest.py."""
 
@@ -1930,6 +2084,7 @@ class TestSafariMacTimestamp:
         assert dt.day == 1
 
 
+@_requires_script("nova_safari_ingest")
 class TestSafariVectorRemember:
     """Tests for vector_remember in nova_safari_ingest.py."""
 
@@ -1957,6 +2112,7 @@ class TestSafariVectorRemember:
 class TestDeduplication:
     """Cross-script deduplication logic tests."""
 
+    @_requires_script("nova_reddit_ingest")
     def test_reddit_dedup_by_post_id(self):
         mod = _reload_module_with_logger("nova_reddit_ingest")
         posts = [
@@ -1972,6 +2128,7 @@ class TestDeduplication:
                     count = mod.ingest_subreddit("test", config, state)
         assert count == 0  # Already seen
 
+    @_requires_script("nova_youtube_ingest")
     def test_youtube_playlist_dedup_by_video_id(self):
         from nova_youtube_ingest import get_playlist_videos
         with patch("subprocess.run") as mock_run:
@@ -1982,6 +2139,7 @@ class TestDeduplication:
             videos = get_playlist_videos("url")
         assert len(videos) == 2
 
+    @_requires_script("nova_email_ingest")
     def test_email_dedup_by_text_hash(self):
         """Email ingest uses text_hash for dedup against API."""
         mod = _reload_module("nova_email_ingest")

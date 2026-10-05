@@ -26,6 +26,7 @@ Written by Jordan Koch.
 """
 
 import json
+import re
 import sys
 from pathlib import Path
 from unittest.mock import patch, MagicMock
@@ -140,10 +141,21 @@ def test_classify_batch_returns_empty_on_empty_llm():
 
 # ── Security invariant 1: PII-local Ollama routing ───────────────────────────
 
+def _is_lan_or_loopback(host: str) -> bool:
+    """Raw memory samples may only be classified on-box or on the private LAN —
+    never a cloud endpoint. Since 2026-07-19 the default points at the .6 inference
+    host (nova-core has no local Ollama), so RFC1918 is as acceptable as loopback."""
+    name = host.split(":", 1)[0]
+    return (name in ("127.0.0.1", "localhost")
+            or name.startswith("192.168.") or name.startswith("10.")
+            or re.match(r"^172\.(1[6-9]|2\d|3[01])\.", name) is not None)
+
+
 def test_ollama_url_is_local_loopback():
-    # Constant must point at loopback — raw memory samples classify on-box only.
-    assert v.OLLAMA_URL.startswith("http://127.0.0.1:") or v.OLLAMA_URL.startswith("http://localhost:")
-    assert "11434" in v.OLLAMA_URL  # local Ollama port
+    # Constant must point at loopback or the private LAN — raw memory samples never leave the house.
+    host = v.OLLAMA_URL.split("://", 1)[1].split("/", 1)[0]
+    assert _is_lan_or_loopback(host), v.OLLAMA_URL
+    assert "11434" in v.OLLAMA_URL  # Ollama port
 
 
 def _fake_urlopen_factory(captured, response_text="ok"):
@@ -163,7 +175,7 @@ def test_call_llm_only_contacts_loopback():
         out = v.call_llm("system prompt", "raw private memory text")
     assert out == "verdict text"
     host = captured["url"].split("://", 1)[1].split("/", 1)[0]
-    assert host.startswith("127.0.0.1") or host.startswith("localhost")
+    assert _is_lan_or_loopback(host), captured["url"]
     # never a cloud endpoint
     for cloud in ("anthropic", "openai", "googleapis", "azure", "amazonaws"):
         assert cloud not in captured["url"]
@@ -258,7 +270,7 @@ def test_move_memory_sql_interpolation_is_characterized():
 def _patch_run_audit(monkeypatch, vectors, sample, classify_result):
     monkeypatch.setattr(v, "get_all_vectors", lambda: vectors)
     monkeypatch.setattr(v, "sample_memories", lambda name, n: list(sample))
-    monkeypatch.setattr(v, "quality_check_batch", lambda mems: {
+    monkeypatch.setattr(v, "quality_check_batch", lambda mems, source=None: {
         "repetitive": 0, "near_empty": 0, "garbled": 0, "low_signal": 0,
         "total_issues": 0, "examples": []})
     monkeypatch.setattr(v, "classify_batch", lambda name, mems, allv: list(classify_result))
@@ -268,8 +280,9 @@ def _patch_run_audit(monkeypatch, vectors, sample, classify_result):
 
 def test_run_audit_moves_only_to_existing_different_vector(monkeypatch):
     # automotive has <50 rows so it is NOT itself audited, but remains a valid
-    # move target (it exists in vector_names).
-    vectors = [("medicine", 100), ("automotive", 10)]
+    # move target (it exists in vector_names). Total must clear the >=1000-memory
+    # empty-store guard or run_audit aborts rather than publish a hallucinated audit.
+    vectors = [("medicine", 1000), ("automotive", 10)]
     sample = [{"id": "m1", "text": "engine repair notes for a v8"},
               {"id": "m2", "text": "aspirin dosage guidance for adults"},
               {"id": "m3", "text": "some borderline note about health"}]
@@ -300,7 +313,7 @@ def test_run_audit_moves_only_to_existing_different_vector(monkeypatch):
 
 
 def test_run_audit_never_moves_to_same_vector(monkeypatch):
-    vectors = [("medicine", 100)]
+    vectors = [("medicine", 1000)]  # >=1000 clears the empty-store abort guard
     sample = [{"id": "m1", "text": "aspirin note"}]
     classify = [{"id": "m1", "verdict": "move", "suggested_vector": "medicine"}]
     _patch_run_audit(monkeypatch, vectors, sample, classify)
@@ -317,7 +330,7 @@ def test_run_audit_never_moves_to_same_vector(monkeypatch):
 def test_run_audit_quality_pct_uses_sampled_not_classified(monkeypatch):
     # Guards the divide-by-zero / bogus-denominator fix: even when the LLM
     # returns no verdicts, quality_pct is computed over rows actually scanned.
-    vectors = [("medicine", 100)]
+    vectors = [("medicine", 1000)]  # >=1000 clears the empty-store abort guard
     sample = [{"id": "m1", "text": "x"}, {"id": "m2", "text": "y"}]  # both near_empty
     _patch_run_audit(monkeypatch, vectors, sample, classify_result=[])
     # restore real quality_check_batch so issues are actually detected

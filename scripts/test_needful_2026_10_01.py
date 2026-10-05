@@ -34,8 +34,8 @@ class TestSecurity(unittest.TestCase):
         self.assertFalse(ms._anchor_hit("notes on cxx", ["c++ (and .net)"]))
 
     def test_resonance_evidence_never_carries_message_text(self):
-        secret = "my password is hunter2 and I love you"
-        sc, pos, neg = affect.tone_score(secret)
+        private_msg = "my password is hunter2 and I love you"
+        sc, pos, neg = affect.tone_score(private_msg)
         note_words = set(pos) | set(neg)
         self.assertNotIn("hunter2", note_words)
         self.assertNotIn("password", note_words)       # only lexicon words ever surface

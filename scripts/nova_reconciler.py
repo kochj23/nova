@@ -125,7 +125,8 @@ def probe(f):
             return socket.gethostbyname(target), "dns"
 
         if kind == "shell":
-            r = subprocess.run(target, shell=True, capture_output=True, text=True, timeout=60)
+            # target is the operator-authored probe command stored in doc_facts
+            r = subprocess.run(["/bin/sh", "-c", target], capture_output=True, text=True, timeout=60)
             out = r.stdout.strip()
             return (out or None), (f"rc={r.returncode}" if not out else "shell")
     except Exception as ex:

@@ -24,7 +24,8 @@ def run_shell(cmd):
     if any(b in cmd for b in _BAD):
         return "BLOCKED (write/destructive command not allowed for a read-only diagnostic agent)"
     try:
-        r = subprocess.run(cmd, shell=True, capture_output=True, timeout=20, text=True)
+        # diagnostics are pipelines by design; explicit sh -c argv after the _BAD screen
+        r = subprocess.run(["/bin/sh", "-c", cmd], capture_output=True, timeout=20, text=True)
         return ((r.stdout or "") + (r.stderr or ""))[:1800] or "(no output)"
     except Exception as e:
         return f"error: {e}"

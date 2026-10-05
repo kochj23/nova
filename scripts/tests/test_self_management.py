@@ -119,20 +119,22 @@ class TestAuditDocs:
     """Tests for documentation auditing."""
 
     def test_detects_missing_memory_md(self, audit_module, tmp_path):
-        with patch.object(audit_module, "MEMORY_MD", tmp_path / "nope.md"):
-            with patch.object(audit_module, "IDENTITY_MD", tmp_path / "id.md"):
-                (tmp_path / "id.md").write_text("Name: Nova\nFull identity doc")
-                issues = audit_module.audit_docs()
-        assert any("MEMORY.md is missing" in i for i in issues)
+        """Flat-file MEMORY.md / IDENTITY.md are retired (b61fe79 — memories + persona live in
+        PostgreSQL), so the module has no such paths and audit_docs() never reports them."""
+        assert not hasattr(audit_module, "MEMORY_MD")
+        assert not hasattr(audit_module, "IDENTITY_MD")
+        issues = audit_module.audit_docs()
+        assert issues == []
+        assert not any("MEMORY.md is missing" in i for i in issues)
 
     def test_detects_empty_memory_md(self, audit_module, tmp_path):
+        """A near-empty MEMORY.md on disk is irrelevant to audit_docs() now (no flat-file reads)."""
         mem = tmp_path / "MEMORY.md"
         mem.write_text("hi")
-        with patch.object(audit_module, "MEMORY_MD", mem):
-            with patch.object(audit_module, "IDENTITY_MD", tmp_path / "id.md"):
-                (tmp_path / "id.md").write_text("Full identity document with content")
-                issues = audit_module.audit_docs()
-        assert any("empty" in i or "minimal" in i for i in issues)
+        with patch.object(audit_module.Path, "home", return_value=tmp_path):
+            issues = audit_module.audit_docs()
+        assert isinstance(issues, list)
+        assert not any("empty" in i or "minimal" in i for i in issues)
 
 
 class TestAuditStateManagement:

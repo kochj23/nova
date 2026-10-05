@@ -36,18 +36,19 @@ def log(m):
 
 
 def _run(cmd, ip=None, timeout=30):
-    full = cmd if (ip in LOCAL_IPS) else (
-        f"ssh -o BatchMode=yes -o ConnectTimeout=8 -o StrictHostKeyChecking=accept-new "
-        f"kochj@{ip} {_q(cmd)}")
+    """Run one of this file's static collection scripts locally (LOCAL_IPS) or over ssh.
+    No shell=True: local runs use an explicit sh -c argv, remote runs pass the script as a
+    single ssh argument (what the old single-quote wrapping achieved via the local shell)."""
+    if ip in LOCAL_IPS:
+        argv = ["/bin/sh", "-c", cmd]
+    else:
+        argv = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8",
+                "-o", "StrictHostKeyChecking=accept-new", f"kochj@{ip}", cmd]
     try:
-        r = subprocess.run(full, shell=True, capture_output=True, text=True, timeout=timeout)
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=timeout)
         return r.returncode, (r.stdout or "")
     except Exception:
         return -1, ""
-
-
-def _q(s):
-    return "'" + s.replace("'", "'\\''") + "'"
 
 
 def get_hosts():

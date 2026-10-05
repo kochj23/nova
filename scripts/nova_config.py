@@ -170,6 +170,7 @@ PRIVATE_SOURCES: set = {
     "private_document",
     "ssl_management",
     # Personal privacy
+    "safari_history",    # browsing history — was only in nova_daily_essay's local set; canonical gate must match (2026-10-05)
     "home_address",
     "family_contacts",
     "apple_health",

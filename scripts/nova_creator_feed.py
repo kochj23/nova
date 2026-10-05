@@ -63,13 +63,15 @@ def refresh_browser_cookies(browser: str, probe_url: str, cache_file, max_age_h:
         if os.path.exists(cache_file) and (time.time() - os.path.getmtime(cache_file)) / 3600 < max_age_h:
             return cache_file
         os.makedirs(os.path.dirname(cache_file), exist_ok=True)
+        inner_argv = [YT_DLP, "--cookies-from-browser", browser, "--cookies", cache_file,
+                      "--skip-download", "--simulate", probe_url]
         inner = (f'{YT_DLP} --cookies-from-browser {browser} --cookies {cache_file} '
                  f'--skip-download --simulate "{probe_url}"')
         # osascript first (TCC-safe from launchd); fall back to direct (works from a terminal)
         subprocess.run(["/usr/bin/osascript", "-e", f'do shell script "{inner}"'],
                        capture_output=True, text=True, timeout=60)
         if not os.path.exists(cache_file):
-            subprocess.run(inner, shell=True, capture_output=True, text=True, timeout=60)
+            subprocess.run(inner_argv, capture_output=True, text=True, timeout=60)
         if os.path.exists(cache_file):
             _filter_cookies_to_domain(cache_file, probe_url)  # security: keep only what we need
             os.chmod(cache_file, 0o600)

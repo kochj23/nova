@@ -331,7 +331,11 @@ class TestSecurity:
         assert research_module.OPENROUTER_URL == "https://openrouter.ai/api/v1/chat/completions"
 
     def test_memory_server_is_localhost(self, research_module):
-        assert "127.0.0.1" in research_module.MEMORY_SERVER
+        # DSN sweep (#501) moved this to the internal service name; must stay on the
+        # private digitalnoise.net domain or loopback, never a public host.
+        host = research_module.MEMORY_SERVER.split("://", 1)[1].split("/", 1)[0].split(":")[0]
+        assert host in ("127.0.0.1", "localhost") or host.endswith(".digitalnoise.net"), host
+        assert research_module.MEMORY_SERVER.endswith(":18790")
 
     @patch("nova_research_paper.get_source_counts")
     def test_excluded_sources_never_selected(self, mock_counts, research_module):

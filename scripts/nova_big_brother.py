@@ -1255,21 +1255,29 @@ def _attempt_failover(service_name: str) -> bool:
 
         # SSH to target and start the service
         svc_dashed = service_name.replace("_", "-")
+        # Each attempt is an argv ssh call (no local shell); the remote command is a
+        # single argument. On macOS the launchd kickstart is tried first and the bare
+        # python3 start is the fallback — that `||` is done here, in Python.
         if os_family == "macos":
-            cmd = (
-                f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no {target_ip} "
-                f"'launchctl kickstart gui/501/net.digitalnoise.nova-{svc_dashed}' 2>&1 "
-                f"|| ssh -o ConnectTimeout=10 {target_ip} "
-                f"'/opt/homebrew/bin/python3 ~/.openclaw/scripts/nova_{service_name}.py &' 2>&1"
-            )
+            attempts = [
+                (["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no"],
+                 f"launchctl kickstart gui/501/net.digitalnoise.nova-{svc_dashed}"),
+                (["-o", "ConnectTimeout=10"],
+                 f"/opt/homebrew/bin/python3 ~/.openclaw/scripts/nova_{service_name}.py &"),
+            ]
         else:
-            cmd = (
-                f"ssh -o ConnectTimeout=10 -o StrictHostKeyChecking=no {target_ip} "
-                f"'systemctl start nova-{svc_dashed} 2>&1 "
-                f"|| python3 ~/.openclaw/scripts/nova_{service_name}.py &' 2>&1"
-            )
+            attempts = [
+                (["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no"],
+                 f"systemctl start nova-{svc_dashed} 2>&1 "
+                 f"|| python3 ~/.openclaw/scripts/nova_{service_name}.py &"),
+            ]
 
-        result = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=30)
+        result = None
+        for ssh_opts, remote_cmd in attempts:
+            result = subprocess.run(["ssh", *ssh_opts, target_ip, remote_cmd],
+                                    capture_output=True, text=True, timeout=30)
+            if result.returncode == 0:
+                break
 
         # Update registry
         try:

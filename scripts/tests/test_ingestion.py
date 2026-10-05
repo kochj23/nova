@@ -31,6 +31,36 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 
+
+# ── Deleted one-off ingest scripts ────────────────────────────────────────────
+# 997504e (2026-05-08, "Deleted old one-off ingest scripts") removed these from
+# scripts/. nova_reddit_ingest was briefly restored from .pyc (72dfb83) and then
+# archived to _archive/ (0adc04e); nothing live shares their contracts. The tests
+# stay and re-arm automatically if a script is restored to scripts/.
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+_REMOVED_SCRIPTS = {
+    "nova_reddit_ingest": "archived to _archive/nova_reddit_ingest.py in 0adc04e (2026-05-13); "
+                          "the live Reddit crawler is nova_reddit_rss_ingest.py (different API)",
+    "nova_safari_ingest": "deleted in 997504e (2026-05-08), no successor",
+    "nova_youtube_ingest": "deleted in 997504e (2026-05-08); YouTube now flows through nova_ingest.py video mode",
+    "nova_youtube_channel_ingest": "deleted in 997504e (2026-05-08); see nova_yt_ingest_watch.py",
+    "nova_youtube_playlist_ingest": "deleted in 997504e (2026-05-08); one-off copies live in _ingest/",
+    "nova_email_ingest": "deleted in 997504e (2026-05-08); EMLX ingest is nova_ingest_emlx.py (covered below)",
+    "nova_video_ingest": "deleted in 997504e (2026-05-08); recordings go through nova_ingest.py recording mode",
+    "nova_gdrive_ingest": "deleted in 997504e (2026-05-08), no successor",
+    "nova_slack_export_ingest": "deleted in 997504e (2026-05-08), no successor",
+    "nova_slack_ingest": "deleted in 997504e (2026-05-08), no successor",
+}
+
+
+def _requires_script(name):
+    """Skip (with the deletion history) when a one-off ingest script is absent."""
+    return pytest.mark.skipif(
+        not (_SCRIPTS_DIR / f"{name}.py").exists(),
+        reason=f"{name}.py is not in scripts/ — {_REMOVED_SCRIPTS[name]}",
+    )
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # nova_reddit_ingest.py — subreddit parsing, post extraction, memory storage
 # ══════════════════════════════════════════════════════════════════════════════
@@ -48,6 +78,7 @@ def _mock_reddit_modules():
     return {"nova_config": mock_nova_config, "nova_logger": mock_logger}
 
 
+@_requires_script("nova_reddit_ingest")
 class TestRedditStateManagement:
     """Tests for load_state/save_state in nova_reddit_ingest.py."""
 
@@ -100,6 +131,7 @@ class TestRedditStateManagement:
                 os.unlink(f.name)
 
 
+@_requires_script("nova_reddit_ingest")
 class TestRedditSubredditConfig:
     """Tests for subreddit configuration in nova_reddit_ingest.py."""
 
@@ -125,6 +157,7 @@ class TestRedditSubredditConfig:
             assert nova_reddit_ingest.SUBREDDITS["burbank"]["dream_weight"] == "high"
 
 
+@_requires_script("nova_reddit_ingest")
 class TestRedditIngestSubreddit:
     """Tests for ingest_subreddit logic."""
 
@@ -186,6 +219,7 @@ class TestRedditIngestSubreddit:
                 assert count == 0
 
 
+@_requires_script("nova_reddit_ingest")
 class TestRedditQuietHours:
     """Tests for quiet hours detection."""
 
@@ -462,6 +496,7 @@ class TestIMessageDBParsing:
 # nova_safari_ingest.py — history grouping, noise filtering
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_requires_script("nova_safari_ingest")
 class TestSafariNoiseDetection:
     """Tests for is_noise_url in nova_safari_ingest.py."""
 
@@ -524,6 +559,7 @@ class TestSafariNoiseDetection:
         assert mod.is_noise_url("https://developer.apple.com/documentation/swift", "developer.apple.com") is False
 
 
+@_requires_script("nova_safari_ingest")
 class TestSafariCleanDomain:
     """Tests for clean_domain in nova_safari_ingest.py."""
 
@@ -558,6 +594,7 @@ class TestSafariCleanDomain:
         assert mod.clean_domain("api.example.com") == "api.example.com"
 
 
+@_requires_script("nova_safari_ingest")
 class TestSafariGroupVisits:
     """Tests for group_visits in nova_safari_ingest.py."""
 
@@ -618,6 +655,7 @@ class TestSafariGroupVisits:
         assert mod.stats["skipped_no_title"] >= 2
 
 
+@_requires_script("nova_safari_ingest")
 class TestSafariFormatMemoryText:
     """Tests for format_memory_text in nova_safari_ingest.py."""
 
@@ -664,6 +702,7 @@ class TestSafariFormatMemoryText:
         assert "more pages" in text
 
 
+@_requires_script("nova_safari_ingest")
 class TestSafariCheckpoint:
     """Tests for checkpoint load/save in nova_safari_ingest.py."""
 
@@ -698,6 +737,7 @@ class TestSafariCheckpoint:
 # nova_youtube_ingest.py — chunking logic, video metadata
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_requires_script("nova_youtube_ingest")
 class TestYouTubeChunkText:
     """Tests for chunk_text in nova_youtube_ingest.py."""
 
@@ -745,6 +785,7 @@ class TestYouTubeChunkText:
         assert result[0] == ""
 
 
+@_requires_script("nova_youtube_ingest")
 class TestYouTubeRemember:
     """Tests for remember (memory storage) in nova_youtube_ingest.py."""
 
@@ -766,6 +807,7 @@ class TestYouTubeRemember:
         mock_urlopen.assert_not_called()
 
 
+@_requires_script("nova_youtube_ingest")
 class TestYouTubeGetPlaylistVideos:
     """Tests for get_playlist_videos in nova_youtube_ingest.py."""
 
@@ -796,6 +838,7 @@ class TestYouTubeGetPlaylistVideos:
 # nova_youtube_playlist_ingest.py — video metadata, transcript chunking
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_requires_script("nova_youtube_playlist_ingest")
 class TestYouTubePlaylistGetInfo:
     """Tests for get_playlist_info in nova_youtube_playlist_ingest.py."""
 
@@ -971,7 +1014,7 @@ class TestSamBlogStateManagement:
         mod = self._get_module()
         with patch.object(mod, "STATE_FILE", Path("/tmp/nonexistent_sam_state.json")):
             state = mod.load_state()
-            assert state == {"ingested_urls": [], "last_check": ""}
+            assert state == {"ingested_urls": [], "last_check": None}
 
     def test_save_and_load_state(self):
         mod = self._get_module()
@@ -989,6 +1032,7 @@ class TestSamBlogStateManagement:
 # nova_slack_ingest.py — Slack message parsing, file processing
 # ══════════════════════════════════════════════════════════════════════════════
 
+@_requires_script("nova_slack_ingest")
 class TestSlackIngestProcessedLog:
     """Tests for load_processed/save_processed in nova_slack_ingest.py."""
 
@@ -1031,6 +1075,7 @@ class TestSlackIngestProcessedLog:
                 assert len(loaded) == 1000
 
 
+@_requires_script("nova_slack_ingest")
 class TestSlackIngestGetRecentFiles:
     """Tests for get_recent_files in nova_slack_ingest.py."""
 
@@ -1093,6 +1138,7 @@ class TestIngestToVector:
 # ══════════════════════════════════════════════════════════════════════════════
 
 @pytest.mark.integration
+@_requires_script("nova_reddit_ingest")
 class TestRedditIngestIntegration:
     """Test that reddit ingest can fetch from a real subreddit."""
 

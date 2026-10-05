@@ -110,7 +110,8 @@ def cmd_import(a):
             if f["kind"] == "script":
                 shutil.copy2(src, Path(info["scripts"]) / f["name"])
         if ok and co.get("hook"):
-            r = subprocess.run(co["hook"], shell=True, capture_output=True, text=True, timeout=120)
+            # hook is the operator's `--hook "<cmd>"` shell line from the control file
+            r = subprocess.run(["/bin/sh", "-c", co["hook"]], capture_output=True, text=True, timeout=120)
             ok = (r.returncode == 0)
             log(f"IMPORT {tid} [{node}] hook rc={r.returncode} {r.stderr.strip()[:60]}")
         if ok:

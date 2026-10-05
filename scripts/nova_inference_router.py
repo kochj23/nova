@@ -81,7 +81,10 @@ POOLS = {
     "conversation": [(N6, 11434, "ollama", "qwen3:30b-a3b"),
                      (N190, 11434, "ollama", "qwen3:30b-a3b")],
     # Nova's persona voice
-    "nova":         [(N6, 11434, "ollama", "nova:latest")],
+    # SPOF plan Phase 5 (2026-10-04): nova:latest also on the M4 Pro mini (.77, built from qwen3-coder:30b + the
+    # same template/params) so the voice survives the Studio; the router prefers the healthy, least-loaded one.
+    "nova":         [(N6, 11434, "ollama", "nova:latest"),
+                     (N190, 11434, "ollama", "nova:latest")],
     # fast / cheap chat — .7's light tier. llama3.2:3b (~25 tok/s on the M2 Pro);
     # qwen3:8b was a chronic 4 tok/s straggler there, dropped. (tinychat is a UI,
     # not an API — removed.)
@@ -89,7 +92,8 @@ POOLS = {
     # burst spreads instead of collapsing .7 (load test 2026-07-14). All run llama3.2:3b.
     # nova-core6 (.252, M1 mini 16GB) joined 2026-07-27 — inference-only by design.
     # 16GB cannot host the 30B MoE models, so it serves the fast tier alongside .7/.5/.86.
-    "fast":         [(N252, 11434, "ollama", "llama3.2:3b"),
+    "fast":         [(N7, 5050, "mlx", "mlx-community/Qwen3-8B-4bit"),   # 2026-10-05: MLX Qwen3-8B on the M2 Pro mini — faster prefill than the 3B ollama tier, resident per process
+                     (N252, 11434, "ollama", "llama3.2:3b"),
                      (N7, 11434, "ollama", "llama3.2:3b"),
                      (N5, 11434, "ollama", "llama3.2:3b"),
                      (N86, 11434, "ollama", "llama3.2:3b"),

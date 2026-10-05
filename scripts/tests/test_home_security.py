@@ -92,8 +92,9 @@ class TestFaceRecognition:
     # ── Exterior cameras list ───────────────────────────────────────────────
 
     def test_exterior_cameras_has_expected_count(self):
-        """At least 10 exterior cameras are configured."""
-        assert len(self.mod.EXTERIOR_CAMERAS) >= 10
+        """At least 9 exterior cameras are configured (exterior_garbage was pulled
+        from face-rec on 2026-06-23 while physically misaimed at an indoor shelf)."""
+        assert len(self.mod.EXTERIOR_CAMERAS) >= 9
 
     def test_exterior_cameras_all_end_with_jpg(self):
         """All exterior camera filenames end with _latest.jpg."""
@@ -304,7 +305,8 @@ class TestFaceRecognition:
         """post_detections posts known face summary to Slack."""
         detections = [{"type": "known", "name": "Jordan", "camera": "Front Door", "confidence": 92}]
         with patch.object(self.mod, "slack_post") as mock_slack, \
-             patch.object(self.mod, "vector_remember"):
+             patch.object(self.mod, "vector_remember"), \
+             patch.object(self.mod, "update_presence", return_value="seen"):
             self.mod.post_detections(detections)
         assert mock_slack.called
         msg = mock_slack.call_args[0][0]
@@ -1805,7 +1807,8 @@ class TestOutputFormatting:
         mod = _import_with_mocks("nova_face_recognition", monkeypatch, mock_nova_config)
         detections = [{"type": "known", "name": "Jordan", "camera": "Front Door", "confidence": 95}]
         with patch.object(mod, "slack_post") as mock_slack, \
-             patch.object(mod, "vector_remember"):
+             patch.object(mod, "vector_remember"), \
+             patch.object(mod, "update_presence", return_value="seen"):
             mod.post_detections(detections)
         msg = mock_slack.call_args[0][0]
         assert "*Jordan*" in msg
@@ -1980,7 +1983,8 @@ class TestFunctionalWorkflows:
         with patch.object(mod, "slack_post") as mock_slack, \
              patch.object(mod, "slack_upload_image"), \
              patch.object(mod, "describe_scene", return_value=None), \
-             patch.object(mod, "vector_remember"):
+             patch.object(mod, "vector_remember"), \
+             patch.object(mod, "update_presence", return_value="seen"):
             mod.post_detections(detections)
 
         assert mock_slack.called

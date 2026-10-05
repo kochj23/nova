@@ -21,6 +21,20 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# The three scripts under test were one-off ingest jobs, deliberately deleted in commit
+# 997504e ("Deleted old one-off ingest scripts: adult_swim, comedy, ... movie_script")
+# once their corpora were in memory. Nothing in the tree replaced their APIs
+# (nova_ingest_movie_scripts.py is a different IMSDb top-100 tool), so each fixture
+# skips with the reason below instead of erroring at import; restoring a script
+# re-enables its tests unchanged.
+_SCRIPTS_DIR = Path(__file__).parent.parent
+
+
+def _require_script(modname: str):
+    if not (_SCRIPTS_DIR / f"{modname}.py").exists():
+        pytest.skip(f"{modname}.py is missing: deleted in commit 997504e (one-off ingest "
+                    "script retired after its corpus was ingested); restore it to run these tests")
+
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -28,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 @pytest.fixture
 def movie_module(mock_nova_config):
     """Import nova_movie_script_ingest fresh."""
+    _require_script("nova_movie_script_ingest")
     for mod in list(sys.modules.keys()):
         if "nova_movie_script_ingest" in mod:
             del sys.modules[mod]
@@ -46,6 +61,7 @@ def movie_module(mock_nova_config):
 @pytest.fixture
 def adult_swim_module(mock_nova_config):
     """Import nova_adult_swim_ingest fresh."""
+    _require_script("nova_adult_swim_ingest")
     for mod in list(sys.modules.keys()):
         if "nova_adult_swim_ingest" in mod:
             del sys.modules[mod]
@@ -63,6 +79,7 @@ def adult_swim_module(mock_nova_config):
 @pytest.fixture
 def comedy_module(mock_nova_config):
     """Import nova_comedy_ingest fresh."""
+    _require_script("nova_comedy_ingest")
     for mod in list(sys.modules.keys()):
         if "nova_comedy_ingest" in mod:
             del sys.modules[mod]

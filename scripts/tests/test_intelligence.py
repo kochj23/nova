@@ -39,6 +39,25 @@ def _make_urlopen_response(data, status=200):
     return mock_resp
 
 
+def _emitted_text(notify_mock, index=-1):
+    """Title + body of one nova_notify.notify() emit as a single text block.
+
+    The briefing scripts moved from nova_config.post_both to the central
+    notification bus (da2f61c, 2026-06-21): first line -> title, rest -> body.
+    """
+    args, kwargs = notify_mock.call_args_list[index]
+    body = kwargs.get("body")
+    return args[0] + ("\n" + body if body else "")
+
+
+_SCRIPTS_DIR = Path(__file__).resolve().parent.parent
+_NO_DAILY_JOURNAL = pytest.mark.skipif(
+    not (_SCRIPTS_DIR / "nova_daily_journal.py").exists(),
+    reason="nova_daily_journal.py was removed in adf1671 (2026-07-01) as dead code "
+           "superseded by nova_journal.py; restore the script to re-enable these tests",
+)
+
+
 def _make_subprocess_result(stdout="", stderr="", returncode=0):
     """Build a mock subprocess.CompletedProcess."""
     result = MagicMock()
@@ -210,7 +229,7 @@ class TestMorningBriefEmailPriorities:
 
 
 class TestMorningBriefCalendar:
-    """Tests for get_calendar_events() and OneOnOne fallback."""
+    """Tests for get_calendar_events() (NovaControl /api/calendar/today) and OneOnOne fallback."""
 
     @pytest.fixture(autouse=True)
     def setup_module(self, mock_nova_config, monkeypatch):
@@ -220,42 +239,49 @@ class TestMorningBriefCalendar:
         mock_mail.is_noise = MagicMock(return_value=False)
         mock_mail.is_important = MagicMock(return_value=False)
         monkeypatch.setitem(sys.modules, "nova_mail_deliver", mock_mail)
-        self.mock_cal = MagicMock()
-        self.mock_cal.get_todays_events = MagicMock(return_value=[])
-        self.mock_cal.format_time = MagicMock(return_value="10:30 AM")
-        monkeypatch.setitem(sys.modules, "nova_calendar", self.mock_cal)
         self.mod = _reload_module("nova_morning_brief")
 
-    def test_calendar_events_formatted(self):
-        """Events from nova_calendar are formatted correctly."""
-        self.mock_cal.get_todays_events.return_value = [
-            {"title": "Standup", "allDay": False, "start": "2026-05-02T10:00:00"},
-            {"title": "All Hands", "allDay": True},
-        ]
+    def test_calendar_events_formatted(self, monkeypatch):
+        """Events from the NovaControl calendar API are formatted as 'HH:MM title (Nmin)'."""
+        payload = {"today": [
+            {"title": "Standup", "startDate": "2026-05-02T10:00:00", "durationMinutes": 30},
+            {"title": "All Hands", "startDate": "2026-05-02T13:00:00", "durationMinutes": 60,
+             "location": "Theater"},
+        ]}
+        monkeypatch.setattr("urllib.request.urlopen", lambda *a, **kw: _make_urlopen_response(payload))
         result = self.mod.get_calendar_events()
         assert len(result) == 2
-        assert "(all day)" in result[1]
-        assert "10:30 AM" in result[0]
+        assert result[0] == "10:00 Standup (30min)"
+        assert result[1] == "13:00 All Hands (60min) @ Theater"
 
-    def test_raw_event_uses_title(self):
-        """Events with raw=True just use title."""
-        self.mock_cal.get_todays_events.return_value = [
-            {"title": "Raw calendar entry", "raw": True},
-        ]
+    def test_event_without_start_uses_title(self, monkeypatch):
+        """Events with no startDate still render by title (no leading time)."""
+        payload = {"today": [{"title": "Raw calendar entry"}]}
+        monkeypatch.setattr("urllib.request.urlopen", lambda *a, **kw: _make_urlopen_response(payload))
         result = self.mod.get_calendar_events()
-        assert "Raw calendar entry" in result[0]
+        assert result[0].startswith("Raw calendar entry")
+        assert "(?min)" in result[0]
+
+    def test_no_events_returns_empty_list(self, monkeypatch):
+        """An empty 'today' list yields [] (no OneOnOne fallback)."""
+        monkeypatch.setattr("urllib.request.urlopen", lambda *a, **kw: _make_urlopen_response({"today": []}))
+        monkeypatch.setattr("subprocess.run", lambda *a, **kw: pytest.fail("fallback must not run"))
+        assert self.mod.get_calendar_events() == []
 
     def test_fallback_to_oneonone_on_error(self, monkeypatch):
-        """Falls back to OneOnOne when nova_calendar raises."""
-        self.mock_cal.get_todays_events.side_effect = Exception("calendar down")
+        """Falls back to the OneOnOne meetings endpoint when the calendar API raises."""
+        def _boom(*a, **kw):
+            raise urllib.error.URLError("calendar down")
+        monkeypatch.setattr("urllib.request.urlopen", _boom)
         today = date.today().isoformat()
-        meeting_data = [{"title": "1on1 with Boss", "date": today}]
+        meeting_data = [{"title": "1on1 with Boss", "date": today},
+                        {"title": "Old meeting", "date": "2020-01-01"}]
         monkeypatch.setattr(
             "subprocess.run",
             lambda *a, **kw: _make_subprocess_result(json.dumps(meeting_data)),
         )
         result = self.mod.get_calendar_events()
-        assert "1on1 with Boss" in result[0]
+        assert result == ["1on1 with Boss"]
 
 
 class TestMorningBriefGitHub:
@@ -410,6 +436,11 @@ class TestMorningBriefMain:
         mock_cal.format_time = MagicMock(return_value="9:00 AM")
         monkeypatch.setitem(sys.modules, "nova_calendar", mock_cal)
         self.mod = _reload_module("nova_morning_brief")
+        # Delivery goes through the notification bus, not nova_config.post_both.
+        self.notify = MagicMock(return_value=True)
+        monkeypatch.setattr(self.mod, "notify", self.notify)
+        monkeypatch.setattr(self.mod, "get_autonomy_note", lambda: [])
+        monkeypatch.setattr(self.mod, "get_full_context", lambda hours: {}, raising=False)
 
     def test_main_posts_to_slack(self, monkeypatch):
         """main() assembles and posts a Slack message."""
@@ -425,9 +456,13 @@ class TestMorningBriefMain:
         monkeypatch.setattr(self.mod, "vector_remember", lambda *a, **kw: None)
 
         self.mod.main()
-        assert self.mock_config.post_both.called
+        self.notify.assert_called_once()
+        _, kwargs = self.notify.call_args
+        assert kwargs["category"] == "morning_brief"
+        assert kwargs["dedup_key"] == f"morning-brief-{self.mod.TODAY}"
+        self.mock_config.post_both.assert_not_called()
 
-        posted_text = self.mock_config.post_both.call_args[0][0]
+        posted_text = _emitted_text(self.notify)
         assert "Good morning" in posted_text
         assert "Weather" in posted_text
         assert "Meetings today" in posted_text
@@ -449,7 +484,7 @@ class TestMorningBriefMain:
         monkeypatch.setattr(self.mod, "vector_remember", lambda *a, **kw: None)
 
         self.mod.main()
-        posted = self.mock_config.post_both.call_args[0][0]
+        posted = _emitted_text(self.notify)
         assert "\U0001f305" in posted  # sunrise emoji
         assert "\U0001f324" in posted  # weather emoji
         assert "Vector memory" in posted
@@ -470,14 +505,15 @@ class TestMorningBriefMain:
 
         # Should not raise
         self.mod.main()
-        assert self.mock_config.post_both.called
+        self.notify.assert_called_once()
+        assert "vector memory server is down" in _emitted_text(self.notify)
 
     def test_main_uses_threadpool_executor(self, monkeypatch):
         """main() uses ThreadPoolExecutor for parallel data fetching."""
         executor_used = []
 
         class MockExecutor:
-            def __init__(self, max_workers=6):
+            def __init__(self, max_workers=7):
                 executor_used.append(max_workers)
 
             def __enter__(self):
@@ -507,7 +543,7 @@ class TestMorningBriefMain:
 
         self.mod.main()
         assert len(executor_used) == 1
-        assert executor_used[0] == 6
+        assert executor_used[0] == 7  # weather, emails, calendar, mail, github, health, autonomy
 
 
 class TestMorningBriefVectorRemember:
@@ -547,6 +583,7 @@ class TestMorningBriefVectorRemember:
 # nova_daily_journal.py
 # ============================================================================
 
+@_NO_DAILY_JOURNAL
 class TestDailyJournalQuery:
     """Tests for _query() and _query_field() PostgreSQL helpers."""
 
@@ -589,6 +626,7 @@ class TestDailyJournalQuery:
         assert val is None
 
 
+@_NO_DAILY_JOURNAL
 class TestDailyJournalLoadState:
     """Tests for _load_state()."""
 
@@ -622,6 +660,7 @@ class TestDailyJournalLoadState:
         assert result == {}
 
 
+@_NO_DAILY_JOURNAL
 class TestDailyJournalSections:
     """Tests for individual data section generators."""
 
@@ -739,6 +778,7 @@ class TestDailyJournalSections:
         assert "Quiet day" in result
 
 
+@_NO_DAILY_JOURNAL
 class TestDailyJournalLLMSynthesis:
     """Tests for LLM synthesis via Ollama."""
 
@@ -801,6 +841,7 @@ class TestDailyJournalLLMSynthesis:
         assert "GitHub" in result
 
 
+@_NO_DAILY_JOURNAL
 class TestDailyJournalBuildMessage:
     """Tests for build_unified_message()."""
 
@@ -829,6 +870,7 @@ class TestDailyJournalBuildMessage:
         assert "─" in msg  # separator
 
 
+@_NO_DAILY_JOURNAL
 class TestDailyJournalMain:
     """Tests for the main() pipeline."""
 
@@ -854,6 +896,7 @@ class TestDailyJournalMain:
         assert self.mock_config.post_both.called
 
 
+@_NO_DAILY_JOURNAL
 class TestDailyJournalVectorRecall:
     """Tests for vector_recall() and memory gathering."""
 
@@ -1034,13 +1077,15 @@ class TestContextBridgeMain:
     def setup_module(self, mock_nova_config, monkeypatch):
         self.mock_config = mock_nova_config
         self.mod = _reload_module("nova_context_bridge")
+        self.notify = MagicMock(return_value=True)
+        monkeypatch.setattr(self.mod, "notify", self.notify)
 
     def test_main_no_signals(self, tmp_path, monkeypatch):
         """No signals means no bridge posted."""
         monkeypatch.setattr(self.mod, "STATE_FILE", tmp_path / "state.json")
         monkeypatch.setattr(self.mod, "gather_today_signals", lambda: [])
         self.mod.main()
-        assert not self.mock_config.post_both.called
+        self.notify.assert_not_called()
 
     def test_main_no_echoes_found(self, tmp_path, monkeypatch):
         """Signals exist but no echoes found -- no posting."""
@@ -1048,7 +1093,7 @@ class TestContextBridgeMain:
         monkeypatch.setattr(self.mod, "gather_today_signals", lambda: ["coding: add tests"])
         monkeypatch.setattr(self.mod, "recall", lambda q, n=8: [])
         self.mod.main()
-        assert not self.mock_config.post_both.called
+        self.notify.assert_not_called()
 
     @pytest.mark.functional
     def test_main_posts_bridge(self, tmp_path, monkeypatch):
@@ -1061,9 +1106,12 @@ class TestContextBridgeMain:
              "metadata": {"date": old_date}, "score": 0.65},
         ])
         self.mod.main()
-        assert self.mock_config.post_both.called
-        posted = self.mock_config.post_both.call_args[0][0]
-        assert "Thread from the past" in posted
+        self.notify.assert_called_once()
+        args, kwargs = self.notify.call_args
+        assert args[0] == "Thread from the past"
+        assert kwargs["category"] == "journal"
+        assert "feature flag" in kwargs["body"]
+        self.mock_config.post_both.assert_not_called()
 
 
 # ============================================================================
@@ -1229,12 +1277,21 @@ class TestThisDayFormatting:
         assert "### Notable Births" in result
 
     @pytest.mark.frame
-    def test_slack_post_chunks_long_messages(self):
-        """Long messages are split into 3000-char chunks."""
-        long_text = "x" * 7000
+    def test_slack_post_emits_one_calendar_digest(self, monkeypatch):
+        """slack_post() is one bus emit: first line -> title (markup stripped),
+        the rest -> body, deduped as the daily 'this-day-digest'. No chunking —
+        the notification daemon owns delivery."""
+        notify = MagicMock(return_value=True)
+        monkeypatch.setattr(self.mod, "notify", notify)
+        long_text = "*:calendar: On This Day*\n" + "x" * 7000
         self.mod.slack_post(long_text)
-        calls = self.mock_config.post_both.call_args_list
-        assert len(calls) == 3  # 7000 / 3000 = 3 chunks
+        notify.assert_called_once()
+        args, kwargs = notify.call_args
+        assert args[0] == "On This Day"
+        assert kwargs["body"] == "x" * 7000
+        assert kwargs["category"] == "calendar"
+        assert kwargs["dedup_key"] == "this-day-digest"
+        self.mock_config.post_both.assert_not_called()
 
 
 class TestThisDayMemoryFile:
@@ -1448,25 +1505,42 @@ class TestNightlyReportMoonPhase:
         assert "illuminated" in result
 
 
-class TestNightlyReportSlackChunking:
-    """Tests for Slack message chunking."""
+class TestNightlyReportSlackPost:
+    """Tests for slack_post() -> notification bus (title/body split, no chunking)."""
 
     @pytest.fixture(autouse=True)
     def setup_module(self, mock_nova_config, monkeypatch):
         self.mock_config = mock_nova_config
         self.mod = _reload_module("nova_nightly_report")
+        self.notify = MagicMock(return_value=True)
+        monkeypatch.setattr(self.mod, "notify", self.notify)
 
     @pytest.mark.frame
-    def test_short_message_single_chunk(self):
-        """Short messages posted as single chunk."""
+    def test_short_message_single_emit(self):
+        """A one-line section is one emit with no body."""
         self.mod.slack_post("Hello")
-        assert self.mock_config.post_both.call_count == 1
+        self.notify.assert_called_once()
+        args, kwargs = self.notify.call_args
+        assert args[0] == "Hello"
+        assert kwargs["body"] is None
+        assert kwargs["category"] == "digest"
+        self.mock_config.post_both.assert_not_called()
 
     @pytest.mark.frame
-    def test_long_message_multiple_chunks(self):
-        """Messages > 3000 chars split into multiple chunks."""
-        self.mod.slack_post("x" * 6500)
-        assert self.mock_config.post_both.call_count == 3
+    def test_long_message_is_one_emit_with_body(self):
+        """Long sections are not chunked: first line is the title, the rest the body."""
+        self.mod.slack_post("*GitHub*\n" + "x" * 6500)
+        self.notify.assert_called_once()
+        args, kwargs = self.notify.call_args
+        assert args[0] == "*GitHub*"
+        assert kwargs["body"] == "x" * 6500
+
+    @pytest.mark.frame
+    def test_blank_title_falls_back(self):
+        """A section that opens with a rule line gets the default title."""
+        self.mod.slack_post("────\nbody")
+        args, _ = self.notify.call_args
+        assert args[0] == "Nova Nightly Report"
 
 
 class TestNightlyReportDreamContext:
@@ -1528,6 +1602,8 @@ class TestNightlyReportMain:
     def setup_module(self, mock_nova_config, monkeypatch, tmp_path):
         self.mock_config = mock_nova_config
         self.mod = _reload_module("nova_nightly_report")
+        self.notify = MagicMock(return_value=True)
+        monkeypatch.setattr(self.mod, "notify", self.notify)
         self.mem_dir = tmp_path / "memory"
         self.mem_dir.mkdir()
         self.workspace = tmp_path / "workspace"
@@ -1568,7 +1644,8 @@ class TestNightlyReportMain:
 
         self.mod.main()
 
-        posted_texts = [c[0][0] for c in self.mock_config.post_both.call_args_list]
+        posted_texts = [_emitted_text(self.notify, i) for i in range(len(self.notify.call_args_list))]
+        self.mock_config.post_both.assert_not_called()
         # Header + non-empty sections + footer = should not include GitHub or Packages or HomeKit
         full_text = "\n".join(posted_texts)
         assert "No activity in the last 24 hours" not in full_text
@@ -1754,6 +1831,8 @@ class TestWeeklyReliabilityMain:
     def setup_module(self, mock_nova_config, mock_nova_logger, monkeypatch, tmp_path):
         self.mock_config = mock_nova_config
         self.mod = _reload_module("nova_weekly_reliability")
+        self.notify = MagicMock(return_value=True)
+        monkeypatch.setattr(self.mod, "notify", self.notify)
         mem_dir = tmp_path / "memory"
         mem_dir.mkdir()
         # Patch Path.home to redirect memory file writes
@@ -1775,9 +1854,13 @@ class TestWeeklyReliabilityMain:
         with patch("urllib.request.urlopen", return_value=_make_urlopen_response({"ok": True})):
             self.mod.main()
 
-        posted = self.mock_config.post_both.call_args[0][0]
+        posted = _emitted_text(self.notify)
         assert "Rock solid" in posted
         assert "99.5%" in posted
+        _, kwargs = self.notify.call_args
+        assert kwargs["dedup_key"] == "weekly-reliability"
+        assert kwargs["category"] == "scheduler"
+        self.mock_config.post_both.assert_not_called()
 
     @pytest.mark.functional
     def test_main_mostly_stable_verdict(self, monkeypatch):
@@ -1811,7 +1894,7 @@ class TestWeeklyReliabilityMain:
                 except AttributeError:
                     pass  # Known bug: t.id should be t[0]
 
-        posted = self.mock_config.post_both.call_args[0][0]
+        posted = _emitted_text(self.notify)
         assert "Mostly stable" in posted
 
     def test_failing_names_extracted_from_tuples(self, monkeypatch):
@@ -1847,7 +1930,7 @@ class TestWeeklyReliabilityMain:
         with patch("urllib.request.urlopen", return_value=_make_urlopen_response({"ok": True})):
             self.mod.main()
 
-        posted = self.mock_config.post_both.call_args[0][0]
+        posted = _emitted_text(self.notify)
         assert "Needs work" in posted
 
     @pytest.mark.frame
@@ -1865,7 +1948,7 @@ class TestWeeklyReliabilityMain:
         with patch("urllib.request.urlopen", return_value=_make_urlopen_response({"ok": True})):
             self.mod.main()
 
-        posted = self.mock_config.post_both.call_args[0][0]
+        posted = _emitted_text(self.notify)
         assert "Scheduler:" in posted
         assert "Tasks:" in posted
         assert "Logs:" in posted
@@ -1888,7 +1971,7 @@ class TestWeeklyReliabilityMain:
         with patch("urllib.request.urlopen", return_value=_make_urlopen_response({"ok": True})):
             self.mod.main()
 
-        posted = self.mock_config.post_both.call_args[0][0]
+        posted = _emitted_text(self.notify)
         assert "Idle tasks" in posted
         assert "lazy" in posted
 

@@ -51,8 +51,10 @@ class TestCanaryTimeoutBudget:
         assert "timeout=12" in canary_source, "Canary should use 12s timeout for Ollama"
         assert "timeout=30" not in canary_source, "Old 30s timeout should be removed"
 
-    def test_scheduler_canary_timeout_is_45(self):
-        """Verify scheduler.yaml gives canary 45s (not the old 15s)."""
+    def test_scheduler_canary_timeout_covers_budget(self):
+        """scheduler.yaml must give the canary at least its 45s worst-case budget and
+        keep it inside the 5m schedule. (15s -> 45s originally; 92e7e4a raised it to 67s
+        as part of a 1.5x headroom sweep across scheduler.yaml.)"""
         import yaml
         config_path = Path.home() / ".openclaw/config/scheduler.yaml"
         if not config_path.exists():
@@ -60,8 +62,9 @@ class TestCanaryTimeoutBudget:
         with open(config_path) as f:
             config = yaml.safe_load(f)
         canary_cfg = config.get("tasks", {}).get("canary", {})
-        assert canary_cfg.get("timeout") == 45, (
-            f"Canary scheduler timeout should be 45, got {canary_cfg.get('timeout')}"
+        timeout = canary_cfg.get("timeout")
+        assert timeout is not None and 45 <= timeout <= 300, (
+            f"Canary scheduler timeout must be within [45, 300]s, got {timeout}"
         )
 
 

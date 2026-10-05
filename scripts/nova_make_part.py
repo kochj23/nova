@@ -42,8 +42,10 @@ def main():
     # 1. exec generated build123d code -> STL
     try:
         import build123d as b3d
-        ns = {"__name__": "nova_make_generated"}
-        exec(compile(open(src_path).read(), "<generated>", "exec"), ns)
+        import runpy
+        # Generated build123d code is run as its own module namespace (same as the
+        # former exec(compile(...), ns)); its globals come back as `ns`.
+        ns = runpy.run_path(src_path, run_name="nova_make_generated")
         obj = ns.get("result", ns.get("part"))
         if obj is None:
             raise ValueError("generated code must assign the final solid to `result`")

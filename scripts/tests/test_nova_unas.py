@@ -97,9 +97,12 @@ class TestSecurity(unittest.TestCase):
         source = inspect.getsource(module)
         self.assertNotIn("sk-", source, "No API keys hardcoded in source")
         self.assertNotIn("Bearer ey", source, "No JWT tokens hardcoded")
-        # Must reference macOS 'security' command
-        self.assertIn("security", source)
-        self.assertIn("find-generic-password", source)
+        # API key is resolved through nova_config._keychain (macOS Keychain, with the
+        # fleet pgcrypto secret store as the Linux fallback) — never read from a file.
+        self.assertIn("_keychain(KEYCHAIN_SERVICE", source)
+        self.assertIn("Keychain", source)
+        # The login password still comes straight from the macOS 'security' tool
+        self.assertIn("find-internet-password", source)
 
     def test_host_is_local_network_not_cloud(self):
         """UNAS host must be a local IP, never an external cloud URL."""
@@ -124,8 +127,7 @@ class TestSecurity(unittest.TestCase):
 
     def test_no_credentials_in_request_url(self):
         """API key must never appear in the URL — only in headers."""
-        with patch("nova_unas_client.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="test-key-123\n")
+        with patch("nova_unas_client._load_api_key", return_value="test-key-123"):
             with patch("nova_unas_client.urllib.request.urlopen") as mock_open:
                 mock_resp = MagicMock()
                 mock_resp.__enter__ = lambda s: s
@@ -211,10 +213,9 @@ class TestRetry(unittest.TestCase):
 
     def test_transient_500_retried(self):
         """HTTP 500 should trigger retries."""
-        with patch("nova_unas_client.subprocess.run") as mock_run, \
+        with patch("nova_unas_client._load_api_key", return_value="test-key-123"), \
              patch("nova_unas_client.time.sleep"), \
              patch("nova_unas_client.urllib.request.urlopen") as mock_open:
-            mock_run.return_value = MagicMock(stdout="test-key\n")
             mock_open.side_effect = self._make_http_error(500)
             with self.assertRaises(UNASError):
                 _request("/api/system", retries=3)
@@ -222,9 +223,8 @@ class TestRetry(unittest.TestCase):
 
     def test_auth_401_not_retried(self):
         """HTTP 401 must raise immediately — no point retrying bad credentials."""
-        with patch("nova_unas_client.subprocess.run") as mock_run, \
+        with patch("nova_unas_client._load_api_key", return_value="test-key-123"), \
              patch("nova_unas_client.urllib.request.urlopen") as mock_open:
-            mock_run.return_value = MagicMock(stdout="test-key\n")
             mock_open.side_effect = self._make_http_error(401)
             with self.assertRaises(UNASError) as ctx:
                 _request("/api/system", retries=3)
@@ -233,9 +233,8 @@ class TestRetry(unittest.TestCase):
 
     def test_auth_403_not_retried(self):
         """HTTP 403 must raise immediately."""
-        with patch("nova_unas_client.subprocess.run") as mock_run, \
+        with patch("nova_unas_client._load_api_key", return_value="test-key-123"), \
              patch("nova_unas_client.urllib.request.urlopen") as mock_open:
-            mock_run.return_value = MagicMock(stdout="test-key\n")
             mock_open.side_effect = self._make_http_error(403)
             with self.assertRaises(UNASError):
                 _request("/api/system", retries=3)
@@ -244,10 +243,9 @@ class TestRetry(unittest.TestCase):
     def test_network_error_retried(self):
         """URLError (network down) must be retried."""
         import urllib.error
-        with patch("nova_unas_client.subprocess.run") as mock_run, \
+        with patch("nova_unas_client._load_api_key", return_value="test-key-123"), \
              patch("nova_unas_client.time.sleep"), \
              patch("nova_unas_client.urllib.request.urlopen") as mock_open:
-            mock_run.return_value = MagicMock(stdout="test-key\n")
             mock_open.side_effect = urllib.error.URLError("Network unreachable")
             with self.assertRaises(UNASError):
                 _request("/api/system", retries=2)
@@ -256,10 +254,9 @@ class TestRetry(unittest.TestCase):
     def test_success_on_second_attempt(self):
         """Should succeed if first attempt fails but second succeeds."""
         import urllib.error
-        with patch("nova_unas_client.subprocess.run") as mock_run, \
+        with patch("nova_unas_client._load_api_key", return_value="test-key-123"), \
              patch("nova_unas_client.time.sleep"), \
              patch("nova_unas_client.urllib.request.urlopen") as mock_open:
-            mock_run.return_value = MagicMock(stdout="test-key\n")
             mock_resp = MagicMock()
             mock_resp.__enter__ = lambda s: s
             mock_resp.__exit__ = MagicMock(return_value=False)
@@ -337,10 +334,21 @@ class TestUnit(unittest.TestCase):
 
     def test_load_api_key_returns_none_gracefully(self):
         """_load_api_key() must return None (not raise) if key missing."""
-        with patch("nova_unas_client.subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(stdout="\n")
-            result = _load_api_key()
-            self.assertIsNone(result)
+        with patch("nova_config._keychain", return_value=None):
+            self.assertIsNone(_load_api_key())
+        with patch("nova_config._keychain", return_value=""):
+            self.assertIsNone(_load_api_key())
+
+    def test_load_api_key_swallows_keychain_errors(self):
+        """A keychain/secret-store failure must degrade to None, never raise."""
+        with patch("nova_config._keychain", side_effect=RuntimeError("keychain locked")):
+            self.assertIsNone(_load_api_key())
+
+    def test_load_api_key_uses_nova_service_account(self):
+        import nova_unas_client as m
+        with patch("nova_config._keychain", return_value="k") as kc:
+            self.assertEqual(_load_api_key(), "k")
+        kc.assert_called_once_with(m.KEYCHAIN_SERVICE, account=m.KEYCHAIN_ACCOUNT, required=False)
 
     def test_request_raises_without_key(self):
         """_request() must raise UNASError if Keychain returns empty."""
@@ -396,16 +404,25 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(check_shares(snap), [])
         self.assertEqual(check_device(snap), [])
 
-    def test_storage_warning_at_80_pct(self):
+    def test_high_percent_with_plenty_free_is_not_a_problem(self):
+        """Alerts are free-space based: 82% used on a 56TB array is ~10TB free -> fine."""
         from nova_unas_monitor import check_storage
         snap = self._make_snapshot(storage_pct=82.0)
+        self.assertGreater(snap["storage"]["free_tb"], 3.0)
+        self.assertEqual(check_storage(snap), [])
+
+    def test_storage_warning_below_3tb_free(self):
+        from nova_unas_monitor import check_storage
+        snap = self._make_snapshot(storage_pct=95.0)   # ~2.8TB free of 56TB
+        self.assertLessEqual(snap["storage"]["free_tb"], 3.0)
         problems = check_storage(snap)
         self.assertEqual(len(problems), 1)
         self.assertIn("warning", problems[0].lower())
 
-    def test_storage_critical_at_90_pct(self):
+    def test_storage_critical_below_1_5tb_free(self):
         from nova_unas_monitor import check_storage
-        snap = self._make_snapshot(storage_pct=91.0)
+        snap = self._make_snapshot(storage_pct=98.0)   # ~1.1TB free of 56TB
+        self.assertLessEqual(snap["storage"]["free_tb"], 1.5)
         problems = check_storage(snap)
         self.assertEqual(len(problems), 1)
         self.assertIn("CRITICAL", problems[0])
@@ -460,7 +477,7 @@ class TestIntegration(unittest.TestCase):
     def test_slack_alerted_on_new_problems(self):
         """Monitor must post to Slack when new problems appear."""
         import nova_unas_monitor as mon
-        snap = self._make_snapshot(storage_pct=92.0)
+        snap = self._make_snapshot(storage_pct=98.0)   # ~1.1TB free -> CRITICAL
         with patch("nova_unas_monitor.client") as mock_client, \
              patch("nova_unas_monitor._save_status"), \
              patch("nova_unas_monitor._load_state", return_value={"problems": []}), \
@@ -551,7 +568,7 @@ class TestFunctional(unittest.TestCase):
             "device": {"model": "UNASPRO8", "name": "UNAS Pro 8", "mac": "X",
                        "state": "configured", "cloud_connected": False, "has_internet": True},
             "storage": {"status": "healthy", "total_bytes": 100, "used_bytes": 10,
-                        "free_bytes": 90, "used_pct": 10.0, "total_tb": 0.0, "free_tb": 0.0,
+                        "free_bytes": 90, "used_pct": 10.0, "total_tb": 55.9, "free_tb": 50.3,
                         "needs_more_disk": False},
             "shares": [],
             "timestamp": 1000.0,
@@ -624,9 +641,10 @@ class TestFrame(unittest.TestCase):
 
     def test_monitor_threshold_constants(self):
         import nova_unas_monitor as m
-        self.assertGreater(m.STORAGE_WARN_PCT, 0)
-        self.assertGreater(m.STORAGE_CRIT_PCT, m.STORAGE_WARN_PCT)
-        self.assertLessEqual(m.STORAGE_CRIT_PCT, 100)
+        # free-space thresholds (TB): critical must be the tighter (smaller) one
+        self.assertGreater(m.STORAGE_CRIT_FREE_TB, 0)
+        self.assertGreater(m.STORAGE_WARN_FREE_TB, m.STORAGE_CRIT_FREE_TB)
+        self.assertFalse(hasattr(m, "STORAGE_WARN_PCT"), "percent thresholds were retired (7c5babe)")
 
     def test_state_dir_path_is_under_home(self):
         import nova_unas_monitor as m

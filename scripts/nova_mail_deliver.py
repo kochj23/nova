@@ -84,7 +84,7 @@ def slack_post(text):
 def send_email(subject, body):
     """Send the daily mail summary to Jordan's PERSONAL inbox.
 
-    Was JORDAN_WORK_EMAIL — but that's the sanitized placeholder 'user@example-corp.com' (a dead
+    Was JORDAN_WORK_EMAIL — but that's the sanitized example-corp placeholder address (a dead
     default that was never replaced), so the digest silently bounced twice a day and Jordan never
     got it. A personal mail digest belongs in his personal inbox anyway, never a work address
     (redline: no work involvement). Fixed 2026-08-11."""

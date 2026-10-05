@@ -76,6 +76,22 @@ class FakeConn:
         self.closed = True
 
 
+def _seed_fresh_states(monkeypatch):
+    """Transition-based alerting (8fe5571): a stream only PAGES on a fresh->stale
+    transition. First-ever sight of a broken stream is a silent 'known-dead' baseline.
+    Seed every explicit stream as previously-fresh so staleness is a transition."""
+    prior = {s.name: {"state": "fresh", "problem_kind": None, "first_stale_ts": None,
+                      "last_alerted_ts": None, "last_alert_num": 0}
+             for s in fm.EXPLICIT_STREAMS}
+    monkeypatch.setattr(fm, "load_states", lambda conn: prior)
+    return prior
+
+
+def _pageable_explicit():
+    """Explicit streams that may emit: human-muted streams are recorded but never notify."""
+    return [s for s in fm.EXPLICIT_STREAMS if s.name not in fm.MUTED_STREAMS]
+
+
 def _collect_notifier():
     calls = []
 
@@ -155,17 +171,43 @@ class TestFunctional:
         assert r.breach is True and r.age_s is None and "NO DATA" in r.reason
 
     def test_run_once_notifies_only_breaches(self, monkeypatch):
-        # discovery returns nothing; make EVERY explicit stream stale so breaches fire.
+        # discovery returns nothing; every explicit stream was fresh and is now stale,
+        # so each (non-muted) one is a fresh->stale TRANSITION and pages exactly once.
         monkeypatch.setattr(fm, "discover_streams", lambda conn: [])
+        _seed_fresh_states(monkeypatch)
         conn = FakeConn(age_value=10**9)
         calls, notifier = _collect_notifier()
         summary = fm.run_once(conn, notify_fn=notifier)
         assert summary["checked"] == len(fm.EXPLICIT_STREAMS)
-        assert len(calls) == len(fm.EXPLICIT_STREAMS)
+        assert len(summary["breaches"]) == len(fm.EXPLICIT_STREAMS)
+        assert len(calls) == len(_pageable_explicit())
+        assert sorted(summary["emitted"]) == sorted(s.name for s in _pageable_explicit())
         for c in calls:
             assert c["category"] == "freshness"
             assert c["dedup_key"].startswith("freshness:")
             assert c["source"] == "nova_freshness_monitor.py"
+            assert c["meta"]["action"] == "transition"
+
+    def test_first_sight_of_dead_stream_is_silent_baseline(self, monkeypatch):
+        # No prior state at all: a long-dead producer must be RECORDED, not paged
+        # (init_silent) — this is what tamed the ~768/day re-alert storm.
+        monkeypatch.setattr(fm, "discover_streams", lambda conn: [])
+        monkeypatch.setattr(fm, "load_states", lambda conn: {})
+        conn = FakeConn(age_value=10**9)
+        calls, notifier = _collect_notifier()
+        summary = fm.run_once(conn, notify_fn=notifier)
+        assert len(summary["breaches"]) == len(fm.EXPLICIT_STREAMS)
+        assert calls == [] and summary["emitted"] == []
+
+    def test_muted_stream_never_pages(self, monkeypatch):
+        monkeypatch.setattr(fm, "discover_streams", lambda conn: [])
+        _seed_fresh_states(monkeypatch)
+        conn = FakeConn(age_value=10**9)
+        calls, notifier = _collect_notifier()
+        summary = fm.run_once(conn, notify_fn=notifier)
+        for muted in fm.MUTED_STREAMS:
+            assert muted not in summary["emitted"]
+            assert not any(c["meta"]["stream"] == muted for c in calls)
 
     def test_dry_run_suppresses_notifications(self, monkeypatch):
         monkeypatch.setattr(fm, "discover_streams", lambda conn: [])
@@ -183,6 +225,7 @@ class TestFunctional:
 
     def test_breach_level_matches_stream(self, monkeypatch):
         monkeypatch.setattr(fm, "discover_streams", lambda conn: [])
+        _seed_fresh_states(monkeypatch)
         conn = FakeConn(age_value=10**9)
         calls, notifier = _collect_notifier()
         fm.run_once(conn, notify_fn=notifier)
@@ -291,9 +334,13 @@ class TestPerformance:
         conn = FakeConn(age_value=1.0)
         cur = conn.cursor()
         fm.run_once(conn, notify_fn=lambda *a, **k: True, dry_run=True)
-        # exactly one age query per explicit stream (no N^2, no per-row scans)
-        age_queries = [q for q in cur.executed if q.startswith("SELECT")]
+        # exactly one max() age aggregate per explicit stream (no N^2, no per-row scans).
+        # The state store adds a bounded O(1) overhead per pass (one SELECT of the
+        # freshness_state table + one SELECT now()), which is not per-stream work.
+        age_queries = [q for q in cur.executed if q.startswith("SELECT") and "max(" in q]
         assert len(age_queries) == len(fm.EXPLICIT_STREAMS)
+        other = [q for q in cur.executed if q.startswith("SELECT") and "max(" not in q]
+        assert len(other) <= 2
 
     def test_age_sql_is_single_aggregate(self):
         # every query must be a single-row max() aggregate — never a full table pull
@@ -407,7 +454,9 @@ class TestIntegration:
         for s in fm.build_streams(real_conn):
             r = fm.check_stream(real_conn, s)
             assert r.error is None, f"{s.name} errored: {r.error}"
-            assert r.age_s is None or r.age_s >= 0
+            # writer hosts' clocks can run a few ms ahead of pg-primary -> tiny negative
+            # age; the query itself is valid. Tolerate sub-5s skew, flag anything larger.
+            assert r.age_s is None or r.age_s >= -5.0, f"{s.name} age {r.age_s}"
 
     def test_run_once_dry_run_summary(self, real_conn):
         summary = fm.run_once(real_conn, notify_fn=lambda *a, **k: True, dry_run=True)

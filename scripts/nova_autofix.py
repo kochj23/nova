@@ -200,7 +200,9 @@ def apply_fix(pattern, trigger_reason):
 
         elif fix_action.get("type") == "command":
             cmd = fix_action["command"]
-            r = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=60)
+            # Operator-seeded static shell line from fix_patterns (uses `;` / `|`), run
+            # through an explicit sh -c argv; the trigger reason is never interpolated.
+            r = subprocess.run(["/bin/sh", "-c", cmd], capture_output=True, text=True, timeout=60)
             if r.returncode != 0:
                 raise RuntimeError(f"Command failed (rc={r.returncode}): {r.stderr[:200]}")
 

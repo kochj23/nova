@@ -3,11 +3,18 @@
 functional, security, privacy, performance, regression, integration, docs.
 Written by Jordan Koch (via Claude)."""
 import importlib.util
+import io
+import json
+import os
 import re
+import subprocess
+import sys
 import time
 import unittest
-from datetime import date
+from contextlib import redirect_stdout
+from datetime import date, datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 
@@ -114,6 +121,186 @@ class TestDocs(unittest.TestCase):
     def test_listed_in_readme(self):
         readme = (SCRIPTS.parent / "README.md").read_text()
         self.assertIn("nova_weight_of_memory.py", readme)
+
+
+# ── house categories added 2026-10-05: Retry, Unit, Frame ───────────────────────
+
+class _Cur:
+    """Cursor stub: answers fetchone/fetchall by substring of the last SQL, records every execute."""
+    def __init__(self, routes=None):
+        self.routes = routes or []; self.sql = []; self.params = []; self._last = ""
+
+    def execute(self, sql, params=None):
+        self.sql.append(sql); self.params.append(params); self._last = sql
+        for needle, val in self.routes:
+            if needle in sql and isinstance(val, Exception):
+                raise val
+
+    def _route(self, default):
+        for needle, val in self.routes:
+            if needle in self._last:
+                return val
+        return default
+
+    def fetchone(self):
+        return self._route(None)
+
+    def fetchall(self):
+        return self._route([])
+
+
+class _Conn:
+    def __init__(self, cur):
+        self._cur = cur; self.autocommit = False
+
+    def cursor(self):
+        return self._cur
+
+
+class _Resp:
+    def __init__(self, payload):
+        self._b = json.dumps(payload).encode()
+
+    def read(self):
+        return self._b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class TestRetry(unittest.TestCase):
+    def test_remember_retries_twice_then_succeeds_with_backoff(self):
+        calls, slept = [], []
+
+        def flaky(req, timeout=None):
+            calls.append(1)
+            if len(calls) < 3:
+                raise OSError("memory server down")
+            return _Resp({"id": 5})
+        with mock.patch("urllib.request.urlopen", flaky):
+            self.assertEqual(wm.remember("t", {}, _sleep=slept.append), {"id": 5})
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(slept, [2, 4])
+
+    def test_remember_raises_after_the_last_attempt(self):
+        calls = []
+
+        def boom(req, timeout=None):
+            calls.append(1); raise OSError("down")
+        with mock.patch("urllib.request.urlopen", boom):
+            with self.assertRaises(OSError):
+                wm.remember("t", {}, _tries=4, _sleep=lambda s: None)
+        self.assertEqual(len(calls), 4)
+
+    # RETRY GAP: main() psycopg2.connect — one attempt; fails open to rc 0 and writes nothing.
+    def test_main_fails_open_without_pg(self):
+        calls = []
+
+        def boom(*a, **k):
+            calls.append(1); raise OSError("pg down")
+        with mock.patch.object(wm.psycopg2, "connect", boom), mock.patch.object(wm.sys, "argv", ["x"]), \
+             mock.patch("urllib.request.urlopen", side_effect=AssertionError("network")), \
+             redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(wm.main(), 0)
+        self.assertEqual(len(calls), 1)
+        self.assertIn("fail-open", out.getvalue())
+
+    def test_gather_fails_open_on_a_broken_read(self):
+        with redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(wm.gather(_Cur([("FROM preoccupations", RuntimeError("no table"))]), date(2026, 10, 5)), [])
+        self.assertIn("preoccupations read failed", out.getvalue())
+
+
+class TestUnit(unittest.TestCase):
+    def test_weight_edges(self):
+        self.assertEqual(wm.weight(0, 0, 0), 0.0)
+        self.assertEqual(wm.weight(wm.MIN_RETURNS, -50, 0), float(wm.MIN_RETURNS))     # negative longevity clamps to 0
+        self.assertEqual(wm.weight(10, 100, wm.STALE_DAYS), wm.weight(10, 100, 0))      # decay starts strictly past STALE_DAYS
+        self.assertAlmostEqual(wm.weight(10, 100, wm.STALE_DAYS * 2), wm.weight(10, 100, 0) / 2)
+
+    def test_months_rounds_and_floors_at_one(self):
+        self.assertEqual(wm._months(0), 1)
+        self.assertEqual(wm._months(44), 1)
+        self.assertEqual(wm._months(46), 2)
+        self.assertEqual(wm._months(365), 12)
+
+    def test_rank_and_sig_on_empty_input(self):
+        self.assertEqual(wm.rank_weighty([]), [])
+        self.assertEqual(wm.rank_weighty([{"key": "a", "weight": 1.0}], n=0), [])
+        self.assertEqual(wm.weigh_sig([]), wm.weigh_sig([]))
+        self.assertEqual(len(wm.weigh_sig([{"key": "a"}])), 16)
+
+    def test_fresh_treats_malformed_state_as_fresh(self):
+        today = date(2026, 10, 5)
+        self.assertTrue(wm._fresh({"s": "not-a-date"}, "s", today))
+        self.assertTrue(wm._fresh({"s": ""}, "s", today))
+        self.assertTrue(wm._fresh({}, "s", today))
+        self.assertFalse(wm._fresh({"s": "2026-10-04"}, "s", today))
+
+    def test_load_and_save_seen_round_trip(self):
+        self.assertEqual(wm.load_seen(_Cur([("FROM service_config", ({"seen": {"a": "2026-10-01"}},))])), {"a": "2026-10-01"})
+        self.assertEqual(wm.load_seen(_Cur([("FROM service_config", ('{"seen": {"b": "2026-10-02"}}',))])), {"b": "2026-10-02"})
+        self.assertEqual(wm.load_seen(_Cur([("FROM service_config", (None,))])), {})
+        self.assertEqual(wm.load_seen(_Cur()), {})
+        cur = _Cur(); wm.save_seen(cur, {"a": "2026-10-05"})
+        self.assertEqual(cur.params[0][:2], (wm.STATE_SERVICE, wm.STATE_KEY))
+        self.assertEqual(json.loads(cur.params[0][2]), {"seen": {"a": "2026-10-05"}})
+
+    def test_gather_computes_longevity_and_staleness(self):
+        today = date(2026, 10, 5)
+        rows = [(1, "the failing disk", 22, date(2026, 2, 1), date(2026, 10, 3)),
+                (2, "never developed", 5, None, None),
+                (3, "shallow", 1, date(2026, 10, 1), date(2026, 10, 1))]   # the SQL COALESCEs returns to 0
+        items = wm.gather(_Cur([("FROM preoccupations", rows)]), today)
+        by = {i["key"]: i for i in items}
+        self.assertEqual((by["preocc:1"]["longevity_days"], by["preocc:1"]["days_since"]), (244, 2))
+        self.assertEqual((by["preocc:2"]["longevity_days"], by["preocc:2"]["days_since"]), (0, 10**6))
+        self.assertEqual(by["preocc:3"]["weight"], 0.0)
+        self.assertEqual([i["key"] for i in wm.rank_weighty(items)], ["preocc:1", "preocc:2"])
+
+    def test_main_golden_path_writes_once_then_dedups(self):
+        today = datetime.now(timezone.utc).date()
+        rows = [(1, "the failing disk", 22, today - date.resolution * 240, today - date.resolution * 2)]
+        posted = []
+
+        def urlopen(req, timeout=None):
+            posted.append(json.loads(req.data.decode())); return _Resp({"id": 1})
+        cur = _Cur([("FROM preoccupations", rows)])
+        with mock.patch.object(wm.psycopg2, "connect", return_value=_Conn(cur)), mock.patch.object(wm.sys, "argv", ["x"]), \
+             mock.patch("urllib.request.urlopen", urlopen), mock.patch.object(wm, "_stamp", return_value={}), \
+             redirect_stdout(io.StringIO()):
+            self.assertEqual(wm.main(), 0)
+        self.assertEqual(len(posted), 1)
+        self.assertEqual(posted[0]["source"], wm.SOURCE)
+        self.assertIn("the failing disk — returned to 22x", posted[0]["text"])
+        self.assertEqual(posted[0]["metadata"]["heaviest"], ["preocc:1"])
+        saved = [p for s, p in zip(cur.sql, cur.params) if "INSERT INTO service_config" in s]
+        sig = posted[0]["metadata"]["sig"]
+        self.assertEqual(json.loads(saved[0][2])["seen"], {sig: today.isoformat()})
+        # same heaviest set, same day -> nothing re-stated
+        cur2 = _Cur([("FROM preoccupations", rows), ("FROM service_config", ({"seen": {sig: today.isoformat()}},))])
+        with mock.patch.object(wm.psycopg2, "connect", return_value=_Conn(cur2)), mock.patch.object(wm.sys, "argv", ["x"]), \
+             mock.patch("urllib.request.urlopen", side_effect=AssertionError("must not post")), \
+             redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(wm.main(), 0)
+        self.assertIn("heaviest set unchanged", out.getvalue())
+        self.assertFalse(any("INSERT" in s for s in cur2.sql))
+
+
+class TestFrame(unittest.TestCase):
+    def test_selftest_exits_zero(self):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_weight_of_memory.py"), "--selftest"],
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("all weight-of-memory assertions passed", r.stdout)
+
+    def test_import_never_runs_main(self):
+        self.assertIn('if __name__ == "__main__":', SRC)
+        with mock.patch.object(wm.psycopg2, "connect", side_effect=AssertionError("main ran")):
+            _load("wm_again", SCRIPTS / "nova_weight_of_memory.py")
 
 
 if __name__ == "__main__":

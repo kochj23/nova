@@ -21,6 +21,17 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+# nova_daily_opinion.py was deliberately removed in commit adf1671 ("Tier B (dead code):
+# remove 7 orphaned files (daily_opinion/daily_journal superseded)"). The opinion tests
+# are kept so they light up again if the script is ever restored, but are skipped
+# while the file is absent.
+_OPINION_SCRIPT = Path(__file__).parent.parent / "nova_daily_opinion.py"
+opinion_removed = pytest.mark.skipif(
+    not _OPINION_SCRIPT.exists(),
+    reason="nova_daily_opinion.py removed as dead code in commit adf1671 (superseded); "
+           "restore the script to re-enable these tests",
+)
+
 
 # ── Fixtures ────────────────────────────────────────────────────────────────
 
@@ -31,6 +42,9 @@ def essay_module(mock_nova_config):
     for mod in list(sys.modules.keys()):
         if "nova_daily_essay" in mod:
             del sys.modules[mod]
+    # pick_subject() gates every source through nova_config.is_private_source(); a bare
+    # MagicMock returns a truthy Mock, which would filter out *every* source.
+    mock_nova_config.is_private_source.return_value = False
     # Mock herd_config and subprocess calls for Keychain
     sys.modules["herd_config"] = MagicMock(HERD=[{"name": "Test", "email": "test@example.com"}])
     with patch("subprocess.run") as mock_sub:
@@ -186,6 +200,7 @@ class TestEssayGeneration:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+@opinion_removed
 class TestOpinionNewsFetch:
     """Tests for Google News RSS fetching."""
 
@@ -207,6 +222,7 @@ class TestOpinionNewsFetch:
         assert stories == []
 
 
+@opinion_removed
 class TestOpinionStorySelection:
     """Tests for story selection."""
 
@@ -223,6 +239,7 @@ class TestOpinionStorySelection:
         assert opinion_module.pick_story([], {"recent_stories": []}) is None
 
 
+@opinion_removed
 class TestOpinionExtractTitle:
     """Tests for opinion title extraction."""
 
@@ -319,6 +336,7 @@ class TestContentSecurity:
         assert "sk-" not in source
         assert "AKIA" not in source
 
+    @opinion_removed
     def test_opinion_no_hardcoded_keys(self, opinion_module):
         import inspect
         source = inspect.getsource(opinion_module)
@@ -329,6 +347,7 @@ class TestContentSecurity:
         source = inspect.getsource(digest_module)
         assert "sk-" not in source
 
+    @opinion_removed
     def test_opinion_uses_email_scrubbing(self, opinion_module):
         """Verify opinion publishes with email redaction."""
         import inspect
@@ -371,6 +390,7 @@ class TestEssayWorkflow:
 
 
 @pytest.mark.functional
+@opinion_removed
 class TestOpinionWorkflow:
     """Functional test for full opinion pipeline."""
 
