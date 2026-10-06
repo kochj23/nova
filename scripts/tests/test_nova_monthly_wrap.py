@@ -4,6 +4,7 @@ Retry, Integration, Functional, Frame). Every model / image / git / PG / notify 
 mocked. Written by Jordan Koch (via Claude)."""
 import importlib.util
 import io
+from json import loads as json_loads
 import re
 import shutil
 import sys
@@ -31,6 +32,7 @@ mw = _load("nova_monthly_wrap_t", SCRIPTS / "nova_monthly_wrap.py")
 SRC = (SCRIPTS / "nova_monthly_wrap.py").read_text()
 _TMP = Path(tempfile.mkdtemp())
 mw.CONTENT_ROOT = _TMP / "content"
+mw.IMAGES_ROOT = _TMP / "static/images"
 mw.LOG_FILE = _TMP / "wrap.log"
 mw._TAP["installed"] = True            # never wrap the real nova_journal.log in tests
 mw.system_prompt = lambda ctx="", **k: "VOICE\n" + ctx   # real one reads PG
@@ -391,6 +393,45 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(sorted(rep["deferred"]), ["local", "operations"])
         mw.git_push.assert_not_called()
 
+    def test_force_republishes_in_place_and_keeps_existing_cover(self):
+        with _q():
+            mw.run("2026-09", ["local"])
+        wrap = mw.CONTENT_ROOT / "local/2026-09-local-monthly-wrap.md"
+        wrap.write_text('---\ntitle: "old"\n---\n\n' + "short " * 100)
+        cover = mw.IMAGES_ROOT / "local/2026-09-local-monthly-wrap.webp"
+        cover.parent.mkdir(parents=True, exist_ok=True)
+        cover.write_bytes(b"RIFF-old-cover")
+        mw.publish_hugo.reset_mock(); mw.generate_image.reset_mock(); mw.git_push.reset_mock()
+        seen = {}
+        orig = mw.publish_hugo.side_effect
+
+        def capture(*a, **k):
+            seen["img"] = Path(k["image_path"]).read_bytes()
+            return orig(*a, **k)
+        mw.publish_hugo.side_effect = capture
+        with _q():
+            rep = mw.run("2026-09", ["local"])                  # without --force: deduped
+        mw.publish_hugo.assert_not_called()
+        with _q():
+            rep = mw.run("2026-09", ["local"], force=True)
+        self.assertEqual([r["section"] for r in rep["published"]], ["local"])
+        r = rep["published"][0]
+        self.assertEqual(r["before_words"], 100)
+        self.assertEqual(mw.publish_hugo.call_args.kwargs["stable_slug"], "2026-09-local-monthly-wrap")
+        mw.generate_image.assert_not_called()                     # existing cover kept
+        self.assertEqual(seen["img"], b"RIFF-old-cover")
+        self.assertNotEqual(Path(mw.publish_hugo.call_args.kwargs["image_path"]), cover)  # temp copy, not itself
+        self.assertFalse(Path(mw.publish_hugo.call_args.kwargs["image_path"]).exists())   # temp cleaned up
+        self.assertEqual(len(list(wrap.parent.glob("*-monthly-wrap.md"))), 1)            # same file overwritten
+        self.assertGreater(mw._written_words("local", "2026-09"), 2000)
+        self.assertTrue(json_loads(FakePG.rows[("nova_monthly_wrap", "2026-09:local")])["republished"])
+        self.assertEqual(mw.git_push.call_count, 1)
+        # cover missing -> generated as usual
+        cover.unlink(); mw.generate_image.reset_mock()
+        with _q():
+            mw.run("2026-09", ["local"], force=True)
+        mw.generate_image.assert_called()
+
     def test_dry_run_never_writes(self):
         with _q():
             rep = mw.run("2026-09", dry_run=True)
@@ -419,6 +460,16 @@ class TestFrame(unittest.TestCase):
             with self.assertRaises(SystemExit) as cm:
                 mw.main(["--month", "September"])
         self.assertEqual(cm.exception.code, 2)
+
+    def test_cli_force_requires_section(self):
+        with _q(), patch("sys.stderr", io.StringIO()):
+            with self.assertRaises(SystemExit) as cm:
+                mw.main(["--month", "2026-09", "--force"])
+        self.assertEqual(cm.exception.code, 2)
+        _reset()
+        with _q(), patch.object(mw, "run", return_value={"failed": [], "published": [1]}) as run:
+            self.assertEqual(mw.main(["--month", "2026-09", "--section", "local", "--force"]), 0)
+        self.assertTrue(run.call_args.kwargs["force"])
 
     def test_cli_generate_implies_dry_run(self):
         _reset()

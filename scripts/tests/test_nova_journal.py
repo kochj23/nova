@@ -411,13 +411,165 @@ class TestIntegration(unittest.TestCase):
         self.assertNotIn("as the source log says", text); self.assertIn(BODY[:60], text)
         self.assertIn("Dr. Ada Moss", nj.LOG_FILE.read_text())                    # rejected claim is logged
 
-    def test_invented_numbers_rejected_before_model_check(self):
+    def test_invented_numbers_are_stripped_then_both_checks_rerun(self):
+        # strip-not-scrap: the added sentence carrying the invented numbers is cut, the
+        # claim check runs on the full expansion, then BOTH checks re-run on the stripped text
         padded = self.GROUNDED + " It took 29 minutes and 0.08% of the budget."
-        text, co = self._pub("Essay With Invented Numbers", BODY, "essay", self.SOURCES, replies=[padded])
-        self.assertEqual(co.call_count, 1)                                         # no checker call needed
-        self.assertNotIn("29 minutes", text); self.assertIn(BODY[:60], text)
+        text, co = self._pub("Essay With Invented Numbers", BODY, "essay", self.SOURCES,
+                             replies=[padded, '{"unsupported": []}', '{"unsupported": []}'])
+        self.assertEqual(co.call_count, 3)
+        self.assertNotIn("29 minutes", text); self.assertIn("as the source log says", text)
+        self.assertIn("EXPANDED:", co.call_args_list[2][0][1])
+        self.assertNotIn("29 minutes", co.call_args_list[2][0][1])               # recheck saw the stripped text
+        log = nj.LOG_FILE.read_text()
+        self.assertIn("number check flagged (not in draft/sources): ['0.08%', '29']", log)
+        self.assertIn("strip: removed 'It took 29 minutes", log)
+        self.assertIn("strip-and-recheck passed", log)
         self.assertEqual(nj.new_numbers("draft 2014", "src 6.5 and 42", "2014, 6.5, 42 and 1. but 29 and 0.08%"),
                          ["0.08%", "29"])
+
+    # ── strip-not-scrap (2026-10-06) ──
+    ADJ = ("amber brisk calm dusty eager faint gentle hollow idle jagged keen lucid mellow nimble "
+           "opaque placid quiet rusty sleepy tidy umber vivid weary young zesty bold crisp dim even frank").split()
+    ADDED = [f"The {a} scheduler restarted on Tuesday at the memory host, as the source log says." for a in ADJ]
+    INVENTED = "Mayor Ada Moss blamed the outage on sabotage."
+
+    def _expansion(self, extra=()):
+        paras = [BODY] + [" ".join(self.ADDED[i:i + 5]) for i in range(0, len(self.ADDED), 5)]
+        return "\n\n".join(paras + list(extra))
+
+    @staticmethod
+    def _flag(sentence, claim=None, typ="event"):
+        return json.dumps({"unsupported": [{"claim": claim or sentence[:30], "sentence": sentence, "type": typ}]})
+
+    def test_checker_prompt_asks_for_the_verbatim_sentence(self):
+        self.assertIn('"sentence"', nj._CHECK_SYS); self.assertIn("VERBATIM", nj._CHECK_SYS)
+
+    def test_flagged_added_sentence_stripped_and_recheck_passes_publishes_expansion(self):
+        exp = self._expansion([f"## Aftermath\n\n{self.INVENTED}", "## Close\n\nAnd so it went."])
+        text, co = self._pub("Essay Strip One Invented", BODY, "essay", self.SOURCES,
+                             replies=[exp, self._flag(self.INVENTED), '{"unsupported": []}'])
+        self.assertEqual(co.call_count, 3)
+        self.assertEqual(co.call_args_list[2].kwargs["model"], nj.CHECK_MODEL)
+        self.assertNotIn("Ada Moss", text)
+        self.assertNotIn("## Aftermath", text)                                   # newly orphaned heading tidied
+        self.assertIn("## Close", text); self.assertIn("The amber scheduler", text); self.assertIn(BODY[:60], text)
+        log = nj.LOG_FILE.read_text()
+        self.assertIn("stripped 1/", log); self.assertIn("strip-and-recheck passed", log)
+
+    def test_flag_in_a_draft_sentence_is_never_removed_and_original_publishes(self):
+        draft_sentence = BODY.split(". ")[0] + "."
+        text, co = self._pub("Essay Flag Lands In Draft", BODY, "essay", self.SOURCES,
+                             replies=[self._expansion(), self._flag(draft_sentence)])
+        self.assertEqual(co.call_count, 2)                                         # no recheck: nothing strippable
+        self.assertNotIn("The amber scheduler", text); self.assertIn(BODY[:60], text)
+        self.assertIn("draft sentences are never removed", nj.LOG_FILE.read_text())
+        # the helper itself refuses (draft text untouched)
+        st = nj.strip_flagged(BODY, self._expansion(), [], [{"claim": "x", "sentence": draft_sentence, "type": "event"}])
+        self.assertFalse(st["ok"]); self.assertEqual(st["removed"], [])
+
+    def test_flag_in_an_edited_draft_sentence_reverts_it_to_the_draft_wording(self):
+        draft = "The backup job finished at dawn and nobody had to touch it at all.\n\nThat was the whole week."
+        edited = "The backup job finished at dawn after 418 retries and nobody had to touch it at all."
+        exp = (edited + "\n\nThat was the whole week.\n\n"
+               + "\n\n".join(" ".join(self.ADDED[i:i + 5]) for i in range(0, 30, 5)))
+        st = nj.strip_flagged(draft, exp, ["418"], [])
+        self.assertTrue(st["ok"], st["why"]); self.assertEqual(st["removed"], [])
+        self.assertEqual(st["reverted"], [(edited, "The backup job finished at dawn and nobody had to touch it at all.")])
+        self.assertTrue(st["text"].startswith("The backup job finished at dawn and nobody had to touch it at all.\n\n"))
+        self.assertNotIn("418", st["text"]); self.assertIn("The amber scheduler", st["text"])
+
+    def test_paraphrased_flag_is_located_fuzzily_else_fails_closed(self):
+        exp = self._expansion(["Nine days later, I reached for the Newsom shield-bill metaphor again, unprompted."])
+        # the checker paraphrased instead of quoting verbatim (seen live 2026-10-06)
+        st = nj.strip_flagged(BODY, exp, [], [{"claim": "the Newsom 'shield bill' metaphor was reused nine days later",
+                                               "type": "number"}])
+        self.assertTrue(st["ok"], st["why"]); self.assertEqual(len(st["removed"]), 1)
+        self.assertIn("shield-bill", st["removed"][0])
+        st = nj.strip_flagged(BODY, exp, [], [{"claim": "x", "type": "event",
+                                               "sentence": "Nine days on, I reached for that Newsom shield-bill metaphor again."}])
+        self.assertTrue(st["ok"], st["why"]); self.assertIn("shield-bill", st["removed"][0])
+        # an ambiguous paraphrase (ties across sentences) is not guessed -> fail closed
+        st = nj.strip_flagged(BODY, exp, [], [{"claim": "memory host scheduler restart on Tuesday per source log",
+                                               "type": "event"}])            # 30 sentences tie at 75%
+        self.assertFalse(st["ok"]); self.assertIn("could not locate", st["why"])
+
+    def test_unlocatable_flag_fails_closed(self):
+        text, co = self._pub("Essay Flag Not Found", BODY, "essay", self.SOURCES,
+                             replies=[self._expansion(), self._flag("Something the text never says at all.")])
+        self.assertEqual(co.call_count, 2); self.assertNotIn("The amber scheduler", text)
+        self.assertIn("could not locate", nj.LOG_FILE.read_text())
+
+    def test_recheck_still_flags_publishes_original(self):
+        exp = self._expansion([self.INVENTED])
+        text, co = self._pub("Essay Recheck Still Flags", BODY, "essay", self.SOURCES,
+                             replies=[exp, self._flag(self.INVENTED), self._flag(self.ADDED[3], "amber")])
+        self.assertEqual(co.call_count, 3)
+        self.assertNotIn("The amber scheduler", text); self.assertIn(BODY[:60], text)
+        self.assertIn("recheck REJECTED", nj.LOG_FILE.read_text())
+
+    def test_checker_error_on_recheck_publishes_original(self):
+        for i, bad in enumerate([None, "garbage verdict", RuntimeError("cli died")]):
+            with self.subTest(bad=bad):
+                text, co = self._pub(f"Essay Recheck Broke Case {'abc'[i]}", BODY, "essay", self.SOURCES,
+                                     replies=[self._expansion([self.INVENTED]), self._flag(self.INVENTED), bad])
+                self.assertEqual(co.call_count, 3)
+                self.assertNotIn("The amber scheduler", text); self.assertIn(BODY[:60], text)
+
+    def test_more_than_15_percent_cut_publishes_original(self):
+        flags = json.dumps({"unsupported": [{"claim": a, "sentence": s, "type": "event"}
+                                            for a, s in zip(self.ADJ[:5], self.ADDED[:5])]})   # 5/30 = 17%
+        text, co = self._pub("Essay Too Much Invented", BODY, "essay", self.SOURCES,
+                             replies=[self._expansion(), flags])
+        self.assertEqual(co.call_count, 2)
+        self.assertNotIn("The amber scheduler", text); self.assertIn(BODY[:60], text)
+        self.assertIn("expansion unreliable", nj.LOG_FILE.read_text())
+        # 4/30 = 13% is within the limit
+        flags4 = json.dumps({"unsupported": [{"claim": a, "sentence": s, "type": "event"}
+                                             for a, s in zip(self.ADJ[:4], self.ADDED[:4])]})
+        text, co = self._pub("Essay Some Invented", BODY, "essay", self.SOURCES,
+                             replies=[self._expansion(), flags4, '{"unsupported": []}'])
+        self.assertNotIn("The amber scheduler", text); self.assertIn("The eager scheduler", text)
+
+    def test_stripped_text_must_still_be_meaningfully_longer(self):
+        long_inv = "Mayor Ada Moss blamed the outage on sabotage by a rival crew from across the valley."
+        exp = BODY + "\n\n" + " ".join(self.ADDED[:2]) + " " + long_inv     # 202w >= 1.25x; 186w after strip
+        with patch.object(nj, "STRIP_MAX_FRACTION", 0.5):
+            text, co = self._pub("Essay Strip Leaves Too Little", BODY, "essay", self.SOURCES,
+                                 replies=[exp, self._flag(long_inv)])
+        self.assertEqual(co.call_count, 2)
+        self.assertIn("stripped 186w is not meaningfully longer than the 156w draft", nj.LOG_FILE.read_text())
+        self.assertNotIn("The amber scheduler", text)
+
+    def test_time_guard_counts_the_strip_recheck(self):
+        # enough for expand + check + publish under the old guard, not with the strip round added
+        with patch.object(nj, "_task_time_left",
+                          return_value=float(nj.CHECK_TIMEOUT_S + nj.LONGFORM_RESERVE_S + 200)):
+            text, co = self._pub("Essay No Time For Strip", BODY, "essay", self.SOURCES)
+        co.assert_not_called(); self.assertIn(BODY[:60], text)
+        # time for the expansion and first check, none left by the recheck -> original
+        with patch.object(nj, "_task_time_left", side_effect=[3000.0, 100.0]):
+            text, co = self._pub("Essay Recheck Out Of Time", BODY, "essay", self.SOURCES,
+                                 replies=[self._expansion([self.INVENTED]), self._flag(self.INVENTED)])
+        self.assertEqual(co.call_count, 2); self.assertNotIn("The amber scheduler", text)
+        self.assertIn("no task time left for the recheck", nj.LOG_FILE.read_text())
+
+    def test_strip_cleanup_is_minimal_and_deterministic(self):
+        draft = "## Intro\n\nThe cat sat on the mat. Mr. Smith agreed."
+        exp = ("## Intro\n\nThe cat sat on the mat. Mr. Smith agreed.\n\nWinds hit the house hard that day. "
+               "But the cat did not care at all.\n\n## Storms\n\nThe governor declared an emergency.\n\n---\n\n"
+               "## Weather\n\nIt rained a lot, honestly. The sky was gray and wet. Puddles formed everywhere. "
+               "Umbrellas came out. Nobody was surprised. Everyone stayed in. Dinner was soup.")
+        with patch.object(nj, "STRIP_MAX_FRACTION", 0.5):
+            st = nj.strip_flagged(draft, exp, [], [
+                {"claim": "winds", "sentence": "Winds hit the house hard that day.", "type": "event"},
+                {"claim": "governor", "sentence": "The “governor” declared ... emergency", "type": "event"}])
+        self.assertTrue(st["ok"], st["why"])
+        self.assertEqual(st["text"], "## Intro\n\nThe cat sat on the mat. Mr. Smith agreed.\n\n"
+                         "The cat did not care at all.\n\n---\n\n## Weather\n\nIt rained a lot, honestly. "
+                         "The sky was gray and wet. Puddles formed everywhere. Umbrellas came out. "
+                         "Nobody was surprised. Everyone stayed in. Dinner was soup.")
+        self.assertEqual(len(st["removed"]), 2)
 
     def test_checker_error_or_garbage_fails_closed(self):
         for i, bad in enumerate([None, "looks fine to me!", RuntimeError("cli died")]):

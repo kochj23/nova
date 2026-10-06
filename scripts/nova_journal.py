@@ -457,10 +457,14 @@ def _canon_section(section: str) -> str:
 # generator profile, not the section folder: operations holds many kinds) has a
 # (min, max, policy) row:
 #   * below min + policy "grounded" + sources passed -> ONE grounded expansion toward
-#     min..max (Sonnet; haiku only if Sonnet errors), then a separate grounding check;
-#     any unsupported specific claim -> the ORIGINAL publishes. Fail closed: checker
-#     error / unparseable verdict / no task time left -> original. A grounded expansion
-#     that is meaningfully longer is accepted even if it is still under min.
+#     min..max (Sonnet; haiku only if Sonnet errors), then the number check + a separate
+#     Sonnet grounding check. Flagged items -> STRIP, NOT SCRAP (2026-10-06): the flagged
+#     sentences the expansion ADDED are removed (draft sentences are never touched),
+#     both checks re-run once on the stripped text, and it publishes only if clean.
+#     Fail closed -> the ORIGINAL publishes: checker error / unparseable verdict / no
+#     task time left / a flag that is not in an added sentence / >15% of the added
+#     sentences cut / anything still flagged on the recheck. A grounded expansion that
+#     is meaningfully longer is accepted even if it is still under min.
 #   * below min + policy "never" (or no sources) -> publish the draft, no model call.
 #   * above max -> one "tighten to <=max, add nothing" pass; any failure -> draft.
 #   * profile not in the table -> no floor, no expansion, publish as written (logged).
@@ -536,6 +540,14 @@ EXPAND_FALLBACK_TIMEOUT_S = 240
 CHECK_MODEL = "anthropic/claude-sonnet"
 CHECK_TIMEOUT_S = 300
 LONGFORM_RESERVE_S = 240            # left for publish + git push after the rewrite
+# Strip-not-scrap (2026-10-06, per Jordan): one invented sentence used to throw away a
+# whole grounded expansion. Now flagged ADDED sentences are cut, both checks re-run once.
+STRIP_MAX_FRACTION = 0.15           # > 15% of the added sentences flagged -> expansion unreliable
+STRIP_RECHECK_S = 300               # strip + re-run both checks; counted in the expansion time guard
+STRIP_DRAFT_SIMILARITY = 0.85       # an added sentence this close to a draft one is an EDITED draft
+                                    # sentence: a flag in it REVERTS it to the draft's exact wording
+STRIP_FUZZY_SENTENCE = 0.75         # checker's "verbatim" sentence not found exactly -> closest unit
+STRIP_CLAIM_WORDS = 0.75            # ...or the one unit holding >= 75% of the claim's content words
 _PROC_T0 = time.monotonic()
 _TASK_TIMEOUT_CACHE: list = []
 
@@ -573,8 +585,12 @@ _CHECK_SYS = (
     "numbers, statistics, amounts, versions (number); dates or times (date); quotations "
     "attributed to anyone (quote); events or incidents said to have happened (event); studies, "
     "papers, reports, URLs (citation). Opinions, analysis, metaphors, jokes and general "
-    "reasoning are NOT claims — ignore them. Reply with ONLY a JSON object, no prose: "
-    '{"unsupported": [{"claim": "<short excerpt>", "type": "name|number|date|quote|event|citation"}]} '
+    "reasoning are NOT claims — ignore them. For each unsupported claim also copy the COMPLETE "
+    "sentence of the EXPANDED text that contains it into \"sentence\", VERBATIM — character for "
+    "character, including its markdown; never paraphrase or shorten it (it is used to locate and "
+    "remove that sentence). Reply with ONLY a JSON object, no prose: "
+    '{"unsupported": [{"claim": "<short excerpt>", "sentence": "<the full sentence, verbatim>", '
+    '"type": "name|number|date|quote|event|citation"}]} '
     '— an empty list if every specific claim is supported.')
 
 # The model routinely prefaces with an acknowledgment ("I can see your article... Let
@@ -722,8 +738,9 @@ def expand_grounded(body: str, sources: str, lo: int, hi: int,
     if len(sources) > LONGFORM_SOURCES_MAX_CHARS:
         src += "\n[... sources truncated ...]"
     user = f"SOURCES:\n<<<\n{src}\n>>>\n\nDRAFT:\n<<<\n{body}\n>>>"
+    # time guard: the expansion only starts if check + strip/recheck + publish still fit
     return _rewrite(_EXPAND_SYS.format(lo=lo, hi=hi), user, time_left,
-                    CHECK_TIMEOUT_S + LONGFORM_RESERVE_S)
+                    CHECK_TIMEOUT_S + STRIP_RECHECK_S + LONGFORM_RESERVE_S)
 
 
 def tighten(body: str, lo: int, hi: int,
@@ -772,6 +789,257 @@ def new_numbers(draft: str, sources: str, expanded: str) -> list[str]:
     invented '0.08%' but let new '29'/'90' through."""
     seen = set(_NUM_RE.findall(draft)) | set(_NUM_RE.findall(sources or ""))
     return sorted({n.rstrip(".,") for n in _NUM_RE.findall(expanded)} - {n.rstrip(".,") for n in seen})
+
+
+# ── Strip-not-scrap helpers (deterministic; no model rewrite) ──────────────────────
+_ABBREV = {"mr", "mrs", "ms", "dr", "st", "vs", "jr", "sr", "e.g", "i.e", "etc", "u.s",
+           "u.k", "no", "approx", "inc", "ltd", "co", "mt", "ft", "ave", "dept", "est"}
+_SENT_END_RE = re.compile(r"[.!?…]+[\"'”’)\]*_]*\s+(?=[\"'“‘(\[*_#>\-–—A-Z0-9])")
+_STRUCT_LINE_RE = re.compile(r"^\s*(#{1,6}\s|(-{3,}|\*{3,}|_{3,})\s*$|\||```)")
+_HEADING_RE = re.compile(r"^\s*(#{1,6})\s")
+_HR_RE = re.compile(r"^\s*(-{3,}|\*{3,}|_{3,})\s*$")
+_CONNECTIVE_RE = re.compile(
+    r"^(And|But|So,|Also,|Still,|Plus,|Yet,|Meanwhile,|Even so,|That said,|Besides,|"
+    r"Then again,|On top of that,)\s+(?=\S)")
+_QUOTE_MAP = str.maketrans({"“": '"', "”": '"', "‘": "'", "’": "'", "–": "-", "—": "-", "…": "..."})
+
+
+def _split_sentences(line: str) -> list[str]:
+    """Split one prose line into sentences (keeps markdown; abbreviations/initials are not
+    boundaries). Over-splitting is harmless: draft and expansion are split the same way."""
+    out, start = [], 0
+    for m in _SENT_END_RE.finditer(line):
+        prev = line[start:m.start()].split()
+        last = prev[-1].lower().strip("([*_\"'").rstrip(".") if prev else ""
+        if last in _ABBREV or (len(last) == 1 and last.isalpha() and last != "i"):
+            continue
+        out.append(line[start:m.end()].rstrip())
+        start = m.end()
+    if line[start:].strip():
+        out.append(line[start:].rstrip())
+    return out
+
+
+def _doc_units(text: str) -> list:
+    """Article -> paragraphs -> lines -> sentence units. Headings / rules / table rows /
+    fences are one unit each. Rendered back by _render_units."""
+    doc = []
+    for para in re.split(r"\n[ \t]*\n", (text or "").strip()):
+        lines = []
+        for line in para.split("\n"):
+            if not line.strip():
+                continue
+            lines.append([line.rstrip()] if _STRUCT_LINE_RE.match(line) else _split_sentences(line))
+        if lines:
+            doc.append(lines)
+    return doc
+
+
+def _render_units(doc: list) -> str:
+    paras = ["\n".join(" ".join(u.strip() if i else u for i, u in enumerate(line)) for line in para if line)
+             for para in doc]
+    return "\n\n".join(p for p in paras if p.strip())
+
+
+def _norm_sentence(s: str) -> str:
+    s = re.sub(r"\[([^\]]*)\]\([^)]*\)", r"\1", str(s or ""))       # [text](url) -> text
+    s = s.translate(_QUOTE_MAP)
+    s = re.sub(r"^\s*(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s*)", "", s)   # heading / list / quote marker
+    s = re.sub(r"[*_`#]", "", s)
+    s = re.sub(r"\s+", " ", s).strip().lower()
+    return s.strip(" .,:;!?-\"'()")
+
+
+def _locate(span: str, normed: list[str]) -> list[int]:
+    """Indexes of units matching a checker-quoted span: the unit contains every fragment of
+    the span (fragments split on '...'), else units wholly inside a multi-sentence span."""
+    frags = [f for f in (_norm_sentence(x) for x in re.split(r"\.\.\.|…", str(span or ""))) if len(f) >= 8]
+    if not frags:
+        return []
+    hits = [i for i, u in enumerate(normed) if u and all(f in u for f in frags)]
+    if not hits:
+        hits = [i for i, u in enumerate(normed) if len(u) >= 15 and any(u in f for f in frags)]
+    return hits
+
+
+_STOPWORDS = frozenset("the and that this with from was were for are but not you your its it's into "
+                       "than then them they their there have has had been about what when which who "
+                       "would could should just over only also very more most some".split())
+
+
+def _content_words(s: str) -> set:
+    words = (w.strip("'") for w in re.findall(r"[a-z0-9][a-z0-9']+", s))
+    return {w for w in words if len(w) >= 3 and w not in _STOPWORDS}
+
+
+def _locate_fuzzy(sentence: str, claim: str, normed: list[str]) -> list[int]:
+    """Fallback when the checker's quote is not verbatim (seen live 2026-10-06: a paraphrased
+    claim). (1) the single unit closest to the quoted sentence (difflib >= STRIP_FUZZY_SENTENCE);
+    (2) else the ONE unit holding >= STRIP_CLAIM_WORDS of the claim's content words (ties -> none).
+    A wrong pick is caught by the recheck: the real offender stays in and is flagged again."""
+    import difflib
+    sn = _norm_sentence(sentence) if sentence else ""
+    if len(sn) >= 20:
+        best, score = None, 0.0
+        for i, u in enumerate(normed):
+            if not u:
+                continue
+            sm = difflib.SequenceMatcher(None, sn, u)
+            if sm.real_quick_ratio() < STRIP_FUZZY_SENTENCE or sm.quick_ratio() < STRIP_FUZZY_SENTENCE:
+                continue
+            r = sm.ratio()
+            if r > score:
+                best, score = i, r
+        if best is not None and score >= STRIP_FUZZY_SENTENCE:
+            return [best]
+    for text in (sentence, claim):
+        cw = _content_words(_norm_sentence(text or ""))
+        if len(cw) < 3:
+            continue
+        scored = sorted(((len(cw & _content_words(u)) / len(cw), i) for i, u in enumerate(normed) if u),
+                        reverse=True)
+        if scored and scored[0][0] >= STRIP_CLAIM_WORDS and (len(scored) == 1 or scored[1][0] < scored[0][0]):
+            return [scored[0][1]]
+    return []
+
+
+def strip_flagged(draft: str, expanded: str, numbers: list, claims: list) -> dict:
+    """Remove the ADDED sentences that carry flagged items. Draft sentences (exact, or an
+    edited near-copy) are never removed — a flag that lands in one, or that cannot be
+    located, makes this fail (ok=False) and the caller publishes the original.
+    An EDITED near-copy of a draft sentence that carries a flag is REVERTED to the draft's
+    exact wording (undoing the expansion's edit — the draft sentence itself is kept).
+    Returns {ok, why, text, removed: [sentence...], reverted: [(edited, draft)...], added,
+    cut_fraction}."""
+    import difflib
+    doc = _doc_units(expanded)
+    flat = [(pi, li, si) for pi, para in enumerate(doc) for li, line in enumerate(para)
+            for si in range(len(line))]
+    units = [doc[pi][li][si] for pi, li, si in flat]
+    normed = [_norm_sentence(u) for u in units]
+    draft_raw = {}
+    for para in _doc_units(draft):
+        for line in para:
+            for u in line:
+                draft_raw.setdefault(_norm_sentence(u), u.strip())
+    draft_raw.pop("", None)
+    draft_n = list(draft_raw)
+    kind, origin = [], {}
+    for i, n in enumerate(normed):
+        if not n:
+            kind.append("empty")
+        elif n in draft_raw:
+            kind.append("draft")
+        else:
+            close = difflib.get_close_matches(n, draft_n, n=1, cutoff=STRIP_DRAFT_SIMILARITY)
+            if close:
+                kind.append("edited")
+                origin[i] = draft_raw[close[0]]
+            else:
+                kind.append("added")
+    added = sum(k == "added" for k in kind)
+    res = {"ok": False, "why": "", "text": expanded, "removed": [], "reverted": [], "added": added,
+           "cut_fraction": 0.0}
+    cut: set = set()
+    revert: dict = {}
+    # "new-number" = the deterministic new_numbers() flags; a CHECKER claim typed "number" is
+    # prose ("nine days later") and is located like any other claim
+    flags = [("new-number", str(n), None) for n in numbers or []] + \
+            [(str(c.get("type", "?")), str(c.get("claim", "")), c.get("sentence"))
+             for c in claims or [] if isinstance(c, dict)]
+    for typ, claim, sentence in flags:
+        if typ == "new-number":
+            hits = [i for i, u in enumerate(units)
+                    if claim in {x.rstrip(".,") for x in _NUM_RE.findall(u)}]
+        else:
+            hits = _locate(sentence, normed) if sentence else []
+            if not hits:
+                hits = _locate(claim, normed)
+            if not hits:
+                hits = _locate_fuzzy(sentence, claim, normed)
+        if not hits:
+            res["why"] = (f"could not locate flagged [{typ}] {claim[:100]!r} in the expansion"
+                          + (f" (checker's sentence: {str(sentence)[:160]!r})" if sentence else
+                             " (checker gave no sentence)"))
+            return res
+        protected = [i for i in hits if kind[i] == "draft"]
+        if protected:
+            res["why"] = (f"flagged [{typ}] {claim[:100]!r} is in a DRAFT sentence "
+                          f"— draft sentences are never removed")
+            return res
+        for i in hits:
+            if kind[i] == "edited":
+                revert[i] = origin[i]
+            else:
+                cut.add(i)
+    changed = len(cut) + len(revert)
+    res["cut_fraction"] = changed / added if added else 1.0
+    res["removed"] = [units[i] for i in sorted(cut)]
+    res["reverted"] = [(units[i], revert[i]) for i in sorted(revert)]
+    if res["cut_fraction"] > STRIP_MAX_FRACTION:
+        res["why"] = (f"{changed}/{added} added sentences flagged ({res['cut_fraction']:.0%} > "
+                      f"{STRIP_MAX_FRACTION:.0%}) — expansion unreliable")
+        return res
+    # remove, then tidy minimally and deterministically (no model rewrite)
+    cut_pos = {flat[i] for i in cut}
+    pos_idx = {pos: i for i, pos in enumerate(flat)}
+    new_doc = []
+    for pi, para in enumerate(doc):
+        new_para, para_has_text = [], False
+        for li, line in enumerate(para):
+            new_line = []
+            for si, u in enumerate(line):
+                if (pi, li, si) in cut_pos:
+                    continue
+                k = kind[pos_idx[(pi, li, si)]]
+                if pos_idx[(pi, li, si)] in revert:          # undo the expansion's edit
+                    lead = u[:len(u) - len(u.lstrip())]
+                    u = lead + revert[pos_idx[(pi, li, si)]]
+                prev_cut = (si > 0 and (pi, li, si - 1) in cut_pos) or \
+                           (si == 0 and li > 0 and (pi, li - 1, len(para[li - 1]) - 1) in cut_pos)
+                if prev_cut and k == "added" and not para_has_text and not new_line:
+                    # an added sentence now opening its paragraph lost what it was continuing
+                    m = _CONNECTIVE_RE.match(u.lstrip())
+                    if m:
+                        rest = u.lstrip()[m.end():]
+                        u = rest[:1].upper() + rest[1:]
+                new_line.append(u)
+            if new_line:
+                new_para.append(new_line)
+                para_has_text = True
+        new_doc.append(new_para)
+
+    def _orphans(d):
+        """indexes of heading-only paragraphs with no content (rules don't count) before the
+        next same-or-higher heading or the end"""
+        def _single(p, rx):
+            return len(p) == 1 and len(p[0]) == 1 and rx.match(p[0][0])
+        out = set()
+        for i, para in enumerate(d):
+            if not _single(para, _HEADING_RE):
+                continue
+            lvl = len(_HEADING_RE.match(para[0][0]).group(1))
+            nxt = next((p for p in d[i + 1:] if p and not _single(p, _HR_RE)), None)
+            if nxt is None:
+                out.add(i)
+                continue
+            h = _HEADING_RE.match(nxt[0][0]) if len(nxt) == 1 and len(nxt[0]) == 1 else None
+            if h and len(h.group(1)) <= lvl:
+                out.add(i)
+        return out
+    was_orphan = _orphans(doc)
+    now_orphan = _orphans(new_doc) - was_orphan
+    new_doc = [p for i, p in enumerate(new_doc) if i not in now_orphan]
+    tidy = []
+    for p in new_doc:   # a rule left next to another rule (its section was emptied) -> one
+        if not p:
+            continue
+        is_hr = len(p) == 1 and len(p[0]) == 1 and _HR_RE.match(p[0][0])
+        if is_hr and tidy and len(tidy[-1]) == 1 and len(tidy[-1][0]) == 1 and _HR_RE.match(tidy[-1][0][0]):
+            continue
+        tidy.append(p)
+    res.update(ok=True, text=_render_units(tidy))
+    return res
 
 
 def longform_expand(title: str, body: str, section: str, sources: str | None,
@@ -852,9 +1120,7 @@ def longform_expand(title: str, body: str, section: str, sources: str | None,
             return body
         invented = new_numbers(body, sources, expanded)
         if invented:
-            log(f"[longform] {tag} — expansion REJECTED: numbers not in draft/sources "
-                f"{invented[:20]} — publishing original")
-            return body
+            log(f"[longform] {tag} — number check flagged (not in draft/sources): {invented[:20]}")
         check_to = CHECK_TIMEOUT_S
         if left is not None:
             check_to = int(min(CHECK_TIMEOUT_S, left - (time.monotonic() - t0) - LONGFORM_RESERVE_S))
@@ -863,14 +1129,63 @@ def longform_expand(title: str, body: str, section: str, sources: str | None,
                 return body
         t1 = time.monotonic()
         passed, bad, note = check_grounding(body, sources, expanded, timeout=check_to)
-        if not passed:
-            shown = "; ".join(f"[{c.get('type')}] {str(c.get('claim'))[:120]}" for c in bad[:12])
-            log(f"[longform] {tag} — grounding check REJECTED ({note}, {time.monotonic() - t1:.0f}s) — "
-                f"publishing original. Unsupported: {shown or '-'}")
+        if not passed and not bad:
+            log(f"[longform] {tag} — grounding check FAILED ({note}, {time.monotonic() - t1:.0f}s) — "
+                f"publishing original (fail closed)")
             return body
-        log(f"[longform] {tag} — grounding check passed ({note}, {time.monotonic() - t1:.0f}s) — "
-            f"publishing {got}w via {model} ({time.monotonic() - t0:.0f}s total)")
-        return expanded
+        if passed and not invented:
+            log(f"[longform] {tag} — grounding check passed ({note}, {time.monotonic() - t1:.0f}s) — "
+                f"publishing {got}w via {model} ({time.monotonic() - t0:.0f}s total)")
+            return expanded
+        # ── strip, not scrap: cut the flagged ADDED sentences, re-run both checks once ──
+        shown = "; ".join(f"[{c.get('type')}] {str(c.get('claim'))[:120]}" for c in bad[:12])
+        log(f"[longform] {tag} — flagged: numbers {invented[:20] or '-'}; claims ({note}, "
+            f"{time.monotonic() - t1:.0f}s): {shown or '-'} — trying strip-and-recheck")
+        st = strip_flagged(body, expanded, invented, bad)
+        for r in st["removed"][:40]:
+            log(f"[longform] {tag} — strip: removed {r.strip()[:200]!r}")
+        for ed, orig in st["reverted"][:40]:
+            log(f"[longform] {tag} — strip: reverted edited draft sentence {ed.strip()[:160]!r} "
+                f"-> draft {orig[:160]!r}")
+        if not st["ok"]:
+            log(f"[longform] {tag} — strip REJECTED: {st['why']} — publishing original")
+            return body
+        stripped = st["text"]
+        sw = len(stripped.split())
+        rev = f", reverted {len(st['reverted'])} edited" if st["reverted"] else ""
+        log(f"[longform] {tag} — stripped {len(st['removed'])}/{st['added']} added sentences{rev} "
+            f"({st['cut_fraction']:.0%}): {got} -> {sw}w")
+        if sw < lo and sw < wc * LONGFORM_MIN_GAIN:
+            log(f"[longform] {tag} — stripped {sw}w is not meaningfully longer than the {wc}w draft — "
+                f"publishing original")
+            return body
+        ok, why = is_publishable(title, stripped)
+        if not ok:
+            log(f"[longform] {tag} — stripped text failed guard ({why}) — publishing original")
+            return body
+        still = new_numbers(body, sources, stripped)
+        if still:
+            log(f"[longform] {tag} — recheck: numbers still not in draft/sources {still[:20]} — "
+                f"publishing original")
+            return body
+        left2 = _task_time_left()
+        recheck_to = CHECK_TIMEOUT_S
+        if left2 is not None:
+            recheck_to = int(min(CHECK_TIMEOUT_S, left2 - LONGFORM_RESERVE_S))
+            if recheck_to < 60:
+                log(f"[longform] {tag} — no task time left for the recheck — publishing original (fail closed)")
+                return body
+        t2 = time.monotonic()
+        passed2, bad2, note2 = check_grounding(body, sources, stripped, timeout=recheck_to)
+        if not passed2:
+            shown2 = "; ".join(f"[{c.get('type')}] {str(c.get('claim'))[:120]}" for c in bad2[:12])
+            log(f"[longform] {tag} — recheck REJECTED ({note2}, {time.monotonic() - t2:.0f}s) — "
+                f"publishing original. Still flagged: {shown2 or '-'}")
+            return body
+        log(f"[longform] {tag} — strip-and-recheck passed ({note2}, {time.monotonic() - t2:.0f}s): "
+            f"removed {len(st['removed'])}/{st['added']} added sentences, {got} -> {sw}w — "
+            f"publishing stripped {sw}w via {model} ({time.monotonic() - t0:.0f}s total)")
+        return stripped
     except Exception as e:
         log(f"[longform] {tag} — length policy error ({e}) — publishing original")
         return body

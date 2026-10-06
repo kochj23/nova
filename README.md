@@ -223,10 +223,17 @@ flowchart TD
     L -->|above max| T[one tighten pass, add nothing] --> P
     L -->|below min, policy never or no sources| P
     L -->|below min, policy grounded + sources| E[one grounded expansion<br/>Sonnet, haiku fallback]
-    E --> G{separate grounding check}
+    E --> G{number check + separate<br/>Sonnet grounding check}
     G -->|every claim supported| P2[publish expansion]
-    G -->|unsupported claim, error, or no time| P
+    G -->|checker error or no time| P
+    G -->|items flagged| S{strip: locate each flag<br/>in an ADDED sentence}
+    S -->|flag in an unedited draft sentence, not found,<br/>or over 15% of added sentences| P
+    S -->|cut added sentences, revert edited draft<br/>sentences, tidy orphaned headings| R{re-run BOTH checks once}
+    R -->|clean and still meaningfully longer| P3[publish stripped expansion]
+    R -->|anything flagged, error, or no time| P
 ```
+
+**Strip, not scrap (2026-10-06).** One invented sentence used to throw away a whole expansion: on the first September wraps, local, operations, opinions, digests and research all published their drafts (2,900–3,900 words) over one to four flagged items each. Now the claim checker returns each unsupported claim's sentence verbatim; the sentences the expansion *added* that carry a flagged claim or number are removed, and a draft sentence the expansion edited and that now carries a flag goes back to the draft's exact wording. Unedited draft sentences are never touched. If the checker paraphrases instead of quoting, the sentence is found by closest match or by the one sentence holding most of the claim's words; ties are not guessed. Headings left empty are tidied without any model rewrite, and both checks run again on the result. It publishes only if that recheck is clean and the text is still meaningfully longer than the draft. A flag that lands in a draft sentence, a flag that can't be found, more than 15% of the added sentences cut, or any error on the recheck still publishes the original. The expansion only starts if the task's time budget also covers the extra five-minute strip-and-recheck. `nova_monthly_wrap.py --force --section X` republishes a wrap in place (same file and URL, cover kept).
 
 | Article type | Words | Below the floor |
 |---|---|---|

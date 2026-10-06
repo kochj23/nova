@@ -24,7 +24,9 @@ Sections run WORKERS (3) at a time under a run budget; ONE git_push (fleet lock)
 at the end. Dedup lives in Postgres (nova_ops.service_config, service
 'nova_monthly_wrap', key '<YYYY-MM>:<section>'), backed by the deterministic
 file name content/<section>/<YYYY-MM>-<section>-monthly-wrap.md, so a
-month+section is never published twice.
+month+section is never published twice — unless --force (with --section):
+republish IN PLACE (same slug/file/URL, the existing cover image kept unless it is
+missing), e.g. after the grounded expander improved (2026-10-06 strip-not-scrap).
 
 Usage:
   nova_monthly_wrap.py                       # previous calendar month, all sections
@@ -32,6 +34,7 @@ Usage:
   nova_monthly_wrap.py --section dreams      # one section (repeatable)
   nova_monthly_wrap.py --dry-run             # scan only: what WOULD be written
   nova_monthly_wrap.py --dry-run --generate  # + draft & grounded expansion, never writes
+  nova_monthly_wrap.py --month 2026-09 --section local --force   # republish in place
 
 Scheduled on nova-core: scheduler-core.yaml task journal_monthly_wrap (1st of the month).
 Written by Jordan Koch (via Claude). Generalized from the one-off May 2026 wrap 2026-10-06.
@@ -40,7 +43,9 @@ Written by Jordan Koch (via Claude). Generalized from the one-off May 2026 wrap 
 import argparse
 import json
 import re
+import shutil
 import sys
+import tempfile
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -61,6 +66,7 @@ from nova_journal_weekly_summary import _parse_article, SKIP_FILES
 
 HUGO_ROOT = nova_journal.HUGO_ROOT
 CONTENT_ROOT = HUGO_ROOT / "content"
+IMAGES_ROOT = HUGO_ROOT / "static/images"
 SITE = "https://nova.digitalnoise.net"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_monthly_wrap.log"
 
@@ -84,7 +90,8 @@ PER_ARTICLE_MIN, PER_ARTICLE_MAX = 350, 14000   # small months get deep excerpts
 
 WORKERS = 3
 # Don't START a section after this many seconds. A section is ~draft 3-6 min +
-# cover <=4 min + Sonnet expansion <=10 min + check <=5 min; leave that plus the
+# cover <=4 min + Sonnet expansion <=10 min + check <=5 min (+ <=5 min strip-and-
+# recheck when the first check flags something, 2026-10-06); leave that plus the
 # final push inside the scheduler timeout (scheduler-core.yaml journal_monthly_wrap).
 RUN_BUDGET_S = 1800   # measured 2026-10-06: draft ~105 s, expand+check <=~6 min, cover <=4 min
 IMAGE_TIMEOUT_S = 240
@@ -417,10 +424,18 @@ def _written_words(section: str, month: str) -> int:
     return _wc(parts[2] if len(parts) == 3 else raw)
 
 
-def wrap_section(section: str, month: str, arts: list[dict], dry_run: bool = False) -> dict | None:
+def _existing_cover(section: str, month: str) -> Path | None:
+    p = IMAGES_ROOT / section / f"{wrap_slug(month, section)}.webp"
+    return p if p.is_file() and p.stat().st_size > 0 else None
+
+
+def wrap_section(section: str, month: str, arts: list[dict], dry_run: bool = False,
+                 force: bool = False) -> dict | None:
     """Draft + cover + publish_hugo (grounded expansion inside). No push. Returns a
-    result dict, or None on failure."""
+    result dict, or None on failure. force: republish in place over the existing wrap,
+    keeping its cover image unless it is missing."""
     t0 = time.monotonic()
+    before_w = _written_words(section, month) if force else None
     sources = build_sources(section, month, arts)
     log(f"[{section}] {len(arts)} posts, {len(sources)} chars of sources — drafting")
     res = generate_wrap(section, month, arts, sources)
@@ -442,21 +457,34 @@ def wrap_section(section: str, month: str, arts: list[dict], dry_run: bool = Fal
                 "draft_words": draft_w, "final_words": _wc(out), "image": None,
                 "draft_stray_numbers": stray,
                 "verdict": _verdict_for(title), "seconds": round(time.monotonic() - t0)}
-    img = _cover(section, month)
+    tmpdir = None
+    old_cover = _existing_cover(section, month) if force else None
+    if old_cover:
+        # publish_hugo copies image_path onto static/images/<section>/<slug>.webp — the same
+        # file — so hand it a temp copy (copying a file onto itself raises).
+        tmpdir = tempfile.mkdtemp(prefix="nova_wrap_cover_")
+        img = str(shutil.copy2(old_cover, Path(tmpdir) / old_cover.name))
+        log(f"[{section}] --force: keeping the existing cover {old_cover.name}")
+    else:
+        img = _cover(section, month)
     mlabel = month_label(month)
-    ok = publish_hugo(title, body, section,
-                      [section, "monthly-wrap", mlabel.lower().replace(" ", "-")],
-                      f"Nova's {mlabel} wrap of {section_label(section)}: "
-                      f"{len(arts)} posts, roasted and reviewed",
-                      image_path=img, emoji=EMOJI, stable_slug=slug,
-                      sources=sources, profile=PROFILE, min_words=MIN_WORDS)
+    try:
+        ok = publish_hugo(title, body, section,
+                          [section, "monthly-wrap", mlabel.lower().replace(" ", "-")],
+                          f"Nova's {mlabel} wrap of {section_label(section)}: "
+                          f"{len(arts)} posts, roasted and reviewed",
+                          image_path=img, emoji=EMOJI, stable_slug=slug,
+                          sources=sources, profile=PROFILE, min_words=MIN_WORDS)
+    finally:
+        if tmpdir:
+            shutil.rmtree(tmpdir, ignore_errors=True)
     if ok is False:
         log(f"[{section}] publish_hugo refused the wrap — not marking done")
         return None
     final_w = _written_words(section, month)
     return {"section": section, "title": title, "slug": slug, "posts": len(arts),
             "draft_words": draft_w, "final_words": final_w, "image": bool(img),
-            "draft_stray_numbers": stray,
+            "draft_stray_numbers": stray, "before_words": before_w, "forced": force,
             "verdict": _verdict_for(title), "url": wrap_url(month, section),
             "seconds": round(time.monotonic() - t0)}
 
@@ -464,10 +492,12 @@ def wrap_section(section: str, month: str, arts: list[dict], dry_run: bool = Fal
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def run(month: str, sections: list[str] | None = None, dry_run: bool = False,
-        generate: bool = False) -> dict:
+        generate: bool = False, force: bool = False) -> dict:
+    """force: republish already-wrapped sections in place (the CLI requires --section)."""
     parse_month(month)
     t_run = time.monotonic()
-    mode = "DRY-RUN" + (" +generate" if generate else "") if dry_run else "LIVE"
+    mode = ("DRY-RUN" + (" +generate" if generate else "") if dry_run else "LIVE") + \
+        (" FORCE (republish in place)" if force else "")
     log(f"=== Monthly wraps {month} ({mode}) ===")
     _install_longform_tap()
     live = list_sections()
@@ -484,8 +514,11 @@ def run(month: str, sections: list[str] | None = None, dry_run: bool = False,
         arts = collect_month_articles(sec, month)
         if not arts:
             status = "skip (no posts)"
-        elif already_done(month, sec, keys):
+        elif already_done(month, sec, keys) and not force:
             status = "skip (already wrapped)"
+        elif force and already_done(month, sec, keys):
+            status = "WRAP (force: republish in place)"
+            queue.append((sec, arts))
         else:
             status = "WRAP"
             queue.append((sec, arts))
@@ -502,7 +535,7 @@ def run(month: str, sections: list[str] | None = None, dry_run: bool = False,
         if time.monotonic() - t_run > RUN_BUDGET_S:
             return sec, "DEFERRED"
         try:
-            r = wrap_section(sec, month, arts, dry_run=dry_run)
+            r = wrap_section(sec, month, arts, dry_run=dry_run, force=force)
         except Exception as e:
             log(f"[{sec}] ERROR: {e}")
             r = None
@@ -523,7 +556,9 @@ def run(month: str, sections: list[str] | None = None, dry_run: bool = False,
                     mark_done(month, sec, {k: r[k] for k in
                                            ("title", "slug", "url", "posts", "draft_words",
                                             "final_words", "image")} |
-                              {"published_at": time.strftime("%Y-%m-%dT%H:%M:%S")})
+                              {"published_at": time.strftime("%Y-%m-%dT%H:%M:%S")} |
+                              ({"republished": True, "before_words": r.get("before_words")}
+                               if r.get("forced") else {}))
     order = [s for s, _ in queue]
     report["published"].sort(key=lambda r: order.index(r["section"]))
 
@@ -548,7 +583,8 @@ def run(month: str, sections: list[str] | None = None, dry_run: bool = False,
 
     log("=== Results ===")
     for r in report["published"]:
-        log(f"  {r['section']:<14} {r['posts']:>4} posts  draft {r['draft_words']}w -> "
+        was = f"was {r['before_words']}w, " if r.get("before_words") is not None else ""
+        log(f"  {r['section']:<14} {r['posts']:>4} posts  {was}draft {r['draft_words']}w -> "
             f"{r['final_words']}w  image={'ok' if r['image'] else 'none'}  {r['seconds']}s  "
             f"{r.get('url', '')}\n      grounding: {r['verdict']}"
             + (f"\n      draft numbers not in sources: {r['draft_stray_numbers'][:15]}"
@@ -569,13 +605,18 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true", help="scan only; never writes or pushes")
     ap.add_argument("--generate", action="store_true",
                     help="with --dry-run: also draft + grounded expansion (timing), never writes")
+    ap.add_argument("--force", action="store_true",
+                    help="republish already-wrapped --section(s) in place (same file/URL, "
+                         "existing cover kept unless missing); requires --section")
     a = ap.parse_args(argv)
     month = a.month or default_month()
     try:
         parse_month(month)
     except ValueError as e:
         ap.error(str(e))
-    rep = run(month, a.section, dry_run=a.dry_run or a.generate, generate=a.generate)
+    if a.force and not a.section:
+        ap.error("--force republishes in place and needs explicit --section(s)")
+    rep = run(month, a.section, dry_run=a.dry_run or a.generate, generate=a.generate, force=a.force)
     return 1 if (rep["failed"] and not rep["published"]) else 0
 
 
