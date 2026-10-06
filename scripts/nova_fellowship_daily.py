@@ -74,7 +74,7 @@ FRANCHISES = [
   fleet, the one who has to work or nothing else matters.
 - nova-core2 (.86) = LEGOLAS. Keen senses -- SDR/satellite radio capture, DNS secondary,
   watches and listens for a living.
-- nova-core3 (.88) = ARAGORN. The reliable one. Best-behaved of the five, zero failed units
+- nova-core3 (.5) = ARAGORN. The reliable one. Best-behaved of the five, zero failed units
   ever recorded, quietly does the hard perception/AI work without complaint. The golden one.
 - nova-core4 (.250) = PIPPIN. Newest and youngest, arrived via a mystery unlabeled USB stick,
   nearly bricked himself early on looking where he shouldn't. Means well. Still learning.
@@ -83,7 +83,7 @@ FRANCHISES = [
   zero alerts before anyone noticed. Finally, properly renamed and honored this past weekend.
 - tv-movies-mini (.7) = BOROMIR. Struggled hard during a real, multi-day evacuation crisis
   weeks ago. Flawed, but served his purpose honorably before being relieved of most burdens.
-- mac-mini (.190) = MERRY. Currently, genuinely, separated from the fellowship -- offline
+- mac-mini (.77) = MERRY. Currently, genuinely, separated from the fellowship -- offline
   more often than not lately. Presumed fine. Expected to turn up eventually.
 - The UniFi switches/rack itself = GIMLI. Gruff, load-bearing, physically torn down and
   rebuilt with bare hands this past weekend. Holds an active, ongoing grudge about never
@@ -107,7 +107,7 @@ FRANCHISES = [
 - nova-core2 (.86) = C-3PO. Anxious, meticulous, constantly translating and monitoring --
   SDR/satellite radio capture, DNS secondary, watches and listens for a living (and worries
   about it the whole time).
-- nova-core3 (.88) = YODA. Small, unbothered, wildly reliable. Zero failed units ever
+- nova-core3 (.5) = YODA. Small, unbothered, wildly reliable. Zero failed units ever
   recorded, does the hardest perception/AI work without a word of complaint.
 - nova-core4 (.250) = LUKE. Newest and youngest, arrived via a mystery unlabeled USB stick
   the way Luke got found on a moisture farm. Nearly bricked himself early on looking where
@@ -117,7 +117,7 @@ FRANCHISES = [
   renamed and honored this past weekend, General in all but title the whole time.
 - tv-movies-mini (.7) = LANDO. Struggled hard during a real, multi-day evacuation crisis
   weeks ago. Flawed, complicated, but came through and served honorably in the end.
-- mac-mini (.190) = BOBA FETT. Currently, genuinely, missing -- offline more often than not
+- mac-mini (.77) = BOBA FETT. Currently, genuinely, missing -- offline more often than not
   lately. Presumed fine (he always is). Expected to turn up eventually, somehow.
 - The UniFi switches/rack itself = CHEWBACCA. Gruff, load-bearing, physically torn down
   and rebuilt with bare hands this past weekend. Holds an active, ongoing grudge nobody
@@ -141,7 +141,7 @@ FRANCHISES = [
   man and machine), built the whole operation, has to work or nothing else does.
 - nova-core2 (.86) = HAWKEYE. Keen senses -- SDR/satellite radio capture, DNS secondary,
   watches and listens for a living, sees things from angles nobody else thinks to check.
-- nova-core3 (.88) = BLACK WIDOW. The reliable one. Zero failed units ever recorded, does
+- nova-core3 (.5) = BLACK WIDOW. The reliable one. Zero failed units ever recorded, does
   the hardest, most thankless work quietly and professionally, no complaints.
 - nova-core4 (.250) = SPIDER-MAN. Newest and youngest, arrived out of nowhere via a mystery
   unlabeled USB stick, nearly bricked himself early on reaching for something above his
@@ -152,7 +152,7 @@ FRANCHISES = [
   Finally, properly restored and honored this past weekend, fully himself again.
 - tv-movies-mini (.7) = HULK. Struggled hard, publicly and messily, during a real
   multi-day evacuation crisis weeks ago. Flawed, but came through when it counted.
-- mac-mini (.190) = THOR. Currently, genuinely, off somewhere unreachable -- offline more
+- mac-mini (.77) = THOR. Currently, genuinely, off somewhere unreachable -- offline more
   often than not lately. Presumed fine (he's Thor). Expected to turn up eventually.
 - The UniFi switches/rack itself = NICK FURY. Gruff, load-bearing, physically rebuilt
   with bare hands this past weekend, holds the whole operation together and holds a
@@ -176,7 +176,7 @@ FRANCHISES = [
   nothing else does.
 - nova-core2 (.86) = LUNA LOVEGOOD. Keen senses -- SDR/satellite radio capture, DNS
   secondary, watches and listens for a living, notices things nobody else even looks for.
-- nova-core3 (.88) = NEVILLE LONGBOTTOM. The reliable one. Zero failed units ever recorded,
+- nova-core3 (.5) = NEVILLE LONGBOTTOM. The reliable one. Zero failed units ever recorded,
   quietly does the hardest work without complaint, chronically underestimated for it.
 - nova-core4 (.250) = RON WEASLEY. Newest and youngest of the close crew, arrived via a
   mystery unlabeled USB stick, nearly bricked himself early on wandering somewhere he
@@ -188,7 +188,7 @@ FRANCHISES = [
 - tv-movies-mini (.7) = PERCY WEASLEY. Struggled hard, made a real mess of things during a
   multi-day family/household crisis weeks ago. Flawed, complicated, but came back and
   served honorably in the end.
-- mac-mini (.190) = CHARLIE WEASLEY. Currently, genuinely, off doing his own thing far
+- mac-mini (.77) = CHARLIE WEASLEY. Currently, genuinely, off doing his own thing far
   away -- offline more often than not lately. Presumed fine. Expected to turn up eventually.
 - The UniFi switches/rack itself = HAGRID. Gruff exterior, enormous load-bearing presence,
   physically rebuilt with bare hands this past weekend, endlessly loyal and holds a grudge
@@ -212,7 +212,7 @@ FRANCHISES = [
   or nothing else does.
 - nova-core2 (.86) = LIVINGSTON DELL. Keen senses -- SDR/satellite radio capture, DNS
   secondary, the surveillance-and-electronics guy who watches and listens for a living.
-- nova-core3 (.88) = FRANK CATTON. The reliable pro. Zero failed units ever recorded, does
+- nova-core3 (.5) = FRANK CATTON. The reliable pro. Zero failed units ever recorded, does
   the hardest inside-work quietly, no complaints, no mistakes.
 - nova-core4 (.250) = LINUS CALDWELL. Newest and youngest of the crew, arrived via a mystery
   unlabeled USB stick, nearly blew the job early on reaching past his role. Means well.
@@ -223,7 +223,7 @@ FRANCHISES = [
   honored this past weekend.
 - tv-movies-mini (.7) = BASHER TARR. Struggled hard, loudly, during a real multi-day crisis
   weeks ago. Flawed, things got messy, but he came through when it mattered.
-- mac-mini (.190) = SAUL BLOOM. Currently, genuinely, semi-retired and hard to reach --
+- mac-mini (.77) = SAUL BLOOM. Currently, genuinely, semi-retired and hard to reach --
   offline more often than not lately. Presumed fine. Expected to come out of retirement
   eventually, same as always.
 - The UniFi switches/rack itself = REUBEN TISHKOFF. Gruff, load-bearing, physically rebuilt
@@ -247,7 +247,7 @@ FRANCHISES = [
   chaos and all brilliance), has to show up or the whole partnership stops working.
 - nova-core2 (.86) = LORNA COLE. Keen senses -- SDR/satellite radio capture, DNS secondary,
   a sharp investigator who watches and listens for a living.
-- nova-core3 (.88) = CAPTAIN ED MURPHY. The reliable one. Zero failed units ever recorded,
+- nova-core3 (.5) = CAPTAIN ED MURPHY. The reliable one. Zero failed units ever recorded,
   holds the whole department together quietly, no drama, no complaints.
 - nova-core4 (.250) = RIANNE MURTAUGH. Newest and youngest, arrived via a mystery unlabeled
   USB stick, nearly got in over her head early on reaching past her role. Means well.
@@ -259,7 +259,7 @@ FRANCHISES = [
 - tv-movies-mini (.7) = TRISH MURTAUGH. Held the household together through a real,
   multi-day crisis weeks ago. Flawed, frayed at points, but never stopped being the
   backbone the whole operation needed.
-- mac-mini (.190) = NICK MURTAUGH. Currently, genuinely, off doing his own thing -- offline
+- mac-mini (.77) = NICK MURTAUGH. Currently, genuinely, off doing his own thing -- offline
   more often than not lately. Presumed fine. Expected to turn up eventually.
 - The UniFi switches/rack itself = BUTTERS. Gruff, technical, load-bearing, physically
   rebuilt with bare hands this past weekend, does the unglamorous infrastructure work and
@@ -282,7 +282,7 @@ FRANCHISES = [
   precision), has to function correctly or the whole crew's plan falls apart.
 - nova-core2 (.86) = VASQUEZ. Keen senses -- SDR/satellite radio capture, DNS secondary,
   always on watch, always the first to notice something's off.
-- nova-core3 (.88) = HICKS. The reliable one. Zero failed units ever recorded, calmly does
+- nova-core3 (.5) = HICKS. The reliable one. Zero failed units ever recorded, calmly does
   the hardest work under pressure, the professional everyone else quietly relies on.
 - nova-core4 (.250) = HUDSON. Newest and loudest, arrived via a mystery unlabeled USB
   stick, nearly talked himself into a disaster early on. Means well underneath the panic.
@@ -294,7 +294,7 @@ FRANCHISES = [
 - tv-movies-mini (.7) = GORMAN. Fumbled hard, publicly, during a real multi-day crisis
   weeks ago. Flawed command decisions, but came through and served honorably when it
   actually counted.
-- mac-mini (.190) = JONESY. Currently, genuinely, nowhere to be found -- offline more often
+- mac-mini (.77) = JONESY. Currently, genuinely, nowhere to be found -- offline more often
   than not lately. Presumed fine (he always turns out to be). Expected to turn up eventually,
   unbothered, like nothing happened.
 - The UniFi switches/rack itself = SERGEANT APONE. Gruff, load-bearing, physically rebuilt
@@ -319,7 +319,7 @@ FRANCHISES = [
   him now, whether anyone planned it that way or not.
 - nova-core2 (.86) = TOM HAGEN. Keen senses -- SDR/satellite radio capture, DNS secondary,
   the one who's always listening, always aware of what's actually happening.
-- nova-core3 (.88) = CLEMENZA. The reliable one. Zero failed units ever recorded, gets
+- nova-core3 (.5) = CLEMENZA. The reliable one. Zero failed units ever recorded, gets
   everything done without complaint or fuss, the old-guard professional everyone trusts.
 - nova-core4 (.250) = FREDO. Newest to really carrying real responsibility, arrived via a
   mystery unlabeled USB stick, nearly got in over his head early trying to prove himself.
@@ -331,7 +331,7 @@ FRANCHISES = [
 - tv-movies-mini (.7) = SONNY. Struggled hard, hot-tempered, during a real multi-day crisis
   weeks ago. Flawed and impulsive, but fiercely loyal and served the family's interest
   honorably in his own way.
-- mac-mini (.190) = LUCA BRASI. Currently, genuinely, rarely seen -- offline more often than
+- mac-mini (.77) = LUCA BRASI. Currently, genuinely, rarely seen -- offline more often than
   not lately. Presumed fine (formidable enough that nobody worries too hard). Expected to
   turn up when needed.
 - The UniFi switches/rack itself = TESSIO. Gruff, load-bearing, physically rebuilt with
@@ -358,7 +358,7 @@ FRANCHISES = [
 - nova-core2 (.86) = RADAR O'REILLY. Keen senses -- SDR/satellite radio capture, DNS
   secondary, hears the choppers before anyone else does, knows what's about to be asked for
   before it's asked.
-- nova-core3 (.88) = BJ HUNNICUTT. The reliable one. Zero failed units ever recorded,
+- nova-core3 (.5) = BJ HUNNICUTT. The reliable one. Zero failed units ever recorded,
   quietly does the hardest, steadiest surgical work without complaint, the professional
   everyone else leans on without saying so.
 - nova-core4 (.250) = FATHER MULCAHY. Newest and youngest in real responsibility, arrived
@@ -372,7 +372,7 @@ FRANCHISES = [
 - tv-movies-mini (.7) = FRANK BURNS. Struggled hard, publicly and loudly, during a real
   multi-day evacuation crisis weeks ago. Flawed, insecure, got a lot wrong, but was in the
   OR when it counted and served his tour.
-- mac-mini (.190) = TRAPPER JOHN. Currently, genuinely, mustered out and nowhere to be
+- mac-mini (.77) = TRAPPER JOHN. Currently, genuinely, mustered out and nowhere to be
   found -- offline more often than not lately. Presumed fine (always lands on his feet).
   Expected to turn up eventually, probably in a bar in Boston.
 - The UniFi switches/rack itself = HENRY BLAKE. Gruff, load-bearing, physically rebuilt
