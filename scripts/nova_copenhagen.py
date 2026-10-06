@@ -524,19 +524,9 @@ AUTO-FIXES APPLIED THIS RUN:
     if len(body.split()) < 200:
         log("article too short after cleanup — aborting")
         return None
-    # Clear the ops long-form floor ourselves (a controlled, voice-preserving expansion) rather
-    # than letting publish_hugo's expander run — that one has a history of leaking "I've expanded
-    # the article…" meta into the body.
-    if len(body.split()) < 2900:
-        log(f"expanding {len(body.split())}w -> 3200+ (own pass, avoids publish_hugo expander)")
-        more = j.call_openrouter(
-            system + "\n\nEXPAND the draft below to at least 3200 words. Keep every bit of the voice; "
-            "add a per-monitor roast of each false alarm and a deeper reflection on alert fatigue. "
-            "Return ONLY the complete expanded article — no preamble, no 'here is the expanded' line.",
-            body, max_tokens=9000)
-        more = _strip_meta_preamble(sanitize(more or ""))
-        if len(more.split()) > len(body.split()):
-            body = more
+    # No self-expansion (2026-10-06, Jordan: no hallucinated padding). The old pass here
+    # stretched the review to 3200+ words with nothing but its own draft; publish_hugo's
+    # ARTICLE_LENGTH row 'copenhagen' (600-1200, never expand) now owns length.
     title = j.call_openrouter(
         "Generate one wry, punchy title (<=14 words) for a morning ops postmortem about alert "
         "fatigue — most alerts were noise, few were real. Output ONLY the title, no quotes.",
@@ -561,7 +551,7 @@ AUTO-FIXES APPLIED THIS RUN:
     ok = j.publish_hugo(title=title, body=body, section="operations",
                         tags=["operations", "postmortem", "reliability", "alert-fatigue", "nova"],
                         description="Nova's morning operations review — separating real failures from monitor noise.",
-                        image_path=image_path)
+                        image_path=image_path, sources=brief, profile="copenhagen")
     if not ok:
         log("publish_hugo returned False (guard blocked or error)")
         return None

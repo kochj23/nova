@@ -196,7 +196,7 @@ def main():
         nj.publish_hugo(title, body, "local",
                         ["local", "trends", "burbank", "lora", "rf", "airwaves", "weekly"],
                         "Nova's weekly read on the neighborhood — the airwaves, the mesh, the RF, and what's overhead.",
-                        image_path=img, emoji="📡")
+                        image_path=img, emoji="📡", sources=_brief(p), profile="local-trends")
         nj.git_push("local", title)   # commit + push the article AND its image (was missing)
         log(f"published to /local (image: {'yes' if img else 'none'})")
     except Exception as e:

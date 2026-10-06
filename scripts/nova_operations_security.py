@@ -322,7 +322,8 @@ def main():
 
     tags = ["operations", "security", "scans", "network", "daily"]
     desc = "Nova's daily security-operations report — closest first: your network, your gear's CVEs, then the wider world."
-    nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji="🛡️")  # dated post
+    nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji="🛡️",
+                    sources=user, profile="ops-security")  # dated post
     _push = nj.git_push("operations", title)
     # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
     _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")

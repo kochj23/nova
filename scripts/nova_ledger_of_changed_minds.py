@@ -78,7 +78,7 @@ def main():
 
     tags = ["operations", "beliefs", "ledger", "monthly", "opinion-drift"]
     desc = "Nova's monthly review of the opinions she revised — what changed, and what the evidence was."
-    if not nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji="⚖️"):
+    if not nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji="⚖️", sources=user, profile="ledger"):
         nj.log(f"[ledger] NOT PUBLISHED — guard rejected: {title}")
         return 1
     _push = nj.git_push("operations", title)

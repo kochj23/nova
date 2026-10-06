@@ -74,16 +74,17 @@ DAYS = 7
 MIN_ARTICLES = 2  # strictly more than one
 
 # Scheduler kills the task at 1800 s. Don't START a new section after this many
-# seconds, leaving room for an in-flight section (longform: up to 2 expansion
-# passes, ~2-6 min) plus the single final push (git_push's network timeout is 180 s).
+# seconds, leaving room for an in-flight section (generation + capped cover image +
+# at most one Sonnet tighten pass if a recap runs past 1400 words — recaps NEVER
+# expand since 2026-10-06, ARTICLE_LENGTH 'weekly-summary') plus the single final
+# push (git_push's network timeout is 180 s).
 RUN_BUDGET_S = 1080
 # Cover image: FLUX ~60 s/image. Default nova_image_utils budget is 2 x 600 s,
 # which alone could blow the task timeout; one 240 s attempt is plenty here.
 IMAGE_TIMEOUT_S = 240
 IMAGE_MAX_RETRIES = 1
-# Sections run 3 at a time. Real work is ~25-40 min serial now (8 sections; 5 are
-# longform sections whose recap publish_hugo expands to >=5000 words in 1-2 haiku
-# passes, + a FLUX cover each). Each section writes distinct files; git push happens once, after all of them;
+# Sections run 3 at a time. Real work is ~3 min of recap generation for 8 sections
+# (measured 2026-10-06) + a FLUX cover each; no longform expansion any more. Each section writes distinct files; git push happens once, after all of them;
 # concurrent claude -p calls and ComfyUI jobs are routine across the journal fleet.
 WORKERS = 3
 
@@ -345,7 +346,11 @@ def summarize_section(section: str, articles: list[dict], start: date, end: date
     tags = [section, "weekly-summary"]
     description = f"Nova's weekly {section} recap — {_date_range_label(start, end)}"
     ok = publish_hugo(title, body, section, tags, description,
-                      image_path=str(img_path) if img_path else None, emoji="\U0001f4c5")
+                      image_path=str(img_path) if img_path else None, emoji="\U0001f4c5",
+                      # ARTICLE_LENGTH 'weekly-summary' = 700-1400, never expands
+                      # (2026-10-06): recaps publish as written, or get one tighten
+                      # pass if they run past 1400.
+                      profile="weekly-summary")
     if ok is False:   # publish gate blocked it — nothing written
         log(f"[{section}] publish_hugo refused the summary — not marking done")
         return None

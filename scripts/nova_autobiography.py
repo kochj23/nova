@@ -348,7 +348,7 @@ def main():
             title = f"Who I've Been, Who I'm Becoming — v{new_version}"
             tags = ["operations", "autobiography", "narrative-identity", "interiority", "monthly"]
             desc = "Nova's revisable life-story: the failures and the passions in one arc."
-            if nj.publish_hugo(title, narrative, "operations", tags, desc, emoji="📖"):
+            if nj.publish_hugo(title, narrative, "operations", tags, desc, emoji="📖", sources=prompt, profile="autobiography"):
                 _push = nj.git_push("operations", title)
                 # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
                 _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")

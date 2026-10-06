@@ -146,7 +146,8 @@ def main():
     # A guard rejection must FAIL the run, not log a publish: the evergreen slug means a silent
     # no-op leaves yesterday's article in place, so the site looks current while the job is dead.
     if not nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🐠",
-                           stable_slug=STABLE_SLUG, cited_memory_ids=cited_ids):
+                           stable_slug=STABLE_SLUG, cited_memory_ids=cited_ids, sources=user,
+                           profile="fishbowl-daily"):
         nj.log(f"[fishbowl-daily] NOT PUBLISHED — quality guard rejected: {title}")
         return 1
     _push = nj.git_push("opinions", title)

@@ -53,6 +53,7 @@ nj = _load("nj", SCRIPT)
 nj.LOG_FILE = TMP / "nova_journal.log"
 nj.STATE_FILE = TMP / "journal_state.json"
 nj.HUGO_ROOT = TMP / "nova-journal"
+nj._TASK_TIMEOUT_CACHE[:] = [None]   # never read the real scheduler yaml: no task budget in tests
 
 BODY = ("The scheduler vanished on Tuesday and nobody noticed until the dashboards went quiet. " * 12).strip()
 REFUSAL = "I need to stop you right there. This assignment doesn't work: you handed me a grab-bag of excerpts. " * 8
@@ -231,6 +232,30 @@ class TestRetry(unittest.TestCase):
 
 
 class TestUnit(unittest.TestCase):
+    def test_article_length_table_lookup_per_profile(self):
+        G, N = nj.EXPAND_GROUNDED, nj.EXPAND_NEVER
+        expect = {"ops-security": (300, 700, N), "emergency-breaking": (300, 700, N), "dream": (400, 900, N),
+                  "unclaimed-digest": (600, 1200, N), "digest": (600, 1200, N), "copenhagen": (600, 1200, N),
+                  "weekly-summary": (700, 1400, N), "opinion": (1000, 1800, G), "fishbowl-daily": (1000, 1800, G),
+                  "local-airwaves": (1200, 2000, G), "tech-today": (1200, 2000, G), "synthesis": (1500, 2500, G),
+                  "essay": (2500, 4000, G), "meta-analysis": (2000, 3500, G), "research": (2500, 5000, G)}
+        for prof, row in expect.items():
+            self.assertEqual(nj.article_length(prof), row, prof)
+        for prof in (None, "", "after-dark", "autobiography", "repo-scout"):
+            self.assertIsNone(nj.article_length(prof))
+        for prof, (lo, hi, pol) in nj.ARTICLE_LENGTH.items():
+            self.assertLess(lo, hi, prof); self.assertIn(pol, (G, N), prof)
+        for p in ("essay", "opinion", "tech-today", "research", "synthesis", "digest", "dream"):
+            self.assertIn(p, nj.PROFILES)                                        # keys are real profile names
+
+    def test_sources_from_memories(self):
+        self.assertEqual(nj.sources_from_memories([], "t"), "")
+        self.assertEqual(nj.sources_from_memories([{"text": "  "}, "junk"], "t"), "")
+        out = nj.sources_from_memories([{"text": "fact one", "source": "wiki"},
+                                        {"text": "x" * 5000, "source": "web", "metadata": {"url": "https://e.x/a"}}], "Topic")
+        self.assertTrue(out.startswith("TOPIC: Topic")); self.assertIn("[1] (wiki) fact one", out)
+        self.assertIn("(web, https://e.x/a)", out); self.assertLess(len(out), 1700)
+
     def test_state_round_trip_and_recent_pruning(self):
         if nj.STATE_FILE.exists():
             nj.STATE_FILE.unlink()
@@ -343,32 +368,97 @@ class TestIntegration(unittest.TestCase):
             self.assertFalse(nj.publish_hugo("Blocked Piece Title", "too short", "dreams", [], "d"))
         self.assertIn("Suppressed a non-publishable *dreams* article", pb.call_args[0][0])
 
-    def test_longform_expansion_only_for_longform_sections(self):
-        long = ("Deep elaboration of the same point, carried further with care. " * 600).strip()
-        with patch.dict(sys.modules, _lazy_stubs()), patch.object(nj, "call_openrouter", return_value="I can see your draft.\n\n---\n\n" + long) as co, _quiet():
-            nj.publish_hugo("Essay On Clocks Lying", BODY, "essays", [], "d")
-            nj.publish_hugo("Dream On Clocks Lying", BODY, "dreams", [], "d")
-        self.assertEqual(co.call_count, 1)
-        self.assertEqual(co.call_args[0][1], BODY)
-        text = next((nj.HUGO_ROOT / "content/essays").glob("*essay-on-clocks-lying.md")).read_text()
-        self.assertNotIn("I can see your draft", text)
-        self.assertIn("Deep elaboration", text)
-        self.assertGreater(len(text.split()), 5000)
-        with patch.dict(sys.modules, _lazy_stubs()), patch.object(nj, "call_openrouter", return_value="short " * 100), _quiet():
-            nj.publish_hugo("Essay Kept Short Here", BODY, "essays", [], "d")
-        text = next((nj.HUGO_ROOT / "content/essays").glob("*essay-kept-short-here.md")).read_text()
-        self.assertIn(BODY[:60], text)                                             # under-floor expansion is discarded
-
-    def test_longform_short_first_pass_gets_one_more_pass(self):
-        mid = ("Elaborated once, still short of the floor here today. " * 300).strip()    # 2700w
-        full = ("Elaborated twice, now comfortably past the floor here. " * 700).strip()  # 5600w
+    # ── per-article-type length policy + grounded expansion (2026-10-06) ──────────
+    def _pub(self, title, body, profile, sources=None, section="essays", replies=None):
+        """publish_hugo with call_openrouter mocked; returns (published_text, mock)."""
         with patch.dict(sys.modules, _lazy_stubs()), \
-                patch.object(nj, "call_openrouter", side_effect=[mid, full]) as co, _quiet():
-            nj.publish_hugo("Essay On Two Passes", BODY, "essays", [], "d")
+                patch.object(nj, "call_openrouter", side_effect=list(replies or [])) as co, _quiet():
+            self.assertTrue(nj.publish_hugo(title, body, section, [], "d", sources=sources, profile=profile))
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")
+        return next((nj.HUGO_ROOT / f"content/{section}").glob(f"*{slug}.md")).read_text(), co
+
+    GROUNDED = ("The scheduler restarted on Tuesday at the memory host, as the source log says. " * 130).strip()  # ~1820w
+    SOURCES = "[1] (ops_log) SRC-FACT-42: the scheduler restarted on Tuesday at the memory host."
+
+    def test_grounded_prompt_carries_sources_and_no_invention_rule_and_uses_sonnet(self):
+        text, co = self._pub("Essay On Grounded Clocks", BODY, "essay", self.SOURCES,
+                             replies=["I can see your draft.\n\n---\n\n" + self.GROUNDED, '{"unsupported": []}'])
+        (sys_p, user_p), kw = co.call_args_list[0]
+        self.assertIn("SRC-FACT-42", user_p); self.assertIn(BODY, user_p)
+        self.assertIn("Expand ONLY using facts present in the DRAFT or the SOURCES", sys_p)
+        self.assertIn("STOP where the sources run out", sys_p)
+        self.assertIn("2500-4000", sys_p)                                         # the essay row, not 5000
+        self.assertEqual((kw["model"], kw["timeout"]), (nj.EXPAND_MODEL, nj.EXPAND_TIMEOUT_S))
+        self.assertIn("sonnet", nj.EXPAND_MODEL)
+        chk_user = co.call_args_list[1][0][1]
+        self.assertIn("SRC-FACT-42", chk_user); self.assertIn("EXPANDED:", chk_user)
+        # grounded + meaningfully longer, still under the 2500 min -> ACCEPTED
+        self.assertIn("as the source log says", text); self.assertNotIn("I can see your draft", text)
+
+    def test_unsupported_claims_reject_expansion_and_publish_original(self):
+        verdict = json.dumps({"unsupported": [{"claim": "Dr. Ada Moss said it was sabotage", "type": "quote"}]})
+        text, co = self._pub("Essay With Invented Quote", BODY, "essay", self.SOURCES,
+                             replies=[self.GROUNDED, verdict])
         self.assertEqual(co.call_count, 2)
-        self.assertEqual(co.call_args_list[1][0][1], mid)                          # 2nd pass expands the 1st
-        text = next((nj.HUGO_ROOT / "content/essays").glob("*essay-on-two-passes.md")).read_text()
-        self.assertIn("Elaborated twice", text)
+        self.assertNotIn("as the source log says", text); self.assertIn(BODY[:60], text)
+        self.assertIn("Dr. Ada Moss", nj.LOG_FILE.read_text())                    # rejected claim is logged
+
+    def test_invented_numbers_rejected_before_model_check(self):
+        padded = self.GROUNDED + " It took 29 minutes and 0.08% of the budget."
+        text, co = self._pub("Essay With Invented Numbers", BODY, "essay", self.SOURCES, replies=[padded])
+        self.assertEqual(co.call_count, 1)                                         # no checker call needed
+        self.assertNotIn("29 minutes", text); self.assertIn(BODY[:60], text)
+        self.assertEqual(nj.new_numbers("draft 2014", "src 6.5 and 42", "2014, 6.5, 42 and 1. but 29 and 0.08%"),
+                         ["0.08%", "29"])
+
+    def test_checker_error_or_garbage_fails_closed(self):
+        for i, bad in enumerate([None, "looks fine to me!", RuntimeError("cli died")]):
+            with self.subTest(bad=bad):
+                text, co = self._pub(f"Essay Checker Broke Case {'abc'[i]}", BODY, "essay", self.SOURCES,
+                                     replies=[self.GROUNDED, bad])
+                self.assertEqual(co.call_count, 2)
+                self.assertNotIn("as the source log says", text); self.assertIn(BODY[:60], text)
+
+    def test_no_sources_means_no_expansion_call(self):
+        text, co = self._pub("Essay Without Any Sources", BODY, "essay", None)
+        co.assert_not_called()
+        self.assertIn(BODY[:60], text)
+        self.assertIn("no sources, not expanding", nj.LOG_FILE.read_text())
+
+    def test_never_rows_and_unmapped_profiles_make_no_model_call(self):
+        for prof, sec in (("dream", "dreams"), ("weekly-summary", "essays"), ("ops-security", "operations"),
+                          ("unclaimed-digest", "operations"), ("autobiography", "operations"), (None, "essays")):
+            with self.subTest(profile=prof):
+                text, co = self._pub(f"Short Piece For {prof or 'nobody'}", BODY, prof, self.SOURCES, section=sec)
+                co.assert_not_called()
+                self.assertIn(BODY[:60], text)
+        self.assertIn("unmapped profile None", nj.LOG_FILE.read_text())
+
+    def test_above_max_gets_one_tighten_pass_else_draft(self):
+        long_body = ("Port scan from the usual suspect, blocked at the edge, nothing new to report. " * 70).strip()  # ~1050w > 700
+        tight = ("Port scan blocked at the edge; nothing new. " * 60).strip()                                       # ~420w
+        text, co = self._pub("Ops Security Too Long Today", long_body, "ops-security", section="operations",
+                             replies=[tight])
+        self.assertEqual(co.call_count, 1)                                         # tighten only, no check
+        sys_p, user_p = co.call_args[0]
+        self.assertIn("add NOTHING", sys_p); self.assertIn("at most 700", sys_p); self.assertEqual(user_p, long_body)
+        self.assertIn("Port scan blocked at the edge; nothing new.", text)
+        self.assertNotIn("from the usual suspect", text)
+        # tighten failure (sonnet AND haiku error) -> draft as written
+        text, co = self._pub("Ops Security Tighten Failed", long_body, "ops-security", section="operations",
+                             replies=[None, None])
+        self.assertEqual([c.kwargs["model"] for c in co.call_args_list], [nj.EXPAND_MODEL, nj.EXPAND_FALLBACK_MODEL])
+        self.assertIn("from the usual suspect", text)
+
+    def test_haiku_only_as_fallback_and_task_budget_respected(self):
+        text, co = self._pub("Essay Sonnet Errored Once", BODY, "essay", self.SOURCES,
+                             replies=[None, self.GROUNDED, '{"unsupported": []}'])
+        self.assertEqual([c.kwargs["model"] for c in co.call_args_list],
+                         [nj.EXPAND_MODEL, nj.EXPAND_FALLBACK_MODEL, nj.CHECK_MODEL])
+        self.assertIn("as the source log says", text)
+        with patch.object(nj, "_task_time_left", return_value=300.0):            # not enough for expand+check
+            text, co = self._pub("Essay Out Of Task Time", BODY, "essay", self.SOURCES)
+        co.assert_not_called(); self.assertIn(BODY[:60], text)
 
     def test_citations_are_recorded_parameterized(self):
         cur = MagicMock(); conn = MagicMock(); conn.cursor.return_value.__enter__.return_value = cur
@@ -436,6 +526,7 @@ class TestFunctional(unittest.TestCase):
                          ("A Fine Title", "dreams", ["zz", "ocean", "tides"], "🌙", "/tmp/cover.png"))
         self.assertEqual(kw["description"], "Nova's zz on Ocean Tides Explained")
         self.assertNotIn("IMGPROMPT", kw["body"]); self.assertIn("## Sources & Attribution", kw["body"])
+        self.assertEqual(kw["profile"], "zz"); self.assertIn("m1", kw["sources"])   # grounds expansion
         gi.assert_called_once_with("prompt", section="dreams")
         gp.assert_called_once_with("dreams", "A Fine Title")
         ns.assert_called_once(); self.assertEqual(ns.call_args[0][:2], ("dreams", "A Fine Title"))

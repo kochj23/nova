@@ -454,7 +454,8 @@ Write today's LA County emergency recap for the local section. Facts first, voic
     tags = ["local", "emergency", "public-safety", "la-county", "daily"]
     description = f"Nova's daily LA County emergency recap — {time.strftime('%d %b %Y')}"
     publish_hugo(title, body, SECTION, tags, description,
-                 image_path=str(img_path) if img_path else None, emoji="\U0001f692")
+                 image_path=str(img_path) if img_path else None, emoji="\U0001f692",
+                 sources=user, profile="emergency-daily")
     git_push(SECTION, title)
     notify(title, body[:220].replace("\n", " "), slug, is_breaking=False)
 
@@ -574,7 +575,8 @@ Write the breaking emergency article for the local section. Facts and what-to-do
     tags = ["local", "breaking", "emergency", "public-safety", "la-county"]
     description = f"BREAKING — LA County emergency, {time.strftime('%d %b %Y')}"
     publish_hugo(title, body, SECTION, tags, description,
-                 image_path=str(img_path) if img_path else None, emoji="\U0001f6a8")
+                 image_path=str(img_path) if img_path else None, emoji="\U0001f6a8",
+                 profile="emergency-breaking")
     git_push(SECTION, title)
     notify(title, body[:220].replace("\n", " "), slug, is_breaking=True)
 

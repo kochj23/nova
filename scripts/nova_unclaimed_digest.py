@@ -247,12 +247,11 @@ def main():
     if not title:
         title = f"What I Did With My Own Time — {nj.today_str()}"
 
-    # Reliably reach the 3000-word floor in her own voice (models undershoot long targets),
-    # via controlled continuations rather than publish_hugo's generic expander.
-    if len(body.split()) < MIN_WORDS:
-        body = _extend_to_length(system, body, MIN_WORDS)
+    # No padding loop (2026-10-06, Jordan: never pad without sources). _extend_to_length
+    # is no longer called; publish_hugo's ARTICLE_LENGTH row 'unclaimed-digest'
+    # (600-1200, never expand) owns length and tightens an over-long entry.
     wc = len(body.split())
-    nj.log(f"[unclaimed-digest] final draft is {wc} words (floor {MIN_WORDS})")
+    nj.log(f"[unclaimed-digest] final draft is {wc} words")
     # publish_hugo's longform floor (operations is a longform section) will expand if we
     # came up short, but we asked for 3000+ directly to avoid leaning on the expander.
 
@@ -265,7 +264,9 @@ def main():
 
     tags = ["operations", "unclaimed-time", "passions", "self-directed", "daily", "interiority"]
     desc = "Everything Nova chose to do today, when no one asked her to be useful — at length, in her own voice."
-    if not nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji="🌱"):
+    if not nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji="🌱",
+                           sources=f"{preocc}\n\n{pursuits_block}\n\n{organ_block}",
+                           profile="unclaimed-digest"):
         nj.log(f"[unclaimed-digest] NOT PUBLISHED — guard rejected: {title}")
         return 1
     _push = nj.git_push("operations", title)

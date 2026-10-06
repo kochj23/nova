@@ -207,7 +207,8 @@ def main():
         nj.publish_hugo(title, body, "operations",
                         ["ops", "alerts", "patterns", "security", "weekly"],
                         "Nova's weekly read on what the alerts are actually saying — chronic noise vs real signal.",
-                        image_path=img, emoji="🚨")
+                        image_path=img, emoji="🚨", sources=_sanitized_brief(p),
+                        profile="alert-patterns")
         nj.git_push("operations", title)   # commit + push the article AND its image (was missing)
         log(f"published sanitized article to /operations (image: {'yes' if img else 'none'})")
     except Exception as e:

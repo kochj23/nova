@@ -133,6 +133,7 @@ def main():
     ok = publish_hugo(
         title=TITLE, body=BODY, section=SECTION, tags=TAGS,
         description=DESCRIPTION, image_path=image_path, emoji="\U0001f5a5",
+        profile="weekly-ops-capstone",
     )
     if not ok:
         print("ABORT: publish_hugo failed")

@@ -105,7 +105,8 @@ def main():
 
     tags = ["opinion", "fishbowl", "watch-community", "roster", "report-card"]
     desc = "Nova's channel-by-channel verdict on the Fishbowl cast."
-    nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🗣️")
+    nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🗣️", sources=user,
+                    profile="opinion-fishbowl-roster")
     _push = nj.git_push("opinions", title)
     # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
     _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")

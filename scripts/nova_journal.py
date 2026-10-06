@@ -268,7 +268,7 @@ def fetch_memories_by_source(source: str, n: int = 25) -> list[dict]:
 
 def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku-4.5",
                     max_tokens: int = 4000, temperature: float = 0.7,
-                    top_p: float = 0.9) -> str | None:
+                    top_p: float = 0.9, timeout: int = 240) -> str | None:
     """Call the local Claude Code CLI (Claude Max subscription — flat rate, no
     per-token billing). ponytail: kept the name/signature so the ~15 call sites
     across the fishbowl/journal scripts don't need touching; OpenRouter's credit
@@ -283,6 +283,9 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
     reached. That killed fishbowl_daily + opinion_fishbowl every morning from
     2026-07-22 (their cast-dossier block had grown to ~470 KiB). stdin has no such
     limit, and fixing it here covers all ~15 call sites at once.
+
+    timeout: seconds before the whole claude process group is killed (default 240).
+    The grounded longform expander passes a larger value for Sonnet (2026-10-06).
     """
     cli_model = ("haiku" if "haiku" in model else
                  "sonnet" if "sonnet" in model else
@@ -329,7 +332,7 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                 text=True, start_new_session=True, env=_env)
             try:
-                out, err = proc.communicate(input=user, timeout=240)
+                out, err = proc.communicate(input=user, timeout=timeout)
             except subprocess.TimeoutExpired:
                 try:
                     _os.killpg(_os.getpgid(proc.pid), _signal.SIGKILL)
@@ -339,7 +342,7 @@ def call_openrouter(system: str, user: str, model: str = "anthropic/claude-haiku
                     proc.communicate(timeout=10)
                 except Exception:
                     pass
-                log(f"Claude Code call TIMED OUT ({cli_model}) — killed process group")
+                log(f"Claude Code call TIMED OUT after {timeout}s ({cli_model}) — killed process group")
                 return None
             if proc.returncode != 0:
                 log(f"Claude Code call failed ({cli_model}) attempt {_attempt}/{_attempts}: "
@@ -447,10 +450,353 @@ def _canon_section(section: str) -> str:
     return "operations" if section == "rando" else section
 
 
+# ── Article length policy + grounded expansion (2026-10-06, per Jordan) ──────────
+# "I don't want it to hallucinate. Maybe move to a model that can handle it?"
+# The old expander asked haiku to pad a ~1,100-word draft to 5,000 words with only
+# the draft in hand — that forces invention. Now each ARTICLE TYPE (keyed by the
+# generator profile, not the section folder: operations holds many kinds) has a
+# (min, max, policy) row:
+#   * below min + policy "grounded" + sources passed -> ONE grounded expansion toward
+#     min..max (Sonnet; haiku only if Sonnet errors), then a separate grounding check;
+#     any unsupported specific claim -> the ORIGINAL publishes. Fail closed: checker
+#     error / unparseable verdict / no task time left -> original. A grounded expansion
+#     that is meaningfully longer is accepted even if it is still under min.
+#   * below min + policy "never" (or no sources) -> publish the draft, no model call.
+#   * above max -> one "tighten to <=max, add nothing" pass; any failure -> draft.
+#   * profile not in the table -> no floor, no expansion, publish as written (logged).
+# EDIT THE NUMBERS HERE. Documented in agent_docs 'scripts' and claude_memories
+# feedback-no-hallucinated-longform.
+EXPAND_NEVER, EXPAND_GROUNDED = "never", "grounded"
+_BREAKING = (300, 700, EXPAND_NEVER)      # breaking security alerts / IPS blocks / CVE notices
+_DAILY = (600, 1200, EXPAND_NEVER)        # daily memory audits / "what I did today" / ops daily logs
+_WEEKLY = (700, 1400, EXPAND_NEVER)       # weekly roundups ("This Week in ...")
+_OPINION = (1000, 1800, EXPAND_GROUNDED)
+_LOCAL = (1200, 2000, EXPAND_GROUNDED)    # local Burbank dispatch
+ARTICLE_LENGTH = {
+    # profile:               (min, max, expand policy)
+    "ops-security":            _BREAKING,   # nova_operations_security.py
+    "emergency-breaking":      _BREAKING,   # nova_journal_emergency.py breaking
+    "dream":                   (400, 900, EXPAND_NEVER),
+    "digest":                  _DAILY,      # nova_journal.py digest (daily ops)
+    "unclaimed-digest":        _DAILY,
+    "fellowship-daily":        _DAILY,
+    "copenhagen":              _DAILY,      # morning ops review
+    "daily-watch":             _DAILY,      # nova_daily_threat_assessment.py
+    "weekly-summary":          _WEEKLY,     # nova_journal_weekly_summary.py
+    "media-wrap":              _WEEKLY,
+    "alert-patterns":          _WEEKLY,
+    "network-health":          _WEEKLY,
+    "weekly-ops-capstone":     _WEEKLY,
+    "opinion":                 _OPINION,
+    "fishbowl-daily":          _OPINION,
+    "opinion-fishbowl":        _OPINION,
+    "opinion-fishbowl-roster": _OPINION,
+    "local-airwaves":          _LOCAL,
+    "local-trends":            _LOCAL,
+    "emergency-daily":         _LOCAL,
+    "tech-today":              (1200, 2000, EXPAND_GROUNDED),
+    "synthesis":               (1500, 2500, EXPAND_GROUNDED),
+    "essay":                   (2500, 4000, EXPAND_GROUNDED),
+    "meta-analysis":           (2000, 3500, EXPAND_GROUNDED),
+    "research":                (2500, 5000, EXPAND_GROUNDED),
+    # Unmapped (publish as written): after-dark, pilot, art, autobiography, ledger,
+    # monthly-wrap, repo-scout, iot-scout, one-off ops articles.
+}
+LONGFORM_MIN_GAIN = 1.25            # "meaningfully longer": >= 1.25x the draft (or >= min)
+LONGFORM_MAX_OVERSHOOT = 1.25       # an expansion past 1.25x max is padding -> rejected
+TIGHTEN_MAX_SLACK = 1.10            # a tightened draft may land up to 10% over max
+LONGFORM_SOURCES_MAX_CHARS = 60_000
+EXPAND_MODEL = "anthropic/claude-sonnet"
+EXPAND_TIMEOUT_S = 600              # Sonnet timed out at the old 240 s default
+EXPAND_FALLBACK_MODEL = "anthropic/claude-haiku-4.5"
+EXPAND_FALLBACK_TIMEOUT_S = 240
+CHECK_MODEL = "anthropic/claude-sonnet"
+CHECK_TIMEOUT_S = 300
+LONGFORM_RESERVE_S = 240            # left for publish + git push after the rewrite
+_PROC_T0 = time.monotonic()
+_TASK_TIMEOUT_CACHE: list = []
+
+_EXPAND_SYS = (
+    "You are Nova, editing your own article before publication. You are given SOURCES "
+    "(the only material this article may draw facts from) and the DRAFT. Expand the draft "
+    "toward {lo}-{hi} words by deepening the analysis of what is already there and by "
+    "bringing in further detail that is EXPLICITLY present in the SOURCES.\n"
+    "HARD RULES — GROUNDING:\n"
+    "- Expand ONLY using facts present in the DRAFT or the SOURCES block. Do not introduce any "
+    "name, number, statistic, date, quote, event, product, study, citation or URL that does not "
+    "appear in them.\n"
+    "- Never attribute words to anyone unless that quote appears in the DRAFT or SOURCES.\n"
+    "- Analysis, opinion, interpretation, voice and connective reasoning are welcome; new facts "
+    "are not.\n"
+    "- If the sources cannot support that length, STOP where the sources run out. A shorter "
+    "honest article beats a padded one. No filler, no restating paragraphs. Never exceed {hi} words.\n"
+    "- Keep the existing structure, title-free format, voice, and any Sources/Attribution "
+    "section exactly as it is.\n"
+    "Output ONLY the full article body — no preamble, no notes about what you changed.")
+
+_TIGHTEN_SYS = (
+    "You are Nova, editing your own article before publication. TIGHTEN the article below to "
+    "at most {hi} words (aim for {lo}-{hi}). Cut repetition, filler and the weakest passages; "
+    "keep the strongest points, the voice, the structure and any Sources/Attribution section. "
+    "HARD RULE: add NOTHING — no new facts, names, numbers, dates, quotes, events or claims; "
+    "only remove and lightly re-join what is already there. Output ONLY the tightened article "
+    "body — no preamble, no notes about what you changed.")
+
+_CHECK_SYS = (
+    "You are a strict fact-checker. You receive SOURCES, the ORIGINAL draft, and an EXPANDED "
+    "version of it. List every specific factual claim in the EXPANDED text that is NOT stated in, "
+    "or directly supported by, the ORIGINAL or the SOURCES (in practice: claims in the added "
+    "text). Specific claims are: names of people/organizations/products/places (name); "
+    "numbers, statistics, amounts, versions (number); dates or times (date); quotations "
+    "attributed to anyone (quote); events or incidents said to have happened (event); studies, "
+    "papers, reports, URLs (citation). Opinions, analysis, metaphors, jokes and general "
+    "reasoning are NOT claims — ignore them. Reply with ONLY a JSON object, no prose: "
+    '{"unsupported": [{"claim": "<short excerpt>", "type": "name|number|date|quote|event|citation"}]} '
+    '— an empty list if every specific claim is supported.')
+
+# The model routinely prefaces with an acknowledgment ("I can see your article... Let
+# me expand it...") despite the Output-ONLY rule — 30 such leaks reached the live site
+# between Jul 30 and Sep 13. Leading meta paragraphs (and a stray --- after them) are
+# stripped before the guard sees the text.
+_EXPAND_META_RE = re.compile(
+    r"^(i can see|i'?ll (expand|tighten)|let me (expand|tighten)|i've (expanded|tightened)|"
+    r"here is the|here's the|the draft you|below is the)", re.I)
+
+
+def article_length(profile: str | None):
+    """(min, max, policy) for a generator profile, or None when unmapped."""
+    return ARTICLE_LENGTH.get(profile or "")
+
+
+def sources_from_memories(memories: list | None, topic: str | None = None,
+                          per_item: int = 1500) -> str:
+    """Render a generator's source material (memories / web results / posts) as the
+    SOURCES block for grounded expansion. "" when there is no real material."""
+    parts = []
+    for i, m in enumerate(memories or [], 1):
+        if not isinstance(m, dict):
+            continue
+        text = str(m.get("text", "")).strip()
+        if not text:
+            continue
+        meta = m.get("metadata") if isinstance(m.get("metadata"), dict) else {}
+        url = meta.get("url", "")
+        tag = f"{m.get('source', '?')}{', ' + url if url else ''}"
+        parts.append(f"[{i}] ({tag}) {text[:per_item]}")
+    if not parts:
+        return ""
+    head = [f"TOPIC: {topic}"] if topic else []
+    return "\n\n".join(head + parts)
+
+
+def _task_timeout_s() -> int | None:
+    """The scheduler's timeout for THIS process's task (script + args matched in the
+    scheduler yaml the parent passed via NOVA_SCHED_CONFIG), or NOVA_TASK_TIMEOUT.
+    None when unknown (a manual run). Cached."""
+    if _TASK_TIMEOUT_CACHE:
+        return _TASK_TIMEOUT_CACHE[0]
+    found = None
+    try:
+        if os.environ.get("NOVA_TASK_TIMEOUT"):
+            found = int(os.environ["NOVA_TASK_TIMEOUT"])
+        else:
+            import yaml
+            cfg = Path(os.environ.get("NOVA_SCHED_CONFIG")
+                       or Path.home() / ".openclaw/config/scheduler.yaml")
+            tasks = (yaml.safe_load(cfg.read_text()) or {}).get("tasks", {}) or {}
+            script, args = Path(sys.argv[0]).name, [str(a) for a in sys.argv[1:]]
+            hits = [int(t.get("timeout", 300)) for t in tasks.values()
+                    if isinstance(t, dict) and t.get("script") == script
+                    and [str(a) for a in (t.get("args") or [])] == args]
+            found = min(hits) if hits else None
+    except Exception:
+        found = None
+    _TASK_TIMEOUT_CACHE.append(found)
+    return found
+
+
+def _task_time_left() -> float | None:
+    t = _task_timeout_s()
+    return None if t is None else t - (time.monotonic() - _PROC_T0)
+
+
+def _clean_expansion(out: str | None) -> str:
+    paras = (out or "").split("\n\n")
+    while paras and (_EXPAND_META_RE.match(paras[0].strip()) or paras[0].strip() == "---"):
+        paras.pop(0)
+    return "\n\n".join(paras).strip()
+
+
+def _rewrite(system: str, user: str, time_left: float | None,
+             after_s: float) -> tuple[str | None, str | None]:
+    """One rewrite pass: Sonnet first; haiku ONLY if Sonnet errors (and there is task
+    time for it). after_s = seconds the caller still needs afterwards (check + publish).
+    Returns (text | None, model_used | None)."""
+    plan = [(EXPAND_MODEL, EXPAND_TIMEOUT_S), (EXPAND_FALLBACK_MODEL, EXPAND_FALLBACK_TIMEOUT_S)]
+    t_start = time.monotonic()
+    for i, (model, tmo) in enumerate(plan):
+        if time_left is not None:
+            avail = time_left - (time.monotonic() - t_start) - after_s
+            if avail < 120:
+                log(f"[longform] no task time left for {model} ({avail:.0f}s) — skipping")
+                return None, None
+            tmo = int(min(tmo, avail))
+        if i:
+            log(f"[longform] {plan[0][0]} failed — falling back to {model}")
+        out = _clean_expansion(call_openrouter(system, user, model=model,
+                                               max_tokens=16000, temperature=0.4, timeout=tmo))
+        if out:
+            return out, model
+    return None, None
+
+
+def expand_grounded(body: str, sources: str, lo: int, hi: int,
+                    time_left: float | None = None) -> tuple[str | None, str | None]:
+    """One grounded expansion pass toward lo..hi words using ONLY draft + sources."""
+    src = sources[:LONGFORM_SOURCES_MAX_CHARS]
+    if len(sources) > LONGFORM_SOURCES_MAX_CHARS:
+        src += "\n[... sources truncated ...]"
+    user = f"SOURCES:\n<<<\n{src}\n>>>\n\nDRAFT:\n<<<\n{body}\n>>>"
+    return _rewrite(_EXPAND_SYS.format(lo=lo, hi=hi), user, time_left,
+                    CHECK_TIMEOUT_S + LONGFORM_RESERVE_S)
+
+
+def tighten(body: str, lo: int, hi: int,
+            time_left: float | None = None) -> tuple[str | None, str | None]:
+    """One 'tighten to <=hi, add nothing' pass."""
+    return _rewrite(_TIGHTEN_SYS.format(lo=lo, hi=hi), body, time_left, LONGFORM_RESERVE_S)
+
+
+def check_grounding(draft: str, sources: str, expanded: str,
+                    timeout: int = CHECK_TIMEOUT_S) -> tuple[bool, list, str]:
+    """Separate model call: specific claims in `expanded` unsupported by draft+sources.
+    FAIL CLOSED — returns (passed, unsupported_claims, note); any error -> (False, [], why)."""
+    src = sources[:LONGFORM_SOURCES_MAX_CHARS]
+    user = (f"SOURCES:\n<<<\n{src}\n>>>\n\nORIGINAL:\n<<<\n{draft}\n>>>\n\n"
+            f"EXPANDED:\n<<<\n{expanded}\n>>>\n\nReturn the JSON now.")
+    try:
+        out = call_openrouter(_CHECK_SYS, user, model=CHECK_MODEL, max_tokens=4000,
+                              temperature=0.0, timeout=timeout)
+        if not out:
+            return False, [], "checker returned nothing"
+        a, b = out.find("{"), out.rfind("}")
+        verdict = json.loads(out[a:b + 1]) if a >= 0 and b > a else None
+        claims = verdict.get("unsupported") if isinstance(verdict, dict) else None
+        if not isinstance(claims, list):
+            return False, [], f"unparseable checker verdict: {out[:200]!r}"
+    except Exception as e:
+        return False, [], f"checker error: {e}"
+    bad = []
+    for c in claims:
+        if isinstance(c, dict):
+            # anything but opinion/analysis counts as specific — unknown types too (fail closed)
+            if str(c.get("type", "")).lower() not in ("opinion", "analysis"):
+                bad.append(c)
+        elif c:
+            bad.append({"claim": str(c), "type": "?"})
+    return (not bad), bad, f"{len(claims)} flagged, {len(bad)} specific"
+
+
+_NUM_RE = re.compile(r"\d[\d,.%]*\d%?|\d%")
+
+
+def new_numbers(draft: str, sources: str, expanded: str) -> list[str]:
+    """Deterministic backstop to the model checker: multi-character numbers (29, 0.08%,
+    2014, 6.5) in the expansion that appear nowhere in draft+sources. Single digits are
+    ignored (list numbering). The 2026-10-06 live check saw the model checker catch an
+    invented '0.08%' but let new '29'/'90' through."""
+    seen = set(_NUM_RE.findall(draft)) | set(_NUM_RE.findall(sources or ""))
+    return sorted({n.rstrip(".,") for n in _NUM_RE.findall(expanded)} - {n.rstrip(".,") for n in seen})
+
+
+def longform_expand(title: str, body: str, section: str, sources: str | None,
+                    profile: str | None = None) -> str:
+    """Apply the profile's length policy. Returns the body to publish: a grounded,
+    checked expansion, a tightened draft, or the draft as written."""
+    from nova_journal_guard import is_publishable
+    wc = len(body.split())
+    tag = f"'{title[:50]}' [{profile or '-'}/{section}] {wc}w"
+    row = article_length(profile)
+    if row is None:
+        log(f"[longform] {tag} — unmapped profile {profile!r}: no floor, publishing as written")
+        return body
+    lo, hi, policy = row
+    t0 = time.monotonic()
+    try:
+        if wc > hi:
+            left = _task_time_left()
+            log(f"[longform] {tag} — above max {hi}, tightening")
+            out, model = tighten(body, lo, hi, left)
+            got = len(out.split()) if out else 0
+            if not out or got >= wc or got > hi * TIGHTEN_MAX_SLACK:
+                log(f"[longform] {tag} — tighten via {model or '-'} gave {got}w — publishing draft as written")
+                return body
+            ok, why = is_publishable(title, out)
+            if not ok:
+                log(f"[longform] {tag} — tightened text failed guard ({why}) — publishing draft as written")
+                return body
+            log(f"[longform] {tag} — tightened {wc} -> {got}w via {model} "
+                f"in {time.monotonic() - t0:.0f}s — publishing tightened")
+            return out
+        if wc >= lo:
+            log(f"[longform] {tag} — within {lo}-{hi}, publishing as written")
+            return body
+        if policy != EXPAND_GROUNDED:
+            log(f"[longform] {tag} — under min {lo} but policy '{policy}', publishing as written")
+            return body
+        if not (sources or "").strip():
+            log(f"[longform] {tag} — no sources, not expanding")
+            return body
+        left = _task_time_left()
+        log(f"[longform] {tag} — grounded expansion toward {lo}-{hi} ({len(sources)} chars of "
+            f"sources{'' if left is None else f', {left:.0f}s task time left'})")
+        expanded, model = expand_grounded(body, sources, lo, hi, left)
+        if not expanded:
+            log(f"[longform] {tag} — expansion produced nothing — publishing original")
+            return body
+        got = len(expanded.split())
+        log(f"[longform] {tag} — {model} expanded {wc} -> {got}w in {time.monotonic() - t0:.0f}s")
+        if got < lo and got < wc * LONGFORM_MIN_GAIN:
+            log(f"[longform] {tag} — {got}w is not meaningfully longer — publishing original")
+            return body
+        if got > hi * LONGFORM_MAX_OVERSHOOT:
+            log(f"[longform] {tag} — {got}w overshoots max {hi} (padding) — publishing original")
+            return body
+        ok, why = is_publishable(title, expanded)
+        if not ok:
+            log(f"[longform] {tag} — expansion failed guard ({why}) — publishing original")
+            return body
+        invented = new_numbers(body, sources, expanded)
+        if invented:
+            log(f"[longform] {tag} — expansion REJECTED: numbers not in draft/sources "
+                f"{invented[:20]} — publishing original")
+            return body
+        check_to = CHECK_TIMEOUT_S
+        if left is not None:
+            check_to = int(min(CHECK_TIMEOUT_S, left - (time.monotonic() - t0) - LONGFORM_RESERVE_S))
+            if check_to < 60:
+                log(f"[longform] {tag} — no task time left for the grounding check — publishing original (fail closed)")
+                return body
+        t1 = time.monotonic()
+        passed, bad, note = check_grounding(body, sources, expanded, timeout=check_to)
+        if not passed:
+            shown = "; ".join(f"[{c.get('type')}] {str(c.get('claim'))[:120]}" for c in bad[:12])
+            log(f"[longform] {tag} — grounding check REJECTED ({note}, {time.monotonic() - t1:.0f}s) — "
+                f"publishing original. Unsupported: {shown or '-'}")
+            return body
+        log(f"[longform] {tag} — grounding check passed ({note}, {time.monotonic() - t1:.0f}s) — "
+            f"publishing {got}w via {model} ({time.monotonic() - t0:.0f}s total)")
+        return expanded
+    except Exception as e:
+        log(f"[longform] {tag} — length policy error ({e}) — publishing original")
+        return body
+
+
 def publish_hugo(title: str, body: str, section: str, tags: list[str],
                  description: str, image_path: str | None = None, emoji: str = "",
                  stable_slug: str | None = None,
-                 cited_memory_ids: list | None = None) -> bool:
+                 cited_memory_ids: list | None = None,
+                 sources: str | None = None, profile: str | None = None) -> bool:
     """Write a Hugo markdown post and copy cover image.
 
     stable_slug: if set, the post uses a FIXED filename ("<slug>.md", no date prefix) so
@@ -459,6 +805,12 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
     nova_ops.article_citations at publish time (the provenance invariant, 2026-09-13);
     the nightly sleep cycle materializes them into nova_memories.memory_links once the
     article is re-ingested.
+    profile: the generator profile (essay, opinion, ops-security, local-airwaves...) —
+    selects the ARTICLE_LENGTH (min, max, policy) row. Unmapped/None -> no floor, no
+    expansion, the draft publishes as written.
+    sources: the source material the draft was written from (memories, news/search
+    results, scanner data, dossiers...). A "grounded" row expands ONLY when this is
+    given, and only with facts in draft+sources (see longform_expand).
     """
     # Central title fallback (2026-09-13): degenerate titles ("Abstract", "Let me…",
     # stray markdown) previously reached the site from generators lacking their own
@@ -490,67 +842,9 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
         return False
     section = _canon_section(section)
 
-    # Long-form floor (2026-07-26, per Jordan; raised 3000 -> 5000 on 2026-10-06,
-    # per Jordan): substantive sections publish at >=5000 words. Deliberately-short
-    # formats (breaking alerts, daily-watch, after-dark monologue, dreams/art, rando
-    # column, digests) are NOT listed — padding a 500-word alert to 3k is how
-    # hallucinations happen.
-    LONGFORM_MIN_WORDS = 5000
-    LONGFORM_SECTIONS = {"essays", "opinions", "operations", "research",
-                         "tech-today", "synthesis", "meta"}
-    wc = len(body.split())
-    if section in LONGFORM_SECTIONS and wc < LONGFORM_MIN_WORDS:
-        log(f"[longform] '{title[:50]}' ({section}) is {wc} words — expanding to >={LONGFORM_MIN_WORDS}")
-        try:
-            _EXPAND_SYS = (
-                "You are Nova, editing your own article before publication. Expand the draft "
-                f"to at least {LONGFORM_MIN_WORDS} words WITHOUT padding: deepen the analysis, "
-                "add concrete elaboration of points already present, extend examples, and let "
-                "the voice breathe. HARD RULES: do not invent new facts, numbers, names, events, "
-                "or quotes that are not in the draft; do not add filler phrases or restate "
-                "paragraphs; keep the existing structure, title-free format, and voice. "
-                "Output ONLY the full expanded article body.")
-            # The model routinely prefaces with an acknowledgment ("I can see your
-            # article... Let me expand it...") despite the Output-ONLY rule — 30
-            # such leaks reached the live site between Jul 30 and Sep 13. Strip any
-            # leading meta-commentary paragraphs (and a stray --- after them)
-            # before the guard sees the text.
-            _META = re.compile(
-                r"^(i can see|i'?ll expand|let me expand|i've expanded|here is the|"
-                r"here's the|the draft you|below is the)", re.I)
-            # Up to 2 passes (2026-10-06, 5000 floor): one haiku pass lands anywhere
-            # from ~2,850 to ~5,000 words on the same 1,100-word draft, so a short
-            # first pass is fed back once (measured: 1100 -> 5062 -> 6849).
-            expanded, src = None, body
-            for _pass in range(2):
-                out = call_openrouter(_EXPAND_SYS, src, max_tokens=16000, temperature=0.7)
-                if not out:
-                    break
-                paras = out.split("\n\n")
-                while paras and (_META.match(paras[0].strip()) or paras[0].strip() == "---"):
-                    paras.pop(0)
-                out = "\n\n".join(paras).strip()
-                if len(out.split()) <= len(src.split()):
-                    break                     # no progress — stop, keep best so far
-                expanded = src = out
-                if len(expanded.split()) >= LONGFORM_MIN_WORDS:
-                    break
-            # Honest floor (2026-09-13): only accept an expansion that actually
-            # reaches the stated minimum — "longer than the draft" was shipping
-            # 2,292-word articles through a stage named 3000. Anything less keeps
-            # the original: a tight short piece beats a padded medium one.
-            if expanded and len(expanded.split()) >= LONGFORM_MIN_WORDS:
-                ok2, why = is_publishable(title, expanded)
-                if ok2:
-                    body = expanded
-                    log(f"[longform] expanded {wc} -> {len(body.split())} words")
-                else:
-                    log(f"[longform] expansion failed guard ({why}) — publishing original")
-            else:
-                got = len(expanded.split()) if expanded else 0
-                log(f"[longform] expansion reached {got} < {LONGFORM_MIN_WORDS} — publishing original {wc}w")
-        except Exception as e:
-            log(f"[longform] expansion error ({e}) — publishing original")
+    # Per-article-type length policy (2026-10-06, per Jordan — replaces the single
+    # 5000-word section floor; see ARTICLE_LENGTH / longform_expand).
+    body = longform_expand(title, body, section, sources, profile=profile)
 
     try:  # prepend the live backyard-weather dateline to the BODY (never the title)
         from nova_weather_blurb import weather_dateline_line
@@ -2360,7 +2654,9 @@ def run_profile(profile_name: str) -> int:
 
     success = publish_hugo(
         title=title, body=body, section=section, tags=tags,
-        description=description, image_path=image_path, emoji=profile["emoji"]
+        description=description, image_path=image_path, emoji=profile["emoji"],
+        # The draft's own source material grounds any long-form expansion (2026-10-06).
+        sources=sources_from_memories(memories, topic), profile=profile_name,
     )
     if not success:
         log("ABORT: Hugo publish failed")

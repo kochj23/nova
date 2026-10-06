@@ -158,7 +158,7 @@ def main():
     tags = ["operations", "media", "weekly", "ingest", "tv", "youtube"]
     desc = "Nova's weekly wrap-up of every YouTube show and TV recording ingested into her memory — with commentary."
     if not nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji="📺",
-                           cited_memory_ids=cited_ids):
+                           cited_memory_ids=cited_ids, sources=user, profile="media-wrap"):
         nj.log(f"[media-wrap] NOT PUBLISHED — quality guard rejected: {title}")
         return 1
     _push = nj.git_push("operations", title)

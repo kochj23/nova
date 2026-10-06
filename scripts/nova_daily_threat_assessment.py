@@ -311,7 +311,8 @@ OUTPUT EXACTLY THIS SHAPE:\nTITLE: <short title, no quotes>\n<blank line>\n<the 
         nj.log(f"[threat-assessment] image gen failed (non-fatal): {e}")
     tags = ["local", "security", "daily"]
     desc = "Nova's daily note that she's still watching."
-    nj.publish_hugo(title, body, "local", tags, desc, image_path=img, emoji="🕯️", stable_slug="daily-watch")
+    nj.publish_hugo(title, body, "local", tags, desc, image_path=img, emoji="🕯️", stable_slug="daily-watch",
+                    profile="daily-watch")
     nj.git_push("local", title)
     nj.log(f"[threat-assessment] published vague local article: {title}")
 

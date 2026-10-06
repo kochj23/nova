@@ -192,7 +192,8 @@ def main():
         nj.publish_hugo(title, body, "operations",
                         ["ops", "network", "reliability", "uptime", "weekly"],
                         "Nova's weekly reliability report card on her own network and data feeds.",
-                        image_path=img, emoji="📶")
+                        image_path=img, emoji="📶", sources=_sanitized_brief(m),
+                        profile="network-health")
         nj.git_push("operations", title)
         log(f"published to /operations (image: {'yes' if img else 'none'})")
     except Exception as e:

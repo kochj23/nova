@@ -143,7 +143,8 @@ def main():
     # return meant this job logged "PUBLISHED" and exited 0 having written nothing —
     # indistinguishable from a real success in scheduler_runs, which is precisely how a
     # dead article job hides. Report the failure so the run is marked failed and retried.
-    if not nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🗣️"):
+    if not nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🗣️", sources=user,
+                           profile="opinion-fishbowl"):
         nj.log(f"[opinion-fishbowl] NOT PUBLISHED — quality guard rejected: {title}")
         nj.git_push("opinions", title)   # still ship any pending deletions/cleanup
         return 1
