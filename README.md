@@ -131,6 +131,38 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ## Infrastructure & Security (June–October 2026)
 
+### Publishing That Tells the Truth, the Art Column Retired, and MLX on the Mini (2026-10-06)
+
+Jordan asked whether any articles were missed during the GitHub Actions outage. None were lost, but three were stranded for hours on nova-core and the logs said they had published. This section is the fallout.
+
+```mermaid
+flowchart TD
+    G[generator on .2 or .6] --> C[commit to local nova-journal]
+    C --> PL[git_push under the fleet-wide advisory lock]
+    PL -->|pushed| D[GitHub Pages deploy] --> LIVE[live on nova.digitalnoise.net]
+    PL -->|network failure or timeout| N[log: committed, NOT published<br/>Slack alert journal-push-failing]
+    PL -->|real conflict| R[rolling-file resolution, else unwedge]
+    N --> W[hourly stranded watchdog<br/>on EVERY publishing host]
+    W -->|rebase + push under the same lock| D
+    LIVE --> S[Nova Speaks sweep, every 10 min]
+    S -->|git fetch; ff-only if clean and behind,<br/>else read origin/main tree| Q[queue render] --> YT[narrated video on YouTube]
+```
+
+| Problem found | Fix |
+|---|---|
+| nova-core pushed over SSH port 22, which timed out three times on 10-05; the Studio watchdog never saw that clone | nova-core uses `ssh.github.com:443`; `nova_article_watchdog.py --stranded` runs hourly on nova-core and pushes under the shared lock |
+| A network push failure was logged as "rebase conflict needing a human", then the article was logged PUBLISHED | `git_push` classifies network / non-fast-forward / conflict, returns `pushed`, `committed_not_pushed`, `nothing` or `failed`; 14 generators log COMMITTED (not yet pushed) when it did not land |
+| The narration sweep only saw the Studio's working copy, so nova-core articles waited for some other job to pull | the sweep fetches first and fast-forwards only a clean, behind clone, otherwise scans `origin/main` directly |
+| Weekly roundup killed at its 30-minute limit: one push per section, each eating a 3-minute timeout | one push at the end, sections independent, three at a time, an 18-minute budget |
+| The Art Corner "daily 4 AM" column had quietly been weekly since June | Jordan retired it: generation and roundups off, archive kept, the top-nav item now links the **Nova Speaks** YouTube playlist; the Start Here schedule now matches the real cadence (essays Wednesday, opinions Tue/Thu/Sat) |
+| The general "Car" Wikipedia crawl stored nothing | the ingest relevance gate ignored seed words of three letters or fewer, so even the seed page failed; the seed page now always counts and short words match whole-word |
+
+**Ingest.** About 49,000 memories went in overnight from nine Wikipedia crawls, among them Prague's defenestrations, epidemics, natural disasters, and a run of LA broadcast oddities (Wally George, Gene Scott, Mojo Nixon). Ten screenplays and 46 of 48 scripts from Final Draft's horror list landed in `horror`. `nova_screenplay_ingest.py` handles IMSDb, Daily Script, Script Slug PDFs and Scribd, and re-OCRs scanned typescripts with tesseract. Texas Chain Saw's 87 garbled chunks were replaced by 80 clean ones.
+
+**MLX on the M2 Pro mini.** A forgotten root LaunchDaemon had been running a 17 GB 32B model on the 32 GB mini since July, which caused its Ollama evictions. It now serves `mlx-community/Qwen3-8B-4bit` on :5050 in offline mode, at about 4.8 GB resident and a 2.7 s warm reply. It sits in the fleet router's fast pool and the LLM ping.
+
+**Upstream.** [jasonacox/TinyLLM#35](https://github.com/jasonacox/TinyLLM/pull/35) adds keep-alive pinning, a resident-aware model picker, a multi-server router and a placement warmer. Both blocking review findings and all five notes are fixed, with 36 tests. In our own repos, URL-Analysis#1 (drop wildcard CORS) is merged, stale Dependabot PRs are closed, and Nova-NextGen is archived.
+
 ### Articles Without Padding, and the October 4 Wishes Committed (2026-10-06)
 
 Two Claude sessions worked in parallel; this records both.
