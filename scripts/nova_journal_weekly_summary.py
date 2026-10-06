@@ -33,7 +33,7 @@ Now: sections are generated + written independently, ONE git_push runs at the en
 a run budget stops starting new sections in time for that push to happen (deferred
 sections stay unseen, so a same-day rerun picks them up), local image gen is
 capped so a wedged ComfyUI can't eat a section's whole budget, and sections run
-WORKERS (2) at a time.
+WORKERS (3) at a time.
 
 Written by Jordan Koch (via Claude).
 """
@@ -74,18 +74,18 @@ DAYS = 7
 MIN_ARTICLES = 2  # strictly more than one
 
 # Scheduler kills the task at 1800 s. Don't START a new section after this many
-# seconds, leaving room for an in-flight section plus the single final push
-# (git_push's network timeout is 180 s). Normal runs finish in 10-13 min.
-RUN_BUDGET_S = 1200
+# seconds, leaving room for an in-flight section (longform: up to 2 expansion
+# passes, ~2-6 min) plus the single final push (git_push's network timeout is 180 s).
+RUN_BUDGET_S = 1080
 # Cover image: FLUX ~60 s/image. Default nova_image_utils budget is 2 x 600 s,
 # which alone could blow the task timeout; one 240 s attempt is plenty here.
 IMAGE_TIMEOUT_S = 240
 IMAGE_MAX_RETRIES = 1
-# Sections run 2 at a time. Real work is ~20-25 min serial now (8 sections; 5 are
-# longform sections whose recap publish_hugo expands to >=3000 words, + a FLUX cover
-# each). Each section writes distinct files; git push happens once, after all of them;
+# Sections run 3 at a time. Real work is ~25-40 min serial now (8 sections; 5 are
+# longform sections whose recap publish_hugo expands to >=5000 words in 1-2 haiku
+# passes, + a FLUX cover each). Each section writes distinct files; git push happens once, after all of them;
 # concurrent claude -p calls and ComfyUI jobs are routine across the journal fleet.
-WORKERS = 2
+WORKERS = 3
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────

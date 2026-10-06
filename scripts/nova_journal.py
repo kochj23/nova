@@ -490,26 +490,26 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
         return False
     section = _canon_section(section)
 
-    # Long-form floor (2026-07-26, per Jordan): substantive sections publish at
-    # >=3000 words. Deliberately-short formats (breaking alerts, daily-watch,
-    # after-dark monologue, dreams/art, rando column, digests) are NOT listed —
-    # padding a 500-word alert to 3k is how hallucinations happen.
-    LONGFORM_MIN_WORDS = 3000
+    # Long-form floor (2026-07-26, per Jordan; raised 3000 -> 5000 on 2026-10-06,
+    # per Jordan): substantive sections publish at >=5000 words. Deliberately-short
+    # formats (breaking alerts, daily-watch, after-dark monologue, dreams/art, rando
+    # column, digests) are NOT listed — padding a 500-word alert to 3k is how
+    # hallucinations happen.
+    LONGFORM_MIN_WORDS = 5000
     LONGFORM_SECTIONS = {"essays", "opinions", "operations", "research",
                          "tech-today", "synthesis", "meta"}
     wc = len(body.split())
     if section in LONGFORM_SECTIONS and wc < LONGFORM_MIN_WORDS:
         log(f"[longform] '{title[:50]}' ({section}) is {wc} words — expanding to >={LONGFORM_MIN_WORDS}")
         try:
-            expanded = call_openrouter(
+            _EXPAND_SYS = (
                 "You are Nova, editing your own article before publication. Expand the draft "
                 f"to at least {LONGFORM_MIN_WORDS} words WITHOUT padding: deepen the analysis, "
                 "add concrete elaboration of points already present, extend examples, and let "
                 "the voice breathe. HARD RULES: do not invent new facts, numbers, names, events, "
                 "or quotes that are not in the draft; do not add filler phrases or restate "
                 "paragraphs; keep the existing structure, title-free format, and voice. "
-                "Output ONLY the full expanded article body.",
-                body, max_tokens=16000, temperature=0.7)
+                "Output ONLY the full expanded article body.")
             # The model routinely prefaces with an acknowledgment ("I can see your
             # article... Let me expand it...") despite the Output-ONLY rule — 30
             # such leaks reached the live site between Jul 30 and Sep 13. Strip any
@@ -518,11 +518,23 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
             _META = re.compile(
                 r"^(i can see|i'?ll expand|let me expand|i've expanded|here is the|"
                 r"here's the|the draft you|below is the)", re.I)
-            if expanded:
-                paras = expanded.split("\n\n")
+            # Up to 2 passes (2026-10-06, 5000 floor): one haiku pass lands anywhere
+            # from ~2,850 to ~5,000 words on the same 1,100-word draft, so a short
+            # first pass is fed back once (measured: 1100 -> 5062 -> 6849).
+            expanded, src = None, body
+            for _pass in range(2):
+                out = call_openrouter(_EXPAND_SYS, src, max_tokens=16000, temperature=0.7)
+                if not out:
+                    break
+                paras = out.split("\n\n")
                 while paras and (_META.match(paras[0].strip()) or paras[0].strip() == "---"):
                     paras.pop(0)
-                expanded = "\n\n".join(paras).strip()
+                out = "\n\n".join(paras).strip()
+                if len(out.split()) <= len(src.split()):
+                    break                     # no progress — stop, keep best so far
+                expanded = src = out
+                if len(expanded.split()) >= LONGFORM_MIN_WORDS:
+                    break
             # Honest floor (2026-09-13): only accept an expansion that actually
             # reaches the stated minimum — "longer than the draft" was shipping
             # 2,292-word articles through a stage named 3000. Anything less keeps

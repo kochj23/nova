@@ -344,7 +344,7 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("Suppressed a non-publishable *dreams* article", pb.call_args[0][0])
 
     def test_longform_expansion_only_for_longform_sections(self):
-        long = ("Deep elaboration of the same point, carried further with care. " * 400).strip()
+        long = ("Deep elaboration of the same point, carried further with care. " * 600).strip()
         with patch.dict(sys.modules, _lazy_stubs()), patch.object(nj, "call_openrouter", return_value="I can see your draft.\n\n---\n\n" + long) as co, _quiet():
             nj.publish_hugo("Essay On Clocks Lying", BODY, "essays", [], "d")
             nj.publish_hugo("Dream On Clocks Lying", BODY, "dreams", [], "d")
@@ -353,11 +353,22 @@ class TestIntegration(unittest.TestCase):
         text = next((nj.HUGO_ROOT / "content/essays").glob("*essay-on-clocks-lying.md")).read_text()
         self.assertNotIn("I can see your draft", text)
         self.assertIn("Deep elaboration", text)
-        self.assertGreater(len(text.split()), 3000)
+        self.assertGreater(len(text.split()), 5000)
         with patch.dict(sys.modules, _lazy_stubs()), patch.object(nj, "call_openrouter", return_value="short " * 100), _quiet():
             nj.publish_hugo("Essay Kept Short Here", BODY, "essays", [], "d")
         text = next((nj.HUGO_ROOT / "content/essays").glob("*essay-kept-short-here.md")).read_text()
         self.assertIn(BODY[:60], text)                                             # under-floor expansion is discarded
+
+    def test_longform_short_first_pass_gets_one_more_pass(self):
+        mid = ("Elaborated once, still short of the floor here today. " * 300).strip()    # 2700w
+        full = ("Elaborated twice, now comfortably past the floor here. " * 700).strip()  # 5600w
+        with patch.dict(sys.modules, _lazy_stubs()), \
+                patch.object(nj, "call_openrouter", side_effect=[mid, full]) as co, _quiet():
+            nj.publish_hugo("Essay On Two Passes", BODY, "essays", [], "d")
+        self.assertEqual(co.call_count, 2)
+        self.assertEqual(co.call_args_list[1][0][1], mid)                          # 2nd pass expands the 1st
+        text = next((nj.HUGO_ROOT / "content/essays").glob("*essay-on-two-passes.md")).read_text()
+        self.assertIn("Elaborated twice", text)
 
     def test_citations_are_recorded_parameterized(self):
         cur = MagicMock(); conn = MagicMock(); conn.cursor.return_value.__enter__.return_value = cur
