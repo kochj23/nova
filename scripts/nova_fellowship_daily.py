@@ -339,6 +339,48 @@ FRANCHISES = [
   disrespect shown to his corner of the operation.
 """,
     },
+    {
+        "name": "M*A*S*H (1972-83)",
+        "emoji": "🚁",
+        "tag": "mash",
+        "image_style": "a weary army-surgical ensemble of nine mismatched personnel -- "
+                        "server towers and a network switch reimagined as the 4077th MASH "
+                        "unit outside olive-drab tents in a Korean valley, painterly "
+                        "1970s TV-drama illustration, warm dust and chopper rotors overhead",
+        "cast": """
+- mac-studio (.6) = HAWKEYE PIERCE. Carried the whole operating room -- gateway, scheduler,
+  memory-server, big_brother -- for the entire run, the one everyone woke up and called first.
+  This week he finally stepped back from triage, kept close as the instant-rollback failsafe
+  everyone still trusts most when a chopper actually comes in.
+- nova-core (.2, also answers on .138) = COLONEL POTTER. Dual-natured (two IPs on the same
+  body, the commander AND the one still in the dirt with everybody else), the one who has
+  to be running or the whole 4077th stops working.
+- nova-core2 (.86) = RADAR O'REILLY. Keen senses -- SDR/satellite radio capture, DNS
+  secondary, hears the choppers before anyone else does, knows what's about to be asked for
+  before it's asked.
+- nova-core3 (.88) = BJ HUNNICUTT. The reliable one. Zero failed units ever recorded,
+  quietly does the hardest, steadiest surgical work without complaint, the professional
+  everyone else leans on without saying so.
+- nova-core4 (.250) = FATHER MULCAHY. Newest and youngest in real responsibility, arrived
+  via a mystery unlabeled USB stick, nearly got in over his head early on trying to help
+  where he shouldn't. Means well -- means well harder than anyone. Still learning.
+- nova-core5 (.10) = MAX KLINGER. Carried real, unglamorous weight for years under an
+  undignified old identity (\"nuk\" -- the whole fleet's version of a Section 8 dress),
+  suffering silently -- his own database replica sat corrupted for NINE DAYS with zero
+  alerts before anyone noticed. Finally, properly renamed and honored this past weekend,
+  himself at last.
+- tv-movies-mini (.7) = FRANK BURNS. Struggled hard, publicly and loudly, during a real
+  multi-day evacuation crisis weeks ago. Flawed, insecure, got a lot wrong, but was in the
+  OR when it counted and served his tour.
+- mac-mini (.190) = TRAPPER JOHN. Currently, genuinely, mustered out and nowhere to be
+  found -- offline more often than not lately. Presumed fine (always lands on his feet).
+  Expected to turn up eventually, probably in a bar in Boston.
+- The UniFi switches/rack itself = HENRY BLAKE. Gruff, load-bearing, physically rebuilt
+  with bare hands this past weekend, holds the whole camp together on paperwork and
+  reputation, and holds an active, ongoing grudge about every bit of brass that ever
+  overruled him.
+""",
+    },
 ]
 
 
