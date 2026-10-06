@@ -45,6 +45,16 @@ def emit(title, body, level, dedup_key):
     print(f"[{level}] {title}: {body}")
 
 
+def _describe(prefix, age_h, job, elapsed_s, files, nbytes, errors):
+    """'nas (incremental): 11.8h ago · 90 files, 286.0 MB in 36m33s · 0 errors'"""
+    kind = job.rsplit(":", 1)[-1]
+    m, sec = divmod(elapsed_s or 0, 60)
+    h, m = divmod(m, 60)
+    dur = f"{h}h{m:02d}m" if h else f"{m}m{sec:02d}s"
+    return (f"{prefix.split(':')[-1]} ({kind}): {age_h:.1f}h ago · {files or 0:,} files, "
+            f"{(nbytes or 0) / 1e6:,.1f} MB in {dur} · {errors or 0} errors")
+
+
 def check():
     conn = psycopg2.connect(DSN)
     conn.autocommit = True
@@ -65,20 +75,20 @@ def check():
             else:
                 # surface a recent FAILED run even if an older success exists
                 cur.execute(
-                    "SELECT rc, ok FROM telemetry.backup_runs WHERE job LIKE %s "
-                    "ORDER BY ts DESC LIMIT 1", (prefix + "%",))
-                rc, ok = cur.fetchone()
+                    "SELECT rc, ok, job, elapsed_s, files, bytes, errors FROM telemetry.backup_runs "
+                    "WHERE job LIKE %s ORDER BY ts DESC LIMIT 1", (prefix + "%",))
+                rc, ok, job, elapsed_s, files, nbytes, errors = cur.fetchone()
                 if not ok:
                     issues.append((prefix, f"most recent run FAILED (rc={rc})", "warning"))
                 else:
-                    healthy.append((prefix, age_h))
+                    healthy.append((prefix, age_h, job, elapsed_s, files, nbytes, errors))
     conn.close()
 
     for prefix, msg, level in issues:
         emit(f"Backup stale/failed: {prefix.split(':')[-1]}", msg, level,
              dedup_key=f"backup-stale:{prefix}")
     if not issues and healthy:
-        body = ", ".join(f"{p.split(':')[-1]}: {a:.1f}h ago" for p, a in healthy)
+        body = "\n".join(_describe(*h) for h in healthy)
         emit("Backups healthy", body, "info", dedup_key="backup-digest")
     return issues
 
