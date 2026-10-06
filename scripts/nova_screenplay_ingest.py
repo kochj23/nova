@@ -32,9 +32,11 @@ def extract(page: str) -> tuple[str, str]:
     cands = re.findall(r'<meta[^>]+property="og:title"[^>]+content="([^"]*)"', page, re.I) \
           + re.findall(r"<title[^>]*>(.*?)</title>", page, re.S | re.I) + re.findall(r"<h1[^>]*>(.*?)</h1>", page, re.S | re.I)
     cands = [re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", "", c))).strip() for c in cands]
+    # strip the site suffix BEFORE the site-name filter, else "Jaws Script at IMSDb." is discarded with the site names
+    cands = [re.sub(r"\s*(Script at IMSDb\.?|- Daily Script|\|\s*Script Slug.*|Screenplay\s*\|.*)\s*$", "", c, flags=re.I)
+             for c in cands]
     cands = [c for c in cands if c and not re.search(r"imsdb|internet movie script database|daily script", c, re.I)]   # site names, not titles
     title = cands[0] if cands else ""
-    title = re.sub(r"\s*(Script at IMSDb\.?|- Daily Script|\|\s*Script Slug.*|Screenplay\s*\|.*)\s*$", "", title, flags=re.I)
     page = re.sub(r"<(script|style)[^>]*>.*?</\1>", "", page, flags=re.S | re.I)
     pre = re.search(r"<pre[^>]*>(.*?)</pre>", page, re.S | re.I)
     body = html.unescape(re.sub(r"<[^>]+>", "\n", pre.group(1) if pre else page))

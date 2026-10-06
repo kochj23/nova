@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for nova_reddit_rss_ingest.py — the 7 house categories (Security, Performance, Retry, Unit,
 Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
+import gc
 import importlib.util
 import io
 import json
@@ -113,6 +114,7 @@ def _urlopen(routes):
 
 
 def _run_main(argv, cur, routes, start_ts=None):
+    gc.collect()   # a prior main()'s lock-file handle can linger in a traceback cycle and hold the flock
     conn = types.SimpleNamespace(cursor=lambda: cur, close=MagicMock(), autocommit=False)
     rr.nova_config.post_both = MagicMock()
     uo = _urlopen(routes); buf = io.StringIO()
@@ -222,7 +224,7 @@ class TestUnit(unittest.TestCase):
     def test_parse_entries_strips_tags_and_unescapes(self):
         e = rr.parse_entries(FEED)
         self.assertEqual([x["id"] for x in e], ["t3_aaa", "t3_bbb"])
-        self.assertEqual(e[1]["title"], "Second post")
+        self.assertEqual(e[1]["title"], "Second <b>post</b>")   # tags stripped first, entities unescaped after: escaped text survives
         self.assertEqual(e[0]["author"], "/u/someone"); self.assertEqual(e[0]["pub"], "2026-10-05T10:00:00+00:00")
         self.assertEqual(e[1]["content"], "")
         self.assertEqual(rr.parse_entries(""), [])
@@ -281,7 +283,7 @@ class TestIntegration(unittest.TestCase):
         with patch.object(rr.urllib.request, "urlopen", _urlopen(routes)) as uo:
             new, sample, first = rr.crawl_sub(cur, "sub", "fishbowl")
         self.assertEqual((new, first), (1, False))
-        self.assertTrue(sample.startswith("[r/sub post by /u/someone] Second post"))
+        self.assertTrue(sample.startswith("[r/sub post by /u/someone] Second <b>post</b>"))
         self.assertIn("--- comments ---\nu/alice: nice", json.loads([c for c in uo.call_args_list if "/remember" in c[0][0].full_url][0][0][0].data)["text"])
         self.assertEqual(cur.ran("INSERT INTO reddit_rss_seen")[0][1], ("sub", "t3_bbb"))
 
@@ -294,10 +296,9 @@ class TestFunctional(unittest.TestCase):
         pg.assert_called_once_with(rr.DSN)
         self.assertTrue(cur.sql[0].startswith("CREATE TABLE IF NOT EXISTS reddit_rss_seen"))
         msgs = [c[0][0] for c in rr.nova_config.post_both.call_args_list]
-        self.assertEqual(len(msgs), 3)
-        self.assertEqual(msgs[0], ":mag: *Reddit RSS* — 2 new post(s) across 1 sub(s): r/burbank (2)")   # vector 'reddit' for all 3 here
-        self.assertTrue(msgs[1].startswith(":mag: *Reddit RSS* — r/WatchesCirclejerk → reddit: 2 new post(s)."))
-        self.assertTrue(msgs[2].startswith(":seedling: *Reddit RSS restored* — first-seed pass ingested: r/fresh→reddit (2)"))
+        self.assertEqual(len(msgs), 2)   # fishbowl pings key off the VECTOR; with vector 'reddit' everything rolls up
+        self.assertEqual(msgs[0], ":mag: *Reddit RSS* — 4 new post(s) across 2 sub(s): r/burbank (2), r/WatchesCirclejerk (2)")
+        self.assertTrue(msgs[1].startswith(":seedling: *Reddit RSS restored* — first-seed pass ingested: r/fresh→reddit (2)"))
         self.assertEqual(cur.state["throttle_streak"], "0"); self.assertEqual(cur.state["cooldown_until"], "0")
         conn.close.assert_called_once()
         self.assertIn("r/fresh: SEEDED 2 posts (comments skipped)", out)

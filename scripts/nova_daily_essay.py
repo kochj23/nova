@@ -156,18 +156,20 @@ def fetch_memories(source: str, n: int = ESSAY_MEMORIES) -> list[dict]:
     Falls back to random selection if the source has no embeddings.
     """
     import subprocess
+    # Escape quotes: source names are interpolated into SQL literals for psql -c.
+    _src = source.replace("'", "''")
     coherent_sql = (
         "WITH seed AS ("
         f"  SELECT embedding FROM memories "
-        f"  WHERE source = '{source}' AND tier != 'scratchpad' AND embedding IS NOT NULL "
+        f"  WHERE source = '{_src}' AND tier != 'scratchpad' AND embedding IS NOT NULL "
         f"  ORDER BY random() LIMIT 1) "
         "SELECT m.text, m.metadata, m.created_at, m.source FROM memories m, seed "
-        f"WHERE m.source = '{source}' AND m.tier != 'scratchpad' AND m.embedding IS NOT NULL "
+        f"WHERE m.source = '{_src}' AND m.tier != 'scratchpad' AND m.embedding IS NOT NULL "
         f"ORDER BY m.embedding <=> seed.embedding LIMIT {n};"
     )
     random_sql = (
         f"SELECT text, metadata, created_at, source FROM memories "
-        f"WHERE source = '{source}' AND tier != 'scratchpad' ORDER BY random() LIMIT {n};"
+        f"WHERE source = '{_src}' AND tier != 'scratchpad' ORDER BY random() LIMIT {n};"
     )
 
     def _run(sql: str):

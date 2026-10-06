@@ -669,7 +669,8 @@ def cmd_check():
         # Match sender to a pending decision
         matched_entries = []
         for email, entries in email_to_pending.items():
-            if email.lower() in sender or sender in email.lower():
+            # an empty/missing From must never match ("" is a substring of every address)
+            if sender and (email.lower() in sender or sender in email.lower()):
                 matched_entries = entries
                 break
 

@@ -193,9 +193,9 @@ def main():
         cur.execute(f"""
             CREATE INDEX {idx_name} ON memories
             USING hnsw (embedding vector_cosine_ops)
-            WHERE source = '{source}'
             WITH (m = 32, ef_construction = 200)
-        """)
+            WHERE source = '{source}'
+        """)  # WITH must precede WHERE in CREATE INDEX (the reverse is a syntax error after the 18h run)
         log(f"  {idx_name} built")
 
     conn.close()

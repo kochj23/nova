@@ -270,7 +270,8 @@ def main():
     wan_str = ""
     if wan_down > 0 or wan_up > 0:
         wan_str = f" WAN: {wan_down/1024/1024/1024:.1f}G down / {wan_up/1024/1024/1024:.1f}G up."
-    summary = f"Bandwidth report {now.strftime('%Y-%m-%d')}: top consumer {top10[0]['name']} at {top10[0]['total']/1024/1024/1024:.1f} GB. {len(clients)} clients, {total_all:.0f} GB LAN total.{wan_str}"
+    top_str = f"top consumer {top10[0]['name']} at {top10[0]['total']/1024/1024/1024:.1f} GB" if top10 else "no LAN traffic"
+    summary = f"Bandwidth report {now.strftime('%Y-%m-%d')}: {top_str}. {len(clients)} clients, {total_all:.0f} GB LAN total.{wan_str}"
     payload = json.dumps({"text": summary, "source": "infrastructure", "metadata": {"type": "bandwidth_report", "date": now.strftime('%Y-%m-%d')}}).encode()
     try:
         req = urllib.request.Request(f"{VECTOR_URL}?async=1", data=payload, headers={"Content-Type": "application/json"}, method="POST")

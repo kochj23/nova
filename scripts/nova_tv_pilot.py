@@ -292,7 +292,9 @@ cover:
 
 """
 
-    filepath.write_text(frontmatter + screenplay + f"\n\n---\n\n*Written by Nova. Source domain: `{source}`. Pilot #{_get_pilot_number()}.*\n")
+    # Counted BEFORE the write, so a brand-new post is existing + 1 (the first pilot was "#0"); a same-day re-publish keeps its number.
+    pilot_no = _get_pilot_number() + (0 if filepath.exists() else 1)
+    filepath.write_text(frontmatter + screenplay + f"\n\n---\n\n*Written by Nova. Source domain: `{source}`. Pilot #{pilot_no}.*\n")
     log(f"Published: {filename}")
     return filepath
 

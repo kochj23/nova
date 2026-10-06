@@ -290,7 +290,7 @@ def main():
             )
 
         # Save state periodically
-        if total_recipes % 10 == 0:
+        if total_recipes % 10 == 0 and not args.dry_run:   # dry run must not mark URLs ingested
             state["ingested_urls"] = list(ingested_urls)
             state["total_chunks"] = total_chunks
             state["last_run"] = datetime.now().isoformat()
@@ -298,11 +298,12 @@ def main():
 
         time.sleep(RATE_LIMIT)
 
-    # Final state save
-    state["ingested_urls"] = list(ingested_urls)
-    state["total_chunks"] = total_chunks
-    state["last_run"] = datetime.now().isoformat()
-    save_state(state)
+    # Final state save (never on a dry run — it would make --resume skip URLs that were never stored)
+    if not args.dry_run:
+        state["ingested_urls"] = list(ingested_urls)
+        state["total_chunks"] = total_chunks
+        state["last_run"] = datetime.now().isoformat()
+        save_state(state)
 
     summary = (
         f":cut_of_meat: *Meat Church Recipe Ingest Complete*\n"

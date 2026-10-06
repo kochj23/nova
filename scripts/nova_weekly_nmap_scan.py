@@ -81,7 +81,7 @@ from pathlib import Path
 subprocess.run(['bash', str(Path.home() / '.openclaw/scripts/nova_herd_broadcast.sh'),
   '--subject', 'Weekly Network Security Scan',
   '--body-file', '/dev/stdin'],
-input={repr(message).encode()})
+input={message.encode()!r})
 """
     ], capture_output=True)
     # Check returncode so a failed broadcast isn't silently swallowed

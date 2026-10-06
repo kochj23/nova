@@ -64,7 +64,7 @@ def _fake_api(people=PEOPLE, meetings=MEETINGS, forget_exc=None, store_exc=None,
             if store_exc: raise store_exc
             return _Resp({"id": len(calls)})
         if url.endswith("/stats"):
-            return _Resp(stats or {"by_source": {"oneonone": 5}, "count": 1_600_000})
+            return _Resp(stats if stats is not None else {"by_source": {"oneonone": 5}, "count": 1_600_000})   # `stats={}` = an empty /stats answer
         raise AssertionError(f"unexpected url {url}")
     return MagicMock(side_effect=urlopen), calls
 

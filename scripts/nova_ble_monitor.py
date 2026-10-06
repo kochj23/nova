@@ -651,7 +651,13 @@ async def poll_cycle():
     for d in sp_devices + ble_devices:
         mac = d["mac"]
         if mac not in merged or (d.get("rssi") is not None and merged[mac].get("rssi") is None):
+            prev = merged.get(mac)
             merged[mac] = d
+            if prev:  # keep the profiler's battery/connected when the BLE record replaces it
+                if prev.get("battery") and not d.get("battery"):
+                    d["battery"] = prev["battery"]
+                if prev.get("connected"):
+                    d["connected"] = True
         else:
             if d.get("battery") and not merged[mac].get("battery"):
                 merged[mac]["battery"] = d["battery"]

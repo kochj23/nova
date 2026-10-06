@@ -55,7 +55,8 @@ def _run(answers, sleep_exc=_Stop()):
             if frag in sql:
                 return types.SimpleNamespace(stdout=out, returncode=0)
         return types.SimpleNamespace(stdout="", returncode=0)
-    with patch.object(hb.subprocess, "run", side_effect=run) as sp, patch.object(hb.time, "sleep", MagicMock(side_effect=sleep_exc)), \
+    client.sleep_mock = MagicMock(side_effect=sleep_exc)          # kept on the client so tests can inspect it after the patch ends
+    with patch.object(hb.subprocess, "run", side_effect=run) as sp, patch.object(hb.time, "sleep", client.sleep_mock), \
          redirect_stdout(io.StringIO()) as out:
         try:
             hb.main()
@@ -168,7 +169,8 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(states["nova/wx_temp/state"], "71.3")
         self.assertEqual(states["nova/presence_jordan_room/state"], "office")
         self.assertNotIn("nova/wan_latency/state", states)                     # empty answer -> no publish
-        self.assertEqual(sp.call_args_list[0][0][0][:7], hb.PG)
+        self.assertEqual(sp.call_args_list[0][0][0][:len(hb.PG)], hb.PG)
+        self.assertEqual(hb.PG[:7], ["psql", "-h", "localhost", "-U", "kochj", "-d", "nova_ops"])
 
     def test_dynamic_rows_discover_once_then_publish_state(self):
         client, pubs, out, _ = _run({"FROM telemetry.climate WHERE ts>now()-interval '30 min' AND temp_f": "living_room\t72.5\nserver_rack\t94.0\n\t1\nonlykey"})
@@ -190,7 +192,7 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(len(disc), len(hb.STATIC)); self.assertTrue(all(r for _, r in disc))
         self.assertEqual(disc[0][0], "homeassistant/sensor/nova/wx_temp/config")
         self.assertIn(f"published discovery for {len(hb.STATIC)} static sensors", out)
-        hb.time.sleep.assert_called_once_with(hb.PUBLISH_INTERVAL)
+        client.sleep_mock.assert_called_once_with(hb.PUBLISH_INTERVAL)
 
     def test_blank_scalar_is_never_published(self):
         client, pubs, out, _ = _run({"wan_quality": "\n"})

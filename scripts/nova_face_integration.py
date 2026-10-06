@@ -64,7 +64,7 @@ def run_command(cmd, timeout=30):
 def identify_faces(image_path):
     """Run sam-faces on image."""
     code, stdout, stderr = run_command(
-        f"python3 {SAM_FACES_DIR}/identify_faces.py --photo {image_path} --no-save-unknowns",
+        ["python3", f"{SAM_FACES_DIR}/identify_faces.py", "--photo", str(image_path), "--no-save-unknowns"],
         timeout=30
     )
 
@@ -79,7 +79,9 @@ def identify_faces(image_path):
 
 def enroll_person(name, image_path):
     """Enroll a person in the face database."""
-    cmd = f'python3 {SAM_FACES_DIR}/enroll_face.py --name "{name}" --photo {image_path} --face-index 0'
+    # argv list (shell=False): `name` arrives from a Slack reply and must never reach a shell
+    cmd = ["python3", f"{SAM_FACES_DIR}/enroll_face.py", "--name", str(name), "--photo", str(image_path),
+           "--face-index", "0"]
     code, stdout, stderr = run_command(cmd, timeout=30)
     
     if code == 0:

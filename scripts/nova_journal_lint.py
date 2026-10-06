@@ -209,13 +209,13 @@ def main():
 
 
 def notify_slack(error: str):
-    """Post build failure to #nova-notifications."""
+    """Post build failure to #nova-alerts (nova_config has no slack_post; the old import always failed silently)."""
     try:
         sys.path.insert(0, str(Path(__file__).parent))
-        from nova_config import slack_post
-        slack_post(
-            "#nova-notifications",
-            f"⚠️ *Journal deploy broken* — Hugo build failing, lint couldn't auto-fix.\n```{error[:500]}```"
+        from nova_config import post_both, SLACK_ALERTS
+        post_both(
+            f"⚠️ *Journal deploy broken* — Hugo build failing, lint couldn't auto-fix.\n```{error[:500]}```",
+            slack_channel=SLACK_ALERTS,
         )
     except Exception:
         pass

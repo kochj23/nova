@@ -58,8 +58,9 @@ TOP_FILMS = [
 
 
 def norm(t: str) -> str:
-    t = t.lower()
+    t = t.lower().strip()
     t = re.sub(r"^(the|a|an)\s+", "", t)
+    t = re.sub(r",\s*(the|a|an)$", "", t)   # IMSDb indexes "Matrix, The"; TOP_FILMS says "The Matrix"
     t = re.sub(r"[^a-z0-9 ]", "", t)
     return re.sub(r"\s+", " ", t).strip()
 

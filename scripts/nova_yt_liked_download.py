@@ -345,6 +345,7 @@ def main():
         # Grab batch_size videos from pending (random selection for variety)
         pending = [v for v in liked_videos if not is_already_downloaded(v["id"], v["title"], state)]
         if not pending:
+            last_fetch = 0   # force a refetch -> "all caught up" exit, instead of busy-spinning up to 30 min
             continue
 
         batch = random.sample(pending, min(batch_size, len(pending)))

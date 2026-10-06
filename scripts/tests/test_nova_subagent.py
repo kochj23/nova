@@ -195,7 +195,8 @@ class TestRetry(unittest.TestCase):
                 await a._main_loop()
         asyncio.run(go())
         self.assertEqual(len(r.published), 1); self.assertEqual(json.loads(r.published[0][1])["ok"], "good")
-        self.assertEqual(a._task_count, 3); self.assertIn("handler exploded", a._last_error or "") or self.assertIsNotNone(a._last_error)
+        self.assertEqual(a._task_count, 2)            # counted after json.loads: the non-JSON frame never counts as a task
+        self.assertIn("Expecting value", a._last_error)  # last error = the JSON decode failure that followed "handler exploded"
 
 
 class TestUnit(unittest.TestCase):

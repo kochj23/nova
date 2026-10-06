@@ -93,7 +93,7 @@ class TestSecurity(unittest.TestCase):
 
     def test_sql_is_parameterized_and_writes_stay_in_pet_registry(self):
         self.assertIsNone(re.search(r'execute\(\s*f"', SRC))
-        writes = {m.group(1) for m in re.finditer(r"\b(?:INSERT INTO|UPDATE|DELETE FROM)\s+([\w.]+)", SRC)}
+        writes = {m.group(1) for m in re.finditer(r"\b(?:INSERT INTO|(?<!DO )UPDATE|DELETE FROM)\s+([\w.]+)", SRC)}   # skip ON CONFLICT DO UPDATE SET
         self.assertEqual(writes, {"pet_registry"})
         cur = _Cur([])
         with patch.object(pr.psycopg2, "connect", return_value=_Conn(cur)):

@@ -124,5 +124,99 @@ def test_frame_empty_candidate_set(monkeypatch):
     assert (checked, leaked, unver) == (0, 0, 0)
 
 
+# ── house classes (7 categories, unittest style) ─────────────────────────────
+import re
+import subprocess
+import unittest
+from unittest import mock
+
+SRC = open(os.path.join(SCRIPTS, "nova_face_gate_watch.py")).read()
+
+
+def _crop(tmp):
+    p = os.path.join(tmp, "unknown_alley_north_latest_470_1224.jpg")
+    open(p, "wb").write(b"x")
+    return p
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
+        self.assertIsNone(pat.search(SRC))
+
+    def test_update_is_parameterized(self):
+        self.assertIn("resolved_as=%s WHERE id=%s", SRC)
+        self.assertNotRegex(SRC, r'execute\(f"UPDATE')
+
+
+class TestPerformance(unittest.TestCase):
+    def test_camera_parse_10k(self):
+        t0 = time.perf_counter()
+        for i in range(10_000):
+            w._camera_from_crop(f"/x/unknown_cam{i}_latest_1_2.jpg")
+        self.assertLess(time.perf_counter() - t0, 1.0)
+
+
+class TestRetry(unittest.TestCase):
+    def test_db_down_on_action_log_fails_open(self):
+        # RETRY GAP: main()/_conn for claude_actions — one attempt, failure swallowed
+        with mock.patch.object(w, "check_candidates", return_value=(0, 0, 0, [])), \
+             mock.patch.object(w, "_conn", side_effect=RuntimeError("pg down")) as c:
+            self.assertEqual(w.main([]), 0)
+        self.assertEqual(c.call_count, 1)
+
+
+class TestUnit(unittest.TestCase):
+    def test_camera_from_crop_edges(self):
+        self.assertEqual(w._camera_from_crop(None), "?")
+        self.assertEqual(w._camera_from_crop(""), "?")
+        self.assertEqual(w._camera_from_crop("unknown_a_b_latest_1.jpg"), "a_b")
+
+
+class TestIntegration(unittest.TestCase):
+    def test_dry_run_issues_no_update_and_no_stamp(self):
+        with tempfile.TemporaryDirectory() as td:
+            conn = FakeConn([("id1", _crop(td), "t")])
+            with mock.patch.object(w, "_conn", return_value=conn), \
+                 mock.patch.object(w, "_stamp") as st:
+                checked, leaked, _, _ = w.check_candidates(gate=lambda p: False, dry_run=True)
+        self.assertEqual((checked, leaked), (1, 1))
+        self.assertEqual(conn.cur.updates, [])
+        st.assert_not_called()
+
+    def test_stamp_writes_telemetry(self):
+        conn = FakeConn([])
+        w._stamp(conn, 3, 1, 0)
+        self.assertIn("telemetry.face_gate_runs", conn.cur._last)
+        self.assertEqual(conn.committed, 1)
+
+
+class TestFunctional(unittest.TestCase):
+    def test_main_notifies_on_leak(self):
+        with mock.patch.object(w, "check_candidates", return_value=(2, 1, 0, [("a", "alley_north", "t")])), \
+             mock.patch.object(w, "_conn", return_value=FakeConn([])), \
+             mock.patch.object(w, "_notify") as n:
+            self.assertEqual(w.main([]), 0)
+        n.assert_called_once()
+        self.assertIn("alley_north", n.call_args[0][0])
+        self.assertEqual(n.call_args[1]["level"], "warning")
+
+    def test_main_dry_run_never_notifies(self):
+        with mock.patch.object(w, "check_candidates", return_value=(2, 1, 0, [("a", "x", "t")])), \
+             mock.patch.object(w, "_conn", return_value=FakeConn([])), \
+             mock.patch.object(w, "_notify") as n:
+            w.main(["--dry-run"])
+        n.assert_not_called()
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_runs_main(self):
+        self.assertIn('if __name__ == "__main__":', SRC)
+        r = subprocess.run([sys.executable, "-c", "import nova_face_gate_watch"], cwd=SCRIPTS,
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("checked=", r.stdout)
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

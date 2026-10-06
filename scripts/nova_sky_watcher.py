@@ -466,20 +466,24 @@ def post_weekly_timelapse():
 
 def main():
     state = load_state()
+    # Per-day reset: without it "sunrise_posted"/"sunset_posted" stuck forever after day one.
+    if state.get("sessions_date") != TODAY:
+        state["sessions_today"], state["frames_today"], state["sessions_date"] = [], 0, TODAY
     session, event_time = current_session()
 
     if not session:
         # Not in golden hour — check if we just finished a session
         gs, gset, sunrise, sunset = get_golden_hours()
 
-        # If sunrise golden hour just ended (within last 10 min)
-        if (NOW - gs[1]).total_seconds() < 600 and "sunrise_posted" not in state.get("sessions_today", []):
+        # If sunrise golden hour just ended (within last 10 min). The 0 <= bound matters: before
+        # the window the delta is negative and used to fire (and burn) the post at midnight.
+        if 0 <= (NOW - gs[1]).total_seconds() < 600 and "sunrise_posted" not in state.get("sessions_today", []):
             post_session_best("sunrise")
             state.setdefault("sessions_today", []).append("sunrise_posted")
             save_state(state)
 
         # If sunset golden hour just ended
-        if (NOW - gset[1]).total_seconds() < 600 and "sunset_posted" not in state.get("sessions_today", []):
+        if 0 <= (NOW - gset[1]).total_seconds() < 600 and "sunset_posted" not in state.get("sessions_today", []):
             post_session_best("sunset")
             state.setdefault("sessions_today", []).append("sunset_posted")
             save_state(state)

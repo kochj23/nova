@@ -13,6 +13,7 @@ Written by Jordan Koch.
 
 import json
 import os
+import re
 import sys
 import urllib.request
 from datetime import datetime, date
@@ -44,6 +45,10 @@ class HealthHandler(BaseHTTPRequestHandler):
 
         data["received_at"] = datetime.now().isoformat()
         record_date = data.get("date", date.today().isoformat())
+        # record_date becomes a filename: only accept YYYY-MM-DD (blocks ../ path traversal)
+        if not isinstance(record_date, str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", record_date):
+            self.send_error(400, "Invalid date")
+            return
         is_history = data.get("source") == "healthkit_history"
 
         if not is_history:

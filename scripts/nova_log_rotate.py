@@ -33,7 +33,7 @@ def log(msg):
 def slack_post(text: str):
     # Weekly log-rotation completion digest — FYI maintenance status.
     lines = text.split("\n", 1)
-    title = lines[0].strip().lstrip("*").rstrip("*").strip()
+    title = lines[0].replace("*", "").strip()   # "*Nova Log Rotation* 🗂️" — strip() alone left the closing "*"
     body = lines[1].strip() if len(lines) > 1 else None
     nova_notify(title, body=body, level="info", category="scheduler",
                 dedup_key="log-rotation-weekly")
@@ -72,7 +72,7 @@ def trim_log_file(path: Path) -> int:
         trimmed = content[-MAX_LOG_BYTES:]
         # Find next newline to avoid splitting a line
         newline_pos = trimmed.find(b"\n")
-        if newline_pos > 0:
+        if newline_pos >= 0:   # pos 0 = cut landed right before a line start; drop the stray "\n"
             trimmed = trimmed[newline_pos + 1:]
         path.write_bytes(trimmed)
         freed = size - len(trimmed)

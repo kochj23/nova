@@ -21,7 +21,12 @@ def psql(sql: str) -> str:
     )
     return r.stdout.strip()
 
+def _q(s: str) -> str:
+    """Escape a SQL string literal ('' for '): "mail_don't_..." was a syntax error psql swallowed as 0 rows."""
+    return s.replace("'", "''")
+
 def rename(old: str, new: str, condition: str = "") -> int:
+    old, new = _q(old), _q(new)
     where = f"source = '{old}'" + (f" AND ({condition})" if condition else "")
     count_sql = f"SELECT COUNT(*) FROM memories WHERE {where};"
     count = int(psql(count_sql) or 0)
@@ -37,6 +42,7 @@ def rename(old: str, new: str, condition: str = "") -> int:
 
 def fix_privacy(source: str) -> int:
     """Tag all rows in a source with privacy=local-only in metadata."""
+    source = _q(source)
     count_sql = f"SELECT COUNT(*) FROM memories WHERE source='{source}' AND metadata->>'privacy' IS NULL;"
     count = int(psql(count_sql) or 0)
     if count == 0:
@@ -54,7 +60,7 @@ WHERE source = '{source}' AND metadata->>'privacy' IS NULL;
     return count
 
 def count(source: str) -> int:
-    return int(psql(f"SELECT COUNT(*) FROM memories WHERE source='{source}';") or 0)
+    return int(psql(f"SELECT COUNT(*) FROM memories WHERE source='{_q(source)}';") or 0)
 
 NOW = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 mode = "DRY RUN" if DRY_RUN else "LIVE"

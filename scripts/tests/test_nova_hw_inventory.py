@@ -93,7 +93,7 @@ class TestSecurity(unittest.TestCase):
         self.assertNotIn("password", hw.DSN)
 
     def test_collection_is_argv_only(self):
-        self.assertNotIn("shell=True", SRC)
+        self.assertNotRegex(SRC, r"shell\s*=\s*True\s*[,)]")     # no shell=True kwarg (the docstring mentions it)
         run = MagicMock(return_value=types.SimpleNamespace(returncode=0, stdout="x"))
         with patch.object(hw.subprocess, "run", run):
             hw._run("echo '===HOST==='; hostname", ip="192.168.1.2")
@@ -101,6 +101,7 @@ class TestSecurity(unittest.TestCase):
         remote, local = run.call_args_list[0][0][0], run.call_args_list[1][0][0]
         self.assertEqual(remote[:3], ["ssh", "-o", "BatchMode=yes"]); self.assertEqual(remote[-2:], ["kochj@192.168.1.2", "echo '===HOST==='; hostname"])
         self.assertEqual(local, ["/bin/sh", "-c", "echo local"])
+        self.assertTrue(all(not c[1].get("shell") for c in run.call_args_list))
 
     def test_sql_parameterized_and_values_truncated(self):
         self.assertIsNone(re.search(r'execute\(\s*f["\']', SRC))

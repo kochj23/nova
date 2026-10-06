@@ -201,6 +201,8 @@ class TestUnit(unittest.TestCase):
 
     def test_publish_pilot_frontmatter_and_cover(self):
         cover = TMP / "cover.png"; cover.write_bytes(b"PNG")
+        for old in tv.CONTENT_DIR.glob("*.md"):                 # other tests publish here too; numbering needs a clean dir
+            old.unlink()
         with redirect_stdout(io.StringIO()):
             fp = tv.publish_pilot("The Last Signal", "the-last-signal", SCREENPLAY, "jazz_history", GENRE, str(cover))
         self.assertEqual(fp, tv.CONTENT_DIR / "2026-10-05-the-last-signal.md")
@@ -211,6 +213,9 @@ class TestUnit(unittest.TestCase):
         self.assertIn('image: "/images/pilot/2026-10-05-the-last-signal.png"', txt)
         self.assertTrue((tv.IMAGES_DIR / "2026-10-05-the-last-signal.png").exists())
         self.assertTrue(txt.rstrip().endswith("Source domain: `jazz_history`. Pilot #1.*"))
+        with redirect_stdout(io.StringIO()):                    # same-day re-publish keeps its number
+            fp = tv.publish_pilot("The Last Signal", "the-last-signal", SCREENPLAY, "jazz_history", GENRE, str(cover))
+        self.assertTrue(fp.read_text().rstrip().endswith("Pilot #1.*"))
         with redirect_stdout(io.StringIO()):
             fp2 = tv.publish_pilot("No Cover", "no-cover", "no logline here " * 200, "history", GENRE, None)
         self.assertIn('image: ""', fp2.read_text()); self.assertIn("A dark comedy pilot drawn from Nova's memory archive on history.", fp2.read_text())

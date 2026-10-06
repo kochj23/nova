@@ -87,18 +87,23 @@ def detect_repetitive(text: str) -> bool:
         else:
             count = 1
     # Also check for repeated short phrases (2-3 word patterns)
+    # Non-overlapping windows (step = phrase_len, every offset): overlapping windows of
+    # "a b a b" alternate "a b"/"b a" and never match their neighbour, so the old
+    # step-1 comparison could never fire.
     for phrase_len in (2, 3):
-        phrases = [" ".join(words[i:i + phrase_len]) for i in range(len(words) - phrase_len + 1)]
-        if len(phrases) < 5:
-            continue
-        count = 1
-        for i in range(1, len(phrases)):
-            if phrases[i] == phrases[i - 1]:
-                count += 1
-                if count >= 5:
-                    return True
-            else:
-                count = 1
+        for off in range(phrase_len):
+            phrases = [" ".join(words[i:i + phrase_len])
+                       for i in range(off, len(words) - phrase_len + 1, phrase_len)]
+            if len(phrases) < 5:
+                continue
+            count = 1
+            for i in range(1, len(phrases)):
+                if phrases[i] == phrases[i - 1]:
+                    count += 1
+                    if count >= 5:
+                        return True
+                else:
+                    count = 1
     return False
 
 

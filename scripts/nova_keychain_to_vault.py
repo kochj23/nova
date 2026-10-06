@@ -25,11 +25,10 @@ def keychain_names():
         try: names |= set(RX.findall(open(f, errors="ignore").read()))
         except OSError: pass
     dump = subprocess.run(["security", "dump-keychain"], capture_output=True, text=True).stdout
-    cur = None
-    for line in dump.splitlines():
-        m = re.search(r'"svce"<blob>="([^"]+)"', line)
-        if m: cur = m.group(1)
-        if '"acct"<blob>="nova"' in line and cur: names.add(cur)
+    # Per item: dump-keychain prints "acct" BEFORE "svce", so pairing line-by-line tagged the previous item.
+    for item in dump.split('keychain: "')[1:]:
+        m = re.search(r'"svce"<blob>="([^"]+)"', item)
+        if m and '"acct"<blob>="nova"' in item: names.add(m.group(1))
     return {n for n in names if not n.startswith("$")}
 
 def keychain_value(name):
@@ -38,7 +37,8 @@ def keychain_value(name):
 
 def vault_titles():
     r = subprocess.run(["op", "item", "list", "--vault", VAULT, "--format=json"], capture_output=True, text=True, timeout=90)
-    return {i["title"] for i in json.loads(r.stdout)} if r.returncode == 0 else set()
+    # None (not an empty set) on failure: an empty set would make main() re-create every item as a duplicate
+    return {i["title"] for i in json.loads(r.stdout)} if r.returncode == 0 else None
 
 def create(name, value, source):
     r = subprocess.run(["op", "item", "create", "--vault", VAULT, "--category=Password", "--title", name,
@@ -48,6 +48,9 @@ def create(name, value, source):
 
 def main():
     have = vault_titles()
+    if have is None:
+        print("could not list the vault (op item list failed) — aborting rather than creating duplicates")
+        return
     names = keychain_names()
     fleet = {row[0] for row in list_secrets()}
     todo = sorted((names | fleet) - have)

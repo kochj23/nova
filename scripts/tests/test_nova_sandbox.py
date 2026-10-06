@@ -109,7 +109,7 @@ class TestSecurity(unittest.TestCase):
         res, r = _run(evil)
         insert = r.of("psql")[0][0][-1]
         self.assertIn("INSERT INTO sandbox_runs", insert)
-        self.assertNotIn("'); DROP", insert)                      # every single quote doubled
+        self.assertNotIn("'); DROP", insert.replace("''", ""))   # every single quote doubled: no lone quote survives
         self.assertIn("''); DROP", insert)
         self.assertLess(len(insert), 5000 + 600)                   # code capped at 5000 chars
         self.assertNotIn("DROP TABLE sandbox_runs; --'", insert)  # the quote never closes the literal early

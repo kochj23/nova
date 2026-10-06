@@ -323,7 +323,7 @@ def notify(title: str, preview: str, is_breaking: bool = False):
     if is_breaking:
         emoji = ":rotating_light::rotating_light:"
         msg = f"{emoji} *Nova Security — {prefix}*\n*{title}*\n_{preview[:250]}_"
-        nova_config.post_both(msg, slack_channel=nova_config.SLACK_CHAT)
+        nova_config.post_both(msg, slack_channel=nova_config.SLACK_CHAN)
 
 
 # ── Daily Briefing ────────────────────────────────────────────────────────────

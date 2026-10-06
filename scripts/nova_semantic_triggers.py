@@ -260,7 +260,8 @@ def subscriber_loop():
 
 async def handle_list(request):
     triggers = _db_query("SELECT * FROM semantic_triggers ORDER BY created_at DESC")
-    return web.json_response({"ok": True, "triggers": triggers}, default=str)
+    return web.json_response({"ok": True, "triggers": triggers},
+                             dumps=lambda o: json.dumps(o, default=str))  # rows carry datetimes
 
 
 async def handle_create(request):

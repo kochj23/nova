@@ -257,8 +257,8 @@ def execute_action(watcher: dict, new_value: str):
             )
 
     elif action_type == "queue_for_claude":
-        desc = action.get("description", f"Watcher '{watcher['name']}' triggered")
-        ctx = json.dumps({"watcher": watcher["name"], "new_value": new_value[:200]}).replace("'", "''")
+        desc = action.get("description", f"Watcher '{watcher['name']}' triggered").replace("'", "''")
+        ctx =json.dumps({"watcher": watcher["name"], "new_value": new_value[:200]}).replace("'", "''")
         db_exec(f"INSERT INTO claude_queue (session_id, status, priority, description, context) "
                 f"VALUES ('watcher', 'queued', 2, '{desc}', '{ctx}')")
 
@@ -290,7 +290,8 @@ def run():
 
         # Update check state
         if error:
-            db_exec(f"UPDATE watchers SET last_check = now(), last_error = '{error[:200]}', "
+            escaped_error = error[:200].replace("'", "''")
+            db_exec(f"UPDATE watchers SET last_check = now(), last_error = '{escaped_error}', "
                     f"consecutive_errors = consecutive_errors + 1, check_count = check_count + 1 "
                     f"WHERE watcher_id = '{w['id']}'")
             if w["consecutive_errors"] + 1 >= 5:

@@ -527,5 +527,219 @@ class TestIngestToMemory:
         assert len(payload["text"]) <= 4000
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# HOUSE CATEGORIES (unittest) — the 7 house categories (Security, Performance, Retry, Unit,
+# Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+# Loaded under a private module name with logging.basicConfig stubbed; notify / nova_config are
+# swapped on THAT module object; every path is a tempdir; HDHomeRun, ffmpeg, whisper, Ollama,
+# the Keychain and the memory server are all mocked.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import importlib.util as _ilu  # noqa: E402
+import logging as _logging  # noqa: E402
+import os as _os  # noqa: E402
+import re as _re  # noqa: E402
+import shutil as _shutil  # noqa: E402
+import subprocess as _sp  # noqa: E402
+import tempfile as _tempfile  # noqa: E402
+import time as _time  # noqa: E402
+import types as _types  # noqa: E402
+import unittest  # noqa: E402
+
+_SCRIPTS = Path(__file__).resolve().parents[1]
+_SRC = (_SCRIPTS / "nova_livetv.py").read_text()
+_TMP = Path(_tempfile.mkdtemp(prefix="livetv_"))
+
+
+def _load_tv():
+    spec = _ilu.spec_from_file_location("nova_livetv_house_t", _SCRIPTS / "nova_livetv.py")
+    mod = _ilu.module_from_spec(spec)
+    with patch.object(_logging, "basicConfig"):
+        spec.loader.exec_module(mod)
+    mod.log = _logging.getLogger("nova_livetv_house_t")
+    mod.log.addHandler(_logging.NullHandler()); mod.log.propagate = False
+    mod.nova_notify = MagicMock()
+    mod.nova_config = _types.SimpleNamespace(slack_bot_token=MagicMock(return_value="tok"), SLACK_API="https://slack.test/api",
+                                             JORDAN_DM="D_TEST", SLACK_NOTIFY="C_TEST")
+    mod.WORK_DIR = _TMP / "work"; mod.TRANSCRIPT_DIR = _TMP / "work" / "transcripts"
+    mod.WORKSPACE = _TMP / "ws"; mod.SCHEDULE_FILE = _TMP / "ws" / "sched.json"; mod.PREFS_FILE = _TMP / "ws" / "prefs.json"
+    return mod
+
+
+TV = _load_tv()
+
+
+def _uresp(obj, status=200):
+    m = MagicMock()
+    m.read.return_value = json.dumps(obj).encode()
+    m.status = status
+    m.__enter__.return_value = m
+    return m
+
+
+class _TVReset(unittest.TestCase):
+    def setUp(self):
+        TV.QUIET, TV.DRY_RUN = False, False
+        TV.nova_notify.reset_mock()
+        for f in (TV.SCHEDULE_FILE, TV.PREFS_FILE):
+            if f.exists():
+                f.unlink()
+
+
+class TestSecurity(_TVReset):
+    def test_no_hardcoded_tokens(self):
+        self.assertIsNone(_re.search(r"xox[bp]-[A-Za-z0-9-]{10,}", _SRC))
+        self.assertIn('"nova-plex-token"', _SRC)   # Plex token comes from the Keychain
+
+    def test_quiet_mode_never_posts(self):
+        TV.QUIET = True
+        with patch.object(TV.urllib.request, "urlopen") as u:
+            TV.post("hello")
+            TV.post_dm("hello")
+        TV.nova_notify.assert_not_called()
+        u.assert_not_called()
+
+    def test_ingest_caps_text_and_skips_tiny(self):
+        with patch.object(TV.urllib.request, "urlopen", return_value=_uresp({})) as u:
+            TV.ingest_to_memory("short", "s")
+            u.assert_not_called()
+            TV.ingest_to_memory("x" * 9000, "s")
+        self.assertEqual(len(json.loads(u.call_args[0][0].data)["text"]), 4000)
+
+
+class TestPerformance(_TVReset):
+    def test_classify_10k_fast(self):
+        t0 = _time.perf_counter()
+        for i in range(10_000):
+            TV.classify_tv_content(f"Show {i}", "the chef grills in the kitchen " * 20, ["Cooking"])
+        self.assertLess(_time.perf_counter() - t0, 3.0)
+
+
+class TestRetry(_TVReset):
+    def test_hdhomerun_and_ollama_fail_open(self):
+        # RETRY GAP: get_lineup()/get_tuner_status()/ollama_generate()/ingest_to_memory() — one try, safe default
+        with patch.object(TV.urllib.request, "urlopen", side_effect=OSError("down")) as u:
+            self.assertEqual(TV.get_lineup(), [])
+            self.assertEqual(TV.get_tuner_status(), [])
+            self.assertEqual(TV.ollama_generate("p"), "")
+            TV.ingest_to_memory("x" * 50, "s")
+        self.assertEqual(u.call_count, 4)
+
+    def test_record_failure_cleans_up(self):
+        TV.WORK_DIR.mkdir(parents=True, exist_ok=True)
+        with patch.object(TV.subprocess, "run", side_effect=_sp.TimeoutExpired("ffmpeg", 40)) as run:
+            self.assertIsNone(TV.record_audio("7.1", 10, "x"))
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(list(TV.WORK_DIR.glob("7_1_*.wav")), [])
+
+    def test_no_tuners_bails(self):
+        busy = [{"VctNumber": "2.1"}, {"VctNumber": "4.1"}]
+        with patch.object(TV.urllib.request, "urlopen", return_value=_uresp(busy)):
+            with self.assertRaises(SystemExit):
+                TV.check_tuner_or_bail(1)
+
+
+class TestUnit(_TVReset):
+    def test_classify_and_default(self):
+        self.assertEqual(TV.classify_tv_content("Jeopardy!", "final answer contestant"), "game_show")
+        self.assertEqual(TV.classify_tv_content("", ""), "television")
+
+    def test_matches_day(self):
+        self.assertTrue(TV.matches_day("daily"))
+        self.assertTrue(TV.matches_day("whatever"))
+        self.assertNotEqual(TV.matches_day("weekdays"), TV.matches_day("weekends"))
+
+    def test_bad_channels_need_two_failures(self):
+        prefs = TV.load_prefs()
+        TV.mark_bad_channel(prefs, "9.1", "KCAL")
+        self.assertEqual(TV.get_bad_channels(prefs), set())
+        TV.mark_bad_channel(prefs, "9.1", "KCAL")
+        self.assertEqual(TV.get_bad_channels(TV.load_prefs()), {"9.1"})
+
+    def test_ollama_strips_think(self):
+        with patch.object(TV.urllib.request, "urlopen", return_value=_uresp({"response": "<think>x</think> Hi"})):
+            self.assertEqual(TV.ollama_generate("p"), "Hi")
+
+
+class TestIntegration(_TVReset):
+    def test_post_routes_through_notify(self):
+        TV.post("Title line\nbody here")
+        TV.nova_notify.assert_called_once_with("Title line", body="body here", level="info", category="tv")
+
+    def test_dry_run_record_and_transcribe_chain(self):
+        TV.DRY_RUN = True
+        TV.WORK_DIR.mkdir(parents=True, exist_ok=True)
+        with patch.object(TV.subprocess, "run") as run:
+            text = TV.record_and_transcribe("2.1", 30, "lbl")
+        run.assert_not_called()
+        self.assertEqual(text, "[dry-run transcript from channel lbl]")
+
+    def test_load_schedule_writes_default(self):
+        self.assertEqual(TV.load_schedule(), TV.DEFAULT_SCHEDULE)
+        self.assertTrue(TV.SCHEDULE_FILE.exists())
+        TV.SCHEDULE_FILE.write_text("{bad json")
+        self.assertEqual(TV.load_schedule(), TV.DEFAULT_SCHEDULE)
+
+
+class TestFunctional(_TVReset):
+    def test_whats_on_alerts_for_show_starting_now(self):
+        now = datetime.now() + timedelta(minutes=1)
+        if now.date() != datetime.now().date():
+            self.skipTest("too close to midnight for a same-day show")
+        TV.SCHEDULE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        TV.SCHEDULE_FILE.write_text(json.dumps({"shows": [
+            {"name": "Jeopardy!", "channel": "7.1", "days": "daily", "time": now.strftime("%H:%M"), "duration": 30}]}))
+        with patch.object(sys, "argv", ["nova_livetv.py", "whats-on"]):
+            TV.main()
+        title = TV.nova_notify.call_args[0][0]
+        self.assertIn("What's On", title)
+        self.assertIn("Jeopardy!", TV.nova_notify.call_args.kwargs["body"])
+
+    def test_dream_surf_dry_run_ingests_without_recording(self):
+        lineup = [{"GuideNumber": "2.1", "GuideName": "KCBS"}, {"GuideNumber": "4.1", "GuideName": "NBC"}]
+
+        def fake_urlopen(req, timeout=None):
+            url = req if isinstance(req, str) else req.full_url
+            if url.endswith("lineup.json"):
+                return _uresp(lineup)
+            if url.endswith("status.json"):
+                return _uresp([{"Resource": "tuner0"}])
+            return _uresp({})
+        with patch.object(sys, "argv", ["nova_livetv.py", "--dry-run", "dream-surf"]), \
+             patch.object(TV.urllib.request, "urlopen", side_effect=fake_urlopen) as u, \
+             patch.object(TV.time, "sleep"), patch.object(TV.subprocess, "run") as run:
+            TV.main()
+        run.assert_not_called()
+        posts = [c for c in u.call_args_list if not isinstance(c[0][0], str)]
+        self.assertEqual(len(posts), 2)
+        self.assertEqual(json.loads(posts[0][0][0].data)["source"], "livetv_dream_fuel")
+
+    def test_command_failure_exits_1(self):
+        with patch.object(sys, "argv", ["nova_livetv.py", "whats-on"]), \
+             patch.object(TV, "cmd_whats_on", side_effect=RuntimeError("boom")):
+            with self.assertRaises(SystemExit) as e:
+                TV.main()
+        self.assertEqual(e.exception.code, 1)
+
+
+class TestFrame(unittest.TestCase):
+    def test_help_exits_zero(self):
+        r = _sp.run([sys.executable, str(_SCRIPTS / "nova_livetv.py"), "--help"], capture_output=True, text=True,
+                    timeout=30, env={**_os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("dream-surf", r.stdout)
+
+    def test_import_never_runs_main(self):
+        self.assertIn('if __name__ == "__main__":', _SRC)
+        r = _sp.run([sys.executable, "-c", "import nova_livetv"], cwd=str(_SCRIPTS), capture_output=True, text=True,
+                    timeout=30, env={**_os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("=== nova_livetv", r.stdout)
+
+
+def teardown_module(module=None):
+    _shutil.rmtree(_TMP, ignore_errors=True)
+
+
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    sys.exit(pytest.main([__file__, "-q"]))

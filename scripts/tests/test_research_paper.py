@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""
+"""Tests for nova_research_paper.py — the 7 house categories (Security, Performance, Retry, Unit,
+Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+
 test_research_paper.py — Comprehensive tests for nova_research_paper.py.
 
 Covers: topic selection, memory gathering, search angle generation, web research,
@@ -11,6 +13,7 @@ Written by Jordan Koch.
 """
 
 import json
+import os
 import sys
 import tempfile
 import time
@@ -26,13 +29,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 @pytest.fixture
-def research_module(mock_nova_config):
-    """Import nova_research_paper fresh with mocked nova_config."""
+def research_module(mock_nova_config, tmp_path, monkeypatch):
+    """Import nova_research_paper fresh with mocked nova_config. Log/state go to tmp, the
+    notification bus is stubbed, and inter-call sleeps are no-ops (offline + fast)."""
     import importlib
     for mod in list(sys.modules.keys()):
         if "nova_research_paper" in mod:
             del sys.modules[mod]
     import nova_research_paper
+    monkeypatch.setattr(nova_research_paper, "LOG_FILE", tmp_path / "research.log")
+    monkeypatch.setattr(nova_research_paper, "STATE_FILE", tmp_path / "state" / "research_state.json")
+    monkeypatch.setattr(nova_research_paper, "notify", MagicMock())
+    monkeypatch.setattr(nova_research_paper.time, "sleep", lambda *a, **k: None)
     return nova_research_paper
 
 
@@ -311,7 +319,7 @@ class TestImageGeneration:
 
 
 @pytest.mark.security
-class TestSecurity:
+class TestSecurityLegacy:
     """Security tests for nova_research_paper.py."""
 
     def test_excluded_sources_are_private(self, research_module):
@@ -417,7 +425,8 @@ class TestMainWorkflow:
 
 
 @pytest.mark.integration
-class TestIntegration:
+@pytest.mark.skipif(not os.environ.get("NOVA_LIVE_TESTS"), reason="live-service checks; set NOVA_LIVE_TESTS=1")
+class TestLiveServices:
     """Integration tests that require live services."""
 
     def test_memory_server_health(self, research_module):
@@ -438,3 +447,199 @@ class TestIntegration:
             assert resp.status == 200
         except Exception:
             pytest.skip("SearXNG not running")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# THE 7 HOUSE CATEGORIES (unittest.TestCase, fully offline)
+# ═══════════════════════════════════════════════════════════════════════════════
+import importlib.util  # noqa: E402
+import io  # noqa: E402
+import re  # noqa: E402
+import subprocess  # noqa: E402
+import unittest  # noqa: E402
+from contextlib import redirect_stdout  # noqa: E402
+
+_SCRIPT = Path(__file__).resolve().parents[1] / "nova_research_paper.py"
+_SRC = _SCRIPT.read_text()
+
+
+def _load_rp():
+    spec = importlib.util.spec_from_file_location("nova_research_paper_t", _SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+_rp = _load_rp()
+
+
+class _Ctx(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+def _js(obj):
+    return _Ctx(json.dumps(obj).encode())
+
+
+class _RPBase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        t = Path(self.tmp.name)
+        self.ps = [patch.object(_rp, "LOG_FILE", t / "log.txt"), patch.object(_rp, "STATE_FILE", t / "st" / "s.json"),
+                   patch.object(_rp, "CONTENT_DIR", t / "content"), patch.object(_rp, "IMAGES_DIR", t / "images"),
+                   patch.object(_rp, "notify"), patch.object(_rp.time, "sleep"),
+                   patch.object(_rp.urllib.request, "urlopen", side_effect=OSError("offline")),
+                   patch.object(_rp.nj, "git_push")]
+        started = [p.start() for p in self.ps]
+        self.notify, self.sleep, self.urlopen, self.push = started[4], started[5], started[6], started[7]
+        self._r = redirect_stdout(io.StringIO())
+        self._r.__enter__()
+
+    def tearDown(self):
+        self._r.__exit__(None, None, None)
+        for p in self.ps:
+            p.stop()
+        self.tmp.cleanup()
+
+
+class TestSecurity(_RPBase):
+    def test_no_hardcoded_credentials(self):
+        self.assertNotRegex(_SRC, r"(?i)(password|secret|token|api[_-]?key)\s*=\s*['\"][A-Za-z0-9-]{12,}['\"]")
+        self.assertIn("nova_config.openrouter_api_key()", _SRC)
+
+    def test_recall_filters_private_memories(self):
+        self.urlopen.side_effect = None
+        self.urlopen.return_value = _js({"memories": [{"text": "public", "source": "wiki"},
+                                                      {"text": "secret", "source": "imessage"}]})
+        out = _rp.recall_memories("q", source="wiki")
+        self.assertEqual([m["text"] for m in out], ["public"])
+
+    def test_excluded_source_never_picked(self):
+        counts = {s: 10_000 for s in _rp.EXCLUDED_SOURCES}
+        counts[_rp.AMBITIOUS_SOURCES[0]] = 150
+        with patch.object(_rp, "get_source_counts", return_value=counts):
+            self.assertEqual(_rp.pick_topic({"recent_topics": []})[0], _rp.AMBITIOUS_SOURCES[0])
+
+
+class TestPerformance(_RPBase):
+    def test_format_references_10k(self):
+        mems = [{"text": f"memory {i} " * 20, "metadata": {"title": f"T{i}"}} for i in range(10_000)]
+        web = [{"title": f"W{i}", "url": f"https://e.x/{i}", "content": "c"} for i in range(10_000)]
+        t0 = time.perf_counter()
+        refs = _rp.format_references(mems, web, "psychology")
+        self.assertLess(time.perf_counter() - t0, 2.0)
+        self.assertIn("9980 additional memory sources", refs)
+
+
+class TestRetry(_RPBase):
+    def test_source_counts_retry_then_succeed(self):
+        self.urlopen.side_effect = [OSError("a"), OSError("b"), _js({"by_source": {"psychology": 500}})]
+        self.assertEqual(_rp.get_source_counts(), {"psychology": 500})
+        self.assertEqual(self.urlopen.call_count, 3)
+        self.assertEqual([c[0][0] for c in self.sleep.call_args_list], [5, 5])
+
+    def test_recall_gives_up_after_three(self):
+        self.assertEqual(_rp.recall_memories("q"), [])
+        self.assertEqual(self.urlopen.call_count, 3)
+
+
+class TestUnit(_RPBase):
+    def test_pick_topic_none_when_thin(self):
+        with patch.object(_rp, "get_source_counts", return_value={}):
+            self.assertEqual(_rp.pick_topic({}), (None, None))
+
+    def test_search_angles_fallbacks(self):
+        with patch.object(_rp.nova_config, "openrouter_api_key", return_value=""):
+            self.assertEqual(_rp.generate_search_angles("x", "desc"), ["desc"] * 5)
+        with patch.object(_rp.nova_config, "openrouter_api_key", return_value="k"):
+            self.assertEqual(_rp.generate_search_angles("x", "desc")[1], "x analysis")
+
+    def test_state_roundtrip(self):
+        self.assertEqual(_rp.load_state(), {"recent_topics": [], "paper_count": 0})
+        _rp.save_state({"paper_count": 3})
+        self.assertEqual(_rp.load_state(), {"paper_count": 3})
+
+
+class TestIntegration(_RPBase):
+    def test_web_sources_dedupe_and_stop_at_minimum(self):
+        calls = []
+
+        def fake(q, max_results=10):
+            calls.append(q)
+            return [{"url": f"https://e.x/{len(calls)}-{i}", "title": "t"} for i in range(10)] + \
+                   [{"url": "https://dup", "title": "d"}]
+        with patch.object(_rp, "searxng_search", side_effect=fake):
+            out = _rp.gather_web_sources("psychology", "minds", ["a", "b", "c", "d"])
+        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(out), 31)
+
+    def test_publish_writes_post_and_uses_shared_git_push(self):
+        outline = {"title": "On Minds", "thesis": "t", "chapters": [{"title": "One"}]}
+        with patch.object(_rp.subprocess, "run", return_value=subprocess.CompletedProcess([], 0, "", "")):
+            _rp.CONTENT_DIR.mkdir(parents=True)
+            self.assertTrue(_rp.publish_to_hugo("## One\n\nbody", outline, None, [None], 4))
+        post = next(_rp.CONTENT_DIR.glob("*-on-minds.md")).read_text()
+        self.assertIn('title: "📄 On Minds"', post)
+        self.assertIn("Nova Research Paper #4", post)
+        self.push.assert_called_once_with("research", "On Minds")
+
+
+class TestFunctional(_RPBase):
+    def _pipeline(self):
+        outline = {"title": "Paper", "thesis": "T", "paper_type": "analytical",
+                   "chapters": [{"title": "A"}, {"title": "B"}]}
+        mems = [{"text": f"m{i}", "metadata": {}} for i in range(_rp.MIN_MEMORIES)]
+        web = [{"title": f"w{i}", "url": f"https://w/{i}"} for i in range(_rp.MIN_WEB_RESULTS)]
+        return [patch.object(_rp, "pick_topic", return_value=("psychology", "minds")),
+                patch.object(_rp, "generate_search_angles", return_value=["a"]),
+                patch.object(_rp, "gather_memories", return_value=mems),
+                patch.object(_rp, "gather_web_sources", return_value=web),
+                patch.object(_rp, "generate_thesis_and_outline", return_value=outline),
+                patch.object(_rp, "generate_cover_image", return_value=None),
+                patch.object(_rp, "generate_chapter", return_value="text"),
+                patch.object(_rp, "generate_chapter_image", return_value=None),
+                patch.object(_rp, "generate_abstract", return_value="abs"),
+                patch.object(_rp, "generate_conclusion", return_value="concl"),
+                patch.object(_rp, "publish_to_hugo", return_value=True)]
+
+    def test_main_golden_path(self):
+        ps = self._pipeline()
+        mocks = [p.start() for p in ps]
+        try:
+            _rp.main()
+        finally:
+            for p in ps:
+                p.stop()
+        paper = mocks[-1].call_args[0][0]
+        self.assertIn("## Abstract", paper)
+        self.assertIn("## References", paper)
+        self.assertEqual(_rp.load_state()["paper_count"], 1)
+        levels = [c.kwargs["level"] for c in self.notify.call_args_list]
+        self.assertEqual(levels, ["warning", "info"])  # missing-cover warning, then the publish note
+
+    def test_main_aborts_on_thin_memories(self):
+        with patch.object(_rp, "pick_topic", return_value=("psychology", "minds")), \
+             patch.object(_rp, "generate_search_angles", return_value=["a"]), \
+             patch.object(_rp, "gather_memories", return_value=[]), \
+             patch.object(_rp, "gather_web_sources") as gw, patch.object(_rp, "publish_to_hugo") as pub:
+            _rp.main()
+        gw.assert_not_called()
+        pub.assert_not_called()
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_runs_main(self):
+        self.assertIn('if __name__ == "__main__":', _SRC)
+        r = subprocess.run([sys.executable, "-c", "import nova_research_paper; print('ok')"],
+                           cwd=str(_SCRIPT.parent), capture_output=True, text=True, timeout=30,
+                           env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "ok")
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-q"]))

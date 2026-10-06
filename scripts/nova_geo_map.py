@@ -139,7 +139,8 @@ document.getElementById("foot").textContent=`${DATA.length} geocodable transmiss
 def main():
     rows = fetch()
     OUT.parent.mkdir(parents=True, exist_ok=True)
-    OUT.write_text(PAGE.replace("__DATA__", json.dumps(rows)))
+    # escape "</" so a transcript containing "</script>" cannot break out of the inline <script>
+    OUT.write_text(PAGE.replace("__DATA__", json.dumps(rows).replace("</", "<\\/")))
     print(f"[geo-map] wrote {OUT} ({len(rows)} incidents)", flush=True)
 
 

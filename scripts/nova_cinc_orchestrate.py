@@ -195,8 +195,8 @@ def converge_node(node, dry_run=False):
         recipe_name = recipe.replace("recipe[", "").replace("]", "")
         rc, out, err = _apply_recipe_shell(user, ip, os_family, recipe_name, dry_run)
         if rc == 0:
-            # Count changes
-            changes = out.count("[changed]") + out.count("[created]")
+            # Count changes (a drift-check reports "[drift]" lines instead of applying them)
+            changes = out.count("[changed]") + out.count("[created]") + out.count("[drift]")
             resources += changes
             output_lines.append(f"{recipe_name}: {changes} changes")
         else:

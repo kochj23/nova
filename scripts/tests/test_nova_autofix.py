@@ -318,5 +318,150 @@ class TestGetActivePatterns:
         assert rows == [{"id": 1, "confidence": 0.9}]
 
 
+# ── house categories added 2026-10-05 (7 unittest classes) ──────────────────
+# Tests for nova_autofix.py — the 7 house categories (Security, Performance, Retry, Unit,
+# Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+
+import re as _re
+import subprocess as _sp
+import time as _time
+import unittest
+from datetime import datetime as _dt, timedelta as _td
+
+_SRC = (Path(__file__).resolve().parents[1] / "nova_autofix.py").read_text()
+
+
+class _Stop(Exception):
+    pass
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        pat = _re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", _re.I)
+        self.assertIsNone(pat.search(_SRC))
+
+    def test_grafana_password_comes_from_keychain(self):
+        with patch("nova_autofix.subprocess.check_output", return_value="pw\n") as co:
+            auth = m._get_grafana_auth()
+        self.assertTrue(auth.startswith("Basic "))
+        self.assertEqual(co.call_args[0][0][:2], ["security", "find-generic-password"])
+
+    def test_sql_is_parameterized(self):
+        self.assertIsNone(_re.search(r"execute\(\s*f[\"']", _SRC))
+        self.assertNotIn("shell=True", _SRC)
+
+
+class TestPerformance(unittest.TestCase):
+    def test_check_trigger_10k_unknown_patterns_fast(self):
+        p = {"trigger_condition": {"nothing": 1}}
+        t0 = _time.perf_counter()
+        for _ in range(10_000):
+            m.check_trigger(p, {})
+        self.assertLess(_time.perf_counter() - t0, 1.0)
+
+    def test_consecutive_failure_query_is_bounded(self):
+        fake = _fake_conn()
+        fake.cursor.return_value.fetchall.return_value = [("failed",)] * 10
+        with patch.object(m, "_conn", return_value=fake):
+            self.assertEqual(m._get_consecutive_failures("t"), 10)
+        self.assertIn("LIMIT 10", fake.cursor.return_value.execute.call_args[0][0])
+
+
+class TestRetry(unittest.TestCase):
+    def test_health_check_fails_open(self):
+        # RETRY GAP: _check_health — a single urlopen attempt; failure returns False, never raises
+        calls = []
+        def boom(*a, **k):
+            calls.append(1); raise OSError("down")
+        with patch("urllib.request.urlopen", side_effect=boom):
+            self.assertFalse(m._check_health("http://x/health"))
+        self.assertEqual(len(calls), 1)
+
+    def test_grafana_annotation_fails_open(self):
+        # RETRY GAP: _annotate_grafana — one POST, errors swallowed
+        with patch.object(m, "_get_grafana_auth", return_value="Basic x"), \
+             patch("urllib.request.urlopen", side_effect=OSError("down")) as uo:
+            self.assertIsNone(m._annotate_grafana("t", ["a"]))
+        self.assertEqual(uo.call_count, 1)
+
+    def test_observe_swallows_db_failure(self):
+        with patch.object(m, "_conn", side_effect=RuntimeError("pg down")):
+            self.assertIsNone(m._observe("nova", "runtime", "s", "o"))
+
+
+class TestUnit(unittest.TestCase):
+    def test_consecutive_failures_stops_at_first_success(self):
+        fake = _fake_conn()
+        fake.cursor.return_value.fetchall.return_value = [("failed",), ("failed",), ("success",), ("failed",)]
+        with patch.object(m, "_conn", return_value=fake):
+            self.assertEqual(m._get_consecutive_failures("t"), 2)
+        self.assertEqual(m._get_consecutive_failures(None), 0)
+        self.assertIsNone(m._get_recent_error(""))
+
+    def test_port_alive_false_on_connect_error(self):
+        with patch("socket.socket") as sock:
+            sock.return_value.connect.side_effect = ConnectionRefusedError()
+            self.assertFalse(m._port_alive(1, "127.0.0.1"))
+            sock.return_value.connect.side_effect = None
+            self.assertTrue(m._port_alive(1, "127.0.0.1"))
+
+    def test_grafana_auth_none_when_keychain_missing(self):
+        with patch("nova_autofix.subprocess.check_output", side_effect=_sp.CalledProcessError(44, "security")):
+            self.assertIsNone(m._get_grafana_auth())
+
+
+class TestIntegration(unittest.TestCase):
+    def test_uses_shared_notify_helper(self):
+        import nova_notify
+        self.assertIs(m.notify, nova_notify.notify)
+
+    def test_seed_patterns_upserts_every_pattern(self):
+        fake = _fake_conn()
+        with patch.object(m, "_conn", return_value=fake), patch.object(m, "log"):
+            m.seed_patterns()
+        calls = fake.cursor.return_value.execute.call_args_list
+        self.assertEqual(len(calls), 5)
+        self.assertTrue(all("ON CONFLICT (pattern_name)" in c[0][0] for c in calls))
+
+
+class TestFunctional(unittest.TestCase):
+    def _one_pass(self, patterns):
+        with patch.object(m, "seed_patterns"), patch.object(m, "log"), \
+             patch.object(m, "get_active_patterns", return_value=patterns), \
+             patch.object(m, "check_trigger", return_value=(True, "down")), \
+             patch.object(m, "apply_fix") as af, \
+             patch("nova_autofix.time.sleep", side_effect=_Stop):
+            with self.assertRaises(_Stop):
+                m.run_loop()
+        return af
+
+    def test_loop_applies_triggered_fix(self):
+        af = self._one_pass([{"id": 1, "pattern_name": "p", "last_applied": None}])
+        af.assert_called_once()
+        self.assertEqual(af.call_args[0][1], "down")
+
+    def test_loop_rate_limits_recent_fix(self):
+        recent = _dt.now() - _td(seconds=60)
+        af = self._one_pass([{"id": 1, "pattern_name": "p", "last_applied": recent}])
+        af.assert_not_called()
+
+    def test_loop_survives_db_error(self):
+        with patch.object(m, "seed_patterns"), patch.object(m, "log") as lg, \
+             patch.object(m, "get_active_patterns", side_effect=RuntimeError("pg")), \
+             patch("nova_autofix.time.sleep", side_effect=_Stop):
+            with self.assertRaises(_Stop):
+                m.run_loop()
+        self.assertTrue(any("Loop error" in c[0][0] for c in lg.call_args_list))
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_runs_main(self):
+        self.assertIn('if __name__ == "__main__":', _SRC)
+        r = _sp.run([sys.executable, "-c", "import nova_autofix"], cwd=str(Path(__file__).resolve().parents[1]),
+                    capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "")
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

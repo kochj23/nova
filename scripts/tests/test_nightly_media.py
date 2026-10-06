@@ -26,31 +26,12 @@ from uuid import uuid4
 sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 
 
-# ── Mock nova_config before nightly_media imports it ─────────────────────────
-def _make_mock_nova_config():
-    m = MagicMock()
-    m.VECTOR_URL = "http://127.0.0.1:18790/remember"
-    m.SLACK_API = "https://slack.com/api"
-    m.SLACK_CHAN = "C_TEST_CHAT"
-    m.SLACK_NOTIFY = "C_TEST_NOTIFY"
-    m.slack_bot_token.return_value = "xoxb-test-token"
-    m.post_both = MagicMock()
-    m.post_discord = MagicMock(return_value=True)
-    return m
-
-
-_mock_cfg = _make_mock_nova_config()
-sys.modules.setdefault("nova_config", _mock_cfg)
-
-# Also stub heavy transitive deps that nova_nightly_media drags in at import time.
-# We stub nova_yt_new_episodes so the module can be imported without that file
-# existing in the test environment.
-if "nova_yt_new_episodes" not in sys.modules:
-    _yt_stub = MagicMock()
-    _yt_stub.CHANNELS = {}
-    _yt_stub.sanitize = lambda s: s
-    _yt_stub.normalize = lambda s: s.lower()
-    sys.modules["nova_yt_new_episodes"] = _yt_stub
+# ── Real (import-clean) deps — never bare-assign sys.modules ─────────────────
+# These used to be MagicMock'd straight into sys.modules (setdefault / item assignment),
+# which leaked a fake nova_config into every later test file in the same session.
+# Both modules are import-clean, so the real ones are used. 2026-10-05.
+import nova_config  # noqa: E402,F401
+import nova_yt_new_episodes  # noqa: E402,F401
 
 import nova_media_registry as registry  # noqa: E402 — after sys.path setup
 
@@ -586,6 +567,189 @@ class TestGetStatusNotRegistered(unittest.TestCase):
         unknown = f"/tmp/completely_nonexistent_{uuid4().hex}.mp4"
         result = registry.get_status(unknown)
         self.assertIsNone(result)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# HOUSE CATEGORIES — Security, Performance, Retry, Unit, Integration, Functional,
+# Frame. Added 2026-10-05 by Jordan Koch (via Claude). Fully offline: the media
+# registry, PG, yt-dlp/ffmpeg/whisper, the memory server, Slack and the notify bus
+# are mocked per test; LOG_FILE / WORK_DIR / VIDEO_ROOT point at a tempdir.
+# ══════════════════════════════════════════════════════════════════════════════
+
+import io as _io  # noqa: E402
+import json as _json  # noqa: E402
+import os as _os  # noqa: E402
+import re as _re  # noqa: E402
+import subprocess as _sp  # noqa: E402
+import tempfile as _tempfile  # noqa: E402
+import time as _time  # noqa: E402
+import types as _types  # noqa: E402
+from contextlib import redirect_stdout as _redirect  # noqa: E402
+
+_NM_PATH = Path(__file__).resolve().parents[1] / "nova_nightly_media.py"
+_NM_SRC = _NM_PATH.read_text()
+_REAL_RUN = _sp.run
+_VOCAB = ("engine torque garage restoration carburetor chassis paint welding gearbox racing "
+          "mechanic bolt wrench cylinder piston exhaust coolant gasket").split()
+
+
+def _speech(n, seed=3):
+    import random as _r
+    rnd = _r.Random(seed)
+    return " ".join(rnd.choice(_VOCAB) for _ in range(n))
+
+
+def _ok():
+    r = MagicMock(); r.__enter__.return_value = r
+    return r
+
+
+class _NightlyCase(unittest.TestCase):
+    def setUp(self):
+        self.td = _tempfile.TemporaryDirectory()
+        d = Path(self.td.name)
+        self.reg = MagicMock(); self.reg.is_done.return_value = False
+        self._ps = [patch.object(nightly, "LOG_FILE", d / "nm.log"), patch.object(nightly, "WORK_DIR", d / "work"),
+                    patch.object(nightly, "VIDEO_ROOT", d / "videos"), patch.object(nightly, "registry", self.reg),
+                    patch.object(nightly.subprocess, "run", side_effect=OSError("no subprocess in tests")),
+                    patch.object(nightly.urllib.request, "urlopen", side_effect=OSError("offline")),
+                    patch.object(nightly, "bus_notify"), patch.object(nightly.nova_config, "post_both"),
+                    patch.object(nightly, "_save_run_position"), patch.object(nightly.time, "sleep")]
+        for p in self._ps:
+            p.start()
+        (d / "work").mkdir(); (d / "videos").mkdir()
+        self.out = _io.StringIO(); self._r = _redirect(self.out); self._r.__enter__()
+
+    def tearDown(self):
+        self._r.__exit__(None, None, None)
+        for p in reversed(self._ps):
+            p.stop()
+        self.td.cleanup()
+
+
+def _tools(transcript):
+    def run(cmd, **kw):
+        if cmd[0] == nightly.FFMPEG_BIN:
+            Path(cmd[-1]).write_bytes(b"0" * 2000)
+        elif cmd[0] == nightly.WHISPER_BIN:
+            Path(cmd[cmd.index("--output-dir") + 1], cmd[cmd.index("--output-name") + 1] + ".txt").write_text(transcript)
+        return MagicMock(returncode=0, stdout="", stderr="")
+    return run
+
+
+class TestSecurity(_NightlyCase):
+    def test_no_hardcoded_credentials(self):
+        pat = _re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", _re.I)
+        self.assertIsNone(pat.search(_NM_SRC))
+        self.assertNotIn("shell=True", _NM_SRC)
+
+    def test_memories_local_only(self):
+        with patch.object(nightly.urllib.request, "urlopen", return_value=_ok()) as u:
+            self.assertTrue(nightly.remember("text " * 5, "automotive", {"k": 1}))
+        self.assertEqual(_json.loads(u.call_args.args[0].data)["privacy"], "local-only")
+
+    def test_video_id_is_one_argv_element(self):
+        with patch.object(nightly.subprocess, "run", return_value=_types.SimpleNamespace(returncode=0, stdout="", stderr="")) as run:
+            nightly._yt_download_video("abc; echo pwned", Path("/x.mp4"))
+        self.assertEqual(run.call_args.args[0][-1], "https://www.youtube.com/watch?v=abc; echo pwned")
+
+
+class TestPerformance(_NightlyCase):
+    def test_classify_and_music_check_10k_fast(self):
+        t0 = _time.perf_counter()
+        for i in range(10_000):
+            nightly.classify_source(f"Show {i}", "an episode", "engine torque dyno")
+            nightly._is_music_path(Path(f"/v/KEXP/{i}.mp4"))
+        self.assertLess(_time.perf_counter() - t0, 2.0)
+
+
+class TestRetry(_NightlyCase):
+    def test_external_calls_fail_open(self):
+        # RETRY GAP: remember()/recall_memory_for_show()/extract_audio()/transcribe() — single attempts;
+        # each failure degrades to False/None/fallback chunk instead of raising
+        self.assertFalse(nightly.remember("t", "s", {}))
+        self.assertEqual(nightly.recall_memory_for_show("Show", ["[Show] fallback chunk"]), "fallback chunk")
+        self.assertIsNone(nightly.recall_memory_for_show("Show"))
+        self.assertFalse(nightly.extract_audio(Path("/x.mp4"), Path(self.td.name) / "a.wav"))
+        with patch.object(nightly.subprocess, "run", side_effect=_sp.TimeoutExpired("w", 1)):
+            self.assertIsNone(nightly.transcribe(Path("a.wav"), Path(self.td.name), "s"))
+
+    def test_notify_errors_swallowed(self):
+        with patch.object(nightly, "bus_notify", side_effect=RuntimeError("bus")), \
+                patch.object(nightly.nova_config, "post_both", side_effect=RuntimeError("slack")):
+            nightly.notify("Title\nbody")
+            nightly.notify("chat", channel=nightly.SLACK_CHAT)
+        self.assertIn("notify bus error", self.out.getvalue())
+        self.assertIn("Slack notify error", self.out.getvalue())
+
+
+class TestUnit(_NightlyCase):
+    def test_classify_source_precedence(self):
+        self.assertEqual(nightly.classify_source("Jay Leno's Garage", "t", "joke laugh"), "automotive")
+        self.assertEqual(nightly.classify_source("Forgotten Weapons", "t", ""), "military_history")
+        self.assertEqual(nightly.classify_source("Random", "A rifle story", ""), "military_history")
+        self.assertEqual(nightly.classify_source("Random", "nothing", "plain"), "television")
+
+    def test_show_name_and_yt_listing_parse(self):
+        self.assertEqual(nightly.show_name_from_path(Path("/v/Seinfeld/Season 04/ep.mkv")), "Seinfeld")
+        self.assertEqual(nightly.show_name_from_path(Path("/v/Show/s02/ep.mkv")), "Show")
+        self.assertEqual(nightly.show_name_from_path(Path("/v/Flat/ep.mkv")), "Flat")
+        out = "id1\tTitle One\t20260101\nid2\tTitle Two\tNA\nbad-line\n"
+        with patch.object(nightly.subprocess, "run", return_value=_types.SimpleNamespace(stdout=out)) as run:
+            vids = nightly._get_recent_videos_with_dateafter("https://yt/c", None)
+        self.assertEqual([(v["id"], v["upload_date"]) for v in vids], [("id1", "20260101"), ("id2", "")])
+        self.assertIn("--playlist-end", run.call_args.args[0])
+
+
+class TestIntegration(_NightlyCase):
+    def test_notify_routing(self):
+        nightly.notify("Clapper title\nline two")
+        self.assertEqual(nightly.bus_notify.call_args.args[0], "Clapper title")
+        self.assertEqual(nightly.bus_notify.call_args.kwargs["category"], "media")
+        nightly.notify("chat msg", channel=nightly.SLACK_CHAT)
+        self.assertEqual(nightly.nova_config.post_both.call_args.kwargs["slack_channel"], nightly.SLACK_CHAT)
+
+    def test_shares_channel_table_with_yt_episodes(self):
+        import nova_yt_new_episodes
+        self.assertIs(nightly.CHANNELS, nova_yt_new_episodes.CHANNELS)
+        self.assertNotIn("CHANNELS = {", _NM_SRC)
+
+
+class TestFunctional(_NightlyCase):
+    def test_ingest_video_golden_path_and_registry(self):
+        with patch.object(nightly.subprocess, "run", side_effect=_tools(_speech(1200))), \
+                patch.object(nightly.urllib.request, "urlopen", return_value=_ok()) as u:
+            res = nightly.ingest_video(Path("/v/Roadkill/Season 01/ep1.mkv"), "Roadkill", "ep1")
+        self.assertEqual((res["status"], res["chunks"]), ("ingested", 3))
+        self.assertEqual(u.call_count, 3)
+        self.reg.mark_ingested.assert_called_once_with("/v/Roadkill/Season 01/ep1.mkv", 3, "automotive")
+
+    def test_phase2_skips_music_and_done_and_notifies(self):
+        root = nightly.VIDEO_ROOT
+        for rel in ("Show/Season 01/a.mp4", "Youtube Music Videos/m.mp4", "other/x.mp4", "Show/Season 01/notes.txt"):
+            (root / rel).parent.mkdir(parents=True, exist_ok=True); (root / rel).write_text("x")
+        with patch.object(nightly, "ingest_video", return_value={"status": "ingested", "chunks": 2, "words": 900,
+                                                                  "chunks_text": ["c"]}) as iv, \
+                patch.object(nightly, "recall_memory_for_show", return_value="a memory"):
+            nightly.run_phase2()
+        iv.assert_called_once()
+        self.assertEqual(iv.call_args.args[1:], ("Show", "a"))
+        self.reg.mark_status.assert_called_once()
+        self.assertEqual(self.reg.mark_status.call_args.args[1], "skipped")
+        self.assertIn("*Show* — _a_", nightly.bus_notify.call_args.args[0])
+
+    def test_ingest_audio_failure_marks_status(self):
+        res = nightly.ingest_video(Path("/v/x.mp4"), "S", "x")
+        self.assertEqual(res["status"], "audio_failed")
+        self.reg.mark_status.assert_called_once_with("/v/x.mp4", "audio_failed")
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_runs_main(self):
+        self.assertIn('if __name__ == "__main__":', _NM_SRC)
+        r = _REAL_RUN([sys.executable, "-c", "import nova_nightly_media"], cwd=str(_NM_PATH.parent),
+                      capture_output=True, text=True, timeout=30, env={**_os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual((r.returncode, r.stdout.strip()), (0, ""), r.stderr)
 
 
 if __name__ == "__main__":

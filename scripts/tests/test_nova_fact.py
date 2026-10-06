@@ -79,7 +79,7 @@ class TestSecurity(unittest.TestCase):
 
     def test_sql_is_parameterized_and_scoped_to_ground_truth(self):
         self.assertIsNone(re.search(r'execute\(\s*f"', SRC))
-        writes = {m.group(1) for m in re.finditer(r"\b(?:INSERT INTO|UPDATE|DELETE FROM)\s+([\w.]+)", SRC)}
+        writes = {m.group(1) for m in re.finditer(r"\b(?:INSERT INTO|(?<!DO )UPDATE|DELETE FROM)\s+([\w.]+)", SRC)}   # skip ON CONFLICT DO UPDATE SET
         self.assertEqual(writes, {"nova.ground_truth"})
 
     def test_injection_in_key_travels_as_a_parameter(self):

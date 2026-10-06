@@ -29,6 +29,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import nova_maintenance_advisor as mod
 
 
+@pytest.fixture(autouse=True)
+def _quiet_logger():
+    """nova_logger.log appends to ~/.openclaw/logs/nova.jsonl — keep every test off the real log."""
+    with patch.object(mod, "log"):
+        yield
+
+
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 
@@ -480,3 +487,133 @@ class TestRunAnalysis:
             # Should swallow the exception and complete.
             out = mod.run_analysis()
         assert out == []
+
+
+# ── house categories added 2026-10-05 (7 unittest classes) ──────────────────
+# Tests for nova_maintenance_advisor.py — the 7 house categories (Security, Performance, Retry, Unit,
+# Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+
+import io as _io
+import os as _os
+import re as _re
+import subprocess as _sp
+import tempfile as _tempfile
+import time as _time
+import unittest
+from contextlib import redirect_stdout as _redirect_stdout
+
+_SRC = (Path(__file__).resolve().parents[1] / "nova_maintenance_advisor.py").read_text()
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        pat = _re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", _re.I)
+        self.assertIsNone(pat.search(_SRC))
+
+    def test_psql_is_argv_and_value_is_escaped(self):
+        self.assertNotIn("shell=True", _SRC)
+        with patch.object(mod.subprocess, "run", return_value=_fake_completed(0, "")) as run:
+            mod._pg_execute("INSERT INTO t VALUES (%s)", ("x'); SELECT pg_sleep(9); --",))
+        argv = run.call_args[0][0]
+        self.assertEqual(argv[:3], ["psql", "-h", "127.0.0.1"])
+        self.assertIn("'x''); SELECT pg_sleep(9); --'", argv[-1])
+
+
+class TestPerformance(unittest.TestCase):
+    def test_pg_query_parses_10k_rows_fast(self):
+        out = "\n".join(f"task{i}\x1f{i}" for i in range(10_000))
+        with patch.object(mod.subprocess, "run", return_value=_fake_completed(0, out)):
+            t0 = _time.perf_counter()
+            rows = mod._pg_query("SELECT 1")
+        self.assertLess(_time.perf_counter() - t0, 1.0)
+        self.assertEqual(len(rows), 10_000)
+        self.assertEqual(rows[-1], ["task9999", "9999"])
+
+
+class TestRetry(unittest.TestCase):
+    def test_psql_timeout_fails_open(self):
+        # RETRY GAP: _pg_query/_pg_execute — one psql attempt; timeout returns []/False (weekly job reruns)
+        with patch.object(mod.subprocess, "run", side_effect=_sp.TimeoutExpired("psql", 15)) as run:
+            self.assertEqual(mod._pg_query("SELECT 1"), [])
+            self.assertFalse(mod._pg_execute("SELECT 1"))
+        self.assertEqual(run.call_count, 2)
+
+    def test_redis_timeout_fails_open(self):
+        # RETRY GAP: check_redis_health — single redis-cli call
+        with patch.object(mod.subprocess, "run", side_effect=_sp.TimeoutExpired("redis-cli", 5)):
+            self.assertEqual(mod.check_redis_health(), [])
+
+
+class TestUnit(unittest.TestCase):
+    def test_param_substitution_edges(self):
+        with patch.object(mod.subprocess, "run", return_value=_fake_completed(0, "")) as run:
+            mod._pg_query("SELECT %s, %s, %s", (None, 7, "a"))
+        self.assertTrue(run.call_args[0][0][-1].endswith("SELECT NULL, 7, 'a'"))
+        with patch.object(mod.subprocess, "run", return_value=_fake_completed(0, "\n  \n")):
+            self.assertEqual(mod._pg_query("SELECT 1"), [])
+
+    def test_redis_dbsize_formats(self):
+        mem = _fake_completed(0, "used_memory:1024\n")
+        for out, expect in (("db0:keys=20000,expires=0", 1), ("(integer) 50", 0)):
+            with patch.object(mod.subprocess, "run", side_effect=[mem, _fake_completed(0, out)]):
+                self.assertEqual(len(mod.check_redis_health()), expect)
+
+
+class TestIntegration(unittest.TestCase):
+    def test_queue_targets_bridge_session_at_priority_4(self):
+        with patch.object(mod, "_pg_execute", return_value=True) as ex, \
+             patch.object(mod, "_pg_query", return_value=[]):
+            self.assertTrue(mod._queue_suggestion({"description": "MAINTENANCE: d", "context": {"a": 1}}))
+        sess, ins = ex.call_args_list
+        self.assertIn("INSERT INTO claude_sessions", sess[0][0])
+        self.assertEqual(sess[0][1][0], mod.BRIDGE_SESSION_ID)
+        self.assertEqual(ins[0][1][:3], (mod.BRIDGE_SESSION_ID, "queued", "4"))
+        self.assertEqual(json.loads(ins[0][1][4]), {"a": 1})
+
+
+class TestFunctional(unittest.TestCase):
+    def test_run_analysis_queues_disk_warning_end_to_end(self):
+        st = MagicMock(f_bavail=1, f_frsize=1024 ** 3, f_blocks=100)     # 1GB free of 100GB
+        written = []
+        with patch.object(mod.os, "statvfs", return_value=st), \
+             patch.object(mod, "check_failure_trends", return_value=[]), \
+             patch.object(mod, "check_latency_trends", return_value=[]), \
+             patch.object(mod, "check_vector_growth", return_value=[]), \
+             patch.object(mod, "check_silent_failures", return_value=[]), \
+             patch.object(mod, "check_redis_health", return_value=[]), \
+             patch.object(mod, "_pg_query", return_value=[]), \
+             patch.object(mod, "_pg_execute", side_effect=lambda sql, p=(): written.append((sql, p)) or True), \
+             _redirect_stdout(_io.StringIO()) as out:
+            res = mod.run_analysis()
+        self.assertEqual(len(res), 3)
+        self.assertEqual(sum("INSERT INTO claude_queue" in s for s, _ in written), 3)
+        self.assertIn("3 queued", out.getvalue())
+
+    def test_queue_write_failure_reports_zero_queued(self):
+        sug = {"description": "MAINTENANCE: x"}
+        with patch.object(mod, "check_failure_trends", return_value=[sug]), \
+             patch.object(mod, "check_latency_trends", return_value=[]), \
+             patch.object(mod, "check_disk_space", return_value=[]), \
+             patch.object(mod, "check_vector_growth", return_value=[]), \
+             patch.object(mod, "check_silent_failures", return_value=[]), \
+             patch.object(mod, "check_redis_health", return_value=[]), \
+             patch.object(mod, "_pg_query", return_value=[]), patch.object(mod, "_pg_execute", return_value=False), \
+             _redirect_stdout(_io.StringIO()) as out:
+            mod.run_analysis()
+        self.assertIn("0 queued", out.getvalue())
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_runs_main(self):
+        # running the script performs the weekly analysis (psql, redis-cli), so the smoke is an import only
+        self.assertIn('if __name__ == "__main__":', _SRC)
+        with _tempfile.TemporaryDirectory() as home:
+            r = _sp.run([sys.executable, "-c", "import nova_maintenance_advisor"],
+                        cwd=str(Path(__file__).resolve().parents[1]), capture_output=True, text=True, timeout=30,
+                        env={**_os.environ, "NOVA_TEST_QUIET": "1", "HOME": home})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "")
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-q"]))

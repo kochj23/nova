@@ -30,7 +30,13 @@ def _load(name, path):
     return mod
 
 
+_before = set(sys.modules)
 gw = _load("gwv2_under_test", SCRIPT)
+# Keep the scripts-dir nova_gateway package OUT of sys.modules after loading: tests/test_gateway.py
+# imports a different nova_gateway (with a context/ sub-package) and collides with ours otherwise.
+_GW_MODS = {k: m for k, m in sys.modules.items() if k == "nova_gateway" or k.startswith("nova_gateway.")}
+for _k in [k for k in _GW_MODS if k not in _before]:
+    sys.modules.pop(_k)   # only drop what THIS file added; leave a package another file loaded in place
 
 
 class TestSecurity(unittest.TestCase):
@@ -44,14 +50,14 @@ class TestSecurity(unittest.TestCase):
             self.assertNotIn(needle, SRC)
 
     def test_tokens_come_from_the_package_loader_not_source(self):
-        import nova_gateway.config as cfg
+        cfg = _GW_MODS["nova_gateway.config"]
         self.assertTrue(callable(cfg.load_tokens))
         self.assertIn("find-generic-password", (SCRIPTS / "nova_gateway" / "config.py").read_text())
 
 
 class TestPerformance(unittest.TestCase):
     def test_reload_is_fast_and_sys_path_growth_is_bounded(self):
-        saved = list(sys.path)
+        saved, mods = list(sys.path), set(sys.modules)
         try:
             t0 = time.perf_counter()
             for _ in range(20):
@@ -60,8 +66,10 @@ class TestPerformance(unittest.TestCase):
             grown = len(sys.path) - len(saved)
         finally:
             sys.path[:] = saved
+            for k in [k for k in sys.modules if k not in mods and (k == "nova_gateway" or k.startswith("nova_gateway."))]:
+                sys.modules.pop(k)   # keep the package out of the cache (see _GW_MODS)
         self.assertLess(dt, 5.0)
-        self.assertLessEqual(grown, 20)      # one insert per load, never more: the package itself is cached
+        self.assertLessEqual(grown, 21)      # one insert per load plus the one package import, never more
 
 
 class TestRetry(unittest.TestCase):
@@ -99,12 +107,10 @@ class TestUnit(unittest.TestCase):
 
 class TestIntegration(unittest.TestCase):
     def test_wrapper_delegates_to_the_same_object_the_package_exports(self):
-        import nova_gateway
-        import nova_gateway.main as pkg_main_attr     # the package re-exports main(), shadowing the submodule name
-        self.assertIs(gw.main, sys.modules["nova_gateway.main"].main)
-        self.assertIs(gw.main, nova_gateway.main)
-        self.assertIs(pkg_main_attr, gw.main)
-        self.assertEqual(nova_gateway.__all__, ["main"])
+        pkg = _GW_MODS["nova_gateway"]                  # the package re-exports main(), shadowing the submodule name
+        self.assertIs(gw.main, _GW_MODS["nova_gateway.main"].main)
+        self.assertIs(gw.main, pkg.main)
+        self.assertEqual(pkg.__all__, ["main"])
 
     def test_package_main_wires_health_channels_and_pg(self):
         src = (SCRIPTS / "nova_gateway" / "main.py").read_text()
@@ -126,7 +132,7 @@ class TestFunctional(unittest.TestCase):
 
     def test_package_main_runs_offline_through_startup_and_shutdown(self):
         """Golden path of the delegated main(): every I/O seam stubbed; shutdown is set by the health server."""
-        m = sys.modules["nova_gateway.main"]
+        m = _GW_MODS["nova_gateway.main"]
         calls = []
 
         async def health(ctx):

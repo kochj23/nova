@@ -226,7 +226,7 @@ MAX_QUESTIONS_PER_NIGHT = 3   # Jordan's interruption budget — tune freely
 # (OTP codes, PINs, passwords) are never surfaced in questions, whatever their
 # privacy field says. Shipped after the 2020 AT&T code finding.
 _CREDENTIAL_SHAPE = re.compile(
-    r"(code|pin|password|passcode|otp|2fa|verification)\W{0,20}\d{4,8}"
+    r"(code|pin|password|passcode|otp|2fa|verification)\W{0,20}(?:(?:is|was|are)\W{1,5})?\d{4,8}"   # "code is 482913"
     r"|\d{4,8}\W{0,20}(code|pin|password|passcode|otp)", re.I)
 
 

@@ -74,7 +74,7 @@ def process_file(md_path: Path, category: str) -> bool:
         # Replace existing tags line
         new_content = re.sub(
             r'^tags:\s*\[.+?\]',
-            f'tags: {tags_yaml}',
+            lambda _m: f'tags: {tags_yaml}',  # callable: JSON escapes must not be re-parsed as regex escapes
             content,
             flags=re.MULTILINE
         )
@@ -82,7 +82,7 @@ def process_file(md_path: Path, category: str) -> bool:
         # Insert tags after categories line
         new_content = re.sub(
             r'^(categories:\s*\[.+?\])',
-            f'\\1\ntags: {tags_yaml}',
+            lambda m: f'{m.group(1)}\ntags: {tags_yaml}',
             content,
             flags=re.MULTILINE
         )

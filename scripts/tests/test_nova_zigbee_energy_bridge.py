@@ -184,8 +184,8 @@ class TestIntegration(_Base):
         with patch.object(zb.psycopg2, "connect", return_value=_Conn(_Cur())), \
              patch.object(zb.mqtt, "Client", return_value=client), redirect_stdout(io.StringIO()) as out:
             zb.main()
+            client.on_connect(client, None, None, 0)        # simulate a (re)connect while stdout is still captured
         self.assertIs(client.on_message, zb.on_message)
-        client.on_connect(client, None, None, 0)
         client.subscribe.assert_called_once_with("zigbee2mqtt/+")
         client.reconnect_delay_set.assert_called_once_with(min_delay=1, max_delay=60)
         self.assertIn("(re)connected rc=0, subscribed zigbee2mqtt/+", out.getvalue())

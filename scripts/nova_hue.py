@@ -223,12 +223,15 @@ def insert_observation(observer: str, category: str, subject: str,
                        metadata: dict | None = None):
     """Insert into shared_observations table."""
     meta_json = json.dumps(metadata) if metadata else "{}"
+
+    def _q(v):  # SQL-literal escape: a sensor name like "Jordan's Porch" broke the insert
+        return str(v).replace("'", "''")
     try:
         subprocess.run(
             ["psql", "-h", "192.168.1.138", "-d", "nova_ops", "-U", "kochj", "-c",
              f"INSERT INTO shared_observations (observer, category, subject, observation, severity, metadata) "
-             f"VALUES ('nova_hue', '{category}', '{subject}', "
-             f"$obs${observation}$obs$, '{severity}', '{meta_json}'::jsonb)"],
+             f"VALUES ('nova_hue', '{_q(category)}', '{_q(subject)}', "
+             f"'{_q(observation)}', '{_q(severity)}', '{_q(meta_json)}'::jsonb)"],
             capture_output=True, text=True, timeout=10
         )
     except Exception as e:

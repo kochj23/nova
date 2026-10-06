@@ -188,7 +188,7 @@ class bose:
             vol_el = root.find(".//{urn:schemas-upnp-org:service:RenderingControl:1}GetVolumeResponse/CurrentVolume")
             if vol_el is None:
                 # Try without namespace
-                vol_el = root.find(".//*[local-name()='CurrentVolume']")
+                vol_el = root.find(".//{*}CurrentVolume")
             volume = int(vol_el.text) if vol_el is not None else -1
         except Exception:
             volume = -1
@@ -277,7 +277,7 @@ class bose:
         try:
             resp = cls._transport_action(info["ip"], "GetTransportInfo")
             root = ElementTree.fromstring(resp)
-            state_el = root.find(".//*[local-name()='CurrentTransportState']")
+            state_el = root.find(".//{*}CurrentTransportState")
             state = state_el.text if state_el is not None else "UNKNOWN"
         except Exception as e:
             state = f"ERROR: {e}"

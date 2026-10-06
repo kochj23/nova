@@ -141,9 +141,9 @@ class TestUnit(_Base):
         p = lr.CRON_RUNS_DIR / "x.jsonl"
         _jsonl(p, [1, 31, 29])
         p.write_text(p.read_text() + "this is not json\n" + json.dumps({"no_ts": True}) + "\n")
-        self.assertEqual(lr.trim_jsonl(p), (5, 4))
+        self.assertEqual(lr.trim_jsonl(p), (5, 3))                       # valid JSON without "ts" reads as epoch -> dropped
         kept = p.read_text().splitlines()
-        self.assertEqual(len(kept), 4); self.assertIn("this is not json", kept)
+        self.assertEqual(len(kept), 3); self.assertIn("this is not json", kept); self.assertNotIn("no_ts", p.read_text())
         self.assertNotIn('"i": 1', p.read_text())                       # the 31-day entry is gone
         self.assertTrue(p.read_text().endswith("\n"))
 

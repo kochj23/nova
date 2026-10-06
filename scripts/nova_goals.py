@@ -103,13 +103,13 @@ def ensure_schema():
 def add_goal(title, description="", project=None, priority="medium",
              deadline=None, check_in_days=7):
     goal_id = str(uuid.uuid4())[:8]
-    deadline_sql = f"'{deadline}'" if deadline else "NULL"
+    deadline_sql = f"'{_escape(str(deadline))}'" if deadline else "NULL"
     project_sql = f"'{_escape(project)}'" if project else "NULL"
 
     sql = f"""
         INSERT INTO goals (id, title, description, project, priority, deadline, check_in_days)
-        VALUES ('{goal_id}', '{_escape(title)}', '{_escape(description)}',
-                {project_sql}, '{priority}', {deadline_sql}, {check_in_days});
+        VALUES ('{_escape(goal_id)}', '{_escape(title)}', '{_escape(description)}',
+                {project_sql}, '{_escape(priority)}', {deadline_sql}, {int(check_in_days)});
     """
     if _exec(sql):
         _log_event(goal_id, "created", f"Goal created: {title}")
@@ -124,20 +124,20 @@ def update_goal(goal_id, **kwargs):
         if key in ("title", "description", "status", "priority", "project"):
             sets.append(f"{key} = '{_escape(str(val))}'")
         elif key == "deadline":
-            sets.append(f"deadline = '{val}'" if val else "deadline = NULL")
+            sets.append(f"deadline = '{_escape(str(val))}'" if val else "deadline = NULL")
         elif key == "check_in_days":
             sets.append(f"check_in_days = {int(val)}")
     if not sets:
         return False
     sets.append("updated_at = NOW()")
-    sql = f"UPDATE goals SET {', '.join(sets)} WHERE id = '{goal_id}';"
+    sql = f"UPDATE goals SET {', '.join(sets)} WHERE id = '{_escape(goal_id)}';"
     return _exec(sql)
 
 
 def complete_goal(goal_id, note=""):
     sql = f"""
         UPDATE goals SET status = 'completed', completed_at = NOW(), updated_at = NOW()
-        WHERE id = '{goal_id}';
+        WHERE id = '{_escape(goal_id)}';
     """
     if _exec(sql):
         _log_event(goal_id, "completed", note or "Goal completed")
@@ -148,7 +148,7 @@ def complete_goal(goal_id, note=""):
 def pause_goal(goal_id, reason=""):
     sql = f"""
         UPDATE goals SET status = 'paused', updated_at = NOW()
-        WHERE id = '{goal_id}';
+        WHERE id = '{_escape(goal_id)}';
     """
     if _exec(sql):
         _log_event(goal_id, "paused", reason or "Goal paused")
@@ -159,7 +159,7 @@ def pause_goal(goal_id, reason=""):
 def drop_goal(goal_id, reason=""):
     sql = f"""
         UPDATE goals SET status = 'dropped', updated_at = NOW()
-        WHERE id = '{goal_id}';
+        WHERE id = '{_escape(goal_id)}';
     """
     if _exec(sql):
         _log_event(goal_id, "dropped", reason or "Goal dropped")
@@ -169,11 +169,11 @@ def drop_goal(goal_id, reason=""):
 
 def log_progress(goal_id, note):
     _log_event(goal_id, "progress", note)
-    _exec(f"UPDATE goals SET last_activity = NOW(), updated_at = NOW() WHERE id = '{goal_id}';")
+    _exec(f"UPDATE goals SET last_activity = NOW(), updated_at = NOW() WHERE id = '{_escape(goal_id)}';")
 
 
 def touch_activity(goal_id):
-    _exec(f"UPDATE goals SET last_activity = NOW() WHERE id = '{goal_id}';")
+    _exec(f"UPDATE goals SET last_activity = NOW() WHERE id = '{_escape(goal_id)}';")
 
 
 # ── Query operations ─────────────────────────────────────────────────────────
@@ -256,9 +256,9 @@ def get_goal_history(goal_id, limit=10):
     rows = _query(f"""
         SELECT timestamp, event_type, note
         FROM goal_log
-        WHERE goal_id = '{goal_id}'
+        WHERE goal_id = '{_escape(goal_id)}'
         ORDER BY timestamp DESC
-        LIMIT {limit};
+        LIMIT {int(limit)};
     """)
     return [{"timestamp": r.split("|")[0], "type": r.split("|")[1],
              "note": r.split("|")[2]} for r in rows if "|" in r]
@@ -360,7 +360,7 @@ def _log_event(goal_id, event_type, note=""):
     event_id = str(uuid.uuid4())[:8]
     _exec(f"""
         INSERT INTO goal_log (id, goal_id, event_type, note)
-        VALUES ('{event_id}', '{goal_id}', '{event_type}', '{_escape(note)}');
+        VALUES ('{event_id}', '{_escape(goal_id)}', '{_escape(event_type)}', '{_escape(note)}');
     """)
 
 

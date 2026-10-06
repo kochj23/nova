@@ -205,7 +205,8 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(m._title({"host": "only-host", "level": "warning", "days_until_expiry": 1.0}), "TLS cert for only-host expires in 1.0 days")
 
     def test_classify_infinite_and_custom_thresholds(self):
-        self.assertEqual(m.classify([_row("inf", float("inf"))]), [])
+        self.assertEqual(m.classify([{**_row("inf", None), "days_until_expiry": float("inf")}]), [])   # timedelta can't hold inf
+        self.assertEqual(m.classify([{**_row("nan", None), "days_until_expiry": float("nan")}]), [])
         a = m.classify([_row("x", 20)], warn_days=30, crit_days=25)
         self.assertEqual(a[0]["level"], "critical")
 

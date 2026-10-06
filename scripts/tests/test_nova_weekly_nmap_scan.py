@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for nova_weekly_nmap_scan.py — the 7 house categories (Security, Performance, Retry, Unit,
 Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
+import ast
 import importlib.util
 import io
 import os
@@ -43,6 +44,13 @@ def _http(post=None, devices=None, threats=None):
     return patch.object(ws.requests, "post", post), patch.object(ws.requests, "get", get), post, get
 
 
+def _body(code):
+    """Decode the bytes literal the -c program feeds to the broadcaster on stdin (what Slack actually receives)."""
+    lit = ast.literal_eval(code.split("input=", 1)[1].rstrip().rstrip(")"))
+    assert isinstance(lit, bytes)
+    return lit.decode()
+
+
 def _ok(returncode=0, stderr=b""):
     return MagicMock(return_value=types.SimpleNamespace(returncode=returncode, stderr=stderr))
 
@@ -67,7 +75,8 @@ class TestSecurity(unittest.TestCase):
         code = args[0][2]
         self.assertIn("input=" + repr(ws.post_to_slack.__globals__["json"].dumps and "") [:0], code)  # code is a -c program
         self.assertIn("'--body-file', '/dev/stdin'", code)
-        self.assertIn(repr("x'; rm -rf / #")[1:-1], code)        # the message survives verbatim inside repr()
+        compile(code, "<python3 -c>", "exec")                     # the generated child program is valid Python
+        self.assertIn("high: x'; rm -rf / #\n", _body(code))   # the message survives verbatim as stdin bytes
         self.assertNotIn("rm -rf / #\n", code.split("input=")[0]) # ...and only inside the input= literal
 
 
@@ -80,8 +89,9 @@ class TestPerformance(unittest.TestCase):
             ws.post_to_slack({"threats": threats, "device_count": 5, "timestamp": "t"})
         self.assertLess(time.perf_counter() - t0, 0.5)
         code = run.call_args[0][0][2]
-        self.assertEqual(code.count("🔴"), 10)
-        self.assertIn("THREATS DETECTED: 10000", code)
+        body = _body(code)
+        self.assertEqual(body.count("🔴"), 10)
+        self.assertIn("THREATS DETECTED: 10000", body)
 
 
 class TestRetry(unittest.TestCase):
@@ -122,12 +132,13 @@ class TestUnit(unittest.TestCase):
         run = _ok()
         with patch.object(ws.subprocess, "run", run):
             ws.post_to_slack({"threats": [], "device_count": 42, "timestamp": "2026-10-05T15:00:00"})
-            clean = run.call_args[0][0][2]
+            clean = _body(run.call_args[0][0][2])
             ws.post_to_slack({"threats": [{"severity": "critical", "description": "telnet open"}], "device_count": 3})
-            hot = run.call_args[0][0][2]
+            hot = _body(run.call_args[0][0][2])
         self.assertIn("Network status: CLEAN", clean); self.assertIn("Devices Scanned: 42", clean)
         self.assertIn("THREATS DETECTED: 1", hot); self.assertIn("critical: telnet open", hot)
         self.assertIn("—N", hot)
+        self.assertTrue(hot.startswith("```\n") and hot.endswith("\n```"))   # real newlines, no repr quotes
 
 
 class TestIntegration(unittest.TestCase):

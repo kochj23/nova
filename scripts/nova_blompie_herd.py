@@ -403,7 +403,8 @@ def cmd_turn(player_email, command):
     )
 
     # If Nova is next — auto-play immediately
-    if next_player["name"] == "Nova":
+    # Guard: a Nova-only roster (herd_config missing) would otherwise recurse forever.
+    if next_player["name"] == "Nova" and current["name"] != "Nova":
         log("Nova's turn — auto-playing...")
         nova_cmd = nova_auto_play(
             scene_text, inventory, state["turn"], state.get("suggested", [])

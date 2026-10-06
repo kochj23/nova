@@ -6,7 +6,6 @@ from pathlib import Path
 from datetime import datetime
 
 metrics_dir = Path.home() / ".openclaw/workspace/metrics"
-metrics_dir.mkdir(exist_ok=True)
 
 def collect_metrics():
     """Collect disk, memory, cron metrics."""
@@ -28,11 +27,17 @@ def collect_metrics():
     
     return metrics
 
-metrics = collect_metrics()
-today = datetime.now().strftime("%Y-%m-%d")
-metrics_file = metrics_dir / f"metrics-{today}.json"
+def main():
+    metrics_dir.mkdir(exist_ok=True)
+    metrics = collect_metrics()
+    today = datetime.now().strftime("%Y-%m-%d")
+    metrics_file = metrics_dir / f"metrics-{today}.json"
 
-with open(metrics_file, "w") as f:
-    json.dump(metrics, f, indent=2)
+    with open(metrics_file, "w") as f:
+        json.dump(metrics, f, indent=2)
 
-print(f"✅ Metrics collected: {metrics_file}")
+    print(f"✅ Metrics collected: {metrics_file}")
+
+
+if __name__ == "__main__":
+    main()

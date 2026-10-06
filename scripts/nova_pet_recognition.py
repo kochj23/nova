@@ -86,7 +86,7 @@ def identify_pet(image_path):
               "If it's an animal that matches none, reply 'UNKNOWN_ANIMAL'. "
               "If there's no animal, reply 'NONE'.")
     ans = _vlm(image_path, prompt).strip().strip('".\'')
-    for p in pets:
+    for p in sorted(pets, key=lambda p: -len(p["name"])):   # longest first: "Maxine" must not match as "Max"
         if p["name"].lower() in ans.lower():
             return p["name"]
     return None

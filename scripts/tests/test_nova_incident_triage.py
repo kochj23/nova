@@ -277,3 +277,144 @@ def test_check_related_services_down_dependency_flagged():
 
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))
+
+
+# ── house categories added 2026-10-05 (the 7 unittest classes) ────────────────
+# Tests for nova_incident_triage.py — the 7 house categories (Security, Performance, Retry, Unit,
+# Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+import json as _json
+import os as _os
+import re as _re
+import subprocess as _subprocess
+import tempfile as _tempfile
+import time as _time
+import unittest
+
+_SRC = (SCRIPTS_DIR / "nova_incident_triage.py").read_text()
+
+
+class _Quiet(unittest.TestCase):
+    """Every class: nova_logger.log stubbed (never writes ~/.openclaw/logs), every psql/redis/HTTP/socket mocked."""
+    def setUp(self):
+        for name, val in (("log", MagicMock()), ("_port_open", MagicMock(return_value=True)),
+                          ("_get_bb_heal_history", MagicMock(return_value=[]))):
+            p = patch.object(m, name, val); p.start(); self.addCleanup(p.stop)
+        self.tmp = _tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
+        p = patch.object(m, "LOG_DIR", Path(self.tmp.name)); p.start(); self.addCleanup(p.stop)
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        pat = _re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", _re.I)
+        self.assertIsNone(pat.search(_SRC))
+        self.assertNotIn(":", m.PG_DSN.split("@")[0].split("//")[1])
+
+    def test_execute_escapes_quotes(self):
+        with patch.object(m.subprocess, "run", return_value=_fake_run("", 0)) as run:
+            self.assertTrue(m._pg_execute("INSERT INTO t VALUES (%s)", ("a'); DROP--",)))
+        q = run.call_args[0][0][-1]
+        self.assertIn("'a''); DROP--'", q)
+
+
+class TestPerformance(unittest.TestCase):
+    def test_suggest_fix_10k_descriptions(self):
+        t0 = _time.perf_counter()
+        for i in range(10_000):
+            m._suggest_fix("Ollama", f"gpu contention timeout disk full #{i}")
+        self.assertLess(_time.perf_counter() - t0, 1.0)
+
+    def test_heal_history_capped_at_10(self):
+        events = {"events": [{"service": "Ollama", "issue": "x"} for _ in range(500)]}
+        resp = MagicMock(); resp.read.return_value = _json.dumps(events).encode()
+        import urllib.request
+        with patch.object(urllib.request, "urlopen", return_value=resp):
+            self.assertEqual(len(m._get_bb_heal_history("Ollama")), 10)
+
+
+class TestRetry(unittest.TestCase):
+    def test_pg_execute_fails_open(self):
+        # RETRY GAP: _pg_execute()/psql — one attempt; timeout -> False, never raises
+        with patch.object(m.subprocess, "run", side_effect=subprocess_timeout()) as run:
+            self.assertFalse(m._pg_execute("SELECT 1"))
+        self.assertEqual(run.call_count, 1)
+
+    def test_heal_history_fails_open(self):
+        # RETRY GAP: _get_bb_heal_history()/urlopen — one attempt, [] on error
+        import urllib.request
+        with patch.object(urllib.request, "urlopen", side_effect=OSError("down")) as u:
+            self.assertEqual(m._get_bb_heal_history("Ollama"), [])
+        self.assertEqual(u.call_count, 1)
+
+
+def subprocess_timeout():
+    import subprocess
+    return subprocess.TimeoutExpired("psql", 10)
+
+
+class TestUnit(_Quiet):
+    def test_log_tail_missing_and_present(self):
+        self.assertEqual(m._get_log_tail("Ollama"), "No log files found")
+        (Path(self.tmp.name) / "ollama-serve.log").write_text("boom\n")
+        with patch.object(m.subprocess, "run", return_value=_fake_run("boom")):
+            out = m._get_log_tail("Ollama", lines=5)
+        self.assertIn("--- ollama-serve.log (last 5 lines) ---", out)
+
+    def test_port_open_false_on_refused(self):
+        import socket
+        with patch.object(socket, "create_connection", side_effect=OSError("refused")):
+            self.assertFalse(type(self)._real_port_open("127.0.0.1", 1))
+
+    _real_port_open = staticmethod(m._port_open)
+
+
+class TestIntegration(_Quiet):
+    def test_down_dependency_becomes_root_cause(self):
+        m._port_open.return_value = False
+        with patch.object(m, "_get_recent_runs", return_value=[]), patch.object(m, "_queue_incident") as q:
+            m.triage_incident("Gateway v2", "not responding", raw_error="x" * 5000, priority=1)
+        report = q.call_args[0][0]
+        self.assertIn("Dependency failure", report["likely_root_cause"])
+        self.assertTrue(report["suggested_actions"][0].startswith("FIX DEPENDENCIES FIRST"))
+        self.assertEqual(len(report["raw_error"]), 2000)
+
+
+class TestFunctional(_Quiet):
+    def _run(self, existing):
+        calls = []
+        def fake(cmd, **kw):
+            calls.append(cmd)
+            if cmd[0] == "psql" and "-A" in cmd:
+                return _fake_run("1" if existing and "claude_queue" in cmd[-1] else "", 0)
+            return _fake_run("", 0)
+        with patch.object(m.subprocess, "run", side_effect=fake):
+            m.triage_incident("Ollama", "gpu contention", priority=2)
+        return calls
+
+    def test_golden_path_queues_and_publishes(self):
+        calls = self._run(existing=False)
+        sqls = [c[-1] for c in calls if c[0] == "psql"]
+        self.assertTrue(any(s.startswith("INSERT INTO claude_queue") for s in sqls))
+        pub = [c for c in calls if c[0] == "redis-cli"]
+        self.assertEqual(pub[0][5:7], ["PUBLISH", "nova:to_claude"])
+        self.assertEqual(_json.loads(pub[0][7])["service"], "Ollama")
+
+    def test_duplicate_incident_skipped(self):
+        calls = self._run(existing=True)
+        sqls = [c[-1] for c in calls if c[0] == "psql"]
+        self.assertFalse(any(s.startswith("INSERT INTO claude_queue") for s in sqls))
+        self.assertFalse(any(c[0] == "redis-cli" for c in calls))
+
+
+class TestFrame(unittest.TestCase):
+    def test_help_exits_zero(self):
+        r = _subprocess.run([sys.executable, str(SCRIPTS_DIR / "nova_incident_triage.py"), "--help"],
+                            capture_output=True, text=True, timeout=30, env={**_os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--dry-run", r.stdout)
+
+    def test_import_never_runs_main(self):
+        r = _subprocess.run([sys.executable, "-c", "import nova_incident_triage"], cwd=str(SCRIPTS_DIR),
+                            capture_output=True, text=True, timeout=30, env={**_os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "")
+

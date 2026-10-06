@@ -251,10 +251,14 @@ def main():
         # Classify transcripts via Haiku
         if to_classify:
             results = classify_batch(to_classify)
+            # The id comes back from the LLM and is interpolated into psql SQL — only accept ids
+            # we actually sent in this batch (a prompt-injected memory could otherwise return
+            # "x' OR '1'='1" and re-source every row). 2026-10-05.
+            batch_ids = {mid for mid, _ in to_classify}
             for r in results:
                 rid = r.get("id", "")
                 vector = r.get("vector", "")
-                if vector and vector in VALID_VECTORS and rid:
+                if vector and vector in VALID_VECTORS and rid in batch_ids:
                     db_exec(f"UPDATE memories SET source = '{vector}' WHERE id = '{rid}'")
                     stats["reclassified"] += 1
                 elif rid:

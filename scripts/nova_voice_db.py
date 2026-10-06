@@ -10,6 +10,7 @@ Usage:
   nova_voice_db.py identify <video> [--secs 240] [--threshold 0.75]
   nova_voice_db.py list
 """
+import json
 import os
 import sys, argparse
 import numpy as np
@@ -36,7 +37,7 @@ def enroll(name, video, rank, secs):
         cur.execute("SELECT embedding, n_samples FROM voiceprints WHERE name=%s", (name,))
         row = cur.fetchone()
         if row:
-            old = np.array(eval(row[0])); n = row[1]
+            old = np.array(json.loads(row[0])); n = row[1]   # pgvector text '[..]' is JSON — never eval DB data
             merged = (old * n + cent) / (n + 1)
             merged = merged / (np.linalg.norm(merged) + 1e-9)
             cur.execute("UPDATE voiceprints SET embedding=%s::vector, n_samples=%s, updated_at=now() WHERE name=%s",

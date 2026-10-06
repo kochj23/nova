@@ -797,7 +797,11 @@ class TestPlexIngestIntegration:
 
     @pytest.fixture(autouse=True)
     def check_services_available(self):
+        import os
         import urllib.request
+        # Opt-in only: these hit live Plex and WRITE a memory to the real memory server.
+        if os.environ.get("NOVA_LIVE_TESTS") != "1":
+            pytest.skip("live-service test; set NOVA_LIVE_TESTS=1 to run")
         try:
             urllib.request.urlopen("http://192.168.1.2:32400/identity", timeout=3)
         except Exception:
@@ -820,6 +824,185 @@ class TestPlexIngestIntegration:
             {"title": "test", "type": "integration_test"},
         )
         assert result == 1
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HOUSE CATEGORIES (unittest) — Security, Performance, Retry, Unit, Integration,
+# Functional, Frame. Added 2026-10-05 by Jordan Koch (via Claude). Fully offline:
+# the module is loaded with resolve_url / logging.basicConfig / signal.signal stubbed,
+# and Plex, ffmpeg/whisper, the memory server and notify are mocked per test.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import importlib.util as _ilu  # noqa: E402
+import logging as _logging  # noqa: E402
+import os as _os  # noqa: E402
+import re as _re  # noqa: E402
+import subprocess as _sp  # noqa: E402
+import tempfile as _tempfile  # noqa: E402
+import types as _types  # noqa: E402
+import unittest  # noqa: E402
+
+import nova_resolve as _nova_resolve  # noqa: E402
+
+_PATH = Path(__file__).resolve().parents[1] / "nova_plex_auto_ingest.py"
+_SRC = _PATH.read_text()
+_REAL_RUN = _sp.run
+
+
+def _load_pai():
+    spec = _ilu.spec_from_file_location("plex_auto_ingest_house", _PATH)
+    mod = _ilu.module_from_spec(spec)
+    with patch.object(_nova_resolve, "resolve_url", return_value="http://192.168.1.2:32400"), \
+            patch.object(_logging, "basicConfig"), patch.object(signal, "signal"):
+        spec.loader.exec_module(mod)
+    return mod
+
+
+_pai = _load_pai()
+
+
+class _PaiCase(unittest.TestCase):
+    """Per-test sandbox: tempdir WORK_DIR/STATE_FILE, every outbound call stubbed."""
+    def setUp(self):
+        self.td = _tempfile.TemporaryDirectory()
+        self.work = Path(self.td.name)
+        self._ps = [patch.object(_pai, "WORK_DIR", self.work), patch.object(_pai, "STATE_FILE", self.work / "s.json"),
+                    patch.object(_pai.urllib.request, "urlopen", side_effect=OSError("offline")),
+                    patch.object(_pai.subprocess, "run", side_effect=OSError("no subprocess in tests")),
+                    patch.object(_pai, "nova_notify"), patch.object(_pai.time, "sleep"),
+                    patch.object(_pai, "shutdown", False)]
+        for p in self._ps:
+            p.start()
+        _pai.log.disabled = True
+
+    def tearDown(self):
+        _pai.log.disabled = False
+        for p in reversed(self._ps):
+            p.stop()
+        self.td.cleanup()
+
+
+def _ok():
+    r = MagicMock(); r.__enter__.return_value = r
+    return r
+
+
+_EP = {"type": "episode", "title": "The Contest", "grandparentTitle": "Seinfeld", "ratingKey": "k1",
+       "duration": 1_800_000, "Genre": [{"tag": "Comedy"}], "Media": [{"Part": [{"file": "/external3/tv/s.mkv"}]}]}
+
+
+class TestSecurity(_PaiCase):
+    def test_no_hardcoded_credentials(self):
+        pat = _re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", _re.I)
+        self.assertIsNone(pat.search(_SRC))
+
+    def test_token_from_keychain_argv(self):
+        with patch.object(_pai.subprocess, "run", return_value=_types.SimpleNamespace(stdout="tok\n")) as run:
+            self.assertEqual(_pai.plex_token(), "tok")
+        self.assertEqual(run.call_args.args[0][:2], ["security", "find-generic-password"])
+        self.assertNotIn("shell=True", _SRC)
+
+    def test_chunks_marked_local_only(self):
+        with patch.object(_pai.urllib.request, "urlopen", return_value=_ok()) as u:
+            _pai.ingest_chunks(["x" * 60], "comedy", {"privacy": "public"})
+        self.assertEqual(json.loads(u.call_args.args[0].data)["metadata"]["privacy"], "local-only")
+
+
+class TestPerformance(_PaiCase):
+    def test_chunk_and_classify_large_transcript_fast(self):
+        text = ". ".join(f"Sentence number {i} about cooking and a chef in a kitchen" for i in range(10_000))
+        t0 = time.perf_counter()
+        chunks = _pai.chunk_text(text)
+        vec = _pai.classify_content("t", "Unknown Show", [], text)
+        self.assertLess(time.perf_counter() - t0, 2.0)
+        self.assertTrue(all(len(c) <= _pai.CHUNK_SIZE + 1 for c in chunks))
+        self.assertEqual(vec, "cooking")
+
+
+class TestRetry(_PaiCase):
+    def test_ingest_counts_only_successes(self):
+        # RETRY GAP: ingest_chunks() — one POST per chunk, no retry; failures are just not counted
+        with patch.object(_pai.urllib.request, "urlopen", side_effect=[OSError("503"), _ok(), OSError("503")]) as u:
+            self.assertEqual(_pai.ingest_chunks(["a" * 60] * 3, "comedy", {}), 1)
+        self.assertEqual(u.call_count, 3)
+
+    def test_plex_and_scan_failures_fail_open(self):
+        with patch.object(_pai, "plex_token", return_value="t"):
+            self.assertEqual(_pai.get_recently_added("6"), [])
+            _pai.trigger_library_scan()                 # must not raise
+        with patch.object(_pai.subprocess, "run", side_effect=_sp.TimeoutExpired("ffmpeg", 600)):
+            self.assertIsNone(_pai.extract_audio("/x.mkv"))
+            self.assertEqual(_pai.transcribe(self.work / "a.wav"), "")
+
+
+class TestUnit(_PaiCase):
+    def test_classify_precedence(self):
+        with patch.dict(sys.modules, {"nova_tv_ingest": _types.SimpleNamespace(classify_source=lambda *a: "local_news")}):
+            self.assertEqual(_pai.classify_content("t", "Jeopardy!", [], ""), "local_news")
+        with patch.dict(sys.modules, {"nova_tv_ingest": _types.SimpleNamespace(classify_source=lambda *a: None)}):
+            self.assertEqual(_pai.classify_content("t", "Jeopardy!", [], ""), "game_show")
+            self.assertEqual(_pai.classify_content("zzz", "qqq", [], "zzz qqq"), "documentary")
+
+    def test_chunk_text_edges(self):
+        self.assertEqual(_pai.chunk_text(""), [])
+        self.assertEqual(_pai.chunk_text("short. bits."), [])
+
+    def test_process_item_skips(self):
+        self.assertFalse(_pai.process_item({**_EP, "Media": []}, "TV"))
+        self.assertFalse(_pai.process_item({**_EP, "duration": 999 * 60000}, "TV"))
+        self.assertFalse(_pai.process_item({**_EP, "duration": 1000}, "TV"))
+
+
+class TestIntegration(_PaiCase):
+    def test_plex_get_builds_tokened_url(self):
+        r = MagicMock(); r.__enter__.return_value = r; r.read.return_value = b'{"MediaContainer": {"Metadata": [1]}}'
+        with patch.object(_pai, "plex_token", return_value="T0K"), \
+                patch.object(_pai.urllib.request, "urlopen", return_value=r) as u:
+            self.assertEqual(_pai.get_recently_added("7"), [1])
+        self.assertTrue(u.call_args.args[0].full_url.endswith("/library/sections/7/recentlyAdded?X-Plex-Token=T0K"))
+
+    def test_notify_goes_through_central_bus(self):
+        _pai.notify("body text", title="T")
+        kw = _pai.nova_notify.call_args.kwargs
+        self.assertEqual((_pai.nova_notify.call_args.args[0], kw["category"], kw["body"]), ("T", "ingest", "body text"))
+
+
+class TestFunctional(_PaiCase):
+    def test_process_item_translates_path_and_ingests(self):
+        wav = self.work / "a.wav"; wav.write_bytes(b"0" * 20000)
+        text = ". ".join(f"Jerry makes a funny joke number {i} in this sitcom" for i in range(80))
+        with patch.object(_pai, "extract_audio", return_value=wav) as ex, patch.object(_pai, "transcribe", return_value=text), \
+                patch.dict(sys.modules, {"nova_tv_ingest": _types.SimpleNamespace(classify_source=lambda *a: None)}), \
+                patch.object(_pai.urllib.request, "urlopen", return_value=_ok()) as u:
+            self.assertEqual(_pai.process_item(dict(_EP), "TV Shows"), "comedy")
+        self.assertEqual(ex.call_args.args[0], "/Volumes/external/tv/s.mkv")
+        self.assertFalse(wav.exists())
+        meta = json.loads(u.call_args.args[0].data)["metadata"]
+        self.assertEqual((meta["show"], meta["section"], meta["type"]), ("Seinfeld", "TV Shows", "plex_auto_ingest"))
+
+    def test_main_records_state_and_notifies(self):
+        with patch.object(_pai, "trigger_library_scan"), \
+                patch.object(_pai, "get_recently_added", side_effect=lambda k: [dict(_EP)] if k == "6" else []), \
+                patch.object(_pai, "process_item", return_value="comedy"):
+            _pai.main()
+            _pai.main()                                         # second run: already ingested
+        st = json.loads(_pai.STATE_FILE.read_text())
+        self.assertEqual(st["ingested"]["k1"]["vector"], "comedy")
+        self.assertEqual(_pai.nova_notify.call_count, 1)
+        self.assertIn("Seinfeld — The Contest", _pai.nova_notify.call_args.kwargs["body"])
+
+
+class TestFrame(unittest.TestCase):
+    def test_compiles_and_has_main_guard(self):
+        import py_compile
+        py_compile.compile(str(_PATH), doraise=True)
+        self.assertIn('if __name__ == "__main__":', _SRC)
+
+    def test_load_with_stubs_never_runs_main(self):
+        with patch.object(_pai, "main") as m:
+            _load_pai()
+        m.assert_not_called()
+        self.assertTrue(callable(_pai.main))
 
 
 if __name__ == "__main__":

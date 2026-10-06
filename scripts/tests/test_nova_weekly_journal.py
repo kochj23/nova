@@ -104,7 +104,7 @@ class TestRetry(unittest.TestCase):
 
 class TestUnit(unittest.TestCase):
     def test_memory_volume_and_empty(self):
-        with mock.patch.object(W.subprocess, "run", _psql([("count(*)", ["1234"]), ("GROUP BY source", ["email|1000", "security|234"])])):
+        with mock.patch.object(W.subprocess, "run", _psql([("GROUP BY source", ["email|1000", "security|234"]), ("count(*)", ["1234"])])):
             s = W.section_memory_volume()
         self.assertEqual(s, "*Memory Volume:*\n• 1,234 new memories this week\n  - email: 1,000\n  - security: 234")
         with mock.patch.object(W.subprocess, "run", _psql([])):
@@ -132,6 +132,7 @@ class TestUnit(unittest.TestCase):
         with mock.patch.object(W.subprocess, "run", _psql([("dream", ["Dream: " + "x" * 200 + " tail"])])):
             s = W.section_dreams()
         self.assertIn("• 1 dream(s) recorded", s); self.assertIn("..._", s); self.assertLess(len(s), 220)
+        self.addCleanup((TMP / "config" / "scheduler_state.json").unlink, missing_ok=True)   # don't leak into test_quiet_week
         (TMP / "config" / "scheduler_state.json").write_text(json.dumps(
             {"tasks": {"a": {"run_count": 5, "consecutive_failures": 4}, "b": {"run_count": 7}}}))
         self.assertEqual(W.section_scheduler(),
@@ -139,6 +140,7 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(W._load_state("missing.json"), {})
 
     def test_infra_and_email(self):
+        self.addCleanup((W.STATE_DIR / "nova_synology_state.json").unlink, missing_ok=True)
         (W.STATE_DIR / "nova_synology_state.json").write_text(json.dumps({"model": "RS1221+", "volumes": "2 vols", "problem_count": 0}))
         tbl = [("NAS health%' AND text NOT LIKE", ["NAS health check: volume degraded " + "y" * 120]),
                ("Network health%' AND text NOT LIKE", []), ("Network health%' AND created_at", ["40"])]
@@ -190,7 +192,12 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual((kw["level"], kw["dedup_key"], kw["body"]), ("warning", "weekly-journal-failure", None))
 
     def test_quiet_week(self):
+        # section_infra_summary always reports NAS/network check counts, so an empty DB is NOT a quiet week...
         with mock.patch.object(W.subprocess, "run", _psql([])), mock.patch.object(W, "section_app_health", return_value=None):
+            self.assertIn("• NAS: 0 health checks, all clear", W.generate_weekly())
+        # ...the fallback line only appears when every section (infra included) has nothing to say.
+        with mock.patch.object(W.subprocess, "run", _psql([])), mock.patch.object(W, "section_app_health", return_value=None), \
+             mock.patch.object(W, "section_infra_summary", return_value=None):
             self.assertTrue(W.generate_weekly().endswith("_Quiet week — no significant events recorded._"))
 
 

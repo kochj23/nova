@@ -10,15 +10,32 @@ Focus (per task):
 All external deps (urllib, subprocess, notify, filesystem for scripts) are mocked.
 No live HTTP, DB, or process spawns.
 
+Extended 2026-10-05 with the 7 house categories (Security, Performance, Retry, Unit,
+Integration, Functional, Frame) as unittest classes at the bottom.
+
 Written by Jordan Koch (via Claude).
 """
 
+import os
+import re
+import subprocess
+import sys
+import time
+import unittest
 from datetime import datetime, timezone, timedelta
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-import nova_watcher_engine as we
+SCRIPTS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SCRIPTS))
+SCRIPT = SCRIPTS / "nova_watcher_engine.py"
+SRC = SCRIPT.read_text()
+
+import nova_watcher_engine as we  # noqa: E402
+
+we.notify = MagicMock(name="notify")      # module-level guard: no test ever reaches Slack
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -286,23 +303,20 @@ def test_queue_for_claude_escapes_quotes_in_context_json():
     assert "''" in sql
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason="KNOWN BUG: queue_for_claude interpolates `desc` (default "
-           "f\"Watcher '{name}' triggered\") into SQL WITHOUT escaping. Only "
-           "`ctx` is escaped. A quote in watcher name breaks out via the "
-           "description column. Report upstream; do not silently 'pass'.",
-)
-def test_queue_for_claude_description_field_is_unescaped_injection():
-    """Documents the real injection: the default description embeds the raw
-    watcher name. This SHOULD be escaped but currently is not."""
+def test_queue_for_claude_description_field_is_escaped():
+    """Regression (fixed 2026-10-05): the default description embeds the watcher
+    name; it was interpolated unescaped (formerly a strict xfail). Now every quote
+    inside the description is doubled, so the statement has exactly four balanced
+    literals ('watcher', 'queued', desc, ctx) and no breakout."""
+    import re as _re
     malicious = "Bobby'); DROP TABLE watchers;--"
     w = _watcher(name=malicious, action={"type": "queue_for_claude"})
     captured = {}
     with patch.object(we, "db_exec", side_effect=lambda sql: captured.__setitem__("sql", sql)):
         we.execute_action(w, "newval")
-    # If the desc were escaped, this raw breakout sequence would be absent.
-    assert "'); DROP TABLE" not in captured["sql"]
+    sql = captured["sql"]
+    assert "'Watcher ''Bobby''); DROP TABLE watchers;--'' triggered'" in sql
+    assert _re.sub("''", "", sql).count("'") == 8
 
 
 def test_run_loop_escapes_quote_in_new_value():
@@ -401,3 +415,130 @@ def test_load_watchers_parses_rows_and_skips_short():
     assert w["action"] == {"type": "slack_notify"}
     assert w["interval_s"] == 120 and w["cooldown_s"] == 300
     assert w["consecutive_errors"] == 0
+
+
+# ══ House categories (unittest classes, run by pytest AND `python3 tests/test_nova_watcher_engine.py`) ══
+
+def _run_with(watchers, checker_result):
+    """Drive run() with load_watchers + the checker mocked; return every SQL handed to psql."""
+    sqls = []
+    with patch.object(we, "load_watchers", return_value=watchers), \
+         patch.dict(we.CHECKERS, {"http": MagicMock(return_value=checker_result)}), \
+         patch.object(we, "db_exec", side_effect=sqls.append), patch.object(we, "log"):
+        we.run()
+    return sqls
+
+
+def _balanced(sql):
+    return re.sub("''", "", sql).count("'") % 2 == 0
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
+        self.assertIsNone(pat.search(SRC))
+        self.assertNotIn("PGPASSWORD", SRC)
+
+    def test_error_text_with_quote_cannot_break_out(self):
+        # regression (fixed 2026-10-05): last_error was interpolated unescaped
+        sqls = _run_with([_watcher()], (False, "", "can't connect'); SELECT pg_sleep(9);--"))
+        upd = [s for s in sqls if "last_error" in s][0]
+        self.assertIn("can''t connect''); SELECT pg_sleep(9);--", upd)
+        self.assertTrue(_balanced(upd))
+
+    def test_every_statement_from_a_hostile_watcher_is_balanced(self):
+        w = _watcher(name="o'brien", last_value="1:o'ld", action={"type": "queue_for_claude"})
+        sqls = _run_with([w], (True, "2:n'ew", ""))
+        self.assertGreaterEqual(len(sqls), 4)
+        for s in sqls:
+            self.assertTrue(_balanced(s), s)
+
+
+class TestPerformance(unittest.TestCase):
+    def test_due_and_cooldown_10k_watchers_fast(self):
+        ws = [_watcher(last_check=_iso(i % 300), last_triggered=_iso(i % 600)) for i in range(10_000)]
+        t0 = time.perf_counter()
+        due = sum(we.is_due(w) for w in ws); cool = sum(we.cooldown_active(w) for w in ws)
+        self.assertLess(time.perf_counter() - t0, 3.0)
+        self.assertTrue(0 < due < 10_000 and 0 < cool < 10_000)
+
+
+class TestRetry(unittest.TestCase):
+    def test_check_failure_is_one_shot_counts_errors_and_disables_at_five(self):
+        # RETRY GAP: check_http() — one GET per 2-min cycle, no in-cycle retry; failures are counted and the
+        # watcher is disabled (with one notify) on the 5th consecutive error instead of raising.
+        op = MagicMock(side_effect=OSError("timeout"))
+        with patch.object(we.urllib.request, "urlopen", op):
+            fired, val, err = we.check_http(_watcher())
+        self.assertEqual((fired, val, op.call_count), (False, "", 1))
+        self.assertIn("timeout", err)
+        we.notify.reset_mock()
+        sqls = _run_with([_watcher(consecutive_errors=4)], (False, "", "timeout"))
+        self.assertTrue(any("status = 'error'" in s for s in sqls))
+        self.assertEqual(we.notify.call_count, 1)
+
+
+class TestUnit(unittest.TestCase):
+    def test_db_query_parses_psql_output_and_fails_open(self):
+        ok = subprocess.CompletedProcess([], 0, stdout="a\tb\n\nc\td\n", stderr="")
+        with patch.object(we.subprocess, "run", return_value=ok) as run:
+            self.assertEqual(we.db_query("SELECT 1"), [["a", "b"], ["c", "d"]])
+        self.assertEqual(run.call_args[0][0][:2], ["psql", "-h"])
+        bad = subprocess.CompletedProcess([], 2, stdout="", stderr="boom")
+        with patch.object(we.subprocess, "run", return_value=bad):
+            self.assertEqual(we.db_query("SELECT 1"), [])
+
+    def test_unknown_type_is_skipped(self):
+        sqls = []
+        with patch.object(we, "load_watchers", return_value=[_watcher(type="carrier-pigeon")]), \
+             patch.object(we, "db_exec", side_effect=sqls.append), patch.object(we, "log"):
+            we.run()
+        self.assertEqual(sqls, [])
+
+
+class TestIntegration(unittest.TestCase):
+    def test_load_then_run_chain(self):
+        row = ["w-1", "n", "http", "https://x", "{}", '{"type":"slack_notify"}', "60", "0", "", "", "", "0"]
+        sqls = []
+        we.notify.reset_mock()
+        with patch.object(we, "db_query", return_value=[row]), \
+             patch.dict(we.CHECKERS, {"http": MagicMock(return_value=(True, "200:abc", ""))}), \
+             patch.object(we, "db_exec", side_effect=sqls.append), patch.object(we, "log"):
+            we.run()
+        self.assertEqual(we.notify.call_args.kwargs["dedup_key"], "watcher-w-1")
+        self.assertTrue(any(s.startswith("INSERT INTO watcher_events") for s in sqls))
+
+
+class TestFunctional(unittest.TestCase):
+    def test_trigger_path_writes_state_action_and_event(self):
+        we.notify.reset_mock()
+        sqls = _run_with([_watcher(last_value="200:old")], (True, "500:new", ""))
+        self.assertIn("last_value = '500:new'", sqls[0])
+        self.assertTrue(any("last_triggered = now()" in s for s in sqls))
+        ev = [s for s in sqls if "watcher_events" in s][0]
+        self.assertIn("'200:old', '500:new', 'slack_notify'", ev)
+        we.notify.assert_called_once()
+
+    def test_cooldown_suppresses_action(self):
+        we.notify.reset_mock()
+        sqls = _run_with([_watcher(last_triggered=_iso(10), cooldown_s=3600)], (True, "x", ""))
+        we.notify.assert_not_called()
+        self.assertFalse(any("watcher_events" in s for s in sqls))
+
+
+class TestFrame(unittest.TestCase):
+    def test_compiles(self):
+        r = subprocess.run([sys.executable, "-m", "py_compile", str(SCRIPT)], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_import_never_runs_main(self):
+        # no --help: a bare run shells out to psql and evaluates live watchers, so the smoke is an import
+        self.assertIn('if __name__ == "__main__":', SRC)
+        r = subprocess.run([sys.executable, "-c", "import nova_watcher_engine"], cwd=str(SCRIPTS),
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "")
+
+
+if __name__ == "__main__":
+    unittest.main()

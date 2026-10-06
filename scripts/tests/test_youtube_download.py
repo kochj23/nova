@@ -10,6 +10,7 @@ Written by Jordan Koch.
 """
 
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -54,6 +55,7 @@ def yt_module(mock_nova_config_for_yt, tmp_path, monkeypatch):
     nova_youtube_download.BASE_DIR = tmp_path / "TVShows"
     nova_youtube_download.shutdown = False
     nova_youtube_download.stats = {}
+    nova_youtube_download.nova_notify_send = MagicMock()   # never reach Slack from a test
 
     return nova_youtube_download
 
@@ -610,6 +612,8 @@ class TestYouTubeIntegration:
 
     @pytest.fixture(autouse=True)
     def check_yt_dlp_available(self):
+        if os.environ.get("NOVA_LIVE_TESTS") != "1":     # house rule: offline by default
+            pytest.skip("live YouTube test; set NOVA_LIVE_TESTS=1 to run")
         result = subprocess.run(
             ["/opt/homebrew/bin/yt-dlp", "--version"],
             capture_output=True, text=True,
@@ -638,5 +642,166 @@ class TestYouTubeIntegration:
         assert len(version) >= 8
 
 
+# ══ House categories (unittest classes) — added 2026-10-05 ═══════════════════════
+# Loaded via spec under a private name so the fixture-driven tests above (which re-import
+# nova_youtube_download per test) are untouched; signal handlers the module installs at import
+# are restored so the test runner keeps its own SIGINT handling.
+
+import importlib.util  # noqa: E402
+import io  # noqa: E402
+import re  # noqa: E402
+import tempfile  # noqa: E402
+import unittest  # noqa: E402
+from contextlib import redirect_stdout  # noqa: E402
+
+_SCRIPTS = Path(__file__).resolve().parents[1]
+_SCRIPT = _SCRIPTS / "nova_youtube_download.py"
+_SRC = _SCRIPT.read_text()
+
+
+def _load_house():
+    saved = {s: signal.getsignal(s) for s in (signal.SIGINT, signal.SIGTERM)}
+    try:
+        spec = importlib.util.spec_from_file_location("yt_house", _SCRIPT)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    finally:
+        for s, h in saved.items():
+            signal.signal(s, h)
+    mod.nova_notify_send = MagicMock(name="nova_notify_send")   # never reach Slack
+    mod.subprocess = MagicMock(name="subprocess")                 # yt-dlp never launched
+    mod.subprocess.TimeoutExpired = subprocess.TimeoutExpired
+    mod.time = MagicMock(name="time")                             # no 32 s inter-video sleeps
+    return mod
+
+
+yh = _load_house()
+
+
+def _cp(stdout="", rc=0, stderr=""):
+    return subprocess.CompletedProcess([], rc, stdout=stdout, stderr=stderr)
+
+
+def _fresh(tmp=None):
+    yh.BASE_DIR = Path(tmp or tempfile.mkdtemp(prefix="yt_house_")); yh.shutdown = False; yh.stats = {}
+    yh.subprocess.run.reset_mock(); yh.subprocess.run.side_effect = None
+    yh.nova_notify_send.reset_mock()
+    return yh.BASE_DIR
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/_-]{16,}['\"]", re.I)
+        self.assertIsNone(pat.search(_SRC))
+
+    def test_hostile_title_cannot_escape_season_dir(self):
+        base = _fresh()
+        yh.subprocess.run.side_effect = [_cp("v1\t../../../etc/passwd\t20200101\n"), _cp()]
+        with redirect_stdout(io.StringIO()):
+            yh.process_channel_by_year("k", {"name": "Chan", "url": "https://www.youtube.com/@x", "mode": "year"})
+        argv = yh.subprocess.run.call_args_list[1][0][0]
+        out = Path(argv[argv.index("-o") + 1])
+        self.assertEqual(out.parent, base / "Chan" / "Season 01")
+        self.assertNotIn("/", out.name)
+
+    def test_yt_dlp_called_with_argv_list(self):
+        self.assertNotIn("shell=True", _SRC)
+        _fresh(); yh.subprocess.run.return_value = _cp()
+        yh.download_video("abc;$(touch pwned)", Path("/tmp/x.mp4"))
+        argv = yh.subprocess.run.call_args[0][0]
+        self.assertEqual(argv[-1], "https://www.youtube.com/watch?v=abc;$(touch pwned)")   # one argv slot, no shell
+
+
+class TestPerformance(unittest.TestCase):
+    def test_sanitize_10k_titles_fast(self):
+        t0 = time.perf_counter()
+        for i in range(10_000):
+            yh.sanitize_filename(f'Episode {i}: "Who/Why?" <part*{i}>   |  ' * 3)
+        self.assertLess(time.perf_counter() - t0, 2.0)
+
+
+class TestRetry(unittest.TestCase):
+    def test_download_error_is_one_shot_and_counted(self):
+        # RETRY GAP: download_video() — one yt-dlp run per video, no retry; failure returns "error: ..." and the
+        # channel moves on (the next scheduled run re-attempts because the file was never written).
+        _fresh()
+        yh.subprocess.run.side_effect = [_cp("a\tA\t20200101\nb\tB\t20200102\n"), _cp(rc=1, stderr="HTTP 429"), _cp()]
+        with redirect_stdout(io.StringIO()):
+            yh.process_channel_by_year("k", {"name": "C", "url": "u", "mode": "year"})
+        self.assertEqual(yh.subprocess.run.call_count, 3)
+        self.assertEqual((yh.stats["k"]["downloaded"], yh.stats["k"]["errors"]), (1, 1))
+
+    def test_timeout_fails_open_per_channel(self):
+        _fresh()
+        yh.subprocess.run.side_effect = subprocess.TimeoutExpired("yt-dlp", 300)
+        with redirect_stdout(io.StringIO()):
+            yh.process_channel("k", {"name": "C", "url": "u", "mode": "year"})
+        self.assertIn("timed out", yh.stats["k"]["error_msg"])
+
+
+class TestUnit(unittest.TestCase):
+    def test_download_video_results(self):
+        _fresh()
+        yh.subprocess.run.return_value = _cp(rc=1, stdout="x has already been downloaded")
+        self.assertEqual(yh.download_video("id", Path("/tmp/a.mp4")), "skip")
+        yh.subprocess.run.return_value = _cp(rc=0)
+        self.assertEqual(yh.download_video("id", Path("/tmp/a.mp4")), "ok")
+
+    def test_get_playlist_videos_parses(self):
+        _fresh()
+        yh.subprocess.run.return_value = _cp("a\tOne\nbadline\nb\tTwo\tExtra\n")
+        self.assertEqual(yh.get_playlist_videos("u"), [{"id": "a", "title": "One"}, {"id": "b", "title": "Two\tExtra"}])
+
+    def test_notify_splits_title_and_body(self):
+        _fresh()
+        yh.notify("Title line\nbody a\nbody b")
+        args, kw = yh.nova_notify_send.call_args
+        self.assertEqual(args[0], "Title line"); self.assertEqual(kw["body"], "body a\nbody b")
+        self.assertEqual(kw["dedup_key"], "youtube-tvshows-download")
+
+
+class TestIntegration(unittest.TestCase):
+    def test_uses_shared_notify_bus(self):
+        self.assertIn("from nova_notify import notify as nova_notify_send", _SRC)
+        self.assertTrue(all(c["url"].startswith("https://www.youtube.com/@") for c in yh.CHANNELS.values()))
+
+
+class TestFunctional(unittest.TestCase):
+    def test_main_single_channel_reports_start_and_finish(self):
+        _fresh()
+        yh.subprocess.run.side_effect = [_cp("v1\tFirst\t20210101\n"), _cp()]
+        with patch.object(sys, "argv", ["x", "--channel", "leno"]), \
+             patch.object(yh, "status_reporter"), redirect_stdout(io.StringIO()):
+            yh.main()
+        titles = [c[0][0] for c in yh.nova_notify_send.call_args_list]
+        self.assertTrue(titles[0].startswith(":arrow_down: YouTube TVShows Download Starting"))
+        self.assertEqual(titles[-1], ":checkered_flag: YouTube Download Complete")
+        self.assertIn("Jay Leno's Garage: 1 new, 0 skipped, 0 errors", yh.nova_notify_send.call_args.kwargs["body"])
+
+    def test_shutdown_flag_stops_before_downloading(self):
+        _fresh(); yh.shutdown = True
+        yh.subprocess.run.side_effect = [_cp("v1\tFirst\t20210101\n")]
+        try:
+            with redirect_stdout(io.StringIO()):
+                yh.process_channel_by_year("k", {"name": "C", "url": "u", "mode": "year"})
+        finally:
+            yh.shutdown = False
+        self.assertEqual(yh.subprocess.run.call_count, 1)                 # listing only, no download
+
+
+class TestFrame(unittest.TestCase):
+    def test_help_exits_zero(self):
+        r = subprocess.run([sys.executable, str(_SCRIPT), "--help"], capture_output=True, text=True, timeout=30,
+                           env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--channel", r.stdout)
+
+    def test_import_never_runs_main(self):
+        r = subprocess.run([sys.executable, "-c", "import nova_youtube_download"], cwd=str(_SCRIPTS),
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "")
+
+
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    sys.exit(pytest.main([__file__, "-q"]))

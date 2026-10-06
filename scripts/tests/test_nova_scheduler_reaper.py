@@ -142,5 +142,114 @@ class TestReap(unittest.TestCase):
         self.assertEqual(out["threshold_ms"], 24 * HOUR_MS)
 
 
+# ── house categories added 2026-10-05 — the 7 house categories (Security, Performance, Retry, Unit,
+# Integration, Functional, Frame). Written by Jordan Koch (via Claude). psycopg2.connect is mocked.
+
+import re  # noqa: E402
+import subprocess  # noqa: E402
+import time  # noqa: E402
+from unittest.mock import MagicMock, patch  # noqa: E402
+
+SCRIPT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "nova_scheduler_reaper.py")
+SRC = open(SCRIPT).read()
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_credentials_and_parameterized_cutoff(self):
+        self.assertIsNone(re.search(r"(password|token|secret)\s*=\s*['\"]", SRC, re.I))
+        self.assertIsNone(re.search(r"execute\(\s*f[\"']", SRC))
+        self.assertIn("started_at < %s", SRC)
+
+    def test_only_writes_are_orphan_flip_and_audit(self):
+        writes = sorted(set(m.group(0).split()[-1] for m in
+                            re.finditer(r"\b(INSERT INTO|UPDATE|DELETE FROM)\s+\w+", SRC)))
+        self.assertEqual(writes, ["claude_actions", "claude_sessions", "scheduler_runs"])
+        self.assertNotIn("DELETE", SRC)
+
+
+class TestPerformance(unittest.TestCase):
+    def test_reap_10k_rows_fast(self):
+        rows = [_row("running" if i % 2 else "success", (i % 100) * HOUR_MS, duration_ms=HOUR_MS)
+                for i in range(10_000)]
+        t0 = time.perf_counter()
+        out = r.reap(FakeConn(rows), now_ms=NOW)
+        self.assertLess(time.perf_counter() - t0, 2.0)
+        self.assertGreater(out["reaped"], 0)
+
+
+class TestRetry(unittest.TestCase):
+    def test_connect_failure_returns_1_single_attempt(self):
+        # RETRY GAP: main()/psycopg2.connect — one attempt; hourly launchd run is the retry
+        with patch("psycopg2.connect", side_effect=RuntimeError("pg down")) as c, patch("builtins.print"):
+            self.assertEqual(r.main(), 1)
+        self.assertEqual(c.call_count, 1)
+
+    def test_audit_insert_failure_rolls_back_to_savepoint(self):
+        conn = MagicMock()
+        cur = conn.cursor.return_value.__enter__.return_value
+        cur.execute.side_effect = lambda sql, *a: (_ for _ in ()).throw(RuntimeError("fk")) if "claude_actions" in sql else None
+        r._log_action(conn, {"reaped": 1, "threshold_h": 24.0})
+        self.assertEqual(cur.execute.call_args_list[-1][0][0], "ROLLBACK TO SAVEPOINT sp_act")
+        conn.commit.assert_called_once()
+
+
+class TestUnit(unittest.TestCase):
+    def test_threshold_custom_floor_factor(self):
+        self.assertEqual(r.compute_threshold_ms(None, floor_h=1), HOUR_MS)
+        self.assertEqual(r.compute_threshold_ms(2 * HOUR_MS, floor_h=1, factor=2), 4 * HOUR_MS)
+
+    def test_fetch_max_success_null(self):
+        self.assertEqual(r.fetch_max_success_ms(FakeConn([])), 0)
+        self.assertEqual(r.fetch_max_success_ms(FakeConn([_row("success", 0, 5)])), 5)
+
+    def test_ensure_session_rollback_on_error(self):
+        conn = MagicMock()
+        conn.cursor.return_value.__enter__.return_value.execute.side_effect = RuntimeError("x")
+        r.ensure_session(conn)
+        conn.rollback.assert_called_once()
+
+
+class TestIntegration(unittest.TestCase):
+    def test_run_once_chains_session_reap_and_audit(self):
+        conn = FakeConn([_row("running", 100 * HOUR_MS)])
+        seen = []
+        orig = FakeCursor.execute
+
+        def spy(self, sql, params=()):
+            seen.append(" ".join(sql.split())[:30])
+            return orig(self, sql, params)
+        with patch.object(FakeCursor, "execute", spy):
+            out = r.run_once(conn)
+        self.assertEqual(out["reaped"], 1)
+        self.assertTrue(seen[0].startswith("INSERT INTO claude_sessions"))
+        self.assertTrue(any(s.startswith("INSERT INTO claude_actions") for s in seen))
+        self.assertEqual(r.DSN, "host=localhost dbname=nova_ops user=kochj")
+
+
+class TestFunctional(unittest.TestCase):
+    def test_main_golden_path(self):
+        conn = FakeConn([_row("running", 100 * HOUR_MS)])
+        conn.close = MagicMock()
+        with patch("psycopg2.connect", return_value=conn), patch("builtins.print") as p:
+            self.assertEqual(r.main(), 0)
+        conn.close.assert_called_once()
+        self.assertIn("reaped 1 orphaned run(s)", p.call_args[0][0])
+
+    def test_main_reap_error_closes_and_returns_1(self):
+        conn = MagicMock()
+        with patch("psycopg2.connect", return_value=conn), patch.object(r, "run_once", side_effect=RuntimeError("x")), \
+             patch("builtins.print"):
+            self.assertEqual(r.main(), 1)
+        conn.close.assert_called_once()
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_runs_main(self):
+        self.assertIn('if __name__ == "__main__":', SRC)
+        res = subprocess.run([sys.executable, "-c", "import nova_scheduler_reaper"], cwd=os.path.dirname(SCRIPT),
+                             capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual((res.returncode, res.stdout.strip()), (0, ""), res.stderr)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

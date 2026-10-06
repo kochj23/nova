@@ -25,13 +25,18 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 
 @pytest.fixture
-def after_dark_module(mock_nova_config):
-    """Import nova_after_dark fresh with mocked nova_config."""
+def after_dark_module(mock_nova_config, monkeypatch, tmp_path):
+    """Import nova_after_dark fresh with mocked nova_config; log/state/Hugo paths go to tmp_path
+    so the suite never writes the real ~/.openclaw/logs or nova-journal."""
     import importlib
     for mod in list(sys.modules.keys()):
         if "nova_after_dark" in mod:
             del sys.modules[mod]
     import nova_after_dark
+    monkeypatch.setattr(nova_after_dark, "LOG_FILE", tmp_path / "after_dark.log")
+    monkeypatch.setattr(nova_after_dark, "STATE_FILE", tmp_path / "after_dark_state.json")
+    monkeypatch.setattr(nova_after_dark, "CONTENT_DIR", tmp_path / "content")
+    monkeypatch.setattr(nova_after_dark, "IMAGES_DIR", tmp_path / "images")
     return nova_after_dark
 
 
@@ -266,8 +271,8 @@ class TestImageGeneration:
 
 
 @pytest.mark.security
-class TestSecurity:
-    """Security tests for nova_after_dark.py."""
+class TestSecurityLegacy:
+    """Security tests for nova_after_dark.py (pytest-fixture style; the house TestSecurity is below)."""
 
     def test_no_hardcoded_credentials(self, after_dark_module):
         import inspect
@@ -356,8 +361,10 @@ class TestErrorHandling:
 
 
 @pytest.mark.integration
-class TestIntegration:
-    """Integration tests requiring live services."""
+@pytest.mark.skipif(not __import__("os").environ.get("NOVA_LIVE_TESTS"),
+                    reason="live network test; set NOVA_LIVE_TESTS=1 to run (house rule: offline by default)")
+class TestLiveWikipedia:
+    """Integration tests requiring live services (opt-in only)."""
 
     def test_wikipedia_api_reachable(self, after_dark_module):
         """Verify Wikipedia On This Day API is reachable."""
@@ -369,3 +376,213 @@ class TestIntegration:
             assert resp.status == 200
         except Exception:
             pytest.skip("Wikipedia API not reachable")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# HOUSE CATEGORIES (unittest) — the 7 house categories (Security, Performance, Retry, Unit,
+# Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+# Loaded under a private module name; nova_config / nova_journal are swapped for stubs on THAT
+# module object only (post_both, git_push, OpenRouter key), and every file path is a tempdir.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+import importlib.util as _ilu  # noqa: E402
+import os as _os  # noqa: E402
+import re as _re  # noqa: E402
+import shutil as _shutil  # noqa: E402
+import subprocess as _sp  # noqa: E402
+import tempfile as _tempfile  # noqa: E402
+import types as _types  # noqa: E402
+import unittest  # noqa: E402
+
+_SCRIPTS = Path(__file__).resolve().parents[1]
+_SRC = (_SCRIPTS / "nova_after_dark.py").read_text()
+_TMP = Path(_tempfile.mkdtemp(prefix="afterdark_"))
+
+
+def _load_ad():
+    spec = _ilu.spec_from_file_location("nova_after_dark_house_t", _SCRIPTS / "nova_after_dark.py")
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    import nova_config as _real_cfg
+    mod.nova_config = _types.SimpleNamespace(
+        post_both=MagicMock(), SLACK_CHAN="C_TEST", openrouter_api_key=MagicMock(return_value=None),
+        filter_private_memories=_real_cfg.filter_private_memories)
+    mod.nj = _types.SimpleNamespace(git_push=MagicMock())
+    mod.LOG_FILE = _TMP / "ad.log"
+    mod.STATE_FILE = _TMP / "state" / "ad.json"
+    mod.CONTENT_DIR = _TMP / "content"
+    mod.IMAGES_DIR = _TMP / "images"
+    mod.print = lambda *a, **k: None
+    return mod
+
+
+AD = _load_ad()
+_EVENT = {"year": 1969, "text": "The Apollo 11 mission lands on the Moon and everyone watches"}
+_LONG = "Good evening, everybody. " * 30
+
+
+def _resp(obj):
+    m = MagicMock()
+    m.read.return_value = json.dumps(obj).encode()
+    m.__enter__.return_value = m
+    return m
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_keys_and_key_from_config(self):
+        self.assertIsNone(_re.search(r"(sk-or-|sk-ant-|xoxb-)[A-Za-z0-9]", _SRC))
+        self.assertIn("nova_config.openrouter_api_key()", _SRC)
+
+    def test_private_memories_filtered_before_public_output(self):
+        mems = {"memories": [{"text": "public fact", "source": "wikipedia"},
+                             {"text": "secret work thing", "source": "work_email"}]}
+        with patch.object(AD.nova_config, "filter_private_memories", side_effect=lambda m: m[:1]) as f, \
+             patch.object(AD.urllib.request, "urlopen", return_value=_resp(mems)):
+            out = AD.recall_memories("q")
+        f.assert_called_once()
+        self.assertEqual(out, ["public fact"])
+
+    def test_slug_is_path_safe(self):
+        ev = {"year": 1, "text": "../../etc/passwd; $(boom) <script>"}
+        AD.publish_to_hugo(_LONG, ev, None, [], [], 1)
+        names = [p.name for p in AD.CONTENT_DIR.iterdir()]
+        self.assertTrue(all(_re.fullmatch(r"[\w.-]+\.md", n) for n in names))
+        self.assertFalse((_TMP / "etc").exists())
+
+
+class TestPerformance(unittest.TestCase):
+    def test_pick_event_from_10k_fast(self):
+        events = [{"year": i, "text": f"event number {i} " * (i % 7 + 1)} for i in range(10_000)]
+        state = {"recent_topics": [e["text"][:50] for e in events[:5000]]}
+        t0 = time.perf_counter()
+        for _ in range(10):
+            AD.pick_event(events, state)
+        self.assertLess(time.perf_counter() - t0, 2.0)
+
+
+class TestRetry(unittest.TestCase):
+    def test_ollama_failure_falls_back_to_openrouter(self):
+        with patch.object(AD, "_generate_ollama", side_effect=OSError("down")) as o, \
+             patch.object(AD, "_generate_openrouter", return_value="cloud monologue") as r:
+            self.assertEqual(AD.generate_monologue(_EVENT, "", ""), "cloud monologue")
+        self.assertEqual((o.call_count, r.call_count), (1, 1))
+
+    def test_both_llms_down_returns_empty(self):
+        with patch.object(AD, "_generate_ollama", return_value="short"), \
+             patch.object(AD, "_generate_openrouter", side_effect=RuntimeError("No OpenRouter key")):
+            self.assertEqual(AD.generate_monologue(_EVENT, "", ""), "")
+
+    def test_image_retried_once_then_warns(self):
+        with _MainRun() as m:
+            m.gen_image.side_effect = [None, None]
+            AD.main()
+        self.assertEqual(m.gen_image.call_count, 2)
+        self.assertIn("Image generation failed", AD.nova_config.post_both.call_args_list[0][0][0])
+
+    def test_fetchers_fail_open(self):
+        # RETRY GAP: fetch_today_in_history()/searxng_search() — one GET each, [] on failure
+        with patch.object(AD.urllib.request, "urlopen", side_effect=OSError("x")) as u:
+            self.assertEqual(AD.fetch_today_in_history(), [])
+            self.assertEqual(AD.searxng_search("q"), [])
+            self.assertEqual(AD.recall_memories("q"), [])
+        self.assertEqual(u.call_count, 3)
+
+
+class TestUnit(unittest.TestCase):
+    def test_pick_event_avoids_recent_and_handles_empty(self):
+        self.assertIsNone(AD.pick_event([], {}))
+        evs = [{"year": 1, "text": "A" * 60}, {"year": 2, "text": "B" * 10}]
+        for _ in range(20):
+            self.assertEqual(AD.pick_event(evs, {"recent_topics": ["A" * 50]})["year"], 2)
+        self.assertIn(AD.pick_event(evs[:1], {"recent_topics": ["A" * 50]})["year"], (1,))
+
+    def test_ollama_strips_think(self):
+        with patch.object(AD.urllib.request, "urlopen", return_value=_resp({"response": "<think>x</think> Joke"})):
+            self.assertEqual(AD._generate_ollama("s", "u"), "Joke")
+
+    def test_state_roundtrip(self):
+        if AD.STATE_FILE.exists():
+            AD.STATE_FILE.unlink()
+        self.assertEqual(AD.load_state(), {"recent_topics": [], "episode_count": 0})
+        AD.save_state({"recent_topics": ["x"], "episode_count": 3})
+        self.assertEqual(AD.load_state()["episode_count"], 3)
+
+
+class TestIntegration(unittest.TestCase):
+    def test_publish_writes_hugo_post_and_uses_hardened_push(self):
+        img = _TMP / "cover.png"; img.write_bytes(b"png")
+        AD.nj.git_push.reset_mock()
+        ok = AD.publish_to_hugo(_LONG, _EVENT, str(img), [{"title": "T", "url": "https://e.x", "content": "c"}],
+                                ["a memory"], 7)
+        self.assertTrue(ok)
+        post = max(AD.CONTENT_DIR.glob("*apollo*.md"), key=lambda p: p.stat().st_mtime).read_text()
+        self.assertIn('title: "\U0001f303 On This Day in 1969"', post)
+        self.assertIn("Episode 7", post)
+        self.assertIn("[T](https://e.x)", post)
+        self.assertIn("cover:", post)
+        AD.nj.git_push.assert_called_once()
+        self.assertEqual(AD.nj.git_push.call_args[0][0], "after-dark")
+
+    def test_slack_post_truncates_and_targets_chat(self):
+        AD.nova_config.post_both.reset_mock()
+        AD.post_to_slack("x" * 5000, _EVENT)
+        msg = AD.nova_config.post_both.call_args[0][0]
+        self.assertLess(len(msg), 2700)
+        self.assertEqual(AD.nova_config.post_both.call_args.kwargs["slack_channel"], "C_TEST")
+
+
+class _MainRun:
+    def __enter__(self):
+        self.ps = [patch.object(AD, "fetch_today_in_history", return_value=[_EVENT]),
+                   patch.object(AD, "searxng_search", return_value=[{"title": "t", "content": "c", "url": "u"}]),
+                   patch.object(AD, "recall_memories", return_value=["m1"]),
+                   patch.object(AD, "generate_monologue", return_value=_LONG),
+                   patch.object(AD, "generate_image", return_value="/nonexistent.png"),
+                   patch.object(AD, "publish_to_hugo", return_value=True),
+                   patch.object(AD, "post_to_slack")]
+        mocks = [p.start() for p in self.ps]
+        (self.fetch, self.search, self.recall, self.gen, self.gen_image, self.publish, self.slack) = mocks
+        AD.nova_config.post_both.reset_mock()
+        if AD.STATE_FILE.exists():
+            AD.STATE_FILE.unlink()
+        return self
+
+    def __exit__(self, *a):
+        for p in self.ps:
+            p.stop()
+
+
+class TestFunctional(unittest.TestCase):
+    def test_golden_path_publishes_posts_and_saves_state(self):
+        with _MainRun() as m:
+            AD.main()
+        m.publish.assert_called_once()
+        self.assertEqual(m.publish.call_args[0][5], 1)
+        m.slack.assert_called_once()
+        st = json.loads(AD.STATE_FILE.read_text())
+        self.assertEqual(st["episode_count"], 1)
+        self.assertEqual(st["recent_topics"], [_EVENT["text"][:50]])
+
+    def test_short_monologue_aborts_everything(self):
+        with _MainRun() as m:
+            m.gen.return_value = "too short"
+            AD.main()
+        m.publish.assert_not_called(); m.slack.assert_not_called()
+        self.assertFalse(AD.STATE_FILE.exists())
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_runs_main(self):
+        self.assertIn('if __name__ == "__main__":', _SRC)
+        r = _sp.run([sys.executable, "-c", "import nova_after_dark"], cwd=str(_SCRIPTS), capture_output=True,
+                    text=True, timeout=30, env={**_os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertNotIn("Nova After Dark ===", r.stdout)
+
+
+def teardown_module(module=None):
+    _shutil.rmtree(_TMP, ignore_errors=True)
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-q"]))

@@ -346,3 +346,174 @@ def test_run_audit_quality_pct_uses_sampled_not_classified(monkeypatch):
 
 # capture the real function before any monkeypatch in this session could shadow it
 _real_quality = v.quality_check_batch
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# House categories added 2026-10-05 — the 7 unittest classes (Security, Performance, Retry,
+# Unit, Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+# Module-level stubs below: no notify bus, no image generation from any test in this file.
+# ═══════════════════════════════════════════════════════════════════════════════
+import os as _os
+import subprocess as _subprocess
+import tempfile as _tempfile
+import time as _time
+import types as _types
+import unittest
+
+v.notify = MagicMock()
+v.generate_image = MagicMock(return_value=None)
+_VSRC = (Path(__file__).resolve().parents[1] / "nova_vector_audit.py").read_text()
+_VTMP = Path(_tempfile.mkdtemp(prefix="vector-audit-test-"))
+
+
+def _stats(**kw):
+    s = {"vectors_audited": 2, "audited_detail": [{"vector": "astronomy", "count": 900, "sampled": 2, "issues": 1,
+                                                   "examples": ["x x x x"]}],
+         "memories_sampled": 200, "memories_classified": 150, "correct": 140, "moved": 1,
+         "moves": [{"id": "m1", "from": "astronomy", "to": "physics", "reason": "misfiled"}],
+         "accuracy_pct": 93.3, "total_vectors": 80, "total_memories": 1_700_000,
+         "quality": {"total_issues": 3, "repetitive": 1, "near_empty": 1, "garbled": 1, "low_signal": 0},
+         "quality_issue_pct": 1.5}
+    s.update(kw)
+    return s
+
+
+class _Voice:
+    def __enter__(self):
+        mod = _types.ModuleType("nova_voice")
+        mod.system_prompt = lambda s: "SYS" + s
+        mod.CONTEXT_JOURNAL_VECTOR_AUDIT = ""
+        self.p = patch.dict(sys.modules, {"nova_voice": mod}); self.p.start(); return self
+
+    def __exit__(self, *e):
+        self.p.stop()
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
+        self.assertIsNone(pat.search(_VSRC))
+
+    def test_private_shelves_never_audited(self):
+        vectors = [("imessage", 5000), ("email", 5000), ("apple_health", 5000), ("astronomy", 5000)]
+        picked = []
+        with patch.object(v, "get_all_vectors", return_value=vectors), \
+             patch.object(v, "_rotation_pick", side_effect=lambda c, n: picked.extend(c) or []), \
+             patch.object(v, "_rotation_mark"), patch.dict(sys.modules, {"psycopg2": MagicMock()}):
+            v.run_audit()
+        self.assertEqual([n for n, _ in picked], ["astronomy"])
+
+    def test_invented_stats_scrubbed_from_public_prose(self):
+        dirty = "LiveJournal is 100% empty with 1,919,003 ghosts since 2003."
+        clean = v._scrub_invented_stats(dirty)
+        self.assertFalse(v._has_invented_stats(clean))
+        self.assertIn("2003", clean)                            # years are legitimate prose
+
+
+class TestPerformance(unittest.TestCase):
+    def test_quality_check_10k(self):
+        mems = [{"id": str(i), "text": f"distinct memory number {i} about orbital mechanics and comets"}
+                for i in range(10_000)]
+        t0 = _time.perf_counter()
+        q = v.quality_check_batch(mems, source="astronomy")
+        self.assertLess(_time.perf_counter() - t0, 5.0)
+        self.assertIn("total_issues", q)
+
+
+class TestRetry(unittest.TestCase):
+    def test_numeric_prose_regenerated_once(self):
+        calls = []
+        def llm(system, user, max_tokens=4000):
+            calls.append(system)
+            return "It was 87% tidy." if len(calls) == 1 else "It was mostly tidy and lovely. " * 10
+        with _Voice(), patch.object(v, "call_llm", side_effect=llm):
+            art = v.generate_article(_stats())
+        self.assertEqual(len(calls), 2)
+        self.assertIn("ZERO digits", calls[1])
+        self.assertTrue(art.startswith("It was mostly tidy"))
+
+    def test_still_numeric_after_retry_is_scrubbed(self):
+        with _Voice(), patch.object(v, "call_llm", return_value="We lost 12,345 memories (40%)."):
+            art = v.generate_article(_stats())
+        prose = art.split("### The actual numbers")[0]
+        self.assertFalse(v._has_invented_stats(prose))
+
+    def test_rotation_falls_back_to_random_when_pg_down(self):
+        # RETRY GAP: _rotation_pick — one connect attempt; on failure, random selection (never raises)
+        pg = _types.ModuleType("psycopg2"); pg.connect = MagicMock(side_effect=OSError("pg down"))
+        with patch.dict(sys.modules, {"psycopg2": pg}):
+            out = v._rotation_pick([("a", 1), ("b", 2), ("c", 3)], 2)
+            v._rotation_mark(["a"])                             # non-fatal too
+        self.assertEqual(len(out), 2)
+        self.assertEqual(pg.connect.call_count, 2)
+
+
+class TestUnit(unittest.TestCase):
+    def test_facts_ledger(self):
+        led = v._facts_ledger(_stats())
+        self.assertIn("1,700,000 across 80 vectors", led)
+        self.assertIn("140 of 150 classified (93.3%)", led)
+        self.assertNotIn("Correctly filed", v._facts_ledger(_stats(accuracy_pct=None)))
+
+    def test_has_invented_stats(self):
+        self.assertTrue(v._has_invented_stats("about 45 %"))
+        self.assertTrue(v._has_invented_stats("19191 rows"))
+        self.assertFalse(v._has_invented_stats("in 1999 and 2026 I learned a lot"))
+
+    def test_empty_store_aborts(self):
+        with patch.object(v, "get_all_vectors", return_value=[("a", 10)]):
+            self.assertTrue(v.run_audit()["aborted"])
+
+
+class TestIntegration(unittest.TestCase):
+    def test_rotation_reads_and_orders_by_last_audited(self):
+        cur = MagicMock(); cur.fetchall.return_value = [("old", 100.0), ("new", 999.0)]
+        pg = _types.ModuleType("psycopg2"); pg.connect = MagicMock(return_value=MagicMock(cursor=lambda: cur))
+        with patch.dict(sys.modules, {"psycopg2": pg}):
+            out = v._rotation_pick([("new", 1), ("old", 1), ("never", 1)], 2)
+        self.assertEqual([n for n, _ in out], ["never", "old"])
+
+    def test_article_is_voice_plus_code_ledger(self):
+        with _Voice(), patch.object(v, "call_llm", return_value="A gentle morning among the shelves.") as llm:
+            art = v.generate_article(_stats())
+        self.assertIn("- astronomy — 1 quality issue(s) found", llm.call_args[0][1])
+        self.assertTrue(art.endswith(v._facts_ledger(_stats())))
+
+
+class TestFunctional(unittest.TestCase):
+    def test_publish_writes_post_pushes_and_notifies(self):
+        runs = []
+        def fake_run(argv, **kw):
+            runs.append(argv[:2]); return _subprocess.CompletedProcess(argv, 0, "", "")
+        v.notify.reset_mock()
+        with patch.object(v, "CONTENT_DIR", _VTMP / "content"), patch.object(v, "IMAGES_DIR", _VTMP / "img"), \
+             patch.object(v, "HUGO_ROOT", _VTMP), patch.object(v.subprocess, "run", fake_run):
+            v.publish('Shelves "and" Dust', "body text", None, _stats())
+        post = next((_VTMP / "content").glob("*-shelves-and-dust.md"))
+        self.assertIn('title: "Shelves and Dust"', post.read_text())
+        self.assertEqual(runs, [["git", "add"], ["git", "commit"], ["git", "pull"], ["git", "push"]])
+        self.assertIn("Moved 1 misfiled", v.notify.call_args[1]["body"])
+
+    def test_main_aborts_without_publishing_on_empty_llm(self):
+        import nova_config
+        with patch.object(v, "run_audit", return_value=_stats()), \
+             patch.object(v, "generate_article", return_value=""), patch.object(v, "generate_title", return_value=""), \
+             patch.object(v, "publish") as pub, patch.object(nova_config, "post_both") as pb:
+            self.assertEqual(v.main(), 1)
+        pub.assert_not_called()
+        self.assertIn("skipped", pb.call_args[0][0])
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_runs_main(self):
+        # no --help/--selftest: a run audits the live store and publishes, so import is the smoke test
+        self.assertIn('if __name__ == "__main__":', _VSRC)
+        r = _subprocess.run([sys.executable, "-c", "import nova_vector_audit as m; print(callable(m.main))"],
+                            cwd=str(Path(__file__).resolve().parents[1]), capture_output=True, text=True, timeout=30,
+                            env={**_os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "True")
+
+
+if __name__ == "__main__":
+    unittest.main()

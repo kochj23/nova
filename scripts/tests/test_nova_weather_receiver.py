@@ -320,3 +320,136 @@ def test_insert_reading_returns_false_on_db_error():
     assert ok is False
     # Best-effort Slack alert attempted.
     assert post.called
+
+
+# -- house categories added 2026-10-05 (the 7 named classes) --------------------
+# The pytest-style tests above cover parsing/security in depth; these add the house
+# taxonomy explicitly. All DB/HTTP/signal access stays mocked -- no port is ever bound.
+
+import io
+import os
+import re
+import subprocess
+import sys
+import time
+import unittest
+from pathlib import Path
+
+_SCRIPTS = Path(__file__).resolve().parents[1]
+_SRC = (_SCRIPTS / "nova_weather_receiver.py").read_text()
+_DROP = "DROP TABLE"
+
+
+def _handler(path, body=b"", headers=None, method="POST"):
+    """Drive WeatherHandler.do_POST/do_GET without a socket."""
+    h = w.WeatherHandler.__new__(w.WeatherHandler)
+    h.path = path
+    h.headers = headers or {"Content-Length": str(len(body))}
+    h.rfile = io.BytesIO(body)
+    h.wfile = io.BytesIO()
+    h.status = None
+    h.send_response = lambda c: setattr(h, "status", c)
+    h.send_header = lambda *a: None
+    h.end_headers = lambda: None
+    getattr(h, "do_" + method)()
+    return h.status, h.wfile.getvalue()
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
+        self.assertIsNone(pat.search(_SRC))
+
+    def test_weather_insert_is_static_parameterized(self):
+        inj = "'; " + _DROP + " x;--"
+        _, cur = _capture_insert({"tempf": inj, "humidity": "50"})
+        sql, params = next(c for c in cur.calls if "telemetry.weather" in c[0])
+        self.assertIn("%s", sql)
+        self.assertNotIn(_DROP, sql)
+        self.assertIsInstance(params, tuple)
+
+    def test_unknown_post_path_is_rejected(self):
+        with patch.object(w, "insert_reading") as ins:
+            status, _ = _handler("/evil", b"tempf=70")
+        self.assertEqual(status, 404)
+        ins.assert_not_called()
+
+
+class TestPerformance(unittest.TestCase):
+    def test_coercers_handle_10k_fields_fast(self):
+        t0 = time.perf_counter()
+        for i in range(10_000):
+            w._float(str(i) + ".5")
+            w._int(str(i))
+            w.calc_dew_point(70.0, 50.0)
+        self.assertLess(time.perf_counter() - t0, 2.0)
+
+
+class TestRetry(unittest.TestCase):
+    def test_db_failure_fails_open_without_retry(self):
+        # RETRY GAP: insert_reading/get_db_conn -- one attempt; DB error -> alert + return False, no retry loop
+        with patch.object(w, "get_db_conn", side_effect=RuntimeError("db down")) as g, \
+             patch.object(w.nova_config, "post_both"):
+            self.assertFalse(w.insert_reading({"tempf": "70"}))
+        self.assertEqual(g.call_count, 1)
+
+
+class TestUnit(unittest.TestCase):
+    def test_float_and_int_edges(self):
+        self.assertIsNone(w._float("'; " + _DROP + " weather;--"))
+        self.assertEqual(w._float("  7.5  "), 7.5)
+        self.assertIsNone(w._int("0xFF"))
+        self.assertEqual(w._int("5.9"), 5)
+
+    def test_dew_point_and_heat_index(self):
+        self.assertLess(w.calc_dew_point(80.0, 50.0), 80.0)
+        self.assertGreater(w.calc_heat_index(95.0, 60.0), 95.0)
+
+
+class TestIntegration(unittest.TestCase):
+    def test_post_report_inserts_and_200s(self):
+        with patch.object(w, "insert_reading", return_value=True) as ins:
+            status, out = _handler("/data/report/", b"tempf=72.5&humidity=40")
+        self.assertEqual((status, out), (200, b"OK"))
+        self.assertEqual(ins.call_args.args[0]["tempf"], "72.5")
+
+    def test_post_db_failure_returns_500(self):
+        with patch.object(w, "insert_reading", return_value=False):
+            status, out = _handler("/data/report/", b"tempf=72.5")
+        self.assertEqual((status, out), (500, b"DB Error"))
+
+    def test_empty_body_is_400(self):
+        with patch.object(w, "insert_reading") as ins:
+            status, out = _handler("/data/report/", b"", headers={"Content-Length": "0"})
+        self.assertEqual(status, 400)
+        ins.assert_not_called()
+
+
+class TestFunctional(unittest.TestCase):
+    def test_health_endpoint_reports_state(self):
+        import json
+        status, out = _handler("/health", method="GET")
+        self.assertEqual(status, 200)
+        body = json.loads(out)
+        self.assertEqual(body["status"], "ok")
+        self.assertIn("uptime_seconds", body)
+
+    def test_get_with_query_inserts_reading(self):
+        with patch.object(w, "insert_reading", return_value=True) as ins:
+            status, out = _handler("/data/report/&tempf=68&humidity=55", method="GET")
+        self.assertEqual((status, out), (200, b"OK"))
+        self.assertEqual(ins.call_args.args[0]["tempf"], "68")
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_binds_a_port_or_runs_main(self):
+        self.assertIn('if __name__ == "__main__":\n    main()', _SRC)
+        r = subprocess.run([sys.executable, "-c", "import nova_weather_receiver as m; print(m.LISTEN_PORT)"],
+                           cwd=str(_SCRIPTS), capture_output=True, text=True, timeout=30,
+                           env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "8087")
+
+
+if __name__ == "__main__":
+    unittest.main()

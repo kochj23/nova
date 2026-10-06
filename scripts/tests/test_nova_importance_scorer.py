@@ -117,7 +117,9 @@ class TestRetry(unittest.TestCase):
         with patch.object(isc, "redis", fake), patch.object(isc, "_redis_client", None):
             self.assertIsNone(isc._get_redis())
             self.assertEqual(isc._check_uniqueness("t", "s"), 0.7)
-        fake.from_url.assert_called_once_with(isc.REDIS_URL, decode_responses=True)
+        # one connect+ping per call (no in-call retry): _get_redis() and _check_uniqueness() each tried exactly once
+        self.assertEqual(fake.from_url.call_args_list, [unittest.mock.call(isc.REDIS_URL, decode_responses=True)] * 2)
+        self.assertEqual(fake.from_url.return_value.ping.call_count, 2)
 
     def test_redis_command_failures_fail_open(self):
         # RETRY GAP: _check_uniqueness / cache_hot / search_hot — a mid-call redis error returns the safe default

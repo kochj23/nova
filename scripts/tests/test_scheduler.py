@@ -28,6 +28,15 @@ from zoneinfo import ZoneInfo
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _offline_ops_writer():
+    """execute_task() records run start/end through nova_ops_writer, whose worker opens a real asyncpg
+    pool to pg-primary. Stub both writers for every test in this file so nothing touches PG."""
+    import nova_ops_writer
+    with patch.object(nova_ops_writer, "record_run_start"), patch.object(nova_ops_writer, "record_run_end"):
+        yield
+
+
 # ============================================================================
 # nova_scheduler.py — Schedule Parsing
 # ============================================================================
@@ -990,6 +999,7 @@ tasks:
 # Integration Tests
 # ============================================================================
 
+@pytest.mark.skipif(not os.environ.get("NOVA_LIVE_TESTS"), reason="live scheduler tests need NOVA_LIVE_TESTS=1")
 class TestSchedulerIntegration:
     """Integration tests for live scheduler service."""
 
@@ -1034,3 +1044,224 @@ class TestSchedulerIntegration:
             assert data.get("ok") is True
         except Exception:
             pytest.skip("Scheduler not running on port 37460")
+
+
+# ── house categories added 2026-10-05 (7 unittest classes) ──────────────────
+# Tests for nova_scheduler.py — the 7 house categories (Security, Performance, Retry, Unit, Integration,
+# Functional, Frame). Written by Jordan Koch (via Claude). A private copy of the module is loaded with
+# its logger, notifier and nova_ops writer replaced, so no file/PG/Slack side effect is possible.
+
+import importlib.util as _ilu
+import re as _re
+import subprocess as _sp
+import tempfile as _tempfile
+import types as _types
+import unittest
+
+_SCRIPTS = Path(__file__).resolve().parents[1]
+_SRC = (_SCRIPTS / "nova_scheduler.py").read_text()
+_TMP = _tempfile.TemporaryDirectory()
+
+
+def _load_sched():
+    spec = _ilu.spec_from_file_location("sched_house", _SCRIPTS / "nova_scheduler.py")
+    mod = _ilu.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    mod.log = MagicMock()
+    mod.notify = MagicMock()
+    mod.nova_ops_writer = _types.SimpleNamespace(record_run_start=MagicMock(), record_run_end=MagicMock(),
+                                                 close=AsyncMock())
+    mod.STATE_PATH = Path(_TMP.name) / "state.json"
+    mod.HEARTBEAT_FILE = Path(_TMP.name) / "heartbeat"
+    mod.CONFIG_PATH = Path(_TMP.name) / "scheduler.yaml"
+    return mod
+
+
+_sh = _load_sched()
+
+
+class _Proc:
+    def __init__(self, rc=0, out=b"ok", err=b""):
+        self.returncode = rc; self.pid = 4242; self._out = out; self._err = err
+
+    async def communicate(self):
+        return self._out, self._err
+
+    def kill(self):
+        pass
+
+    async def wait(self):
+        return self.returncode
+
+
+def _sched(alerts=True):
+    s = _sh.NovaScheduler()
+    s.sched_cfg = {"python": "/usr/bin/python3", "tz": "America/Los_Angeles", "env": {"PATH": "/usr/bin"}}
+    s.slack_cfg = {"alerts": alerts}
+    return s
+
+
+def _task(tid="t1", **kw):
+    t = _sh.Task(id=tid, script="job.py", schedule="every 5m", timeout=30, **kw)
+    t._interval_s = 300
+    return t
+
+
+def _exec(s, task, procs):
+    procs = list(procs)
+    calls = []
+
+    async def cse(*cmd, **kw):
+        calls.append((cmd, kw))
+        return procs.pop(0)
+
+    with patch.object(_sh.asyncio, "create_subprocess_exec", side_effect=cse):
+        asyncio.run(s.execute_task(task))
+    return calls
+
+
+class _HouseBase(unittest.TestCase):
+    def setUp(self):
+        _sh.notify.reset_mock(); _sh.log.reset_mock()
+        _sh.nova_ops_writer.record_run_start.reset_mock(); _sh.nova_ops_writer.record_run_end.reset_mock()
+
+
+class TestSecurity(_HouseBase):
+    def test_no_hardcoded_credentials(self):
+        pat = _re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", _re.I)
+        self.assertIsNone(pat.search(_SRC))
+        self.assertNotIn("shell=True", _SRC)
+
+    def test_tasks_run_as_argv_never_a_shell_string(self):
+        s = _sched()
+        t = _task(args=["--flag; rm -rf ~"])
+        calls = _exec(s, t, [_Proc(0)])
+        cmd, kw = calls[0]
+        self.assertEqual(cmd[0], "/usr/bin/python3")
+        self.assertEqual(cmd[-1], "--flag; rm -rf ~")              # one inert argv token
+        self.assertEqual(kw["cwd"], str(_sh.SCRIPTS_DIR))
+
+    def test_run_history_query_is_parameterized(self):
+        self.assertIn("WHERE task_id=$1", _SRC)
+        self.assertIsNone(_re.search(r"fetch\(\s*f[\"']", _SRC))
+
+
+class TestPerformance(_HouseBase):
+    def test_cron_and_interval_parsing_fast_and_bounded(self):
+        t0 = time.time()
+        base = time.time()
+        for i in range(500):
+            _sh.next_cron_time("*/5 * * * *", base + i * 60)
+        for i in range(10_000):
+            _sh.parse_interval(f"every {i % 90}m")
+        self.assertLess(time.time() - t0, 3.0)
+        self.assertEqual(_sh.next_cron_time("bad expr", 1000.0), 4600.0)
+        self.assertIn("range(525600)", _SRC)                          # the search loop is capped at a year
+
+
+class TestRetry(_HouseBase):
+    def test_first_failure_retries_in_60s_then_recovers(self):
+        s = _sched()
+        t = _task()
+        _exec(s, t, [_Proc(1, err=b"boom")])
+        self.assertTrue(t.state._retry_pending)
+        self.assertEqual(t.state.consecutive_failures, 0)
+        self.assertAlmostEqual(t.state.next_run, time.time() + 60, delta=5)
+        _exec(s, t, [_Proc(0)])
+        self.assertFalse(t.state._retry_pending)
+        self.assertTrue(_sh.nova_ops_writer.record_run_end.call_args[1]["retry_recovered"])
+        self.assertTrue(_sh.nova_ops_writer.record_run_start.call_args[1]["was_retry"])
+        _sh.notify.assert_not_called()
+
+    def test_alert_cadence_backs_off(self):
+        self.assertEqual([n for n in range(1, 70) if _sh._should_alert_failure(n)], [1, 2, 4, 8, 16, 32, 64])
+        self.assertFalse(_sh._should_alert_failure(0))
+
+
+class TestUnit(_HouseBase):
+    def test_parse_edges(self):
+        self.assertEqual(_sh.parse_interval("every 2h"), 7200)
+        self.assertEqual(_sh.parse_interval("hourly"), 0)
+        self.assertEqual(_sh.parse_cron("cron  0 8 * * 0 "), "0 8 * * 0")
+        self.assertEqual(_sh.parse_cron("every 5m"), "")
+
+    def test_timeout_sets_124(self):
+        class Slow(_Proc):
+            async def communicate(self):
+                await asyncio.sleep(5)
+        s = _sched(alerts=False)
+        t = _task(); t.timeout = 0.01; t.state._retry_pending = True
+        _exec(s, t, [Slow()])
+        self.assertEqual(t.state.last_exit_code, 124)
+        self.assertEqual(_sh.nova_ops_writer.record_run_end.call_args[1]["status"], "timeout")
+        self.assertIn("Timed out", t.state.last_error)
+
+
+class TestIntegration(_HouseBase):
+    def test_run_start_and_end_share_run_id(self):
+        s = _sched()
+        _exec(s, _task(), [_Proc(0, out=b"x" * 500)])
+        st = _sh.nova_ops_writer.record_run_start.call_args[1]
+        en = _sh.nova_ops_writer.record_run_end.call_args[1]
+        self.assertEqual(st["run_id"], en["run_id"])
+        self.assertEqual((st["task_id"], en["status"]), ("t1", "success"))
+        self.assertEqual(len(en["stdout_tail"]), 200)
+
+    def test_failure_alert_rate_limited_per_task(self):
+        s = _sched()
+        asyncio.run(s._slack_alert(":x: *a* — boom", task_id="a"))
+        asyncio.run(s._slack_alert(":x: *a* — boom again", task_id="a"))
+        asyncio.run(s._slack_alert(":x: *b* — boom", task_id="b"))
+        keys = [c[0][5] for c in _sh.notify.call_args_list]
+        self.assertEqual(keys, ["scheduler-task-failure-a", "scheduler-task-failure-b"])
+
+
+class TestFunctional(_HouseBase):
+    def test_quarantine_after_threshold_alerts_once(self):
+        s = _sched()
+        t = _task()
+        t.state.consecutive_failures = _sh.QUARANTINE_THRESHOLD - 1
+        _exec(s, t, [_Proc(1, err=b"dead")])
+        _exec(s, t, [_Proc(1, err=b"dead")])
+        self.assertIn("t1", s._quarantined)
+        dks = [c[0][5] for c in _sh.notify.call_args_list]
+        self.assertEqual(dks.count("scheduler-quarantine-t1"), 1)
+        _exec(s, t, [_Proc(0)])
+        self.assertNotIn("t1", s._quarantined)                      # a success clears dead-letter
+
+    def test_reload_adds_updates_removes(self):
+        _sh.CONFIG_PATH.write_text(
+            "scheduler: {}\nslack: {alerts: false}\ntasks:\n"
+            "  keep: {script: k.py, schedule: every 10m}\n  new: {script: n.py, schedule: cron 0 8 * * 0}\n")
+        s = _sched()
+        s.tasks = {"keep": _task("keep"), "gone": _task("gone")}
+        s.tasks["keep"].state.run_count = 7
+        s._quarantined = {"keep"}
+        s._reload()
+        self.assertEqual(set(s.tasks), {"keep", "new"})
+        self.assertEqual(s.tasks["keep"].state.run_count, 7)          # runtime state preserved
+        self.assertEqual(s.tasks["new"]._cron_expr, "0 8 * * 0")
+        self.assertEqual(s._quarantined, set())                        # schedule changed -> cleared
+        self.assertEqual(s.slack_cfg, {"alerts": False})
+
+    def test_reload_with_broken_yaml_keeps_tasks(self):
+        _sh.CONFIG_PATH.write_text("tasks: [unclosed")
+        s = _sched(); s.tasks = {"keep": _task("keep")}
+        s._reload()
+        self.assertEqual(set(s.tasks), {"keep"})
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_starts_the_scheduler(self):
+        # main() loads the live config and runs the forever loop, so the smoke is an import only
+        self.assertIn('if __name__ == "__main__":', _SRC)
+        with _tempfile.TemporaryDirectory() as home:
+            r = _sp.run([sys.executable, "-c", "import nova_scheduler, threading; print(threading.active_count())"],
+                        cwd=str(_SCRIPTS), capture_output=True, text=True, timeout=30,
+                        env={**os.environ, "NOVA_TEST_QUIET": "1", "HOME": home})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "1")
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-q"]))

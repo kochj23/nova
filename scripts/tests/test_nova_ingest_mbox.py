@@ -207,8 +207,10 @@ class TestFunctional(unittest.TestCase):
 
     def test_error_paths_exit_1_before_any_network(self):
         uo = MagicMock()
+        empty = TMP / "empty-dir"; empty.mkdir(exist_ok=True)       # TMP itself holds other tests' mboxes one level down
+        (empty / "notes.txt").write_text("not an mbox")
         with patch.object(im.urllib.request, "urlopen", uo), redirect_stdout(io.StringIO()):
-            for argv in (["x"], ["x", str(TMP / "nope")], ["x", str(TMP)]):          # no arg / missing dir / no mbox at top level
+            for argv in (["x"], ["x", str(TMP / "nope")], ["x", str(empty)]):         # no arg / missing dir / dir without mboxes
                 with patch.object(sys, "argv", argv):
                     with self.assertRaises(SystemExit) as cm:
                         im.main()

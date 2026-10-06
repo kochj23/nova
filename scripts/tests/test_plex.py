@@ -10,6 +10,7 @@ Written by Jordan Koch.
 """
 
 import json
+import os
 import sys
 import xml.etree.ElementTree as ET
 from datetime import datetime, date, timedelta, timezone
@@ -36,15 +37,19 @@ def mock_nova_config_for_plex(monkeypatch):
     mock_config.post_both = MagicMock()
     mock_config.post_discord = MagicMock(return_value=True)
     monkeypatch.setitem(sys.modules, "nova_config", mock_config)
+    # nova_plex resolves PLEX_URL at import via nova_resolve, which queries PG — keep it offline.
+    import nova_resolve
+    monkeypatch.setattr(nova_resolve, "resolve_url", lambda *a, **k: "http://192.168.1.2:32400")
     return mock_config
 
 
 @pytest.fixture
-def plex_module(mock_nova_config_for_plex):
-    """Import nova_plex with mocked dependencies."""
-    import importlib
+def plex_module(mock_nova_config_for_plex, monkeypatch, request):
+    """Import nova_plex with mocked dependencies (the original sys.modules entry is restored after)."""
     if "nova_plex" in sys.modules:
-        del sys.modules["nova_plex"]
+        monkeypatch.delitem(sys.modules, "nova_plex")
+    else:
+        request.addfinalizer(lambda: sys.modules.pop("nova_plex", None))
     import nova_plex
     return nova_plex
 
@@ -625,8 +630,10 @@ class TestArgParsing:
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(os.environ.get("NOVA_LIVE_TESTS") != "1",
+                    reason="live Plex + Keychain test; opt in with NOVA_LIVE_TESTS=1 (suite is offline by default)")
 class TestPlexIntegration:
-    """Integration tests that hit the real Plex server. Skipped if unavailable."""
+    """Integration tests that hit the real Plex server. Opt-in only (NOVA_LIVE_TESTS=1); skipped if unavailable."""
 
     @pytest.fixture(autouse=True)
     def check_plex_available(self):
@@ -667,5 +674,188 @@ class TestPlexIntegration:
                 plex_module.QUIET = False
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# HOUSE CATEGORIES (added 2026-10-05) — the 7 unittest classes.
+# Tests for nova_plex.py — the 7 house categories (Security, Performance, Retry, Unit,
+# Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+# A private copy of the module is loaded (never touches sys.modules["nova_plex"]) with PLEX_URL
+# resolution, Keychain, Slack/notify and the vector store stubbed at load; state files go to a tempdir.
+# ═══════════════════════════════════════════════════════════════════════════════
+import importlib.util as _ilu
+import re as _re
+import subprocess as _sp
+import tempfile as _tf
+import time as _time
+import unittest
+import urllib.error as _uerr
+
+_SCRIPT = Path(__file__).resolve().parent.parent / "nova_plex.py"
+_SRC = _SCRIPT.read_text()
+_PTMP = _tf.TemporaryDirectory()
+
+
+def _load_px():
+    import nova_resolve
+    with patch.object(nova_resolve, "resolve_url", return_value="http://plex.test:32400"):
+        spec = _ilu.spec_from_file_location("nova_plex_house_copy", _SCRIPT)
+        mod = _ilu.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    return mod
+
+
+px = _load_px()
+px.nova_config = MagicMock(SLACK_NOTIFY="C_N", SLACK_CHAN="C_C", JORDAN_DM="D_J")
+px.nova_notify = MagicMock()
+px._keychain_get = MagicMock(return_value="tok-test")
+px._keychain_set = MagicMock()
+px.VECTOR_URL = "http://vector.test/remember"
+_PROOT = Path(_PTMP.name)
+px.WORKSPACE = _PROOT
+for _n in ("PLAYING_FILE", "MOOD_FILE", "GUEST_FILE", "CANON_FILE", "SEASONAL_FILE"):
+    setattr(px, _n, _PROOT / f"{_n.lower()}.json")
+
+
+def _hist(*titles, lib="6"):
+    v = "".join(f'<Video grandparentTitle="{t}" title="ep" librarySectionID="{lib}" viewedAt="1" '
+                f'duration="60000" type="episode"/>' for t in titles)
+    return ET.fromstring(f"<MediaContainer>{v}</MediaContainer>")
+
+
+class _PxBase(unittest.TestCase):
+    def setUp(self):
+        px._TOKEN_CACHE = None
+        px.QUIET = False
+        px.nova_config.reset_mock(); px.nova_notify.reset_mock()
+        px._keychain_get.reset_mock(return_value=True, side_effect=True)
+        px._keychain_get.return_value = "tok-test"
+        px.CANON_FILE.unlink(missing_ok=True)
+
+
+class TestSecurity(_PxBase):
+    def test_no_hardcoded_credentials(self):
+        pat = _re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/_-]{16,}['\"]", _re.I)
+        self.assertIsNone(pat.search(_SRC))
+
+    def test_missing_keychain_creds_exit_without_network(self):
+        px._keychain_get.return_value = ""
+        with patch.object(px.urllib.request, "urlopen") as u, self.assertRaises(SystemExit):
+            px._plex_token()
+        u.assert_not_called()
+
+    def test_token_exchange_saves_to_keychain_never_logs(self):
+        resp = MagicMock(); resp.__enter__.return_value.read.return_value = b'{"user": {"authToken": "NEWTOK123"}}'
+        px._keychain_get.side_effect = lambda s: {"nova-plex-email": "e", "nova-plex-password": "p"}.get(s, "")
+        with patch.object(px.urllib.request, "urlopen", return_value=resp), patch.object(px, "log") as log:
+            self.assertEqual(px._plex_token(), "NEWTOK123")
+        px._keychain_set.assert_called_once_with("nova-plex-token", "NEWTOK123")
+        self.assertNotIn("NEWTOK123", str(log.mock_calls))
+
+
+class TestPerformance(_PxBase):
+    def test_rewatch_over_10k_views_fast(self):
+        root = _hist(*[f"Show{i % 500}" for i in range(10_000)])
+        with patch.object(px, "plex_get", return_value=root), patch("builtins.print"):
+            t0 = _time.perf_counter()
+            px.QUIET = True
+            px.cmd_rewatch(MagicMock())
+        self.assertLess(_time.perf_counter() - t0, 2.0)
+        self.assertEqual(len(px.load_json(px.CANON_FILE)["items"]), 500)
+
+
+class TestRetry(_PxBase):
+    def test_unreachable_plex_exits_1_once(self):
+        # RETRY GAP: plex_get()/urlopen — one attempt; main() maps URLError to exit 1 (no retry/backoff)
+        with patch.object(px.urllib.request, "urlopen", side_effect=_uerr.URLError("refused")) as u, \
+             patch.object(sys, "argv", ["nova_plex.py", "history", "-q"]), patch("builtins.print"):
+            px.cmd_history(MagicMock())                         # history swallows its own fetch error
+            self.assertEqual(u.call_count, 1)
+            with patch.object(px, "cmd_history", side_effect=_uerr.URLError("refused")), \
+                 patch.dict(px.COMMANDS, {"history": (px.cmd_history, "")}):
+                with self.assertRaises(SystemExit) as cm:
+                    px.main()
+        self.assertEqual(cm.exception.code, 1)
+
+    def test_post_and_vector_fail_open(self):
+        px.nova_config.post_both.side_effect = RuntimeError("slack down")
+        with patch("builtins.print") as pr:
+            px.post("hello")
+        pr.assert_called_with("hello")
+        px.nova_config.post_both.side_effect = None
+        with patch.object(px.urllib.request, "urlopen", side_effect=OSError("down")):
+            px.store_vector("t", "plex")
+
+
+class TestUnit(_PxBase):
+    def test_alert_title_body_split(self):
+        px.alert("*Stats Title*\nline two", level="warning")
+        args, kw = px.nova_notify.call_args
+        self.assertEqual((args[0], kw["body"], kw["level"]), ("Stats Title", "line two", "warning"))
+
+    def test_quiet_alert_prints(self):
+        px.QUIET = True
+        with patch("builtins.print") as pr:
+            px.alert("x")
+        px.nova_notify.assert_not_called()
+        pr.assert_called_once_with("x")
+
+    def test_token_cached(self):
+        px.token(); px.token()
+        self.assertEqual(px._keychain_get.call_count, 1)
+
+
+class TestIntegration(_PxBase):
+    def test_plex_get_builds_tokenized_url_on_resolved_host(self):
+        resp = MagicMock(); resp.__enter__.return_value.read.return_value = b"<MediaContainer/>"
+        with patch.object(px.urllib.request, "urlopen", return_value=resp) as u:
+            px.plex_get("/library/sections", {"a": 1})
+        url = u.call_args[0][0].full_url
+        self.assertTrue(url.startswith("http://plex.test:32400/library/sections?"))
+        self.assertIn("X-Plex-Token=tok-test", url)
+
+    def test_new_canon_entry_posts_to_chat(self):
+        with patch.object(px, "plex_get", return_value=_hist("Columbo", "Columbo", "Columbo", "Other", lib="6")), \
+             patch("builtins.print"):
+            px.cmd_rewatch(MagicMock())
+        msg, kw = px.nova_config.post_both.call_args
+        self.assertIn("Columbo (3x)", msg[0])
+        self.assertEqual(kw["slack_channel"], "C_C")
+
+
+class TestFunctional(_PxBase):
+    def test_main_rewatch_quiet_golden_path(self):
+        with patch.object(px, "plex_get", return_value=_hist("A", "A", "B", "Hidden", lib="6")), \
+             patch.object(sys, "argv", ["nova_plex.py", "rewatch", "--quiet"]), patch("builtins.print"):
+            px.main()
+        canon = px.load_json(px.CANON_FILE)
+        self.assertEqual(canon["items"]["A"]["count"], 2)
+        px.nova_config.post_both.assert_not_called()          # --quiet never posts
+
+    def test_library_23_never_counted(self):
+        with patch.object(px, "plex_get", return_value=_hist("Secret", "Secret", "Secret", lib="23")), \
+             patch("builtins.print"):
+            px.QUIET = True
+            px.cmd_rewatch(MagicMock())
+        self.assertNotIn("Secret", px.load_json(px.CANON_FILE)["items"])
+
+
+class TestFrame(unittest.TestCase):
+    def test_help_exits_zero(self):
+        code = ("import sys, runpy, nova_resolve; nova_resolve.resolve_url = lambda *a, **k: 'http://plex.test:1'; "
+                f"sys.argv = ['nova_plex.py', '--help']; runpy.run_path({str(_SCRIPT)!r}, run_name='__main__')")
+        r = _sp.run([sys.executable, "-c", code], cwd=str(_SCRIPT.parent), capture_output=True, text=True,
+                    timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("rewatch", r.stdout)
+
+    def test_import_never_runs_main(self):
+        self.assertIn('if __name__ == "__main__":', _SRC)
+        code = "import nova_resolve; nova_resolve.resolve_url = lambda *a, **k: 'http://plex.test:1'; import nova_plex"
+        r = _sp.run([sys.executable, "-c", code], cwd=str(_SCRIPT.parent), capture_output=True, text=True,
+                    timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "")
+
+
+
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    sys.exit(pytest.main([__file__, "-q"]))

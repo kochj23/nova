@@ -85,9 +85,9 @@ class TestSecurity(unittest.TestCase):
 
     def test_ingest_is_spawned_without_a_shell_and_only_for_imsdb_urls(self):
         self.assertNotIn("shell=True", SRC)
-        evil = {"https://imsdb.com/Movie%20Scripts/Alien%20Script.html": '<a href="/scripts/x.html; rm -rf /">Read</a>'}
+        evil = {"https://imsdb.com/Movie%20Scripts/Alien%20Script.html": '<a href="/scripts/x; rm -rf /.html">Read</a>'}
         runs, seen, out = _run_main(web=_web(evil), films=("Alien",))
-        self.assertEqual(runs[0][:4], ["/opt/homebrew/bin/python3", ms.INGEST, "url", "https://imsdb.com/scripts/x.html; rm -rf /"])
+        self.assertEqual(runs[0][:4], ["/opt/homebrew/bin/python3", ms.INGEST, "url", "https://imsdb.com/scripts/x; rm -rf /.html"])
         self.assertTrue(all(isinstance(a, str) for a in runs[0]))     # argv list: the string is data, never a shell command
 
     def test_index_hrefs_are_quoted_before_fetch(self):
@@ -135,7 +135,7 @@ class TestRetry(unittest.TestCase):
 class TestUnit(unittest.TestCase):
     def test_norm(self):
         self.assertEqual(ms.norm("The Godfather"), "godfather")
-        self.assertEqual(ms.norm("Godfather, The"), "godfather the")
+        self.assertEqual(ms.norm("Godfather, The"), "godfather")   # IMSDb's trailing-article form folds to the same key
         self.assertEqual(ms.norm("Se7en"), "se7en")
         self.assertEqual(ms.norm("  A   Clockwork  Orange! "), "clockwork orange")
         self.assertEqual(ms.norm(""), "")
@@ -145,7 +145,7 @@ class TestUnit(unittest.TestCase):
         with patch("urllib.request.urlopen", _web()):
             idx = ms.imsdb_index()
         self.assertEqual(idx["alien"], "/Movie Scripts/Alien Script.html")
-        self.assertEqual(idx["godfather the"], "/Movie Scripts/Godfather, The Script.html")
+        self.assertEqual(idx["godfather"], "/Movie Scripts/Godfather, The Script.html")
         self.assertEqual(len(idx), 4)
 
     def test_raw_script_url_none_when_missing(self):
@@ -187,7 +187,7 @@ class TestIntegration(unittest.TestCase):
     def test_norm_joins_the_top_list_to_the_index(self):
         with patch("urllib.request.urlopen", _web()):
             idx = ms.imsdb_index()
-        self.assertIn(ms.norm("The Matrix"), idx)      # "Matrix, The" vs "The Matrix" -> both normalise... differently
+        self.assertIn(ms.norm("The Matrix"), idx)      # "Matrix, The" (IMSDb) and "The Matrix" (TOP_FILMS) normalise to the same key
         self.assertEqual(idx.get(ms.norm("Alien")), "/Movie Scripts/Alien Script.html")
         self.assertTrue(len(ms.TOP_FILMS) >= 90)
 

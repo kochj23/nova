@@ -223,7 +223,7 @@ def crawl_sub(cur, sub, vector):
 def main():
     # No args → crawl the full configured SUBS map. Args override for testing: "<sub[,sub]> <vector>".
     if len(sys.argv) >= 3:
-        targets = {s.split("/r/")[-1].split("/")[0].replace("r/", "").strip("/"): sys.argv[2]
+        targets = {s.strip().split("/r/")[-1].removeprefix("r/").split("/")[0]: sys.argv[2]
                    for s in sys.argv[1].split(",") if s.strip()}
     else:
         targets = rotating_targets()   # fishbowl every run + a rotating batch of the others

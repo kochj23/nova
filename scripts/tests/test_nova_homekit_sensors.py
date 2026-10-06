@@ -168,7 +168,7 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(hs.collect({}), {})
         self.assertEqual(hs.collect({"services": None}), {})
         self.assertEqual(hs.collect({"services": [{"characteristics": None}]}), {})
-        self.assertEqual(hs.collect(_acc("s", "r", temp=None, hum=55.55, aqi=3)), {"humidity": 55.6, "aqi": 3.0})
+        self.assertEqual(hs.collect(_acc("s", "r", temp=None, hum=55.56, aqi=3)), {"humidity": 55.6, "aqi": 3.0})   # (55.55 is 55.549.. in binary)
         self.assertEqual(hs.collect(_acc("s", "r", temp=20, lux=12.34, voc=7.77)), {"temp_f": 68.0, "lux": 12.3, "voc": 7.8})
         self.assertEqual(hs.collect({"services": [{"characteristics": [{"type": "Battery Level", "value": 50}]}]}), {})
 

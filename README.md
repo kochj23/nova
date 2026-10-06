@@ -88,7 +88,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Short video | `nova_short_video.py` — her writing → narrated captioned 1080×1920 vertical mp4 (say/XTTS + OpenRouter stills + ffmpeg) |
 | PG primary | **nova-core (.2:5434)** since 2026-09-28 — `.7` + `.10` + `.125` streaming standbys (lag < 5 ms); SCRAM-only auth since 2026-10-03, no LAN trust |
 | Borrowed tongues | 35 sampled languages/creeds + Ferengi Rules anchor (`nova_lexicon.py`; 8 offered per article); the **horror shelf** (2026-09-30): Halloween, Friday the 13th, Elm Street, Cabin in the Woods, Predator, Alien, Romero's Dead, Evil Dead, The Thing — each with the ops metaphor it is secretly about |
-| Tests | 4,770 test functions in 129 files; every organ (62) carries the seven named classes per `tests/CONVENTIONS.md` (Security/Performance/Retry/Unit/Integration/Functional/Frame); whole suite green in one process: `13141 passed, 374 skipped, 1 xfailed in 2:33` |
+| Tests | 13,245 test functions in 657 files; **every one of the 617 Python scripts** carries a dedicated file with the seven named classes per `tests/CONVENTIONS.md` (Security/Performance/Retry/Unit/Integration/Functional/Frame); whole suite green in one process: 21,605 passed, 0 failed |
 | Memory sources | 254 domains |
 | Gateway | Nova Gateway v2.4.0 (pure Python asyncio, hot-reloadable config) |
 | Channels | Slack + Discord + Signal + Web Chatroom + Claude Code bridge |
@@ -130,6 +130,34 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 ---
 
 ## Infrastructure & Security (June–October 2026)
+
+### Every Script Gets the Seven — a Full Code Audit (2026-10-05, night)
+
+Jordan: "Do a full code audit using sub-agents making sure that everything has the seven tests. Add if missing." The strict audit (one dedicated `tests/test_<script>.py` per script carrying exactly the seven named classes from `tests/CONVENTIONS.md`) found **64 of 617** Python scripts compliant. Two waves of parallel agents later — the first cut off by a usage limit mid-run, the second restarted on a new model from a shared brief with a checkpoint commit in between — **617 of 617** are compliant and the whole suite is green in one process.
+
+| | Before | After |
+|---|---|---|
+| Scripts with a dedicated 7-class test file | 64 / 617 | **617 / 617** |
+| Test files · test functions | 129 · 4,770 | 657 · 13,245 |
+| Full suite, one process | 13,141 passed | **21,605 passed, 0 failed**, 386 skipped (live-service tests gated behind `NOVA_LIVE_TESTS=1`), 3m56s |
+
+```mermaid
+flowchart LR
+    A[strict audit<br/>class-name check, 617 scripts] --> B[balanced batches<br/>by line count]
+    B --> C[parallel agents<br/>shared brief + CONVENTIONS.md pitfalls]
+    C --> D[per-batch single-session run<br/>catches cross-file leaks]
+    D --> E[fixer pass<br/>half-finished files from the cut-off wave]
+    E --> F[full suite, one process]
+    F -->|green| G[commit + push<br/>pre-push PII scan]
+```
+
+**What the tests found** — real production bugs, each fixed minimally with a regression test:
+
+- **Security:** SQL injection in `nova_goals`, `nova_ops_context`, `nova_hue`, `nova_rules`, `nova_watcher_engine`, `nova_daily_essay`, `nova_gateway/taskflow` (now a bound parameter) and `slack_reclassify` (model-returned IDs went straight into an UPDATE — a crafted memory could have rewritten every row); shell injection in `nova_face_integration` (a name from a Slack reply reached a shell); `eval()` on database content in `nova_voice_db`; path traversal through the unauthenticated `date` field of `nova_healthkit_receiver`; a `</script>` break-out in `nova_geo_map`.
+- **Silent failures:** journal build-failure alerts were never sent (`nova_journal_lint` imported a function that does not exist); security breaking alerts crashed after publishing; the sky watcher stopped posting after its first day; CINC drift checks always reported zero; the Bose soundbar always read as an error; the memory-quality audit could never flag a repeated phrase; vector reclassification silently skipped any source with an apostrophe; the re-embed index statement was a syntax error waiting at the end of an 18-hour run.
+- **Data hazards:** `nova_keychain_to_vault` would have duplicated every secret if listing the vault failed, and paired each account with the previous item's service; RF discovery deleted WAVs still being written; the movie-script ingest never matched titles beginning with "The".
+
+**Flagged, not changed** (design decisions for Jordan): the chatroom lets any LAN client claim to be Nova and get code executed; semantic triggers can register any script path through an unauthenticated endpoint; the swarm agent's "read-only" filter is a blocklist (`find / -delete` passes); the SSH server accepts passwords; the Wazuh bridge and daily summary fall back to the vendor-default password; Homebridge uses factory admin/admin; the presence engine never logs a departure for anyone home longer than a minute; the iMessage sender never checks its allowed-contacts list.
 
 ### Two Wishes Granted, Evidence Before Belief, and the Seven-Category Test Standard (2026-10-05, evening)
 

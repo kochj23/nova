@@ -137,8 +137,8 @@ class TestUnit(unittest.TestCase):
     def test_find_locations(self):
         locs = ge.find_locations("ADW suspect 962 Hyperion Avenue; TC at Glenoaks and Olive Blvd; 403 West Boulevard")
         self.assertEqual(locs[0], ("962 Hyperion Avenue", "962 Hyperion Avenue"))
-        self.assertEqual(locs[1], ("Glenoaks and Olive Blvd", "Glenoaks & Olive, Los Angeles"))
-        self.assertEqual(locs[2], ("403 West Boulevard", "403 West Boulevard"))
+        self.assertEqual(locs[1], ("403 West Boulevard", "403 West Boulevard"))       # numbered addresses first...
+        self.assertEqual(locs[2], ("Glenoaks and Olive Blvd", "Glenoaks & Olive, Los Angeles"))   # ...then intersections
         self.assertEqual(ge.find_locations(""), []); self.assertEqual(ge.find_locations(None), [])
         self.assertEqual(len(ge.find_locations("962 Hyperion Ave and 962 hyperion ave")), 1)   # de-duped case-insensitively
 

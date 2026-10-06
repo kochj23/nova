@@ -128,10 +128,12 @@ def describe_image(image_path, prompt="Describe this security camera image in 1-
 def slack_post(text, level="info", category="vision", dedup_key=None):
     # First line -> title, remaining -> body. Strip leading emoji/markdown from title.
     raw_lines = text.split("\n")
-    title = raw_lines[0].lstrip(": ").replace("*", "").strip()
+    title = raw_lines[0].replace("*", "").strip()
     if title.startswith(":"):
-        # drop a leading :emoji: token if present
+        # drop a leading :emoji: token if present (checked BEFORE stripping ':' — stripping first left
+        # titles like "camera: Daily Vision Report")
         title = title.split(" ", 1)[1] if " " in title else title
+    title = title.lstrip(": ").strip()
     body = "\n".join(raw_lines[1:]).strip() or None
     notify(title, body=body, level=level, category=category, dedup_key=dedup_key,
            meta={"host": "Office-M4-2"})

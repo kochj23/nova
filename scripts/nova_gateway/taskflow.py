@@ -123,17 +123,19 @@ async def resume_flow(pool, flow_id: str, next_step: str, input_data: dict = Non
 async def finish_flow(pool, flow_id: str, final_state: dict = None) -> bool:
     """Mark flow as completed."""
     try:
-        updates = {"status": "completed", "ended_at": _now_ms(), "updated_at": _now_ms()}
+        # final_state is bound as $3 — never spliced into the SQL text (a quote in it broke/injected the UPDATE)
+        args = [_now_ms(), flow_id]
         state_clause = ""
         if final_state:
-            state_clause = f", state_json = '{json.dumps(final_state)}'"
+            state_clause = ", state_json = $3"
+            args.append(json.dumps(final_state))
 
         result = await pool.execute(
             f"""UPDATE flow_runs
                 SET status = 'completed', ended_at = $1, updated_at = $1{state_clause},
                     revision = revision + 1
                 WHERE flow_id = $2 AND status IN ('running', 'waiting')""",
-            _now_ms(), flow_id
+            *args
         )
         log.info(f"[taskflow] Finished flow {flow_id[:8]}")
         return "UPDATE 1" in result

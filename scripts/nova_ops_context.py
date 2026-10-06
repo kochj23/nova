@@ -44,6 +44,7 @@ def _pg_query(sql, params=None):
 
 def get_security_context(hours: int = 24) -> dict:
     """Get security context for article generation."""
+    hours = int(hours)  # interpolated into SQL below; coerce so only a number can ever land there
     ctx = {}
 
     # Recent security events from Wazuh pipeline
@@ -99,6 +100,7 @@ def get_security_context(hours: int = 24) -> dict:
 
 def get_syslog_context(hours: int = 24) -> dict:
     """Get syslog/firewall context."""
+    hours = int(hours)  # interpolated into SQL below; coerce so only a number can ever land there
     ctx = {}
 
     # Threat types
@@ -148,6 +150,7 @@ def get_syslog_context(hours: int = 24) -> dict:
 
 def get_infra_context(hours: int = 24) -> dict:
     """Get infrastructure/capacity context."""
+    hours = int(hours)  # interpolated into SQL below; coerce so only a number can ever land there
     ctx = {}
 
     # Latest capacity per host

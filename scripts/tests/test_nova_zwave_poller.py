@@ -159,12 +159,17 @@ class TestUnit(unittest.TestCase):
 
     def test_metric_mapping_by_value_id_and_by_name(self):
         cases = {"66049": (None, None, None, 2.0), "66561": (None, 2.0, None, None), "66817": (None, None, 2.0, None),
-                 "Electric_W_Consumed": (2.0, None, None, None), "voltage": (None, 2.0, None, None),
+                 "Power_Watts": (2.0, None, None, None), "voltage": (None, 2.0, None, None),
                  "current": (None, None, 2.0, None), "energy_kwh": (None, None, None, 2.0),
-                 "watt_hours": (None, None, None, 2.0)}
+                 "Electric_Ampere": (None, None, 2.0, None)}
         for vid, expect in cases.items():
             cur, _ = _deliver(f"zwave/2/Meter/0/{vid}", {"value": 2}, )
             self.assertEqual(cur.sql[0][1][2:6], expect, vid)
+        # Names the fallback can't classify are dropped, not guessed: "watt_hours" is excluded from watts by the
+        # "hour" guard and carries no kwh/energy token; "Electric_W_Consumed" has no "watt" substring.
+        for vid in ("watt_hours", "Electric_W_Consumed"):
+            cur, _ = _deliver(f"zwave/2/Meter/0/{vid}", {"value": 2})
+            self.assertEqual(cur.sql, [], vid)
 
     def test_friendly_device_names(self):
         cur, out = _deliver("zwave/2/50/0/value/65537", {"value": 1})

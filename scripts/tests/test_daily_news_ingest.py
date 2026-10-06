@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
-"""
+"""Tests for nova_daily_news_ingest.py — the 7 house categories (Security, Performance, Retry, Unit,
+Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+
 test_daily_news_ingest.py — Comprehensive tests for nova_daily_news_ingest.py.
 
 Covers: HDHomeRun recording, MLX Whisper transcription, text chunking,
@@ -10,6 +12,7 @@ Written by Jordan Koch.
 """
 
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -54,6 +57,8 @@ def news_module(mock_nova_config_for_news, tmp_path, monkeypatch):
     nova_daily_news_ingest.WORK_DIR = tmp_path / "daily-news"
     nova_daily_news_ingest.LOG_FILE = str(tmp_path / "test.log")
     nova_daily_news_ingest.shutdown = False
+    # Never let a pipeline test reach the real notification bus (PG event queue -> Slack).
+    monkeypatch.setattr(nova_daily_news_ingest, "_bus_notify", MagicMock())
 
     return nova_daily_news_ingest
 
@@ -538,6 +543,7 @@ class TestFrameworkDailyNews:
 
 
 @pytest.mark.integration
+@pytest.mark.skipif(not os.environ.get("NOVA_LIVE_TESTS"), reason="live-service checks; set NOVA_LIVE_TESTS=1")
 class TestDailyNewsIntegration:
     """Integration tests hitting live services. Skipped if unavailable."""
 
@@ -584,5 +590,152 @@ class TestDailyNewsIntegration:
             pytest.skip("Memory server not available at 127.0.0.1:18790")
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# THE 7 HOUSE CATEGORIES (unittest.TestCase, fully offline)
+# ═══════════════════════════════════════════════════════════════════════════════
+import importlib.util  # noqa: E402
+import io  # noqa: E402
+import re  # noqa: E402
+import tempfile  # noqa: E402
+import unittest  # noqa: E402
+
+_SCRIPT = Path(__file__).resolve().parents[1] / "nova_daily_news_ingest.py"
+_SRC = _SCRIPT.read_text()
+
+
+def _load_news():
+    """Load a private copy; restore the SIGINT/SIGTERM handlers the module installs at import."""
+    old_int, old_term = signal.getsignal(signal.SIGINT), signal.getsignal(signal.SIGTERM)
+    spec = importlib.util.spec_from_file_location("nova_daily_news_ingest_t", _SCRIPT)
+    mod = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(mod)
+    finally:
+        signal.signal(signal.SIGINT, old_int)
+        signal.signal(signal.SIGTERM, old_term)
+    return mod
+
+
+_dn = _load_news()
+
+
+class _CtxResp(io.BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+class _NewsBase(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.ps = [patch.object(_dn, "WORK_DIR", Path(self.tmp.name)), patch.object(_dn, "_bus_notify"),
+                   patch("urllib.request.urlopen", side_effect=OSError("offline"))]
+        self.bus = [p.start() for p in self.ps][1]
+
+    def tearDown(self):
+        for p in self.ps:
+            p.stop()
+        self.tmp.cleanup()
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        self.assertNotRegex(_SRC, r"(?i)(password|secret|token|api[_-]?key)\s*=\s*['\"][^'\"]{8,}")
+
+    def test_subprocess_argv_lists_no_shell(self):
+        self.assertNotIn("shell=True", _SRC)
+        self.assertIn("cmd = [\n        FFMPEG", _SRC)
+
+    def test_ingested_chunks_marked_public_local_news(self):
+        with patch("urllib.request.urlopen", return_value=_CtxResp(b"{}")) as u:
+            _dn.ingest_chunks(["x" * 60], "t", "d")
+        body = json.loads(u.call_args[0][0].data)
+        self.assertEqual(body["source"], "local_news")
+        self.assertEqual(body["metadata"]["privacy"], "public")
+
+
+class TestPerformance(unittest.TestCase):
+    def test_chunk_text_large_transcript(self):
+        text = "The council voted on the budget measure today. " * 10_000
+        t0 = time.perf_counter()
+        chunks = _dn.chunk_text(text)
+        self.assertLess(time.perf_counter() - t0, 2.0)
+        self.assertTrue(all(len(c) <= _dn.CHUNK_SIZE + 1 for c in chunks))
+
+
+class TestRetry(_NewsBase):
+    def test_ingest_failures_counted_not_raised(self):
+        # RETRY GAP: ingest_chunks — each chunk POSTed once; failures counted, never raised
+        with patch("urllib.request.urlopen", side_effect=[OSError("a"), _CtxResp(b"{}"), OSError("b")]) as u:
+            n = _dn.ingest_chunks(["a" * 60, "b" * 60, "c" * 60], "t", "d")
+        self.assertEqual((n, u.call_count), (1, 3))
+
+    def test_summary_fails_open(self):
+        # RETRY GAP: summarize_news — one Ollama call, placeholder on failure
+        self.assertIn("Summary unavailable", _dn.summarize_news("text", "17:00", "d"))
+
+
+class TestUnit(unittest.TestCase):
+    def test_chunk_text_edges(self):
+        self.assertEqual(_dn.chunk_text(""), [])
+        self.assertEqual(_dn.chunk_text("Too short."), [])
+
+    def test_notify_level_inference(self):
+        with patch.object(_dn, "_bus_notify") as bus:
+            _dn.notify(":x: Daily News Recording Failed — x")
+            _dn.notify("*Started*\nline two")
+        self.assertEqual(bus.call_args_list[0].kwargs["level"], "warning")
+        self.assertEqual(bus.call_args_list[1][0][0], "Started")
+        self.assertEqual(bus.call_args_list[1].kwargs["body"], "line two")
+        self.assertEqual(bus.call_args_list[1].kwargs["level"], "info")
+
+
+class TestIntegration(_NewsBase):
+    def test_record_uses_hdhr_stream_and_work_dir(self):
+        def fake_run(cmd, **kw):
+            Path(cmd[-1]).write_bytes(b"\0" * 200_000)
+            return subprocess.CompletedProcess(cmd, 0, "", "")
+        with patch.object(_dn.subprocess, "run", side_effect=fake_run) as run:
+            out = _dn.record_audio(5)
+        self.assertEqual(out.parent, Path(self.tmp.name))
+        self.assertIn(_dn.HDHR_STREAM + _dn.CHANNEL, run.call_args[0][0])
+
+    def test_notify_goes_through_bus_with_news_category(self):
+        _dn.notify("hello")
+        self.assertEqual(self.bus.call_args.kwargs["category"], "news")
+        self.assertEqual(self.bus.call_args.kwargs["dedup_key"], "daily-news-ingest")
+
+
+class TestFunctional(_NewsBase):
+    def test_golden_path(self):
+        wav = Path(self.tmp.name) / "k.wav"
+        wav.write_bytes(b"\0" * 10)
+        text = "The fire on Grand Avenue was contained by crews this evening. " * 50
+        with patch.object(_dn, "record_audio", return_value=wav), patch.object(_dn, "transcribe", return_value=text), \
+             patch.object(_dn, "ingest_chunks", return_value=2) as ing, \
+             patch.object(_dn, "summarize_news", return_value="- fire"):
+            _dn.main()
+        self.assertFalse(wav.exists())
+        self.assertEqual(len(list(Path(self.tmp.name).glob("*_transcript.txt"))), 1)
+        self.assertGreater(len(ing.call_args[0][0]), 0)
+        self.assertIn("- fire", self.bus.call_args.kwargs["body"])
+
+    def test_record_failure_notifies_warning(self):
+        with patch.object(_dn, "record_audio", return_value=None), patch.object(_dn, "transcribe") as tr:
+            _dn.main()
+        tr.assert_not_called()
+        self.assertEqual(self.bus.call_args.kwargs["level"], "warning")
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_runs_main(self):
+        self.assertIn('if __name__ == "__main__":', _SRC)
+        with patch.object(_dn.subprocess, "run") as run:
+            _load_news()
+        run.assert_not_called()
+
+
 if __name__ == "__main__":
-    pytest.main([__file__, "-v"])
+    sys.exit(pytest.main([__file__, "-q"]))
