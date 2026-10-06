@@ -69,7 +69,7 @@ MAX_HERD = int(os.environ.get("NOVA_REACH_MAX_HERD", "2"))      # herd members w
 # are sent DIRECTLY (no daily cap, no cooldown, no co-agency proposal, no generosity
 # redline). Herd correspondents keep the gated path.
 DIRECT_AUDIENCES = set(a.strip().lower() for a in os.environ.get("NOVA_REACH_DIRECT", "jordan").split(",") if a.strip())
-WINDOW_HOURS = os.environ.get("NOVA_REACH_WINDOW", "10-13")   # Jordan's band per nova_human_insight: 10:00–12:59
+WINDOW_HOURS = os.environ.get("NOVA_REACH_WINDOW", "8-21")    # Jordan 2026-10-06: "during the day, just dont set off alerts" — daytime band; posts go to #nova-chat (SLACK_CHAN), never alert channels
 
 
 def in_window(now=None) -> bool:

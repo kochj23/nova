@@ -87,12 +87,21 @@ def main(alert):
 
     # ── 3. A sensor went quiet ───────────────────────────────────────────────
     # Zero work is not success — the rule that caught the dead search-ingest today.
+    # 2026-10-06: judge each method against its OWN rhythm. Event-driven sensors (the outdoor front
+    # motion sensor, AV power) are legitimately silent for hours — 'ha_motion' was paged as broken while
+    # reporting 64 times that week, and Nova proposed disabling it (#136). Quiet now = the current gap
+    # exceeds both 6 h and 1.5x the longest gap that method had between events in the past 7 days.
     quiet = q(cur, """
-        SELECT method, max(ts), now() - max(ts) AS gap
-        FROM telemetry.presence
-        WHERE ts > now() - interval '7 days'
-        GROUP BY 1
-        HAVING now() - max(ts) > interval '6 hours'
+        WITH ev AS (
+            SELECT method, ts, ts - lag(ts) OVER (PARTITION BY method ORDER BY ts) AS between
+            FROM telemetry.presence
+            WHERE ts > now() - interval '7 days'),
+        m AS (
+            SELECT method, max(ts) AS last, now() - max(ts) AS gap,
+                   coalesce(max(between), interval '0') AS longest
+            FROM ev GROUP BY 1)
+        SELECT method, last, gap FROM m
+        WHERE gap > greatest(interval '6 hours', longest * 1.5)
         ORDER BY 3 DESC""")
     for method, last, gap in quiet:
         findings.append(("sensor_quiet",

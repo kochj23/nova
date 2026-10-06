@@ -163,3 +163,13 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_sensor_quiet_judges_each_method_against_its_own_rhythm():
+    """2026-10-06: the outdoor motion sensor (64 events/week, multi-day gaps) was paged as broken
+    and Nova proposed disabling it. Quiet must mean 'gap > max(6h, 1.5x its longest recent gap)'."""
+    import pathlib, re
+    src = pathlib.Path(__file__).resolve().parent.parent.joinpath("nova_negative_space.py").read_text()
+    block = src.split("── 3. A sensor went quiet")[1].split("── 4.")[0]
+    assert "lag(ts) OVER (PARTITION BY method ORDER BY ts)" in block
+    assert re.search(r"greatest\(interval '6 hours', longest \* 1\.5\)", block)

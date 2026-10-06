@@ -198,11 +198,13 @@ class TestRetry(unittest.TestCase):
 
 class TestUnit(unittest.TestCase):
     def test_in_window_default_band(self):
-        self.assertEqual(rc.WINDOW_HOURS, "10-13")
-        self.assertTrue(rc.in_window(datetime(2026, 10, 5, 10, 0)))
-        self.assertTrue(rc.in_window(datetime(2026, 10, 5, 12, 59)))
-        self.assertFalse(rc.in_window(datetime(2026, 10, 5, 13, 0)))
-        self.assertFalse(rc.in_window(datetime(2026, 10, 5, 9, 59)))
+        # Jordan 2026-10-06: reaches allowed "during the day" — 08:00–20:59
+        self.assertEqual(rc.WINDOW_HOURS, "8-21")
+        self.assertTrue(rc.in_window(datetime(2026, 10, 5, 8, 0)))
+        self.assertTrue(rc.in_window(datetime(2026, 10, 5, 20, 59)))
+        self.assertFalse(rc.in_window(datetime(2026, 10, 5, 7, 59)))
+        self.assertFalse(rc.in_window(datetime(2026, 10, 5, 21, 0)))
+        self.assertFalse(rc.in_window(datetime(2026, 10, 5, 2, 0)))
 
     def test_in_window_honors_env_override(self):
         with mock.patch.dict(os.environ, {"NOVA_REACH_WINDOW": "22-23"}):
