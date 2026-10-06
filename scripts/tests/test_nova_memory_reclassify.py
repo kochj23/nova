@@ -254,3 +254,279 @@ def test_name_cluster_crashes_on_fully_empty_output(monkeypatch):
 def test_name_cluster_truncates_to_40_chars(monkeypatch):
     monkeypatch.setattr(R, "call_openrouter", lambda *a, **k: "a" * 100)
     assert len(R.name_cluster(["t"])) == 40
+
+
+# ── house categories added 2026-10-05 (Security, Performance, Retry, Unit, Integration, Functional, Frame) ────
+# The targeted pytest functions above stay as-is; these classes complete the seven-category contract and make
+# the file runnable as `python3 tests/test_nova_memory_reclassify.py`.
+import io  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+import re  # noqa: E402
+import subprocess  # noqa: E402
+import tempfile  # noqa: E402
+import time  # noqa: E402
+import types  # noqa: E402
+import unittest  # noqa: E402
+from collections import Counter  # noqa: E402
+from contextlib import redirect_stdout  # noqa: E402
+from unittest.mock import patch  # noqa: E402
+
+SCRIPT = SCRIPTS_DIR / "nova_memory_reclassify.py"
+SRC = SCRIPT.read_text()
+TMP = Path(tempfile.mkdtemp(prefix="reclassify-test-"))
+R.LOG = TMP / "memory_reclassify.log"          # keep ~/.openclaw/logs untouched
+R.OUT = TMP / "operations"                     # ...and the Hugo operations folder
+
+
+class _Cur:
+    """Cursor stub for main(): the keyset page is served once, then empty; every statement + params is recorded."""
+    def __init__(self, centroids, page, texts=()):
+        self.centroids, self.page, self.texts = centroids, page, list(texts)
+        self.sql, self.params, self._last, self._paged, self.closed = [], [], None, False, False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=None):
+        s = " ".join(sql.split()); self.sql.append(s); self.params.append(params); self._last = []
+        if "GROUP BY source HAVING" in s:
+            self._last = self.centroids
+        elif "ORDER BY id LIMIT" in s:
+            self._last = [] if self._paged else self.page; self._paged = True
+        elif "SELECT text FROM memories" in s:
+            self._last = [(t,) for t in self.texts]
+
+    def fetchall(self):
+        return list(self._last)
+
+    def ran(self, frag):
+        return [(s, p) for s, p in zip(self.sql, self.params) if frag in s]
+
+
+class _Conn:
+    def __init__(self, cur):
+        self.cur, self.closed, self.autocommit = cur, False, False
+
+    def cursor(self):
+        return self.cur
+
+    def close(self):
+        self.closed = self.cur.closed = True
+
+
+CENTROIDS = [("knowledge", 300, "[1.0, 0.0, 0.0]"), ("wikipedia", 250, "[0.0, 1.0, 0.0]"), ("imessage", 900, "[0.0, 0.0, 1.0]")]
+PAGE = [("m1", "wikipedia", "[1.0, 0.0, 0.0]"),      # misfiled public memory -> moves to knowledge
+        ("m2", "knowledge", "[1.0, 0.0, 0.0]"),      # already right
+        ("m3", "imessage", "[1.0, 0.0, 0.0]"),       # private -> stays put
+        ("m4", "knowledge", "[0.0, 0.0, 1.0]")]      # homeless (imessage is not a target)
+
+
+def _main(argv=(), cur=None, llm="Nova's own article.", urlopen=None, connect_exc=None, batch=None):
+    """Run main() fully offline; returns (cur, slack messages, execute_batch calls, urlopen requests, log text)."""
+    cur = cur or _Cur(CENTROIDS, PAGE)
+    slack, batches, reqs = [], [], []
+
+    def connect(dsn):
+        if connect_exc:
+            raise connect_exc
+        return _Conn(cur)
+
+    def open_(req, timeout=None):
+        reqs.append(req)
+        if urlopen:
+            raise urlopen
+        return io.BytesIO(b"{}")
+    with patch.object(R.psycopg2, "connect", connect), patch.object(R, "slack", slack.append), \
+         patch.object(R.psycopg2.extras, "execute_batch", batch or (lambda c, sql, rows, page_size=0: batches.append((sql, list(rows))))), \
+         patch.object(R, "call_openrouter", lambda *a, **k: llm), patch.object(R.urllib.request, "urlopen", open_), \
+         patch.object(sys, "argv", ["nova_memory_reclassify.py", *argv]), redirect_stdout(io.StringIO()):
+        R.main()
+    return cur, slack, batches, reqs, R.LOG.read_text()
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
+        self.assertIsNone(pat.search(SRC))
+        self.assertNotIn("password", R.DSN)
+
+    def test_sql_is_parameterized_and_nothing_is_ever_deleted(self):
+        self.assertIsNone(re.search(r'execute(_batch)?\(\s*(cur,\s*)?f"', SRC))
+        self.assertNotIn("DELETE", SRC)
+        writes = {m.group(1) for m in re.finditer(r"\b(?:INSERT INTO|UPDATE|DELETE FROM)\s+([\w.]+)", SRC)}
+        self.assertEqual(writes, {"memories"})
+        cur, _, batches, _, _ = _main()
+        for s, p in zip(cur.sql, cur.params):
+            if "FROM memories" in s:
+                self.assertIn("%s", s); self.assertIsInstance(p, tuple)     # every value travels as a bind param
+        self.assertIn("WHERE id=%s", batches[0][0])
+
+    def test_private_memory_never_moves_and_private_vector_is_never_a_target(self):
+        cur, _, batches, _, _ = _main()
+        moved = {mid for _, rows in batches for (_, _, mid) in rows}
+        self.assertNotIn("m3", moved)
+        self.assertNotIn("imessage", {ns for _, rows in batches for (ns, _, _) in rows})
+
+    def test_article_prompt_forbids_secrets_and_ids(self):
+        self.assertIn("No secrets, no IDs.", SRC)
+
+
+class TestPerformance(unittest.TestCase):
+    def test_process_fast_on_10k_memories(self):
+        sources, cents, src_idx = _axis_centroids()
+        batch = [(f"m{i}", ("knowledge", "wikipedia", "imessage")[i % 3], f"[{i % 2}.0, {(i + 1) % 2}.0, 0.1]") for i in range(10_000)]
+        pending, pairs, hid, hemb = [], Counter(), [], []
+        t0 = time.perf_counter()
+        n = R._process(batch, sources, cents, src_idx, pending, pairs, hid, hemb)
+        self.assertLess(time.perf_counter() - t0, 3.0)
+        self.assertEqual(n, 10_000)
+        self.assertGreater(len(pending), 0)
+        self.assertFalse(any(os == "imessage" for _, _, os in pending))
+
+    def test_homeless_buffer_is_capped(self):
+        sources, cents, src_idx = _axis_centroids()
+        batch = [(f"h{i}", "knowledge", "[0.0, 0.0, 1.0]") for i in range(50)]
+        hid, hemb = [], []
+        with patch.object(R, "HOMELESS_CAP", 10):
+            R._process(batch, sources, cents, src_idx, [], Counter(), hid, hemb)
+        self.assertEqual((len(hid), len(hemb)), (10, 10))
+
+
+class TestRetry(unittest.TestCase):
+    def test_slack_failure_is_swallowed_and_logged(self):
+        # RETRY GAP: slack()/nova_config.post_both — one attempt; failure is logged, the run continues
+        with patch.object(R.nova_config, "post_both", side_effect=OSError("slack 500")), redirect_stdout(io.StringIO()):
+            R.slack("hello")
+        self.assertIn("slack post failed: slack 500", R.LOG.read_text())
+
+    def test_ops_vector_store_failure_does_not_abort_the_run(self):
+        # RETRY GAP: urllib.request.urlopen(/remember) — one attempt; the article is still written to disk and Slack
+        cur, slack, _, reqs, log = _main(urlopen=OSError("memory server down"))
+        self.assertEqual(len(reqs), 1)
+        self.assertIn("ops-vector store failed: memory server down", log)
+        self.assertTrue(slack[-1].startswith(":white_check_mark: *Memory reclassification complete*"))
+        self.assertTrue(cur.closed)
+
+    def test_llm_failure_falls_back_to_a_deterministic_article(self):
+        # RETRY GAP: write_article/call_openrouter — one attempt; None -> canned summary, never an empty article
+        with patch.object(R, "call_openrouter", lambda *a, **k: None):
+            text = R.write_article({"processed": 10, "moved": 2, "homeless": 1, "new_vectors": {}, "top_moves": [], "elapsed_s": 3})
+        self.assertEqual(text, "Memory audit complete: 2 of 10 memories reshelved.")
+
+    def test_pg_connect_failure_escapes_before_any_slack_post(self):
+        # RETRY GAP: main()/psycopg2.connect — one attempt; nothing is announced for a run that never started
+        posted = []
+        with patch.object(R.nova_config, "post_both", lambda m, **k: posted.append(m)), \
+             patch.object(R.psycopg2, "connect", side_effect=OSError("pg down")), \
+             patch.object(sys, "argv", ["nova_memory_reclassify.py"]), redirect_stdout(io.StringIO()):
+            with self.assertRaises(OSError):
+                R.main()
+        self.assertEqual(posted, [])
+
+
+class TestUnit(unittest.TestCase):
+    def test_log_writes_to_the_redirected_file(self):
+        with redirect_stdout(io.StringIO()) as out:
+            R.log("unit-probe")
+        self.assertIn("unit-probe", out.getvalue())
+        self.assertIn("] unit-probe", R.LOG.read_text().splitlines()[-1])
+
+    def test_kmeans_single_cluster_and_small_input(self):
+        X = R.normalize(np.array([[1.0, 0.0], [0.9, 0.1], [0.8, 0.2]], dtype=np.float32))
+        self.assertEqual(R.kmeans(X, k=1).tolist(), [0, 0, 0])
+        self.assertEqual(len(R.kmeans(X, k=3)), 3)
+
+    def test_ops_voice_prompt_is_a_string_about_nova(self):
+        with patch.object(R.psycopg2, "connect", side_effect=OSError("offline")):   # nova_voice reads PG for flavor; stay offline
+            p = R.nova_config_ops_voice()
+        self.assertIsInstance(p, str)
+        self.assertIn("Nova", p)
+
+    def test_write_article_prompt_carries_the_stats(self):
+        seen = {}
+
+        def fake(sys_p, user, **kw):
+            seen.update(sys_p=sys_p, user=user, kw=kw); return "ok"
+        with patch.object(R, "call_openrouter", fake):
+            self.assertEqual(R.write_article({"processed": 1234, "moved": 5, "homeless": 7, "new_vectors": {"nv": 9},
+                                              "top_moves": [{"from→to": "a → b", "n": 5}], "elapsed_s": 42}), "ok")
+        self.assertIn("1,234", seen["user"]); self.assertIn("- a → b: 5", seen["user"]); self.assertIn("nv (9)", seen["user"])
+        self.assertEqual(seen["kw"]["max_tokens"], 1200)
+
+
+class TestIntegration(unittest.TestCase):
+    def test_shared_helpers_are_imported_not_copied(self):
+        import nova_journal, nova_unused_memories
+        self.assertIs(R.call_openrouter, nova_journal.call_openrouter)
+        self.assertIs(R.INTERNAL_SOURCES, nova_unused_memories.INTERNAL_SOURCES)
+        self.assertIn("dbname=nova_memories", R.DSN)
+        self.assertNotIn("def is_private_source", SRC)
+
+    def test_process_output_matches_the_flush_update_shape(self):
+        cur, _, batches, _, _ = _main()
+        sql, rows = batches[0]
+        self.assertIn("SET source=%s", sql); self.assertIn("'reclass_from',%s", sql); self.assertTrue(sql.endswith("WHERE id=%s"))
+        self.assertEqual(rows, [("knowledge", "wikipedia", "m1")])     # (new_source, old_source, id) in placeholder order
+
+    def test_build_centroids_then_process_chain(self):
+        conn = _fake_conn(CENTROIDS)
+        sources, cents = R.build_centroids(conn)
+        src_idx = {s: i for i, s in enumerate(sources)}
+        n, pending, pairs, hid, _ = _run_process(PAGE, sources, cents, src_idx)
+        self.assertEqual((n, pending, hid), (4, [("m1", "knowledge", "wikipedia")], ["m4"]))
+        self.assertEqual(pairs, Counter({"wikipedia → knowledge": 1}))
+
+
+class TestFunctional(unittest.TestCase):
+    def test_golden_path_moves_writes_article_and_announces(self):
+        for f in R.OUT.glob("*"):
+            f.unlink()
+        cur, slack, batches, reqs, log = _main()
+        self.assertEqual(batches, [(batches[0][0], [("knowledge", "wikipedia", "m1")])])
+        stats = json.loads((R.OUT / "reclassify_stats.json").read_text())
+        self.assertEqual((stats["processed"], stats["moved"], stats["homeless"], stats["dry_run"]), (4, 1, 1, False))
+        self.assertEqual(stats["top_moves"], [{"from→to": "wikipedia → knowledge", "n": 1}])
+        md = next(R.OUT.glob("*-memory-reclassify.md")).read_text()
+        self.assertIn('categories: ["operations"]', md); self.assertIn("Nova's own article.", md)
+        body = json.loads(reqs[0].data)
+        self.assertEqual(body["source"], "operations"); self.assertIn("Nova's own article.", body["text"])
+        self.assertTrue(reqs[0].full_url.endswith("/remember"))
+        self.assertTrue(slack[0].startswith(":mag: *Memory reclassification started*"))
+        self.assertIn("4 audited · 1 moved · 0 new vector(s) · 1 homeless", slack[-1])
+        self.assertEqual(cur.params[0], (R.MIN_TARGET,))
+        self.assertEqual(cur.ran("ORDER BY id LIMIT")[0][1], ("", R.BATCH))
+        self.assertTrue(cur.closed)
+        self.assertIn("DONE", log)
+
+    def test_dry_run_changes_nothing_but_still_reports(self):
+        cur, slack, batches, reqs, _ = _main(argv=["--dry-run"])
+        self.assertEqual(batches, [])
+        self.assertFalse(any("UPDATE" in s for s in cur.sql))
+        self.assertTrue(json.loads((R.OUT / "reclassify_stats.json").read_text())["dry_run"])
+        self.assertEqual(len(reqs), 1)
+
+    def test_limit_stops_after_the_first_page(self):
+        cur, _, _, _, _ = _main(argv=["--limit", "2"])
+        self.assertEqual(len(cur.ran("ORDER BY id LIMIT")), 1)
+
+    def test_bad_limit_is_a_usage_error(self):
+        with self.assertRaises(ValueError):
+            _main(argv=["--limit", "lots"])
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_runs_main(self):
+        # no --help: the script has no argparse and any invocation starts a 1.66M-row mutating run — import smoke only
+        self.assertIn('if __name__ == "__main__":\n    main()', SRC)
+        r = subprocess.run([sys.executable, "-c", "import nova_memory_reclassify"], cwd=str(SCRIPTS_DIR),
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "")
+
+
+if __name__ == "__main__":
+    unittest.main()

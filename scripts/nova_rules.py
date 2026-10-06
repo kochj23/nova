@@ -107,7 +107,7 @@ def add_rule(rule_text, topic="global", source_type="correction",
              context="", confidence=1.0, expires_at=None,
              original_correction=None):
     rule_id = str(uuid.uuid4())[:8]
-    expires_sql = f"'{expires_at}'" if expires_at else "NULL"
+    expires_sql = f"'{_escape(str(expires_at))}'" if expires_at else "NULL"
     correction_json = json.dumps(original_correction) if original_correction else "NULL"
     if correction_json != "NULL":
         correction_json = f"'{_escape(correction_json)}'::jsonb"
@@ -115,7 +115,7 @@ def add_rule(rule_text, topic="global", source_type="correction",
     sql = f"""
         INSERT INTO rules (id, rule, topic, source_type, context, confidence, expires_at, original_correction)
         VALUES ('{rule_id}', '{_escape(rule_text)}', '{_escape(topic)}',
-                '{source_type}', '{_escape(context)}', {confidence},
+                '{_escape(source_type)}', '{_escape(context)}', {float(confidence)},
                 {expires_sql}, {correction_json});
     """
     if _exec(sql):
@@ -125,7 +125,7 @@ def add_rule(rule_text, topic="global", source_type="correction",
 
 
 def retire_rule(rule_id, reason=""):
-    sql = f"UPDATE rules SET status = 'retired', updated_at = NOW() WHERE id = '{rule_id}';"
+    sql = f"UPDATE rules SET status = 'retired', updated_at = NOW() WHERE id = '{_escape(rule_id)}';"
     if _exec(sql):
         log(f"Rule retired: {rule_id} — {reason}", level=LOG_INFO, source=SOURCE)
         return True
@@ -136,9 +136,9 @@ def record_application(rule_id, context="", prevented=""):
     app_id = str(uuid.uuid4())[:8]
     _exec(f"""
         INSERT INTO rule_applications (id, rule_id, context, prevented)
-        VALUES ('{app_id}', '{rule_id}', '{_escape(context)}', '{_escape(prevented)}');
+        VALUES ('{app_id}', '{_escape(rule_id)}', '{_escape(context)}', '{_escape(prevented)}');
         UPDATE rules SET times_applied = times_applied + 1, updated_at = NOW()
-        WHERE id = '{rule_id}';
+        WHERE id = '{_escape(rule_id)}';
     """)
 
 

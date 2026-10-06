@@ -612,5 +612,305 @@ class TestFrameworkIntegration(unittest.TestCase):
                       "Signal fallback must use the Homebrew signal-cli path")
 
 
+
+# ── House categories added 2026-10-05 (Security, Retry, Unit, Integration, Functional, Frame) ──
+# TestPerformance already lives above. Everything below is offline: Slack/Discord/local-notify
+# senders are stubbed at module load, state/metrics files and the nova.jsonl log go to a tempdir.
+
+import io
+import subprocess
+import tempfile
+import types
+from contextlib import redirect_stderr, redirect_stdout
+
+import nova_big_brother as bb
+import nova_config as _cfg
+import nova_logger as _nl
+
+SRC = (SCRIPTS_DIR / "nova_big_brother.py").read_text()
+_TMP = Path(tempfile.mkdtemp(prefix="bb-test-"))
+bb.PID_FILE = _TMP / "big-brother.pid"
+bb.STATE_FILE = _TMP / "big-brother-state.json"
+bb.METRICS_FILE = _TMP / "bb-metrics.json"
+_nl.LOG_FILE = _TMP / "nova.jsonl"          # nova_logger.log() writes here at call time
+
+
+class _CfgProxy:
+    """nova_config as Big Brother sees it: real constants/helpers, but the senders are stubs.
+    Only this module's view is replaced, so other test files keep the real post_both."""
+    def __init__(self, real):
+        self._real = real
+        self.post_both = MagicMock(name="post_both")        # never reach Slack/Discord from a test
+        self.notify_local = MagicMock(name="notify_local")  # never pop a macOS notification
+
+    def __getattr__(self, name):
+        return getattr(self._real, name)
+
+
+bb.nova_config = CFG = _CfgProxy(_cfg)
+
+
+def _reset_notify_state():
+    bb._digest_buffer.clear(); bb._issue_last_alerted.clear(); bb._alerted_issues.clear()
+    bb._last_digest_post = 0.0
+    CFG.post_both = MagicMock(name="post_both"); CFG.notify_local = MagicMock(name="notify_local")
+
+
+def _resp(payload, status=200):
+    r = MagicMock(); r.status = status; r.read.return_value = json.dumps(payload).encode()
+    return r
+
+
+def _get(path):
+    """Drive BBHandler.do_GET without a socket; returns the decoded JSON body."""
+    h = bb.BBHandler.__new__(bb.BBHandler)
+    h.path = path; h.wfile = io.BytesIO()
+    h.send_response = MagicMock(); h.send_header = MagicMock(); h.end_headers = MagicMock()
+    h.do_GET()
+    return h.send_response.call_args[0][0], json.loads(h.wfile.getvalue() or b"null")
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
+        self.assertIsNone(pat.search(SRC))
+        self.assertIn("nova_config.slack_bot_token()", SRC)      # Slack token comes from the Keychain helper
+
+    def test_sql_is_parameterized_and_writes_are_bounded(self):
+        self.assertIsNone(re.search(r'execute\(\s*f"', SRC))
+        self.assertIsNone(re.search(r'execute\([^)]*%\s*\(', SRC))
+        writes = {m.group(1) for m in re.finditer(r"\b(?:INSERT INTO|(?<!DO )UPDATE|DELETE FROM)\s+([\w.]+)", SRC)}
+        self.assertEqual(writes, {"churn", "claude_queue", "incidents", "service_registry"})
+
+    def test_model_allowlist_keeps_cloud_to_research(self):
+        cloud = {m for m in bb._ALLOWED_MODELS if m.startswith("openrouter/")}
+        self.assertEqual(cloud, {"openrouter/qwen/qwen3-235b-a22b-2507"})
+        self.assertTrue(bb._OPENROUTER_ALLOWED_AGENTS <= {"research", "main", "chat"})
+
+    def test_notify_strips_markup_before_the_local_banner(self):
+        _reset_notify_state()
+        bb._notify_immediate(":rotating_light: *Gateway DOWN* :x:", is_critical=True)
+        title, body = CFG.notify_local.call_args[0][:2]
+        self.assertEqual((title, body), ("Nova — Big Brother", "Gateway DOWN"))
+        self.assertTrue(CFG.notify_local.call_args[1]["critical"])
+
+
+class TestRetry(unittest.TestCase):
+    def test_recall_check_retries_twice_then_succeeds(self):
+        calls = [OSError("conn reset"), OSError("timeout"), _resp({"memories": [], "count": 0})]
+        with patch.object(bb, "_hnsw_reindex_running", lambda: False), patch.object(bb.time, "sleep") as slp, \
+             patch.object(bb.urllib.request, "urlopen", side_effect=calls) as u:
+            self.assertTrue(bb._check_memory_server_recall())
+        self.assertEqual(u.call_count, 3)
+        self.assertEqual([c[0][0] for c in slp.call_args_list], [5, 5])   # backoff between attempts
+
+    def test_recall_check_gives_up_after_three(self):
+        with patch.object(bb, "_hnsw_reindex_running", lambda: False), patch.object(bb.time, "sleep"), \
+             patch.object(bb.urllib.request, "urlopen", side_effect=OSError("down")) as u:
+            self.assertFalse(bb._check_memory_server_recall())
+        self.assertEqual(u.call_count, 3)
+
+    def test_notify_falls_back_to_raw_slack_then_signal(self):
+        # RETRY GAP: _notify_immediate — post_both is tried once; failure cascades to raw Slack HTTP, then signal-cli
+        _reset_notify_state()
+        CFG.post_both = MagicMock(side_effect=RuntimeError("gateway dead"))
+        with patch.object(_cfg, "slack_bot_token", lambda: "tok"), \
+             patch.object(bb.urllib.request, "urlopen", side_effect=OSError("slack 500")) as u, \
+             patch.object(bb.subprocess, "run") as sp:
+            bb._notify_immediate("boom", is_critical=True)
+        self.assertEqual(u.call_count, 1)
+        self.assertEqual(json.loads(u.call_args[0][0].data)["channel"], _cfg.SLACK_BB)
+        self.assertEqual(sp.call_args[0][0][0], "/opt/homebrew/bin/signal-cli")
+
+    def test_protected_task_probe_fails_open(self):
+        # RETRY GAP: _is_protected_task_running — one urlopen; any failure means "not protected"
+        with patch.object(bb.urllib.request, "urlopen", side_effect=OSError("scheduler down")):
+            self.assertFalse(bb._is_protected_task_running())
+        with patch.object(bb.urllib.request, "urlopen", side_effect=[_resp({"tasks_running": 1}), OSError("x")]):
+            self.assertTrue(bb._is_protected_task_running())       # can't see names -> conservative
+
+    def test_http_healthy_is_one_shot(self):
+        # RETRY GAP: _http_healthy — a single probe; score history (3 of 5) is the dampener, not a retry
+        with patch.object(bb.urllib.request, "urlopen", side_effect=OSError("refused")) as u:
+            self.assertFalse(bb._http_healthy("127.0.0.1", 1, "/health"))
+        self.assertEqual(u.call_count, 1)
+
+
+class TestUnit(unittest.TestCase):
+    def setUp(self):
+        bb._service_score_history.clear(); bb._service_check_interval.clear()
+        bb._service_last_checked.clear(); bb._service_healthy_since.clear()
+        bb._service_restart_times.clear(); bb._service_crash_loop_until.clear()
+        _reset_notify_state()
+
+    def test_score_history_needs_three_of_five(self):
+        self.assertTrue(bb._score_history_confirms_down("X", False))       # first sample: trust it
+        self.assertFalse(bb._score_history_confirms_down("X", True))
+        self.assertFalse(bb._score_history_confirms_down("X", False))      # 2 of 3 down
+        self.assertTrue(bb._score_history_confirms_down("X", False))       # 3 of 4 down
+        for _ in range(5):
+            bb._score_history_confirms_down("X", True)
+        self.assertFalse(bb._score_history_confirms_down("X", False))      # window slid clean
+
+    def test_adaptive_interval(self):
+        self.assertEqual(bb._get_service_interval("Y"), bb.SWEEP_INTERVAL)
+        self.assertTrue(bb._should_check_now("Y"))
+        bb._update_adaptive_interval("Y", True)
+        self.assertEqual(bb._get_service_interval("Y"), bb.SWEEP_INTERVAL)
+        self.assertFalse(bb._should_check_now("Y"))
+        bb._service_healthy_since["Y"] -= bb.HEALTHY_STRETCH_S + 1
+        bb._update_adaptive_interval("Y", True)
+        self.assertEqual(bb._get_service_interval("Y"), bb.RELAXED_INTERVAL)
+        bb._update_adaptive_interval("Y", False)
+        self.assertEqual(bb._get_service_interval("Y"), bb.HEIGHTENED_INTERVAL)
+        self.assertNotIn("Y", bb._service_healthy_since)
+
+    def test_crash_loop_detection(self):
+        with patch.object(bb, "_escalate_to_claude") as esc:
+            self.assertFalse(bb._check_crash_loop("Redis"))
+            self.assertFalse(bb._check_crash_loop("Redis"))
+            self.assertTrue(bb._check_crash_loop("Redis"))                 # third restart in the window
+            self.assertTrue(bb._check_crash_loop("Redis"))                 # cooldown holds
+        esc.assert_called_once()
+        self.assertEqual(esc.call_args[1]["priority"], 2)
+        CFG.post_both.assert_called_once()
+        self.assertIn("Crash-loop detected: Redis", CFG.post_both.call_args[0][0])
+
+    def test_maybe_notify_cooldown(self):
+        bb._maybe_notify("k", "first", is_critical=True, cooldown=600)
+        bb._maybe_notify("k", "second", is_critical=True, cooldown=600)
+        self.assertEqual(CFG.post_both.call_count, 1)
+        bb._issue_last_alerted["k"] -= 601
+        bb._maybe_notify("k", "third", is_critical=True, cooldown=600)
+        self.assertEqual(CFG.post_both.call_count, 2)
+
+    def test_key_to_bb_name_edges(self):
+        self.assertIsNone(bb._key_to_bb_name("no-such-key"))
+        self.assertIsNone(bb._key_to_bb_name(None))
+        for key, name in bb._KEY_TO_BB_NAME.items():
+            self.assertEqual(bb._key_to_bb_name(key), name)
+
+    def test_quiet_hours_boundaries(self):
+        with patch("nova_big_brother.datetime") as dt:
+            now = MagicMock(); dt.now.return_value = now
+            for hour, quiet in ((22, True), (21, False), (7, True), (8, False), (0, True)):
+                now.hour = hour
+                self.assertEqual(bb._is_quiet_hours(), quiet, hour)
+
+    def test_non_critical_notify_is_buffered_not_posted(self):
+        bb._notify("warn only")
+        CFG.post_both.assert_not_called()
+        self.assertEqual([m for _, m in bb._digest_buffer], ["warn only"])
+
+
+class TestIntegration(unittest.TestCase):
+    def setUp(self):
+        _reset_notify_state()
+
+    def test_escalator_helpers_are_imported_not_reimplemented(self):
+        import nova_bb_escalator as esc
+        self.assertIs(bb.should_notify, esc.should_notify)
+        self.assertIs(bb._resolve_escalation, esc._resolve_escalation)
+        self.assertNotIn("def should_notify", SRC)
+
+    def test_notify_then_flush_digest_posts_one_rollup_to_the_digest_channel(self):
+        for _ in range(3):
+            bb._notify(":x: Plex DOWN")
+        bb._notify("RESOLVED: Redis")
+        bb._flush_digest()
+        CFG.post_both.assert_called_once()
+        msg, kw = CFG.post_both.call_args[0][0], CFG.post_both.call_args[1]
+        self.assertEqual(kw["slack_channel"], _cfg.SLACK_DIGEST)
+        self.assertIn("1 issues (3 events)", msg)
+        self.assertIn("Plex DOWN (x3)", msg)
+        self.assertIn("1 auto-resolved", msg)
+        self.assertEqual(bb._digest_buffer, [])
+
+    def test_critical_notify_goes_straight_to_the_critical_channel(self):
+        bb._maybe_notify("gw", ":rotating_light: Gateway DOWN", is_critical=True)
+        CFG.post_both.assert_called_once_with(":rotating_light: Gateway DOWN", slack_channel=_cfg.SLACK_BB)
+        self.assertEqual(bb._digest_buffer, [])
+
+    def test_service_is_up_routes_http_vs_port(self):
+        with patch.object(bb, "_http_healthy", return_value=True) as h, patch.object(bb, "_port_open", return_value=False) as p:
+            self.assertTrue(bb._service_is_up("Ollama", "127.0.0.1", 11434, "/api/version"))
+            self.assertFalse(bb._service_is_up("Redis", "127.0.0.1", 6379, None))
+        h.assert_called_once_with("127.0.0.1", 11434, "/api/version"); p.assert_called_once_with("127.0.0.1", 6379)
+
+    def test_record_event_persists_state_to_the_redirected_file(self):
+        bb._heal_events.clear()
+        bb._record_event("info", "state write", "ok", "Test")
+        state = json.loads(bb.STATE_FILE.read_text())
+        self.assertEqual(state["events_total"], 1)
+        self.assertEqual(state["pid"], os.getpid())
+        self.assertTrue(str(bb.STATE_FILE).startswith(str(_TMP)))
+
+
+class TestFunctional(unittest.TestCase):
+    def setUp(self):
+        _reset_notify_state(); bb._heal_events.clear()
+
+    def test_api_events_endpoint_serves_newest_first_with_limit(self):
+        for i in range(5):
+            bb._record_event("info", f"ev{i}", "fix", "Svc")
+        status, body = _get("/bb/events?n=2")
+        self.assertEqual(status, 200)
+        self.assertEqual([e["issue"] for e in body], ["ev4", "ev3"])
+        status, body = _get("/bb/events?n=junk")
+        self.assertEqual(len(body), 5)                    # bad n falls back to the default of 100
+
+    def test_api_unknown_route_is_404(self):
+        status, _ = _get("/bb/nonexistent")
+        self.assertEqual(status, 404)
+
+    def test_digest_flush_respects_interval_and_empty_buffer(self):
+        bb._last_digest_post = time.time()
+        bb._notify("buffered")
+        bb._flush_digest()
+        CFG.post_both.assert_not_called()
+        bb._last_digest_post = 0.0; bb._digest_buffer.clear()
+        bb._flush_digest()
+        CFG.post_both.assert_not_called()                 # nothing to say -> nothing posted
+
+    def test_digest_post_failure_never_escapes(self):
+        CFG.post_both = MagicMock(side_effect=RuntimeError("slack 500"))
+        bb._notify("one thing")
+        with patch.object(_cfg, "slack_bot_token", lambda: ""), redirect_stderr(io.StringIO()):
+            bb._flush_digest()                             # fallback token empty -> silently logged
+        self.assertEqual(bb._digest_buffer, [])
+
+    def test_log_scan_resumes_and_handles_rotation(self):
+        log = _TMP / "scan.log"
+        log.write_text("fine\n")
+        bb._SEEN_ERRORS.pop(str(log), None)
+        self.assertEqual(bb._scan_log_file(log), [])
+        with open(log, "a") as f:
+            f.write("No space left on device\n")
+        found = bb._scan_log_file(log)
+        self.assertEqual([(s, svc, d) for s, svc, d, _ in found], [("critical", "System", "Disk full")])
+        log.write_text("OOM killer\n")                       # shorter file == rotated -> rescanned from 0
+        self.assertEqual(bb._scan_log_file(log)[0][2], "Out of memory condition")
+        self.assertEqual(bb._scan_log_file(_TMP / "missing.log"), [])
+
+    def test_metrics_round_trip_through_tempdir(self):
+        bb._metrics.clear(); bb._metrics.append({"t": 1, "issues": 0})
+        bb._flush_metrics()
+        bb._metrics.clear(); bb._load_metrics()
+        self.assertEqual(list(bb._metrics), [{"t": 1, "issues": 0}])
+
+
+class TestFrame(unittest.TestCase):
+    def test_import_never_starts_the_daemon(self):
+        self.assertIn('if __name__ == "__main__":\n    main()', SRC)
+        r = subprocess.run([sys.executable, "-c", "import nova_big_brother"], cwd=str(SCRIPTS_DIR),
+                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_main_is_a_daemon_with_a_pid_file_and_sweep_loop(self):
+        self.assertIn("_write_pid()", SRC)
+        self.assertIn("while not _shutdown.is_set():", SRC)
+        self.assertNotIn("argparse", SRC)                   # no CLI surface; launchd owns the lifecycle
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

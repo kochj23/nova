@@ -153,7 +153,9 @@ def scan_content() -> dict:
     for section in SECTIONS:
         d = CONTENT_DIR / section
         if not d.exists():
-            sections_data[section] = {"post_count": 0, "coverage_7d": [False]*7, "latest_ts": None, "latest_title": ""}
+            sections_data[section] = {"post_count": 0, "coverage_7d": [False]*7, "coverage_titles": [""]*7,
+                                      "latest_ts": None, "latest_title": "", "age_hours": 9999,
+                                      "posts_this_week": 0, "posts_last_week": 0, "words_this_week": 0}
             continue
 
         posts = [f for f in d.glob("*.md") if f.name != "_index.md"]

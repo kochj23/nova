@@ -27,3 +27,15 @@ Hard rules
 - Do not change the script under test unless you find a genuine bug; keep that change minimal and say so.
 - Docstring header: `"""Tests for <script> — the 7 house categories (Security, Performance, Retry, Unit,
   Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""`
+
+## Pitfalls learned on 2026-10-05 (every one of these bit us)
+- Stub every outbound side effect at module load, not just in one test: `nova_config.post_both`, `nova_notify.notify`,
+  Slack/Discord senders, `urllib.request.urlopen`, `requests`, `subprocess.run`, SMTP. One unmocked path posted a
+  SQL-injection test string to #nova-chat eight times.
+- Never assign into `sys.modules` directly; use `monkeypatch.setitem(sys.modules, ...)` or `patch.dict(sys.modules, ...)`
+  with the SAME object restored (a leaked MagicMock broke 12 tests in other files). Never `patch.dict("sys.modules")`
+  around an import that pulls in Cython extensions (asyncpg) — restore only the keys you set.
+- No module-level clocks (`NOW = datetime.now()`) in timing assertions; compute at call time.
+- Redirect any `LOG_FILE` / state file / outreach log to a tempdir; tests must leave `~/.openclaw/logs` untouched.
+- A script's `--selftest` may reach PG or the LLM; check before using it in TestFrame. Prefer `--help`, else import smoke.
+- A test file must pass when run right after any other file: finish by running your whole batch in ONE pytest session.

@@ -224,3 +224,236 @@ def test_screenplay_alpha_ratio_gate_for_reocr():
     import nova_screenplay_ingest as sp
     assert sp.alpha_ratio("HOSTEI.: Wr~t:en & Cire~ted ty ~:.}:; r:ERVE - 'Soaz") < 0.62      # garbage text layer -> re-OCR
     assert sp.alpha_ratio("PAXTON: We should get out of here before it gets dark.") > 0.62
+
+
+# ── the 7 house categories (unittest classes, added 2026-10-05) ─────────────
+# Tests for nova_speaks_upload.py — the 7 house categories (Security, Performance, Retry, Unit,
+# Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+import io
+import tempfile
+import types
+import unittest
+from contextlib import redirect_stdout
+
+SCRIPT = SCRIPTS / "nova_speaks_upload.py"
+SRC = SCRIPT.read_text()
+
+
+def _article_file(body=ARTICLE, section="local"):
+    d = Path(tempfile.mkdtemp()) / "content" / section
+    d.mkdir(parents=True)
+    p = d / "2026-10-05-heat-dome.md"
+    p.write_text(body)
+    return p
+
+
+def _yt_stub(upload=None, exc=None, valid=True):
+    """A youtube_up stand-in: records Metadata kwargs and the upload call; never touches the network."""
+    mod = types.ModuleType("youtube_up")
+    mod.calls = []
+
+    class Metadata:
+        def __init__(self, **kw):
+            mod.calls.append(("Metadata", kw)); self.kw = kw
+
+    class _Enum(dict):
+        def __getattr__(self, k): return k
+        def __getitem__(self, k): return k
+
+    class YTUploaderSession:
+        def __init__(self, jar): mod.calls.append(("session", jar))
+        def has_valid_cookies(self): return valid
+        def upload(self, mp4, meta, progress_callback=None):
+            mod.calls.append(("upload", mp4, meta.kw))
+            if progress_callback:
+                progress_callback("upload", 0); progress_callback("upload", 50); progress_callback("upload", 100)
+            if exc:
+                raise exc
+            return upload
+    mod.Metadata, mod.PrivacyEnum, mod.CategoryEnum, mod.YTUploaderSession = Metadata, _Enum(), _Enum(), YTUploaderSession
+    return mod
+
+
+def _pg(row, rowcount=1):
+    cur = MagicMock(); cur.fetchone.return_value = row; cur.rowcount = rowcount
+    conn = MagicMock(); conn.cursor.return_value = cur
+    return conn, cur
+
+
+def _main(argv, row, yt=None, rowcount=1):
+    """Run main() with PG, youtube_up, the Safari cookie export and the cookie jar all stubbed.
+    Returns (rc, cursor, stdout, youtube_up stub)."""
+    conn, cur = _pg(row, rowcount)
+    yt = yt or _yt_stub("xDOTDX-xOd4")
+    jar = Path(tempfile.mkdtemp()) / "jar.txt"
+    jar.write_text("# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tLOGIN_INFO\tli\n")
+    out = io.StringIO()
+    with patch.object(up.psycopg2, "connect", lambda dsn: conn), patch.object(sys, "argv", ["nova_speaks_upload.py"] + argv), \
+         patch.dict(sys.modules, {"youtube_up": yt}), patch.object(up, "COOKIES", jar), \
+         patch.object(up, "refresh_cookies", lambda: None), redirect_stdout(out):
+        rc = up.main()
+    return rc, cur, out.getvalue(), yt
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
+        self.assertIsNone(pat.search(SRC))
+        self.assertNotIn("password", up.DSN)
+
+    def test_sql_is_parameterized_and_writes_are_scoped(self):
+        self.assertIsNone(re.search(r'execute\(\s*f"', SRC))
+        writes = {m.group(1) for m in re.finditer(r"\b(?:INSERT INTO|UPDATE|DELETE FROM|ALTER TABLE)\s+([\w.]+)", SRC)}
+        self.assertEqual(writes, {"nova_speaks_renders"})
+        rc, cur, _, _ = _main(["--slug", "x'; SELECT pg_sleep(9); --", "--dry-run"], None)
+        for call in cur.execute.call_args_list:
+            self.assertNotIn("pg_sleep", call[0][0])                                   # the payload only ever travels as a parameter
+
+    def test_cookie_values_never_reach_the_log(self):
+        raw = Path(tempfile.mkdtemp()) / "raw.txt"
+        raw.write_text("# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t0\tSAPISID\tSUPERSECRETVALUE\n")
+        out = Path(tempfile.mkdtemp()) / "jar.txt"
+        buf = io.StringIO()
+        with patch("subprocess.run", return_value=MagicMock(returncode=0, stderr="")), patch("tempfile.mktemp", return_value=str(raw)), \
+             patch.object(up, "COOKIES", out), redirect_stdout(buf):
+            up.refresh_cookies()
+        self.assertNotIn("SUPERSECRETVALUE", buf.getvalue())
+        self.assertIn("cookies refreshed from Safari (2 lines)", buf.getvalue())
+        self.assertFalse(raw.exists())                                                  # the raw export is unlinked
+
+    def test_angle_brackets_are_stripped_from_every_field(self):
+        m = up.build("s", str(_article_file()), "https://x/<y>")
+        for v in (m["title"], m["description"], *m["tags"]):
+            self.assertNotRegex(v, r"[<>]")
+
+
+class TestPerformance(unittest.TestCase):
+    def test_frontmatter_parse_10k_under_bound(self):
+        t0 = time.perf_counter()
+        for _ in range(10_000):
+            up.fm(ARTICLE, "title"); up.fm(ARTICLE, "missing")
+        self.assertLess(time.perf_counter() - t0, 1.5)
+
+    def test_build_bounded_on_huge_tag_list(self):
+        p = _article_file(ARTICLE.replace('["burbank", "local-news", "burbank"]', "[" + ", ".join(f'"t{i}"' for i in range(5000)) + "]"))
+        t0 = time.perf_counter()
+        m = up.build("s", str(p), "u")
+        self.assertLess(time.perf_counter() - t0, 1.0)
+        self.assertEqual(len(m["tags"]), 30)                                            # YouTube's cap is honoured
+
+
+class TestRetry(unittest.TestCase):
+    def test_cookie_export_failure_fails_open_and_keeps_the_last_jar(self):
+        # RETRY GAP: refresh_cookies()/yt-dlp — one attempt; on failure the previous jar is reused and no exception escapes
+        jar = Path(tempfile.mkdtemp()) / "jar.txt"; jar.write_text("old")
+        buf = io.StringIO()
+        with patch("subprocess.run", return_value=MagicMock(returncode=1, stderr="Safari: TCC denied")) as run, \
+             patch.object(up, "COOKIES", jar), redirect_stdout(buf):
+            up.refresh_cookies()
+        self.assertEqual(run.call_count, 1)
+        self.assertEqual(jar.read_text(), "old")
+        self.assertIn("reusing jar.txt", buf.getvalue())
+
+    def test_upload_failure_releases_the_claim_and_reraises(self):
+        # RETRY GAP: session().upload — one attempt; the 'uploading' claim is released so the sweep can retry later
+        conn, cur = _pg((str(_article_file()), "u", "/tmp/x.mp4", None))
+        yt = _yt_stub(exc=RuntimeError("quota"))
+        with patch.object(up.psycopg2, "connect", lambda dsn: conn), patch.object(sys, "argv", ["x", "--slug", "s"]), \
+             patch.dict(sys.modules, {"youtube_up": yt}), patch.object(up, "session", lambda: yt.YTUploaderSession(None)), \
+             redirect_stdout(io.StringIO()):
+            with self.assertRaises(RuntimeError):
+                up.main()
+        sql = [c[0][0] for c in cur.execute.call_args_list]
+        self.assertEqual(sum(1 for c in yt.calls if c[0] == "upload"), 1)
+        self.assertTrue(any("youtube_id='uploading' WHERE slug=%s AND youtube_id IS NULL" in s for s in sql))
+        self.assertTrue(sql[-1].startswith("UPDATE nova_speaks_renders SET youtube_id=NULL"))
+
+
+class TestUnit(unittest.TestCase):
+    def test_fm_edges(self):
+        self.assertEqual(up.fm("", "title"), "")
+        self.assertEqual(up.fm("title: \"Quoted\"\n", "title"), "Quoted")
+        self.assertEqual(up.fm("subtitle: no\ntitle:   spaced  \n", "title"), "spaced")
+        self.assertEqual(up.fm("x: 1", "y"), "")
+
+    def test_build_section_from_parent_dir_and_date_short_year(self):
+        m = up.build("s", str(_article_file(section="random-thoughts")), "u")
+        self.assertTrue(m["title"].startswith("AI: Nova Speaks 10/5/26 - Random Thoughts - "))
+        self.assertEqual(str(m["recorded"]), "2026-10-05")
+        self.assertIn("random-thoughts", m["tags"])
+
+    def test_build_without_description_or_tags(self):
+        body = ARTICLE.replace('description: "Nova\'s daily dispatch <b>from</b> Burbank."\n', "").replace('tags: ["burbank", "local-news", "burbank"]\n', "")
+        m = up.build("s", str(_article_file(body)), "https://u/")
+        self.assertTrue(m["description"].startswith("Article: https://u/\n\n"))
+        self.assertEqual(m["tags"], ("Nova", "AI", "Nova Speaks", "local"))
+
+    def test_build_rejects_a_missing_date(self):
+        with self.assertRaises(ValueError):
+            up.build("s", str(_article_file(ARTICLE.replace("date: 2026-10-05T10:00:00-07:00\n", ""))), "u")
+
+
+class TestIntegration(unittest.TestCase):
+    def test_sweep_invokes_this_script_by_slug_and_parses_its_last_line(self):
+        sweep = (SCRIPTS / "nova_speaks_sweep.py").read_text()
+        self.assertIn('"nova_speaks_upload.py"), "--slug", slug]', sweep)
+        self.assertIn("print(vid)", SRC)                                                  # the id is the final stdout line
+
+    def test_build_feeds_metadata_with_playlist_and_category(self):
+        art = _article_file()
+        rc, cur, _, yt = _main(["--slug", "2026-10-05-heat-dome"], (str(art), "https://u/", "/tmp/x.mp4", None), yt=_yt_stub("AAAAAAAAAAA"))
+        kw = next(c[1] for c in yt.calls if c[0] == "Metadata")
+        self.assertEqual(kw["playlist_ids"], [up.PLAYLIST])
+        self.assertEqual((kw["privacy"], kw["category"], kw["made_for_kids"]), ("PUBLIC", "SCIENCE_TECH", False))
+        self.assertEqual(kw["title"], up.build("s", str(art), "https://u/")["title"])
+
+    def test_dsn_and_cookie_jar_match_the_fleet_conventions(self):
+        self.assertEqual(up.DSN, "host=localhost dbname=nova_ops user=kochj")
+        self.assertEqual(str(up.COOKIES).split("/.openclaw/")[1], "cache/yt_cookies_youtube.txt")
+
+
+class TestFunctional(unittest.TestCase):
+    def test_golden_path_claims_uploads_and_records_the_video_id(self):
+        rc, cur, out, yt = _main(["--slug", "2026-10-05-heat-dome"], (str(_article_file()), "https://u/", "/tmp/x.mp4", None))
+        self.assertEqual(rc, 0)
+        self.assertEqual([c[0] for c in yt.calls], ["Metadata", "session", "upload"])
+        self.assertEqual(yt.calls[-1][1], "/tmp/x.mp4")
+        sql = [(c[0][0], c[0][1] if len(c[0]) > 1 else None) for c in cur.execute.call_args_list]
+        self.assertEqual(sql[-1], ("UPDATE nova_speaks_renders SET youtube_id=%s, youtube_uploaded_at=now() WHERE slug=%s", ("xDOTDX-xOd4", "2026-10-05-heat-dome")))
+        self.assertTrue(out.rstrip().endswith("xDOTDX-xOd4"))
+        self.assertIn("DONE https://youtu.be/xDOTDX-xOd4 (PUBLIC)", out)
+        self.assertIn("upload 0%", out); self.assertNotIn("upload 50%", out)
+
+    def test_no_done_render_returns_one_without_touching_youtube(self):
+        rc, cur, out, yt = _main(["--slug", "ghost"], None)
+        self.assertEqual(rc, 1)
+        self.assertIn("no done render for ghost", out)
+        self.assertEqual(yt.calls, [])
+
+    def test_lost_claim_race_returns_zero_without_uploading(self):
+        rc, cur, out, yt = _main(["--slug", "s"], (str(_article_file()), "u", "/tmp/x.mp4", None), rowcount=0)
+        self.assertEqual(rc, 0)
+        self.assertIn("claimed by another uploader", out)
+        self.assertFalse(any(c[0] == "upload" for c in yt.calls))
+
+    def test_check_reports_cookie_validity_as_exit_code(self):
+        for valid, rc in ((True, 0), (False, 1)):
+            rc_got, _, out, _ = _main(["--check"], None, yt=_yt_stub(valid=valid))
+            self.assertEqual(rc_got, rc)
+            self.assertIn(f"cookies valid: {valid}", out)
+
+
+class TestFrame(unittest.TestCase):
+    def test_help_exits_zero_and_import_never_runs_main(self):
+        r = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, timeout=30,
+                           env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--dry-run", r.stdout)
+        self.assertIn('if __name__ == "__main__":\n    sys.exit(main())', SRC)
+        r = subprocess.run([sys.executable, "-c", "import nova_speaks_upload"], cwd=str(SCRIPTS), capture_output=True, text=True,
+                           timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual((r.returncode, r.stdout), (0, ""), r.stderr)
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -136,11 +136,15 @@ def cmd_list(a):
     for co in cos:
         c = json.load(open(co)); print(f"  {c['id']}  \"{c['name']}\"  {len(c['files'])}f  targets={c['targets']}")
 
-p = argparse.ArgumentParser(prog="nova_transport.py")
-sub = p.add_subparsers(dest="cmd", required=True)
-r = sub.add_parser("release"); r.add_argument("name"); r.add_argument("--script", nargs="*"); r.add_argument("--hook"); r.add_argument("--to"); r.set_defaults(fn=cmd_release)
-pr = sub.add_parser("promote"); pr.add_argument("id"); pr.set_defaults(fn=cmd_promote)
-im = sub.add_parser("import"); im.add_argument("--node"); im.set_defaults(fn=cmd_import)
-sub.add_parser("status").set_defaults(fn=cmd_status)
-sub.add_parser("list").set_defaults(fn=cmd_list)
-a = p.parse_args(); a.fn(a)
+def main(argv=None):
+    p = argparse.ArgumentParser(prog="nova_transport.py")
+    sub = p.add_subparsers(dest="cmd", required=True)
+    r = sub.add_parser("release"); r.add_argument("name"); r.add_argument("--script", nargs="*"); r.add_argument("--hook"); r.add_argument("--to"); r.set_defaults(fn=cmd_release)
+    pr = sub.add_parser("promote"); pr.add_argument("id"); pr.set_defaults(fn=cmd_promote)
+    im = sub.add_parser("import"); im.add_argument("--node"); im.set_defaults(fn=cmd_import)
+    sub.add_parser("status").set_defaults(fn=cmd_status)
+    sub.add_parser("list").set_defaults(fn=cmd_list)
+    a = p.parse_args(argv); a.fn(a)
+
+if __name__ == "__main__":
+    main()

@@ -533,5 +533,261 @@ class TestPushPublicMirrors(unittest.TestCase):
         self.assertNotIn(SECRET, c.kwargs["input"])
 
 
+# ── The 7 house categories (added 2026-10-05): Security, Performance, Retry, Unit,
+#    Integration, Functional, Frame. Written by Jordan Koch (via Claude). ────────
+
+import io
+import os
+import re
+import time
+import types
+from contextlib import redirect_stdout
+
+SCRIPTS = Path(__file__).resolve().parents[1]
+SCRIPT = SCRIPTS / "nova_dns_sync.py"
+SRC = SCRIPT.read_text()
+_INJ = "x'); DR" "OP TABLE dns_records; --"
+
+
+def _client(i, **kw):
+    c = {"mac": f"aa:bb:cc:dd:{i >> 8 & 0xff:02x}:{i & 0xff:02x}", "ip": f"10.{i >> 16 & 0xff}.{i >> 8 & 0xff}.{i & 0xff}",
+         "name": f"device-{i}"}
+    c.update(kw)
+    return c
+
+
+class _Cur:
+    """Cursor that records every (sql, params) and answers the sticky lookup from `names`."""
+    def __init__(self, names=None):
+        self.names = names or {}; self.sql = []; self._mac = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def execute(self, sql, params=None):
+        self.sql.append((" ".join(sql.split()), params))
+        self._mac = params[0] if params else None
+
+    def fetchone(self):
+        n = self.names.get(self._mac)
+        return (n, False) if n else None
+
+
+class _Conn:
+    def __init__(self, cur):
+        self.cur = cur; self.closed = False; self.autocommit = False
+
+    def cursor(self):
+        return self.cur
+
+    def close(self):
+        self.closed = True
+
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials(self):
+        pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
+        self.assertIsNone(pat.search(SRC))
+        self.assertNotIn("password", dns.DSN)
+
+    def test_secrets_come_from_keychain_or_fleet_store_never_source(self):
+        # darwin -> `security find-generic-password` as an argv list (no shell); linux -> nova_secrets
+        with patch("nova_dns_sync.subprocess.run", return_value=MagicMock(stdout="kc-value\n")) as mrun, \
+             patch.object(dns.sys, "platform", "darwin"):
+            self.assertEqual(dns.api_key(), "kc-value")
+        argv = mrun.call_args.args[0]
+        self.assertEqual(argv[:2], ["security", "find-generic-password"])
+        self.assertIn("nova-unifi-api-key", argv)
+        self.assertNotIn("shell", mrun.call_args.kwargs)
+        fake = types.ModuleType("nova_secrets"); fake.get_secret = MagicMock(return_value="fleet-value")
+        with patch.dict(sys.modules, {"nova_secrets": fake}), patch.object(dns.sys, "platform", "linux"):
+            self.assertEqual(dns.tsig_secret(), "fleet-value")
+        fake.get_secret.assert_called_once_with("nova-bind-tsig-key")
+
+    def test_sql_is_parameterized_and_only_touches_dns_records(self):
+        self.assertIsNone(re.search(r'execute\(\s*f"', SRC))
+        self.assertIsNone(re.search(r'execute\([^)]*%\s*\(', SRC))
+        writes = {m.group(1) for m in re.finditer(r"\b(?:INSERT INTO|(?<!DO )UPDATE|DELETE FROM)\s+([\w.]+)", SRC)}
+        self.assertEqual(writes, {"dns_records"})
+        cur = _Cur()
+        dns.build(_Conn(cur), [_client(1, name=_INJ)])
+        for sql, params in cur.sql:
+            self.assertNotIn("DR" "OP", sql)
+        ins = [p for s, p in cur.sql if s.startswith("INSERT")]
+        self.assertEqual(ins[0][1], "x-dr" "op-table-dns-records")          # slugged, passed as a parameter
+
+    def test_unifi_key_travels_in_a_header_not_the_url(self):
+        with patch("nova_dns_sync.urllib.request.urlopen") as u:
+            u.return_value.__enter__.return_value.read.return_value = b'{"data": [{"mac": "m"}]}'
+            self.assertEqual(dns.get_clients("K-1"), [{"mac": "m"}])
+        req = u.call_args.args[0]
+        self.assertEqual(req.get_header("X-api-key"), "K-1")
+        self.assertNotIn("K-1", req.full_url)
+        self.assertTrue(req.full_url.startswith(dns.UNIFI))
+
+
+class TestPerformance(unittest.TestCase):
+    def test_build_dry_run_on_10k_clients_is_fast(self):
+        clients = [_client(i) for i in range(10_000)] + [_client(i, name=None, hostname=None) for i in range(500)]
+        t0 = time.perf_counter()
+        out = dns.build(None, clients)
+        self.assertLess(time.perf_counter() - t0, 2.0)
+        self.assertEqual(len(out), 10_500 + len(SERVICE_ALIASES))
+
+    def test_slug_10k_is_fast(self):
+        t0 = time.perf_counter()
+        for i in range(10_000):
+            slug(f"  Jordan's iPhone #{i} (Office) ")
+        self.assertLess(time.perf_counter() - t0, 1.0)
+
+
+class TestRetry(unittest.TestCase):
+    def test_get_clients_is_one_shot_and_fails_closed(self):
+        # RETRY GAP: get_clients() — one urlopen, no backoff. The exception escapes, which is the SAFE
+        # outcome here: a UniFi outage must never reach push_bind() with an empty list and wipe the zone.
+        with patch("nova_dns_sync.urllib.request.urlopen", side_effect=OSError("unifi down")) as u, \
+             patch("nova_dns_sync.push_bind") as pb, patch("nova_dns_sync.api_key", return_value="k"), \
+             patch("nova_dns_sync.psycopg2.connect") as pg, patch.object(sys, "argv", ["nova_dns_sync.py"]):
+            with self.assertRaises(OSError):
+                dns.main()
+        self.assertEqual(u.call_count, 1)
+        pb.assert_not_called(); pg.assert_not_called()
+
+    def test_push_bind_is_one_shot_and_fails_open(self):
+        # RETRY GAP: push_bind() — a single nsupdate; a failure returns False and never raises
+        with patch("nova_dns_sync.tsig_secret", return_value=SECRET), \
+             patch("nova_dns_sync.subprocess.run", return_value=MagicMock(returncode=1, stderr="REFUSED")) as mrun, \
+             redirect_stdout(io.StringIO()) as out:
+            self.assertFalse(push_bind([("a.%s" % DOMAIN, "10.0.0.1")]))
+        self.assertEqual(mrun.call_count, 1)
+        self.assertIn("nsupdate failed", out.getvalue())
+
+    def test_resolve_public_is_one_shot_and_fails_open(self):
+        # RETRY GAP: resolve_public() — one dig; timeout/absence yields [] so the mirror is left alone
+        with patch("nova_dns_sync.subprocess.run", side_effect=subprocess.TimeoutExpired("dig", 10)) as mrun:
+            self.assertEqual(resolve_public("www"), [])
+        self.assertEqual(mrun.call_count, 1)
+
+    def test_secret_lookup_failure_escapes_before_any_push(self):
+        # RETRY GAP: _secret() — check=True keychain call, no retry; nothing is pushed without the key
+        with patch("nova_dns_sync.subprocess.run", side_effect=subprocess.CalledProcessError(44, "security")) as mrun, \
+             patch.object(dns.sys, "platform", "darwin"):
+            with self.assertRaises(subprocess.CalledProcessError):
+                push_bind([])
+        self.assertEqual(mrun.call_count, 1)
+
+
+class TestUnit(unittest.TestCase):
+    def test_slug_edges(self):
+        self.assertEqual(slug(None), "")
+        self.assertEqual(slug("   "), "")
+        self.assertEqual(slug("A--B__C"), "a-b-c")
+        self.assertEqual(slug("Ünïcode"), "n-code")
+
+    def test_derive_name_edges(self):
+        self.assertIsNone(derive_name({}))
+        self.assertIsNone(derive_name({"mac": ""}))
+        self.assertEqual(derive_name({"mac": "00:11:22:33:44:55"}), "dev-334455")
+        self.assertEqual(derive_name({"name": "!!!", "hostname": "Rack Pi"}), "rack-pi")
+        self.assertEqual(derive_name({"oui": "Apple Inc", "mac": "00:11:22:33:44:55"}), "apple-inc-4455")
+
+    def test_build_edges(self):
+        self.assertEqual(dns.build(None, []), [(f"{a}.{DOMAIN}", ip) for a, ip in SERVICE_ALIASES.items()])
+        out = dns.build(None, [_client(1, ip=None, fixed_ip=None, last_ip="10.9.9.9")])
+        self.assertEqual(out[0], (f"device-1.{DOMAIN}", "10.9.9.9"))
+        same = [_client(1, name="twin", mac="aa:aa:aa:aa:aa:01"), _client(2, name="twin", mac="aa:aa:aa:aa:aa:02")]
+        names = [f for f, _ in dns.build(None, same)]
+        self.assertIn(f"twin.{DOMAIN}", names); self.assertIn(f"twin-aa02.{DOMAIN}", names)
+
+    def test_failover_aliases_are_a_subset_with_a_shorter_ttl(self):
+        self.assertTrue(FAILOVER_ALIASES <= set(SERVICE_ALIASES))
+        self.assertLess(FAILOVER_TTL, 300)
+
+    def test_public_mirrors_include_the_apex(self):
+        self.assertIn("", PUBLIC_MIRRORS)
+        self.assertEqual(len(set(PUBLIC_MIRRORS)), len(PUBLIC_MIRRORS))
+
+
+class TestIntegration(unittest.TestCase):
+    def test_build_then_push_bind_produces_one_delete_and_add_per_entry(self):
+        entries = dns.build(None, [_client(1), _client(2)])
+        with patch("nova_dns_sync.tsig_secret", return_value=SECRET), \
+             patch("nova_dns_sync.subprocess.run", return_value=MagicMock(returncode=0, stderr="")) as mrun:
+            self.assertTrue(push_bind(entries))
+        lines = _script_lines(mrun)
+        self.assertEqual(len([l for l in lines if l.startswith("update delete")]), len(entries))
+        self.assertEqual(len([l for l in lines if l.startswith("update add")]), len(entries))
+        self.assertIn(f"update add pg-primary.{DOMAIN}. {FAILOVER_TTL} A {SERVICE_ALIASES['pg-primary']}", lines)
+        self.assertIn(f"update add device-1.{DOMAIN}. 300 A 10.0.0.1", lines)
+
+    def test_sticky_lookup_and_upsert_share_the_dns_records_table(self):
+        cur = _Cur(names={"aa:bb:cc:dd:00:01": "kept-name"})
+        out = dns.build(_Conn(cur), [_client(1, name="new-name")])
+        self.assertEqual(out[0][0], f"kept-name.{DOMAIN}")
+        tables = {re.search(r"(?:FROM|INTO|EXISTS)\s+(\w+)", s).group(1) for s, _ in cur.sql}
+        self.assertEqual(tables, {"dns_records"})
+        self.assertEqual([p for s, p in cur.sql if s.startswith("INSERT")][0], ("aa:bb:cc:dd:00:01", "kept-name", "10.0.0.1"))
+
+    def test_both_secrets_go_through_the_one_secret_helper(self):
+        with patch("nova_dns_sync._secret", return_value="s") as sec:
+            dns.api_key(); dns.tsig_secret()
+        self.assertEqual([c.args[0] for c in sec.call_args_list], ["nova-unifi-api-key", "nova-bind-tsig-key"])
+
+
+class TestFunctional(unittest.TestCase):
+    def _main(self, argv, clients, bind_ok=True, mirrors=3):
+        conn = _Conn(_Cur())
+        with patch("nova_dns_sync.api_key", return_value="k"), patch("nova_dns_sync.get_clients", return_value=clients), \
+             patch("nova_dns_sync.psycopg2.connect", return_value=conn) as pg, \
+             patch("nova_dns_sync.push_bind", return_value=bind_ok) as pb, \
+             patch("nova_dns_sync.push_public_mirrors", return_value=mirrors) as pm, \
+             patch.object(sys, "argv", ["nova_dns_sync.py"] + argv), redirect_stdout(io.StringIO()) as out:
+            rc = dns.main()
+        return rc, out.getvalue(), conn, pg, pb, pm
+
+    def test_dry_run_previews_without_pg_or_bind(self):
+        rc, out, conn, pg, pb, pm = self._main(["--dry-run"], [_client(1), _client(2)])
+        self.assertEqual(rc, 0)
+        pg.assert_not_called(); pb.assert_not_called(); pm.assert_not_called()
+        self.assertIn(f"10.0.0.1        device-1.{DOMAIN}", out)
+        self.assertIn(f"{2 + len(SERVICE_ALIASES)} records (2 clients + {len(SERVICE_ALIASES)} service aliases)", out)
+
+    def test_golden_path_writes_pg_pushes_bind_and_mirrors(self):
+        rc, out, conn, pg, pb, pm = self._main([], [_client(1)])
+        self.assertEqual(rc, 0)
+        pg.assert_called_once_with(dns.DSN)
+        self.assertTrue(conn.autocommit); self.assertTrue(conn.closed)
+        entries = pb.call_args.args[0]
+        self.assertEqual(entries[0], (f"device-1.{DOMAIN}", "10.0.0.1"))
+        self.assertEqual(len(entries), 1 + len(SERVICE_ALIASES))
+        self.assertTrue(any(s.startswith("INSERT INTO dns_records") for s, _ in conn.cur.sql))
+        self.assertIn(f"pushed to BIND primary {BIND_PRIMARY}: OK", out)
+        self.assertIn(f"public mirrors re-synced: 3/{len(PUBLIC_MIRRORS)}", out)
+
+    def test_bind_failure_is_reported_and_mirrors_still_run(self):
+        rc, out, conn, pg, pb, pm = self._main([], [_client(1)], bind_ok=False, mirrors=0)
+        self.assertEqual(rc, 0)
+        self.assertIn(": FAILED", out)
+        pm.assert_called_once(); self.assertTrue(conn.closed)
+
+
+class TestFrame(unittest.TestCase):
+    def test_help_exits_zero(self):
+        r = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, timeout=30,
+                           env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--dry-run", r.stdout)
+
+    def test_import_never_runs_main(self):
+        self.assertIn('if __name__ == "__main__":\n    sys.exit(main())', SRC)
+        r = subprocess.run([sys.executable, "-c", "import nova_dns_sync"], cwd=str(SCRIPTS), capture_output=True,
+                           text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.strip(), "")
+
+
 if __name__ == "__main__":
     unittest.main()

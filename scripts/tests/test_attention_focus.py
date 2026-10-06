@@ -41,7 +41,7 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(af.rank_focus(items, 1)[0]["key"], "incident:1")
 
     def test_main_dry_run_prints_focus_and_writes_nothing(self):
-        today = date(2026, 9, 28)
+        today = af.datetime.now(af.timezone.utc).date()   # main() reads the real clock; a pinned date expired at UTC midnight
         cur = _world(today)
         buf = io.StringIO()
         with patch.object(af.psycopg2, "connect", lambda *a, **k: _Conn(cur)), \
@@ -53,7 +53,7 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(cur.executed("INSERT"), [])
 
     def test_main_golden_path_remembers_then_saves_high_water(self):
-        today = date(2026, 9, 28)
+        today = af.datetime.now(af.timezone.utc).date()
         cur = _world(today)
         posted = []
         buf = io.StringIO()

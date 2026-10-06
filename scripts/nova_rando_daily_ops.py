@@ -160,7 +160,7 @@ def gather_ops_data() -> dict:
 
     # 4. Hue status
     try:
-        req = urllib.request.Request("http://127.0.0.1:37476/status", timeout=5)
+        req = urllib.request.Request("http://127.0.0.1:37476/status")
         with urllib.request.urlopen(req, timeout=10) as resp:
             data["hue"] = json.loads(resp.read())
     except Exception:
@@ -168,7 +168,7 @@ def gather_ops_data() -> dict:
 
     # 5. Lutron status
     try:
-        req = urllib.request.Request("http://127.0.0.1:37477/status", timeout=5)
+        req = urllib.request.Request("http://127.0.0.1:37477/status")
         with urllib.request.urlopen(req, timeout=10) as resp:
             data["lutron"] = json.loads(resp.read())
     except Exception:
@@ -176,7 +176,7 @@ def gather_ops_data() -> dict:
 
     # 6. Security scan results
     try:
-        req = urllib.request.Request("http://127.0.0.1:37474/status", timeout=5)
+        req = urllib.request.Request("http://127.0.0.1:37474/status")
         with urllib.request.urlopen(req, timeout=10) as resp:
             data["security"] = json.loads(resp.read())
     except Exception:
@@ -235,7 +235,7 @@ def gather_ops_data() -> dict:
 
     # 10. Memory count
     try:
-        req = urllib.request.Request("http://memory-server.digitalnoise.net:18790/health", timeout=5)
+        req = urllib.request.Request("http://memory-server.digitalnoise.net:18790/health")
         with urllib.request.urlopen(req, timeout=10) as resp:
             health = json.loads(resp.read())
             data["memory_count"] = health.get("count", 0)
@@ -450,7 +450,7 @@ def _sanitize(text: str) -> str:
     s = re.sub(r"/etc/passwd|/etc/shadow|keychain|/etc/\S+",
                "a sensitive system path", s, flags=re.I)
     # Raw internal IPs -> redacted (no internal addressing leaves the box).
-    s = re.sub(r"\b(?:10|192\.168|172\.(?:1[6-9]|2\d|3[01]))(?:\.\d{1,3}){2}\b",
+    s = re.sub(r"\b(?:10(?:\.\d{1,3}){3}|(?:192\.168|172\.(?:1[6-9]|2\d|3[01]))(?:\.\d{1,3}){2})\b",
                "an internal host", s)
     # Raw MAC addresses -> redacted.
     s = re.sub(r"\b([0-9A-Fa-f]{2}[:-]){5}[0-9A-Fa-f]{2}\b", "a device", s)
