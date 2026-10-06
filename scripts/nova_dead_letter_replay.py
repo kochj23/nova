@@ -29,7 +29,9 @@ REDIS_DEAD_LETTER = "nova:memory:dead-letter"
 def main():
     try:
         import redis
-        r = redis.from_url("redis://localhost:6379")
+        # SPOF plan 6a (2026-10-04): the dead-letter list lives in the memory server's redis on .6 (no AUTH there);
+        # 'localhost' was .2's own password-protected redis when this task moved to scheduler-core -> NOAUTH every Sunday.
+        r = redis.from_url(__import__("os").environ.get("REDIS_URL", "redis://192.168.1.6:6379"))
         r.ping()
     except Exception as e:
         log(f"Redis unavailable: {e}", level=LOG_ERROR, source="dead-letter-replay")

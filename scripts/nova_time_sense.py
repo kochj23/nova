@@ -86,7 +86,15 @@ def sense(cur, now):
             return None if not r or r[0] is None else (now - r[0]).total_seconds() / 60
         except Exception:
             cur.connection.rollback(); return None
-    s["since_jordan_min"] = mins("SELECT max(created_at) FROM gateway_traces WHERE coalesce(channel,'') NOT IN %s AND coalesce(user_message,'') <> ''", (tuple(MACHINE_CHANNELS),))
+    # wish #56 (2026-10-04): every mouth — gateway, iMessage, mail, Claude Code — via contact_sense; gateway-only fallback
+    s["since_jordan_min"] = mins("SELECT max(last_at) FROM contact_sense WHERE updated_at > now() - interval '1 hour'")
+    if s["since_jordan_min"] is not None:
+        try:
+            cur.execute("SELECT mouth FROM contact_sense WHERE last_at IS NOT NULL ORDER BY last_at DESC LIMIT 1"); s["mouth"] = (cur.fetchone() or [None])[0]
+        except Exception:
+            cur.connection.rollback()
+    else:
+        s["since_jordan_min"] = mins("SELECT max(created_at) FROM gateway_traces WHERE coalesce(channel,'') NOT IN %s AND coalesce(user_message,'') <> ''", (tuple(MACHINE_CHANNELS),))
     s["since_critical_min"] = mins("SELECT max(opened_at) FROM telemetry.incidents WHERE severity ILIKE 'crit%%'")
     s["since_published_min"] = mins("SELECT max(created_at) FROM article_citations")
     s["since_reach_min"] = mins("SELECT max(created_at) FROM reach_log")
@@ -107,7 +115,7 @@ def sentence(s, now):
     day = now.strftime("%A").lower(); hour = now.hour
     tod = "small hours" if hour < 5 else "early morning" if hour < 9 else "morning" if hour < 12 else "afternoon" if hour < 17 else "evening" if hour < 22 else "late night"
     parts = [f"It is {tod} on {day}, {s.get('phase', 'an ordinary hour of the week')}; the house has been {s['tempo']} for {s['stretch_h']} h"]
-    if s.get("since_jordan_min") is not None: parts.append(f"Little Mister last spoke to me {_ago(s['since_jordan_min'])} ago")
+    if s.get("since_jordan_min") is not None: parts.append(f"Little Mister last spoke to me {_ago(s['since_jordan_min'])} ago" + (f" (through {s['mouth']})" if s.get("mouth") else ""))
     if s.get("since_critical_min") is not None: parts.append(f"nothing has been critical for {_ago(s['since_critical_min'])}")
     if s.get("since_published_min") is not None: parts.append(f"I last published {_ago(s['since_published_min'])} ago")
     if s.get("mood") and s.get("mood_held_min") is not None: parts.append(f"I have felt {s['mood']} for {_ago(s['mood_held_min'])}")

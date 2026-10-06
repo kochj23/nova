@@ -173,12 +173,23 @@ def check_backups():
         return
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.touch()
-    rc, _ = sh(SSH + ["kochj@192.168.1.11", "/volume1/homes/kochj/nova_backup_agent.sh incremental"], 3600)
+    rc, out = sh(SSH + ["kochj@192.168.1.11", "/volume1/homes/kochj/nova_backup_agent.sh incremental"], 3600)
+    if rc == 3:
+        # Agent exits 3 (stdout "LOCKED: ...") when another NAS job holds the flock — e.g. the Sunday
+        # 04:30 full run, which takes most of the day. Nothing is broken; do not burn today's rerun
+        # budget or escalate. (2026-10-04: this was reported as "FAIL ... agent rc=0" and escalated.)
+        marker.unlink(missing_ok=True)
+        record("backups", "PENDING", None,
+               f"stale: {','.join(bad)}; a backup job is already running on the synology (lock held) — "
+               "will re-check next cycle. If this persists >24h the agent's lock-guard kills the holder.")
+        return
     ok_now = all(pg("SELECT count(*) FROM telemetry.backup_runs WHERE job LIKE '" + j +
                     ":%' AND job NOT LIKE '%lockguard%' AND ok AND ts > now() - interval '2 hours'") != "0"
                  for j in bad)
     record("backups", "fixed" if ok_now else "FAIL", "reran backup agent on synology",
-           f"stale: {','.join(bad)}, agent rc={rc}")
+           f"stale: {','.join(bad)}, agent rc={rc} {out[-200:]!r}. Agent reports telemetry to PG via "
+           "postgresql://kochj@192.168.1.2:5432 (+~/.pgpass on the synology); check nova_backup.log for "
+           "'telemetry FAILED' vs real rsync failures — the backup may have succeeded while telemetry did not.")
 
 
 MESH_FIX = {

@@ -227,6 +227,12 @@ def main():
             if ok:
                 confirm(ch, ts, f"Recorded: {'approved' if v == 'yes' else 'rejected'} #{ref}."
                                 + (" Handed to Claude." if v == "yes" else ""), dry)
+        elif kind == "conflict":    # wish #58: any reply in the thread IS the decision (posted by nova_directive_decide.py)
+            if not dry:
+                cur.execute("UPDATE directive_conflicts SET status='decided', decided_by='jordan', decided_at=now(), "
+                            "decision_note=%s WHERE id=%s AND status IN ('open','decided')", (answer[:600], int(ref)))
+            ok = True
+            confirm(ch, ts, f"Recorded your decision on directive conflict #{ref}. Thank you.", dry)
         else:
             continue
         if ok and not dry:

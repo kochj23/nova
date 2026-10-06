@@ -201,3 +201,5 @@ launchd/net.digitalnoise.nova-review-custody.plist
 # large local binaries / backups (2026-09-25)
 bin/yt-dlp
 scripts/*.pre-unas-cutover
+scripts/*.pre-2*
+scripts/net.digitalnoise.nova-mac-media-folder-guard.plist

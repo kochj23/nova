@@ -253,7 +253,9 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(args[0], "Grading My Own Nerves")
         self.assertEqual(args[2], "operations")
         self.assertEqual(args[3], ["ops", "network", "reliability", "uptime", "weekly"])
-        self.assertEqual(kw, {"image_path": "/tmp/x.png", "emoji": "📶"})
+        src = kw.pop("sources")                          # sanitized brief: grounding for the length policy (2026-10-06)
+        self.assertTrue(src)
+        self.assertEqual(kw, {"image_path": "/tmp/x.png", "emoji": "📶", "profile": "network-health"})
         nh.nj.git_push.assert_called_once_with("operations", "Grading My Own Nerves")
         self.assertIn("published to /operations (image: yes)", out)
 

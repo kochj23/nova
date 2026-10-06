@@ -182,7 +182,9 @@ class TestFunctional(unittest.TestCase):
         lg.nj.generate_image.assert_called_once_with("prompt", width=1024, height=768, section="operations")
         args, kw = lg.nj.publish_hugo.call_args
         self.assertEqual(args[2], "operations"); self.assertIn("opinion-drift", args[3])
-        self.assertEqual(kw, {"image_path": "/tmp/img.webp", "emoji": "⚖️"})
+        src = kw.pop("sources")                          # grounding material for the length policy (2026-10-06)
+        self.assertTrue(src)
+        self.assertEqual(kw, {"image_path": "/tmp/img.webp", "emoji": "⚖️", "profile": "ledger"})
         lg.nj.git_push.assert_called_once_with("operations", "Minds, Changed")
         lg.nj.notify_slack.assert_called_once_with("operations", "⚖️ Minds, Changed", "Nova's monthly Ledger of Changed Minds.")
         self.assertIn("PUBLISHED: Minds, Changed", lg.nj.log.call_args[0][0])

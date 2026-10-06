@@ -39,7 +39,7 @@ TSIG_KEY_NAME = "nova-dns-key"
 # and the only live replica is .10. The container named "pg17-replica" is the primary.
 SERVICE_ALIASES = {
     "pg-primary":       "192.168.1.2",   # 2026-09-28 14:07 controlled switchover back to nova-core (.2:5432 socat -> local :5434). .10/.7/.125 are standbys being rebuilt from .2.
-    "memory-server":    "192.168.1.6",   # :18790 — TEMP 2026-09-17: nova-core down; local instance running on .6 (socat forward disabled). Revert to .2 when nova-core rebuilt.
+    "memory-server":    "192.168.1.86",  # :18790 — SPOF plan Phase 4 (2026-10-04): HAProxy on nova-core2 fronts .6 (truth, writes) + read replicas .2/.5. ROLLBACK: set back to 192.168.1.6 and run the sync.
     "grafana":          "192.168.1.2",    # nova-core wired (was its wifi ip)
     "inference-router": "192.168.1.2",    # :37475 fleet LLM proxy
     "nova-gw":          "192.168.1.2",    # Gateway V2 :18792 (migrated off .6 2026-07-13)

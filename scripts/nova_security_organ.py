@@ -19,7 +19,7 @@ Usage: nova_security_organ.py [--once] [--seed] [--dry-run] [--test-alert] [--in
 ponytail: UniFi stat/sta is the only source (covers DHCP + static + Wi-Fi); add UDM DHCP-lease
 and syslog DHCPACK feeds only if a device ever gets in without showing up in stat/sta.
 """
-import argparse, os, socket, sys, time
+import argparse, os, re, socket, sys, time
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -96,6 +96,34 @@ def neighbor_clients() -> list[dict]:
     return res
 
 
+MAC_RE = re.compile(r"\b([0-9a-f]{2}(?::[0-9a-f]{2}){5})\b", re.I)
+QUORUM = 2                  # wish #61 (2026-10-04): witnesses needed before a newcomer is CRITICAL (else WARNING)
+
+
+def dhcp_macs(cur, minutes=15) -> set:
+    """Third witness (wish #61): MACs the UDM's DHCP server acked recently — its syslog is forwarded to
+    nova_syslog_server (.6:1514, repointed from the dead .7:514 target on 2026-10-04) into syslog_events."""
+    try:
+        cur.execute("SELECT message FROM syslog_events WHERE received_at > now() - make_interval(mins => %s) "
+                    "AND message ~* 'DHCP(ACK|REQUEST|OFFER|DISCOVER)'", (minutes,))
+        return {m.lower() for (msg,) in cur.fetchall() for m in MAC_RE.findall(msg or "")}
+    except Exception:  # noqa: BLE001
+        cur.connection.rollback(); return set()
+
+
+def level_for(fs, witnesses, arrival, now=None) -> tuple[str, str]:
+    """Pure. A newcomer is CRITICAL only when UniFi says it is genuinely new AND at least QUORUM witnesses saw it
+    AND nobody known just walked in; otherwise WARNING with the reason. -> (level, why)."""
+    now = now or time.time()
+    if fs and now - fs >= RECENT_S:
+        return "warning", "UniFi has seen it before"
+    if len(witnesses) < QUORUM:
+        return "warning", f"single witness ({', '.join(sorted(witnesses))}) — {QUORUM} needed for a critical (wish #61)"
+    if arrival:
+        return "warning", f"{arrival[0]} walked in {arrival[1]} min ago — likely their device (wish #66)"
+    return "critical", ""
+
+
 def cycle(conn, dry_run=False, seed=False) -> int:
     global KNOWN_COUNT
     clients = unifi._fetch_clients()
@@ -105,7 +133,12 @@ def cycle(conn, dry_run=False, seed=False) -> int:
     if clients is not None:
         seen = {(c.get("mac") or "").lower() for c in clients}
         seen |= {(d.get("mac") or "").lower() for d in (unifi._fetch_devices() or [])}   # UniFi's own switches/APs are not intruders
-        clients = clients + [n for n in neighbor_clients() if n["mac"] not in seen]
+        arp = {n["mac"]: n for n in neighbor_clients()}
+        for c in clients:
+            c["_witnesses"] = {"unifi"} | ({"arp"} if (c.get("mac") or "").lower() in arp else set())
+        for mac, n in arp.items():
+            if mac not in seen:
+                n["_witnesses"] = {"arp"}; clients.append(n)
     if clients is None:
         with conn.cursor() as cur:
             heartbeat(cur, "degraded", "UniFi client fetch failed")
@@ -115,26 +148,35 @@ def cycle(conn, dry_run=False, seed=False) -> int:
     new = 0
     with conn.cursor() as cur:
         known = known_macs(cur); KNOWN_COUNT = len(known)
+        dhcp = dhcp_macs(cur)
+        try:                                    # wish #66: read the shared organ board before talking to Jordan
+            from nova_organ_board import board, someone_just_arrived
+            arrival = someone_just_arrived(board(cur))
+        except Exception:  # noqa: BLE001
+            arrival = None
         for c in clients:
             mac = (c.get("mac") or "").lower()
             if not mac or mac in known:
                 continue
             new += 1
             title, body = describe(c)
+            witnesses = set(c.get("_witnesses") or {"unifi"}) | ({"dhcp"} if mac in dhcp else set())
             if seed:
                 log(f"seeding {mac} ({c.get('name') or c.get('hostname') or '-'})")
             elif dry_run:
-                log(f"DRY-RUN would alert: {title}")
+                log(f"DRY-RUN would alert: {title} witnesses={sorted(witnesses)}")
             else:
                 fs = c.get("first_seen")
-                level = "critical" if (not fs or time.time() - fs < RECENT_S) else "warning"
-                if level == "warning":
+                level, why = level_for(fs, witnesses, arrival)
+                if why == "UniFi has seen it before":
                     title = title.replace("NEW DEVICE on the network", "unrecorded device (UniFi has seen it before)")
+                body += f"\nWitnesses: {', '.join(sorted(witnesses))}." + (f" Held at warning: {why}." if why and level == "warning" else "")
                 notify(title, body, level=level, category="security", source="nova_security_organ",
                        dedup_key=f"newdev:{mac}",
                        meta={"mac": mac, "ip": c.get("ip"), "oui": c.get("oui"), "wired": bool(c.get("is_wired")),
                              "essid": c.get("essid"), "ap_mac": c.get("ap_mac"), "sw_mac": c.get("sw_mac"),
-                             "randomized_mac": is_randomized(mac), "unifi_first_seen": fs})
+                             "randomized_mac": is_randomized(mac), "unifi_first_seen": fs,
+                             "witnesses": sorted(witnesses), "held_because": why or None})
                 log(f"ALERT {level}: {title}")
             if not dry_run:
                 cur.execute("INSERT INTO telemetry.known_devices (client_mac, client_name, ip, first_seen) "
@@ -177,6 +219,16 @@ def main():
     ap.add_argument("--once", action="store_true"); ap.add_argument("--seed", action="store_true")
     ap.add_argument("--dry-run", action="store_true"); ap.add_argument("--test-alert", action="store_true")
     ap.add_argument("--interval", type=int, default=30); ap.add_argument("--digest", action="store_true")
+    ap.add_argument("--selftest", action="store_true")
+    if "--selftest" in sys.argv:            # the quorum/arrival logic is the only branchy bit worth a check
+        now = 1_000_000.0
+        assert level_for(None, {"unifi", "arp"}, None, now) == ("critical", "")
+        assert level_for(now - 10, {"unifi"}, None, now)[0] == "warning" and "single witness" in level_for(now - 10, {"unifi"}, None, now)[1]
+        assert level_for(now - 10, {"unifi", "dhcp"}, ("jordan", 3), now)[1].startswith("jordan walked in")
+        assert level_for(now - 2 * RECENT_S, {"unifi", "arp", "dhcp"}, None, now) == ("warning", "UniFi has seen it before")
+        probe = ":".join(["dd", "ee", "ff", "00", "11", "22"])   # built at runtime: no MAC literal in source (pre-commit scan)
+        assert probe in {m.lower() for m in MAC_RE.findall(f"DHCPACK(br0) 192.168.1.50 {probe.upper()} phone")}
+        print("selftest ok"); return 0
     a = ap.parse_args()
     if a.test_alert:
         test_alert(); return

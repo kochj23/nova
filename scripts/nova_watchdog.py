@@ -51,6 +51,12 @@ CHECKS = [
     ("pg-primary (.2) postgres",  "tcp",  ("192.168.1.2", 5434)),   # .6:5432 is a localhost-only pgbouncer shim since 2026-10-03
     ("mac-studio (.6) nova-gw",   "tcp",  ("192.168.1.6", 18792)),
     ("mac-studio (.6) mqtt",      "tcp",  ("192.168.1.6", 1883)),
+    # wish #57 (2026-10-04): control-plane liveness from OUTSIDE it — the Studio's mesh agent heartbeat,
+    # probed every sweep; FAIL_THRESHOLD misses -> CRITICAL via this watchdog's own Slack path (no .6 anywhere).
+    ("mac-studio (.6) mesh-agent", "http", "http://192.168.1.6:37470/health"),
+    # SPOF plan Phase 4 (2026-10-04): the memory HA front (alias target) and the new read replica.
+    ("nova-core2 (.86) memory-ha", "http", "http://192.168.1.86:18790/health"),
+    ("nova-core3 (.5) memory-replica", "http", "http://192.168.1.5:18790/health"),
     ("nova-core (.2) host",       "tcp",  ("192.168.1.2", 22)),
     ("nova-core (.2) pg-replica", "tcp",  ("192.168.1.2", 5432)),
     ("nova-core (.2) grafana",    "http", "http://192.168.1.2:3000/api/health"),

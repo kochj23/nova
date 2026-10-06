@@ -307,7 +307,11 @@ def signal_social(oc):
     machine channels like health-checks); falls back to gateway_query_log. Contact
     lifts valence; its absence is neutral (not manufactured loneliness)."""
     convos, src = None, None
-    if _table_exists(oc, "gateway_traces"):
+    if _table_exists(oc, "contact_sense"):      # wish #56 (2026-10-04): every mouth, incl. iMessage/mail/Claude Code sessions
+        c = _one(oc, "SELECT sum(count_24h) FROM contact_sense WHERE updated_at > now()-interval '1 hour'")
+        if c is not None:
+            convos, src = int(c), "contact_sense"
+    if convos is None and _table_exists(oc, "gateway_traces"):
         convos = _one(oc, "SELECT count(*) FROM gateway_traces WHERE created_at > now()-interval '24 hours' "
                           "AND coalesce(channel,'') NOT IN ('hc','healthcheck','test','cron','system')")
         src = "gateway_traces"

@@ -20,7 +20,9 @@ import time
 import uuid
 from pathlib import Path
 
-DOCKER = "/opt/homebrew/bin/docker"
+import shutil as _shutil
+# SPOF plan 6c (2026-10-04): the task also runs on Linux (scheduler-core), where docker is /usr/bin/docker
+DOCKER = "/opt/homebrew/bin/docker" if Path("/opt/homebrew/bin/docker").exists() else (_shutil.which("docker") or "docker")
 IMAGE = "nova-sandbox:latest"
 DOCKERFILE_DIR = Path.home() / ".openclaw/docker/nova-sandbox"
 DEFAULT_TIMEOUT = 300
