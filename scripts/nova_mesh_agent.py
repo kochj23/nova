@@ -74,8 +74,11 @@ def load_config():
             except ImportError:
                 raw = p.read_text()
                 for line in raw.splitlines():
+                    # top-level keys only: nested `port:` under services: once clobbered the agent port
+                    if line[:1] in (" ", "\t", "-", "#"):
+                        continue
                     line = line.strip()
-                    if ":" in line and not line.startswith("#") and not line.startswith("-"):
+                    if ":" in line:
                         k, v = line.split(":", 1)
                         k, v = k.strip(), v.strip().strip('"').strip("'")
                         if k in DEFAULT_CONFIG:
