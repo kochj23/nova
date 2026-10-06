@@ -549,6 +549,10 @@ def page_relevance_check(text, seed_query, vector_name):
     vector_words = set(vector_name.lower().replace("_", " ").split())
     check_words = seed_words | vector_words
     hits = sum(1 for w in check_words if w in sample and len(w) > 3)
+    # 2026-10-06: short topics ("Car", "War", "Art", "Sex Pistols"->"sex") were rejected outright because every
+    # seed word was <= 3 chars — even the seed page itself (the "Car" crawl stored 0 of 0). Short SEED words
+    # count when they appear as whole words (so "car" doesn't match "scarf").
+    hits += sum(1 for w in seed_words if len(w) == 3 and re.search(rf"\b{re.escape(w)}s?\b", sample))
     return hits >= 1
 
 _INJECTION_DROPS = [0]   # chunks dropped by the prompt-injection screen this run (logged at exit)
@@ -820,7 +824,7 @@ def run_wikipedia(query, vector, target, state, dry_run, timeout_hours=0):
             continue
         done_urls.add(url)
         current_depth = _depth_map.get(url, 0)
-        if not page_relevance_check(text, query, vector):
+        if url != start and not page_relevance_check(text, query, vector):   # the seed page is relevant by definition
             _skipped += 1
             continue
         text     = clean_text(text)
