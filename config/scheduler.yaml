@@ -847,6 +847,13 @@ tasks:
     timeout: 43200
     overlap: skip
 
+  yt_subs_audio:                   # audio-only transcript ingest of the ~770 subscribed channels no other pipeline covers; latest video per channel only, local MLX Whisper (Jordan 2026-10-06)
+    script: nova_yt_subs_audio.py
+    args: ["--max", "60"]
+    schedule: cron 15 */3 * * *
+    timeout: 10800
+    overlap: skip
+
   # ---- 2026-10-05 ----
   model_warm:                      # keep the placement in service_config(nova_model_warm.placement) RESIDENT fleet-wide — chat TTFT was 31 s of model reloads
     script: nova_model_warm.py

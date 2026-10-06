@@ -283,6 +283,8 @@ def auto_select_vector(topic, sample, existing):
         url = "http://memory-server.digitalnoise.net:18790/recall?q=" + urllib.parse.quote(topic) + "&n=5"
         with urllib.request.urlopen(url, timeout=8) as r:
             results = json.loads(r.read())
+            if isinstance(results, dict):   # /recall returns {"memories": [...]}; iterating the dict always threw
+                results = results.get("memories", [])
             sources = [m.get("source", "") for m in results if m.get("source")]
             if sources:
                 from collections import Counter
