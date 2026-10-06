@@ -449,6 +449,31 @@ def yield_to_scheduled():
     return should_yield(tasks, _t.time())
 
 
+# ── Earned skills (2026-10-06) ──────────────────────────────────────────────────
+# Threads she woke >=3 times became skill cards (nova_skill_distill) that Jordan approved; the
+# implemented ones run through nova_pursue_skill: same hour, but sourced and cited instead of a
+# free riff. Only when the chosen preoccupation (or an ingest thread's source) maps to a skill whose
+# nova_skills row is 'implemented' — a retired card falls straight back to the normal path below.
+def try_skill(oc, mc, p):
+    try:
+        import nova_pursue_skill as ps
+        if p.get("mode") == "preoccupation":
+            slug = ps.slug_for_topic(p.get("topic"))
+        elif p.get("mode") == "thread":
+            slug = ps.slug_for_source(p.get("src"))
+        else:
+            slug = None
+        if not slug or ps.SKILLS[slug].get("meta"):
+            return False
+        r = ps.run_skill(slug, oc=oc, mc=mc, trigger=TRIGGER)
+        if r.get("handled"):
+            log(f"spent the hour through skill {slug}: {r.get('outcome')}")
+            return True
+    except Exception as e:  # noqa: BLE001
+        log(f"skill path failed (non-fatal, falling back): {e}")
+    return False
+
+
 def main():
     other = yield_to_scheduled()
     if other:
@@ -579,6 +604,9 @@ def main():
             nova_aspirations.pursue(oc, mc, p)
         except Exception as e:
             log(f"aspire pursue failed (non-fatal): {e}")
+        return 0
+
+    if try_skill(oc, mc, p):
         return 0
 
     if p["mode"] == "preoccupation":
