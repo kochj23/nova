@@ -12,11 +12,16 @@ Nothing is uploaded: the mp4 lands in the review folder and a Slack note says wh
   nova_speaks.py --article ... --sections "Abstract,Chapter 2,Conclusion" --suffix preview
   nova_speaks.py --article ... --images img1.png img2.webp ...        # your own stills
   nova_speaks.py --article ... --generate-images 5                    # FLUX renders from chapter titles
-Env: NOVA_SPEAKS_VOICE (ref wav), NOVA_SPEAKS_OUT (review dir).
+  nova_speaks.py --article ... --script-only                          # narration script (.txt) only, no TTS
+Narration stage (nova_speaks_narration.py, 2026-10-06): foreign phrases introduced from the PG phrasebook, each paragraph
+rewritten for the ear by the local qwen3:8b (grounded, fail-open), spoken-form normalization (°F, times, units, acronyms…),
+and a Whisper back-check of every voiced part with seed retries. The exact spoken script lands next to the mp4 as .txt and
+a QUALITY {json} line goes to the log (the sweep stores it in nova_speaks_renders.quality).
+Env: NOVA_SPEAKS_VOICE (ref wav), NOVA_SPEAKS_OUT (review dir), NOVA_SPEAKS_REWRITE=0 (skip the LLM pass).
 ponytail: XTTS runs ~0.67x real time on the Studio GPU; a 5,000-word article is ~50 min of synthesis.
 Captions are a chapter lower-third, not word-level; add mlx-whisper .srt generation when wanted.
 """
-import argparse, os, re, subprocess, sys, json, glob, random, math, time
+import argparse, os, re, subprocess, sys, json, glob, random, math, time, hashlib
 from pathlib import Path
 
 HOME = Path.home()
@@ -47,12 +52,17 @@ def article_to_script(md: str, sections: list[str] | None):
             cur_h, cur_p = re.sub(r"^#+\s*", "", b).strip(" *"), []
             continue
         if b.startswith(("|", "```", "<", "![")): continue
+        # tables inside a block are never read; list items become sentences instead of one run-on
+        lines = [ln for ln in b.splitlines() if not ln.lstrip().startswith("|")]
+        lines = [(lambda x: x if re.search(r"[.!?:;]$", x) else x + ".")(re.sub(r"^\s*(?:[-*+]|\d+[.)])\s+", "", ln).strip())
+                 if re.match(r"^\s*(?:[-*+]|\d+[.)])\s+", ln) else ln for ln in lines]
+        b = "\n".join(lines)
         t = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", b)                      # links -> text
         t = re.sub(r"\[\d+\]", "", t)                                       # citation markers
         t = re.sub(r"https?://\S+", "", t)
         t = re.sub(r"[*_`>#]+", "", t)
         t = re.sub(r"\s+", " ", t).strip()
-        if len(t) > 20: cur_p.append(t)
+        if len(t) > 20 or re.search(r"[A-Za-z]{2,}", t): cur_p.append(t)     # short ones ("Qapla'.") merge into a neighbour later
     if cur_p: chapters.append((cur_h, cur_p))
     drop = ("references", "sources & attribution", "sources and attribution")
     chapters = [(h, ps) for h, ps in chapters if not h.lower().startswith(drop)]
@@ -82,8 +92,8 @@ def load_tts():
     return tts
 
 
-def speak(tts, text, path):
-    # XTTS handles sentence splitting; keep chunks < ~600 chars to stay well inside its window
+def split_parts(text):
+    """≤400-char parts on sentence boundaries; fragments under 4 words ride with a neighbour (XTTS growls on them)."""
     def pieces(sent, limit=230):
         # XTTS asserts < 400 tokens per call; a single run-on sentence (lists, ledgers) can exceed it. Split long
         # sentences at clause boundaries, then hard-wrap at a word boundary as a last resort.
@@ -101,22 +111,49 @@ def speak(tts, text, path):
             if o: final.append(o)
         return final
     parts, cur = [], ""
-    for sent in (pc for s0 in re.split(r"(?<=[.!?])\s+", text) for pc in pieces(s0)):
-        if len(cur) + len(sent) > 400 and cur: parts.append(cur); cur = sent
+    for s0 in re.split(r"(?<=[.!?])\s+", text):
+        ps = pieces(s0)
+        if len(ps) > 1:                 # a split run-on: each piece is its own part, or XTTS sees one >250-char sentence
+            if cur: parts.append(cur); cur = ""
+            parts += ps[:-1]; cur = ps[-1]; continue
+        sent = ps[0]
+        if len(cur) + len(sent) > 400 and cur and len(sent.split()) >= 4: parts.append(cur); cur = sent
         else: cur = (cur + " " + sent).strip()
     if cur: parts.append(cur)
+    if len(parts) > 1 and len(parts[-1].split()) < 4: last = parts.pop(); parts[-1] += " " + last
+    return parts
+
+
+def _dur(path):
+    return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path], capture_output=True, text=True).stdout.strip() or 0)
+
+
+def speak(tts, text, path, checker=None, stats=None):
+    """Voice one paragraph. Each part is back-checked (Whisper WER + duration sanity) and re-synthesized with another
+    seed when it reads as garbage — XTTS v2 occasionally growls."""
+    import nova_speaks_narration as nn
+    stats = stats if stats is not None else nn.new_stats(getattr(checker, "backend", "none"))
+    kw = {"speaker_wav": str(VOICE)} if str(VOICE).endswith(".wav") else {"speaker": str(VOICE)}
+
+    def synth(part, wav, seed):
+        try:
+            import torch; torch.manual_seed(seed)
+        except Exception:
+            pass
+        random.seed(seed)
+        tts.tts_to_file(text=part, language="en", file_path=wav, **kw, **nn.XTTS_KW)
     wavs = []
-    for i, p in enumerate(parts):
+    for i, p in enumerate(split_parts(text)):
         w = f"{path}.{i}.wav"
-        kw = {"speaker_wav": str(VOICE)} if str(VOICE).endswith(".wav") else {"speaker": str(VOICE)}
-        tts.tts_to_file(text=p, language="en", file_path=w, **kw); wavs.append(w)
+        nn.synth_checked(synth, p, w, checker, stats, _dur, seed_base=int(hashlib.md5(p.encode()).hexdigest()[:6], 16))
+        wavs.append(w)
     if len(wavs) == 1: os.replace(wavs[0], path)
     else:
         lst = f"{path}.txt"; open(lst, "w").write("".join(f"file '{w}'\n" for w in wavs))
         subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", lst, "-c", "copy", path], check=True)
         for w in wavs: os.remove(w)
         os.remove(lst)
-    return float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", path], capture_output=True, text=True).stdout.strip() or 0)
+    return _dur(path)
 
 
 # ── stills + cards ───────────────────────────────────────────────────────────────────────
@@ -176,6 +213,7 @@ def main():
     ap.add_argument("--images", nargs="*", default=None); ap.add_argument("--generate-images", type=int, default=0)
     ap.add_argument("--suffix", default=""); ap.add_argument("--subject", default=None)
     ap.add_argument("--url", default=None); ap.add_argument("--voice", default=None)
+    ap.add_argument("--script-only", action="store_true", help="write the narration script (.txt) and stop before TTS")
     a = ap.parse_args()
     global VOICE
     if a.voice: VOICE = a.voice
@@ -187,10 +225,21 @@ def main():
     url = a.url or f"https://nova.digitalnoise.net/{section}/{slug}/"
     subject = a.subject or title.split(":")[0]
     chapters = article_to_script(md, [s.strip() for s in a.sections.split(",")] if a.sections else None)
+    # narration stage: foreign phrases introduced, rewritten for the ear (local model, grounded), spoken form
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import nova_speaks_narration as nn
+    t_n = time.time()
+    chapters, rstats = nn.narrate(chapters, cache=nn.RewriteCache())
+    log(f"narration: {rstats} ({time.time()-t_n:.0f}s)")
     words = sum(len(p.split()) for _, ps in chapters for p in ps)
     log(f"{len(chapters)} chapters, {words} words, ~{words/150:.0f} min of speech")
     work = Path(f"{HOME}/.openclaw/workspace/speaks/{slug}{('-'+a.suffix) if a.suffix else ''}"); work.mkdir(parents=True, exist_ok=True)
     OUT_DIR.mkdir(parents=True, exist_ok=True)
+    script_txt = OUT_DIR / f"NovaSpeaks-{slug}{('-'+a.suffix) if a.suffix else ''}.txt"     # exactly what the voice was given
+    script_txt.write_text(f"{title}\n{url}\n\n" + "\n\n".join(f"## {h}\n\n" + "\n\n".join(ps) for h, ps in chapters) + "\n")
+    log(f"script: {script_txt}")
+    if a.script_only:
+        print(str(script_txt)); return
 
     # images: cover + given/generated/random recent renders
     imgs = []
@@ -221,15 +270,18 @@ def main():
 
     # voice per paragraph
     tts = load_tts()
+    checker = nn.BackCheck()
+    qstats = nn.new_stats(checker.backend)
+    log(f"back-check: {checker.backend}")
     segs = []  # (chapter, wav, dur)
     t0 = time.time()
     for ci, (h, ps) in enumerate(chapters):
         for pi, p in enumerate(ps):
-            wav = str(work / f"c{ci:02d}p{pi:03d}.wav")
+            # the text hash is in the name: a re-render with a new script never reuses a stale wav
+            wav = str(work / f"c{ci:02d}p{pi:03d}-{hashlib.sha1((p + json.dumps(nn.XTTS_KW)).encode()).hexdigest()[:10]}.wav")
             if not os.path.exists(wav):
-                speak(tts, p, wav)
-            dur = float(subprocess.run(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", wav], capture_output=True, text=True).stdout.strip() or 0)
-            segs.append((h, wav, dur))
+                speak(tts, p, wav, checker, qstats)
+            segs.append((h, wav, _dur(wav)))
         log(f"voiced chapter {ci+1}/{len(chapters)} '{h[:40]}' ({time.time()-t0:.0f}s elapsed)")
     narration = str(work / "narration.wav")
     open(work / "narr.txt", "w").write("".join(f"file '{w}'\n" for _, w, _ in segs))
@@ -255,6 +307,9 @@ def main():
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", str(work / "clips.txt"), "-c", "copy", silent], check=True)
     out = OUT_DIR / f"NovaSpeaks-{slug}{('-'+a.suffix) if a.suffix else ''}.mp4"
     subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", silent, "-itsoffset", "4", "-i", narration, "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", str(out)], check=True)
+    q = nn.finish_stats(qstats); q["rewrite"] = rstats
+    print("QUALITY " + json.dumps(q), flush=True)
+    log(f"back-check: {q['parts']} parts, {q['retries']} retries, worst WER {q['worst_wer']}, mean WER {q['mean_wer']}, flagged {q['flagged']}")
     log(f"DONE {out} ({os.path.getsize(out)/1e6:.0f} MB, {total/60+0.2:.1f} min)")
     try:
         sys.path.insert(0, str(HOME / ".openclaw/scripts"))

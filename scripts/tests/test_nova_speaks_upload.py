@@ -117,7 +117,7 @@ def test_sweep_retries_only_recent_unuploaded_rows():
 def test_claim_happens_after_metadata_validation_and_is_released_on_failure():
     src = (SCRIPTS / "nova_speaks_upload.py").read_text()
     assert src.index("meta = Metadata(") < src.index("SET youtube_id='uploading'")
-    assert "SET youtube_id=NULL WHERE slug=%s AND youtube_id='uploading'" in src
+    assert "SET youtube_id=%s WHERE slug=%s AND youtube_id='uploading'" in src      # NULL, or the old id on a replacement
 
 
 def test_renderer_and_sweep_honor_frontmatter_cover():
@@ -137,7 +137,7 @@ def test_cinc_probes_local_host_without_ssh():
 
 # ── functional ──────────────────────────────────────────────────────────────
 def test_dry_run_prints_metadata_without_uploading(article, monkeypatch, capsys):
-    cur = MagicMock(); cur.fetchone.return_value = (str(article), "https://nova.digitalnoise.net/local/x/", "/tmp/x.mp4", None)
+    cur = MagicMock(); cur.fetchone.return_value = (str(article), "https://nova.digitalnoise.net/local/x/", "/tmp/x.mp4", None, None)
     conn = MagicMock(); conn.cursor.return_value = cur
     monkeypatch.setattr(up.psycopg2, "connect", lambda dsn: conn)
     monkeypatch.setattr(sys, "argv", ["nova_speaks_upload.py", "--slug", "2026-10-05-heat-dome", "--dry-run"])
@@ -148,7 +148,7 @@ def test_dry_run_prints_metadata_without_uploading(article, monkeypatch, capsys)
 
 
 def test_already_uploaded_row_is_skipped(article, monkeypatch):
-    cur = MagicMock(); cur.fetchone.return_value = (str(article), "u", "/tmp/x.mp4", "xDOTDX-xOd4")
+    cur = MagicMock(); cur.fetchone.return_value = (str(article), "u", "/tmp/x.mp4", "xDOTDX-xOd4", None)
     conn = MagicMock(); conn.cursor.return_value = cur
     monkeypatch.setattr(up.psycopg2, "connect", lambda dsn: conn)
     monkeypatch.setattr(sys, "argv", ["nova_speaks_upload.py", "--slug", "s"])
@@ -356,7 +356,7 @@ class TestRetry(unittest.TestCase):
 
     def test_upload_failure_releases_the_claim_and_reraises(self):
         # RETRY GAP: session().upload — one attempt; the 'uploading' claim is released so the sweep can retry later
-        conn, cur = _pg((str(_article_file()), "u", "/tmp/x.mp4", None))
+        conn, cur = _pg((str(_article_file()), "u", "/tmp/x.mp4", None, None))
         yt = _yt_stub(exc=RuntimeError("quota"))
         with patch.object(up.psycopg2, "connect", lambda dsn: conn), patch.object(sys, "argv", ["x", "--slug", "s"]), \
              patch.dict(sys.modules, {"youtube_up": yt}), patch.object(up, "session", lambda: yt.YTUploaderSession(None)), \
@@ -366,7 +366,8 @@ class TestRetry(unittest.TestCase):
         sql = [c[0][0] for c in cur.execute.call_args_list]
         self.assertEqual(sum(1 for c in yt.calls if c[0] == "upload"), 1)
         self.assertTrue(any("youtube_id='uploading' WHERE slug=%s AND youtube_id IS NULL" in s for s in sql))
-        self.assertTrue(sql[-1].startswith("UPDATE nova_speaks_renders SET youtube_id=NULL"))
+        self.assertTrue(sql[-1].startswith("UPDATE nova_speaks_renders SET youtube_id=%s WHERE slug=%s AND youtube_id='uploading'"))
+        self.assertEqual(cur.execute.call_args_list[-1][0][1][0], None)
 
 
 class TestUnit(unittest.TestCase):
@@ -401,7 +402,7 @@ class TestIntegration(unittest.TestCase):
 
     def test_build_feeds_metadata_with_playlist_and_category(self):
         art = _article_file()
-        rc, cur, _, yt = _main(["--slug", "2026-10-05-heat-dome"], (str(art), "https://u/", "/tmp/x.mp4", None), yt=_yt_stub("AAAAAAAAAAA"))
+        rc, cur, _, yt = _main(["--slug", "2026-10-05-heat-dome"], (str(art), "https://u/", "/tmp/x.mp4", None, None), yt=_yt_stub("AAAAAAAAAAA"))
         kw = next(c[1] for c in yt.calls if c[0] == "Metadata")
         self.assertEqual(kw["playlist_ids"], [up.PLAYLIST])
         self.assertEqual((kw["privacy"], kw["category"], kw["made_for_kids"]), ("PUBLIC", "SCIENCE_TECH", False))
@@ -414,7 +415,7 @@ class TestIntegration(unittest.TestCase):
 
 class TestFunctional(unittest.TestCase):
     def test_golden_path_claims_uploads_and_records_the_video_id(self):
-        rc, cur, out, yt = _main(["--slug", "2026-10-05-heat-dome"], (str(_article_file()), "https://u/", "/tmp/x.mp4", None))
+        rc, cur, out, yt = _main(["--slug", "2026-10-05-heat-dome"], (str(_article_file()), "https://u/", "/tmp/x.mp4", None, None))
         self.assertEqual(rc, 0)
         self.assertEqual([c[0] for c in yt.calls], ["Metadata", "session", "upload"])
         self.assertEqual(yt.calls[-1][1], "/tmp/x.mp4")
@@ -431,7 +432,7 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(yt.calls, [])
 
     def test_lost_claim_race_returns_zero_without_uploading(self):
-        rc, cur, out, yt = _main(["--slug", "s"], (str(_article_file()), "u", "/tmp/x.mp4", None), rowcount=0)
+        rc, cur, out, yt = _main(["--slug", "s"], (str(_article_file()), "u", "/tmp/x.mp4", None, None), rowcount=0)
         self.assertEqual(rc, 0)
         self.assertIn("claimed by another uploader", out)
         self.assertFalse(any(c[0] == "upload" for c in yt.calls))

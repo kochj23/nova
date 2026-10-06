@@ -335,9 +335,11 @@ Jordan's idea (10/3): not just posts — videos. Rule since 10/3 19:30: every ar
 | Step | Piece |
 |------|-------|
 | Script | `nova_speaks.py` — markdown → chapters/paragraphs (drops References, citations, links, fenced code), XTTS v2 voice "Gracie Wise", per-paragraph wavs, Ken Burns stills from the article's cover (frontmatter `cover.image`, so the filename need not match the slug) + section covers, PIL title/end cards and chapter lower-thirds, ffmpeg 1080p |
+| Narration (2026-10-06) | `nova_speaks_narration.py`, between script and voice — Jordan listened and heard "ninety-one-F", screen-prose sentences, the odd XTTS growl and an unexplained *Qapla'*. Per paragraph: **gloss** (foreign phrases introduced on first use — "in Klingon, Qapla', which means 'success'" — from the PG phrasebook `service_config nova_speaks/phrasebook`, 50 seeded entries Jordan can extend; Han romanized with pypinyin, other scripts said as "a phrase in &lt;language&gt;", never an invented translation) → **write for the ear** (local qwen3:8b on the Studio's Ollama, think off, router `conversation` pool as fallback; a grounding guard rejects any rewrite with a number, capitalized name or quote not in the original; fail-open; cached by paragraph hash in `nova_speaks_rewrites`) → **spoken form** (deterministic: °F/°C, mph, inHg, %, $, times, dates, ordinals, ranges, versions, CVE ids, IPs, codes, acronyms letter-spaced, symbols, emoji out) → **XTTS** at temperature 0.65 / repetition_penalty 7 / top_p 0.8 / top_k 40, fragments merged → **Whisper back-check** of every part (mlx-whisper on Macs, faster-whisper on Linux): WER > 0.35 or an implausible duration → re-synthesize with another seed, best of 3 kept. The exact spoken script lands next to the mp4 as `.txt`; per-render stats go to `nova_speaks_renders.quality` |
 | Render pool | `nova_speaks_sweep.py` (Studio scheduler, every 10 min) — queues live posts, ships article + covers to an idle host, reaps finished renders. Hosts: Studio (MPS), mini M4 Pro (MPS), nova-core2/core7 (CPU). A host that fails 3 renders disables itself. Output: `/Volumes/nas/nova-fs/videos/review` |
 | Upload | `nova_speaks_upload.py` — `youtube-up` driving YouTube Studio's own upload endpoint with a YouTube-only cookie jar exported from Safari on each run (no Google Cloud project, no OAuth app, no API quota — "Oh God, that never works"). Title `AI: Nova Speaks M/D/YY - <Section> - <article title>` trimmed at a word boundary to 100 chars; description = article summary + URL + channel boilerplate + AI-voice disclaimer; tags = section + frontmatter tags; category Science & Technology; added to the **Nova Speaks** playlist; public. Atomic row claim in `nova_speaks_renders` so the sweep's retry and any backfill never double-upload |
 | Approval | Slack #nova-claude gets "ready for your approval" with the watch and Studio-edit links. Stale Safari session → Slack says so; the sweep retries for 2 days |
+| Quality re-renders | `nova_speaks_backcheck.py` transcribes published episodes and fails any with growl/garble runs or an article containing °F/°C, a phrasebook phrase or non-Latin script; `--requeue` puts them back in the sweep (`old_youtube_id` set, note `rerender-quality-20261006`). Re-renders only take idle hosts (new articles first). Each finished one is uploaded under the same title (one per sweep), and the old video is set **private** and removed from the playlist — never deleted |
 
 ```mermaid
 flowchart LR
@@ -348,11 +350,16 @@ flowchart LR
     D --> D2[mini M4 Pro · MPS]
     D --> D3[nova-core2 · CPU]
     D --> D4[nova-core7 · CPU]
-    D1 & D2 & D3 & D4 -->|nova_speaks.py<br/>XTTS Gracie Wise + Ken Burns + ffmpeg| E[/nas/nova-fs/videos/review/*.mp4/]
+    D1 & D2 & D3 & D4 --> N[narration stage<br/>gloss foreign phrases · qwen3:8b write-for-the-ear + grounding guard<br/>spoken form °F/times/acronyms]
+    P[(service_config<br/>phrasebook)] -.-> N
+    N -->|XTTS Gracie Wise<br/>Whisper back-check, seed retries| V[nova_speaks.py<br/>Ken Burns + ffmpeg]
+    V --> E[/nas/nova-fs/videos/review/*.mp4 + .txt script/]
     B -->|reap DONE| E
     E --> F[nova_speaks_upload.py<br/>youtube-up · Safari cookie jar]
     F -->|claim row, PUBLIC,<br/>AI: Nova Speaks M/D/YY - Section - Title| G[YouTube · Nova Speaks playlist]
-    F -->|youtube_id| C
+    F -->|youtube_id, quality| C
+    C -.failed back-check: re-render.-> B
+    F -.replacement: old video private + out of playlist.-> G
     B -->|watch + Studio links| H[Slack #nova-claude]
     F -.stale cookies.-> H
 ```

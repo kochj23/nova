@@ -95,7 +95,7 @@ class TestSecurity(_Base):
         h = _host(ssh="node1")
         calls = []
         with patch.object(ss, "sh", side_effect=lambda h, cmd, timeout=60: calls.append(cmd) or (1, "")):
-            cur = Cur([("status='rendering'", [("x", "node1", 123, "/t/logs/a b;rm -rf ~.log", "T")])])
+            cur = Cur([("status='rendering'", [("x", "node1", 123, "/t/logs/a b;rm -rf ~.log", "T", None, None)])])
             ss.reap(cur, {"node1": h})
         self.assertIn("'/t/logs/a b;rm -rf ~.log'", calls[1])
 
@@ -117,7 +117,7 @@ class TestRetry(_Base):
     def test_render_failure_counts_toward_auto_disable(self):
         # RETRY GAP: reap — a dead render is not retried; it is marked failed and the host's fail counter
         # advances (3 in a row disables it). The sweep itself never raises.
-        cur = Cur([("status='rendering'", [("slug1", "studio", 99, "/t/logs/slug1.log", "T")])])
+        cur = Cur([("status='rendering'", [("slug1", "studio", 99, "/t/logs/slug1.log", "T", None, None)])])
         with patch.object(ss, "sh", side_effect=[(1, ""), (0, "Traceback: OOM")]):
             ss.reap(cur, {"studio": _host()})
         self.assertTrue(any("status='failed'" in s for s, _ in cur.sql))
@@ -175,7 +175,7 @@ class TestUnit(_Base):
 
 class TestIntegration(_Base):
     def test_reap_done_marks_uploads_and_posts(self):
-        cur = Cur([("status='rendering'", [("glass-tides", "studio", 7, "/t/logs/g.log", "Glass Tides")])])
+        cur = Cur([("status='rendering'", [("glass-tides", "studio", 7, "/t/logs/g.log", "Glass Tides", None, None)])])
         log_txt = "...\nDONE /out/glass-tides.mp4 (3:12, 1080p)\n"
         with patch.object(ss, "sh", side_effect=[(1, ""), (0, log_txt)]), patch.object(ss, "upload", return_value="abcdefghijk"):
             ss.reap(cur, {"studio": _host()})

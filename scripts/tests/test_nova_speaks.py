@@ -33,6 +33,8 @@ def _load():
 ns = _load()
 ns.log = lambda m: None
 import nova_notify  # noqa: E402
+import nova_speaks_narration as nn  # noqa: E402
+nn.log = lambda m: None
 
 MD = """---
 title: "🎙️ Machines That Listen: An Essay"
@@ -117,7 +119,8 @@ class TestUnit(unittest.TestCase):
     def test_article_to_script_chapters(self):
         ch = ns.article_to_script(MD, None)
         self.assertEqual([h for h, _ in ch], ["Opening", "Chapter One"])
-        self.assertEqual(ch[1][1], ["A linked paragraph with a citation and bold words in it."])
+        # short paragraphs are kept now (2026-10-06): the narration stage merges them into a neighbour
+        self.assertEqual(ch[1][1], ["A linked paragraph with a citation and bold words in it.", "short"])
 
     def test_sections_filter(self):
         self.assertEqual([h for h, _ in ns.article_to_script(MD, ["chapter"])], ["Chapter One"])
@@ -142,10 +145,10 @@ class TestIntegration(unittest.TestCase):
         tts = _Tts()
         with tempfile.TemporaryDirectory() as d, patch.object(ns.subprocess, "run", return_value=_proc()):
             ns.speak(tts, "Short sentence.", str(Path(d) / "a.wav"))
-            self.assertEqual(tts.calls[-1][1], {"speaker": ns.VOICE})
+            self.assertEqual(tts.calls[-1][1], {"speaker": ns.VOICE, **nn.XTTS_KW})
             with patch.object(ns, "VOICE", "/tmp/ref.wav"):
                 ns.speak(tts, "Short sentence.", str(Path(d) / "b.wav"))
-        self.assertEqual(tts.calls[-1][1], {"speaker_wav": "/tmp/ref.wav"})
+        self.assertEqual(tts.calls[-1][1], {"speaker_wav": "/tmp/ref.wav", **nn.XTTS_KW})
 
     def test_clip_overlay_builds_filter_complex(self):
         with patch.object(ns.subprocess, "run") as run:
@@ -170,7 +173,13 @@ class _Main:
         p("HOME", new=self.home)
         p("OUT_DIR", new=self.home / "review")
         self.tts = p("load_tts", return_value=_Tts())
-        self.speak = p("speak", side_effect=lambda t, txt, path: Path(path).write_bytes(b"w"))
+        self.speak = p("speak", side_effect=lambda t, txt, path, *a, **k: Path(path).write_bytes(b"w"))
+        # narration stage offline: no PG cache, no LLM, seed phrasebook, no Whisper
+        q = lambda n, **kw: self.st.enter_context(patch.object(nn, n, **kw))
+        q("RewriteCache", return_value=None)
+        q("load_phrasebook", return_value=nn.SEED_PHRASEBOOK)
+        q("llm", side_effect=TimeoutError("offline"))
+        q("BackCheck", return_value=SimpleNamespace(backend="none"))
         self.to_png = p("to_png")
         self.clip = p("clip")
         self.card = p("card")

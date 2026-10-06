@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS nova_speaks_renders (
   slug text PRIMARY KEY, section text NOT NULL, article_path text NOT NULL, url text NOT NULL, title text,
   status text NOT NULL DEFAULT 'queued', host text, pid int, log_path text, mp4_path text,
   queued_at timestamptz DEFAULT now(), started_at timestamptz, finished_at timestamptz, note text);
+ALTER TABLE nova_speaks_renders ADD COLUMN IF NOT EXISTS youtube_id text, ADD COLUMN IF NOT EXISTS youtube_uploaded_at timestamptz,
+  ADD COLUMN IF NOT EXISTS quality jsonb, ADD COLUMN IF NOT EXISTS old_youtube_id text, ADD COLUMN IF NOT EXISTS old_youtube_retired boolean;
 CREATE TABLE IF NOT EXISTS nova_speaks_hosts (
   host text PRIMARY KEY, ssh text, python text NOT NULL, scripts_dir text NOT NULL, tts_home text NOT NULL,
   journal_dir text NOT NULL, out_dir text NOT NULL, out_is_nas boolean NOT NULL DEFAULT false,
@@ -163,8 +165,8 @@ def scan_new(cur, origin_ref=None):
 
 # ── 2. reap finished renders ────────────────────────────────────────────────────────────
 def reap(cur, hosts):
-    cur.execute("SELECT slug, host, pid, log_path, title FROM nova_speaks_renders WHERE status='rendering'")
-    for slug, hname, pid, lp, title in cur.fetchall():
+    cur.execute("SELECT slug, host, pid, log_path, title, old_youtube_id, note FROM nova_speaks_renders WHERE status='rendering'")
+    for slug, hname, pid, lp, title, old_yt, prev_note in cur.fetchall():
         h = hosts.get(hname)
         if not h: continue
         rc, _ = sh(h, f"kill -0 {pid} 2>/dev/null")
@@ -181,8 +183,19 @@ def reap(cur, hosts):
                     log(f"scp back failed for {slug}: {e}")
             elif mp4.startswith(h["out_dir"]):
                 mp4 = REVIEW + mp4[len(h["out_dir"]):]
-            cur.execute("UPDATE nova_speaks_renders SET status='done', mp4_path=%s, finished_at=now(), note=%s WHERE slug=%s", (mp4, f"{hname}: {info}", slug))
+            q = re.search(r"^QUALITY (\{.*\})\s*$", txt, re.M)
+            qj = q.group(1) if q else None
+            qs = ""
+            if qj:
+                try:
+                    d = json.loads(qj); qs = f" · back-check {d.get('parts')} parts, {d.get('retries')} retries, worst WER {d.get('worst_wer')}"
+                except Exception: qj = None
+            note = f"{hname}: {info}{qs}" + (f" | {prev_note}" if old_yt and prev_note and "rerender" in prev_note else "")
+            cur.execute("UPDATE nova_speaks_renders SET status='done', mp4_path=%s, finished_at=now(), note=%s, quality=%s WHERE slug=%s", (mp4, note, qj, slug))
             cur.execute("UPDATE nova_speaks_hosts SET fails=0 WHERE host=%s", (hname,))
+            if old_yt:
+                log(f"re-render done: {slug} on {hname} — replacement upload is throttled (one per sweep)")
+                continue
             yt = upload(slug)
             post_approval(f"🎬 *Nova Speaks — ready for your approval, Little Mister:* {title}\n`{mp4}`\n{info} · rendered on {hname} · voice Gracie Wise\n"
                           + (f"Published to YouTube: https://youtu.be/{yt} (edit: https://studio.youtube.com/video/{yt}/edit)" if yt
@@ -190,7 +203,10 @@ def reap(cur, hosts):
             log(f"done: {slug} on {hname}")
         else:
             tail = txt[-400:].replace("\n", " ")
-            cur.execute("UPDATE nova_speaks_renders SET status='failed', finished_at=now(), note=%s WHERE slug=%s", (f"{hname}: {tail}", slug))
+            if old_yt:     # a failed re-render keeps the published old video; back to done, flagged
+                cur.execute("UPDATE nova_speaks_renders SET status='done', old_youtube_id=NULL, note=%s WHERE slug=%s", (f"{prev_note} | re-render FAILED on {hname}: {tail[-200:]}", slug))
+            else:
+                cur.execute("UPDATE nova_speaks_renders SET status='failed', finished_at=now(), note=%s WHERE slug=%s", (f"{hname}: {tail}", slug))
             cur.execute("UPDATE nova_speaks_hosts SET fails=fails+1, enabled=(fails+1<3) WHERE host=%s", (hname,))
             post_approval(f"⚠️ Nova Speaks render FAILED for *{title}* on {hname} — log `{lp}`")
             log(f"failed: {slug} on {hname}")
@@ -206,6 +222,20 @@ def upload(slug):
         log(f"upload failed for {slug}: {e}")
     return None
 
+def replace_one(cur):
+    """One quality re-render per sweep goes up (YouTube daily limits + the sweep's 5-minute budget): the uploader posts
+    the new version under the same title into the playlist and sets the old one PRIVATE + out of the playlist."""
+    cur.execute("SELECT slug, title, old_youtube_id FROM nova_speaks_renders WHERE status='done' AND old_youtube_id IS NOT NULL "
+                "AND youtube_id = old_youtube_id ORDER BY finished_at LIMIT 1")
+    for slug, title, old in cur.fetchall():
+        yt = upload(slug)
+        if not yt: continue
+        cur.execute("SELECT old_youtube_retired FROM nova_speaks_renders WHERE slug=%s", (slug,))
+        retired = (cur.fetchone() or [None])[0]
+        post_approval(f"🔁 Nova Speaks re-render (narration quality) replaced *{title}*: https://youtu.be/{yt} — old {old} "
+                      + ("set private + removed from the playlist." if retired else "could NOT be hidden automatically; please set it private in Studio."))
+
+
 # ── 3. dispatch ─────────────────────────────────────────────────────────────────────────
 def idle(h):
     rc, _ = sh(h, "pgrep -f '[n]ova_speaks.py' >/dev/null"); return rc != 0
@@ -214,7 +244,8 @@ def dispatch(cur, hosts):
     # fastest hosts first, so the Studio takes the next job when it is free
     for h in sorted(hosts.values(), key=lambda x: -(x["speed"] or 0)):
         if not h["enabled"]: continue
-        cur.execute("SELECT slug, section, article_path, url FROM nova_speaks_renders WHERE status='queued' ORDER BY queued_at LIMIT 1")
+            # new articles first; quality re-renders (old_youtube_id set) only take otherwise idle hosts
+        cur.execute("SELECT slug, section, article_path, url FROM nova_speaks_renders WHERE status='queued' ORDER BY (old_youtube_id IS NOT NULL), queued_at LIMIT 1")
         row = cur.fetchone()
         if not row: return
         try:
@@ -233,7 +264,8 @@ def dispatch(cur, hosts):
                 own = [root / "static/images" / section / f"{slug}.webp"] + ([root / "static" / fm.group(1).lstrip("/")] if fm else [])
                 covers += [c for c in own if c.exists() and c.name not in {x.name for x in covers}]
             for cv in covers: copy_to(h, str(cv), f"{h['journal_dir']}/static/images/{section}/{cv.name}")
-            copy_to(h, str(SCRIPTS / "nova_speaks.py"), f"{h['scripts_dir']}/nova_speaks.py")   # keep the renderer current
+            for f in ("nova_speaks.py", "nova_speaks_narration.py"):              # keep the renderer + narration stage current
+                copy_to(h, str(SCRIPTS / f), f"{h['scripts_dir']}/{f}")
             lp = f"{h['tts_home']}/logs/{slug}.log"
             inner = (f"cd {shlex.quote(h['scripts_dir'])} && exec env TTS_HOME={shlex.quote(h['tts_home'])} COQUI_TOS_AGREED=1 "
                      f"NOVA_SPEAKS_OUT={shlex.quote(h['out_dir'])} {h['env'] or ''} {shlex.quote(h['python'])} nova_speaks.py "
@@ -291,12 +323,12 @@ def main():
     if n: log(f"queued {n} new article(s)")
     reap(cur, hosts)
     # retry one YouTube upload that failed earlier (stale cookies); a row that keeps failing ages out after 2 days.
-    cur.execute("ALTER TABLE nova_speaks_renders ADD COLUMN IF NOT EXISTS youtube_id text, ADD COLUMN IF NOT EXISTS youtube_uploaded_at timestamptz")
     cur.execute("SELECT slug, title FROM nova_speaks_renders WHERE status='done' AND youtube_id IS NULL "
                 "AND finished_at > now() - interval '2 days' ORDER BY finished_at LIMIT 1")
     for slug, title in cur.fetchall():
         yt = upload(slug)
         if yt: post_approval(f"🎬 YouTube upload retry succeeded for *{title}*: https://youtu.be/{yt}")
+    replace_one(cur)
     dispatch(cur, hosts)
     podcast_index(cur)
     cur.execute("SELECT status, count(*) FROM nova_speaks_renders GROUP BY 1 ORDER BY 1")
