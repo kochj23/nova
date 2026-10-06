@@ -52,7 +52,7 @@ STATE_FILE = Path.home() / ".openclaw/config/journal_weekly_summary_state.json"
 MODEL = "anthropic/claude-haiku-4.5"
 
 # Non-article directories / files to skip when enumerating sections.
-SKIP_DIRS = {"about", "meta", "start-here", "rando"}  # rando retired — daily pieces now go to operations
+SKIP_DIRS = {"about", "meta", "start-here", "rando", "art"}  # rando retired — daily pieces now go to operations; art = Art Corner retired 2026-10-06 (archive only, no roundups)
 SKIP_FILES = {"_index.md", "search.md"}
 
 DAYS = 7
