@@ -18,6 +18,10 @@ Usage:
   --check      report only, change nothing (default)
   --fix        diagnose, repair, and generate anything still missing
   --dry-run    with --fix: show what would be done, generate nothing
+  --stranded   ONLY push commits stranded in THIS host's clone (committed, never pushed);
+               never regenerates. Scheduled on nova-core (.2), which publishes from its own
+               clone and was invisible to the .6 watchdog (3 articles stranded 2026-10-05).
+               Combine with --dry-run to report without pushing.
 """
 import argparse
 import datetime as dt
@@ -262,17 +266,68 @@ def autofix(causes, dry):
             run(["git", "add", "content/", "static/"], cwd=HUGO)
             run(["git", "-c", "user.name=Jordan Koch", "commit", "-m",
                  "chore: publish content stranded by an interrupted job"], cwd=HUGO)
-            # Rebase onto origin BEFORE pushing — this watchdog exists to un-strand commits,
-            # so it must NOT itself get stuck behind a diverged clone (host .6: 82 ahead / 25 behind).
-            pull = run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=HUGO, timeout=180)
-            if pull.returncode != 0:
-                run(["git", "rebase", "--abort"], cwd=HUGO)
-                log(f"    push ABORTED — pull --rebase failed (diverged/conflict): {pull.stderr[:200]}")
-            else:
-                r = run(["git", "push", "origin", "main"], cwd=HUGO, timeout=180)
-                log(f"    push rc={r.returncode}" + ("" if r.returncode == 0 else f" FAILED: {r.stderr[:200]}"))
+            rebase_and_push()
         fixed = True
     return fixed
+
+
+def _push_lock():
+    """(acquire, release) for nova_journal's fleet-wide journal-push advisory lock, so this
+    watchdog never races a generator's git_push. Falls back to no-ops (best-effort, as
+    nova_journal itself does) if that module cannot be imported."""
+    try:
+        from nova_journal import _acquire_push_lock, _release_push_lock
+        return _acquire_push_lock, _release_push_lock
+    except Exception as e:
+        log(f"    push lock unavailable ({str(e)[:80]}) — proceeding unlocked")
+        return (lambda *a, **k: None), (lambda c: None)
+
+
+def unpushed_count():
+    r = run(["git", "rev-list", "--count", "origin/main..HEAD"], cwd=HUGO, timeout=30)
+    try:
+        return int(r.stdout.strip()) if r.returncode == 0 else 0
+    except ValueError:
+        return 0
+
+
+def rebase_and_push():
+    """Rebase onto origin, then push — under the fleet push lock. Returns True on success."""
+    acquire, release = _push_lock()
+    conn = acquire()
+    try:
+        # Rebase onto origin BEFORE pushing — this watchdog exists to un-strand commits,
+        # so it must NOT itself get stuck behind a diverged clone (host .6: 82 ahead / 25 behind).
+        pull = run(["git", "pull", "--rebase", "--autostash", "origin", "main"], cwd=HUGO, timeout=180)
+        if pull.returncode != 0:
+            run(["git", "rebase", "--abort"], cwd=HUGO)
+            log(f"    push ABORTED — pull --rebase failed (diverged/conflict): {pull.stderr[:200]}")
+            return False
+        if unpushed_count() == 0:
+            log("    nothing left to push (another writer pushed it while we waited)")
+            return True
+        r = run(["git", "push", "origin", "main"], cwd=HUGO, timeout=180)
+        log(f"    push rc={r.returncode}" + ("" if r.returncode == 0 else f" FAILED: {r.stderr[:200]}"))
+        return r.returncode == 0
+    finally:
+        release(conn)
+
+
+def push_stranded(dry):
+    """Host-agnostic stranded-commit sweep of THIS host's clone. Exit 0 = clean/repaired."""
+    log(f"=== stranded-commit check {HUGO} ===")
+    run(["git", "fetch", "-q", "origin"], cwd=HUGO, timeout=90)   # else origin/main is stale
+    n = unpushed_count()
+    if n == 0:
+        log("  OK      no unpushed commits")
+        return 0
+    log(f"  STRANDED {n} commit(s) committed but not pushed:")
+    for line in run(["git", "log", "origin/main..HEAD", "--oneline"], cwd=HUGO, timeout=30).stdout.splitlines()[:20]:
+        log(f"    {line}")
+    if dry:
+        log("  DRY-RUN — not pushing")
+        return 1
+    return 0 if rebase_and_push() else 1
 
 
 def regenerate(item, dry):
@@ -300,7 +355,11 @@ def main():
     ap.add_argument("--fix", action="store_true", help="diagnose, repair, regenerate")
     ap.add_argument("--check", action="store_true", help="report only (default)")
     ap.add_argument("--dry-run", action="store_true", help="with --fix, change nothing")
+    ap.add_argument("--stranded", action="store_true",
+                    help="only push commits stranded in this host's clone; never regenerate")
     a = ap.parse_args()
+    if a.stranded:
+        return push_stranded(a.dry_run)
 
     now = dt.datetime.now()
     log(f"=== article watchdog {now:%Y-%m-%d %H:%M} (grace {GRACE_MIN}m) ===")
