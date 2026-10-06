@@ -57,6 +57,8 @@ def _reset():
         m.reset_mock(side_effect=True)
     ws.call_openrouter.return_value = "recap " * 100
     ws.generate_image.return_value = None
+    ws.publish_hugo.return_value = MagicMock()
+    ws.LOG_FILE.unlink(missing_ok=True)
 
 
 def _q():
@@ -198,6 +200,109 @@ class TestFrame(unittest.TestCase):
                            capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "")
+
+
+class TestTimeoutHardening(unittest.TestCase):
+    """2026-10-04 run killed at 1800 s: per-section git push x ~4 min on a dead GitHub link."""
+
+    def setUp(self):
+        _reset()
+        self.today = date.today()
+        for sec in ("alpha", "beta", "gamma"):
+            _art(sec, "a.md", self.today); _art(sec, "b.md", self.today)
+        self._budget, self._workers = ws.RUN_BUDGET_S, ws.WORKERS
+
+    def tearDown(self):
+        ws.RUN_BUDGET_S, ws.WORKERS = self._budget, self._workers
+
+    def test_sections_run_concurrently_bounded_by_workers(self):
+        import threading
+        live, peak, lock = [0], [0], threading.Lock()
+        def llm(*a, **k):
+            with lock:
+                live[0] += 1; peak[0] = max(peak[0], live[0])
+            time.sleep(0.1)
+            with lock:
+                live[0] -= 1
+            return "recap " * 100
+        ws.call_openrouter.side_effect = llm
+        ws.WORKERS = 2
+        with _q():
+            ws.run()
+        self.assertEqual(peak[0], 2)
+        self.assertEqual(ws.publish_hugo.call_count, 3)
+        self.assertIn("alpha, beta, gamma", ws.git_push.call_args[0][1])   # stable order
+        self.assertEqual(len(json.loads(ws.STATE_FILE.read_text())["seen"]), 3)
+
+    def test_single_push_for_all_sections(self):
+        with _q():
+            ws.run()
+        self.assertEqual(ws.publish_hugo.call_count, 3)
+        ws.git_push.assert_called_once()
+        self.assertIn("alpha, beta, gamma", ws.git_push.call_args[0][1])
+        self.assertEqual(ws.nova_notify.call_count, 3)          # one per section, no warning
+
+    def test_one_failing_section_does_not_block_others(self):
+        def llm(system, user, **k):
+            if '"Beta"' in system:
+                raise RuntimeError("claude hung")
+            return "recap " * 100
+        ws.call_openrouter.side_effect = llm
+        with _q():
+            ws.run()
+        self.assertEqual(ws.publish_hugo.call_count, 2)
+        ws.git_push.assert_called_once()
+        seen = json.loads(ws.STATE_FILE.read_text())["seen"]
+        self.assertEqual(sorted(k.split(":")[0] for k in seen), ["alpha", "gamma"])
+        self.assertIn("incomplete", ws.nova_notify.call_args[0][0])
+
+    def test_budget_defers_remaining_sections_but_still_pushes(self):
+        ws.RUN_BUDGET_S = 0.05
+        ws.WORKERS = 1
+        def slow(*a, **k):
+            time.sleep(0.1)
+            return "recap " * 100
+        ws.call_openrouter.side_effect = slow
+        with _q():
+            ws.run()
+        self.assertEqual(ws.publish_hugo.call_count, 1)          # alpha only
+        ws.git_push.assert_called_once()
+        self.assertEqual(json.loads(ws.STATE_FILE.read_text())["seen"],
+                         [ws._week_key("alpha", self.today - timedelta(days=ws.DAYS))])
+        self.assertIn("deferred (budget): beta, gamma", ws.nova_notify.call_args[1]["body"])
+        log = ws.LOG_FILE.read_text()
+        self.assertIn("deferred: beta, gamma", log)
+
+    def test_publish_gate_refusal_not_marked_seen_or_pushed(self):
+        ws.publish_hugo.return_value = False
+        with _q():
+            ws.run()
+        ws.git_push.assert_not_called()
+        self.assertFalse(ws.STATE_FILE.exists())
+        ws.publish_hugo.return_value = MagicMock()
+
+    def test_generate_dry_run_calls_llm_but_never_publishes(self):
+        with _q():
+            ws.run(dry_run=True, generate=True)
+        self.assertEqual(ws.call_openrouter.call_count, 3)
+        for m in (ws.publish_hugo, ws.git_push, ws.nova_notify, ws.generate_image):
+            m.assert_not_called()
+        self.assertFalse(ws.STATE_FILE.exists())
+        self.assertRegex(ws.LOG_FILE.read_text(), r"\[alpha\] ok in \d+s")
+
+    def test_image_generation_is_capped(self):
+        arts = [{"title": "t", "date": self.today, "body": "b", "name": "n"}]
+        with _q():
+            ws.summarize_section("alpha", arts, self.today, self.today, {}, False)
+        self.assertLessEqual(ws.nova_image_utils.TIMEOUT * ws.nova_image_utils.MAX_RETRIES, 300)
+
+    def test_cli_generate_flag_implies_dry_run(self):
+        with tempfile.TemporaryDirectory() as home:
+            r = subprocess.run([sys.executable, str(SCRIPTS / "nova_journal_weekly_summary.py"), "--generate"],
+                               capture_output=True, text=True, timeout=30,
+                               env={**os.environ, "NOVA_TEST_QUIET": "1", "HOME": home})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("DRY-RUN +generate", r.stdout)
 
 
 if __name__ == "__main__":

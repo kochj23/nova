@@ -20,7 +20,20 @@ Run modes:
   (default)  — generate + publish weekly summaries for qualifying sections.
   dry-run    — print, per section, how many articles fell in the last 7 days and
                which sections WOULD get a summary. Does NOT call publish_hugo /
-               git_push / Slack. (alias: dryrun)
+               git_push / Slack. (aliases: dryrun, --dry-run)
+  dry-run --generate
+             — as dry-run, but ALSO runs the LLM recap generation per qualifying
+               section and logs per-section timings. Still never writes, pushes,
+               notifies or touches state. For timing checks off-schedule.
+
+Timeout hardening (2026-10-06): the 2026-10-04 run was killed at the scheduler's
+1800 s limit. ~1050 s of it was `git push` — GitHub ssh:22 was timing out from
+nova-core and every section did its own push (+ pull --rebase), 2–4.5 min each.
+Now: sections are generated + written independently, ONE git_push runs at the end,
+a run budget stops starting new sections in time for that push to happen (deferred
+sections stay unseen, so a same-day rerun picks them up), local image gen is
+capped so a wedged ComfyUI can't eat a section's whole budget, and sections run
+WORKERS (2) at a time.
 
 Written by Jordan Koch (via Claude).
 """
@@ -29,6 +42,7 @@ import json
 import re
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, date
 from pathlib import Path
 
@@ -36,6 +50,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 sys.path.insert(0, str(Path.home() / ".openclaw"))
 
 import nova_config
+import nova_image_utils
 from nova_voice import system_prompt
 from nova_notify import notify as nova_notify
 
@@ -57,6 +72,20 @@ SKIP_FILES = {"_index.md", "search.md"}
 
 DAYS = 7
 MIN_ARTICLES = 2  # strictly more than one
+
+# Scheduler kills the task at 1800 s. Don't START a new section after this many
+# seconds, leaving room for an in-flight section plus the single final push
+# (git_push's network timeout is 180 s). Normal runs finish in 10-13 min.
+RUN_BUDGET_S = 1200
+# Cover image: FLUX ~60 s/image. Default nova_image_utils budget is 2 x 600 s,
+# which alone could blow the task timeout; one 240 s attempt is plenty here.
+IMAGE_TIMEOUT_S = 240
+IMAGE_MAX_RETRIES = 1
+# Sections run 2 at a time. Real work is ~20-25 min serial now (8 sections; 5 are
+# longform sections whose recap publish_hugo expands to >=3000 words, + a FLUX cover
+# each). Each section writes distinct files; git push happens once, after all of them;
+# concurrent claude -p calls and ComfyUI jobs are routine across the journal fleet.
+WORKERS = 2
 
 
 # ── Logging ───────────────────────────────────────────────────────────────────
@@ -285,18 +314,25 @@ the throughline, and tell the reader what's worth their time."""
 
 
 def summarize_section(section: str, articles: list[dict], start: date, end: date,
-                      state: dict, dry_run: bool) -> bool:
-    """Generate + publish a weekly summary for one qualifying section."""
+                      state: dict, dry_run: bool):
+    """Generate + write (publish_hugo) one section's weekly summary.
+
+    Returns (title, body) on success, None on failure. Does NOT git_push or notify —
+    run() does one push for all sections at the end (a per-section push cost 2-4.5
+    min each when GitHub was unreachable and is what timed out the 2026-10-04 run).
+    """
     log(f"[{section}] generating weekly summary for {len(articles)} articles")
     result = generate_summary(section, articles, start, end)
     if not result:
-        return False
+        return None
     title, body = result
-    slug = _slug(title)
 
     img_path = None
     try:
         section_label = section.replace("-", " ")
+        # Cap local image gen for this job (module globals read at call time).
+        nova_image_utils.TIMEOUT = IMAGE_TIMEOUT_S
+        nova_image_utils.MAX_RETRIES = IMAGE_MAX_RETRIES
         img_path = generate_image(
             f"weekly recap collage for a journal section about {section_label}, "
             f"layered overlapping pages and light, editorial, muted palette, "
@@ -308,19 +344,21 @@ def summarize_section(section: str, articles: list[dict], start: date, end: date
 
     tags = [section, "weekly-summary"]
     description = f"Nova's weekly {section} recap — {_date_range_label(start, end)}"
-    publish_hugo(title, body, section, tags, description,
-                 image_path=str(img_path) if img_path else None, emoji="\U0001f4c5")
-    git_push(section, title)
-    notify(section, title, body[:220].replace("\n", " "), slug)
-    log(f"[{section}] published: {title}")
-    return True
+    ok = publish_hugo(title, body, section, tags, description,
+                      image_path=str(img_path) if img_path else None, emoji="\U0001f4c5")
+    if ok is False:   # publish gate blocked it — nothing written
+        log(f"[{section}] publish_hugo refused the summary — not marking done")
+        return None
+    log(f"[{section}] written: {title}")
+    return title, body
 
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def run(dry_run: bool = False):
-    mode = "DRY-RUN" if dry_run else "LIVE"
+def run(dry_run: bool = False, generate: bool = False):
+    mode = "DRY-RUN" + (" +generate" if generate else "") if dry_run else "LIVE"
     log(f"=== Weekly section summaries ({mode}) ===")
+    t_run = time.monotonic()
 
     today = date.today()
     cutoff = today - timedelta(days=DAYS)
@@ -361,7 +399,7 @@ def run(dry_run: bool = False):
     print(f"Qualifying sections (>1 article, not yet done): "
           f"{', '.join(s for s, _ in qualifying) if qualifying else '(none)'}\n")
 
-    if dry_run:
+    if dry_run and not generate:
         log(f"Dry-run complete. {len(qualifying)} section(s) would be summarized.")
         return
 
@@ -369,22 +407,75 @@ def run(dry_run: bool = False):
         log("No qualifying sections this week — nothing to publish.")
         return
 
-    for section, articles in qualifying:
+    published, failed, deferred = [], [], []
+
+    def _one(section, articles):
+        """Worker: returns (section, result|None|'DEFERRED'). No shared-state writes."""
+        if time.monotonic() - t_run > RUN_BUDGET_S:
+            return section, "DEFERRED"
+        t0 = time.monotonic()
         try:
-            ok = summarize_section(section, articles, week_start, week_end, state, dry_run)
+            if dry_run:   # --generate: LLM only, never write/push/notify/state
+                res = generate_summary(section, articles, week_start, week_end)
+            else:
+                res = summarize_section(section, articles, week_start, week_end, state, dry_run)
         except Exception as e:
             log(f"[{section}] ERROR: {e}")
-            ok = False
-        if ok:
-            seen.add(_week_key(section, week_start))
-            # Persist after each success so a mid-run failure doesn't lose progress.
-            state["seen"] = sorted(seen)[-500:]
-            state["last_run"] = today.isoformat()
-            save_state(state)
+            res = None
+        log(f"[{section}] {'ok' if res else 'FAILED'} in {time.monotonic() - t0:.0f}s "
+            f"(run elapsed {time.monotonic() - t_run:.0f}s)")
+        return section, res
 
-    log(f"=== Weekly summaries complete ===")
+    with ThreadPoolExecutor(max_workers=max(1, WORKERS)) as pool:
+        futures = [pool.submit(_one, sec, arts) for sec, arts in qualifying]
+        for fut in as_completed(futures):
+            section, res = fut.result()
+            if res == "DEFERRED":
+                deferred.append(section)
+                continue
+            if not res:
+                failed.append(section)
+                continue
+            published.append((section, res[0], res[1]))
+            if not dry_run:
+                seen.add(_week_key(section, week_start))
+                # Persist after each written section (main thread only): the file is on
+                # disk, so a rerun must not write a duplicate (an unpushed commit/file is
+                # swept by the stranded-content watchdog).
+                state["seen"] = sorted(seen)[-500:]
+                state["last_run"] = today.isoformat()
+                save_state(state)
+    order = [sec for sec, _ in qualifying]
+    published.sort(key=lambda t: order.index(t[0]))
+    failed.sort(key=order.index)
+    deferred.sort(key=order.index)
+
+    if deferred:
+        log(f"Run budget ({RUN_BUDGET_S}s) exhausted — deferred: {', '.join(deferred)} "
+            f"(still unseen; rerun today to pick them up)")
+
+    if published and not dry_run:
+        t0 = time.monotonic()
+        names = ", ".join(s for s, _, _ in published)
+        status = git_push("weekly-summary", f"This Week in: {names}")
+        log(f"git_push ({names}) -> {status} in {time.monotonic() - t0:.0f}s")
+        for section, title, body in published:
+            notify(section, title, body[:220].replace("\n", " "), _slug(title))
+            log(f"[{section}] published: {title}")
+
+    if (failed or deferred) and not dry_run:
+        nova_notify("Nova Journal — weekly summaries incomplete",
+                    body=f"failed: {', '.join(failed) or '-'}; deferred (budget): "
+                         f"{', '.join(deferred) or '-'}. Rerun: "
+                         f"nova_journal_weekly_summary.py (same day; done sections are skipped)",
+                    level="warning", category="journal",
+                    dedup_key="journal-weekly-summary-incomplete")
+
+    log(f"=== Weekly summaries complete in {time.monotonic() - t_run:.0f}s: "
+        f"{len(published)} ok, {len(failed)} failed, {len(deferred)} deferred ===")
 
 
 if __name__ == "__main__":
-    arg = sys.argv[1].lower().strip() if len(sys.argv) > 1 else ""
-    run(dry_run=arg in ("dry-run", "dryrun", "dry"))
+    args = {a.lower().strip().lstrip("-") for a in sys.argv[1:]}
+    gen = "generate" in args   # --generate always implies dry-run (never publishes)
+    run(dry_run=gen or bool(args & {"dry-run", "dryrun", "dry"}), generate=gen)
