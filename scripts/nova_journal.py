@@ -497,11 +497,34 @@ ARTICLE_LENGTH = {
     "tech-today":              (1200, 2000, EXPAND_GROUNDED),
     "synthesis":               (1500, 2500, EXPAND_GROUNDED),
     "essay":                   (2500, 4000, EXPAND_GROUNDED),
-    "meta-analysis":           (2000, 3500, EXPAND_GROUNDED),
     "research":                (2500, 5000, EXPAND_GROUNDED),
-    # Unmapped (publish as written): after-dark, pilot, art, autobiography, ledger,
-    # monthly-wrap, repo-scout, iot-scout, one-off ops articles.
+    # Monthly pieces — "a lot happens in a month" (Jordan, 2026-10-06): >= 3000 words.
+    "meta":                    (3000, 6000, EXPAND_GROUNDED),   # nova_meta_analysis.py (monthly)
+    "monthly-wrap":            (3000, 6000, EXPAND_GROUNDED),   # nova_monthly_wrap.py
+    "autobiography":           (1500, 3000, EXPAND_GROUNDED),   # weekly narrative-identity arc
+    "ledger":                  (1200, 2500, EXPAND_GROUNDED),   # nova_ledger_of_changed_minds.py (monthly)
+    "repo-scout":              (800, 1600, EXPAND_NEVER),       # nova_repo_scout.py verdict review
+    "iot-scout":               (800, 1600, EXPAND_NEVER),       # nova_iot_scout.py verdict review
+    # Unmapped (publish as written): one-off ops articles. Retired profiles: RETIRED_PROFILES.
 }
+# Retired generator profiles (no rows on purpose). Publishing under one still works but
+# logs a WARNING — something is still calling a generator Jordan retired.
+RETIRED_PROFILES = frozenset({"after-dark", "pilot", "art"})
+
+# Per-story length overrides (2026-10-06, per Jordan: "some specific stories at 3,000+
+# words — I'll call them out"). Lives in Postgres so it is changed without a deploy:
+#   nova_ops.service_config (service='nova_journal', key='longform_overrides') value =
+#   [{"profile": "copenhagen", "min_words": 3000, "note": "..."},
+#    {"pattern": "(?i)two.months.of", "min_words": 3000}]      # regex vs title AND slug
+# An entry needs "min_words" plus "profile" and/or "pattern" (both given -> both must
+# match). The highest matching min wins; publish_hugo(min_words=N) beats the DB.
+# An override only RAISES the floor and turns on grounded expansion for that story — it
+# still needs sources and still passes the number check + Sonnet grounding check (no
+# sources -> publishes as written). LONGFORM_OVERRIDES is the in-code fallback, used
+# only when the DB is unreachable. Keep it empty: Jordan names the stories.
+LONGFORM_OVERRIDES: list = []
+LONGFORM_OVERRIDE_PG = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj connect_timeout=5"
+_LONGFORM_OVERRIDE_CACHE: list = []
 LONGFORM_MIN_GAIN = 1.25            # "meaningfully longer": >= 1.25x the draft (or >= min)
 LONGFORM_MAX_OVERSHOOT = 1.25       # an expansion past 1.25x max is padding -> rejected
 TIGHTEN_MAX_SLACK = 1.10            # a tightened draft may land up to 10% over max
@@ -566,6 +589,48 @@ _EXPAND_META_RE = re.compile(
 def article_length(profile: str | None):
     """(min, max, policy) for a generator profile, or None when unmapped."""
     return ARTICLE_LENGTH.get(profile or "")
+
+
+def longform_overrides() -> list:
+    """The per-story override list: service_config nova_journal/longform_overrides, else
+    LONGFORM_OVERRIDES when PG is unreachable. Cached per process."""
+    if _LONGFORM_OVERRIDE_CACHE:
+        return _LONGFORM_OVERRIDE_CACHE[0]
+    rows = list(LONGFORM_OVERRIDES)
+    try:
+        import psycopg2
+        c = psycopg2.connect(LONGFORM_OVERRIDE_PG)
+        try:
+            with c.cursor() as cur:
+                cur.execute("SELECT value FROM service_config WHERE service = %s AND key = %s",
+                            ("nova_journal", "longform_overrides"))
+                r = cur.fetchone()
+        finally:
+            c.close()
+        rows = r[0] if r and isinstance(r[0], list) else []
+    except Exception as e:
+        log(f"[longform] override lookup failed ({e}) — using in-code LONGFORM_OVERRIDES")
+    _LONGFORM_OVERRIDE_CACHE.append(rows)
+    return rows
+
+
+def override_min_words(profile: str | None, title: str, slug: str = "") -> int | None:
+    """Highest min_words among override entries matching this story, or None."""
+    best = None
+    for o in longform_overrides():
+        try:
+            n = int(o.get("min_words") or 0)
+            prof, pat = o.get("profile"), o.get("pattern")
+            if n <= 0 or not (prof or pat):
+                continue
+            if prof and prof != profile:
+                continue
+            if pat and not (re.search(pat, title or "") or re.search(pat, slug or "")):
+                continue
+            best = max(best or 0, n)
+        except Exception:
+            continue
+    return best
 
 
 def sources_from_memories(memories: list | None, topic: str | None = None,
@@ -710,15 +775,34 @@ def new_numbers(draft: str, sources: str, expanded: str) -> list[str]:
 
 
 def longform_expand(title: str, body: str, section: str, sources: str | None,
-                    profile: str | None = None) -> str:
+                    profile: str | None = None, min_words: int | None = None,
+                    slug: str | None = None) -> str:
     """Apply the profile's length policy. Returns the body to publish: a grounded,
-    checked expansion, a tightened draft, or the draft as written."""
+    checked expansion, a tightened draft, or the draft as written.
+    min_words: per-story floor (publish_hugo(min_words=) or a service_config override)."""
     from nova_journal_guard import is_publishable
     wc = len(body.split())
     tag = f"'{title[:50]}' [{profile or '-'}/{section}] {wc}w"
+    if profile in RETIRED_PROFILES:
+        log(f"[longform] WARNING {tag} — publishing under RETIRED profile {profile!r} "
+            f"(after-dark/pilot/art were retired) — who is still calling it?")
     row = article_length(profile)
+    if min_words is None:
+        try:
+            min_words = override_min_words(
+                profile, title, slug or re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-"))
+        except Exception:
+            min_words = None
+    if min_words:
+        # An override only raises the floor and turns on GROUNDED expansion — sources and
+        # the grounding check are still required below. It never permits padding.
+        lo0, hi0 = (row[0], row[1]) if row else (0, 0)
+        lo = max(lo0, int(min_words))
+        row = (lo, max(hi0, 2 * lo), EXPAND_GROUNDED)
+        log(f"[longform] {tag} — per-story override: min {lo} (grounded only)")
     if row is None:
-        log(f"[longform] {tag} — unmapped profile {profile!r}: no floor, publishing as written")
+        if profile not in RETIRED_PROFILES:
+            log(f"[longform] {tag} — unmapped profile {profile!r}: no floor, publishing as written")
         return body
     lo, hi, policy = row
     t0 = time.monotonic()
@@ -796,7 +880,8 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
                  description: str, image_path: str | None = None, emoji: str = "",
                  stable_slug: str | None = None,
                  cited_memory_ids: list | None = None,
-                 sources: str | None = None, profile: str | None = None) -> bool:
+                 sources: str | None = None, profile: str | None = None,
+                 min_words: int | None = None) -> bool:
     """Write a Hugo markdown post and copy cover image.
 
     stable_slug: if set, the post uses a FIXED filename ("<slug>.md", no date prefix) so
@@ -811,6 +896,8 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
     sources: the source material the draft was written from (memories, news/search
     results, scanner data, dossiers...). A "grounded" row expands ONLY when this is
     given, and only with facts in draft+sources (see longform_expand).
+    min_words: per-story floor that beats the table/DB overrides (raises the min and
+    enables grounded expansion; still needs sources + passes the grounding check).
     """
     # Central title fallback (2026-09-13): degenerate titles ("Abstract", "Let me…",
     # stray markdown) previously reached the site from generators lacking their own
@@ -844,7 +931,8 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
 
     # Per-article-type length policy (2026-10-06, per Jordan — replaces the single
     # 5000-word section floor; see ARTICLE_LENGTH / longform_expand).
-    body = longform_expand(title, body, section, sources, profile=profile)
+    body = longform_expand(title, body, section, sources, profile=profile, min_words=min_words,
+                           slug=stable_slug)
 
     try:  # prepend the live backyard-weather dateline to the BODY (never the title)
         from nova_weather_blurb import weather_dateline_line

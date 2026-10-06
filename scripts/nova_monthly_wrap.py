@@ -201,6 +201,7 @@ Write my Monthly Wrap article for this section. Reference the specific articles,
         description=description,
         image_path=image_path,
         emoji=config["emoji"],
+        sources=user, profile="monthly-wrap",   # 3000-6000 grounded (ARTICLE_LENGTH)
     )
 
     if success:

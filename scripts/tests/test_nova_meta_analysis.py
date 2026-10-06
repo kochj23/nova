@@ -39,9 +39,18 @@ def _stubbed(mods):
                 sys.modules[k] = v
 
 
+def _fake_publish_hugo(title, body, section, tags, description, emoji="", stable_slug=None, **kw):
+    """Stands in for nova_journal.publish_hugo: writes the post where the real one would."""
+    d = TMP / "nova-journal" / "content" / section
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{stable_slug}.md").write_text(f'---\ntitle: "{emoji} {title}"\ntags: {json.dumps(tags)}\n---\n{body}')
+    return True
+
+
 def _load():
     # nova_journal resolves service URLs through PG at import: stand it in for the load
     nj = types.ModuleType("nova_journal"); nj.git_push = MagicMock()
+    nj.publish_hugo = MagicMock(side_effect=_fake_publish_hugo)
     with _stubbed({"nova_journal": nj}):
         spec = importlib.util.spec_from_file_location("meta_analysis", SCRIPT)
         mod = importlib.util.module_from_spec(spec)
@@ -160,6 +169,33 @@ class TestUnit(unittest.TestCase):
 
 
 class TestIntegration(unittest.TestCase):
+    def test_publish_goes_through_publish_hugo_with_meta_profile_and_sources(self):
+        """2026-10-06: the monthly meta must use the regular pipeline (>=3000-word grounded
+        expansion + check), not its own writer — profile 'meta' + the month's material as sources."""
+        _fresh_site()
+        ma.nj.git_push.reset_mock(); ma.nj.publish_hugo.reset_mock()
+        posts = [{"category": "dreams", "title": "Lanterns Over Burbank", "tags": ["dreams"], "body": "SRC-BODY-7 water",
+                  "slug": "2026-09-01-lanterns", "url": "/dreams/2026-09-01-lanterns/"}]
+        pats = {"total_posts": 1, "by_category": {"dreams": 1}, "top_tags": [("dreams", 1)],
+                "recurring_words": [("water", 1)], "most_active_category": "dreams"}
+        with redirect_stdout(io.StringIO()):
+            url = ma._publish("I keep dreaming of water.", pats, posts, "March 2026")
+        (title, body, section, tags, desc), kw = ma.nj.publish_hugo.call_args
+        self.assertEqual((section, kw["profile"], kw["emoji"]), ("meta", "meta", "🔮"))
+        self.assertEqual(title, "What My Mind Has Been Doing — March 2026")
+        self.assertRegex(kw["stable_slug"], r"^\d{4}-\d{2}-what-my-mind-has-been-doing$")
+        self.assertEqual(url, f"/meta/{kw['stable_slug']}/")
+        for needle in ("Lanterns Over Burbank", "SRC-BODY-7", "/dreams/2026-09-01-lanterns/", '"dreams": 1', "MONTH: March 2026"):
+            self.assertIn(needle, kw["sources"])
+        self.assertIn("| dreams | 1 |", body); self.assertTrue(body.startswith("I keep dreaming of water."))
+        ma.nj.git_push.assert_called_once_with("meta", "March 2026 self-analysis")
+        self.assertNotIn("write_text(", SRC[SRC.index("def _publish("):SRC.index("def main(")])   # no private writer
+        # guard refusal -> nothing pushed, no URL
+        ma.nj.git_push.reset_mock()
+        with patch.object(ma.nj, "publish_hugo", return_value=False), redirect_stdout(io.StringIO()):
+            self.assertIsNone(ma._publish("x", pats, posts, "March 2026"))
+        ma.nj.git_push.assert_not_called()
+
     def test_publish_writes_hugo_post_and_pushes(self):
         _fresh_site()
         ma.nj.git_push.reset_mock()

@@ -321,7 +321,7 @@ def run(dry_run: bool = False, force_repo: str | None = None) -> int:
     desc = f"Nova's daily scout of a trending AI repo: {repo['full_name']} — verdict {verdict}."
 
     if dry_run:
-        nj.publish_hugo(title, full_body, "operations", tags, desc, emoji=emoji)
+        nj.publish_hugo(title, full_body, "operations", tags, desc, emoji=emoji, profile="repo-scout")
         nj.log(f"[scout] DRY RUN — wrote '{title}' [{verdict}] to operations/, "
                f"NOT pushed, NOT logged (repo stays eligible).")
         print(f"\n===== {emoji} {title}  [{verdict}] =====")
@@ -330,7 +330,7 @@ def run(dry_run: bool = False, force_repo: str | None = None) -> int:
         conn.close()
         return 0
 
-    nj.publish_hugo(title, full_body, "operations", tags, desc, emoji=emoji)
+    nj.publish_hugo(title, full_body, "operations", tags, desc, emoji=emoji, profile="repo-scout")
     cur.execute(
         "INSERT INTO repo_scout_log (full_name,url,stars,language,verdict,title) "
         "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (full_name) DO UPDATE SET "

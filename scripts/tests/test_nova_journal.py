@@ -54,6 +54,7 @@ nj.LOG_FILE = TMP / "nova_journal.log"
 nj.STATE_FILE = TMP / "journal_state.json"
 nj.HUGO_ROOT = TMP / "nova-journal"
 nj._TASK_TIMEOUT_CACHE[:] = [None]   # never read the real scheduler yaml: no task budget in tests
+nj._LONGFORM_OVERRIDE_CACHE[:] = [[]]  # never read the real service_config overrides in tests
 
 BODY = ("The scheduler vanished on Tuesday and nobody noticed until the dashboards went quiet. " * 12).strip()
 REFUSAL = "I need to stop you right there. This assignment doesn't work: you handed me a grab-bag of excerpts. " * 8
@@ -238,11 +239,18 @@ class TestUnit(unittest.TestCase):
                   "unclaimed-digest": (600, 1200, N), "digest": (600, 1200, N), "copenhagen": (600, 1200, N),
                   "weekly-summary": (700, 1400, N), "opinion": (1000, 1800, G), "fishbowl-daily": (1000, 1800, G),
                   "local-airwaves": (1200, 2000, G), "tech-today": (1200, 2000, G), "synthesis": (1500, 2500, G),
-                  "essay": (2500, 4000, G), "meta-analysis": (2000, 3500, G), "research": (2500, 5000, G)}
+                  "essay": (2500, 4000, G), "research": (2500, 5000, G),
+                  # 2026-10-06 follow-up: monthly pieces >= 3000 + the formerly unmapped live generators
+                  "meta": (3000, 6000, G), "monthly-wrap": (3000, 6000, G), "autobiography": (1500, 3000, G),
+                  "ledger": (1200, 2500, G), "repo-scout": (800, 1600, N), "iot-scout": (800, 1600, N)}
         for prof, row in expect.items():
             self.assertEqual(nj.article_length(prof), row, prof)
-        for prof in (None, "", "after-dark", "autobiography", "repo-scout"):
+        self.assertGreaterEqual(nj.article_length("meta")[0], 3000)               # "a lot happens in a month"
+        for prof in (None, "", "after-dark", "pilot", "art", "meta-analysis"):
             self.assertIsNone(nj.article_length(prof))
+        self.assertEqual(nj.RETIRED_PROFILES, {"after-dark", "pilot", "art"})
+        self.assertFalse(nj.RETIRED_PROFILES & set(nj.ARTICLE_LENGTH))
+        self.assertEqual(nj.LONGFORM_OVERRIDES, [])                               # Jordan names the stories
         for prof, (lo, hi, pol) in nj.ARTICLE_LENGTH.items():
             self.assertLess(lo, hi, prof); self.assertIn(pol, (G, N), prof)
         for p in ("essay", "opinion", "tech-today", "research", "synthesis", "digest", "dream"):
@@ -427,12 +435,85 @@ class TestIntegration(unittest.TestCase):
 
     def test_never_rows_and_unmapped_profiles_make_no_model_call(self):
         for prof, sec in (("dream", "dreams"), ("weekly-summary", "essays"), ("ops-security", "operations"),
-                          ("unclaimed-digest", "operations"), ("autobiography", "operations"), (None, "essays")):
+                          ("unclaimed-digest", "operations"), ("repo-scout", "operations"),
+                          ("iot-scout", "operations"), (None, "essays")):
             with self.subTest(profile=prof):
                 text, co = self._pub(f"Short Piece For {prof or 'nobody'}", BODY, prof, self.SOURCES, section=sec)
                 co.assert_not_called()
                 self.assertIn(BODY[:60], text)
         self.assertIn("unmapped profile None", nj.LOG_FILE.read_text())
+
+    def test_retired_profiles_log_a_warning_not_unmapped(self):
+        for prof, sec in (("after-dark", "after-dark"), ("pilot", "pilot"), ("art", "art")):
+            with self.subTest(profile=prof):
+                text, co = self._pub(f"Retired Piece For {prof}", BODY, prof, self.SOURCES, section=sec)
+                co.assert_not_called(); self.assertIn(BODY[:60], text)
+                log = nj.LOG_FILE.read_text()
+                self.assertIn(f"WARNING 'Retired Piece For {prof}'", log)
+                self.assertIn(f"RETIRED profile {prof!r}", log)
+                self.assertNotIn(f"unmapped profile {prof!r}", log)
+
+    def test_new_rows_drive_policy(self):
+        # autobiography is grounded now: a short draft with sources gets the 1500-3000 expansion
+        text, co = self._pub("Autobiography Chapter Grounded", BODY, "autobiography", self.SOURCES,
+                             section="operations", replies=[self.GROUNDED, '{"unsupported": []}'])
+        self.assertIn("1500-3000", co.call_args_list[0][0][0]); self.assertIn("as the source log says", text)
+        # monthly-wrap / meta ask for 3000-6000
+        text, co = self._pub("Monthly Wrap Grounded Test", BODY, "meta", self.SOURCES, section="meta",
+                             replies=[self.GROUNDED, '{"unsupported": []}'])
+        self.assertIn("3000-6000", co.call_args_list[0][0][0])
+
+    def test_per_story_override_raises_min_but_still_needs_sources_and_grounding(self):
+        overrides = [{"profile": "copenhagen", "min_words": 3000},
+                     {"pattern": "(?i)two.months.of", "min_words": 3500},
+                     {"min_words": 9000}]                                          # no selector -> ignored
+        old = list(nj._LONGFORM_OVERRIDE_CACHE)
+        try:
+            nj._LONGFORM_OVERRIDE_CACHE[:] = [overrides]
+            self.assertEqual(nj.override_min_words("copenhagen", "Morning Review"), 3000)
+            self.assertEqual(nj.override_min_words("digest", "Two Months Of DNS"), 3500)
+            self.assertEqual(nj.override_min_words("digest", "x", "2026-10-06-two-months-of-dns"), 3500)
+            self.assertIsNone(nj.override_min_words("digest", "Something Else"))
+            # copenhagen's row is 'never' — the override turns on GROUNDED expansion toward 3000-6000
+            text, co = self._pub("Copenhagen Override Grounded", BODY, "copenhagen", self.SOURCES,
+                                 section="operations", replies=[self.GROUNDED, '{"unsupported": []}'])
+            self.assertIn("3000-6000", co.call_args_list[0][0][0])
+            self.assertEqual(co.call_args_list[1].kwargs["model"], nj.CHECK_MODEL)  # grounding check ran
+            self.assertIn("as the source log says", text)
+            self.assertIn("per-story override: min 3000", nj.LOG_FILE.read_text())
+            # ...but never without sources
+            text, co = self._pub("Copenhagen Override No Sources", BODY, "copenhagen", None, section="operations")
+            co.assert_not_called(); self.assertIn(BODY[:60], text)
+            # ...and an unsupported claim still rejects the expansion
+            bad = json.dumps({"unsupported": [{"claim": "Mayor Lee resigned", "type": "event"}]})
+            text, co = self._pub("Copenhagen Override Bad Claim", BODY, "copenhagen", self.SOURCES,
+                                 section="operations", replies=[self.GROUNDED, bad])
+            self.assertNotIn("as the source log says", text); self.assertIn(BODY[:60], text)
+        finally:
+            nj._LONGFORM_OVERRIDE_CACHE[:] = old
+        # publish_hugo(min_words=) works on an unmapped profile too, still grounded-only
+        with patch.dict(sys.modules, _lazy_stubs()), \
+                patch.object(nj, "call_openrouter", side_effect=[self.GROUNDED, '{"unsupported": []}']) as co, _quiet():
+            self.assertTrue(nj.publish_hugo("One Off Ops Story Long", BODY, "operations", [], "d",
+                                            sources=self.SOURCES, profile=None, min_words=3000))
+        self.assertIn("3000-6000", co.call_args_list[0][0][0]); self.assertEqual(co.call_count, 2)
+
+    def test_override_lookup_reads_service_config_then_falls_back(self):
+        old = list(nj._LONGFORM_OVERRIDE_CACHE)
+        try:
+            cur = MagicMock(); cur.fetchone.return_value = ([{"profile": "essay", "min_words": 3200}],)
+            conn = MagicMock(); conn.cursor.return_value.__enter__.return_value = cur
+            nj._LONGFORM_OVERRIDE_CACHE[:] = []
+            with patch("psycopg2.connect", return_value=conn), _quiet():
+                self.assertEqual(nj.longform_overrides(), [{"profile": "essay", "min_words": 3200}])
+            sql, params = cur.execute.call_args[0]
+            self.assertIn("FROM service_config", sql); self.assertEqual(params, ("nova_journal", "longform_overrides"))
+            nj._LONGFORM_OVERRIDE_CACHE[:] = []
+            with patch("psycopg2.connect", side_effect=RuntimeError("pg down")), \
+                    patch.object(nj, "LONGFORM_OVERRIDES", [{"profile": "x", "min_words": 3000}]), _quiet():
+                self.assertEqual(nj.longform_overrides(), [{"profile": "x", "min_words": 3000}])
+        finally:
+            nj._LONGFORM_OVERRIDE_CACHE[:] = old
 
     def test_above_max_gets_one_tighten_pass_else_draft(self):
         long_body = ("Port scan from the usual suspect, blocked at the edge, nothing new to report. " * 70).strip()  # ~1050w > 700

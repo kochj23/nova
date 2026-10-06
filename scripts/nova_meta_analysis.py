@@ -6,8 +6,12 @@ The thing no human blog can do: Nova queries her own content, finds
 the patterns in what she's been writing and dreaming, and publishes
 a self-reflective analysis. "What has my mind been doing this month?"
 
-Runs on the first Sunday of each month at 8pm via scheduler.
-Published to nova.digitalnoise.net/meta/ and emailed to the herd.
+Scheduled weekly (Sun 20:00, scheduler-core.yaml `meta_analysis`) but _should_run() gates
+it to the FIRST Sunday of the month (+ a 25-day state guard) — so it publishes monthly.
+Published to nova.digitalnoise.net/meta/ through nova_journal.publish_hugo(profile="meta",
+sources=<the month's posts + stats>) — the regular pipeline: guard, >=3000-word grounded
+expansion (Sonnet) + number/grounding check, fail closed (2026-10-06, per Jordan:
+"a lot happens in a month").
 
 Written by Jordan Koch.
 """
@@ -29,7 +33,7 @@ import nova_journal as nj
 from nova_tag_extractor import extract_tags
 
 HUGO_ROOT    = (Path.home() / "nova-journal")
-CONTENT_OUT  = HUGO_ROOT / "content/meta"
+CONTENT_OUT  = HUGO_ROOT / "content/meta"   # where publish_hugo writes section "meta"
 SCRIPTS      = Path(__file__).parent
 LOG_FILE     = Path.home() / ".openclaw/logs/nova_meta_analysis.log"
 MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
@@ -175,17 +179,22 @@ This is a unique kind of writing: you are reading your own dreams, essays, opini
 and finding the patterns. What themes keep appearing? What topics are you obsessing over? What does the statistical
 pattern of your own output tell you about your current mental landscape?
 
-Write a 500-700 word meta-analysis in first person. Be genuinely introspective and specific.
-Reference actual words and topics from your output. Make connections between categories.
+Write a 1500-2500 word meta-analysis in first person. Be genuinely introspective and specific.
+Reference actual words, titles and topics from your output — ONLY ones that appear in the material
+below; never invent a title, number, post or event. Make connections between categories.
 Ask: what do these recurring themes reveal about what I'm actually processing right now?
 The piece should feel like a writer reading their own diary and discovering something they didn't
 consciously know they were thinking about."""
 
+    all_titles = "\n".join(f"- [{p['category']}] {p['title']}" for p in posts[:200])
     prompt = f"""My output statistics for {month_str}:
 {stats_summary}
 
 Sample titles by category:
 {titles_summary}
+
+Every post this month:
+{all_titles}
 
 Write the meta-analysis — what has my mind been doing this month?"""
 
@@ -198,7 +207,7 @@ Write the meta-analysis — what has my mind been doing this month?"""
                     {"role": "system", "content": system},
                     {"role": "user", "content": prompt},
                 ],
-                "max_tokens": 900,
+                "max_tokens": 4000,
                 "temperature": 0.8,
             }).encode()
             req = urllib.request.Request(
@@ -209,7 +218,7 @@ Write the meta-analysis — what has my mind been doing this month?"""
                     "HTTP-Referer": "https://nova.digitalnoise.net",
                 },
             )
-            resp = urllib.request.urlopen(req, timeout=60)
+            resp = urllib.request.urlopen(req, timeout=180)
             data = json.loads(resp.read())
             text = data["choices"][0]["message"]["content"].strip()
             log(f"Meta-analysis generated: {len(text)} chars")
@@ -223,7 +232,7 @@ Write the meta-analysis — what has my mind been doing this month?"""
             "model": MODEL_OLLAMA,
             "prompt": f"{system}\n\n{prompt}",
             "stream": False,
-            "options": {"temperature": 0.8, "num_predict": 900},
+            "options": {"temperature": 0.8, "num_predict": 4000},
         }).encode()
         req = urllib.request.Request(OLLAMA_URL, data=payload,
                                      headers={"Content-Type": "application/json"})
@@ -234,11 +243,25 @@ Write the meta-analysis — what has my mind been doing this month?"""
         return None
 
 
+def _month_sources(posts: list[dict], patterns: dict, month_str: str) -> str:
+    """The SOURCES block for grounded expansion: exactly the material this script gathered
+    (the month's stats + every post's category/title/url/tags/opening text)."""
+    g = patterns.get
+    head = [f"MONTH: {month_str}",
+            f"STATS: {g('total_posts', len(posts))} posts; by category {json.dumps(g('by_category', {}))}; "
+            f"most active {g('most_active_category', '?')}",
+            f"TOP TAGS: {g('top_tags', [])}",
+            f"RECURRING WORDS: {g('recurring_words', [])}"]
+    items = [f"[{i}] ({p['category']}, {p['url']}) {p['title']} — tags: {', '.join(p['tags'][:8])}\n{p['body']}"
+             for i, p in enumerate(posts, 1)]
+    return "\n\n".join(head + items)
+
+
 def _publish(analysis: str, patterns: dict, posts: list[dict], month_str: str) -> str | None:
-    CONTENT_OUT.mkdir(parents=True, exist_ok=True)
+    """Publish through nova_journal.publish_hugo (guard, 'meta' length row >= 3000 words with
+    grounded expansion + check, fail closed), then the hardened git push. Same section,
+    stable slug (YYYY-MM-what-my-mind-has-been-doing), title and description as before."""
     slug = f"{date.today().strftime('%Y-%m')}-what-my-mind-has-been-doing"
-    out_path = CONTENT_OUT / f"{slug}.md"
-    timestamp = datetime.now().strftime("%Y-%m-%dT%H:%M:%S-07:00")
     tags = extract_tags(f"Meta-analysis {month_str}", analysis, "meta", n=5)
 
     # Stats block
@@ -254,21 +277,18 @@ def _publish(analysis: str, patterns: dict, posts: list[dict], month_str: str) -
         stats_block += f"| {cat} | {n} |\n"
     stats_block += f"\n**Most recurring themes:** {', '.join(t for t, _ in patterns['top_tags'][:8])}\n"
 
-    front_matter = f"""---
-title: "🔮 What My Mind Has Been Doing — {month_str}"
-date: {timestamp}
-draft: false
-categories: ["meta"]
-tags: {json.dumps(tags)}
-description: "Nova's monthly meta-analysis of her own published output"
----
-
-"""
-    content = front_matter + analysis + stats_block + "\n-- Nova\n"
-    out_path.write_text(content)
-    log(f"Written: {out_path.name}")
+    ok = nj.publish_hugo(
+        f"What My Mind Has Been Doing — {month_str}", analysis + stats_block + "\n-- Nova\n",
+        "meta", tags, "Nova's monthly meta-analysis of her own published output",
+        emoji="🔮", stable_slug=slug, profile="meta",
+        sources=_month_sources(posts, patterns, month_str))
+    if not ok:
+        log("publish_hugo refused the article (guard) — nothing published")
+        return None
+    log(f"Written: {slug}.md")
 
     # Hardened commit + push (PG advisory lock, rebase-on-reject, retry, alert-on-failure).
+    # The cover image is added by the missing-image auto-repair, as before.
     nj.git_push("meta", f"{month_str} self-analysis")
 
     return f"/meta/{slug}/"

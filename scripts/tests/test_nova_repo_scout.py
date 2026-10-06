@@ -306,7 +306,7 @@ class TestFunctional(unittest.TestCase):
         self.assertTrue(body.startswith("body text\n\n---\n\n*Scouted repo: [acme/local-rag]"))
         self.assertIn("Verdict: PASS", body)
         self.assertEqual(tags, ["ai", "github", "repo-scout", "pass", "python"])
-        self.assertEqual(rs.nj.publish_hugo.call_args[1], {"emoji": "🪦"})
+        self.assertEqual(rs.nj.publish_hugo.call_args[1], {"emoji": "🪦", "profile": "repo-scout"})
         self.assertEqual(cur.ran("INSERT INTO repo_scout_log")[0][1],
                          ("acme/local-rag", "https://github.com/acme/local-rag", 1200, "Python", "PASS", "Neat, Not Mine"))
         self.assertEqual(cur.ran("INSERT INTO telemetry.events")[0][1], ("Repo scout [PASS]: acme/local-rag", "Neat, Not Mine"))

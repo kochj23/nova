@@ -355,7 +355,7 @@ def run(dry_run: bool = False, force_repo: str | None = None) -> int:
 
     if dry_run:
         nj.publish_hugo(title, full_body, "operations", tags, desc,
-                        image_path=image_path, emoji=emoji)
+                        image_path=image_path, emoji=emoji, profile="iot-scout")
         nj.log(f"[iot-scout] DRY RUN — wrote '{title}' [{verdict}] to operations/, "
                f"NOT pushed, NOT logged (repo stays eligible).")
         print(f"\n===== {emoji} {title}  [{verdict}] =====")
@@ -366,7 +366,7 @@ def run(dry_run: bool = False, force_repo: str | None = None) -> int:
         return 0
 
     nj.publish_hugo(title, full_body, "operations", tags, desc,
-                    image_path=image_path, emoji=emoji)
+                    image_path=image_path, emoji=emoji, profile="iot-scout")
     cur.execute(
         "INSERT INTO iot_scout_log (full_name,url,stars,language,verdict,title) "
         "VALUES (%s,%s,%s,%s,%s,%s) ON CONFLICT (full_name) DO UPDATE SET "
