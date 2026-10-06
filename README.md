@@ -131,6 +131,42 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ## Infrastructure & Security (June–October 2026)
 
+### Articles Without Padding, and the October 4 Wishes Committed (2026-10-06)
+
+Two Claude sessions worked in parallel; this records both.
+
+**No hallucinated longform.** Jordan: "I don't want it to hallucinate." The old journal expander asked a small model to stretch a ~1,100-word draft to 5,000 words with nothing but the draft in hand, which forces invention. `nova_journal.publish_hugo` now looks up an `ARTICLE_LENGTH` row per article type (keyed by the generator's `profile`, since one section holds many kinds) and every publisher passes its `profile` and, where it has them, its `sources`.
+
+```mermaid
+flowchart TD
+    D[draft + profile + sources] --> L{length vs ARTICLE_LENGTH row}
+    L -->|within range| P[publish as written]
+    L -->|above max| T[one tighten pass, add nothing] --> P
+    L -->|below min, policy never or no sources| P
+    L -->|below min, policy grounded + sources| E[one grounded expansion<br/>Sonnet, haiku fallback]
+    E --> G{separate grounding check}
+    G -->|every claim supported| P2[publish expansion]
+    G -->|unsupported claim, error, or no time| P
+```
+
+| Article type | Words | Below the floor |
+|---|---|---|
+| Breaking security alerts, IPS blocks, CVE notices | 300–700 | never expand |
+| Daily audits, ops logs, Copenhagen review, unclaimed digest | 600–1,200 | never expand |
+| Weekly roundups ("This Week in …") | 700–1,400 | never expand |
+| Opinion | 1,000–1,800 | grounded expansion only |
+| Local Burbank dispatch | 1,200–2,000 | grounded expansion only |
+
+Copenhagen and the unclaimed digest lost their own padding loops; the weekly recaps went from 25–40 minutes of expansion to about 3 minutes.
+
+**The October 4 wishes, now in git.** Live on nova-core since 2026-10-04 but never committed until today:
+
+- **#56 contact sense:** affect and time sense count every channel Jordan uses (gateway, iMessage, mail, Claude Code), not just the gateway, and time sense says which one he last used.
+- **#57 outside liveness:** the off-box watchdog probes the Studio's mesh agent, the memory HA front (.86) and the read replica (.5).
+- **#58 directive decisions:** a Slack thread reply to a directive conflict records Jordan's decision.
+- **#61 / #66 security organ quorum:** a new device is critical only when two of UniFi, ARP and DHCP syslog saw it and nobody known just walked in; otherwise it is a warning with the reason.
+- **SPOF follow-ups:** the memory-server alias points at the HAProxy front, dead-letter replay reads the Studio's redis, the sandbox finds docker on Linux, and a NAS backup lock reads as pending instead of failed.
+
 ### Retiring the Chatroom, Vault-First Credentials, and the Missing Departures (2026-10-06)
 
 Jordan's calls on the audit's design findings: credentials through the 1Password vault, fix presence, retire the chatroom but keep cross-agent coordination on the backend, leave semantic triggers, the swarm agent and iMessage alone, and never "fix" anything by binding it to localhost.
