@@ -161,6 +161,14 @@ flowchart TD
 
 **MLX on the M2 Pro mini.** A forgotten root LaunchDaemon had been running a 17 GB 32B model on the 32 GB mini since July, which caused its Ollama evictions. It now serves `mlx-community/Qwen3-8B-4bit` on :5050 in offline mode, at about 4.8 GB resident and a 2.7 s warm reply. It sits in the fleet router's fast pool and the LLM ping.
 
+**Monthly pieces and per-story overrides.** The monthly meta-analysis ("what my mind has been doing") now publishes through `publish_hugo` with profile `meta`: at least 3,000 words, expanded only from the month's own material, through the same claim check. It still runs on the first Sunday of the month, and its task timeout went from 900 to 1,800 seconds. Jordan names any story that should be long; an entry in the database is enough, no deploy needed:
+
+```sql
+UPDATE service_config SET value = value || '[{"profile":"copenhagen","min_words":3000}]'::jsonb WHERE service='nova_journal' AND key='longform_overrides';
+```
+
+An override raises the floor and allows grounded expansion. It never permits padding without sources. New length rows: autobiography 1,500–3,000, ledger 1,200–2,500, monthly-wrap 3,000–6,000, repo and IoT scouts 800–1,600 (never expanded). After-dark, pilot and art are marked retired.
+
 **Upstream.** [jasonacox/TinyLLM#35](https://github.com/jasonacox/TinyLLM/pull/35) adds keep-alive pinning, a resident-aware model picker, a multi-server router and a placement warmer. Both blocking review findings and all five notes are fixed, with 36 tests. In our own repos, URL-Analysis#1 (drop wildcard CORS) is merged, stale Dependabot PRs are closed, and Nova-NextGen is archived.
 
 ### Articles Without Padding, and the October 4 Wishes Committed (2026-10-06)
