@@ -132,6 +132,24 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ## Infrastructure & Security (June–October 2026)
 
+### Journal Covers Rendered on the Studio, Not the Cloud (2026-10-06)
+
+Every journal cover made on nova-core had been going to OpenRouter: the "local-first" path of 2026-10-01 only ever worked on the Studio, because `generate_image.sh` health-checked `192.168.1.6:8188` but then submitted the job to a hardcoded `127.0.0.1:8188` — on `.2` that is nothing, so each cover paid for a cloud image (and on 2026-10-06 one timed out and one was "Request Moderated"). Jordan: *free and local*.
+
+- **ComfyUI is LAN-only now.** `~/bin/start-comfyui.sh` (launchd `com.jordankoch.comfyui`) runs `main.py --listen 127.0.0.1,192.168.1.6` — loopback for the Studio's own callers (SwarmUI's backend, Big Brother, incident triage, `generate_image.sh`) and the wired LAN address for the fleet. It was `--listen 0.0.0.0`, which also answered on the Wi-Fi interface (`.112`) and any interface added later. No port-forward, no proxy, pf left off: the bind itself is the fence, reachable from `192.168.1.0/24` only. Verified from `.2` and `.5` (`curl http://192.168.1.6:8188/system_stats` → 200) and that `.112:8188` now refuses.
+- **Backend selection** (`nova_image_utils.generate_image`): the ComfyUI URL comes from env `NOVA_COMFYUI_URL`, else `service_config (image_gen, comfyui).url`, else `http://192.168.1.6:8188`. If that address belongs to this machine (a throwaway `bind()` succeeds) it is the Studio and the old `generate_image.sh` path runs unchanged. Anywhere else (`.2`, standby `.5`) a Python client probes `/system_stats` (3 s), reads the queue depth, submits the **same graph** (`comfy_workflow()` — now the single source; `generate_image.sh` imports it, verified byte-identical to the old inline graphs), and polls `/history`. ComfyUI runs one job at a time, so a busy queue is *waited out* inside the caller's `TIMEOUT` budget (600 s default; the monthly wrap and weekly summary set 240 s) rather than treated as failure; once our job is executing it gets `min(300 s, TIMEOUT)`. One submission, never resubmitted. OpenRouter only if ComfyUI is unreachable, rejects the graph, errors, or the budget runs out; a timed-out job still queued is deleted from the queue, one already running is left to finish (an interrupt during a cold model load saves nothing). Every image logs `backend=comfyui-local|comfyui-remote|openrouter` with its wall time.
+- **Measured from `.2`:** FLUX.1 dev 1024×768, 20 steps — **54 s** end to end with the model warm. A *cold* FLUX load after a ComfyUI restart took ~14 minutes from `/Volumes/Data`, so the first cover after a restart overruns 300 s and goes to OpenRouter while the load completes for the next one.
+- **GPU headroom:** 512 GB unified, ~97 GB resident Ollama set, ~80 % free at the time; FLUX dev holds ~33 GB (UNET 22.7 GB + T5 9.3 GB). Memory is not the constraint; a cover does share the GPU with Ollama/MLX/XTTS/Whisper for about a minute, and only one image runs at a time.
+
+```mermaid
+flowchart LR
+    GI["generate_image()"] --> Q{"ComfyUI address<br/>local to this host?"}
+    Q -->|"yes — Studio"| SH["generate_image.sh<br/>127.0.0.1:8188"]
+    Q -->|"no — .2 / .5"| RC["LAN client → 192.168.1.6:8188<br/>health 3 s · wait out queue · gen ≤ 300 s"]
+    SH -->|"failed"| OR["OpenRouter"]
+    RC -->|"unreachable / error / budget spent"| OR
+```
+
 ### The Quiet Sensor — Wish #69, Granted (2026-10-06)
 
 Nova wished for "a sense that notices what is said between the lines, the unspoken, the unfiled — to finally know what matters without being told." The seed was a question about **gray-zone** tactics: the space where nothing is declared, so the ambiguity itself is the signal. Jordan has a standing yes on her wishes and approved this one the same day. His one condition for anything like it: *"I don't want it to hallucinate."*
@@ -2026,7 +2044,7 @@ All services bind to `192.168.1.6` (LAN-accessible). Exceptions bind to `127.0.0
 | NovaControl | 37400 | 127.0.0.1 | macOS app |
 | OpenWebUI | 3000 | 192.168.1.6 | |
 | SwarmUI | 7801 | 0.0.0.0 | image generation front-end (Settings.fds `Host: 0.0.0.0`, was `localhost` until 2026-10-01) |
-| ComfyUI | 8188 | 0.0.0.0 | image backend (`--listen 0.0.0.0` in ~/bin/start-comfyui.sh); `generate_image.sh` targets 192.168.1.6:8188 so the journal on .2 can render covers locally |
+| ComfyUI | 8188 | 127.0.0.1 + 192.168.1.6 | image backend (`--listen 127.0.0.1,192.168.1.6` in ~/bin/start-comfyui.sh since 2026-10-06; was 0.0.0.0). LAN-only, no port-forward. nova-core/.5 render covers through it (`nova_image_utils` LAN client); Studio callers use loopback |
 | Endpoint monitor / request router / security scan | 37469 / 37473 / 37474 | 0.0.0.0 | LAN-bound 2026-10-01 (were loopback) |
 | Relay | 37479 | 127.0.0.1 | deliberately loopback: it trusts loopback peers (see nova_relay.py) |
 | NovaHomeKit | 37433 | 127.0.0.1 | macOS app |

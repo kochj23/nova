@@ -28,6 +28,7 @@ def _load():
 
 
 iu = _load()
+iu._comfyui_url_cache = "http://127.0.0.1:8188"   # Studio path, no PG lookup (LAN path: test_nova_image_utils_remote.py)
 PNG = base64.b64encode(b"\x89PNG fake").decode()
 
 
