@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Tests for nova_wazuh_daily_summary.py — the 7 house categories (Security, Performance, Retry, Unit,
 Integration, Functional, Frame). Written by Jordan Koch (via Claude).
-The module reads the indexer password from Keychain AT IMPORT, so it is loaded with subprocess.run patched
-to a fake `security` (the real Keychain is never read). The Wazuh indexer (os_query) and nova_notify are
+The module reads the indexer password from the 1Password vault (nova_secrets.vault_secret) AT IMPORT, so it is
+loaded with vault_secret patched on the real nova_secrets module (op/PG/Keychain are never touched). The Wazuh indexer (os_query) and nova_notify are
 mocked at module load."""
 import base64
 import importlib.util
@@ -21,24 +21,26 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 SCRIPT = SCRIPTS / "nova_wazuh_daily_summary.py"
 SRC = SCRIPT.read_text()
+import nova_secrets  # noqa: E402  (import-clean; only its vault_secret attribute is patched, per load)
 
 
-def _fake_security(pw):
-    def run(argv, **kw):
-        assert argv[0] == "security", argv
-        return subprocess.CompletedProcess(argv, 0 if pw else 44, pw + "\n" if pw else "", "")
-    return run
+def _fake_vault(pw):
+    """vault_secret stand-in: returns pw, or raises KeyError like the real one when vault + mirror miss."""
+    return MagicMock(return_value=pw) if pw else MagicMock(side_effect=KeyError("not in vault or mirror"))
 
 
-def _load(pw="fixture-indexer-pw"):
+def _load(pw="fixture-indexer-pw", vault=None):
+    vault = vault or _fake_vault(pw)
     spec = importlib.util.spec_from_file_location("wazuh_summary_under_test", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
-    with patch.object(subprocess, "run", _fake_security(pw)):
+    with patch.object(nova_secrets, "vault_secret", vault), \
+            patch.object(subprocess, "run", side_effect=RuntimeError("subprocess.run during import")):
         spec.loader.exec_module(mod)
     return mod
 
 
-wz = _load()
+_VAULT = _fake_vault("fixture-indexer-pw")
+wz = _load(vault=_VAULT)
 # module-level stubs: no indexer HTTP, no notifications
 wz.urllib = types.SimpleNamespace(request=types.SimpleNamespace(
     Request=wz.urllib.request.Request, urlopen=MagicMock(side_effect=OSError("offline"))))
@@ -72,17 +74,20 @@ def _answers(levels=None, vulns=None, sca=None, active=7, rootcheck=0, fim=10):
 
 
 class TestSecurity(unittest.TestCase):
-    def test_password_comes_from_keychain_not_source(self):
+    def test_password_comes_from_vault_not_source(self):
+        _VAULT.assert_called_once_with("nova-wazuh-indexer-password")
         self.assertEqual(base64.b64decode(wz.WAZUH_CREDS).decode(), "admin:fixture-indexer-pw")
+        self.assertIn("from nova_secrets import vault_secret", SRC)
+        self.assertNotIn("find-generic-password", SRC)
         pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
         self.assertIsNone(pat.search(SRC))
         self.assertIn('"nova-wazuh-indexer-password"', SRC)
 
-    def test_keychain_miss_falls_back_to_docker_default(self):
-        # SECURITY GAP (reported, not changed): with no Keychain/shim entry the module falls back to the
-        # Wazuh docker demo default password rather than failing closed. This test pins that behaviour.
-        m = _load(pw="")
-        self.assertEqual(base64.b64decode(m.WAZUH_CREDS).decode(), "admin:SecretPassword")
+    def test_vault_miss_fails_closed_no_docker_default(self):
+        # Fixed 2026-10-06: no Wazuh docker-demo default; a vault + mirror miss raises KeyError at import.
+        self.assertNotIn("SecretPassword", SRC)
+        with self.assertRaises(KeyError):
+            _load(pw="")
 
     def test_basic_auth_header_and_indexer_target(self):
         cm = MagicMock(); cm.read.return_value = b"{}"
@@ -169,11 +174,14 @@ class TestFunctional(unittest.TestCase):
 
 
 class TestFrame(unittest.TestCase):
-    def test_import_with_stubbed_keychain_never_runs_main(self):
-        # no --help/--selftest, and import reads Keychain — so the child process stubs subprocess.run first
+    def test_import_with_stubbed_vault_never_runs_main(self):
+        # no --help/--selftest, and import reads the vault — so the child process stubs vault_secret first
         self.assertIn('if __name__ == "__main__":', SRC)
         code = ("import subprocess, runpy, sys\n"
-                "subprocess.run = lambda a, **k: subprocess.CompletedProcess(a, 0, 'x\\n', '')\n"
+                "sys.path.insert(0, '.')\n"
+                "subprocess.run = lambda a, **k: subprocess.CompletedProcess(a, 44, '', '')\n"
+                "import nova_secrets\n"
+                "nova_secrets.vault_secret = lambda n, f='password': 'x'\n"
                 "m = runpy.run_path(sys.argv[1], run_name='wazuh_smoke')\n"
                 "print(m['EXPECTED_AGENTS'])\n")
         r = subprocess.run([sys.executable, "-c", code, str(SCRIPT)], cwd=str(SCRIPTS), capture_output=True,

@@ -274,9 +274,12 @@ async def check_transitions(new_occupancy):
         is_home = state["home"]
 
         if was_home is True and not is_home:
+            # `since` is when they became HOME, so this is how long they were home. Log a real departure
+            # (home >= 1 min); ignore sub-minute flicker. Was inverted until 2026-10-06 (< 1), which logged
+            # only flicker and dropped every real departure: 81 departures vs 705 arrivals.
             since = prev.get("since", datetime.now(timezone.utc))
-            away_min = (datetime.now(timezone.utc) - since).total_seconds() / 60 if since else 0
-            if away_min < 1:
+            home_min = (datetime.now(timezone.utc) - since).total_seconds() / 60 if since else 0
+            if home_min >= 1:
                 key = f"{person}:left"
                 if key not in _last_transition or time.time() - _last_transition[key] > 1800:
                     _last_transition[key] = time.time()

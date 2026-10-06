@@ -54,13 +54,12 @@ MUTED_FINDINGS = {
 
 
 def _wazuh_creds() -> str:
-    """admin:<password> from Keychain (nova-wazuh-indexer-password), base64'd.
-    Never hardcode the indexer password in source."""
-    import subprocess
-    pw = subprocess.run(
-        ["security", "find-generic-password", "-a", "nova",
-         "-s", "nova-wazuh-indexer-password", "-w"],
-        capture_output=True, text=True).stdout.strip() or "SecretPassword"
+    """admin:<password> from the 1Password vault "Nova" (item nova-wazuh-indexer-password), base64'd.
+    Fails closed: no vendor-default fallback (Jordan 2026-10-06). Raises KeyError if the vault and its
+    mirror both lack the item, so the scheduler records a real failure instead of trying a default."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from nova_secrets import vault_secret
+    pw = vault_secret("nova-wazuh-indexer-password")
     return base64.b64encode(f"admin:{pw}".encode()).decode()
 
 

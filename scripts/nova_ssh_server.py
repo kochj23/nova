@@ -4,7 +4,7 @@ nova_ssh_server.py — SSH remote access to Nova.
 
 Allows Jordan to chat with Nova from any terminal via SSH.
 Messages are sent to the OpenClaw gateway agent session.
-Authenticated via SSH keys only (no passwords).
+Authenticated via SSH keys, or a password checked against the 1Password vault (item nova-ssh-password).
 
 Port: 2222 (loopback by default, can be changed for remote access)
 Keys: Uses Jordan's authorized SSH public keys from ~/.ssh/authorized_keys
@@ -114,11 +114,16 @@ class NovaSSHServer(asyncssh.SSHServer):
         return True
 
     def validate_password(self, username, password):
-        stored = subprocess.run(
-            ["security", "find-generic-password", "-a", "nova", "-s", "nova-ssh-password", "-w"],
-            capture_output=True, text=True, timeout=10
-        ).stdout.strip()
-        return stored and password == stored
+        """Checked against the 1Password vault "Nova" item nova-ssh-password (Jordan 2026-10-06).
+        No item, or the vault and its mirror both unreachable -> password login refused."""
+        import hmac
+        try:
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+            from nova_secrets import vault_secret
+            stored = vault_secret("nova-ssh-password")
+        except Exception:
+            return False
+        return bool(stored) and hmac.compare_digest(password.encode(), stored.encode())
 
 
 async def handle_session(process):

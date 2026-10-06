@@ -18,8 +18,8 @@ import psycopg2.extras
 
 DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 HB_URL = "http://192.168.1.10:8581"
-HB_USER = "admin"
-HB_PASS = "admin"
+HB_USER = "admin"                     # the login name is not a secret; the password lives in 1Password
+HB_PASS_ITEM = "nova-homebridge-password"   # 1Password vault "Nova" (Jordan 2026-10-06: no passwords in source)
 POLL_INTERVAL = 10
 LOG_FILE = Path.home() / ".openclaw/logs/homebridge_poller.log"
 
@@ -48,7 +48,13 @@ def get_db():
 
 def hb_login():
     global _token
-    data = json.dumps({"username": HB_USER, "password": HB_PASS}).encode()
+    try:
+        from nova_secrets import vault_secret
+        password = vault_secret(HB_PASS_ITEM)
+    except Exception as e:                 # fail closed: never fall back to a default password
+        log.error(f"HB login skipped — {HB_PASS_ITEM} unavailable from 1Password: {e}")
+        return False
+    data = json.dumps({"username": HB_USER, "password": password}).encode()
     req = urllib.request.Request(f"{HB_URL}/api/auth/login", data=data,
                                 headers={"Content-Type": "application/json"})
     try:

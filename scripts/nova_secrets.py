@@ -114,6 +114,46 @@ def get_secret(name):
         raise KeyError(f"secret not found: {name}")
     return row[0]
 
+_VAULT_NAME_RE = __import__("re").compile(r"^[A-Za-z0-9][A-Za-z0-9._ -]{0,120}$")
+
+
+def _vault_token_ro():
+    """Read-only 1Password service-account token (vault Nova only): env, sealed cred / env file,
+    then the macOS System keychain item nova-op-token. Same lookup as nova_op_sync."""
+    t = os.environ.get("OP_SERVICE_ACCOUNT_TOKEN") or _load("OP_TOKEN")
+    if not t and sys.platform == "darwin":
+        t = _keychain("nova-op-token")
+    return t
+
+
+def vault_secret(name, field="password"):
+    """1Password vault "Nova" first, then its hourly mirror in nova.secrets. Never a default.
+
+    The vault is the source of truth (2026-10-03); the mirror exists so the fleet keeps running when
+    WAN/1Password is down. Raises KeyError when neither has the item — callers must fail closed,
+    never fall back to a vendor default password."""
+    import shutil, subprocess
+    if not _VAULT_NAME_RE.match(name or "") or not _VAULT_NAME_RE.match(field or ""):
+        raise ValueError(f"invalid vault item/field name: {name!r}/{field!r}")
+    tok = _vault_token_ro()
+    if tok and shutil.which("op"):
+        for attempt in range(2):                       # one retry: op occasionally times out on cold start
+            try:
+                r = subprocess.run(["op", "read", f"op://Nova/{name}/{field}"], capture_output=True, text=True,
+                                   timeout=30, stdin=subprocess.DEVNULL,
+                                   env={**os.environ, "OP_SERVICE_ACCOUNT_TOKEN": tok})
+                if r.returncode == 0 and r.stdout.strip():
+                    return r.stdout.strip()
+                if "isn't an item" in r.stderr or "not found" in r.stderr.lower():
+                    break                               # definitive miss — do not retry
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+    try:
+        return get_secret(name)                        # the vault's own mirror (offline path)
+    except Exception as e:
+        raise KeyError(f"secret not in 1Password vault Nova or its mirror: {name}") from e
+
+
 def _vault_token_rw():
     """Read-WRITE 1Password service-account token (vault Nova only). Present on .6 (System keychain
     item nova-op-token-rw) so Nova can create/rotate secrets herself; absent elsewhere -> no vault write."""

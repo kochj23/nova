@@ -187,9 +187,9 @@ class TestIntegration(unittest.TestCase):
         with patch.object(sa, "_port_listening", lambda port, host="127.0.0.1": port != 11434):
             issues, ok = sa.audit_services()
         self.assertEqual(issues, ["Ollama (:11434) is not listening"]); self.assertEqual(len(ok), len(sa.EXPECTED_SERVICES) - 1)
-        with patch.object(sa, "_process_running", lambda m: m != "nova_chatroom.py"):
+        with patch.object(sa, "_process_running", lambda m: m != "nova_scheduler.py"):
             issues, ok = sa.audit_processes()
-        self.assertEqual(issues, ["Chatroom (`nova_chatroom.py`) is not running"])
+        self.assertEqual(issues, ["Scheduler (`nova_scheduler.py`) is not running"])
 
 
 class TestFunctional(unittest.TestCase):

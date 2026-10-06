@@ -56,6 +56,14 @@ class _Env(unittest.TestCase):
         self.addCleanup(lambda: [p.stop() for p in ps.values()])
 
 
+OP_TOK = "ro-" + "fixture-token"
+
+
+def _op_calls(run_mock):
+    """Only the `op read` calls (the PG mirror may also probe the Keychain for its DB password)."""
+    return [c for c in run_mock.call_args_list if c.args and c.args[0][:2] == ["op", "read"]]
+
+
 class TestSecurity(_Env):
     def test_no_hardcoded_credentials(self):
         pat = re.compile(r"(api[_-]?key|password|secret|token|passphrase)\s*=\s*['\"][A-Za-z0-9+/\-]{12,}['\"]", re.I)
@@ -80,6 +88,27 @@ class TestSecurity(_Env):
             ns.main()
         self.assertEqual(out.getvalue(), "stored: svc_pw\n")
         self.assertEqual(self.pg.cur.execute.call_args[0][1]["v"], "hunter2-long-value")
+
+    def test_vault_secret_rejects_bad_names_without_calling_op(self):
+        self.m["which"].return_value = "/usr/bin/op"
+        with mock.patch.dict(os.environ, {"OP_SERVICE_ACCOUNT_TOKEN": OP_TOK}):
+            for name, field in (("../x", "password"), ("a/b", "password"), ("", "password"),
+                                ("ok-name", "../pw"), ("ok-name", "a/b"), ("x\nop://Other/y", "password")):
+                with self.assertRaises(ValueError, msg=(name, field)):
+                    ns.vault_secret(name, field)
+        self.m["run"].assert_not_called()
+        self.m["pg"].assert_not_called()
+
+    def test_vault_token_passed_only_via_env_never_argv(self):
+        self.m["which"].return_value = "/usr/bin/op"
+        self.m["run"].return_value = mock.Mock(returncode=0, stdout="vault-val\n", stderr="")
+        with mock.patch.dict(os.environ, {"OP_SERVICE_ACCOUNT_TOKEN": OP_TOK}):
+            self.assertEqual(ns.vault_secret("nova-x"), "vault-val")
+        argv, kw = self.m["run"].call_args.args[0], self.m["run"].call_args.kwargs
+        self.assertEqual(argv, ["op", "read", "op://Nova/nova-x/password"])
+        self.assertFalse(any(OP_TOK in a for a in argv))
+        self.assertEqual(kw["env"]["OP_SERVICE_ACCOUNT_TOKEN"], OP_TOK)
+        self.assertIs(kw["stdin"], subprocess.DEVNULL)
 
     def test_reader_uses_least_privilege_role(self):
         ns.get_secret("x")
@@ -108,6 +137,20 @@ class TestRetry(_Env):
         self.assertEqual([a[:3] for a in argvs[:2]], [["sudo", "-n", "systemd-creds"]] * 2)
         self.assertEqual(argvs[2][-1], "/etc/nova/nova-secrets-db-pass.env")
         self.assertEqual(argvs[3][-1], "/etc/nova/nova-secret.env")
+
+    def test_vault_read_retries_once_then_uses_mirror(self):
+        self.m["which"].return_value = "/usr/bin/op"
+        self.m["run"].side_effect = [subprocess.TimeoutExpired("op", 30), mock.Mock(returncode=0, stdout="v2\n", stderr="")]
+        with mock.patch.dict(os.environ, {"OP_SERVICE_ACCOUNT_TOKEN": OP_TOK}):
+            self.assertEqual(ns.vault_secret("nova-x"), "v2")              # second attempt wins
+        self.assertEqual(self.m["run"].call_count, 2)
+        self.m["pg"].assert_not_called()
+        self.m["run"].reset_mock(); self.m["run"].side_effect = None
+        self.m["run"].return_value = mock.Mock(returncode=1, stdout="", stderr="network unreachable")
+        with mock.patch.dict(os.environ, {"OP_SERVICE_ACCOUNT_TOKEN": OP_TOK}):
+            self.assertEqual(ns.vault_secret("nova-x"), "plain")           # both attempts fail -> PG mirror
+        self.assertEqual(len(_op_calls(self.m["run"])), 2)                      # exactly one retry, no more
+        self.m["pg"].assert_called_once()
 
     def test_vault_write_failure_is_non_fatal(self):
         # RETRY GAP: _vault_put — one `op` attempt; failure is reported on stderr and returns False
@@ -143,6 +186,15 @@ class TestUnit(_Env):
         with mock.patch.object(ns.sys, "platform", "linux"):
             self.assertIsNone(ns._keychain("NOVA_SECRET_KEY"))
 
+    def test_vault_secret_hit_returns_stripped_value_and_skips_mirror(self):
+        self.m["which"].return_value = "/usr/bin/op"
+        self.m["run"].return_value = mock.Mock(returncode=0, stdout="  from-vault \n", stderr="")
+        with mock.patch.dict(os.environ, {"OP_SERVICE_ACCOUNT_TOKEN": OP_TOK}):
+            self.assertEqual(ns.vault_secret("nova-x", field="credential"), "from-vault")
+        self.assertEqual(self.m["run"].call_args.args[0][-1], "op://Nova/nova-x/credential")
+        self.assertEqual(self.m["run"].call_count, 1)
+        self.m["pg"].assert_not_called()
+
     def test_get_unknown_raises_keyerror(self):
         self.pg.cur.fetchone.return_value = None
         with self.assertRaises(KeyError):
@@ -156,6 +208,21 @@ class TestIntegration(_Env):
             ns.set_secret("b", "2", note="1Password: synced")
         self.assertEqual([c[0][0] for c in vp.call_args_list], ["a"])
         self.assertEqual(self.pg.conn.commit.call_count, 2)
+
+    def test_vault_not_found_falls_back_to_mirror_without_retry(self):
+        self.m["which"].return_value = "/usr/bin/op"
+        self.m["run"].return_value = mock.Mock(returncode=1, stdout="",
+                                              stderr='[ERROR] "nova-x" isn\'t an item in the "Nova" vault')
+        with mock.patch.dict(os.environ, {"OP_SERVICE_ACCOUNT_TOKEN": OP_TOK}):
+            self.assertEqual(ns.vault_secret("nova-x"), "plain")           # mirror = get_secret(name)
+        self.assertEqual(len(_op_calls(self.m["run"])), 1)                 # definitive miss: no retry
+        sql, params = self.pg.cur.execute.call_args.args
+        self.assertIn("FROM nova.secrets", sql)
+        self.assertEqual(params["n"], "nova-x")
+
+    def test_no_op_or_token_goes_straight_to_mirror(self):
+        self.assertEqual(ns.vault_secret("nova-x"), "plain")               # which(op) is None in _Env
+        self.assertFalse([c for c in self.m["run"].call_args_list if c.args[0][:1] == ["op"]])
 
     def test_vault_create_uses_0600_template_and_cleans_up(self):
         self.m["which"].return_value = "/usr/bin/op"
@@ -186,6 +253,19 @@ class TestFunctional(_Env):
         with mock.patch.object(sys, "argv", ["x", "delete", "svc"]), mock.patch("sys.stdout", new_callable=io.StringIO):
             ns.main()
         self.assertEqual(self.pg.cur.execute.call_args[0], ("DELETE FROM nova.secrets WHERE name=%s", ("svc",)))
+
+    def test_vault_and_mirror_both_miss_raise_keyerror_never_default(self):
+        self.m["which"].return_value = "/usr/bin/op"
+        self.m["run"].return_value = mock.Mock(returncode=1, stdout="", stderr="item not found")
+        self.pg.cur.fetchone.return_value = None
+        with mock.patch.dict(os.environ, {"OP_SERVICE_ACCOUNT_TOKEN": OP_TOK}):
+            with self.assertRaises(KeyError) as cm:
+                ns.vault_secret("nova-x")
+        self.assertIn("nova-x", str(cm.exception))
+        self.m["pg"].side_effect = OSError("pg down")                      # mirror unreachable is also KeyError
+        with mock.patch.dict(os.environ, {"OP_SERVICE_ACCOUNT_TOKEN": OP_TOK}):
+            with self.assertRaises(KeyError):
+                ns.vault_secret("nova-x")
 
     def test_cli_usage_and_unknown(self):
         for argv in (["x"], ["x", "frobnicate"]):

@@ -102,7 +102,7 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Memory server auth | Token on the destructive routes (`/forget`, `/forget_all`); reads/writes log unauthenticated callers during migration |
 | Hot-reload | Gateway: `POST :18792/reload` or `SIGHUP`. Scheduler: `SIGHUP` reloads tasks. |
 | Model failover | Ollama → MLX → llama.cpp → OpenRouter (auto, health-checked every 30s) |
-| Chatroom | Real-time multi-party chat on port 37480, Nova has full memory access, external via CF tunnel + service token auth |
+| Cross-agent coordination | Backend only since 2026-10-06: `claude_coordination` + `claude_messages` tables and the gateway's `POST /api/chat`. The web chatroom was retired (code in `scripts/_archive/chatroom-2026-10-06/`) |
 | Gauge Dashboard | Live 3D system monitoring — [gauges.digitalnoise.net](https://gauges.digitalnoise.net/gauges) |
 | Grafana | 50 dashboards on **nova-core** (192.168.1.2:3000), anonymous Viewer on the LAN; home dashboard = **Nova Cluster** (`nova_cluster_dash.py`), also the kiosk on nova-core7's VNC desktop |
 | Mesh / Cluster | `nova_mesh_agent.py` on every node — 15s heartbeats, `service_registry` health authority, ring-peer failure detection, live mesh map |
@@ -130,6 +130,22 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 ---
 
 ## Infrastructure & Security (June–October 2026)
+
+### Retiring the Chatroom, Vault-First Credentials, and the Missing Departures (2026-10-06)
+
+Jordan's calls on the audit's design findings: credentials through the 1Password vault, fix presence, retire the chatroom but keep cross-agent coordination on the backend, leave semantic triggers, the swarm agent and iMessage alone, and never "fix" anything by binding it to localhost.
+
+**Credentials go through the vault.** A new `nova_secrets.vault_secret(name)` reads `op://Nova/<name>/password` with the read-only service account, falls back only to the vault's own hourly mirror, and raises if neither has the item — never a default.
+
+| Script | Before | After |
+|---|---|---|
+| `nova_wazuh_bridge`, `nova_wazuh_daily_summary` | Keychain, else the Wazuh vendor default `SecretPassword` | vault item `nova-wazuh-indexer-password`; missing → the task fails loudly |
+| `nova_homebridge_poller` | `admin`/`admin` hardcoded in source | vault item `nova-homebridge-password`; missing → login skipped, no default sent |
+| `nova_ssh_server` (not running) | Keychain password, docstring claimed keys only | vault item `nova-ssh-password`, constant-time compare; no item exists yet, so password login is refused |
+
+**The chatroom is gone; the backend stays.** Its scripts, tests and docs moved to `_archive`, its LaunchAgent to `disabled/`. Retiring it surfaced a live exposure: `chat.digitalnoise.net` still routed through the Cloudflare tunnel to port 37480, which now belongs to the JARVIS brain — so its `/activity` and `/environment` endpoints (what Jordan is doing, which lights are on) were readable from the internet. The ingress is removed from both tunnel connectors; the hostname now returns 404.
+
+**Presence departures.** `check_transitions` measured how long a person had been *home* and logged a departure only if that was under a minute — so it recorded flicker and dropped every real departure (705 arrivals vs 81 departures on file). Flipped: stays of a minute or more are logged, flicker ignored.
 
 ### Every Script Gets the Seven — a Full Code Audit (2026-10-05, night)
 

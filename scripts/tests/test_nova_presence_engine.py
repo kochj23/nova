@@ -184,6 +184,23 @@ class TestFunctional(_Base):
         self.assertIn("person_arrived", sql)
         self.assertIn("detected in kitchen", args[0])
 
+    def test_departure_logged_only_after_real_home_stay(self):
+        # Regression (fixed 2026-10-06): the >=1-minute check was inverted, so real departures were dropped
+        # and only sub-minute flicker was logged.
+        away = {"jordan": {"home": False, "room": "unknown", "confidence": 0.0}}
+        pe._home_state["jordan"] = {"home": True, "room": "office", "since": NOW() - timedelta(minutes=2)}
+        asyncio.run(pe.check_transitions(away))
+        self.assertEqual(len(self.pool.executed), 1)
+        sql, args = self.pool.executed[0]
+        self.assertIn("person_left", sql)
+        self.assertIn("last seen in office", args[0])
+
+        self.pool.executed.clear(); pe._last_transition.clear()
+        pe._home_state["jordan"] = {"home": True, "room": "office", "since": NOW() - timedelta(seconds=10)}
+        asyncio.run(pe.check_transitions(away))
+        self.assertEqual(self.pool.executed, [])            # sub-minute flicker ignored
+        self.assertFalse(pe._home_state["jordan"]["home"])
+
     def test_http_handlers(self):
         pe._occupancy["jordan"] = {"room": "office", "confidence": 0.7}
         pe._home_state["jordan"] = {"home": True, "room": "office"}

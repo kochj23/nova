@@ -150,8 +150,9 @@ async def health_server(ctx: GatewayContext):
     async def chat_api(request):
         """POST /api/chat — Run a message through the full agent pipeline.
 
-        Used by nova_chatroom.py to give chatroom Nova the same capabilities
-        as Slack/Discord Nova (tools, web browsing, memory, function calling).
+        Backend entry for other agents and services (the web chatroom that first used it was
+        retired 2026-10-06) — the same capabilities as Slack/Discord Nova (tools, web browsing,
+        memory, function calling).
 
         Body: {"message": "...", "session_id": "chatroom:general", "agent_id": "chat"}
         Returns: {"ok": true, "response": "..."}

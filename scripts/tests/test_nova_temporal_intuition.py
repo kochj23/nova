@@ -32,6 +32,14 @@ SRC = SCRIPT.read_text()
 NOW = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
 
 
+class _FrozenDT(datetime):
+    """datetime whose now() is pinned to the fixture NOW — the module reads the real clock, and the
+    fixtures are absolute dates, so without this the day counts drift by one every midnight."""
+    @classmethod
+    def now(cls, tz=None):
+        return NOW.astimezone(tz) if tz else NOW.replace(tzinfo=None)
+
+
 class _Resp:
     def __init__(self, payload):
         self._b = json.dumps(payload).encode()
@@ -268,6 +276,7 @@ class TestFunctional(unittest.TestCase):
              mock.patch("urllib.request.urlopen", urlopen or default_urlopen), \
              mock.patch.object(ti, "_stamp", return_value={}), \
              mock.patch.object(ti.sys, "argv", ["nova_temporal_intuition.py", *argv]), \
+             mock.patch.object(ti, "datetime", _FrozenDT), \
              redirect_stdout(io.StringIO()) as out:
             rc = ti.main()
         return rc, out.getvalue(), posted

@@ -45,14 +45,12 @@ EXPECTED_SERVICES = {
     18790: {"name": "Memory Server", "path": "/health", "host": "192.168.1.6"},
     11434: {"name": "Ollama", "path": "/", "host": "192.168.1.6"},
     37400: {"name": "NovaControl", "path": "/api/status", "host": "127.0.0.1"},
-    37480: {"name": "Chatroom", "path": "/health", "host": "192.168.1.6"},
 }
 
 EXPECTED_PROCESSES = [
     {"name": "Scheduler", "match": "nova_scheduler.py"},
     {"name": "Gateway v2", "match": "nova_gateway_v2.py"},
     {"name": "Memory Server", "match": "memory_server.py"},
-    {"name": "Chatroom", "match": "nova_chatroom.py"},
     # NOTE: cloudflared moved OFF .6 to HA connectors on .2 + .10 (2026-06-21).
     # It is watched by nova_prober's cloudflared_tunnel probe (connector health),
     # not by a local-process check here.

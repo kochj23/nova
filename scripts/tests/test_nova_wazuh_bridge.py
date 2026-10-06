@@ -2,7 +2,8 @@
 """Tests for nova_wazuh_bridge.py — the 7 house categories (Security, Performance, Retry, Unit,
 Integration, Functional, Frame). Written by Jordan Koch (via Claude).
 
-The module reads the Wazuh indexer password from Keychain AT IMPORT; every load here stubs that call."""
+The module reads the Wazuh indexer password from the 1Password vault (nova_secrets.vault_secret) AT IMPORT;
+every load here patches vault_secret on the real nova_secrets module (op/PG are never touched)."""
 import base64
 import importlib.util
 import json
@@ -22,7 +23,8 @@ from unittest.mock import MagicMock, patch
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 SCRIPT = SCRIPTS / "nova_wazuh_bridge.py"
-FAKE_PW = "pw-" + "from-fake-keychain"
+FAKE_PW = "pw-" + "from-fake-vault"
+import nova_secrets  # noqa: E402  (import-clean; only its vault_secret attribute is patched, per load)
 
 
 def _load(name, path):
@@ -32,9 +34,17 @@ def _load(name, path):
     return mod
 
 
-with patch("subprocess.run", return_value=SimpleNamespace(stdout=FAKE_PW + "\n", returncode=0)) as _kc:
-    wb = _load("wazuh_bridge_t", SCRIPT)
-KEYCHAIN_ARGV = _kc.call_args.args[0]
+def _load_with_vault(name, vault):
+    """Load the module with nova_secrets.vault_secret replaced by `vault`; subprocess.run is a tripwire
+    so a real `op`/`security` call can never happen during the import."""
+    with patch.object(nova_secrets, "vault_secret", vault), \
+            patch("subprocess.run", side_effect=RuntimeError("subprocess.run during import")):
+        return _load(name, SCRIPT)
+
+
+_VAULT = MagicMock(return_value=FAKE_PW)
+wb = _load_with_vault("wazuh_bridge_t", _VAULT)
+VAULT_CALL = _VAULT.call_args
 SRC = SCRIPT.read_text()
 wb.log = lambda m: None
 wb.subprocess = MagicMock()
@@ -97,12 +107,22 @@ def _resp(obj):
 
 
 class TestSecurity(unittest.TestCase):
-    def test_password_comes_from_keychain(self):
-        self.assertEqual(KEYCHAIN_ARGV[:2], ["security", "find-generic-password"])
-        self.assertIn("nova-wazuh-indexer-password", KEYCHAIN_ARGV)
+    def test_password_comes_from_vault_item(self):
+        self.assertEqual(VAULT_CALL.args, ("nova-wazuh-indexer-password",))
         self.assertEqual(base64.b64decode(wb.WAZUH_CREDS).decode(), f"admin:{FAKE_PW}")
+        self.assertIn("from nova_secrets import vault_secret", SRC)
+        self.assertNotIn("find-generic-password", SRC)                # no direct Keychain read any more
         pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
         self.assertIsNone(pat.search(SRC))
+
+    def test_no_vendor_default_password_in_source(self):
+        self.assertNotIn("SecretPassword", SRC)
+
+    def test_vault_miss_fails_closed(self):
+        miss = MagicMock(side_effect=KeyError("nova-wazuh-indexer-password"))
+        with self.assertRaises(KeyError):
+            _load_with_vault("wazuh_bridge_failclosed_t", miss)
+        miss.assert_called_once_with("nova-wazuh-indexer-password")
 
     def test_sql_is_parameterized(self):
         self.assertIsNone(re.search(r'execute\(\s*f["\']', SRC))
@@ -233,10 +253,11 @@ class TestFunctional(unittest.TestCase):
 
 
 class TestFrame(unittest.TestCase):
-    def test_import_never_runs_main_or_touches_real_keychain(self):
+    def test_import_never_runs_main_or_touches_real_vault(self):
         self.assertIn('if __name__ == "__main__":', SRC)
         code = ("import sys,subprocess,types;sys.path.insert(0,'.');"
-                "subprocess.run=lambda *a,**k: types.SimpleNamespace(stdout='', returncode=44);"
+                "subprocess.run=lambda *a,**k: types.SimpleNamespace(stdout='', stderr='', returncode=44);"
+                "import nova_secrets;nova_secrets.vault_secret=lambda n,f='password': 'smoke';"
                 "import importlib.util as u;s=u.spec_from_file_location('m','nova_wazuh_bridge.py');"
                 "m=u.module_from_spec(s);s.loader.exec_module(m);print('ok')")
         r = subprocess.run([sys.executable, "-c", code], cwd=str(SCRIPTS), capture_output=True, text=True,

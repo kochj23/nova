@@ -3,7 +3,9 @@
 Integration, Functional, Frame). Written by Jordan Koch (via Claude).
 
 The module configures logging, creates its log dir and installs SIGTERM/SIGINT handlers at import,
-so it is loaded with Path.home -> tempdir and logging.basicConfig / signal.signal stubbed."""
+so it is loaded with Path.home -> tempdir and logging.basicConfig / signal.signal stubbed.
+hb_login() reads the password via nova_secrets.vault_secret (1Password `op` / PG mirror); that is stubbed for the
+whole module (it was the real `op read` + PG fallback that made this file slow)."""
 import importlib.util
 import io
 import json
@@ -37,12 +39,16 @@ def _load():
 
 
 hb = _load()
+import nova_secrets  # noqa: E402  (import-clean; hb_login imports vault_secret from it at call time)
+FAKE_HB_PW = "hb-" + "vault-fixture"
+VAULT = MagicMock(return_value=FAKE_HB_PW)
 _PATCHES = []
 
 
 def setUpModule():
     for p in (patch.object(hb.urllib.request, "urlopen", side_effect=OSError("offline")),
-              patch.object(hb.psycopg2, "connect", side_effect=AssertionError("unmocked PG"))):
+              patch.object(hb.psycopg2, "connect", side_effect=AssertionError("unmocked PG")),
+              patch.object(nova_secrets, "vault_secret", VAULT)):
         p.start(); _PATCHES.append(p)
     hb.log.disabled = True
 
@@ -73,8 +79,33 @@ class TestSecurity(_State, unittest.TestCase):
     def test_no_long_hardcoded_secrets(self):
         pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
         self.assertIsNone(pat.search(SRC))
-        # FINDING (reported, not changed): HB_USER/HB_PASS are the Homebridge factory default admin/admin.
         self.assertEqual(hb.HB_URL, "http://192.168.1.10:8581")
+
+    def test_no_admin_password_literal_in_source(self):
+        # Fixed 2026-10-06: the Homebridge factory default admin/admin password is gone from source.
+        self.assertFalse(hasattr(hb, "HB_PASS"))
+        self.assertIsNone(re.search(r"HB_PASS\s*=", SRC))
+        self.assertIsNone(re.search(r"[\"']password[\"']\s*:\s*[\"']", SRC))   # no literal password value
+        self.assertNotIn("admin/admin", SRC)
+        self.assertEqual(hb.HB_PASS_ITEM, "nova-homebridge-password")
+
+    def test_login_posts_vault_password(self):
+        VAULT.reset_mock()
+        with patch.object(hb.urllib.request, "urlopen", return_value=_resp({"access_token": "tk"})) as u:
+            self.assertTrue(hb.hb_login())
+        VAULT.assert_called_once_with("nova-homebridge-password")
+        req = u.call_args.args[0]
+        self.assertTrue(req.full_url.endswith("/api/auth/login"))
+        self.assertEqual(json.loads(req.data), {"username": hb.HB_USER, "password": FAKE_HB_PW})
+        self.assertEqual(hb._token, "tk")
+
+    def test_login_fails_closed_when_vault_unavailable(self):
+        with patch.object(nova_secrets, "vault_secret", side_effect=KeyError("nova-homebridge-password")), \
+                patch.object(hb.urllib.request, "urlopen") as u:
+            self.assertFalse(hb.hb_login())
+            self.assertIsNone(hb.hb_get("/api/accessories"))
+        u.assert_not_called()
+        self.assertIsNone(hb._token)
 
     def test_inserts_parameterized(self):
         hb._token = "t"

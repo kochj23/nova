@@ -32,6 +32,14 @@ SRC = SCRIPT.read_text()
 NOW = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
 
 
+class _FrozenDT(datetime):
+    """datetime whose now() is pinned to the fixture NOW — the module reads the real clock, and the
+    fixtures are absolute dates, so without this the day counts drift by one every midnight."""
+    @classmethod
+    def now(cls, tz=None):
+        return NOW.astimezone(tz) if tz else NOW.replace(tzinfo=None)
+
+
 class _Resp:
     def __init__(self, payload):
         self._b = json.dumps(payload).encode()
@@ -195,7 +203,8 @@ class TestUnit(unittest.TestCase):
         cur = _Cur(_routes(**{"to_regclass": ("public.x",),
                               "FROM public.freshness_state": [("weather", "stale", since)],
                               "FROM public.escalation_state": [("disk-full", 7), ("flap", None)]}))
-        found = tk._candidates(cur)
+        with mock.patch.object(tk, "datetime", _FrozenDT):
+            found = tk._candidates(cur)
         self.assertEqual([c["key"] for c in found],
                          ["page:disk-nas-90", "page:cert-expiry", "stale:weather", "incident:disk-full", "incident:flap"])
         self.assertEqual([c["score"] for c in found], [9, 5, 6, 10, 4])

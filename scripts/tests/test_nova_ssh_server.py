@@ -2,9 +2,10 @@
 """Tests for nova_ssh_server.py — the 7 house categories (Security, Performance, Retry, Unit,
 Integration, Functional, Frame). Written by Jordan Koch (via Claude).
 
-No port is ever bound and the Keychain is never read: create_server, the security CLI, Ollama and the
-memory server are all mocked."""
+No port is ever bound and no secret store is ever read: create_server, nova_secrets.vault_secret (1Password /
+PG mirror), Ollama and the memory server are all mocked."""
 import asyncio
+import hmac
 import importlib.util
 import json
 import os
@@ -33,6 +34,7 @@ def _load():
 
 
 sh = _load()
+import nova_secrets  # noqa: E402  (import-clean; validate_password imports vault_secret from it per call)
 sh.HOST_KEY_PATH = Path(_TMP.name) / "ssh" / "host_key"
 sh.AUTHORIZED_KEYS = Path(_TMP.name) / "authorized_keys"
 
@@ -59,7 +61,8 @@ class TestSecurity(unittest.TestCase):
     def test_no_hardcoded_credentials(self):
         pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{8,}['\"]", re.I)
         self.assertIsNone(pat.search(SRC))
-        self.assertIn('"nova-ssh-password"', SRC)              # password lives in Keychain
+        self.assertIn('vault_secret("nova-ssh-password")', SRC)  # password lives in the 1Password vault
+        self.assertNotIn("find-generic-password", SRC)
 
     def test_only_known_usernames(self):
         srv = sh.NovaSSHServer()
@@ -67,14 +70,32 @@ class TestSecurity(unittest.TestCase):
         self.assertFalse(srv.begin_auth("root"))
         self.assertFalse(srv.begin_auth("admin"))
 
-    def test_password_auth_against_keychain_never_empty(self):
+    def test_password_auth_against_vault(self):
         srv = sh.NovaSSHServer()
-        with patch.object(sh.subprocess, "run", return_value=SimpleNamespace(stdout="s3cret\n")) as run:
+        with patch.object(nova_secrets, "vault_secret", return_value="s3cret") as v, \
+                patch.object(sh.subprocess, "run", side_effect=AssertionError("no subprocess")):
+            self.assertTrue(srv.validate_password("nova", "s3cret"))     # right password
+            self.assertFalse(srv.validate_password("nova", "wrong"))     # wrong password
+            self.assertFalse(srv.validate_password("nova", ""))
+        v.assert_called_with("nova-ssh-password")
+
+    def test_vault_failure_refuses_login(self):
+        srv = sh.NovaSSHServer()
+        for err in (KeyError("nova-ssh-password"), RuntimeError("op down"), OSError("pg down")):
+            with patch.object(nova_secrets, "vault_secret", side_effect=err):
+                self.assertFalse(srv.validate_password("nova", "s3cret"))
+        with patch.object(nova_secrets, "vault_secret", return_value=""):
+            self.assertFalse(srv.validate_password("nova", ""))           # empty item never authenticates
+
+    def test_constant_time_compare_used(self):
+        srv = sh.NovaSSHServer()
+        with patch.object(nova_secrets, "vault_secret", return_value="s3cret"), \
+                patch.object(hmac, "compare_digest", wraps=hmac.compare_digest) as cd:
+            self.assertFalse(srv.validate_password("nova", "nope"))
             self.assertTrue(srv.validate_password("nova", "s3cret"))
-            self.assertFalse(srv.validate_password("nova", "wrong"))
-        self.assertEqual(run.call_args[0][0][:2], ["security", "find-generic-password"])
-        with patch.object(sh.subprocess, "run", return_value=SimpleNamespace(stdout="")):
-            self.assertFalse(srv.validate_password("nova", ""))    # missing Keychain entry never authenticates
+        self.assertEqual(cd.call_count, 2)
+        self.assertEqual(cd.call_args.args, (b"s3cret", b"s3cret"))
+        self.assertNotIn("password == stored", SRC)
 
     def test_public_key_requires_authorized_keys(self):
         srv = sh.NovaSSHServer()
