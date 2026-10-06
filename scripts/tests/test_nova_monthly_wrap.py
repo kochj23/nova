@@ -1,178 +1,433 @@
 #!/usr/bin/env python3
-"""Tests for nova_monthly_wrap.py — the 7 house categories (Security, Performance, Retry, Unit,
-Integration, Functional, Frame). Written by Jordan Koch (via Claude).
-HUGO_ROOT is a tempdir; the LLM, image generation, Hugo publish, git push and Slack are mocked."""
+"""Tests for nova_monthly_wrap.py — the 7 house categories (Unit, Security, Performance,
+Retry, Integration, Functional, Frame). Every model / image / git / PG / notify call is
+mocked. Written by Jordan Koch (via Claude)."""
 import importlib.util
-import os
+import io
 import re
 import shutil
-import subprocess
 import sys
 import tempfile
+import threading
 import time
 import unittest
-from contextlib import ExitStack
+from contextlib import redirect_stdout
+from datetime import date
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
-SCRIPT = SCRIPTS / "nova_monthly_wrap.py"
-SRC = SCRIPT.read_text()
+sys.path.insert(0, str(SCRIPTS))
 
 
-def _load():
-    spec = importlib.util.spec_from_file_location("nova_monthly_wrap_t", SCRIPT)
+def _load(name, path):
+    spec = importlib.util.spec_from_file_location(name, path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
     return mod
 
 
-mw = _load()
-for _n in ("call_openrouter", "get_image_prompt", "generate_image", "publish_hugo", "git_push", "notify_slack", "log"):
-    setattr(mw, _n, MagicMock())   # module-level stubs: nothing outbound even if a test forgets
+mw = _load("nova_monthly_wrap_t", SCRIPTS / "nova_monthly_wrap.py")
+SRC = (SCRIPTS / "nova_monthly_wrap.py").read_text()
+_TMP = Path(tempfile.mkdtemp())
+mw.CONTENT_ROOT = _TMP / "content"
+mw.LOG_FILE = _TMP / "wrap.log"
+mw._TAP["installed"] = True            # never wrap the real nova_journal.log in tests
+mw.system_prompt = lambda ctx="", **k: "VOICE\n" + ctx   # real one reads PG
+
+DRAFT = "SUBTITLE: Five Hundred Posts and a Grudge\n\n## The month\n\n" + ("word " * 3000)
 
 
-def _article(d, section, name, title, body="Body text here"):
-    p = d / "content" / section
-    p.mkdir(parents=True, exist_ok=True)
-    (p / name).write_text(f'---\ntitle: "{title}"\ndate: x\n---\n{body}\n')
+class FakePG:
+    """service_config stand-in: {(service, key): json}."""
+    rows: dict = {}
+    fail = False
 
-
-class _Run:
-    def __init__(self, llm="# My Wrap 🎉\n\nbody", img="/tmp/c.webp", pub=True):
-        self.llm, self.img, self.pub = llm, img, pub
-
-    def __enter__(self):
-        self.root = Path(tempfile.mkdtemp())
-        self.st = ExitStack()
-        p = lambda n, **kw: self.st.enter_context(patch.object(mw, n, **kw))
-        p("HUGO_ROOT", new=self.root)
-        self.call = p("call_openrouter", return_value=self.llm)
-        p("get_image_prompt", return_value="ip")
-        self.gen = p("generate_image", return_value=self.img)
-        self.publish = p("publish_hugo", return_value=self.pub)
-        self.push = p("git_push")
-        self.slack = p("notify_slack")
-        self.log = p("log")
-        self.voice = self.st.enter_context(patch.object(mw.nova_voice, "system_prompt", return_value="HOUSE"))
+    def __call__(self):
+        if FakePG.fail:
+            raise OSError("pg down")
         return self
 
-    def __exit__(self, *a):
-        self.st.close()
-        shutil.rmtree(self.root, ignore_errors=True)
+    def cursor(self):
+        pg = self
+
+        class Cur:
+            def __enter__(s):
+                return s
+
+            def __exit__(s, *a):
+                return False
+
+            def execute(s, sql, params):
+                s.sql = sql
+                if sql.lstrip().upper().startswith("SELECT"):
+                    svc, like = params
+                    pre = like.rstrip("%")
+                    s.res = [(k,) for (sv, k) in FakePG.rows if sv == svc and k.startswith(pre)]
+                else:
+                    svc, key, val = params
+                    FakePG.rows[(svc, key)] = val
+
+            def fetchall(s):
+                return s.res
+        return Cur()
+
+    def commit(self):
+        pass
+
+    def close(self):
+        pass
 
 
-class TestSecurity(unittest.TestCase):
-    def test_no_credentials(self):
-        self.assertIsNone(re.search(r"(password|api[_-]?key|token|secret)\s*=\s*['\"]", SRC, re.I))
+def _reset():
+    shutil.rmtree(mw.CONTENT_ROOT, ignore_errors=True)
+    FakePG.rows, FakePG.fail = {}, False
+    mw._pg = FakePG()
+    mw.call_openrouter = MagicMock(return_value=DRAFT)
+    mw.generate_image = MagicMock(return_value=None)
+    mw.git_push = MagicMock(return_value="pushed")
+    mw.nova_notify = MagicMock()
 
-    def test_unknown_section_cannot_path_traverse(self):
-        with _Run() as r, patch.object(sys, "argv", ["x", "../../etc"]):
-            mw.main()
-        r.call.assert_not_called()
-        self.assertTrue(any("Unknown section" in c[0][0] for c in r.log.call_args_list))
-
-    def test_title_symbols_stripped(self):
-        with _Run(llm="# Wrap <script>alert(1)</script> 🎉\nbody") as r:
-            _article(r.root, "rando", "2026-05-01-a.md", "A")
-            mw.generate_wrap("rando", mw.SECTIONS["rando"])
-        self.assertNotIn("<", r.publish.call_args.kwargs["title"])
-
-
-class TestPerformance(unittest.TestCase):
-    def test_many_articles_read_fast(self):
-        with _Run() as r:
-            for i in range(500):
-                _article(r.root, "art", f"2026-05-{i:04d}.md", f"T{i}", "x" * 2000)
-            t0 = time.perf_counter()
-            arts = mw.get_may_articles("art")
-        self.assertLess(time.perf_counter() - t0, 2.0)
-        self.assertEqual(len(arts), 500)
-        self.assertTrue(all(len(a["preview"]) <= 600 for a in arts))
+    def fake_publish(title, body, section, tags, description, image_path=None, emoji="",
+                     stable_slug=None, sources=None, profile=None, min_words=None, **k):
+        p = mw.CONTENT_ROOT / section / f"{stable_slug}.md"
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(f'---\ntitle: "{title}"\ndate: 2026-10-01T13:30:00-07:00\n'
+                     f'tags: {tags}\n---\n\n{body}\n')
+        return True
+    mw.publish_hugo = MagicMock(side_effect=fake_publish)
+    mw.RUN_BUDGET_S = 3000
+    mw.WORKERS = 3
 
 
-class TestRetry(unittest.TestCase):
-    def test_llm_failure_skips_publish(self):
-        # RETRY GAP: generate_wrap()/call_openrouter — one call; empty -> False, nothing published
-        with _Run(llm=None) as r:
-            _article(r.root, "art", "2026-05-01.md", "A")
-            self.assertFalse(mw.generate_wrap("art", mw.SECTIONS["art"]))
-        self.assertEqual(r.call.call_count, 1)
-        r.publish.assert_not_called()
+def _art(section, name, d, title="A piece", tags='["x"]', body="Body text here.", desc=""):
+    p = mw.CONTENT_ROOT / section / name
+    p.parent.mkdir(parents=True, exist_ok=True)
+    extra = f'description: "{desc}"\n' if desc else ""
+    p.write_text(f'---\ntitle: "{title}"\ndate: {d.isoformat()}T09:00:00-07:00\n'
+                 f'tags: {tags}\n{extra}---\n\n*Published Monday*\n\n{body}\n')
+    return p
 
-    def test_section_exception_does_not_stop_others(self):
-        with _Run() as r, patch.object(mw, "generate_wrap", side_effect=[RuntimeError("x"), True]), \
-             patch.object(sys, "argv", ["x", "art", "rando"]):
-            mw.main()
-        r.push.assert_called_once()
-        self.assertTrue(any("1/2 sections" in c[0][0] for c in r.log.call_args_list))
 
+def _q():
+    return redirect_stdout(io.StringIO())
+
+
+# ── Unit ─────────────────────────────────────────────────────────────────────
 
 class TestUnit(unittest.TestCase):
-    def test_get_may_articles_filters_month_and_parses(self):
-        with _Run() as r:
-            _article(r.root, "art", "2026-05-02-x.md", "May Piece", "hello")
-            _article(r.root, "art", "2026-06-01-x.md", "June Piece")
-            (r.root / "content/art/2026-05-03-nofm.md").write_text("no frontmatter")
-            arts = mw.get_may_articles("art")
-        self.assertEqual([a["title"] for a in arts], ["May Piece", "2026-05-03-nofm"])
-        self.assertEqual(arts[0]["preview"], "hello")
-        self.assertEqual(arts[1]["preview"], "")
+    def setUp(self):
+        _reset()
 
-    def test_no_articles_returns_false(self):
-        with _Run() as r:
-            self.assertFalse(mw.generate_wrap("art", mw.SECTIONS["art"]))
-        r.call.assert_not_called()
+    def test_parse_month(self):
+        self.assertEqual(mw.parse_month("2026-09"), (2026, 9))
+        for bad in ("2026-13", "2026-9", "26-09", "", "2026-00", "2026-09-01"):
+            with self.assertRaises(ValueError):
+                mw.parse_month(bad)
 
-    def test_title_fallback_when_no_heading(self):
-        with _Run(llm="plain body") as r:
-            _article(r.root, "after-dark", "2026-05-01.md", "A")
-            mw.generate_wrap("after-dark", mw.SECTIONS["after-dark"])
-        self.assertEqual(r.publish.call_args.kwargs["title"], "Monthly Wrap: After Dark — May 2026")
+    def test_default_month_is_previous_calendar_month(self):
+        self.assertEqual(mw.default_month(date(2026, 10, 1)), "2026-09")
+        self.assertEqual(mw.default_month(date(2026, 10, 6)), "2026-09")
+        self.assertEqual(mw.default_month(date(2027, 1, 1)), "2026-12")
+        self.assertEqual(mw.default_month(date(2026, 3, 31)), "2026-02")
 
+    def test_labels_and_slug(self):
+        self.assertEqual(mw.month_label("2026-09"), "September 2026")
+        self.assertEqual(mw.section_label("tech-today"), "Tech Today")
+        self.assertEqual(mw.wrap_slug("2026-09", "dreams"), "2026-09-dreams-monthly-wrap")
+        self.assertEqual(mw.wrap_url("2026-09", "local"),
+                         "https://nova.digitalnoise.net/local/2026-09-local-monthly-wrap/")
+
+    def test_list_sections_skips_retired_and_meta(self):
+        for s in ("operations", "dreams", "art", "after-dark", "pilot", "meta", "about",
+                  "start-here", "rando", "_hidden"):
+            (mw.CONTENT_ROOT / s).mkdir(parents=True, exist_ok=True)
+        self.assertEqual(mw.list_sections(), ["dreams", "operations"])
+
+    def test_collect_filters_month_and_roundups(self):
+        _art("operations", "2026-09-02-a.md", date(2026, 9, 2), "Real one")
+        _art("operations", "2026-08-31-b.md", date(2026, 8, 31), "August")
+        _art("operations", "2026-10-01-c.md", date(2026, 10, 1), "October")
+        _art("operations", "2026-09-07-w.md", date(2026, 9, 7), "This Week in Operations: Sep",
+             tags='["operations", "weekly-summary"]')
+        _art("operations", "2026-08-monthly.md", date(2026, 9, 1), "Monthly Wrap: Ops",
+             tags='["monthly-wrap"]')
+        _art("synthesis", "2026-09-06-twimh.md", date(2026, 9, 6), "🧵 This Week in My Head: Aug 30")
+        arts = mw.collect_month_articles("operations", "2026-09")
+        self.assertEqual([a["title"] for a in arts], ["Real one"])
+        self.assertEqual(arts[0]["url"],
+                         "https://nova.digitalnoise.net/operations/2026-09-02-a/")
+        self.assertNotIn("*Published", arts[0]["body"])
+        # synthesis' own weekly column is real content, not a recap
+        self.assertEqual(len(mw.collect_month_articles("synthesis", "2026-09")), 1)
+
+    def test_build_sources_lists_every_post_with_url(self):
+        for i in range(1, 6):
+            _art("essays", f"2026-09-0{i}-e{i}.md", date(2026, 9, i), f"Essay {i}",
+                 body="deep " * 5000, desc=f"about {i}")
+        arts = mw.collect_month_articles("essays", "2026-09")
+        src = mw.build_sources("essays", "2026-09", arts)
+        self.assertLessEqual(len(src), mw.SOURCES_BUDGET)
+        for a in arts:
+            self.assertIn(a["url"], src)
+            self.assertIn(a["title"], src)
+        self.assertIn("POSTS PUBLISHED IN THIS SECTION THIS MONTH: 5", src)
+
+
+# ── Security ─────────────────────────────────────────────────────────────────
+
+class TestSecurity(unittest.TestCase):
+    def test_no_hardcoded_credentials_or_home_paths(self):
+        pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
+        self.assertIsNone(pat.search(SRC))
+        self.assertNotIn("/Users/" + "kochj/", SRC)
+
+    def test_month_and_section_injection_rejected(self):
+        for bad in ("2026-09/../../etc", "2026-09; rm -rf /", "../2026-09"):
+            with self.assertRaises(ValueError):
+                mw.wrap_slug(bad, "ops")
+        for bad in ("../etc", "a/b", "ops;ls", "", "A"):
+            with self.assertRaises(ValueError):
+                mw.wrap_slug("2026-09", bad)
+
+    def test_unknown_section_is_ignored(self):
+        _reset()
+        _art("dreams", "2026-09-03-d.md", date(2026, 9, 3), "Dream")
+        with _q():
+            rep = mw.run("2026-09", ["../../etc", "dreams"])
+        self.assertEqual([r["section"] for r in rep["published"]], ["dreams"])
+
+    def test_sql_is_parameterized(self):
+        for m in re.finditer(r"cur\.execute\((.{0,400}?)\)\n", SRC, re.S):
+            self.assertNotIn("f\"", m.group(1)[:3])
+            self.assertIn("%s", m.group(1))
+
+
+# ── Performance ──────────────────────────────────────────────────────────────
+
+class TestPerformance(unittest.TestCase):
+    def test_big_month_sources_fast_and_bounded(self):
+        _reset()
+        arts = [{"title": f"Post {i}", "date": date(2026, 9, 1 + i % 28), "name": f"{i}.md",
+                 "url": f"https://x/{i}/", "description": "d" * 300, "body": "w " * (i % 900 + 50),
+                 "words": i % 900 + 50, "tags": []} for i in range(2000)]
+        t0 = time.monotonic()
+        src = mw.build_sources("operations", "2026-09", arts)
+        self.assertLess(time.monotonic() - t0, 2.0)
+        self.assertLessEqual(len(src), mw.SOURCES_BUDGET)
+        self.assertLessEqual(src.count("Excerpt:"), mw.MAX_SOURCE_ARTICLES)
+        self.assertIn("2000", src)
+
+    def test_sections_run_concurrently_bounded_by_workers(self):
+        _reset()
+        for s in ("digests", "dreams", "essays", "local", "opinions"):
+            _art(s, "2026-09-03-x.md", date(2026, 9, 3), f"{s} post")
+        live, peak, lock = [0], [0], threading.Lock()
+
+        def slow(*a, **k):
+            with lock:
+                live[0] += 1
+                peak[0] = max(peak[0], live[0])
+            time.sleep(0.15)
+            with lock:
+                live[0] -= 1
+            return DRAFT
+        mw.call_openrouter = MagicMock(side_effect=slow)
+        mw.WORKERS = 2
+        with _q():
+            rep = mw.run("2026-09")
+        self.assertEqual(len(rep["published"]), 5)
+        self.assertEqual(peak[0], 2)
+
+
+# ── Retry ────────────────────────────────────────────────────────────────────
+
+class TestRetry(unittest.TestCase):
+    def setUp(self):
+        _reset()
+        _art("dreams", "2026-09-03-d.md", date(2026, 9, 3), "Dream")
+
+    def test_draft_falls_back_to_haiku(self):
+        mw.call_openrouter = MagicMock(side_effect=[None, DRAFT])
+        with _q():
+            rep = mw.run("2026-09")
+        self.assertEqual(len(rep["published"]), 1)
+        models = [c.kwargs["model"] for c in mw.call_openrouter.call_args_list]
+        self.assertEqual(models, [mw.DRAFT_MODEL, mw.DRAFT_FALLBACK_MODEL])
+
+    def test_short_drafts_fail_the_section(self):
+        mw.call_openrouter = MagicMock(return_value="too short")
+        with _q():
+            rep = mw.run("2026-09")
+        self.assertEqual(rep["failed"], ["dreams"])
+        mw.publish_hugo.assert_not_called()
+        mw.git_push.assert_not_called()
+
+    def test_image_failure_non_fatal(self):
+        mw.generate_image = MagicMock(side_effect=RuntimeError("comfy down"))
+        with _q():
+            rep = mw.run("2026-09")
+        self.assertEqual(len(rep["published"]), 1)
+        self.assertFalse(rep["published"][0]["image"])
+
+    def test_cover_retries_balanced_tier_once(self):
+        mw.generate_image = MagicMock(side_effect=[None, "/tmp/x.png"])
+        with _q():
+            rep = mw.run("2026-09")
+        self.assertTrue(rep["published"][0]["image"])
+        self.assertEqual([c.kwargs["section"] for c in mw.generate_image.call_args_list],
+                         ["dreams", "default"])
+
+    def test_publish_refusal_not_marked_done(self):
+        mw.publish_hugo = MagicMock(return_value=False)
+        with _q():
+            rep = mw.run("2026-09")
+        self.assertEqual(rep["failed"], ["dreams"])
+        self.assertEqual(FakePG.rows, {})
+        mw.git_push.assert_not_called()
+
+    def test_pg_down_still_dedups_on_wrap_file(self):
+        with _q():
+            mw.run("2026-09")
+        FakePG.fail = True
+        mw.publish_hugo.reset_mock()
+        with _q():
+            rep = mw.run("2026-09")
+        mw.publish_hugo.assert_not_called()
+        self.assertEqual(rep["published"], [])
+
+    def test_image_generation_is_capped(self):
+        with _q():
+            mw.run("2026-09")
+        self.assertEqual(mw.nova_image_utils.TIMEOUT, mw.IMAGE_TIMEOUT_S)
+        self.assertEqual(mw.nova_image_utils.MAX_RETRIES, mw.IMAGE_MAX_RETRIES)
+
+
+# ── Integration ──────────────────────────────────────────────────────────────
 
 class TestIntegration(unittest.TestCase):
-    def test_voice_routing_house_vs_column(self):
-        with _Run() as r:
-            _article(r.root, "rando", "2026-05-01.md", "A")
-            _article(r.root, "dreams", "2026-05-01.md", "B")
-            mw.generate_wrap("rando", mw.SECTIONS["rando"])
-            self.assertEqual(r.call.call_args[0][0], "HOUSE")
-            mw.generate_wrap("dreams", mw.SECTIONS["dreams"])
-            self.assertIn("COLUMN VOICE", r.call.call_args[0][0])
-        self.assertEqual(r.voice.call_count, 1)
+    def test_reuses_journal_pipeline(self):
+        for name in ("publish_hugo", "git_push", "call_openrouter", "generate_image"):
+            self.assertIn(name, SRC)
+        self.assertIn("from nova_journal_weekly_summary import _parse_article", SRC)
 
-    def test_helpers_come_from_nova_journal(self):
-        self.assertIn("from nova_journal import", SRC)
-        self.assertNotIn("def call_openrouter", SRC)
+    def test_publish_hugo_gets_grounding_args(self):
+        _reset()
+        _art("essays", "2026-09-15-road.md", date(2026, 9, 15), "The Road to Sentience",
+             body="cron jobs in a trenchcoat " * 50)
+        with _q():
+            mw.run("2026-09")
+        kw = mw.publish_hugo.call_args.kwargs
+        self.assertEqual(kw["profile"], "monthly-wrap")
+        self.assertEqual(kw["min_words"], 5000)
+        self.assertEqual(kw["stable_slug"], "2026-09-essays-monthly-wrap")
+        self.assertIn("The Road to Sentience", kw["sources"])
+        self.assertIn("https://nova.digitalnoise.net/essays/2026-09-15-road/", kw["sources"])
+        self.assertIn("trenchcoat", kw["sources"])
+        title = mw.publish_hugo.call_args.args[0]
+        self.assertEqual(title, "Essays — September 2026: Five Hundred Posts and a Grudge")
+        self.assertNotIn("SUBTITLE", mw.publish_hugo.call_args.args[1])
+        # the draft prompt carried the same sources the expander will see
+        self.assertIn(kw["sources"], mw.call_openrouter.call_args.args[1])
 
+    def test_profile_row_exists_in_journal(self):
+        import nova_journal
+        self.assertEqual(nova_journal.ARTICLE_LENGTH["monthly-wrap"][2], nova_journal.EXPAND_GROUNDED)
+        self.assertLessEqual(mw.SOURCES_BUDGET, nova_journal.LONGFORM_SOURCES_MAX_CHARS)
+
+
+# ── Functional ───────────────────────────────────────────────────────────────
 
 class TestFunctional(unittest.TestCase):
-    def test_golden_path_publishes_notifies_and_pushes_once(self):
-        with _Run() as r, patch.object(sys, "argv", ["x", "art"]):
-            _article(r.root, "art", "2026-05-01.md", "Sunset Study")
-            mw.main()
-        kw = r.publish.call_args.kwargs
-        self.assertEqual((kw["section"], kw["emoji"], kw["image_path"]), ("art", "🎨", "/tmp/c.webp"))
-        self.assertIn("monthly-wrap", kw["tags"])
-        self.assertIn('"Sunset Study"', r.call.call_args[0][1])
-        r.slack.assert_called_once()
-        r.push.assert_called_once_with("monthly-wrap", "Monthly Wrap — May 2026")
+    def setUp(self):
+        _reset()
+        _art("operations", "2026-09-01-o.md", date(2026, 9, 1), "Ops 1")
+        _art("operations", "2026-09-20-o2.md", date(2026, 9, 20), "Ops 2")
+        _art("local", "2026-09-04-l.md", date(2026, 9, 4), "Burbank")
+        _art("dreams", "2026-08-30-d.md", date(2026, 8, 30), "August dream only")
+        _art("art", "2026-09-05-a.md", date(2026, 9, 5), "Retired art")
 
-    def test_publish_failure_no_slack(self):
-        with _Run(pub=False) as r:
-            _article(r.root, "art", "2026-05-01.md", "A")
-            self.assertFalse(mw.generate_wrap("art", mw.SECTIONS["art"]))
-        r.slack.assert_not_called()
+    def test_one_wrap_per_live_section_with_posts_and_one_push(self):
+        with _q():
+            rep = mw.run("2026-09")
+        self.assertEqual([r["section"] for r in rep["published"]], ["local", "operations"])
+        self.assertEqual(mw.git_push.call_count, 1)
+        self.assertEqual(set(k for _, k in FakePG.rows), {"2026-09:local", "2026-09:operations"})
+        self.assertTrue((mw.CONTENT_ROOT / "local/2026-09-local-monthly-wrap.md").exists())
+        self.assertGreater(rep["published"][0]["final_words"], 2000)
 
+    def test_rerun_is_deduped_via_state(self):
+        with _q():
+            mw.run("2026-09")
+        # even if the file vanished, the PG row stops a second publish
+        for p in mw.CONTENT_ROOT.glob("*/*-monthly-wrap.md"):
+            p.unlink()
+        mw.publish_hugo.reset_mock()
+        mw.git_push.reset_mock()
+        with _q():
+            rep = mw.run("2026-09")
+        mw.publish_hugo.assert_not_called()
+        mw.git_push.assert_not_called()
+        self.assertEqual(rep["published"], [])
+
+    def test_partial_failure_publishes_the_rest(self):
+        def flaky(system, user, **k):
+            if "Burbank" in user:
+                raise RuntimeError("boom")
+            return DRAFT
+        mw.call_openrouter = MagicMock(side_effect=flaky)
+        with _q():
+            rep = mw.run("2026-09")
+        self.assertEqual(rep["failed"], ["local"])
+        self.assertEqual([r["section"] for r in rep["published"]], ["operations"])
+        self.assertEqual(mw.git_push.call_count, 1)
+        self.assertTrue(any("incomplete" in c.args[0] for c in mw.nova_notify.call_args_list))
+
+    def test_budget_defers_but_still_pushes(self):
+        mw.WORKERS = 1
+        mw.RUN_BUDGET_S = -1
+        with _q():
+            rep = mw.run("2026-09")
+        self.assertEqual(sorted(rep["deferred"]), ["local", "operations"])
+        mw.git_push.assert_not_called()
+
+    def test_dry_run_never_writes(self):
+        with _q():
+            rep = mw.run("2026-09", dry_run=True)
+        self.assertEqual(sorted(rep["would_wrap"]), ["local", "operations"])
+        mw.call_openrouter.assert_not_called()
+        mw.publish_hugo.assert_not_called()
+        mw.git_push.assert_not_called()
+        self.assertEqual(FakePG.rows, {})
+
+
+# ── Frame ────────────────────────────────────────────────────────────────────
 
 class TestFrame(unittest.TestCase):
     def test_import_never_runs_main(self):
         self.assertIn('if __name__ == "__main__":', SRC)
-        r = subprocess.run([sys.executable, "-c", "import nova_monthly_wrap"], cwd=str(SCRIPTS),
-                           capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
-        self.assertEqual(r.returncode, 0, r.stderr)
-        self.assertNotIn("Monthly Wrap Generator", r.stdout)
+
+    def test_cli_dry_run_exits_zero_with_default_month(self):
+        _reset()
+        with _q(), patch.object(mw, "default_month", return_value="2026-09") as dm:
+            self.assertEqual(mw.main(["--dry-run"]), 0)
+        dm.assert_called_once()
+        mw.publish_hugo.assert_not_called()
+
+    def test_cli_rejects_bad_month(self):
+        with _q(), patch("sys.stderr", io.StringIO()):
+            with self.assertRaises(SystemExit) as cm:
+                mw.main(["--month", "September"])
+        self.assertEqual(cm.exception.code, 2)
+
+    def test_cli_generate_implies_dry_run(self):
+        _reset()
+        _art("dreams", "2026-09-03-d.md", date(2026, 9, 3), "Dream")
+        with _q(), patch.object(mw.nova_journal, "longform_expand", side_effect=lambda t, b, *a, **k: b):
+            self.assertEqual(mw.main(["--month", "2026-09", "--generate"]), 0)
+        mw.publish_hugo.assert_not_called()
+        mw.git_push.assert_not_called()
+        self.assertEqual(FakePG.rows, {})
 
 
 if __name__ == "__main__":

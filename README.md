@@ -3251,6 +3251,54 @@ Token lives in the fleet pgcrypto store (`nova-memory-server-token`), delivered 
 - `nova_config.py` constants: `LAN_IP = "192.168.1.6"`, `NOVA_HOST = LAN_IP`
 - YouTube cookies: `~/.openclaw/cache/yt_cookies.txt` (mode 600, not in git)
 
+## Monthly Section Wraps (2026-10-06)
+
+Jordan: *"Let's make a monthly wrap article for each section. Normal yadda-yadda funny
+Nova voice with image, 5000 words target. Fire off on the 1st."*
+
+`scripts/nova_monthly_wrap.py` writes one **"&lt;Section&gt; — &lt;Month YYYY&gt;: &lt;subtitle&gt;"** wrap
+per live journal section that had at least one post in the month (default: the previous
+calendar month). Skipped: `about`, `start-here`, `meta` (the monthly meta-analysis covers
+the site), and the retired `rando`, `art`, `after-dark`, `pilot`. Weekly recaps and earlier
+wraps are never wrapped again.
+
+- **Sources:** each post's title, date, live URL, description and a body excerpt, packed
+  into a 56k-char SOURCES block. Very large months, such as operations with about 500 posts,
+  use the 60 longest posts.
+- **Draft:** Sonnet (haiku fallback) in full `nova_voice` writes about 3500–5000 words,
+  linking the real posts.
+  Numbers in the draft that are not in the sources get logged.
+- **Length:** `publish_hugo(profile='monthly-wrap', sources=…, min_words=5000)`. The shared
+  grounded expander and the number and claim checks fail closed. A wrap can land under
+  5000 words when the month's material runs out, which is the intended behaviour.
+- **Cover:** `nova_image_utils.generate_image` (local ComfyUI first), capped at one 240 s
+  attempt, saved to `static/images/<section>/<YYYY-MM>-<section>-monthly-wrap.webp`.
+- **URL:** `https://nova.digitalnoise.net/<section>/<YYYY-MM>-<section>-monthly-wrap/`
+- **Dedup:** Postgres `nova_ops.service_config` (service `nova_monthly_wrap`, key
+  `<YYYY-MM>:<section>`), backed by the deterministic file name.
+- **Runtime:** 3 sections at a time with a 1800 s start budget, then **one** `git_push`
+  under the fleet lock.
+- **Schedule:** nova-core `scheduler-core.yaml` task `journal_monthly_wrap`, cron
+  `30 13 1 * *` (13:30 on the 1st), timeout 3600, group `llm`. Also mirrored to the
+  standby (.5).
+- **Manual run:** `nova_monthly_wrap.py --month 2026-09 [--section X] [--dry-run [--generate]]`
+
+```mermaid
+flowchart LR
+    cron["1st 13:30<br/>nova-core"] --> scan["sections with posts<br/>last month"]
+    scan --> dedup{"wrapped already?<br/>PG service_config"}
+    dedup -- yes --> skip["skip"]
+    dedup -- no --> src["SOURCES<br/>titles, URLs, excerpts"]
+    src --> draft["Sonnet draft<br/>Nova voice"]
+    draft --> img["cover<br/>ComfyUI 240 s"]
+    img --> pub["publish_hugo<br/>monthly-wrap, min 5000"]
+    pub --> exp{"grounded expand<br/>+ number/claim check"}
+    exp -- pass --> longer["expanded"]
+    exp -- fail --> orig["draft as written"]
+    longer --> push["one git_push<br/>fleet lock"]
+    orig --> push
+```
+
 ## Maker & Home Integrations (June 2026)
 
 ### `nova_make` — Nova prints physical objects from an idea (autonomous)
