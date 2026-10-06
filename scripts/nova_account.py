@@ -24,7 +24,7 @@ MEM = os.environ.get("NOVA_MEM_DSN", "host=pg-primary.digitalnoise.net dbname=no
 JOURNAL = Path(os.environ.get("NOVA_JOURNAL_DIR", str(Path.home() / "nova-journal")))
 SITE = "https://nova.digitalnoise.net"
 SELF_VECTORS = ("unclaimed", "gravel", "imagination", "learning", "projects", "self_answer", "research", "association",
-                "growth", "self_eval", "attention_focus", "weight_of_memory", "episodic", "empathy_core", "hold",
+                "growth", "self_eval", "attention_focus", "weight_of_memory", "episodic", "empathy_core", "hold", "quiet_sensor",
                 "self_model", "principal_model", "becoming")
 
 
