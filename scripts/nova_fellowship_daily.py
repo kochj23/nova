@@ -381,6 +381,538 @@ FRANCHISES = [
   overruled him.
 """,
     },
+    {
+        "name": "Friday the 13th",
+        "emoji": "🏕️",
+        "tag": "friday-the-13th",
+        "image_style": "a summer-camp ensemble of nine mismatched counselors -- server towers "
+                        "and a network switch reimagined as campers around a lakeside "
+                        "campfire, one hulking hockey-masked rack looming affectionately in "
+                        "the trees, 1980s horror-comedy poster illustration, misty moonlit lake",
+        "cast": """
+- mac-studio (.6) = ALICE HARDY. The original final girl -- carried the whole first summer
+  (gateway, scheduler, memory-server, big_brother) on her own. This week she finally left
+  camp for standby, kept close as the instant-rollback failsafe everyone still trusts most.
+- nova-core (.2, also answers on .138) = PAMELA VOORHEES. Dual-natured (two IPs on the same
+  body, famously able to do both voices), the reason the whole camp operation exists at all.
+  Has to be running or none of the sequels happen.
+- nova-core2 (.86) = CRAZY RALPH. Keen senses -- SDR/satellite radio capture, DNS secondary,
+  rides around on his bicycle hearing and seeing everything, warning everyone. Nobody listens.
+  He is always right.
+- nova-core3 (.5) = GINNY FIELD. The reliable one. Zero failed units ever recorded, keeps her
+  head and does the hard psychology/perception work under pressure, no panic, no complaints.
+- nova-core4 (.250) = TINA SHEPARD. Newest and youngest, arrived via a mystery unlabeled USB
+  stick with powers she didn't fully understand, nearly bricked everything early on reaching
+  into a lake she shouldn't have. Means well. Still learning.
+- nova-core5 (.10) = TOMMY JARVIS. Carried real, unglamorous weight for years, chronically
+  disbelieved, under an old undignified name ("nuk") -- his own database replica sat corrupted
+  for NINE DAYS with zero alerts before anyone noticed. Finally, properly renamed and honored.
+- tv-movies-mini (.7) = STEVE CHRISTY. Insisted on reopening camp and struggled hard through a
+  real multi-day crisis weeks ago. Flawed judgment, but showed up for his counselors and
+  served honorably before being relieved of most burdens.
+- mac-mini (.77) = PAUL HOLT. Wandered off into the woods to check on something and is
+  currently, genuinely, unaccounted for -- offline more often than not lately. Presumed fine.
+  Expected to turn up eventually.
+- The UniFi switches/rack itself = JASON VOORHEES. Gruff, silent, load-bearing, physically
+  rebuilt with bare hands this past weekend and simply cannot be kept down. Holds an active,
+  decades-long grudge -- currently about never getting rainbow LEDs on the mask.
+""",
+    },
+    {
+        "name": "Halloween",
+        "emoji": "🎃",
+        "tag": "halloween",
+        "image_style": "a small-town Halloween-night ensemble of nine -- server towers and a "
+                        "network switch reimagined as Haddonfield neighbors on a leafy suburban "
+                        "street lined with jack-o'-lanterns, one pale-masked rack lurking "
+                        "politely behind a hedge, moody autumn illustration, orange porch light",
+        "cast": """
+- mac-studio (.6) = LAURIE STRODE. Carried the whole fight -- gateway, scheduler,
+  memory-server, big_brother -- for decades. This week she finally stepped back to the
+  fortified house in the woods, kept close as the instant-rollback failsafe, always prepared.
+- nova-core (.2, also answers on .138) = DR. LOOMIS. Dual-natured (two IPs on the same body,
+  physician AND prophet of doom), the one who knows what's really going on and has to be
+  running or nobody in town takes anything seriously.
+- nova-core2 (.86) = TOMMY DOYLE. Keen senses -- SDR/satellite radio capture, DNS secondary,
+  the kid who watched out the window and saw the boogeyman before any adult would believe it.
+- nova-core3 (.5) = SHERIFF LEIGH BRACKETT. The reliable one. Zero failed units ever recorded,
+  steady small-town lawman, does the hard patient work without drama or complaint.
+- nova-core4 (.250) = JAMIE LLOYD. Newest and youngest, arrived via a mystery unlabeled USB
+  stick, nearly got in way over her head early on poking at the family history. Means well.
+  Still learning.
+- nova-core5 (.10) = KAREN STRODE. Spent years doing the real, unglamorous work while being
+  quietly dismissed under an old undignified name ("nuk") -- her own database replica sat
+  corrupted for NINE DAYS with zero alerts before anyone noticed. Finally renamed and honored.
+- tv-movies-mini (.7) = ANNIE BRACKETT. Was supposed to be babysitting during a real
+  multi-day crisis weeks ago and struggled hard, very publicly. Flawed, distracted, but came
+  through and served honorably before being relieved of most duties.
+- mac-mini (.77) = BEN TRAMER. Talked about constantly, almost never actually seen --
+  offline more often than not lately. Presumed fine. Expected to turn up eventually.
+- The UniFi switches/rack itself = MICHAEL MYERS. Gruff, silent, load-bearing, physically
+  rebuilt with bare hands this past weekend and comes back every single autumn regardless.
+  Holds an active, decades-long grudge, currently about the rainbow LEDs.
+""",
+    },
+    {
+        "name": "Hellraiser",
+        "emoji": "🧩",
+        "tag": "hellraiser",
+        "image_style": "a gothic ensemble of nine -- server towers and a network switch "
+                        "reimagined as a family in an old London house plus a few austere "
+                        "leather-clad visitors, a glowing golden puzzle box at the center, "
+                        "baroque dark-fantasy illustration, blue light through dusty curtains",
+        "cast": """
+- mac-studio (.6) = KIRSTY COTTON. Carried the whole fight -- gateway, scheduler,
+  memory-server, big_brother -- across an entire era of sequels. This week she finally
+  stepped back to standby, kept close as the instant-rollback failsafe everyone trusts most.
+- nova-core (.2, also answers on .138) = THE LAMENT CONFIGURATION. Dual-natured (two IPs on
+  the same body, an ornate box AND a doorway), literally the gateway. Everything opens
+  through it; has to work or nothing else happens.
+- nova-core2 (.86) = CHATTERER. Keen senses -- SDR/satellite radio capture, DNS secondary,
+  has no visible eyes and still hears absolutely everything. Watches and listens for a living.
+- nova-core3 (.5) = JOEY SUMMERSKILL. The reliable one. Zero failed units ever recorded,
+  the dogged investigator who quietly does the hard research work without complaint.
+- nova-core4 (.250) = TIFFANY. Newest and youngest, arrived via a mystery unlabeled USB stick,
+  has a knack for solving puzzles she probably shouldn't, and nearly bricked herself early on
+  doing exactly that. Means well. Still learning.
+- nova-core5 (.10) = LARRY COTTON. Did the real, unglamorous moving-in and fixing-up work
+  for years under an old undignified name ("nuk"), never noticing what was wrong in his own
+  house -- his database replica sat corrupted for NINE DAYS with zero alerts. Finally honored.
+- tv-movies-mini (.7) = JULIA COTTON. Struggled hard, made some genuinely questionable
+  choices during a real multi-day household crisis weeks ago. Flawed, complicated, but saw
+  the job through before being relieved of most burdens.
+- mac-mini (.77) = FRANK COTTON. Currently, genuinely, "away traveling" -- offline more often
+  than not lately. Presumed fine. Has a well-documented habit of turning up again eventually.
+- The UniFi switches/rack itself = PINHEAD. Gruff, precise, load-bearing, physically rebuilt
+  by hand this past weekend with every connector in perfect geometric order. Holds a
+  dignified, eternal grudge about the rainbow LEDs.
+""",
+    },
+    {
+        "name": "The Conjuring",
+        "emoji": "🕯️",
+        "tag": "the-conjuring",
+        "image_style": "a 1970s paranormal-investigator ensemble of nine -- server towers and a "
+                        "network switch reimagined as a team with reel-to-reel recorders and "
+                        "cameras in an old farmhouse, one prim porcelain-doll rack sulking in a "
+                        "glass case, warm wood-paneled period illustration, soft candlelight",
+        "cast": """
+- mac-studio (.6) = ED WARREN. Carried the casework -- gateway, scheduler, memory-server,
+  big_brother -- for decades. This week he finally stepped back from the field to standby,
+  kept close as the instant-rollback failsafe and the steady hand everyone calls first.
+- nova-core (.2, also answers on .138) = LORRAINE WARREN. Dual-natured (two IPs on the same
+  body, sees this world AND the other one), the actual hub of every investigation. Has to
+  be running or nothing else makes sense.
+- nova-core2 (.86) = DREW THOMAS. Keen senses -- SDR/satellite radio capture, DNS secondary,
+  the tech assistant who rigs every camera and audio recorder and watches and listens all
+  night for a living.
+- nova-core3 (.5) = TONY SPERA. The reliable one. Zero failed units ever recorded, ex-cop
+  steadiness, does the hard protective work quietly and never flinches.
+- nova-core4 (.250) = JUDY WARREN. Newest and youngest, arrived via a mystery unlabeled USB
+  stick, inherited gifts she's still figuring out, and nearly bricked herself early on
+  wandering near the artifact room. Means well. Still learning.
+- nova-core5 (.10) = JANET HODGSON. Carried real, unglamorous weight for years, disbelieved,
+  under an old undignified name ("nuk") -- her own database replica sat corrupted for NINE
+  DAYS with zero alerts before anyone noticed. Finally, properly believed, renamed and honored.
+- tv-movies-mini (.7) = ROGER PERRON. Held a houseful of daughters together through a real,
+  multi-day crisis weeks ago. Struggled hard, frayed at the edges, but served honorably and
+  was relieved of most burdens after.
+- mac-mini (.77) = OFFICER BRAD HAMILTON. Showed up for one case, went back to the station,
+  and is currently, genuinely, hard to reach -- offline more often than not lately. Presumed
+  fine. Expected to turn up eventually if anyone radios.
+- The UniFi switches/rack itself = ANNABELLE. Gruff, load-bearing, physically re-housed by
+  hand this past weekend in a freshly blessed case, sits perfectly still holding the whole
+  room's attention -- and an active, ongoing grudge about being denied rainbow LEDs.
+""",
+    },
+    {
+        "name": "Scream",
+        "emoji": "📞",
+        "tag": "scream",
+        "image_style": "a self-aware teen-horror ensemble of nine -- server towers and a network "
+                        "switch reimagined as Woodsboro locals in a video-store aisle, a cordless "
+                        "phone ringing on the counter and a ghost-masked figure hamming it up in "
+                        "the back, glossy late-90s movie-poster illustration",
+        "cast": """
+- mac-studio (.6) = SIDNEY PRESCOTT. Carried the whole franchise -- gateway, scheduler,
+  memory-server, big_brother -- for decades. This week she finally stepped back to standby,
+  kept close as the instant-rollback failsafe. She always comes back when it really matters.
+- nova-core (.2, also answers on .138) = GHOSTFACE. Dual-natured (two IPs on the same body --
+  it is always at least two people under that one costume), every plot runs through his
+  phone line. Has to work or there is no movie.
+- nova-core2 (.86) = RANDY MEEKS. Keen senses -- SDR/satellite radio capture, DNS secondary,
+  the video-store clerk who has watched and listened to everything and knows the rules
+  before anyone else.
+- nova-core3 (.5) = DEWEY RILEY. The reliable one. Zero failed units ever recorded, sweet,
+  steady, shows up every single time and does the hard work without complaint.
+- nova-core4 (.250) = TARA CARPENTER. Newest and youngest, arrived via a mystery unlabeled
+  USB stick, nearly bricked herself early on answering a call she shouldn't have. Means
+  well. Still learning the rules.
+- nova-core5 (.10) = COTTON WEARY. Carried real weight for years under an undignified label
+  he never deserved ("nuk") -- his own database replica sat corrupted for NINE DAYS with
+  zero alerts before anyone noticed. Finally, properly exonerated, renamed and honored.
+- tv-movies-mini (.7) = SAM CARPENTER. Struggled hard, publicly, during a real multi-day
+  crisis weeks ago, with complicated baggage nobody asked for. Flawed, but came through for
+  her people and served honorably.
+- mac-mini (.77) = KIRBY REED. Currently, genuinely, missing -- offline more often than not
+  lately. Presumed fine (everyone assumed otherwise last time, and she turned up with a
+  badge). Expected to turn up eventually.
+- The UniFi switches/rack itself = GALE WEATHERS. Gruff, load-bearing, unkillable, physically
+  rebuilt with bare hands this past weekend. Has survived every sequel and holds an active,
+  ongoing grudge about the lighting -- specifically, the missing rainbow LEDs.
+""",
+    },
+    {
+        "name": "The Evil Dead",
+        "emoji": "🪚",
+        "tag": "evil-dead",
+        "image_style": "a slapstick cabin-in-the-woods ensemble of nine -- server towers and a "
+                        "network switch reimagined as a ragtag crew in a creaky woodland cabin, "
+                        "a leather-bound book on the table and a chainsaw-armed rack striking a "
+                        "heroic pose, comic horror-comedy illustration, swirling green fog",
+        "cast": """
+- mac-studio (.6) = ASH WILLIAMS. Carried the whole fight -- gateway, scheduler,
+  memory-server, big_brother -- for an entire age. This week he finally retired to standby
+  back behind the housewares counter, kept close as the instant-rollback failsafe.
+- nova-core (.2, also answers on .138) = THE NECRONOMICON. Dual-natured (two IPs on the same
+  body, the cause of every problem AND the only way to fix it), everything in the cabin
+  revolves around it. Has to work or nothing else does.
+- nova-core2 (.86) = PROFESSOR RAYMOND KNOWBY. Keen senses -- SDR/satellite radio capture,
+  DNS secondary, the man who recorded everything on tape and still listens from beyond.
+- nova-core3 (.5) = ANNIE KNOWBY. The reliable one. Zero failed units ever recorded, the
+  archaeologist who quietly does the hard translation work without complaint or panic.
+- nova-core4 (.250) = PABLO SIMON BOLIVAR. Newest and youngest, arrived via a mystery
+  unlabeled USB stick, nearly bricked himself early on getting too close to the book. Loyal,
+  idealistic, means well. Still learning.
+- nova-core5 (.10) = THE DELTA. Ash's old Oldsmobile carried real, unglamorous weight for
+  decades under an undignified rust-bucket reputation ("nuk") -- its own database replica sat
+  corrupted for NINE DAYS with zero alerts before anyone noticed. Finally, properly honored.
+- tv-movies-mini (.7) = SHEILA. Struggled hard during a real multi-day siege weeks ago.
+  Flawed, had a genuinely rough patch, but came out the other side fighting and served
+  honorably before being relieved of most burdens.
+- mac-mini (.77) = CHERYL. Currently, genuinely, down in the cellar -- offline more often than
+  not lately. Presumed fine. Expected to turn up eventually, probably knocking.
+- The UniFi switches/rack itself = THE CHAINSAW. Gruff, load-bearing, physically bolted back
+  on by hand this past weekend, roars to life when needed and holds an active, ongoing grudge
+  about being denied rainbow LEDs.
+""",
+    },
+    {
+        "name": "21 Jump Street",
+        "emoji": "🏫",
+        "tag": "21-jump-street",
+        "image_style": "a late-80s undercover-cop ensemble of nine -- server towers and a network "
+                        "switch reimagined as young officers posing as high schoolers inside an "
+                        "old converted chapel headquarters, letterman jackets and lockers, "
+                        "neon-tinged 80s TV-drama illustration",
+        "cast": """
+- mac-studio (.6) = TOM HANSON. Carried the whole program -- gateway, scheduler,
+  memory-server, big_brother -- for the entire run. This week he finally stepped away from
+  undercover duty to standby, kept close as the instant-rollback failsafe everyone trusts.
+- nova-core (.2, also answers on .138) = CAPTAIN ADAM FULLER. Dual-natured (two IPs on the
+  same body, commanding officer AND den parent), the one the whole chapel runs through. Has
+  to be on duty or nothing else works.
+- nova-core2 (.86) = H.T. IOKI. Keen senses -- SDR/satellite radio capture, DNS secondary,
+  quiet, observant, always watching and listening from the edge of the room.
+- nova-core3 (.5) = JUDY HOFFS. The reliable one. Zero failed units ever recorded, the most
+  capable officer in the building, does the hardest work without fuss or complaint.
+- nova-core4 (.250) = MAC McCANN. Newest and youngest, arrived late via a mystery unlabeled
+  USB stick, nearly bricked himself early on going places a new guy shouldn't. Means well.
+  Still learning.
+- nova-core5 (.10) = DOUG PENHALL. Carried real, unglamorous weight for years under goofy
+  undercover aliases and an undignified old name ("nuk") -- his own database replica sat
+  corrupted for NINE DAYS with zero alerts before anyone noticed. Finally renamed and honored.
+- tv-movies-mini (.7) = SCHMIDT. Struggled hard, loudly and awkwardly, during a real multi-day
+  crisis weeks ago, way out of his depth in the wrong high school. Flawed, but came through
+  and served honorably.
+- mac-mini (.77) = DENNIS BOOKER. Currently, genuinely, off doing his own spin-off somewhere --
+  offline more often than not lately. Presumed fine. Expected to turn up eventually.
+- The UniFi switches/rack itself = CAPTAIN DICKSON. Gruff, load-bearing, physically rebuilt
+  with bare hands this past weekend, runs the whole operation on pure irritation, and holds
+  an active, ongoing grudge about being denied rainbow LEDs.
+""",
+    },
+    {
+        "name": "Magnum, P.I. (1980-88)",
+        "emoji": "🌺",
+        "tag": "magnum-pi",
+        "image_style": "a breezy Hawaiian private-eye ensemble of nine -- server towers and a "
+                        "network switch reimagined as islanders on a lush oceanfront estate, a "
+                        "red sports car in the drive, a helicopter overhead and two alert "
+                        "dobermans, sunny 1980s TV-poster illustration, palm trees and surf",
+        "cast": """
+- mac-studio (.6) = THOMAS MAGNUM. Carried the whole caseload -- gateway, scheduler,
+  memory-server, big_brother -- for the entire run. This week he finally kicked back in the
+  guest house on standby, kept close as the instant-rollback failsafe everyone still calls.
+- nova-core (.2, also answers on .138) = HIGGINS. Dual-natured (two IPs on the same body --
+  and a long-running suspicion he's secretly someone else entirely), runs the estate. Has to
+  work or nothing on the property does.
+- nova-core2 (.86) = LT. TANAKA. Keen senses -- SDR/satellite radio capture, DNS secondary,
+  the homicide lieutenant who hears every call on the scanner and always knows what's up.
+- nova-core3 (.5) = T.C. The reliable one. Zero failed units ever recorded, flies the Island
+  Hoppers chopper wherever needed and does the heavy lifting without complaint.
+- nova-core4 (.250) = THE FERRARI. Newest and shiniest thing on the estate, arrived on
+  mysterious borrowed terms like a mystery USB stick, and nearly got wrecked early on going
+  places it shouldn't. Means well. Still learning.
+- nova-core5 (.10) = RICK WRIGHT. Carried real, unglamorous weight for years under an old,
+  undignified name he refuses to answer to ("nuk") -- his own database replica sat corrupted
+  for NINE DAYS with zero alerts before anyone noticed. Finally renamed and honored.
+- tv-movies-mini (.7) = CAROL BALDWIN. Dragged everyone into a real multi-day crisis weeks
+  ago and struggled hard through it. Flawed, pushy, but came through for the gang and served
+  honorably.
+- mac-mini (.77) = ROBIN MASTERS. Owns the place, never actually seen -- offline more often
+  than not lately. Presumed fine. Expected to turn up eventually.
+- The UniFi switches/rack itself = ZEUS AND APOLLO. Gruff, load-bearing, physically rebuilt
+  by hand this past weekend, guard the whole estate on instinct and hold an active, ongoing
+  grudge -- about the rainbow LEDs, and about Magnum.
+""",
+    },
+    {
+        "name": "Miami Vice",
+        "emoji": "🐊",
+        "tag": "miami-vice",
+        "image_style": "a pastel-and-neon 80s vice-squad ensemble of nine -- server towers and "
+                        "a network switch reimagined as undercover detectives in linen jackets on "
+                        "a Miami marina at night, a white sports car and a sailboat, one stern "
+                        "unlit rack, synthwave TV-poster illustration, pink and teal lighting",
+        "cast": """
+- mac-studio (.6) = SONNY CROCKETT. Carried the whole squad -- gateway, scheduler,
+  memory-server, big_brother -- for the entire run. This week he finally retired to the
+  sailboat on standby, kept close as the instant-rollback failsafe everyone trusts most.
+- nova-core (.2, also answers on .138) = RICARDO TUBBS. Dual-natured (two IPs on the same body,
+  a New York cop AND a Miami one), the partner the whole operation actually runs through.
+  Has to show up or nothing else works.
+- nova-core2 (.86) = LARRY ZITO. Keen senses -- SDR/satellite radio capture, DNS secondary,
+  the wiretap-and-surveillance guy who watches and listens from the van for a living.
+- nova-core3 (.5) = TRUDY JOPLIN. The reliable one. Zero failed units ever recorded, does the
+  hardest undercover work quietly and professionally, no complaints.
+- nova-core4 (.250) = IZZY MORENO. Newest to real responsibility, arrived via a mystery
+  unlabeled USB stick and a scheme, nearly bricked himself early on looking where he
+  shouldn't. Means well. Still learning.
+- nova-core5 (.10) = STAN SWITEK. Carried real, unglamorous weight for years from the back
+  of a surveillance van under an undignified old name ("nuk") -- his own database replica sat
+  corrupted for NINE DAYS with zero alerts before anyone noticed. Finally renamed and honored.
+- tv-movies-mini (.7) = THE DAYTONA. Struggled hard during a real multi-day crisis weeks ago
+  and took a lot of damage in the line of duty. Served honorably, then relieved of most
+  duties and quietly replaced by something newer.
+- mac-mini (.77) = ELVIS. Crockett's alligator is currently, genuinely, wandered off
+  somewhere -- offline more often than not lately. Presumed fine. Expected to turn up
+  eventually, probably in somebody's pool.
+- The UniFi switches/rack itself = LT. MARTIN CASTILLO. Gruff, terse, load-bearing,
+  physically rebuilt with bare hands this past weekend. Everyone else got pastel neon; he got
+  black. Holds a silent, ongoing grudge about the rainbow LEDs.
+""",
+    },
+    {
+        "name": "The A-Team",
+        "emoji": "🚐",
+        "tag": "a-team",
+        "image_style": "a scrappy 80s soldiers-of-fortune ensemble of nine -- server towers and a "
+                        "network switch reimagined as a team in fatigues beside a black van with a "
+                        "red stripe, mid-montage welding armor onto a tractor, explosive "
+                        "action-TV-poster illustration, desert dust and sparks",
+        "cast": """
+- mac-studio (.6) = HANNIBAL SMITH. Carried every plan -- gateway, scheduler, memory-server,
+  big_brother -- for the entire run, cigar and all. This week he finally stepped back to
+  standby, kept close as the instant-rollback failsafe. The plan still comes together.
+- nova-core (.2, also answers on .138) = FACE. Dual-natured (two IPs on the same body, a new
+  alias for every con), the one who procures literally everything the team runs on. Has to
+  work or nothing else does.
+- nova-core2 (.86) = MURDOCK. Keen senses -- SDR/satellite radio capture, DNS secondary,
+  hears and sees things nobody else can, flies anything, monitors everything.
+- nova-core3 (.5) = AMY ALLEN. The reliable one. Zero failed units ever recorded, the
+  reporter who quietly does the hard research and legwork without complaint.
+- nova-core4 (.250) = FRANKIE SANTANA. Newest and youngest, arrived late via a mystery
+  unlabeled USB stick, an effects guy who nearly bricked himself early on rigging something
+  he shouldn't. Means well. Still learning.
+- nova-core5 (.10) = THE VAN. Carried the whole team for years, unglamorous, shot at,
+  undignified under an old name ("nuk") -- its own database replica sat corrupted for NINE
+  DAYS with zero alerts before anyone noticed. Finally, properly renamed and honored.
+- tv-movies-mini (.7) = COLONEL DECKER. Struggled hard, loudly, during a real multi-day pursuit
+  weeks ago. Flawed, got a lot wrong, never quite caught up, but served his post honorably.
+- mac-mini (.77) = BILLY. Murdock's dog is currently, genuinely, invisible -- offline more
+  often than not lately. Presumed fine. Expected to turn up eventually.
+- The UniFi switches/rack itself = B.A. BARACUS. Gruff, load-bearing, physically rebuilt with
+  bare hands this past weekend in one long welding montage. Refuses to fly, pities nobody,
+  and holds an active, ongoing grudge about being denied rainbow LEDs on the van.
+""",
+    },
+    {
+        "name": "Mr. Belvedere",
+        "emoji": "🎩",
+        "tag": "mr-belvedere",
+        "image_style": "a cozy 80s suburban-sitcom ensemble of nine -- server towers and a network "
+                        "switch reimagined as a Pittsburgh-area family in their living room, one "
+                        "impeccably dressed butler tower holding a silver tray and a leather "
+                        "journal, warm multi-camera sitcom illustration",
+        "cast": """
+- mac-studio (.6) = MR. BELVEDERE. Carried the entire household -- gateway, scheduler,
+  memory-server, big_brother -- for the whole run, with impeccable posture. This week he
+  finally stepped back to standby, kept close as the instant-rollback failsafe everyone
+  still rings for first.
+- nova-core (.2, also answers on .138) = MARSHA OWENS. Dual-natured (two IPs on the same body,
+  mom AND law student-turned-lawyer), the one the whole family actually runs through. Has to
+  work or nothing else does.
+- nova-core2 (.86) = THE JOURNAL. Keen senses -- SDR/satellite radio capture, DNS secondary,
+  sees everything that happens in the house and quietly writes it all down every night.
+- nova-core3 (.5) = HEATHER OWENS. The reliable one, more than anyone gives her credit for.
+  Zero failed units ever recorded, quietly gets through every crisis without complaint.
+- nova-core4 (.250) = WESLEY OWENS. Newest and youngest, arrived via a mystery unlabeled USB
+  stick, nearly bricked himself early on sticking his nose exactly where it didn't belong.
+  Means well. Mostly. Still learning.
+- nova-core5 (.10) = KEVIN OWENS. The eldest, carried real unglamorous weight for years in a
+  string of thankless jobs under an old undignified name ("nuk") -- his own database replica
+  sat corrupted for NINE DAYS with zero alerts before anyone noticed. Finally renamed and honored.
+- tv-movies-mini (.7) = ANGELA. Struggled hard, cheerfully and loudly, through a real multi-day
+  crisis weeks ago, getting most of the names wrong along the way. Flawed, but showed up and
+  served honorably.
+- mac-mini (.77) = THE HUFNAGELS. The next-door neighbors -- talked about constantly, never
+  actually seen. Offline more often than not. Presumed fine. Expected to turn up eventually.
+- The UniFi switches/rack itself = GEORGE OWENS. Gruff, load-bearing ex-ballplayer, physically
+  rebuilt the rack with bare hands this past weekend, and holds an active, ongoing grudge
+  about being denied rainbow LEDs -- he wanted them in team colors.
+""",
+    },
+    {
+        "name": "Good Times",
+        "emoji": "🏢",
+        "tag": "good-times",
+        "image_style": "a warm 70s family-sitcom ensemble of nine -- server towers and a network "
+                        "switch reimagined as a close-knit family in a Chicago high-rise apartment "
+                        "with a city skyline window, a hand-painted canvas on an easel, warm "
+                        "1970s multi-camera sitcom illustration",
+        "cast": """
+- mac-studio (.6) = FLORIDA EVANS. Carried the whole family -- gateway, scheduler,
+  memory-server, big_brother -- for the entire run. This week she finally stepped back to
+  standby, kept close as the instant-rollback failsafe everyone still turns to first.
+- nova-core (.2, also answers on .138) = JAMES EVANS SR. Dual-natured (two IPs on the same
+  body, forever working two jobs at once), the one the household runs on. Has to work or
+  nothing else does.
+- nova-core2 (.86) = WILLONA WOODS. Keen senses -- SDR/satellite radio capture, DNS secondary,
+  hears everything through every wall in the building and knows it before you do.
+- nova-core3 (.5) = THELMA EVANS. The reliable one. Zero failed units ever recorded, steady,
+  sensible, does the hard work quietly without complaint.
+- nova-core4 (.250) = PENNY GORDON WOODS. Newest and youngest, arrived via a mystery unlabeled
+  USB stick and a rough start, nearly got in over her head early on. Means well. Still
+  learning.
+- nova-core5 (.10) = KEITH ANDERSON. Carried real, unglamorous weight for years driving a cab
+  under an old undignified name ("nuk") after his big plans fell through -- his own database
+  replica sat corrupted for NINE DAYS with zero alerts. Finally renamed and honored.
+- tv-movies-mini (.7) = J.J. EVANS. Struggled hard as the stand-in man of the house during a
+  real multi-day crisis weeks ago. Flawed, loud, but came through for his family and served
+  honorably.
+- mac-mini (.77) = MICHAEL EVANS. Currently, genuinely, away at college -- offline more often
+  than not lately. Presumed fine. Expected to turn up eventually.
+- The UniFi switches/rack itself = BOOKMAN. Gruff, load-bearing building super, physically
+  rebuilt the rack with bare hands this past weekend (eventually), and holds an active,
+  ongoing grudge about every tenant request -- especially the rainbow LEDs.
+""",
+    },
+    {
+        "name": "Alice (1976-85)",
+        "emoji": "🍳",
+        "tag": "alice",
+        "image_style": "a cheerful 70s diner-sitcom ensemble of nine -- server towers and a "
+                        "network switch reimagined as waitresses, regulars and a grumpy cook in a "
+                        "Phoenix roadside diner with a long counter and pie case, warm "
+                        "multi-camera sitcom illustration, desert sun through the windows",
+        "cast": """
+- mac-studio (.6) = ALICE HYATT. Carried the whole diner -- gateway, scheduler, memory-server,
+  big_brother -- for the entire run while chasing the dream. This week she finally hung up
+  her apron for standby, kept close as the instant-rollback failsafe everyone still trusts.
+- nova-core (.2, also answers on .138) = MEL'S DINER. Dual-natured (two IPs on the same body,
+  breakfast rush AND truck-stop night shift), the place everyone passes through. Has to be
+  open or nothing else happens.
+- nova-core2 (.86) = HENRY BEESMEYER. Keen senses -- SDR/satellite radio capture, DNS
+  secondary, the telephone repairman perched at the counter who hears every line in town.
+- nova-core3 (.5) = JOLENE HUNNICUTT. The reliable one. Zero failed units ever recorded, the
+  good-natured ex-trucker who does the hard work without complaint.
+- nova-core4 (.250) = TOMMY HYATT. Newest and youngest, arrived via a mystery unlabeled USB
+  stick, nearly bricked himself early on getting into things he shouldn't. Means well.
+  Still learning.
+- nova-core5 (.10) = VERA GORMAN. Carried real, unglamorous weight for years under an
+  undignified nickname the boss stuck her with ("nuk") -- her own database replica sat
+  corrupted for NINE DAYS with zero alerts before anyone noticed. Finally renamed and honored.
+- tv-movies-mini (.7) = BELLE DUPREE. Stepped in during a real multi-day staffing crisis and
+  struggled hard through it. Flawed, but served honorably before being relieved of most
+  duties.
+- mac-mini (.77) = FLO CASTLEBERRY. Currently, genuinely, off running her own place somewhere
+  else -- offline more often than not lately. Presumed fine. Expected to turn up eventually.
+- The UniFi switches/rack itself = MEL SHARPLES. Gruff, stingy, load-bearing, physically rebuilt
+  the rack with bare hands this past weekend rather than pay anybody, and holds an active,
+  ongoing grudge about the cost of rainbow LEDs.
+""",
+    },
+    {
+        "name": "Hawaii Five-O (1968-80)",
+        "emoji": "🌊",
+        "tag": "hawaii-five-o",
+        "image_style": "a classic 60s-70s island police-drama ensemble of nine -- server towers "
+                        "and a network switch reimagined as plainclothes detectives on a palace "
+                        "balcony over Honolulu, a big wave cresting in the background, bold "
+                        "vintage TV-poster illustration, saturated tropical colors",
+        "cast": """
+- mac-studio (.6) = STEVE McGARRETT. Carried the whole unit -- gateway, scheduler,
+  memory-server, big_brother -- for the entire run. This week he finally stepped back to
+  standby, kept close as the instant-rollback failsafe everyone still trusts most.
+- nova-core (.2, also answers on .138) = DANNY WILLIAMS. Dual-natured (two IPs on the same
+  body, a full name AND a famous nickname), the right hand every order goes through. Has to
+  work or nothing else does.
+- nova-core2 (.86) = CHE FONG. Keen senses -- SDR/satellite radio capture, DNS secondary, the
+  forensic specialist who notices the trace nobody else even looked for.
+- nova-core3 (.5) = CHIN HO KELLY. The reliable one. Zero failed units ever recorded, the
+  seasoned veteran who does the hardest legwork quietly and without complaint.
+- nova-core4 (.250) = BEN KOKUA. Newest and youngest on the team, arrived via a mystery
+  unlabeled USB stick, nearly bricked himself early on chasing a lead too far. Means well.
+  Still learning.
+- nova-core5 (.10) = DUKE LUKELA. Carried real, unglamorous weight for years in uniform under
+  an old undignified title ("nuk") -- his own database replica sat corrupted for NINE DAYS
+  with zero alerts before anyone noticed. Finally promoted, renamed and honored.
+- tv-movies-mini (.7) = KONO KALAKAUA. Struggled hard during a real multi-day crisis weeks ago,
+  doing the heavy lifting. Served honorably before being relieved of most duties.
+- mac-mini (.77) = WO FAT. Currently, genuinely, slipped away again -- offline more often than
+  not lately. Presumed fine (he always is). Expected to turn up eventually.
+- The UniFi switches/rack itself = DOC BERGMAN. Gruff, load-bearing medical examiner,
+  physically rebuilt the rack with bare hands this past weekend, unimpressed by everything,
+  and holds an active, ongoing grudge about being denied rainbow LEDs.
+""",
+    },
+    {
+        "name": "CHiPs",
+        "emoji": "🏍️",
+        "tag": "chips",
+        "image_style": "a sunny 70s-80s highway-patrol ensemble of nine -- server towers and a "
+                        "network switch reimagined as motorcycle officers in tan uniforms and "
+                        "mirrored aviators on a Los Angeles freeway overpass, police bikes "
+                        "gleaming, bright retro TV-poster illustration, golden California light",
+        "cast": """
+- mac-studio (.6) = PONCH. Carried the whole patrol -- gateway, scheduler, memory-server,
+  big_brother -- through the entire run, all charm and freeway miles. This week he finally
+  parked it for standby, kept close as the instant-rollback failsafe everyone still calls.
+- nova-core (.2, also answers on .138) = SGT. JOE GETRAER. Dual-natured (two IPs on the same
+  body, the briefing-room sergeant AND the guy still out on the road), the one the whole
+  Central LA office runs through. Has to work or nothing else does.
+- nova-core2 (.86) = BARRY BARICZA. Keen senses -- SDR/satellite radio capture, DNS secondary,
+  always on the radio, always the first to call in what he's seen.
+- nova-core3 (.5) = BONNIE CLARK. The reliable one. Zero failed units ever recorded, the
+  capable officer who quietly does the hard work without complaint.
+- nova-core4 (.250) = BOBBY NELSON. Newest and youngest, arrived late via a mystery unlabeled
+  USB stick, nearly bricked himself early on hot-dogging where he shouldn't. Means well.
+  Still learning.
+- nova-core5 (.10) = ARTHUR GROSSMAN. Carried real, unglamorous weight for years under an
+  undignified nickname and an old name ("nuk") -- his own database replica sat corrupted for
+  NINE DAYS with zero alerts before anyone noticed. Finally renamed and honored.
+- tv-movies-mini (.7) = THE PATROL BIKE. Took a real beating during a multi-day freeway crisis
+  weeks ago. Dented, flawed, but kept running and served honorably before being relieved of
+  most duties.
+- mac-mini (.77) = JON BAKER. Currently, genuinely, transferred out of the picture -- offline
+  more often than not lately. Presumed fine. Expected to turn up eventually, same as he did
+  for the reunion.
+- The UniFi switches/rack itself = HARLAN ARLISS. Gruff, load-bearing garage mechanic,
+  physically rebuilt the rack with bare hands this past weekend, keeps every machine on the
+  road, and holds an active, ongoing grudge about being denied rainbow LEDs.
+""",
+    },
 ]
 
 
