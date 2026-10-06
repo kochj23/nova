@@ -239,6 +239,10 @@ def fetch_memories_by_source(source: str, n: int = 25) -> list[dict]:
         capture_output=True, text=True, timeout=30
     )
     if result.returncode != 0:
+        # Surface the psql error: swallowing it is how a missing -h (no local socket on
+        # nova-core) hid behind "Only 0 memories for X" for 8 Wednesdays (Aug 12-Sep 30 2026).
+        log(f"fetch_memories_by_source({source}): psql exit {result.returncode}: "
+            f"{(result.stderr or '').strip()[:300]}")
         return []
     memories = []
     # Records split on \x1e (psql -R), not newline: memory texts contain newlines, and a
