@@ -3297,6 +3297,47 @@ Token lives in the fleet pgcrypto store (`nova-memory-server-token`), delivered 
 - `nova_config.py` constants: `LAN_IP = "192.168.1.6"`, `NOVA_HOST = LAN_IP`
 - YouTube cookies: `~/.openclaw/cache/yt_cookies.txt` (mode 600, not in git)
 
+## Claude Fleet Coordination (2026-10-06)
+
+Jordan: *"I like this idea of not only distributed LLMs but each Nova cluster node running
+Claude and there being coordination between all of them."*
+
+On 2026-10-06 the Studio rebooted mid-session and the M4 mini (.77) picked the work back
+up with four parallel sub-agents. Most of it landed, but one lane passed as a chat message
+was misread and dropped. Shared-tree git accidents and IPs copied from stale notes showed
+the gaps. Coordination now runs through `nova_ops`, not chat. Full doc: `agent_docs`
+`claude-fleet-coordination`.
+
+- **Who is doing what:** `SELECT * FROM claude_board;` lists live sessions with their host,
+  last action, claims and locks. `claude_sessions.host` is set by the session-logger hook.
+- **Work is leased:** `claude_claim` → `claude_note` → `claude_finish` on `claude_queue`.
+  The lease lasts 20 minutes and every tool call renews it (`claude_heartbeat` in
+  session-logger). Progress notes stay on the row, so a crash loses minutes, not the plan.
+- **Dead sessions:** `scripts/nova_claude_lease_reaper.py` runs on scheduler-core every 5
+  minutes (.2, standby .5). It calls `claude_reap()`, which requeues expired claims. Each
+  one is posted to #nova-claude (notify category `claude_fleet`).
+- **Shared working trees:** `ring-guard.py` (PreToolUse on every node) takes a 15-minute
+  repo lock on any git write. While another session holds it, tree-wide ops (`add -A`,
+  `commit -a`, `reset --hard`, …) are denied, and stashing is always denied.
+  Explicit-path commits always pass.
+- **Startup:** `session-start.sh` shows each session its claim id, the board, its own
+  claims and any orphaned work.
+- **SQL:** `scripts/sql/claude_fleet_coordination.sql`. The self-test
+  (`…_test.sql`) runs in a rolled-back transaction.
+
+```mermaid
+flowchart LR
+    s1["Claude on .6"] -- claim/note/finish --> q[("claude_queue<br/>lease 20 min")]
+    s2["Claude on .77"] -- claim/note/finish --> q
+    s3["Claude on core7"] -- claim/note/finish --> q
+    log["session-logger<br/>every tool call"] -- heartbeat --> q
+    reap["lease reaper<br/>scheduler-core 5m"] -- expired? requeue --> q
+    reap --> slack["#nova-claude"]
+    rg["ring-guard<br/>git writes"] -- lock 15 min --> locks[("claude_locks")]
+    q --> board["claude_board view"]
+    locks --> board
+```
+
 ## Monthly Section Wraps (2026-10-06)
 
 Jordan: *"Let's make a monthly wrap article for each section. Normal yadda-yadda funny

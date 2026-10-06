@@ -92,6 +92,8 @@ CHANNEL = {
 CATEGORY_OVERRIDE = {
     "security_news": nova_config.SLACK_FEED,   # CVE/threat NEWS is FYI, not your-network
     "claude_code":   nova_config.SLACK_FEED,   # Claude Code activity is FYI
+    "claude_fleet":  "C0B3RSRR0DD",            # #nova-claude — cross-node Claude coordination
+                                               # (orphaned claims requeued by nova_claude_lease_reaper)
     "email":         nova_config.SLACK_EMAIL,  # mail digests -> #nova-email (its purpose). Without
                                                # this they fell to info->#nova-feed, so #nova-email
                                                # sat silent while the digest drowned in the firehose.
