@@ -92,7 +92,7 @@ POOLS = {
     # burst spreads instead of collapsing .7 (load test 2026-07-14). All run llama3.2:3b.
     # nova-core6 (.252, M1 mini 16GB) joined 2026-07-27 — inference-only by design.
     # 16GB cannot host the 30B MoE models, so it serves the fast tier alongside .7/.5/.86.
-    "fast":         [(N7, 5050, "mlx", "/Users/Shared/mlx-models/Qwen3-8B-4bit"),   # 2026-10-05: MLX Qwen3-8B on the M2 Pro mini — faster prefill than the 3B ollama tier, resident per process
+    "fast":         [(N7, 5050, "mlx", "mlx-community/Qwen3-8B-4bit"),   # 2026-10-05: MLX Qwen3-8B on the M2 Pro mini — faster prefill than the 3B ollama tier, resident per process
                      (N252, 11434, "ollama", "llama3.2:3b"),
                      (N7, 11434, "ollama", "llama3.2:3b"),
                      (N5, 11434, "ollama", "llama3.2:3b"),
