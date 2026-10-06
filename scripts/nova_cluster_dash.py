@@ -105,7 +105,7 @@ STATUS_MAP = vmap({"up": ("UP", GOOD), "down": ("DOWN", BAD), "slow": ("SLOW", W
 
 # ------------------------------------------------------------------ SQL -----
 SQL = {}
-SQL["status_line"] = """WITH n AS (SELECT count(DISTINCT node_name) alive FROM service_registry WHERE last_heartbeat > now()-interval '3 minutes'),
+SQL["status_line"] = """WITH n AS (SELECT count(*) alive FROM node_status WHERE last_heartbeat > now()-interval '3 minutes'),
 s AS (SELECT count(*) FILTER (WHERE status='up' AND last_heartbeat > now()-interval '3 minutes') up, count(*) total FROM service_registry),
 l AS (SELECT count(*) FILTER (WHERE status='up') up, count(*) total FROM (SELECT DISTINCT ON (node_name, service_name) status FROM health_checks
       WHERE checked_by='nova_llm_ping' AND checked_at > now()-interval '30 minutes' ORDER BY node_name, service_name, checked_at DESC) t),
@@ -117,7 +117,7 @@ SELECT CASE WHEN i.crit > 0 OR r.ok < 3 OR n.alive < 8 THEN 'CRITICAL' WHEN i.op
 FROM n, s, l, i, r"""
 SQL["clock"] = """SELECT to_char(now() AT TIME ZONE 'America/Los_Angeles', 'Dy DD Mon  HH24:MI') AS clock"""
 
-SQL["nodes_alive"] = """SELECT count(DISTINCT node_name) AS "nodes alive" FROM service_registry WHERE last_heartbeat > now()-interval '3 minutes'"""
+SQL["nodes_alive"] = """SELECT count(*) AS "nodes alive" FROM node_status WHERE last_heartbeat > now()-interval '3 minutes'"""
 SQL["services_up_ts"] = """SELECT g AS time,
   (SELECT count(*) FILTER (WHERE status='up') FROM (SELECT DISTINCT ON (service_name) status FROM health_checks h
      WHERE h.checked_by='mac-studio' AND h.checked_at > g - interval '10 minutes' AND h.checked_at <= g ORDER BY service_name, checked_at DESC) x) AS "services up"
@@ -190,7 +190,7 @@ def build():
 
     # ---- headline tiles (y 2-7), 6 x w4
     P.append(tile("🛰  nodes alive", SQL["nodes_alive"], 0, 2, 4, 5, thr((None, BAD), (8, WARN), (10, GOOD)), spark=False, fmt="table",
-                  desc="distinct service_registry nodes with a heartbeat < 3 min (target 10; no history table, so no sparkline)"))
+                  desc="node_status rows whose own mesh-agent heartbeat is < 3 min (target 10; no history table, so no sparkline). Was service_registry until 2026-10-06, which only counts nodes with registered services."))
     P.append(tile("🧩  services up", SQL["services_up_ts"], 4, 2, 4, 5, thr((None, BAD), (30, WARN), (32, GOOD)),
                   desc="services whose latest health_check (mac-studio checker, 10-min window) is up; 32 known"))
     P.append(tile("🧠  LLM backends healthy", SQL["llm_healthy_ts"], 8, 2, 4, 5, thr((None, BAD), (7, WARN), (10, GOOD)),
