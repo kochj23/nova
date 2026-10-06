@@ -349,9 +349,11 @@ def main():
             tags = ["operations", "autobiography", "narrative-identity", "interiority", "monthly"]
             desc = "Nova's revisable life-story: the failures and the passions in one arc."
             if nj.publish_hugo(title, narrative, "operations", tags, desc, emoji="📖"):
-                nj.git_push("operations", title)
+                _push = nj.git_push("operations", title)
+                # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
+                _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
                 nj.notify_slack("operations", f"📖 {title}", "Nova's autobiography, revised.")
-                log(f"[autobiography] PUBLISHED: {title}")
+                log(f"[autobiography] {_pub}: {title}")
             else:
                 log("[autobiography] publish guard rejected — internal version still saved")
         except Exception as e:

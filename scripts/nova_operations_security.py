@@ -323,9 +323,11 @@ def main():
     tags = ["operations", "security", "scans", "network", "daily"]
     desc = "Nova's daily security-operations report — closest first: your network, your gear's CVEs, then the wider world."
     nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji="🛡️")  # dated post
-    nj.git_push("operations", title)
+    _push = nj.git_push("operations", title)
+    # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
+    _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
     nj.notify_slack("operations", f"🛡️ {title}", "Nova's morning security-ops report.")
-    nj.log(f"[ops-security] PUBLISHED: {title} ({len(devices)} devices, {len(mine_cves)} gear-CVEs)")
+    nj.log(f"[ops-security] {_pub}: {title} ({len(devices)} devices, {len(mine_cves)} gear-CVEs)")
     return 0
 
 

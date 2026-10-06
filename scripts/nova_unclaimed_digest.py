@@ -268,9 +268,11 @@ def main():
     if not nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji="🌱"):
         nj.log(f"[unclaimed-digest] NOT PUBLISHED — guard rejected: {title}")
         return 1
-    nj.git_push("operations", title)
+    _push = nj.git_push("operations", title)
+    # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
+    _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
     nj.notify_slack("operations", f"🌱 {title}", "Nova's daily unclaimed-time column.")
-    nj.log(f"[unclaimed-digest] PUBLISHED: {title}")
+    nj.log(f"[unclaimed-digest] {_pub}: {title}")
     return 0
 
 

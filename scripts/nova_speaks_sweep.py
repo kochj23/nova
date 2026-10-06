@@ -18,6 +18,10 @@ import os, re, sys, json, subprocess, time, pathlib, shlex
 import psycopg2
 
 JOURNAL = pathlib.Path.home() / "nova-journal"
+# Articles that exist only on origin/main (this clone is dirty/diverged, so it was not fast-forwarded) are
+# materialized here, mirroring the repo layout, so dispatch/podcast_index have a real file to read.
+ORIGIN_CACHE = pathlib.Path.home() / ".cache" / "nova-speaks" / "origin"
+PUSH_LOCK_KEY = 47110815   # == nova_journal._PUSH_LOCK_KEY: the fleet-wide journal-push advisory lock
 SCRIPTS = pathlib.Path(__file__).resolve().parent
 LOCAL = os.uname().nodename
 REVIEW = "/Volumes/nas/nova-fs/videos/review"            # Studio's view of the review dir (UNAS)
@@ -72,12 +76,75 @@ def is_live(url):
 def frontmatter(md):
     m = re.match(r"^---\n(.*?)\n---", md, re.S); return m.group(1) if m else ""
 
+# ── 0. bring the clone up to date ───────────────────────────────────────────────────────
+def _jgit(*args, timeout=60):
+    return subprocess.run(["git", *args], cwd=JOURNAL, capture_output=True, text=True, timeout=timeout)
+
+def sync_journal(cur):
+    """Articles are published from nova-core too; nothing else reliably pulls this clone, so they never got queued.
+    git fetch origin main, then fast-forward ONLY if the clone is clean, on main, and strictly behind — under the
+    fleet-wide journal-push lock (skip if another writer holds it). Never rebase/reset someone's working copy.
+    Returns "origin/main" when origin has commits the working copy lacks (scan its tree too), else None."""
+    try:
+        f = _jgit("fetch", "-q", "origin", "main", timeout=120)
+        if f.returncode != 0:
+            log(f"journal fetch failed: {' '.join(f.stderr.split())[:160]}"); return None
+        g = JOURNAL / ".git"
+        wedged = any((g / x).exists() for x in ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD"))
+        branch = _jgit("symbolic-ref", "-q", "--short", "HEAD").stdout.strip()
+        dirty = bool(_jgit("status", "--porcelain").stdout.strip())
+        behind = int(_jgit("rev-list", "--count", "HEAD..origin/main").stdout.strip() or 0)
+        ahead = int(_jgit("rev-list", "--count", "origin/main..HEAD").stdout.strip() or 0)
+        if not behind: return None
+        if branch == "main" and not wedged and not dirty and not ahead:
+            cur.execute("SELECT pg_try_advisory_lock(%s)", (PUSH_LOCK_KEY,))
+            if cur.fetchone()[0]:
+                try:
+                    m = _jgit("merge", "--ff-only", "-q", "origin/main")
+                finally:
+                    cur.execute("SELECT pg_advisory_unlock(%s)", (PUSH_LOCK_KEY,))
+                if m.returncode == 0:
+                    log(f"journal fast-forwarded {behind} commit(s)"); return None
+                log(f"journal ff-merge failed: {' '.join(m.stderr.split())[:160]}")
+            else:
+                log("journal push lock held by a writer — not fast-forwarding this sweep")
+        else:
+            why = ", ".join(w for w, on in (("dirty", dirty), (f"{ahead} ahead", ahead), ("wedged", wedged),
+                                            (f"on {branch or 'detached HEAD'}", branch != "main")) if on)
+            log(f"journal clone {why}, {behind} behind — left untouched; scanning origin/main too")
+        return "origin/main"
+    except Exception as e:
+        log(f"journal sync failed: {e}"); return None
+
+def _origin_articles(ref):
+    """(relpath, text) for every content/<section>/<post>.md in ref's tree that the working copy doesn't have."""
+    ls = _jgit("ls-tree", "-r", "--name-only", ref, "--", "content")
+    for rel in ls.stdout.splitlines():
+        parts = rel.split("/")
+        if len(parts) != 3 or not rel.endswith(".md") or (JOURNAL / rel).exists(): continue
+        show = _jgit("show", f"{ref}:{rel}")
+        if show.returncode == 0: yield rel, show.stdout
+
+def _materialize(ref, rel, text):
+    """Write an origin-only article (and its cover, if any) under ORIGIN_CACHE; return the article path."""
+    dst = ORIGIN_CACHE / rel; dst.parent.mkdir(parents=True, exist_ok=True); dst.write_text(text)
+    section, stem = rel.split("/")[1], pathlib.Path(rel).stem
+    fm = re.search(r'^\s*image:\s*"?(/images/[^"\s]+)', text, re.M)
+    for img in {f"static/images/{section}/{stem}.webp", *( [f"static{fm.group(1)}"] if fm else [] )}:
+        r = subprocess.run(["git", "show", f"{ref}:{img}"], cwd=JOURNAL, capture_output=True, timeout=60)
+        if r.returncode == 0:
+            (ORIGIN_CACHE / img).parent.mkdir(parents=True, exist_ok=True); (ORIGIN_CACHE / img).write_bytes(r.stdout)
+    return dst
+
 # ── 1. new live posts ───────────────────────────────────────────────────────────────────
-def scan_new(cur):
+def scan_new(cur, origin_ref=None):
     n = 0
-    for p in (JOURNAL / "content").glob("*/*.md"):
+    cands = [(p, None) for p in (JOURNAL / "content").glob("*/*.md")]
+    if origin_ref:
+        cands += [(JOURNAL / rel, (rel, text)) for rel, text in _origin_articles(origin_ref)]
+    for p, remote in cands:
         if p.name.startswith("_"): continue
-        fm = frontmatter(p.read_text(errors="ignore"))
+        fm = frontmatter(remote[1] if remote else p.read_text(errors="ignore"))
         if re.search(r"^draft:\s*true", fm, re.M): continue
         d = re.search(r"^date:\s*(\S+)", fm, re.M)
         if not d: continue
@@ -89,6 +156,7 @@ def scan_new(cur):
         if not is_live(url): log(f"not live yet: {p.stem}"); continue
         t = re.search(r'^title:\s*"?(.+?)"?\s*$', fm, re.M)
         title = re.sub(r"^[^\w]+", "", t.group(1).strip('" ')) if t else p.stem
+        if remote: p = _materialize(origin_ref, *remote)
         cur.execute("INSERT INTO nova_speaks_renders (slug, section, article_path, url, title) VALUES (%s,%s,%s,%s,%s)", (p.stem, section, str(p), url, title))
         n += 1
     return n
@@ -160,9 +228,10 @@ def dispatch(cur, hosts):
             # the article's cover plus a few recent covers from its section, so the Ken Burns rotation has variety on every host
             sec_dir = JOURNAL / "static/images" / section
             covers = sorted(sec_dir.glob("*.webp"), key=lambda f: f.stat().st_mtime)[-6:]
-            if (sec_dir / f"{slug}.webp").exists() and (sec_dir / f"{slug}.webp") not in covers: covers.append(sec_dir / f"{slug}.webp")
             fm = re.search(r'^\s*image:\s*"?(/images/[^"\s]+)', pathlib.Path(art).read_text(), re.M)   # frontmatter cover when its name != slug
-            if fm and (JOURNAL / "static" / fm.group(1).lstrip("/")).exists(): covers.append(JOURNAL / "static" / fm.group(1).lstrip("/"))
+            for root in (JOURNAL, ORIGIN_CACHE):    # ORIGIN_CACHE: covers of articles taken from origin/main's tree
+                own = [root / "static/images" / section / f"{slug}.webp"] + ([root / "static" / fm.group(1).lstrip("/")] if fm else [])
+                covers += [c for c in own if c.exists() and c.name not in {x.name for x in covers}]
             for cv in covers: copy_to(h, str(cv), f"{h['journal_dir']}/static/images/{section}/{cv.name}")
             copy_to(h, str(SCRIPTS / "nova_speaks.py"), f"{h['scripts_dir']}/nova_speaks.py")   # keep the renderer current
             lp = f"{h['tts_home']}/logs/{slug}.log"
@@ -218,7 +287,7 @@ def main():
     cur.execute("SELECT host, ssh, python, scripts_dir, tts_home, journal_dir, out_dir, out_is_nas, env, speed, enabled FROM nova_speaks_hosts")
     cols = ["host", "ssh", "python", "scripts_dir", "tts_home", "journal_dir", "out_dir", "out_is_nas", "env", "speed", "enabled"]
     hosts = {r[0]: dict(zip(cols, r)) for r in cur.fetchall()}
-    n = scan_new(cur)
+    n = scan_new(cur, sync_journal(cur))
     if n: log(f"queued {n} new article(s)")
     reap(cur, hosts)
     # retry one YouTube upload that failed earlier (stale cookies); a row that keeps failing ages out after 2 days.

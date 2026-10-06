@@ -106,9 +106,11 @@ def main():
     tags = ["opinion", "fishbowl", "watch-community", "roster", "report-card"]
     desc = "Nova's channel-by-channel verdict on the Fishbowl cast."
     nj.publish_hugo(title, body, "opinions", tags, desc, image_path=img, emoji="🗣️")
-    nj.git_push("opinions", title)
+    _push = nj.git_push("opinions", title)
+    # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
+    _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
     nj.notify_slack("opinions", f"🗣️ {title}", "Nova's channel-by-channel Fishbowl roster review.")
-    nj.log(f"[opinion-fishbowl-roster] PUBLISHED: {title}")
+    nj.log(f"[opinion-fishbowl-roster] {_pub}: {title}")
     return 0
 
 

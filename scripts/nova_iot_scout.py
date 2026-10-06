@@ -381,10 +381,12 @@ def run(dry_run: bool = False, force_repo: str | None = None) -> int:
     except Exception as e:
         nj.log(f"[iot-scout] telemetry skipped: {e}")
 
-    nj.git_push("operations", title)
+    _push = nj.git_push("operations", title)
+    # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
+    _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
     nj.notify_slack("operations", f"{emoji} {title} [{verdict}]",
                     f"Scouted {repo['full_name']} ({repo.get('stargazers_count')}★) — {verdict}.")
-    nj.log(f"[iot-scout] PUBLISHED '{title}' [{verdict}] on {repo['full_name']}")
+    nj.log(f"[iot-scout] {_pub} '{title}' [{verdict}] on {repo['full_name']}")
     conn.close()
     return 0
 

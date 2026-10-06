@@ -149,9 +149,11 @@ def main():
                            stable_slug=STABLE_SLUG, cited_memory_ids=cited_ids):
         nj.log(f"[fishbowl-daily] NOT PUBLISHED — quality guard rejected: {title}")
         return 1
-    nj.git_push("opinions", title)
+    _push = nj.git_push("opinions", title)
+    # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
+    _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
     nj.notify_slack("fishbowl", f"🐠 {title}", "Nova's daily Fishbowl dispatch updated.")
-    nj.log(f"[fishbowl-daily] PUBLISHED (evergreen): {title}")
+    nj.log(f"[fishbowl-daily] {_pub} (evergreen): {title}")
     return 0
 
 

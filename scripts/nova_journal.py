@@ -810,10 +810,92 @@ def _release_push_lock(conn):
         pass
 
 
+# ── Push/pull failure classification ─────────────────────────────────────────
+# 2026-10-05 17:04 on nova-core: `git push` died with "ssh: connect to host github.com
+# port 22: Connection timed out", the code then ran `pull --rebase` (same network death),
+# logged "pull --rebase conflict needing a human", and the caller logged PUBLISHED — though
+# nothing reached GitHub. A network failure is not a conflict and must never be reported
+# as published. git_push now classifies the failure and returns a status string.
+_NETWORK_MARKERS = (
+    "ssh: connect to host", "connection timed out", "operation timed out", "timed out",
+    "timeout", "could not resolve host", "could not resolve hostname", "connection refused",
+    "connection reset", "connection closed by", "fatal: unable to access",
+    "could not read username", "device not configured", "network is unreachable",
+    "no route to host", "temporary failure in name resolution",
+)
+_NON_FF_MARKERS = ("non-fast-forward", "fetch first", "[rejected]", "updates were rejected",
+                   "tip of your current branch is behind")
+_CONFLICT_MARKERS = ("conflict", "could not apply", "merge conflict")
+
+# git_push return values. Strings, so existing callers that ignore the result keep working.
+PUSH_PUSHED = "pushed"
+PUSH_NOT_PUSHED = "committed_not_pushed"
+PUSH_NOTHING = "nothing"
+PUSH_FAILED = "failed"
+
+
+def classify_git_failure(text: str) -> str:
+    """Classify git push/pull stderr: 'network' | 'non_fast_forward' | 'conflict' | 'other'.
+    Network is checked first: an ssh timeout is followed by "Could not read from remote
+    repository", which must not be read as anything the repo itself did."""
+    low = (text or "").lower()
+    if any(m in low for m in _NETWORK_MARKERS):
+        return "network"
+    if any(m in low for m in _NON_FF_MARKERS):
+        return "non_fast_forward"
+    if any(m in low for m in _CONFLICT_MARKERS):
+        return "conflict"
+    return "other"
+
+
+def published_label(status) -> str:
+    """What a caller should log after git_push: only a real push is PUBLISHED."""
+    if status == PUSH_NOT_PUSHED:
+        return "COMMITTED (not yet pushed)"
+    if status == PUSH_FAILED:
+        return "NOT COMMITTED (git failed)"
+    return "PUBLISHED"   # pushed, nothing-new (already committed earlier), or a legacy None
+
+
+def _alert_push_failing(msg: str):
+    """#nova-warning alert, deduped under one key whatever the cause."""
+    try:
+        from nova_notify import notify
+        ahead = _git(["rev-list", "--count", "origin/main..HEAD"]).stdout.strip() or "?"
+        notify("Journal push failing — articles are not reaching the site",
+               body=f"{msg}\n{ahead} commit(s) unpushed. Repo state: {_repo_wedged() or 'clean'}",
+               level="warning", category="journal", source="nova_journal.py",
+               dedup_key="journal-push-failing")
+    except Exception:
+        pass
+
+
+def _network_not_published(reason: str) -> str:
+    reason = " ".join((reason or "").split())[:200]
+    log(f"push failed (network): {reason} — committed locally, NOT published; "
+        f"the hourly stranded watchdog will retry")
+    _alert_push_failing(f"push failed (network): {reason}")
+    return PUSH_NOT_PUSHED
+
+
+def _git_net(args, timeout=180):
+    """_git for network ops: a TimeoutExpired becomes a synthetic network failure
+    (rc 124) instead of escaping to the generic 'Git error' handler with no alert."""
+    try:
+        return _git(args, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(["git", *args], 124, stdout="",
+                                           stderr=f"git {args[0]} timed out after {timeout}s")
+
+
 def git_push(section: str, title: str):
-    """Stage, commit, push the Hugo repo — serialized fleet-wide via a PG advisory lock."""
+    """Stage, commit, push the Hugo repo — serialized fleet-wide via a PG advisory lock.
+
+    Returns PUSH_PUSHED, PUSH_NOT_PUSHED (committed locally only), PUSH_NOTHING or
+    PUSH_FAILED. Use published_label(status) when logging the outcome."""
     section = _canon_section(section)
     lock_conn = _acquire_push_lock()
+    committed = False
     try:
         import time as _time
         # A wedged repo makes `git add -A` stage conflict markers and commit them onto
@@ -821,7 +903,7 @@ def git_push(section: str, title: str):
         wedged = _repo_wedged()
         if wedged and not _unwedge(wedged):
             log("Repo still wedged after repair attempt — refusing to commit")
-            return
+            return PUSH_FAILED
         # We hold the fleet-wide push lock, so no other git_push is running — any
         # index.lock is stale (a crashed git). Clear it rather than skip; skipping here
         # is what left articles written-but-uncommitted (the untracked-file bug).
@@ -836,7 +918,7 @@ def git_push(section: str, title: str):
         result = subprocess.run(["git", "add", "-A"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
         if result.returncode != 0:
             log(f"Git add failed: {result.stderr[:200]}")
-            return
+            return PUSH_FAILED
         # Universal MAC scrub at the commit chokepoint. scrub_pii runs in publish_hugo, but
         # some generators publish via other paths (e.g. the memory-audit article on 2026-09-19),
         # leaking a device MAC that the pre-commit hook then blocks — and since `git add -A`
@@ -870,7 +952,7 @@ def git_push(section: str, title: str):
             combined = (result.stdout or "") + (result.stderr or "")
             if "nothing to commit" in combined:
                 log("Nothing to commit")
-                return
+                return PUSH_NOTHING
             # The per-clone pre-commit secret-scanner rejected the commit. Historically
             # this returned silently and the article vanished (never on disk after the
             # generator moved on, never on origin). Detect the hook's block banner and
@@ -886,51 +968,65 @@ def git_push(section: str, title: str):
                         slack_channel=nova_config.SLACK_NOTIFY, discord_channel=None)
                 except Exception as e:
                     log(f"BLOCK alert failed to post: {e}")
-                return
+                return PUSH_FAILED
             log(f"Commit failed: {result.stderr[:200]}")
-            return
-        result = _git(["push"], timeout=180)
-        if result.returncode != 0:
-            # Another daily writer pushed first (non-fast-forward). Rebase on top and retry
-            # once, so concurrent journal jobs don't strand each other's commits.
-            log(f"Push rejected, rebasing + retrying: {result.stderr[:120]}")
-            pull = _git(["pull", "--rebase"], timeout=180)
-            if pull.returncode != 0:
-                # The rebase STOPPED — historically this was ignored, which left the repo
-                # mid-rebase for every later job to commit into. Resolve the routine case
-                # (rolling files) and finish; otherwise back all the way out.
-                if _resolve_rolling_conflicts():
-                    cont = subprocess.run(["git", "rebase", "--continue"], cwd=HUGO_ROOT,
-                                          capture_output=True, text=True, timeout=120,
-                                          env={**os.environ, "GIT_EDITOR": "true"})
-                    if cont.returncode != 0:
-                        log(f"rebase --continue failed: {cont.stderr[:200]}")
-                        _unwedge("rebase --continue failed")
-                        return
-                else:
-                    _unwedge("pull --rebase conflict needing a human")
-                    return
-            result = _git(["push"], timeout=180)
-            if result.returncode != 0:
-                # Do NOT claim the commit is safe — it is only safe if the repo is sane.
-                msg = f"Push still failed after rebase: {result.stderr[:200]}"
-                log(msg)
-                try:
-                    from nova_notify import notify
-                    ahead = _git(["rev-list", "--count", "origin/main..HEAD"]).stdout.strip() or "?"
-                    notify("Journal push failing — articles are not reaching the site",
-                           body=f"{msg}\n{ahead} commit(s) unpushed. Repo state: "
-                                f"{_repo_wedged() or 'clean'}",
-                           level="warning", category="journal", source="nova_journal.py",
-                           dedup_key="journal-push-failing")
-                except Exception:
-                    pass
-            else:
-                log("Pushed to GitHub after rebase — deploy triggered")
-        else:
+            return PUSH_FAILED
+        committed = True
+        result = _git_net(["push"])
+        if result.returncode == 0:
             log("Pushed to GitHub — deploy triggered")
+            return PUSH_PUSHED
+        err = (result.stderr or "") + (result.stdout or "")
+        if classify_git_failure(err) == "network":
+            # GitHub unreachable: rebasing would fail the same way and get misreported
+            # as a conflict. The commit is safe locally; the stranded watchdog retries.
+            return _network_not_published(err)
+        # Another daily writer pushed first (non-fast-forward). Rebase on top and retry
+        # once, so concurrent journal jobs don't strand each other's commits.
+        log(f"Push rejected, rebasing + retrying: {err[:120]}")
+        pull = _git_net(["pull", "--rebase"])
+        if pull.returncode != 0:
+            perr = (pull.stderr or "") + (pull.stdout or "")
+            kind = classify_git_failure(perr)
+            if kind == "network" and not _repo_wedged():
+                # The fetch half died; no rebase was started — nothing to resolve.
+                return _network_not_published(perr)
+            # The rebase STOPPED — historically this was ignored, which left the repo
+            # mid-rebase for every later job to commit into. Resolve the routine case
+            # (rolling files) and finish; otherwise back all the way out.
+            if _resolve_rolling_conflicts():
+                cont = subprocess.run(["git", "rebase", "--continue"], cwd=HUGO_ROOT,
+                                      capture_output=True, text=True, timeout=120,
+                                      env={**os.environ, "GIT_EDITOR": "true"})
+                if cont.returncode != 0:
+                    log(f"rebase --continue failed: {cont.stderr[:200]}")
+                    _unwedge("rebase --continue failed")
+                    _alert_push_failing(f"rebase --continue failed: {cont.stderr[:200]}")
+                    return PUSH_NOT_PUSHED
+            else:
+                what = ("pull --rebase conflict needing a human" if kind == "conflict"
+                        else f"pull --rebase failed ({kind}): {' '.join(perr.split())[:160]}")
+                _unwedge(what)
+                _alert_push_failing(what)
+                return PUSH_NOT_PUSHED
+        result = _git_net(["push"])
+        if result.returncode != 0:
+            err = (result.stderr or "") + (result.stdout or "")
+            if classify_git_failure(err) == "network":
+                return _network_not_published(err)
+            # Do NOT claim the commit is safe — it is only safe if the repo is sane.
+            msg = f"Push still failed after rebase: {err[:200]}"
+            log(msg)
+            _alert_push_failing(msg)
+            return PUSH_NOT_PUSHED
+        log("Pushed to GitHub after rebase — deploy triggered")
+        return PUSH_PUSHED
     except Exception as e:
         log(f"Git error: {e}")
+        if committed:
+            _alert_push_failing(f"Git error after commit: {e}")
+            return PUSH_NOT_PUSHED
+        return PUSH_FAILED
     finally:
         _release_push_lock(lock_conn)
 
@@ -2255,7 +2351,8 @@ def run_profile(profile_name: str) -> int:
         return 1
 
     # ── Step 6: Git push ──────────────────────────────────────────────────────
-    git_push(section, title)
+    push_status = git_push(section, title)
+    log(f"{published_label(push_status)}: {title}")
 
     # ── Step 7: Slack notify ──────────────────────────────────────────────────
     preview = body[:300].replace("\n", " ").strip()

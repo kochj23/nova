@@ -161,9 +161,11 @@ def main():
                            cited_memory_ids=cited_ids):
         nj.log(f"[media-wrap] NOT PUBLISHED — quality guard rejected: {title}")
         return 1
-    nj.git_push("operations", title)
+    _push = nj.git_push("operations", title)
+    # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
+    _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
     nj.notify_slack("operations", f"📺 {title}", "Nova's weekly media ingest wrap-up.")
-    nj.log(f"[media-wrap] PUBLISHED: {title}")
+    nj.log(f"[media-wrap] {_pub}: {title}")
     return 0
 
 

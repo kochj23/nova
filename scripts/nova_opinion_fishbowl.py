@@ -147,9 +147,11 @@ def main():
         nj.log(f"[opinion-fishbowl] NOT PUBLISHED — quality guard rejected: {title}")
         nj.git_push("opinions", title)   # still ship any pending deletions/cleanup
         return 1
-    nj.git_push("opinions", title)
+    _push = nj.git_push("opinions", title)
+    # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
+    _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
     nj.notify_slack("opinions", f"🗣️ {title}", "Nova's daily Fishbowl opinion column.")
-    nj.log(f"[opinion-fishbowl] PUBLISHED: {title}")
+    nj.log(f"[opinion-fishbowl] {_pub}: {title}")
     return 0
 
 

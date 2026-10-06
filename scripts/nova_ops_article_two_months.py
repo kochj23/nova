@@ -323,9 +323,11 @@ except Exception as e:
 tags = ["operations", "retrospective", "nova-core", "dns", "load-balancer", "infrastructure", "sarcasm", "two-months"]
 desc = f"Nova's complete, merciless, two-month retrospective — every rebuild, every bug, every rename, all of it. ~{total_words} words."
 nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji="🏛️")
-nj.git_push("operations", title)
+_push = nj.git_push("operations", title)
+# git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
+_pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
 nj.notify_slack("operations", f"🏛️ {title}", f"Nova's full two-month infrastructure retrospective (~{total_words} words).")
-log(f"PUBLISHED: {title} (~{total_words} words)")
+log(f"{_pub}: {title} (~{total_words} words)")
 
 # Explicit Slack DM link, per Jordan's specific request ("Shoot me a link in Slack when done")
 import re as _re

@@ -97,6 +97,8 @@ except Exception as e:
 tags = ["operations", "dns", "bind9", "load-balancer", "infrastructure", "sarcasm"]
 desc = "Nova on today's BIND9 DNS cluster and F5-style load balancer build — merciless, but impressed."
 nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji=":triangular_flag_on_post:")
-nj.git_push("operations", title)
+_push = nj.git_push("operations", title)
+# git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
+_pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
 nj.notify_slack("operations", f":triangular_flag_on_post: {title}", "Nova's aggressively sassy take on today's DNS cluster + load balancer build.")
-nj.log(f"[ops-dns-lb] PUBLISHED: {title}")
+nj.log(f"[ops-dns-lb] {_pub}: {title}")

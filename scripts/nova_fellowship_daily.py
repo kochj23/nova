@@ -446,9 +446,11 @@ OUTPUT EXACTLY THIS SHAPE:\nTITLE: <short punchy title, no quotes>\n<blank line>
     tags = ["operations", franchise["tag"], "nova-core", "fleet", "daily", "sarcasm"]
     desc = f"Nova's daily fleet status, told as {franchise['name']}."
     nj.publish_hugo(title, body, "operations", tags, desc, image_path=img, emoji=franchise["emoji"])
-    nj.git_push("operations", title)
+    _push = nj.git_push("operations", title)
+    # git_push returns 'pushed'/'committed_not_pushed'/'nothing'/'failed' — only a real push is PUBLISHED
+    _pub = {"committed_not_pushed": "COMMITTED (not yet pushed)", "failed": "NOT COMMITTED (git failed)"}.get(_push, "PUBLISHED")
     nj.notify_slack("operations", f"{franchise['emoji']} {title}", "Today's fleet status.")
-    log(f"PUBLISHED: {title}")
+    log(f"{_pub}: {title}")
     return 0
 
 
