@@ -38,7 +38,7 @@ bm.psycopg2 = types.SimpleNamespace(connect=MagicMock(side_effect=AssertionError
 
 
 class _Cur:
-    """Cursor stub: answers `max(ts)` and `SELECT rc, ok` per job prefix; records every statement."""
+    """Cursor stub: answers `max(ts)` and the latest-run row per job prefix; records every statement."""
     def __init__(self, last=None, latest=None):
         self.last, self.latest = last or {}, latest or {}
         self.sql, self._row = [], None
@@ -55,7 +55,8 @@ class _Cur:
         if "max(ts)" in sql:
             self._row = (self.last.get(prefix),)
         else:
-            self._row = self.latest.get(prefix, (0, True))
+            # rc, ok + job, elapsed_s, files, bytes, errors
+            self._row = self.latest.get(prefix, (0, True)) + (prefix + ":incremental", 2193, 90, 299853402, 0)
 
     def fetchone(self):
         return self._row
@@ -200,7 +201,8 @@ class TestFunctional(unittest.TestCase):
         n.assert_called_once()
         kw = n.call_args.kwargs
         self.assertEqual((kw["title"], kw["level"], kw["dedup_key"]), ("Backups healthy", "info", "backup-digest"))
-        self.assertEqual(kw["body"], "nas: 1.0h ago, external: 2.5h ago")
+        self.assertEqual(kw["body"], ("nas (incremental): 1.0h ago · 90 files, 299.9 MB in 36m33s · 0 errors\n"
+             "external (incremental): 2.5h ago · 90 files, 299.9 MB in 36m33s · 0 errors"))
         self.assertEqual(out, "")
 
     def test_never_succeeded_job_warns(self):
