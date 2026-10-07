@@ -621,6 +621,14 @@ def mode_execute(oc, mode, pid):
     try:
         assert_executable(mode, row)
     except ExecutionRefused as e:
+        # Her own value check saying no is final: it was decided at proposal time and never changes, so
+        # leaving it 'approved' re-refused it every 15 min — 4 herd reaches turned the job CRITICAL
+        # (2026-10-07). Other refusals (mode not live, ...) stay 'approved' so they run once allowed.
+        if "value_check" in str(e):
+            oc.execute("UPDATE coagency_proposals SET status='refused', execution_result=%s WHERE id=%s",
+                       (f"REFUSED: {e}", pid))
+            clog(oc, mode, "execute_refused", f"#{pid}: {e} (final)")
+            return 0
         oc.execute("UPDATE coagency_proposals SET execution_result=%s WHERE id=%s",
                    (f"REFUSED: {e}", pid))
         clog(oc, mode, "execute_refused", f"#{pid}: {e}")

@@ -308,6 +308,14 @@ class TestFunctional(unittest.TestCase):
         self.assertIn("REFUSED: mode is 'propose', not 'live'", cur.stmts("SET execution_result=%s WHERE id=%s")[0][1][0])
         self.assertFalse(cur.stmts("INSERT INTO autonomy_ledger"))
 
+    def test_value_check_refusal_is_final_not_retried(self):
+        prop = ("approved", True, {"available": True, "allowed": False}, "", "jordan", "send-to-O.C.: hi")
+        cur = _Cur(_rules(mode='"live"', proposal=prop))
+        rc, cfg, uo, rs, out = _run_main(cur, ["--mode", "execute", "--id", "5"])
+        self.assertEqual(rc, 0)
+        rs.assert_not_called()
+        self.assertTrue(cur.stmts("SET status='refused', execution_result=%s WHERE id=%s"))
+
     def test_execute_live_golden_path_passes_every_lock(self):
         prop = ("approved", True, {"available": True, "allowed": True}, "nova-soil-monitor", "jordan", "restart nova-soil-monitor")
         cur = _Cur(_rules(mode='"live"', proposal=prop))
