@@ -2447,7 +2447,7 @@ yt-dlp uses Chrome cookies (Safari cookies rejected by YouTube's bot detection s
 - `--windows-filenames` — strips `[ ]` for CIFS/SMB NAS compatibility
 - `--extractor-args` falls back gracefully to audio-only for members-only content
 
-**Subscriptions:** `sync_subscriptions()` pulls your current YouTube subscriptions from Chrome at 10:15 AM daily. New subscriptions appear automatically next morning.
+**Subscriptions:** `sync_subscriptions()` in `nova_yt_new_episodes.py` has failed since June 2026 (the Chrome jar can't see the subscriptions page), so that downloader runs on its 74 hardcoded channels only. Every other subscribed channel is covered audio-only by `nova_yt_subs_audio.py` — see *YouTube Subscriptions — Audio-Only Transcript Ingest* below. Subscription listing and Nova Speaks uploads use the Safari-sourced jar `cache/yt_cookies_youtube.txt`.
 
 ---
 
@@ -3337,6 +3337,105 @@ flowchart LR
     q --> board["claude_board view"]
     locks --> board
 ```
+
+## YouTube Subscriptions — Audio-Only Transcript Ingest (2026-10-06)
+
+Jordan: *"For the channels that are not downloading videos now, all 700-and-whatever of them, can you just
+download the audio (no video) and only keep the most recent video for the transcription pipeline?"*
+
+Of 844 subscribed channels, only ~70 reached any pipeline: `nova_yt_new_episodes.py`'s subscription sync
+had failed every run since June (the Chrome cookie jar can't see the subscriptions page) and fell back to
+its 74 hardcoded channels. `scripts/nova_yt_subs_audio.py` covers the rest.
+
+- **Who:** the live subscription list (Safari jar `cache/yt_cookies_youtube.txt`; last good list cached in
+  `service_config yt_subs_audio/subscriptions`) minus every channel referenced by the Fishbowl watcher or the
+  TV-episode downloader.
+- **What:** each channel's newest finished upload under 3 h (no live/upcoming), **bestaudio only**, kept as
+  `/Volumes/external/nova-yt-audio/<Channel> [UC id]/<Title> [video id].m4a` — only the latest file per channel.
+- **Transcribe:** local MLX Whisper (no cloud spend), under the shared GPU lock (one mlx_whisper at a time
+  across this and the stream capturer — `nova_yt_capture.whisper_lock`, PG advisory lock 778901300).
+- **File:** a local qwen3:30b picks one topic from channel + title — automotive, horology, music, travel,
+  news, geopolitics, history, computing, cooking, television, film, comedy, science — anything else goes to
+  `youtube_subscriptions`. (Nearest-memory voting had filed Seattle travel under `coffee` and a Beatles box
+  set under `horror`.)
+- **Baseline:** `yt_subs_baseline` (Studio scheduler, hourly) runs 55-minute slices that exit cleanly and
+  resume: ≤30 downloads in any rolling hour (counted in PG), 3 attempts per failed video, `no_speech` for
+  music videos, progress to #nova-info every 30 min, done-flag `service_config yt_subs_baseline/done`.
+  The recurring updater (`yt_subs_audio`, every 3 h) stays **paused** until Jordan picks a cadence.
+- State: `nova_ops.yt_ingest_seen` channel `sub:<channel_id>` (status ingested / no_speech / failed, attempts).
+
+```mermaid
+flowchart LR
+    subs["844 subscriptions<br/>(Safari jar, PG-cached)"] --> minus["minus Fishbowl watcher<br/>+ TV-episode channels"]
+    minus --> latest["newest upload &lt;3 h<br/>per channel"]
+    latest --> rate{"&lt;30 in last hour?<br/>(PG)"}
+    rate -- wait --> rate
+    rate -- go --> dl["bestaudio .m4a<br/>/Volumes/external/nova-yt-audio"]
+    dl --> lock["whisper_lock<br/>(one GPU job)"]
+    lock --> wh["MLX Whisper<br/>local"]
+    wh --> cls["qwen3 topic<br/>classifier"]
+    cls --> mem[("Nova memory<br/>pipeline=yt_subs_audio")]
+    wh -- no speech --> ns["no_speech"]
+    dl -- error --> retry["failed (≤3 attempts)"]
+```
+
+## Watches and Friends — Weekly Watch Roundup (2026-10-06)
+
+Jordan: *"Watch news first … and then end with a few graphs of the madness."* The daily Fishbowl dispatch is
+replaced by one weekly issue (Sundays 07:00, scheduler-core on nova-core, standby .5) in the new **Watches**
+section of the journal: 5,000–10,000 words in Nova's voice, then a full **Sources** list.
+
+- **Roster** (`nova_yt_ingest_watch.CHANNELS`, polled every 15 min): **31 watch-news channels** (vector
+  `horology`: Watch Hangout, Peter Piccolino, Luxury Bazaar, Roman Sharf, The 1916 Company, Teddy Baldassarre,
+  This Watch That Watch, Watch Clyde, Watch Eric, Andrew Morgan, A Podcast About Watches, Federico, Watches of
+  Espionage, Watchfinder, Bob's Watches, Chrono24, Britt Pearce, Jenni Elle, Raimond Irimescu, Tony, Wristwatch
+  Revival, WatchPro, Menta, …) and **26 Fishbowl / Hate Streams channels** (vector `fishbowl`: The Franchise
+  Club, Archie Luxury, AC3 Dungeon, Oisín O'Malley, Tim Write, Doxx, Marcelo, Nico Leonard, The Timepiece
+  Gentleman, …).
+- **Capture:** the runner passes each channel's own vector (it was hardcoded `fishbowl`); news captures are
+  transcript-only, Fishbowl streams are also filed to Plex. A replay that YouTube hasn't finished processing
+  is parked as `vod_pending` and retried every 2 h (4 attempts) instead of being marked empty — the Franchise
+  Club had silently captured nothing for three weeks that way. yt-dlp's error is now logged.
+- **Generator:** `scripts/nova_watches_and_friends.py` — last 7 days; the news section (organised by story,
+  4,000–6,000 words) and the Fishbowl section (1,000–1,800 words) are separate grounded Sonnet calls, plus a
+  "Deeper Cuts" pass if the issue is under 5,000 words. Both get Jordan's ground truth from
+  `nova_fishbowl_summaries.KNOWN_FACTS` (who's who; Anthony Farrer is serving a 70-month federal sentence, so
+  his uploads are archive, never news). Sources are built from the memory rows, never by the model.
+
+```mermaid
+flowchart LR
+    w["watcher<br/>every 15 min"] --> q[("yt_ingest_seen<br/>queued / vod_pending")]
+    q --> r["capture runner<br/>(vector per channel)"]
+    r --> lock["whisper_lock"]
+    lock --> h[("horology<br/>31 news channels")]
+    lock --> f[("fishbowl<br/>26 hate-stream channels")]
+    r -- replay not ready --> vp["vod_pending<br/>retry every 2 h"] --> q
+    h --> gen["nova_watches_and_friends<br/>Sun 07:00"]
+    f --> gen
+    kf["KNOWN_FACTS"] --> gen
+    gen --> site["/watches/ issue<br/>news → Fishbowl → Sources"]
+```
+
+## Fixes and Small Builds (2026-10-06 – 10-07)
+
+- **Fleet node count:** the Omarchy bar and the Grafana *Nova Cluster* "nodes alive" tile counted
+  `service_registry` (nodes with registered services) and showed 8/10; both now count `node_status` heartbeats.
+  nova-core6 got a mesh-agent LaunchDaemon; nova-core7's agent was pointed at the retired .6:5432 with a
+  plaintext password in its config (now `.pgpass` → pg-primary). The mesh agent's no-PyYAML config parser no
+  longer lets nested keys clobber top-level ones.
+- **Backup digest:** "Backups healthy" now lists files, size, duration and errors per job.
+- **Vector picker** (`nova_ingest.auto_select_vector`): whole-word matching (substrings filed car videos under
+  `art`/`he_man`/`fire`) and a 4-of-7 majority for the semantic fallback, which had silently never run.
+- **Co-agency:** a proposal that Nova's own value check refused is closed as `refused` at execution instead of
+  being retried every 15 minutes (it had turned `coagency_execute_approved` CRITICAL).
+- **Journal lint:** nova-core had no Hugo, so every 30-minute run reported "Journal deploy broken". Hugo
+  0.161.1 extended (the GitHub Pages version, checksum-verified) is in `~/.local/bin` there; a host without
+  Hugo now skips the check instead of alarming.
+- **YouTube cookies:** `nova_speaks_upload.refresh_cookies` keeps the last good jar when a Safari export comes
+  back without login cookies (one such export logged out both the uploader and the subscriptions feed).
+- **Running bits:** about one seasoned article in five now works in *"It's all for you, Damien!"* (The Omen,
+  1976) — never on grim topics. The cluster-casting article rotates through 24 franchises, including fifteen new
+  TV and film casts.
 
 ## Monthly Section Wraps (2026-10-06)
 
