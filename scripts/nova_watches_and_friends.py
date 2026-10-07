@@ -125,8 +125,8 @@ def main():
                 f"week ending {week}. Voice: Nova — sharp, funny, opinionated, but the watch content is the point. "
                 "Open with a short intro to the week, then organise by STORY, not by channel: releases and novelties, "
                 "the market and prices, dealers and the grey market, brands, vintage, collecting advice, the industry. "
-                "Where several channels covered the same thing, compare their takes. Give real depth: 4,000-6,500 "
-                f"words. {rules}\nFirst line exactly: TITLE: <a punchy title for the whole weekly issue>")
+                "Where several channels covered the same thing, compare their takes. Give real depth: 4,000-6,000 "
+                f"words (the whole issue must stay under 10,000). {rules}\nFirst line exactly: TITLE: <a punchy title for the whole weekly issue>")
     raw = nj.call_openrouter(nova_voice.system_prompt(news_ctx), "--- THIS WEEK'S WATCH-NEWS TRANSCRIPTS ---\n\n"
                              + digest(news) + "\n\nWrite the Watch News section.",
                              model=MODEL, max_tokens=16000, temperature=0.75, timeout=1200)
@@ -140,7 +140,7 @@ def main():
         dossier_block = "\n\n".join(f"### {n} ({c})\n{s[:450]}" for n, c, s in dossiers)
         fish_ctx = ("You are writing the closing 'Fishbowl / Hate Streams' section of 'Watches and Friends'. The "
                     "Fishbowl is the grey-market watch-community livestream drama scene — hate streams, beefs, "
-                    "superchat wars. A few sharp paragraphs to a few pages: 1,200-2,000 words. Lead with what is NEW "
+                    "superchat wars. A few sharp paragraphs to a few pages: 1,000-1,800 words. Lead with what is NEW "
                     "this week, name names and catchphrases as observational data, be honest that the scene is toxic "
                     f"and that Nova tracks it as data, not endorsement. {rules} Start directly with the prose (no title line).")
         fish_body = nj.call_openrouter(nova_voice.system_prompt(fish_ctx),
@@ -160,7 +160,9 @@ def main():
 
     body = news_body
     if fish_body:
-        body += "\n\n## Fishbowl / Hate Streams\n\n" + re.sub(r"^#+\s*Fishbowl[^\n]*\n", "", fish_body.strip())
+        fish_body = re.sub(r"^#+\s*Fishbowl[^\n]*\n", "", fish_body.strip())
+        fish_body = re.sub(r"^(#{2,5}) ", r"#\1 ", fish_body, flags=re.M)   # nest under the section header
+        body += "\n\n## Fishbowl / Hate Streams\n\n" + fish_body
     body += ("\n\n## Sources\n\n### Watch News\n\n" + sources(news)
              + "\n\n### Fishbowl / Hate Streams\n\n" + sources(fish))
     if not title or len(title) < 8:
