@@ -565,7 +565,7 @@ tasks:
   op_sync:
     script: nova_op_sync.py
     schedule: every 1h
-    timeout: 120
+    timeout: 180
     overlap: skip
 
   claude_cred_sync:
@@ -857,9 +857,9 @@ tasks:
 
   yt_subs_baseline:                # ONE rate-limited pass (30/h) over every never-downloaded subscribed channel; status to #nova-info; hourly kick = resume after reboot; exits at once when service_config yt_subs_baseline/done is set
     script: nova_yt_subs_audio.py
-    args: ["--baseline"]
+    args: ["--baseline", "--max-minutes", "55"]   # hourly slices -> clean exits, so the scheduler/Big Brother see successes
     schedule: cron 5 * * * *
-    timeout: 172800
+    timeout: 3600
     overlap: skip
 
   # ---- 2026-10-05 ----
