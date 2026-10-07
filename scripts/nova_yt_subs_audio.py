@@ -61,7 +61,19 @@ def subscriptions():
     r = _yt(["--flat-playlist", "--print", "%(id)s\t%(uploader_id)s\t%(uploader)s",
              "https://www.youtube.com/feed/channels"], timeout=300)
     subs = [tuple(l.split("\t", 2)) for l in r.stdout.splitlines() if l.count("\t") == 2]
-    return [s for s in subs if s[0].startswith("UC")]
+    subs = [s for s in subs if s[0].startswith("UC")]
+    import json
+    c = psycopg2.connect(DSN); c.autocommit = True; cur = c.cursor()
+    if subs:   # remember the last good list: a logged-out cookie jar must not stop the baseline
+        cur.execute("INSERT INTO service_config (service, key, value) VALUES ('yt_subs_audio', 'subscriptions', %s) "
+                    "ON CONFLICT (service, key) DO UPDATE SET value = excluded.value", (json.dumps(subs),))
+    else:
+        cur.execute("SELECT value FROM service_config WHERE service = 'yt_subs_audio' AND key = 'subscriptions'")
+        row = cur.fetchone()
+        subs = [tuple(x) for x in row[0]] if row else []
+        log(f"live subscription fetch failed — using the cached list ({len(subs)} channels)")
+    c.close()
+    return subs
 
 
 def covered_keys(src_text):

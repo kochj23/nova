@@ -68,6 +68,11 @@ def refresh_cookies():
     # Safari keeps SAPISID & co. on .google.com only; Google shares those values with youtube.com, so re-domain the copies
     yt += [".youtube.com" + l[len(l.split("\t")[0]):] for l in rows
            if l.split("\t")[0] == ".google.com" and l.split("\t")[5] in WHITELIST and l.split("\t")[5] not in have]
+    names = {l.split("\t")[5] for l in yt}
+    if not ({"SAPISID", "LOGIN_INFO"} & names):
+        # A partial export (no login cookies — seen 2026-10-07 15:09 from a context without full Safari
+        # access) replaced a good jar and logged out the uploader AND yt_subs_audio. Keep the last good one.
+        log(f"safari export has no login cookies ({len(yt)} rows) — keeping {COOKIES.name}"); os.unlink(tmp); return
     keep = ["# Netscape HTTP Cookie File\n"] + yt
     COOKIES.parent.mkdir(parents=True, exist_ok=True)
     COOKIES.write_text("".join(keep)); COOKIES.chmod(0o600); os.unlink(tmp)
