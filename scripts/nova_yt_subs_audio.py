@@ -211,22 +211,25 @@ def _laps(pending, failed_now, retry_lap):
     yield from list(retry_lap)
 
 
-def baseline(cur, todo, existing):
+def baseline(cur, todo, existing, max_minutes=0):
     cur.execute("SELECT 1 FROM service_config WHERE service = %s AND key = %s", DONE_KEY)
     if cur.fetchone():
         log("baseline already complete — nothing to do")
         return
     cur.execute("SELECT DISTINCT substr(channel, 5) FROM yt_ingest_seen WHERE channel LIKE 'sub:%%' "
-                "AND status IN ('ingested', 'no_speech')")   # failed ones get retried
+                "AND (status IN ('ingested', 'no_speech') OR (status = 'failed' AND attempts >= 3))")
+    # ^ failed ones get retried, up to 3 attempts
     had = {r[0] for r in cur.fetchall()}
     pending = [s for s in todo if s[0] not in had]
     total, start = len(todo), time.time()
     stats = {"ingested": 0, "failed": 0, "no_speech": 0, "skipped": 0, "chunks": 0}
     failed_now = []
-    post_info(f":headphones: *YouTube subscriptions baseline {'resumed' if had else 'started'}* — "
-              f"{len(pending)} of {total} uncovered channels still need their latest video. Audio only "
-              f"-> `{AUDIO_DIR}`, max {RATE_PER_HOUR}/hour, local Whisper -> Nova memory. "
-              f"ETA ~{len(pending) / RATE_PER_HOUR:.0f} h. Updates every 30 min.")
+    if not had:   # announce once; hourly resumed slices stay quiet apart from the 30-min progress line
+        post_info(f":headphones: *YouTube subscriptions baseline started* — "
+                  f"{len(pending)} of {total} uncovered channels still need their latest video. Audio only "
+                  f"-> `{AUDIO_DIR}`, max {RATE_PER_HOUR}/hour, local Whisper -> Nova memory. "
+                  f"ETA ~{len(pending) / RATE_PER_HOUR:.0f} h. Updates every 30 min.")
+    started = time.time()
     last_status = time.time()
     # One retry lap for this run's failures: the 2026-10-07 00:00-04:00 cluster (memory server /
     # PG briefly unreachable) failed 60+ perfectly good videos that transcribe fine on a re-run.
@@ -234,6 +237,9 @@ def baseline(cur, todo, existing):
     for i, (cid, handle, name) in enumerate(_laps(pending, failed_now, retry_lap), 1):
         if ni._shutdown:
             break
+        if max_minutes and time.time() - started > max_minutes * 60:
+            log(f"time slice of {max_minutes} min used — exiting cleanly; the hourly kick resumes")
+            return   # ponytail: hourly slices so the scheduler sees successes (one 24 h run read as failing)
         latest = latest_video(cid)
         if not latest:
             stats["skipped"] += 1
@@ -248,9 +254,10 @@ def baseline(cur, todo, existing):
         stats["chunks"] += stored or 0
         if status == "failed" and (cid, handle, name) not in retry_lap:
             failed_now.append((cid, handle, name))
-        cur.execute("INSERT INTO yt_ingest_seen (channel, video_id, title, status) VALUES (%s, %s, %s, %s) "
-                    "ON CONFLICT (channel, video_id) DO UPDATE SET status = excluded.status, seen_at = now()",
-                    (f"sub:{cid}", vid, title[:300], status))
+        cur.execute("INSERT INTO yt_ingest_seen (channel, video_id, title, status, attempts) VALUES (%s, %s, %s, %s, %s) "
+                    "ON CONFLICT (channel, video_id) DO UPDATE SET status = excluded.status, seen_at = now(), "
+                    "attempts = yt_ingest_seen.attempts + excluded.attempts",
+                    (f"sub:{cid}", vid, title[:300], status, int(status == "failed")))
         if time.time() - last_status >= STATUS_EVERY_S:
             last_status = time.time()
             left = len(pending) - i
@@ -278,6 +285,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--only", help="a single channel id")
     ap.add_argument("--baseline", action="store_true", help="one rate-limited pass over never-downloaded channels")
+    ap.add_argument("--max-minutes", type=int, default=0, help="baseline: exit cleanly after this many minutes")
     a = ap.parse_args()
 
     subs = subscriptions()
@@ -299,7 +307,7 @@ def main():
         if not os.path.ismount(AUDIO_DIR.parent):   # unmounted share = a local folder on the boot SSD
             log(f"{AUDIO_DIR.parent} is not mounted — not starting")
             sys.exit(1)
-        baseline(cur, todo, existing)
+        baseline(cur, todo, existing, a.max_minutes)
         return
     done = 0
     for cid, handle, name in todo:
