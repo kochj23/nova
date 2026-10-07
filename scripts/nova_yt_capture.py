@@ -74,6 +74,20 @@ def slack(m):
         log(f"slack: {e}")
 
 
+MAX_VOD_ATTEMPTS = 4
+
+
+def retry_or_empty(vid):
+    try:
+        c = psycopg2.connect(DSN); c.autocommit = True
+        c.cursor().execute("UPDATE yt_ingest_seen SET attempts = attempts + 1, seen_at = now(), "
+                           "status = CASE WHEN attempts + 1 >= %s THEN 'empty' ELSE 'vod_pending' END "
+                           "WHERE video_id = %s", (MAX_VOD_ATTEMPTS, vid))
+        c.close()
+    except Exception as e:
+        log(f"status update failed: {e}")
+
+
 def setstatus(vid, status):
     try:
         c = psycopg2.connect(DSN); c.autocommit = True
@@ -115,13 +129,15 @@ def download(url, live, stem):
         cmd += ["--live-from-start", "--wait-for-video", "0"]
     cmd += [url]
     log(f"{'RECORDING LIVE (from start)' if live else 'downloading VOD'}: {url}")
-    subprocess.run(cmd, capture_output=True, text=True, timeout=12 * 3600)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=12 * 3600)
     audio = chat = None
     for f in WORK.glob(f"{stem}.*"):
         if f.name.endswith(".live_chat.json") or f.suffix == ".json":
             chat = f
         elif f.suffix.lower() in (".m4a", ".webm", ".opus", ".mp3", ".mp4", ".mkv", ".wav", ".aac", ".ogg"):
             audio = f
+    if not audio:   # was silent for weeks (49 empty Franchise Club streams) — say why
+        log(f"no media from yt-dlp (rc={r.returncode}): {(r.stderr or '').strip()[-300:]}")
     return audio, chat
 
 
@@ -324,7 +340,13 @@ def main():
     for i, c in enumerate(chunk(chat)):
         if remember(f"{hdr} (live chat/superchats)\n{c}", {**base, "part": "chat", "idx": i}):
             n += 1
-    setstatus(vid, "ingested" if n else "empty")
+    if not n and not audio and not live:
+        # A long stream's replay is often not downloadable for hours after it ends — the 2026-09/10
+        # Franchise Club streams all came back empty this way. Park it; the watcher re-queues
+        # vod_pending rows every 2 h, up to 4 tries, before calling it empty.
+        retry_or_empty(vid)
+    else:
+        setstatus(vid, "ingested" if n else "empty")
     log(f"done {vid}: transcript={'y' if transcript else 'n'} chat={'y' if chat else 'n'} chunks={n}")
     # post a sample of the actual memory to #nova-info (alongside progress)
     if n:

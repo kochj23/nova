@@ -41,7 +41,8 @@ class _Cur:
         if "pg_try_advisory_lock" in sql:
             self._last = (self.lock,)
         elif "FROM yt_ingest_seen" in sql:
-            self._last = self.rows.pop(0) if self.rows else None
+            # rows are (video_id, status, title[, channel]); channel defaults to a fishbowl key
+            self._last = (tuple(self.rows.pop(0)) + ("archieluxury",))[:4] if self.rows else None
         else:
             self._last = None
 
@@ -152,6 +153,12 @@ class TestIntegration(unittest.TestCase):
         cur = _Cur([]); _run(cur)
         q = cur.ran("FROM yt_ingest_seen")[0][0]
         self.assertIn("status IN ('queued','queued_live')", q); self.assertIn("ORDER BY seen_at LIMIT 1", q)
+
+    def test_each_channel_captures_into_its_own_vector(self):
+        cur = _Cur([("n1", "queued", "news", "teddyb"), ("f1", "queued", "drama", "archieluxury"),
+                    ("x1", "queued", "unknown channel", "not-a-key")])
+        _, run, _ = _run(cur)
+        self.assertEqual([c[0][0][3] for c in run.call_args_list], ["horology", "fishbowl", "fishbowl"])
 
     def test_child_runs_with_a_twelve_hour_ceiling(self):
         cur = _Cur([("v", "queued", "t")])

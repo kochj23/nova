@@ -181,12 +181,23 @@ class TestFunctional(_Base):
         self.assertIn("Fishbowl memory ingested", self.cfg.post_both.call_args.args[0])
         self.assertEqual(rc.call_args.args[0], "Chan")
 
-    def test_nothing_captured_marks_empty_and_stays_quiet(self):
+    def test_undownloadable_vod_is_parked_for_retry_and_stays_quiet(self):
+        # a long replay is often not downloadable yet -> vod_pending (retried every 2 h), not empty
         with patch.object(sys, "argv", ["x", "zzz", "fishbowl"]), patch.object(yt, "setstatus") as st, \
+                patch.object(yt, "retry_or_empty") as ro, \
                 patch.object(yt, "meta_of", return_value=("", "")), patch.object(yt, "download", return_value=(None, None)):
             yt.main()
-        self.assertEqual(st.call_args_list[-1].args, ("zzz", "empty"))
+        ro.assert_called_once_with("zzz")
+        self.assertNotIn(("zzz", "empty"), [c.args for c in st.call_args_list])
         self.cfg.post_both.assert_not_called()
+
+    def test_live_recording_with_nothing_is_empty_not_retried(self):
+        with patch.object(sys, "argv", ["x", "zzz", "fishbowl", "--live"]), patch.object(yt, "setstatus") as st, \
+                patch.object(yt, "retry_or_empty") as ro, \
+                patch.object(yt, "meta_of", return_value=("", "")), patch.object(yt, "download", return_value=(None, None)):
+            yt.main()
+        ro.assert_not_called()
+        self.assertEqual(st.call_args_list[-1].args, ("zzz", "empty"))
 
 
 class TestFrame(unittest.TestCase):

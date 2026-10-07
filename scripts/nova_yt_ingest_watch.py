@@ -151,6 +151,11 @@ def dispatch(vid, vector, live):
 def main():
     seed_only = "--seed" in sys.argv
     conn = _db(); cur = conn.cursor(); ensure(cur)
+    # VOD replays that weren't downloadable yet (nova_yt_capture parks them as vod_pending): retry every 2 h
+    cur.execute("UPDATE yt_ingest_seen SET status='queued' WHERE status='vod_pending' "
+                "AND seen_at < now() - interval '2 hours'")
+    if cur.rowcount:
+        log(f"re-queued {cur.rowcount} replay(s) that weren't downloadable earlier")
     for ch in CHANNELS:
         cur.execute("SELECT video_id FROM yt_ingest_seen WHERE channel=%s", (ch["key"],))
         seen = {r[0] for r in cur.fetchall()}

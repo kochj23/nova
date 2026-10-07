@@ -32,7 +32,7 @@ yw.dispatch = MagicMock()          # never spawn a detached capture worker from 
 
 class _Cur:
     def __init__(self, seen):
-        self.seen = seen; self.sql = []; self._last = ""
+        self.seen = seen; self.sql = []; self._last = ""; self.rowcount = 0
 
     def execute(self, sql, params=None):
         self.sql.append((sql, params)); self._last = sql
