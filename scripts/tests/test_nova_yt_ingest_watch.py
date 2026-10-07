@@ -121,7 +121,9 @@ class TestIntegration(unittest.TestCase):
         yw.ensure(cur)
         self.assertIn("CREATE TABLE IF NOT EXISTS yt_ingest_seen", cur.sql[0][0])
         self.assertIn("PRIMARY KEY (channel, video_id)", cur.sql[0][0])
-        self.assertTrue(all(c["vector"] == "fishbowl" for c in yw.CHANNELS))
+        # Watches and Friends (2026-10-06): watch-news channels -> horology, the drama scene -> fishbowl
+        self.assertTrue(all(c["vector"] in ("fishbowl", "horology") for c in yw.CHANNELS))
+        self.assertEqual({c["key"]: c["vector"] for c in yw.CHANNELS}["tpgentleman"], "fishbowl")  # Farrer
 
 
 class TestFunctional(unittest.TestCase):
