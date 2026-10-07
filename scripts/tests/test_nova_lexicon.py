@@ -144,5 +144,19 @@ class TestFrame(unittest.TestCase):
         self.assertEqual((r.returncode, r.stdout.strip()), (0, ""), r.stderr)
 
 
+class TestDamienBit(unittest.TestCase):
+    """Jordan's Omen running bit: occasional, exactly-once, never on a grim topic or unseasoned section."""
+    def test_fires_on_low_roll_only(self):
+        self.assertEqual(lx.damien_block("fleet uptime", roll=0.1).count("It's all for you, Damien!"), 1)
+        self.assertEqual(lx.damien_block("fleet uptime", roll=0.9), "")
+
+    def test_never_on_grim_topics(self):
+        for t in ("Wildfire evacuation in Burbank", "a fatal crash on the 5", "obituary", "suicide prevention"):
+            self.assertEqual(lx.damien_block(t, roll=0.0), "", t)
+
+    def test_unseasoned_sections_stay_clean(self):
+        self.assertEqual(lx.seasoning("", "the backup ran"), "")
+
+
 if __name__ == "__main__":
     unittest.main()

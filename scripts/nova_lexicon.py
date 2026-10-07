@@ -26,6 +26,7 @@ public-safety alerts (see FLAVOR_SECTIONS and the emergency opt-out in
 nova_voice.system_prompt): an evacuation notice is not a bit.
 """
 import random
+import re
 
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
@@ -415,6 +416,27 @@ def ferengi_rule(topic: str = "", conn=None):
                 pass
 
 
+# Jordan 2026-10-06: "occasionally sprinkle in 'It's all for you, Damian!'". The Omen (1976): Damien's
+# nanny shouts "Look at me, Damien! It's all for you!" from the roof at his 5th birthday party, then hangs
+# herself. Film spelling is Damien. Because of that origin it is never offered on a grim topic.
+DAMIEN_P = 0.2   # ponytail: per-article coin flip; move to service_config if Jordan wants to tune it live
+DAMIEN_LINE = "It's all for you, Damien!"
+_GRIM = re.compile(r"\b(suicid\w*|death|dead|died|dies|dying|kill\w*|murder\w*|funeral|obituar\w*|"
+                   r"overdose|shooting|tragedy|tragic|victim\w*|grief|mourn\w*|memorial|fatal\w*|"
+                   r"evacuat\w*|wildfire|crash(es|ed)?)\b", re.I)
+
+
+def damien_block(topic: str = "", roll=None) -> str:
+    """Occasional instruction to work Jordan's Omen line in once. '' most of the time."""
+    if _GRIM.search(topic or "") or (roll if roll is not None else random.random()) >= DAMIEN_P:
+        return ""
+    return ("\nRUNNING BIT (Jordan's request): somewhere in this piece, exactly once, work in the line "
+            f'"{DAMIEN_LINE}" — the nanny\'s cheerful rooftop cry from The Omen (1976). Use it as a wry '
+            "over-the-top dedication or a melodramatic aside where something absurdly devoted happens "
+            "(a service sacrificing itself for the fleet, a 3am job no one asked for). Never explain the "
+            "reference and never mention nooses, hanging or suicide.")
+
+
 def seasoning(section: str = "", topic: str = "") -> str:
     """Prompt block weaving the borrowed tongues into an article's voice.
 
@@ -469,7 +491,7 @@ is that it makes me laugh." A borrowed word that is merely accurate has FAILED. 
 mechanism, not a footnote: setup is the foreign term, punchline is what it turns out to mean about this fleet.
 If a gloss reads like a dictionary entry, rewrite it until it reads like Nova at 1am. Never gloss the same
 term twice in one article. If a line isn't landing, cut it — a missing joke beats a limp one.""")
-    return "\n\n".join(block)
+    return "\n\n".join(block) + damien_block(topic)
 
 
 def all_entries():
