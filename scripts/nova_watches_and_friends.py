@@ -116,11 +116,15 @@ def main():
         log("no watch-news transcripts in the window — aborting")
         return 1
 
+    try:   # Jordan's ground truth about the scene (who's who, Farrer is archive-only, ...) — both sections
+        from nova_fishbowl_summaries import KNOWN_FACTS
+    except Exception:
+        KNOWN_FACTS = ""
     week = nj.today_str()
     rules = ("Ground every claim in the transcripts below; name the channel and the video when you use it. "
              "Never invent prices, references, model numbers or quotes that are not in the transcripts. "
              "Markdown with ## and ### headers, no H1. Do NOT write a sources or links list — it is appended "
-             "automatically.")
+             "automatically.\n\n" + KNOWN_FACTS)
     news_ctx = (f"You are writing the WATCH NEWS part of 'Watches and Friends', Nova's weekly watch roundup for the "
                 f"week ending {week}. Voice: Nova — sharp, funny, opinionated, but the watch content is the point. "
                 "Open with a short intro to the week, then organise by STORY, not by channel: releases and novelties, "

@@ -52,7 +52,7 @@ CHANNELS = [
     {"key": "paulpluta", "url": "https://www.youtube.com/@PaulPlutaPrestige/streams", "vector": "horology"},
     {"key": "mortysdiner", "url": "https://www.youtube.com/@MortysDiner/streams", "vector": "fishbowl"},
     {"key": "theoriginaloc", "url": "https://www.youtube.com/@theoriginaloc/streams", "vector": "fishbowl"},
-    {"key": "tpgentleman", "url": "https://www.youtube.com/@Thetimepiecegentleman/videos", "vector": "horology"},
+    {"key": "tpgentleman", "url": "https://www.youtube.com/@Thetimepiecegentleman/videos", "vector": "fishbowl"},
     {"key": "romansharf", "url": "https://www.youtube.com/@RomanSharf/streams", "vector": "horology"},
     {"key": "greymarketpod", "url": "https://www.youtube.com/@greymarketpod/videos", "vector": "horology"},
     {"key": "cramareels", "url": "https://www.youtube.com/@TheCramaReels/streams", "vector": "fishbowl"},

@@ -87,7 +87,12 @@ KNOWN_FACTS = (
     "- Watch Nicholas and The Franchise Club are NOT friends and never have been — bitter ENEMIES "
     "for YEARS. Any apparent friendliness is sarcasm, a truce, or Nicholas's spin.\n"
     "- Do NOT cast The Franchise Club as a 'tyranny' or the villain — that inverts reality. If a "
-    "transcript frames the Franchise Club as the oppressor, that's the bad actor's framing, not the truth."
+    "transcript frames the Franchise Club as the oppressor, that's the bad actor's framing, not the truth.\n"
+    "- Anthony Farrer (The Timepiece Gentleman, @Thetimepiecegentleman) is FISHBOWL / HATE-STREAM material, "
+    "never watch news. He pleaded guilty to wire and mail fraud, has been in federal custody since November "
+    "2023, and was sentenced to 70 months in federal prison for taking at least $5.6M from 40+ consignment "
+    "customers (IRS-CI release). Anything uploaded on his channels is ARCHIVE footage, not current events — "
+    "never describe him as currently dealing, streaming or posting."
 )
 
 
