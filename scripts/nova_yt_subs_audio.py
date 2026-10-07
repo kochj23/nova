@@ -132,7 +132,7 @@ def transcribe_and_remember(audio, name, title, vid, existing, dry_run):
     finally:
         wav.unlink(missing_ok=True)
     if not text:
-        return 0
+        return None   # no speech (music video, silent cut) — not a failure, never retried
     text = ni.clean_text(text)
     vector = ni.auto_select_vector(f"{name} {title}", text[:500], existing)
     if vector not in existing:
@@ -169,23 +169,36 @@ def wait_for_rate(cur):
         time.sleep(min(cur.fetchone()[0] + 1, 300))
 
 
+def _laps(pending, failed_now, retry_lap):
+    """Yield every pending channel, then (once) every channel that failed during the first lap."""
+    yield from pending
+    retry_lap.extend(failed_now)
+    if retry_lap:
+        log(f"retry lap: {len(retry_lap)} channel(s) that failed this run")
+    yield from list(retry_lap)
+
+
 def baseline(cur, todo, existing):
     cur.execute("SELECT 1 FROM service_config WHERE service = %s AND key = %s", DONE_KEY)
     if cur.fetchone():
         log("baseline already complete — nothing to do")
         return
     cur.execute("SELECT DISTINCT substr(channel, 5) FROM yt_ingest_seen WHERE channel LIKE 'sub:%%' "
-                "AND status = 'ingested'")   # failed ones get one more try on a resumed pass
+                "AND status IN ('ingested', 'no_speech'))")   # failed ones get retried
     had = {r[0] for r in cur.fetchall()}
     pending = [s for s in todo if s[0] not in had]
     total, start = len(todo), time.time()
-    stats = {"ingested": 0, "failed": 0, "skipped": 0, "chunks": 0}
+    stats = {"ingested": 0, "failed": 0, "no_speech": 0, "skipped": 0, "chunks": 0}
+    failed_now = []
     post_info(f":headphones: *YouTube subscriptions baseline {'resumed' if had else 'started'}* — "
               f"{len(pending)} of {total} uncovered channels still need their latest video. Audio only "
               f"-> `{AUDIO_DIR}`, max {RATE_PER_HOUR}/hour, local Whisper -> Nova memory. "
               f"ETA ~{len(pending) / RATE_PER_HOUR:.0f} h. Updates every 30 min.")
     last_status = time.time()
-    for i, (cid, handle, name) in enumerate(pending, 1):
+    # One retry lap for this run's failures: the 2026-10-07 00:00-04:00 cluster (memory server /
+    # PG briefly unreachable) failed 60+ perfectly good videos that transcribe fine on a re-run.
+    retry_lap = []
+    for i, (cid, handle, name) in enumerate(_laps(pending, failed_now, retry_lap), 1):
         if ni._shutdown:
             break
         latest = latest_video(cid)
@@ -197,9 +210,11 @@ def baseline(cur, todo, existing):
         log(f"[{i}/{len(pending)}] {name}: {title[:80]}")
         audio = download_audio(cid, vid, name)
         stored = transcribe_and_remember(audio, name, title, vid, existing, False) if audio else 0
-        status = "ingested" if stored else "failed"
+        status = "no_speech" if stored is None else ("ingested" if stored else "failed")
         stats[status] += 1
-        stats["chunks"] += stored
+        stats["chunks"] += stored or 0
+        if status == "failed" and (cid, handle, name) not in retry_lap:
+            failed_now.append((cid, handle, name))
         cur.execute("INSERT INTO yt_ingest_seen (channel, video_id, title, status) VALUES (%s, %s, %s, %s) "
                     "ON CONFLICT (channel, video_id) DO UPDATE SET status = excluded.status, seen_at = now()",
                     (f"sub:{cid}", vid, title[:300], status))
