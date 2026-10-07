@@ -36,6 +36,16 @@ class TestSubsAudio(unittest.TestCase):
     def test_transcription_is_local_only(self):
         self.assertIn("local_only=True", Path(m.__file__).read_text())
 
+    def test_channel_folder_is_readable_and_renames_legacy_id_folder(self):
+        d = Path(tempfile.mkdtemp())
+        with patch.object(m, "AUDIO_DIR", d):
+            (d / "UCabc").mkdir()
+            (d / "UCabc" / "x.m4a").write_text("1")
+            f = m.channel_folder("UCabc", 'Hoovies: Garage / "Cars"?')
+        self.assertEqual(f.name, "Hoovies Garage Cars [UCabc]")
+        self.assertTrue((f / "x.m4a").exists())
+        self.assertFalse((d / "UCabc").exists())
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -96,12 +96,24 @@ def keep_only(folder: Path, keep: Path):
                 log(f"  could not remove {f.name}: {e}")
 
 
-def download_audio(channel_id, vid):
-    folder = AUDIO_DIR / channel_id
+def channel_folder(channel_id, name):
+    """'<Channel Name> [UC...]' — readable, still unique. Renames an older id-only folder in place."""
+    safe = re.sub(r"\s+", " ", re.sub(r'[\\/:*?"<>|]+', " ", name or "")).strip(" .")[:80] or "channel"
+    folder = AUDIO_DIR / f"{safe} [{channel_id}]"
+    legacy = AUDIO_DIR / channel_id
+    if legacy.is_dir() and not folder.exists():
+        legacy.rename(folder)
     folder.mkdir(parents=True, exist_ok=True)
+    return folder
+
+
+def download_audio(channel_id, vid, name=""):
+    folder = channel_folder(channel_id, name)
     r = _yt(["-f", "bestaudio[ext=m4a]/bestaudio", "--no-playlist", "--no-overwrites",
-             "-o", str(folder / f"{vid}.%(ext)s"), f"https://www.youtube.com/watch?v={vid}"], timeout=1800)
-    got = [f for f in folder.glob(f"{vid}.*") if f.suffix in AUDIO_EXTS]
+             "--windows-filenames",   # no : ? * etc. on the SMB share
+             "-o", str(folder / "%(title).80B [%(id)s].%(ext)s"),
+             f"https://www.youtube.com/watch?v={vid}"], timeout=1800)
+    got = [f for f in folder.iterdir() if f"[{vid}]" in f.name and f.suffix in AUDIO_EXTS]
     if r.returncode != 0 or not got:
         log(f"  download failed {vid}: {r.stderr.strip().splitlines()[-1] if r.stderr.strip() else r.returncode}")
         return None
@@ -183,7 +195,7 @@ def baseline(cur, todo, existing):
         vid, title = latest
         wait_for_rate(cur)
         log(f"[{i}/{len(pending)}] {name}: {title[:80]}")
-        audio = download_audio(cid, vid)
+        audio = download_audio(cid, vid, name)
         stored = transcribe_and_remember(audio, name, title, vid, existing, False) if audio else 0
         status = "ingested" if stored else "failed"
         stats[status] += 1
@@ -254,7 +266,7 @@ def main():
         if cur.fetchone():
             continue
         log(f"{name}: {title[:80]}")
-        audio = None if a.dry_run else download_audio(cid, vid)
+        audio = None if a.dry_run else download_audio(cid, vid, name)
         stored = transcribe_and_remember(audio, name, title, vid, existing, a.dry_run) if audio else 0
         status = "dry_run" if a.dry_run else ("ingested" if stored else "failed")
         if not a.dry_run:
