@@ -268,9 +268,11 @@ def auto_select_vector(topic, sample, existing):
     combined = (topic + " " + sample[:500]).lower()
     scores   = {}
     for vec in existing:
+        # Whole words only: substring matching filed car videos under "art" (p-ART, st-ART),
+        # "he_man" (t-HE MAN) and "fire" (FIRE-d) — 2026-10-06.
         words = re.split(r"[_\s]+", vec.lower())
-        score = sum(1.5 for w in words if len(w) > 3 and w in combined)
-        if vec.replace("_", " ").lower() in combined:
+        score = sum(1.5 for w in words if len(w) > 3 and re.search(rf"\b{re.escape(w)}\b", combined))
+        if re.search(rf"\b{re.escape(vec.replace('_', ' ').lower())}\b", combined):
             score += 10
         if score > 0:
             scores[vec] = score
@@ -280,7 +282,10 @@ def auto_select_vector(topic, sample, existing):
             log(f"Auto-selected vector: '{best}' (score={scores[best]:.1f})")
             return best
     try:
-        url = "http://memory-server.digitalnoise.net:18790/recall?q=" + urllib.parse.quote(topic) + "&n=5"
+        # Recall on the topic plus a content sample; only trust a clear majority of the 7 nearest
+        # memories (a plurality of 5 was effectively random).
+        q = (topic + " " + (sample[:300] if sample != topic else "")).strip()
+        url = "http://memory-server.digitalnoise.net:18790/recall?q=" + urllib.parse.quote(q) + "&n=7"
         with urllib.request.urlopen(url, timeout=8) as r:
             results = json.loads(r.read())
             if isinstance(results, dict):   # /recall returns {"memories": [...]}; iterating the dict always threw
@@ -288,9 +293,10 @@ def auto_select_vector(topic, sample, existing):
             sources = [m.get("source", "") for m in results if m.get("source")]
             if sources:
                 from collections import Counter
-                best = Counter(sources).most_common(1)[0][0]
-                log(f"Semantic vector: '{best}'")
-                return best
+                best, n = Counter(sources).most_common(1)[0]
+                if n >= 4:
+                    log(f"Semantic vector: '{best}' ({n}/7)")
+                    return best
     except Exception:
         pass
     d = _derive(topic)
