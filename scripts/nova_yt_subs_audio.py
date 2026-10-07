@@ -121,6 +121,35 @@ def download_audio(channel_id, vid, name=""):
     return got[0]
 
 
+# Fixed topic list (Jordan 2026-10-07: "Seattle travel -> travel, Omega James Bond -> horology,
+# Beatles -> music, truck build -> automotive"). A local LLM picks one label from channel + title;
+# anything else, or any error, goes to FALLBACK_VECTOR. Replaced nearest-memory voting, which
+# filed videos into whatever odd vector their neighbours happened to sit in.
+TOPICS = {"automotive": "automotive", "horology": "horology", "music": "music", "travel": "travel",
+          "news": "news", "geopolitics": "geopolitics", "history": "history", "computing": "computing",
+          "cooking": "cooking", "television": "television", "film": "film", "comedy": "comedy",
+          "science": "science"}
+CLASSIFIER_URL = "http://127.0.0.1:11434/api/chat"
+CLASSIFIER_MODEL = "qwen3:30b-a3b"
+
+
+def classify(channel, title):
+    import json
+    import urllib.request
+    prompt = (f"Pick exactly one topic label for this YouTube video from: {', '.join(TOPICS)}, other. "
+              f"Answer with the label only.\nChannel: {channel}\nTitle: {title}")
+    body = {"model": CLASSIFIER_MODEL, "think": False, "stream": False, "options": {"temperature": 0},
+            "messages": [{"role": "user", "content": prompt}]}
+    try:
+        req = urllib.request.Request(CLASSIFIER_URL, json.dumps(body).encode(), {"Content-Type": "application/json"})
+        out = json.loads(urllib.request.urlopen(req, timeout=120).read())["message"]["content"]
+        label = re.sub(r"[^a-z]", " ", out.rsplit("</think>", 1)[-1].lower()).split()  # qwen3 may still think aloud
+        return TOPICS.get(label[0] if label else "", FALLBACK_VECTOR)
+    except Exception as e:
+        log(f"  classifier failed ({e}) -> {FALLBACK_VECTOR}")
+        return FALLBACK_VECTOR
+
+
 def transcribe_and_remember(audio, name, title, vid, existing, dry_run):
     """-> number of chunks stored (0 = nothing usable)."""
     ni.WORK_DIR.mkdir(parents=True, exist_ok=True)
@@ -134,9 +163,7 @@ def transcribe_and_remember(audio, name, title, vid, existing, dry_run):
     if not text:
         return None   # no speech (music video, silent cut) — not a failure, never retried
     text = ni.clean_text(text)
-    vector = ni.auto_select_vector(f"{name} {title}", text[:500], existing)
-    if vector not in existing:
-        vector = FALLBACK_VECTOR   # ponytail: no per-channel vector sprawl; re-home later if a topic grows
+    vector = classify(name, title)
     stored, seen_hashes = 0, set()
     for chunk in ni.chunk_words(text):
         if ni.is_garbage(chunk):

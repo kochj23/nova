@@ -46,6 +46,16 @@ class TestSubsAudio(unittest.TestCase):
         self.assertTrue((f / "x.m4a").exists())
         self.assertFalse((d / "UCabc").exists())
 
+    def test_classify_maps_label_after_thinking_and_falls_back(self):
+        def fake(answer):
+            return types.SimpleNamespace(read=lambda: ('{"message": {"content": %s}}' % __import__("json").dumps(answer)).encode())
+        with patch("urllib.request.urlopen", return_value=fake("hmm... watches </think>\n\nHorology")):
+            self.assertEqual(m.classify("Chisholm Hunter", "Omega Bond Seamasters"), "horology")
+        with patch("urllib.request.urlopen", return_value=fake("other")):
+            self.assertEqual(m.classify("x", "y"), m.FALLBACK_VECTOR)
+        with patch("urllib.request.urlopen", side_effect=OSError("down")):
+            self.assertEqual(m.classify("x", "y"), m.FALLBACK_VECTOR)
+
 
 if __name__ == "__main__":
     unittest.main()
