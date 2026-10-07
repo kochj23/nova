@@ -307,7 +307,8 @@ def main():
     # File the VIDEO into Plex's YouTube library before cleaning up the temp dir, so fishbowl
     # streams show up in Plex (Jordan 2026-08-11). Everything captured, grouped by channel under
     # a "Fishbowl" folder. Then delete the leftover temp files (audio-extract wavs, chat json).
-    file_video_to_plex(stem, channel, title, vid)
+    if vector == "fishbowl":   # watch-news channels (horology, 2026-10-06) are transcript-only, not Plex
+        file_video_to_plex(stem, channel, title, vid)
     for f in WORK.glob(f"{stem}.*"):
         try:
             f.unlink()
