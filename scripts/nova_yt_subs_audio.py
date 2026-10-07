@@ -15,9 +15,13 @@ Each run:
 At most --max new videos are transcribed per run (default 25) so the first pass over ~770 channels is
 spread out instead of pinning the GPU. Scheduled on the Studio scheduler (MLX Whisper is Apple-only).
 Usage: nova_yt_subs_audio.py [--max N] [--dry-run] [--only CHANNEL_ID]
+       nova_yt_subs_audio.py --baseline   # one pass: latest audio of every never-downloaded channel,
+         <= RATE_PER_HOUR downloads (rolling hour, counted in PG so restarts keep the pace), status to
+         #nova-info every 30 min, sets service_config yt_subs_baseline/done when finished (later runs exit).
 """
 import argparse
 import hashlib
+import os
 import re
 import subprocess
 import sys
@@ -32,7 +36,11 @@ import nova_ingest as ni  # noqa: E402  (shared transcribe/chunk/remember path)
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 YTDLP = "/opt/homebrew/bin/yt-dlp"
 COOKIES = Path.home() / ".openclaw/cache/yt_cookies_youtube.txt"   # Safari jar, kept fresh by nova_speaks_upload
-AUDIO_DIR = Path("/Volumes/Data/nova-yt-audio")
+AUDIO_DIR = Path("/Volumes/external/nova-yt-audio")   # UNAS External share; not Plex (Jordan 2026-10-06)
+INFO_CHANNEL = "C0BC4SNUTQR"   # #nova-info — Jordan asked for baseline status here
+RATE_PER_HOUR = 30            # max audio downloads in any rolling hour
+STATUS_EVERY_S = 1800
+DONE_KEY = ("yt_subs_baseline", "done")
 FALLBACK_VECTOR = "youtube_subscriptions"
 COVERED_BY = ("nova_yt_ingest_watch.py", "nova_yt_new_episodes.py")
 LIST_PAUSE_S = 2      # politeness between channel listings
@@ -78,9 +86,14 @@ def latest_video(channel_id):
 
 
 def keep_only(folder: Path, keep: Path):
+    """Delete older finished audio only. Never touch SMB temp files (.smbdelete*), dotfiles or
+    yt-dlp .part files: unlinking an open .smbdelete raised EBUSY and killed the first baseline run."""
     for f in folder.glob("*"):
-        if f.is_file() and f != keep:
-            f.unlink()
+        if f != keep and f.suffix in AUDIO_EXTS and not f.name.startswith("."):
+            try:
+                f.unlink()
+            except OSError as e:
+                log(f"  could not remove {f.name}: {e}")
 
 
 def download_audio(channel_id, vid):
@@ -124,11 +137,87 @@ def transcribe_and_remember(audio, name, title, vid, existing, dry_run):
     return stored
 
 
+def post_info(msg):
+    try:
+        import nova_config
+        nova_config.post_both(msg, slack_channel=INFO_CHANNEL, discord_channel="")
+    except Exception as e:
+        log(f"status post failed: {e}")
+
+
+def wait_for_rate(cur):
+    """Block until fewer than RATE_PER_HOUR sub: downloads happened in the last hour."""
+    while not ni._shutdown:
+        cur.execute("SELECT count(*), min(seen_at) FROM yt_ingest_seen WHERE channel LIKE 'sub:%%' "
+                    "AND status IN ('ingested', 'failed') AND seen_at > now() - interval '1 hour'")
+        n, oldest = cur.fetchone()
+        if n < RATE_PER_HOUR:
+            return
+        cur.execute("SELECT greatest(5, extract(epoch FROM %s + interval '1 hour' - now()))::int", (oldest,))
+        time.sleep(min(cur.fetchone()[0] + 1, 300))
+
+
+def baseline(cur, todo, existing):
+    cur.execute("SELECT 1 FROM service_config WHERE service = %s AND key = %s", DONE_KEY)
+    if cur.fetchone():
+        log("baseline already complete — nothing to do")
+        return
+    cur.execute("SELECT DISTINCT substr(channel, 5) FROM yt_ingest_seen WHERE channel LIKE 'sub:%%' "
+                "AND status = 'ingested'")   # failed ones get one more try on a resumed pass
+    had = {r[0] for r in cur.fetchall()}
+    pending = [s for s in todo if s[0] not in had]
+    total, start = len(todo), time.time()
+    stats = {"ingested": 0, "failed": 0, "skipped": 0, "chunks": 0}
+    post_info(f":headphones: *YouTube subscriptions baseline {'resumed' if had else 'started'}* — "
+              f"{len(pending)} of {total} uncovered channels still need their latest video. Audio only "
+              f"-> `{AUDIO_DIR}`, max {RATE_PER_HOUR}/hour, local Whisper -> Nova memory. "
+              f"ETA ~{len(pending) / RATE_PER_HOUR:.0f} h. Updates every 30 min.")
+    last_status = time.time()
+    for i, (cid, handle, name) in enumerate(pending, 1):
+        if ni._shutdown:
+            break
+        latest = latest_video(cid)
+        if not latest:
+            stats["skipped"] += 1
+            continue
+        vid, title = latest
+        wait_for_rate(cur)
+        log(f"[{i}/{len(pending)}] {name}: {title[:80]}")
+        audio = download_audio(cid, vid)
+        stored = transcribe_and_remember(audio, name, title, vid, existing, False) if audio else 0
+        status = "ingested" if stored else "failed"
+        stats[status] += 1
+        stats["chunks"] += stored
+        cur.execute("INSERT INTO yt_ingest_seen (channel, video_id, title, status) VALUES (%s, %s, %s, %s) "
+                    "ON CONFLICT (channel, video_id) DO UPDATE SET status = excluded.status, seen_at = now()",
+                    (f"sub:{cid}", vid, title[:300], status))
+        if time.time() - last_status >= STATUS_EVERY_S:
+            last_status = time.time()
+            left = len(pending) - i
+            post_info(f":headphones: YT baseline: {i}/{len(pending)} this pass — {stats['ingested']} ingested "
+                      f"({stats['chunks']} chunks), {stats['failed']} failed, {stats['skipped']} no video. "
+                      f"{left} left, ETA ~{left / RATE_PER_HOUR:.1f} h. Latest: {name} — {title[:60]}")
+    if ni._shutdown:
+        post_info(f":pause_button: YT baseline paused (process stopped) after {stats['ingested']} ingested; "
+                  f"the hourly scheduler kick resumes it.")
+        return
+    cur.execute("INSERT INTO service_config (service, key, value) VALUES (%s, %s, %s) ON CONFLICT DO NOTHING",
+                (*DONE_KEY, '{"finished": "' + time.strftime("%Y-%m-%dT%H:%M:%S") + '"}'))
+    cur.execute("SELECT count(*) FILTER (WHERE status = 'ingested'), count(*) FILTER (WHERE status = 'failed') "
+                "FROM yt_ingest_seen WHERE channel LIKE 'sub:%%'")
+    ok, bad = cur.fetchone()
+    post_info(f":white_check_mark: *YouTube subscriptions baseline done* — {ok} channels ingested, {bad} failed "
+              f"(members-only/age-gated/removed), {stats['skipped']} with no finished upload. This pass: "
+              f"{stats['chunks']} memory chunks in {(time.time() - start) / 3600:.1f} h. "
+              f"Recurring updates stay paused until Jordan decides the cadence.")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--max", type=int, default=25, help="new videos to transcribe this run")
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--only", help="a single channel id")
+    ap.add_argument("--baseline", action="store_true", help="one rate-limited pass over never-downloaded channels")
     a = ap.parse_args()
 
     subs = subscriptions()
@@ -146,6 +235,12 @@ def main():
     conn.autocommit = True
     cur = conn.cursor()
     existing = ni.get_existing_vectors()
+    if a.baseline:
+        if not os.path.ismount(AUDIO_DIR.parent):   # unmounted share = a local folder on the boot SSD
+            log(f"{AUDIO_DIR.parent} is not mounted — not starting")
+            sys.exit(1)
+        baseline(cur, todo, existing)
+        return
     done = 0
     for cid, handle, name in todo:
         if done >= a.max or ni._shutdown:

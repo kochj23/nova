@@ -23,10 +23,10 @@ class TestSubsAudio(unittest.TestCase):
 
     def test_keep_only_latest_audio(self):
         d = Path(tempfile.mkdtemp())
-        for n in ("old.m4a", "older.webm", "new.m4a"):
+        for n in ("old.m4a", "older.webm", "new.m4a", ".smbdeleteAAA1", "next.m4a.part"):
             (d / n).write_text("x")
         m.keep_only(d, d / "new.m4a")
-        self.assertEqual(sorted(p.name for p in d.iterdir()), ["new.m4a"])
+        self.assertEqual(sorted(p.name for p in d.iterdir()), [".smbdeleteAAA1", "new.m4a", "next.m4a.part"])
 
     def test_latest_video_skips_live_and_upcoming(self):
         out = "a1\tis_upcoming\tsoon\nb2\tis_live\tnow\nc3\tnot_live\tdone\n"
