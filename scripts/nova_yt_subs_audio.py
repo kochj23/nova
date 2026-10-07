@@ -161,7 +161,9 @@ def transcribe_and_remember(audio, name, title, vid, existing, dry_run):
     try:
         if not ni._audio(audio, wav):
             return 0
-        text = ni._transcribe_dispatch(wav, wav.stem, ni.WORK_DIR, local_only=True)
+        from nova_yt_capture import whisper_lock   # shared GPU lock with the capture runner
+        with whisper_lock():
+            text = ni._transcribe_dispatch(wav, wav.stem, ni.WORK_DIR, local_only=True)
     finally:
         wav.unlink(missing_ok=True)
     if not text:

@@ -173,7 +173,36 @@ def _dedupe_loops(text, max_repeat=2):
     return cleaned
 
 
+WHISPER_LOCK = 778901300   # PG advisory lock: one mlx_whisper at a time on the Studio GPU
+
+
+class whisper_lock:
+    """Serialize mlx_whisper across the capture runner and nova_yt_subs_audio. Two at once on the GPU
+    failed ~2/3 of subscription transcriptions on 2026-10-07 when 47 replays were re-queued.
+    Fail-open: if PG is unreachable, run anyway rather than stall."""
+    def __enter__(self):
+        try:
+            self.c = psycopg2.connect(DSN, connect_timeout=5); self.c.autocommit = True
+            self.c.cursor().execute("SELECT pg_advisory_lock(%s)", (WHISPER_LOCK,))
+        except Exception:
+            self.c = None
+        return self
+
+    def __exit__(self, *exc):
+        if self.c:
+            try:
+                self.c.close()   # closing the session releases the advisory lock
+            except Exception:
+                pass
+        return False
+
+
 def transcribe(wav, stem):
+    with whisper_lock():
+        return _transcribe(wav, stem)
+
+
+def _transcribe(wav, stem):
     subprocess.run([WHISPER, str(wav), "--model", WMODEL, "--output-format", "txt",
                     "--output-dir", str(WORK), "--output-name", stem, "--language", "en",
                     # anti-hallucination: stop the model conditioning on its own looped output,
