@@ -74,13 +74,17 @@ def uncovered(subs, handles, ids):
     return [s for s in subs if s[0] not in ids and s[1].lstrip("@").lower() not in handles]
 
 
+MAX_SECONDS = 3 * 3600   # 7-hour auction livestream replays: hours of download, 2 h transcribed at most
+
+
 def latest_video(channel_id):
-    """(video_id, title) of the newest finished upload, or None."""
-    r = _yt(["--flat-playlist", "-I", "1:3", "--print", "%(id)s\t%(live_status)s\t%(title)s",
+    """(video_id, title) of the newest finished upload under MAX_SECONDS, or None."""
+    r = _yt(["--flat-playlist", "-I", "1:5", "--print", "%(id)s\t%(live_status)s\t%(duration)s\t%(title)s",
              f"https://www.youtube.com/channel/{channel_id}/videos"])
     for line in r.stdout.splitlines():
-        vid, live, title = (line.split("\t", 2) + ["", ""])[:3]
-        if vid and live not in ("is_live", "is_upcoming"):
+        vid, live, dur, title = (line.split("\t", 3) + ["", "", ""])[:4]
+        too_long = dur.replace(".", "", 1).isdigit() and float(dur) > MAX_SECONDS
+        if vid and live not in ("is_live", "is_upcoming") and not too_long:
             return vid, title
     return None
 
@@ -211,7 +215,7 @@ def baseline(cur, todo, existing):
         log("baseline already complete — nothing to do")
         return
     cur.execute("SELECT DISTINCT substr(channel, 5) FROM yt_ingest_seen WHERE channel LIKE 'sub:%%' "
-                "AND status IN ('ingested', 'no_speech'))")   # failed ones get retried
+                "AND status IN ('ingested', 'no_speech')")   # failed ones get retried
     had = {r[0] for r in cur.fetchall()}
     pending = [s for s in todo if s[0] not in had]
     total, start = len(todo), time.time()

@@ -29,7 +29,7 @@ class TestSubsAudio(unittest.TestCase):
         self.assertEqual(sorted(p.name for p in d.iterdir()), [".smbdeleteAAA1", "new.m4a", "next.m4a.part"])
 
     def test_latest_video_skips_live_and_upcoming(self):
-        out = "a1\tis_upcoming\tsoon\nb2\tis_live\tnow\nc3\tnot_live\tdone\n"
+        out = "a1\tis_upcoming\t60\tsoon\nb2\tis_live\t60\tnow\nl9\tnot_live\t25717.0\tauction\nc3\tnot_live\t600\tdone\n"
         with patch.object(m, "_yt", return_value=types.SimpleNamespace(stdout=out, returncode=0)):
             self.assertEqual(m.latest_video("UCx"), ("c3", "done"))
 
