@@ -127,11 +127,25 @@ def lint_file(filepath: Path) -> list[str]:
     return fixes
 
 
+def _hugo():
+    """hugo on PATH, else the known per-host installs (scheduler PATHs are minimal). nova-core got
+    ~/.local/bin/hugo 0.161.1 extended (= the GitHub Pages deploy version) on 2026-10-07."""
+    import shutil
+    return shutil.which("hugo") or next((str(p) for p in (Path.home() / ".local/bin/hugo",
+                                         Path("/opt/homebrew/bin/hugo"), Path("/usr/local/bin/hugo"))
+                                        if p.exists()), None)
+
+
 def hugo_build_check() -> tuple[bool, str]:
-    """Run hugo build and return (success, error_output)."""
+    """Run hugo build and return (success, error_output). (True, "") when this host has no hugo:
+    an absent binary is not a broken deploy (it paged #nova-alerts every 30 min on 2026-10-07)."""
+    hugo = _hugo()
+    if not hugo:
+        log("hugo not installed on this host — skipping the build check")
+        return True, ""
     try:
         result = subprocess.run(
-            ["hugo", "--gc", "--minify", "--buildFuture", "--quiet"],
+            [hugo, "--gc", "--minify", "--buildFuture", "--quiet"],
             cwd=HUGO_ROOT, capture_output=True, text=True, timeout=120
         )
         return result.returncode == 0, result.stderr

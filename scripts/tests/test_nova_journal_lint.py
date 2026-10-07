@@ -50,6 +50,8 @@ def _load():
 
 
 jl = _load()
+_REAL_HUGO = jl._hugo
+jl._hugo = lambda: "hugo"   # argv assertions below expect the bare name; resolution is tested separately
 
 BROKEN = '---\ntitle: "🎨 "Cold Night, Warm Glow""\ndate: 2026-10-05\nimage:\n  alt: "a "quote" inside"\n---\n\nBody with "quotes" untouched.\n'
 CLEAN = '---\ntitle: "A fine title: with colon"\ndescription: plain\n---\nbody\n'
@@ -219,6 +221,18 @@ class TestFrame(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertIn("All 0 files OK", r.stdout)
         self.assertTrue((TMP / "frame-home" / ".openclaw/logs/nova_journal_lint.log").exists())
+
+
+class TestHugoResolution(unittest.TestCase):
+    def test_missing_hugo_is_not_a_broken_deploy(self):
+        with patch.object(jl, "_hugo", return_value=None), patch.object(jl.subprocess, "run") as run:
+            self.assertEqual(jl.hugo_build_check(), (True, ""))
+            run.assert_not_called()
+
+    def test_falls_back_to_known_install_paths_when_not_on_path(self):
+        with patch("shutil.which", return_value=None), \
+                patch.object(jl.Path, "exists", lambda self: str(self).endswith(".local/bin/hugo")):
+            self.assertTrue(_REAL_HUGO().endswith(".local/bin/hugo"))
 
 
 if __name__ == "__main__":
