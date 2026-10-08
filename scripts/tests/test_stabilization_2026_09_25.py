@@ -238,11 +238,13 @@ class TestIntegration(unittest.TestCase):
         self.assertTrue(all(v["healthy"] for k, v in st2.items() if k != "active"))
 
     def test_aspirations_wish_queues_a_build_task(self):
-        # Simulate pursue()'s post-insert block against a recording cursor.
+        # 2026-10-08: the 2026-09-25 standing-yes auto-queue was retired (it queued the same
+        # wish four times). A build is queued only via approve_wish (--approve <id>).
         a = _src("nova_aspirations.py")
-        self.assertIn("INSERT INTO claude_queue", a)
+        self.assertEqual(a.count("INSERT INTO claude_queue"), 1)
+        self.assertIn("def approve_wish(", a)
         self.assertIn("status='acknowledged'", a)
-        self.assertIn("standing yes from Jordan", a)
+        self.assertNotIn("standing yes from Jordan 2026-09-25 — build", a)
 
     def test_notifier_level_table_covers_all_levels(self):
         nn = _load("nn_int", SCRIPTS / "nova_notifier.py")
