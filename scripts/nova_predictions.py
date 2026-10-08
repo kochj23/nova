@@ -54,6 +54,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.parse
 import urllib.request
 from datetime import datetime, timedelta, timezone
@@ -112,12 +113,22 @@ def llm(prompt, max_tokens=700, temperature=0.85):
     return ""
 
 
-def remember(text, source, metadata):
-    req = urllib.request.Request(
-        f"{MEMSRV}/remember", method="POST", headers={"Content-Type": "application/json"},
-        data=json.dumps({"text": text, "source": source, "metadata": metadata}).encode())
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.load(r).get("id")
+REMEMBER_BACKOFF = (0.5, 1.5)   # 3 attempts; callers (own_mistake, spawn_curiosity) log the final failure
+
+
+def remember(text, source, metadata, _sleep=None):
+    body = json.dumps({"text": text, "source": source, "metadata": metadata}).encode()
+    for attempt in range(len(REMEMBER_BACKOFF) + 1):
+        try:
+            req = urllib.request.Request(
+                f"{MEMSRV}/remember", method="POST", headers={"Content-Type": "application/json"}, data=body)
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return json.load(r).get("id")
+        except Exception as e:
+            if attempt >= len(REMEMBER_BACKOFF):
+                raise
+            log(f"  remember attempt {attempt + 1} failed ({e}) — retrying")
+            (_sleep or time.sleep)(REMEMBER_BACKOFF[attempt])
 
 
 def recall(q, n=4, source=None):

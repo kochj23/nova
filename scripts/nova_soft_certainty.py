@@ -24,6 +24,7 @@ nova_ops.soft_certainty_state. calibrate()/current_stance() are cheap reads.
 import argparse
 import json
 import sys
+import time
 from datetime import date, datetime
 from pathlib import Path
 
@@ -36,6 +37,21 @@ TODAY = date.today().isoformat()
 
 def log(m):
     print(f"[soft-certainty {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
+
+
+CONNECT_BACKOFF = (0.25,)     # hot path (gateway stance, calibrate): 2 quick attempts, then fail open
+
+
+def _connect(timeout=3, backoff=CONNECT_BACKOFF, _sleep=None):
+    """psycopg2.connect with a retry + backoff; the final failure raises (callers fail open)."""
+    for attempt in range(len(backoff) + 1):
+        try:
+            return psycopg2.connect(OPS_DSN, connect_timeout=timeout)
+        except Exception as e:
+            if attempt >= len(backoff):
+                log(f"pg connect failed after {attempt + 1} attempts: {e}")
+                raise
+            (_sleep or time.sleep)(backoff[attempt])
 
 
 def ensure_schema(oc):
@@ -154,7 +170,7 @@ def calibrate(stated, oc=None, domain=None):
     conn = None
     try:
         if own:
-            conn = psycopg2.connect(OPS_DSN, connect_timeout=3); conn.autocommit = True
+            conn = _connect(); conn.autocommit = True
             oc = conn.cursor()
         st = _latest(oc)
     except Exception:
@@ -193,7 +209,7 @@ def current_stance(oc=None):
     conn = None
     try:
         if own:
-            conn = psycopg2.connect(OPS_DSN, connect_timeout=3); conn.autocommit = True
+            conn = _connect(); conn.autocommit = True
             oc = conn.cursor()
         st = _latest(oc)
     except Exception:
@@ -234,7 +250,7 @@ def main():
     ap.add_argument("--refresh", action="store_true", help="recompute calibration from resolved predictions")
     ap.add_argument("--show", action="store_true", help="print current state + stance + a sample calibration")
     args = ap.parse_args()
-    conn = psycopg2.connect(OPS_DSN, connect_timeout=5); conn.autocommit = True; oc = conn.cursor()
+    conn = _connect(timeout=5, backoff=(1.0, 2.0)); conn.autocommit = True; oc = conn.cursor()
     ensure_schema(oc)
     if args.refresh:
         return refresh(oc)

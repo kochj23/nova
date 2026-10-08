@@ -44,6 +44,7 @@ import math
 import random
 import sys
 import re
+import time
 import urllib.request
 from datetime import date, datetime
 from pathlib import Path
@@ -102,16 +103,37 @@ def llm(prompt, max_tokens=560, temperature=0.8):
     return ""
 
 
-def remember(text, source, metadata):
-    try:
-        req = urllib.request.Request(
-            f"{MEMSRV}/remember", method="POST", headers={"Content-Type": "application/json"},
-            data=json.dumps({"text": text, "source": source, "metadata": metadata}).encode())
-        with urllib.request.urlopen(req, timeout=60) as r:
-            return json.load(r).get("id")
-    except Exception as e:
-        log(f"remember failed (non-fatal): {e}")
-        return None
+RETRY_BACKOFF = (0.5, 1.5)   # seconds between the 3 attempts of an external call
+
+
+def remember(text, source, metadata, _sleep=None):
+    """POST to the memory server — 3 attempts with backoff; logs and returns None if all fail."""
+    body = json.dumps({"text": text, "source": source, "metadata": metadata}).encode()
+    for attempt in range(len(RETRY_BACKOFF) + 1):
+        try:
+            req = urllib.request.Request(
+                f"{MEMSRV}/remember", method="POST", headers={"Content-Type": "application/json"}, data=body)
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return json.load(r).get("id")
+        except Exception as e:
+            if attempt < len(RETRY_BACKOFF):
+                log(f"remember attempt {attempt + 1} failed ({e}) — retrying")
+                (_sleep or time.sleep)(RETRY_BACKOFF[attempt])
+            else:
+                log(f"remember failed after {attempt + 1} attempts (non-fatal): {e}")
+    return None
+
+
+def _connect(dsn, _sleep=None):
+    """psycopg2.connect with 3 attempts + backoff; the last failure raises."""
+    for attempt in range(len(RETRY_BACKOFF) + 1):
+        try:
+            return psycopg2.connect(dsn, connect_timeout=10)
+        except Exception as e:
+            if attempt >= len(RETRY_BACKOFF):
+                raise
+            log(f"pg connect attempt {attempt + 1} failed ({e}) — retrying")
+            (_sleep or time.sleep)(RETRY_BACKOFF[attempt])
 
 
 def _extract_json(s):
@@ -407,10 +429,10 @@ def main():
     ap.add_argument("--approve", type=int, metavar="WISH_ID",
                     help="Jordan approved this wish — queue its build for Claude")
     args = ap.parse_args()
-    ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
+    ops = _connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
     if args.approve:
         return 0 if approve_wish(oc, args.approve) else 1
-    mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
+    mem = _connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
     cand = surface_aspiration(oc, mc)
     if not cand:
         log("no aspirational material worth surfacing right now (or wishlist full/fresh)"); return 0

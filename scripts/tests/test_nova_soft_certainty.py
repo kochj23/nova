@@ -108,16 +108,17 @@ class TestPerformance(unittest.TestCase):
 
 
 class TestRetry(unittest.TestCase):
-    # RETRY GAP: calibrate() / current_stance() — one psycopg2.connect, no backoff; both fail open.
+    # calibrate() / current_stance() — 2 connect attempts with backoff (nova_soft_certainty._connect); both fail open.
     def test_calibrate_fails_open_to_stated_when_pg_is_down(self):
         calls = []
 
         def boom(*a, **k):
             calls.append(1); raise OSError("pg down")
-        with mock.patch.object(sc.psycopg2, "connect", boom):
+        with mock.patch.object(sc.psycopg2, "connect", boom), mock.patch.object(sc.time, "sleep", lambda s: None), \
+                redirect_stdout(io.StringIO()):
             self.assertEqual(sc.calibrate(0.9), 0.9)
             self.assertEqual(sc.current_stance(), "")
-        self.assertEqual(len(calls), 2)       # one attempt each, never raises
+        self.assertEqual(len(calls), 4)       # two attempts each, never raises
 
     def test_latest_and_domain_stats_swallow_cursor_errors(self):
         cur = _Cur([("FROM soft_certainty_state", RuntimeError("no table")),
