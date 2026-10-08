@@ -203,3 +203,4 @@ bin/yt-dlp
 scripts/*.pre-unas-cutover
 scripts/*.pre-2*
 scripts/net.digitalnoise.nova-mac-media-folder-guard.plist
+config/nova_anchors.json

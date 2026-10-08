@@ -7,7 +7,7 @@ plus a metadata.geo block (nearest_mi + per-address list). Because it edits the 
 distance then rides along everywhere downstream — recall, article context, conversation — with
 no per-consumer wiring. Runs on a schedule; `--backfill` widens the window.
 
-Home = 508 S Glenwood Pl, Burbank CA 91506 (see nova_geo_distance).
+Home = the private service_config 'home' point (see nova_geo_distance).
 """
 import json
 import sys

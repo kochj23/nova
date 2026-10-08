@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """nova_geo_distance.py — annotate scanner/fire/aviation text with distance from home.
 
-Home = 508 S Glenwood Pl, Burbank CA 91506. For any street address or intersection found in a
+Home = the private service_config 'home' point (never in this repo). For any street address or intersection found in a
 transmission, geocode it (cached in nova_ops.geo_cache) and append the straight-line distance
 from home. Used at ingest time (bakes distance into memory), in article generators, and in
 conversation. Best-effort: Whisper garbles addresses, so misses are expected and cached so we
@@ -20,8 +20,35 @@ import urllib.request
 
 import psycopg2
 
-HOME_LAT, HOME_LON = 34.1679024, -118.3148472       # 508 S Glenwood Pl, Burbank CA 91506
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+ZIP_CENTROID = (34.169, -118.325)   # public 91506 centroid; the exact home point is private
+
+
+def _private_home():
+    """Exact home point from the private service_config 'home' row (never in the public repo);
+    falls back to the zip centroid if PG is unreachable or the row is missing."""
+    import json
+    for attempt in range(3):
+        try:
+            c = psycopg2.connect(DSN, connect_timeout=5)
+            try:
+                cur = c.cursor()
+                cur.execute("SELECT value FROM service_config WHERE key='home'")
+                row = cur.fetchone()
+            finally:
+                c.close()
+            if not row:
+                return ZIP_CENTROID
+            v = json.loads(row[0]) if isinstance(row[0], str) else row[0]
+            return float(v["lat"]), float(v["lon"])
+        except psycopg2.OperationalError:
+            time.sleep(0.5 * (2 ** attempt))
+        except Exception:  # noqa: BLE001 — malformed row
+            return ZIP_CENTROID
+    return ZIP_CENTROID
+
+
+HOME_LAT, HOME_LON = _private_home()
 NOMINATIM = "https://nominatim.openstreetmap.org/search"
 UA = "nova-geo/1.0 (home scanner enrichment; kochj)"
 # LA-county-ish viewbox (lon_w, lat_s, lon_e, lat_n) — bound geocoding so garble doesn't match Kansas
@@ -48,7 +75,7 @@ def ensure_cache(cur):
                 "ok boolean, cached_at timestamptz DEFAULT now())")
 
 
-ANCHORS_FILE = os.path.expanduser("~/.openclaw/config/nova_anchors.json")
+ANCHORS_FILE = os.path.expanduser("~/.openclaw/private/nova_anchors.json")   # git-ignored: holds real addresses
 
 
 def _load_anchors():

@@ -6,7 +6,7 @@ Runs every few minutes. On NEW distance-enriched scanner/fire transmissions it c
   • CONVERGENCE: police AND fire BOTH active within CONV_MI in a short window (+ an LAPD helicopter
     overhead) -> likely a major incident near home.
 Dedupes per incident, tracks a last-seen cursor so each transmission is considered once, and posts
-to Slack via nova_notify. Home = 508 S Glenwood Pl, Burbank. `--dry` prints instead of posting.
+to Slack via nova_notify. Home = the private service_config 'home' point. `--dry` prints instead of posting.
 """
 import re
 import sys

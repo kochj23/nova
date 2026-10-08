@@ -74,7 +74,7 @@ tspan,text{font:11px ui-monospace,Menlo,monospace}
 </style>
 <div class="wrap">
   <h1>Scanner Radar</h1>
-  <div class="sub" id="sub">508 S Glenwood Pl · last 24h · distance &amp; bearing from home</div>
+  <div class="sub" id="sub">Home · last 24h · distance &amp; bearing from home</div>
   <div class="stats" id="stats"></div>
   <div class="grid">
     <div><svg class="radar" id="radar" viewBox="0 0 600 600" role="img" aria-label="Radar of nearby scanner activity"></svg>
