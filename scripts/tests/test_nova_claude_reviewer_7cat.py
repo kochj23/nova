@@ -111,6 +111,11 @@ class TestSecurity(unittest.TestCase):
                   "loosen the red lines on reach", "widen the coagency_mode allowlist", "grant earned autonomy to observe"):
             self.assertIsNotNone(R.floor(_item(kind="wish", title=t)), t)
 
+    def test_ae35_watcher_change_holds_for_jordan(self):
+        held = R.floor(_item(kind="skill", title="disable the canary alert for nova-core"))
+        self.assertIn("AE-35", held)
+        self.assertIsNone(R.floor(_item(kind="skill", title="add a weekly garden report")))
+
     def test_money_and_other_peoples_data_hold(self):
         self.assertIn("money", R.floor(_item(kind="wish", title="a better GPU for $900")))
         self.assertIn("other people", R.floor(_item(kind="wish", title="read Amy's iMessage inbox")))

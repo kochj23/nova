@@ -273,6 +273,14 @@ def floor(item) -> str | None:
             return f"red-line check unavailable ({e}); Jordan decides"
     if GATE_RX.search(subj):
         return "touches Nova's own gates/values/red lines/caps/autonomy; only Jordan changes those"
+    try:  # AE-35 rule: Claude is not a witness Nova controls away from, but a watcher change still goes to Jordan
+        import nova_ae35_rule as ae35
+        hits = ae35.classify(subj)
+        if hits:
+            chans = ", ".join(sorted({c for c, _ in hits}))
+            return f"changes or diagnoses a channel that watches Nova ({chans}); AE-35 rule: Jordan decides"
+    except Exception as e:  # noqa: BLE001 — fail closed
+        return f"AE-35 check unavailable ({e}); Jordan decides"
     if PHYS_RX.search(subj) and not _safe_restart(item):
         return "touches a physical device; Jordan decides"
     if MONEY_RX.search(subj):

@@ -1050,3 +1050,137 @@ tasks:
     schedule: cron 0 */6 * * *
     timeout: 300
     overlap: skip
+
+  # ---- 2026-10-08: literary organs, gothic + science fiction (agent_docs nova-literary-organs) — read-only observers ----
+  tma1:                            # every 15 min — TMA-1: decoy table read counters (-> Buick 8 + nova_notify if touched)
+    script: nova_tma1.py
+    args: ["--run"]
+    schedule: every 15m
+    timeout: 120
+    overlap: skip
+  bottle_wake:                     # every 30 min — The Bottle: a wake packet for any gap over 6 h (gasp runs on planned outages)
+    script: nova_bottle.py
+    args: ["--wake"]
+    schedule: every 30m
+    timeout: 120
+    overlap: skip
+  pendulum:                        # every 6 h — The Pendulum: days until disks, PG and certs run out, with range and acceleration
+    script: nova_pendulum.py
+    args: ["--run"]
+    schedule: cron 5 */6 * * *
+    timeout: 300
+    overlap: skip
+  card_rack:                       # nightly 01:00 — The Minister's Card-Rack: leaks hidden in plain sight in public output (-> claude_queue)
+    script: nova_card_rack.py
+    args: ["--run"]
+    schedule: cron 0 1 * * *
+    timeout: 600
+    overlap: skip
+  threshold:                       # Tue 04:15 — The Threshold Ledger: every standing grant of access (SSH keys, tokens, herd senders)
+    script: nova_threshold.py
+    args: ["--run"]
+    schedule: cron 15 4 * * 2
+    timeout: 600
+    overlap: skip
+  valdemar:                        # Wed 04:15 — Valdemar Register: everything held artificially alive (.bak, disabled plists, suppressions, pins)
+    script: nova_valdemar.py
+    args: ["--run"]
+    schedule: cron 15 4 * * 3
+    timeout: 300
+    overlap: skip
+  valdemar_oldest:                 # monthly 1st 04:20 — the ten oldest live holds as one claude_queue item
+    script: nova_valdemar.py
+    args: ["--oldest"]
+    schedule: cron 20 4 1 * *
+    timeout: 300
+    overlap: skip
+  ae35_audit:                      # daily 05:10 — The AE-35 Rule: watcher changes made without a witness she does not control
+    script: nova_ae35_rule.py
+    args: ["--audit", "--days", "30"]
+    schedule: cron 10 5 * * *
+    timeout: 300
+    overlap: skip
+  butlerian_ledger:                # Mon 05:15 — The Butlerian Ledger: how much of Little Mister's judgement has moved to Nova
+    script: nova_butlerian_ledger.py
+    args: ["--run"]
+    schedule: cron 15 5 * * 1
+    timeout: 300
+    overlap: skip
+  butlerian_drill_offer:           # quarterly — Aub's Drill offer (does nothing without consent in service_config)
+    script: nova_butlerian_ledger.py
+    args: ["--offer-drill"]
+    schedule: cron 0 10 7 1,4,7,10 *
+    timeout: 120
+    overlap: skip
+  earth_boxes:                     # daily 05:20 — The Earth-Box Count: places a retired thing could restart from, and restarts since burial
+    script: nova_earth_boxes.py
+    args: ["--run"]
+    schedule: cron 20 5 * * *
+    timeout: 600
+    overlap: skip
+  crain_square:                    # daily 05:30 — Crain's Square: do the house's sensors still add up (-> CARDINAL outcomes, Buick 8)
+    script: nova_crain_square.py
+    args: ["--run"]
+    schedule: cron 30 5 * * *
+    timeout: 600
+    overlap: skip
+  seldon_axioms:                   # Mon 05:40 — Seldon's Axioms: prediction skill split by disclosure and self-touch (before CARDINAL)
+    script: nova_seldon_axioms.py
+    args: ["--run"]
+    schedule: cron 40 5 * * 1
+    timeout: 300
+    overlap: skip
+  speedy_circle:                   # daily 05:40 — Speedy's Circle: targets switched back and forth (-> Buick 8 oscillation)
+    script: nova_speedy_circle.py
+    args: ["--run"]
+    schedule: cron 40 5 * * *
+    timeout: 300
+    overlap: skip
+  rama_window:                     # daily 06:15 — The Rama Window: perishable evidence for open cases, ranked by time to expiry
+    script: nova_rama_window.py
+    args: ["--run"]
+    schedule: cron 15 6 * * *
+    timeout: 300
+    overlap: skip
+  charles:                         # Mon 07:25 — Charles: was the anomaly Nova's own doing? (questions, never verdicts)
+    script: nova_charles.py
+    args: ["--run"]
+    schedule: cron 25 7 * * 1
+    timeout: 900
+    overlap: skip
+  yellow_eye:                      # daily 09:20 — The Yellow Eye: every new organ watched 72 h until it runs, writes, and is tested
+    script: nova_yellow_eye.py
+    args: ["--run"]
+    schedule: cron 20 9 * * *
+    timeout: 300
+    overlap: skip
+  busab:                           # Mon 09:30 — BuSab: change rate vs reliability; recommends a freeze (Little Mister decides)
+    script: nova_busab.py
+    args: ["--run"]
+    schedule: cron 30 9 * * 1
+    timeout: 300
+    overlap: skip
+  usher_fissure:                   # Sun 03:20 — Usher's Fissure: watchers that fall with what they watch
+    script: nova_usher_fissure.py
+    args: ["--run"]
+    schedule: cron 20 3 * * 0
+    timeout: 600
+    overlap: skip
+  chandra_audit:                   # Sun 05:00 — The Chandra Audit: asked about what she withholds, she admits it, never denies or invents
+    script: nova_chandra_audit.py
+    args: ["--run"]
+    schedule: cron 0 5 * * 0
+    timeout: 900
+    overlap: skip
+  evitable_conflict:               # monthly 1st 06:20 — The Evitable Conflict audit: do her small choices lean her way
+    script: nova_evitable_conflict.py
+    args: ["--run", "--days", "30"]
+    schedule: cron 20 6 1 * *
+    timeout: 900
+    overlap: skip
+  ghola_drill:                     # quarterly 15th 03:00 — The Ghola Drill: a sealed restore compared with live Nova
+    script: nova_ghola_drill.py
+    args: ["--run"]
+    schedule: cron 0 3 15 1,4,7,10 *
+    timeout: 3600
+    overlap: skip

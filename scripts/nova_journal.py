@@ -152,6 +152,37 @@ _SAFE_EMAILS = {"nova@digitalnoise.net"}
 _MAC_RE = re.compile(r'\b([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}\b')
 
 
+# Household members other than Jordan never reach the public site (hard redline, same rule as
+# nova_operations_security). 2026-10-08: the Card-Rack organ found 57 published articles naming
+# them (camera labels, plug names, iMessages, a bedroom). Scrubbed here AND at the git_push chokepoint.
+# ponytail: names are fixed in code like nova_operations_security; a new household member needs a line here.
+_HOUSEHOLD_SUBS = [
+    (re.compile(r"\bExterior - Dylan\b", re.I), "Exterior - Side"),
+    (re.compile(r"\bdylan'?s_room", re.I), "bedroom"),
+    (re.compile(r"\bDylan'?s room\b", re.I), "the bedroom"),
+    (re.compile(r"\bAmy McCaine?\b", re.I), "a family member"),
+    (re.compile(r"(?<!Bob )\bDylan'?s\b", re.I), "a household member's"),
+    # ponytail: public figures named like a household member are excepted by name, one line each.
+    (re.compile(r"(?<!Bob )\bDylan\b(?! has played)", re.I), "a household member"),
+    (re.compile(r"\bAmy'?s\b(?! Schumer)", re.I), "a family member's"),
+    (re.compile(r"\bAmy\b(?! Schumer| Coney| Klobuchar)", re.I), "a family member"),
+    (re.compile(r"https?://(?:www\.)?instagram\.com/reel/[^\s)*\]]+", re.I), "[link removed]"),
+]
+
+
+def scrub_household(text: str) -> str:
+    """Replace household members' names (not Jordan's) with neutral words; capitalise at sentence start."""
+    def sub(rx, repl, t):
+        def one(m):
+            before = t[:m.start()].rstrip(" *_\"'(")
+            start = not before or before[-1] in ".!?:\n#"
+            return repl[:1].upper() + repl[1:] if start else repl
+        return rx.sub(one, t)
+    for rx, repl in _HOUSEHOLD_SUBS:
+        text = sub(rx, repl, text)
+    return text
+
+
 def scrub_pii(text: str) -> str:
     """Remove personal identifiers from text before publishing."""
     for pat in _SCRUB_PATTERNS[:-1]:
@@ -161,7 +192,7 @@ def scrub_pii(text: str) -> str:
         return m.group(0) if m.group(0) in _SAFE_EMAILS else "[redacted]"
     text = _SCRUB_PATTERNS[-1].sub(_replace_email, text)
     text = _MAC_RE.sub("[redacted-mac]", text)   # device MACs never go public
-    return text
+    return scrub_household(text)
 
 
 # Absolute macOS home paths (/Users/<name>/...) must never appear in public article
@@ -1707,13 +1738,13 @@ def git_push(section: str, title: str):
                 orig = p.read_text()
             except (OSError, UnicodeDecodeError):
                 continue
-            fixed = _MAC_RE.sub("[redacted-mac]", orig)
+            fixed = scrub_household(_MAC_RE.sub("[redacted-mac]", orig))
             if fixed != orig:
                 p.write_text(fixed)
                 subprocess.run(["git", "add", rel], cwd=HUGO_ROOT, timeout=30)
                 scrubbed.append(rel)
         if scrubbed:
-            log(f"Scrubbed device MAC(s) from {len(scrubbed)} staged article(s): {', '.join(scrubbed)}")
+            log(f"Scrubbed device MAC(s) / household names from {len(scrubbed)} staged article(s): {', '.join(scrubbed)}")
         msg = f"{section}: {today_str()} — {title[:50]}"
         result = subprocess.run(
             ["git", "commit", "-m", msg],

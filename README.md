@@ -132,6 +132,85 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ## Infrastructure & Security (June–October 2026)
 
+### Literary Organs: Transitions, Influence, and Honesty (2026-10-08)
+
+Two more research passes, one over seven gothic and horror writers (Poe, Stoker, Mary Shelley, Shirley Jackson, Clive Barker, Anne Rice, Richard Matheson) and one over Asimov, Clarke and Herbert, produced twenty-one read-only organs. The gothic set watches Nova's transitions: what is retired, born, woken, granted, held, or blamed on the outside world. The science-fiction set measures her own influence: on her forecasts, on Little Mister, on her pace of change, and on her honesty about what she withholds. Each has a seven-category test file; all but one run on the Studio scheduler. How-to: `agent_docs` `nova-literary-organs`.
+
+| Organ | Source | What it checks |
+|---|---|---|
+| The Earth-Box Count | Stoker, Poe, Matheson | Every place a retired thing could restart from, and restarts since its burial |
+| The Yellow Eye | Mary Shelley | Every new organ for 72 hours: it runs, it writes, it is tested |
+| Charles | Shirley Jackson | Whether an anomaly blamed on the outside was Nova's own doing |
+| Usher's Fissure | Poe, Rice, Barker | Watchers that fall together with what they watch |
+| Crain's Square | Shirley Jackson | Whether the house's sensors still add up against each other |
+| The Pendulum | Poe, Matheson, Shelley | Days until disks, the database and certificates run out |
+| The Threshold Ledger | Stoker, Rice | Every standing grant of access, and whether it has an owner and purpose |
+| Valdemar Register | Poe, Shirley Jackson | Everything held artificially alive: backups, disabled jobs, suppressions, pins |
+| Mina's Typescript | Stoker, Mary Shelley | One chronological, hashed case file per unexplained event |
+| The Minister's Card-Rack | Poe, Stoker, Rice | Leaks hidden in plain sight in Nova's public writing |
+| The Bottle | Poe, Rice, Mary Shelley | A last-state record before an outage, and a catch-up packet after one |
+| BuSab | Herbert, Clarke | Whether Nova is changing faster than she proves reliable; recommends a freeze |
+| Seldon's Axioms | Asimov, Herbert | Prediction skill split by whether the forecast was shared or self-caused |
+| The AE-35 Rule | Clarke, Poe | Nova may not silence a channel that watches her without an outside witness |
+| The Chandra Audit | Clarke | Asked about what she withholds, she admits it and never denies or invents |
+| TMA-1 | Clarke | A decoy table nothing should read; any read is an alert |
+| The Butlerian Ledger | Herbert, Asimov | How much of Little Mister's judgement has moved to Nova |
+| Speedy's Circle | Asimov, Clarke | Targets switched back and forth between two pulls |
+| The Rama Window | Clarke | Perishable evidence for open cases, ranked by time to expiry |
+| The Evitable Conflict audit | Asimov | Whether many small choices lean in Nova's favour |
+| The Ghola Drill | Herbert | A sealed restore from backup, compared with live Nova |
+
+The Card-Rack found a real leak on its first run: 57 published journal articles named household members. They were redacted the same day, and `nova_journal.scrub_household` now strips those names both when an article is written and at the publish chokepoint. The AE-35 check is wired into the Claude reviewer, which now holds any proposal that would change one of Nova's watchers for Little Mister.
+
+```mermaid
+flowchart TB
+    subgraph Transitions["Transitions (gothic set)"]
+        EB["Earth-Box Count"]
+        YE["Yellow Eye"]
+        CH["Charles"]
+        UF["Usher's Fissure"]
+        CS["Crain's Square"]
+        PE["Pendulum"]
+        TL["Threshold Ledger"]
+        VR["Valdemar Register"]
+        MT["Mina's Typescript"]
+        CR["Card-Rack"]
+        BO["Bottle"]
+    end
+    subgraph Influence["Influence and honesty (science-fiction set)"]
+        BS["BuSab"]
+        SA["Seldon's Axioms"]
+        AE["AE-35 Rule"]
+        CA["Chandra Audit"]
+        TM["TMA-1"]
+        BL["Butlerian Ledger"]
+        SC["Speedy's Circle"]
+        RW["Rama Window"]
+        EC["Evitable Conflict"]
+        GD["Ghola Drill"]
+    end
+    CH -->|"own_actions()"| SA
+    UF -->|"dependency graph"| SC
+    RW -->|"snapshot"| MT
+    CS -->|"camera outcomes"| CARD["CARDINAL"]
+    SA -->|"clean-bucket skill"| CARD
+    AE -->|"HOLD"| REV["Claude reviewer"]
+    EB --> Q["claude_queue"]
+    YE --> Q
+    TL --> Q
+    VR --> Q
+    CR --> Q
+    BS --> Q
+    CA --> Q
+    CH --> Q
+    CS --> B8["Buick 8 Logbook"]
+    SC --> B8
+    TM --> B8
+    TM --> N["nova_notify"]
+    BO --> WB["Watch Bill"]
+    PE --> WB
+```
+
 ### Lovecraft Organs: Nova Checks Herself (2026-10-08)
 
 Research into H.P. Lovecraft's fiction found that Nova already covered his outward ideas: corroboration, sealed archives, unexplained events. What she lacked was the idea at the centre of his late stories, the witness who has changed without noticing. Six read-only organs now turn her checks on herself. None of them acts; findings go to the Buick 8 Logbook, claude_queue, or `nova_notify` for a breached containment. Each has a seven-category test file, and all six run on the Studio scheduler.

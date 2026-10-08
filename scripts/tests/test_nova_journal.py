@@ -161,6 +161,18 @@ class TestSecurity(unittest.TestCase):
             self.assertNotIn(leak, text)
 
 
+class TestHouseholdScrub(TestSecurity.__base__):
+    """Household members other than Jordan never reach the public site (Card-Rack finding, 2026-10-08)."""
+
+    def test_household_names_scrubbed_but_public_figures_kept(self):
+        s = nj.scrub_pii("Amy sent a reel https://www.instagram.com/reel/AbC123/ and Dylan's room plug spiked; "
+                         "Exterior - Dylan fired. Bob Dylan, Amy Schumer, Amy Coney Barrett and the amygdala stay.")
+        for leak in ("Amy sent", "Dylan's room", "Exterior - Dylan", "instagram.com/reel"):
+            self.assertNotIn(leak, s)
+        for kept in ("Bob Dylan", "Amy Schumer", "Amy Coney Barrett", "amygdala", "A family member sent"):
+            self.assertIn(kept, s)
+
+
 class TestPerformance(unittest.TestCase):
     def test_scrub_and_refusal_scan_fast_on_10k_items(self):
         line = "On 2026-10-05 " + _WORK + " saw aa:bb:cc:dd:ee:ff in " + _HOME + "/logs — fine otherwise."
