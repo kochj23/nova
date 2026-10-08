@@ -162,12 +162,19 @@ def describe_scene(image_path):
             OLLAMA_URL, data=payload,
             headers={"Content-Type": "application/json"}
         )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json.loads(resp.read())
-        return result.get("response", "").strip()[:200]
     except Exception as e:
         log(f"Vision describe failed: {e}")
         return None
+    for attempt in range(3):   # Ollama swapping models: retry 2 s / 4 s before giving up (logged)
+        try:
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                result = json.loads(resp.read())
+            return result.get("response", "").strip()[:200]
+        except Exception as e:
+            if attempt == 2:
+                log(f"Vision describe failed after 3 tries: {e}")
+                return None
+            time.sleep(2 * (attempt + 1))
 
 
 def looks_like_person(image_path):

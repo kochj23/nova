@@ -75,12 +75,12 @@ class TestPerformance(unittest.TestCase):
 
 class TestRetry(unittest.TestCase):
     def test_remember_fails_open(self):
-        # RETRY GAP: remember — one POST to the memory server; failure returns None
+        # remember — 3 POSTs to the memory server (1 s / 2 s backoff); then None, logged to stderr
         fresh = importlib.util.module_from_spec(importlib.util.spec_from_file_location("nfi2", SCRIPT))
         importlib.util.spec_from_file_location("nfi2", SCRIPT).loader.exec_module(fresh)
-        with patch.object(fresh.urllib.request, "urlopen", side_effect=OSError("down")) as uo:
+        with patch.object(fresh.urllib.request, "urlopen", side_effect=OSError("down")) as uo, patch("time.sleep"):
             self.assertIsNone(fresh.remember("x"))
-        self.assertEqual(uo.call_count, 1)
+        self.assertEqual(uo.call_count, 3)
 
     def test_run_command_timeout_and_error(self):
         with patch.object(fi.subprocess, "run", side_effect=subprocess.TimeoutExpired("x", 1)):

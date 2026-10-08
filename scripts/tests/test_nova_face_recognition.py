@@ -115,8 +115,8 @@ class TestRetry(unittest.TestCase):
         self.assertTrue(fr.looks_like_person(str(_ROOT / "missing.jpg")))   # unreadable -> fail-open
 
     def test_describe_scene_fails_open(self):
-        # RETRY GAP: describe_scene() — single attempt, returns None on error
-        with patch.object(fr.urllib.request, "urlopen", side_effect=OSError("down")):
+        # describe_scene() — 3 attempts (2 s / 4 s), then None (logged)
+        with patch.object(fr.urllib.request, "urlopen", side_effect=OSError("down")), patch.object(fr.time, "sleep"):
             self.assertIsNone(fr.describe_scene(str(self.img)))
 
 

@@ -285,7 +285,8 @@ class TestDescribeScene:
         img = tmp_path / "test.jpg"
         img.write_bytes(b"fake")
         mock_urlopen.side_effect = Exception("Ollama down")
-        result = face_module.describe_scene(str(img))
+        with patch("time.sleep"):
+            result = face_module.describe_scene(str(img))
         assert result is None
 
 

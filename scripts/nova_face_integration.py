@@ -47,10 +47,19 @@ def remember(text, source="vision"):
             data=data,
             headers={"Content-Type": "application/json"}
         )
-        with urllib.request.urlopen(req, timeout=5) as resp:
-            return json.loads(resp.read()).get("id")
-    except Exception:
+    except Exception as e:
+        print(f"[face-integration] remember: could not build request: {e}", file=sys.stderr)
         return None
+    for attempt in range(3):   # memory-server restarts are brief: retry 1 s / 2 s, then say so
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                return json.loads(resp.read()).get("id")
+        except Exception as e:
+            if attempt == 2:
+                print(f"[face-integration] remember failed after 3 tries: {e}", file=sys.stderr)
+                return None
+            import time
+            time.sleep(1 + attempt)
 
 def run_command(cmd, timeout=30):
     """Run shell command."""

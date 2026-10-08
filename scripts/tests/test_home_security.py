@@ -137,7 +137,7 @@ class TestFaceRecognition:
         img = tmp_path / "test.jpg"
         img.write_bytes(b"\xff\xd8\xff\xe0")
 
-        with patch("urllib.request.urlopen", side_effect=Exception("timeout")):
+        with patch("urllib.request.urlopen", side_effect=Exception("timeout")), patch("time.sleep"):
             result = self.mod.describe_scene(str(img))
         assert result is None
 
@@ -479,7 +479,7 @@ class TestFaceIntegration:
 
     def test_remember_returns_none_on_failure(self):
         """remember returns None on network failure."""
-        with patch("urllib.request.urlopen", side_effect=Exception("down")):
+        with patch("urllib.request.urlopen", side_effect=Exception("down")), patch("time.sleep"):
             result = self.mod.remember("test text")
         assert result is None
 
