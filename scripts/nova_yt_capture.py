@@ -17,6 +17,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import urllib.request
 from pathlib import Path
 
@@ -77,24 +78,29 @@ def slack(m):
 MAX_VOD_ATTEMPTS = 4
 
 
+def _pg_update(sql, params, attempts=3):
+    """One status UPDATE, retried (a PG blip left rows stuck in 'downloading'); logged on final failure."""
+    for attempt in range(attempts):
+        try:
+            c = psycopg2.connect(DSN, connect_timeout=10); c.autocommit = True
+            c.cursor().execute(sql, params)
+            c.close()
+            return True
+        except Exception as e:
+            if attempt == attempts - 1:
+                log(f"status update failed after {attempts} tries: {e}")
+                return False
+            time.sleep(2 * (attempt + 1))
+
+
 def retry_or_empty(vid):
-    try:
-        c = psycopg2.connect(DSN); c.autocommit = True
-        c.cursor().execute("UPDATE yt_ingest_seen SET attempts = attempts + 1, seen_at = now(), "
-                           "status = CASE WHEN attempts + 1 >= %s THEN 'empty' ELSE 'vod_pending' END "
-                           "WHERE video_id = %s", (MAX_VOD_ATTEMPTS, vid))
-        c.close()
-    except Exception as e:
-        log(f"status update failed: {e}")
+    _pg_update("UPDATE yt_ingest_seen SET attempts = attempts + 1, seen_at = now(), "
+               "status = CASE WHEN attempts + 1 >= %s THEN 'empty' ELSE 'vod_pending' END "
+               "WHERE video_id = %s", (MAX_VOD_ATTEMPTS, vid))
 
 
 def setstatus(vid, status):
-    try:
-        c = psycopg2.connect(DSN); c.autocommit = True
-        c.cursor().execute("UPDATE yt_ingest_seen SET status=%s WHERE video_id=%s", (status, vid))
-        c.close()
-    except Exception as e:
-        log(f"status update failed: {e}")
+    _pg_update("UPDATE yt_ingest_seen SET status=%s WHERE video_id=%s", (status, vid))
 
 
 def ytbase():
@@ -324,12 +330,15 @@ def remember(text, meta):
                           "metadata": {**meta, "privacy": "private"}}).encode()
     req = urllib.request.Request(MEMORY_URL + "?async=1", data=payload,
                                  headers={"Content-Type": "application/json"}, method="POST")
-    try:
-        with urllib.request.urlopen(req, timeout=20):
-            return True
-    except Exception as e:
-        log(f"remember failed: {e}")
-        return False
+    for attempt in range(3):   # a memory-server restart used to drop chunks (and mark a stream 'empty')
+        try:
+            with urllib.request.urlopen(req, timeout=20):
+                return True
+        except Exception as e:
+            if attempt == 2:
+                log(f"remember failed after 3 tries: {e}")
+                return False
+            time.sleep(2 * (attempt + 1))
 
 
 def main():

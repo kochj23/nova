@@ -11,6 +11,7 @@ Queue = nova_ops.yt_ingest_seen rows with status 'queued' (VOD) or 'queued_live'
 """
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import psycopg2
@@ -29,8 +30,20 @@ def log(m):
     print(f"[capture-runner] {m}", flush=True)
 
 
+def _connect(attempts=3):
+    """PG connect with retry (5 s / 10 s backoff); re-raises on the last try so launchd logs the failure."""
+    for attempt in range(attempts):
+        try:
+            return psycopg2.connect(DSN, connect_timeout=10)
+        except Exception as e:
+            if attempt == attempts - 1:
+                raise
+            log(f"PG connect failed ({e}); retry {attempt + 1}")
+            time.sleep(5 * 2 ** attempt)
+
+
 def main():
-    c = psycopg2.connect(DSN); c.autocommit = True; cur = c.cursor()
+    c = _connect(); c.autocommit = True; cur = c.cursor()
     cur.execute("SELECT pg_try_advisory_lock(%s)", (LOCK,))
     if not cur.fetchone()[0]:
         log("another instance holds the lock — exiting"); return

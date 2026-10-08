@@ -111,9 +111,9 @@ class TestRetry(unittest.TestCase):
         self.assertIn("done — 2 captured", out)
 
     def test_pg_connect_failure_escapes_before_any_capture(self):
-        # RETRY GAP: main()/psycopg2.connect — no retry; launchd re-fires the job on the next interval
+        # main()/psycopg2.connect — retried 3x with backoff, then raises (launchd logs it, re-fires later)
         run = MagicMock()
-        with patch.object(cr.psycopg2, "connect", side_effect=OSError("pg down")), \
+        with patch.object(cr.psycopg2, "connect", side_effect=OSError("pg down")), patch.object(cr.time, "sleep"), \
              patch.object(cr.subprocess, "run", run), redirect_stdout(io.StringIO()):
             with self.assertRaises(OSError):
                 cr.main()

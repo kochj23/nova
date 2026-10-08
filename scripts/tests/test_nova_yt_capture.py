@@ -105,15 +105,17 @@ class TestPerformance(_Base):
 
 
 class TestRetry(_Base):
-    def test_remember_failure_is_one_shot(self):
-        # RETRY GAP: remember/urlopen — one attempt per chunk; False on failure, counted as not stored
-        with patch.object(yt.urllib.request, "urlopen", side_effect=OSError("down")) as uo:
+    def test_remember_failure_retries_then_reports(self):
+        # remember/urlopen — 3 attempts per chunk with backoff; False (logged) after the last
+        with patch.object(yt.urllib.request, "urlopen", side_effect=OSError("down")) as uo, \
+                patch.object(yt.time, "sleep"):
             self.assertFalse(yt.remember("t", {"vector": "v"}))
-        self.assertEqual(uo.call_count, 1)
+        self.assertEqual(uo.call_count, 3)
+        self.assertIn("remember failed after 3 tries", self.out.getvalue())
 
     def test_status_and_meta_fail_open(self):
-        # RETRY GAP: setstatus/meta_of — one attempt each, logged / empty defaults
-        with patch.object(yt.psycopg2, "connect", side_effect=OSError("pg down")):
+        # setstatus retries 3x then logs; meta_of falls back to empty defaults
+        with patch.object(yt.psycopg2, "connect", side_effect=OSError("pg down")), patch.object(yt.time, "sleep"):
             yt.setstatus("v", "x")
         with patch.object(yt.subprocess, "run", side_effect=subprocess.TimeoutExpired("yt-dlp", 120)):
             self.assertEqual(yt.meta_of("v"), ("", ""))
