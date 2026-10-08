@@ -156,6 +156,19 @@ class TestSecurity:
         rnd = [s for s, _ in env["conn"].sql if "RANDOM()" in s]
         assert len(rnd) == 2 and all(ms.BOXED_CLAUSE in s for s in rnd)
 
+    def test_search_excludes_boxed_in_every_branch(self, env):
+        # Federal Hill Lights (2026-10-08) found /search had no lockbox filter.
+        for mode in ("fts", "ilike"):
+            for src in (None, "conversation"):
+                out = run(ms.text_search(q="memory", n=10, source=src, mode=mode, include_boxed=False))
+                assert all(not m["metadata"].get("boxed") for m in out["memories"])
+        srch = [s for s, _ in env["conn"].sql if "FROM memories WHERE t" in s]
+        assert len(srch) >= 4 and all(ms.BOXED_CLAUSE in s for s in srch)
+
+    def test_search_include_boxed_is_explicit(self, env):
+        out = run(ms.text_search(q="memory", n=10, source=None, mode="ilike", include_boxed=True))
+        assert any(m["metadata"].get("boxed") for m in out["memories"])
+
     def test_deep_recall_excludes_boxed_hits_and_linked_hops(self, env):
         out = run(ms.deep_recall(q="q", n=5, source=None, min_score=0.0))
         assert ids(out) == ["open1"]

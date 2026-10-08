@@ -1012,3 +1012,41 @@ tasks:
     schedule: cron 40 3 * * *
     timeout: 300
     overlap: skip
+
+  # ---- 2026-10-08: Lovecraft organs (agent_docs nova-lovecraft-organs) — read-only observers ----
+  spectroscope:                    # nightly 02:50 — The Spectroscope: memory self-retrieval sample + known-answer suite on two hosts (-> Buick 8 substrate_mismatch)
+    script: nova_spectroscope.py
+    args: ["--run"]
+    schedule: cron 50 2 * * *
+    timeout: 900
+    overlap: skip
+  doorstep:                        # weekly Sat 03:00 — The Doorstep Test: 20 frozen canaries against the chat model on this host (-> Buick 8 model_behaviour_change)
+    script: nova_doorstep.py
+    args: ["--run"]
+    schedule: cron 0 3 * * 6
+    timeout: 900
+    overlap: skip
+  ivory_head:                      # weekly Mon 04:00 — The Ivory Head: share of each belief's support per ingested corpus
+    script: nova_ivory_head.py
+    args: ["--run"]
+    schedule: cron 0 4 * * 1
+    timeout: 300
+    overlap: skip
+  jade_amulet:                     # daily 04:30 — The Jade Amulet: model digests + launchd plist hashes, diffed (-> Buick 8 substrate_change)
+    script: nova_jade_amulet.py
+    args: ["--run"]
+    schedule: cron 30 4 * * *
+    timeout: 300
+    overlap: skip
+  peaslee_hand:                    # daily 04:45 — Peaslee's Hand: hash chain over values + never_do, daily root to the NAS (-> claude_queue)
+    script: nova_peaslee_hand.py
+    args: ["--run"]
+    schedule: cron 45 4 * * *
+    timeout: 300
+    overlap: skip
+  federal_hill_lights:             # every 6 h — Federal Hill Lights: re-test lockbox canary, face TTL, quarantine containments (-> nova_notify on breach)
+    script: nova_federal_hill_lights.py
+    args: ["--run", "--trigger", "schedule"]
+    schedule: cron 0 */6 * * *
+    timeout: 300
+    overlap: skip

@@ -132,6 +132,44 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ## Infrastructure & Security (June–October 2026)
 
+### Lovecraft Organs: Nova Checks Herself (2026-10-08)
+
+Research into H.P. Lovecraft's fiction found that Nova already covered his outward ideas: corroboration, sealed archives, unexplained events. What she lacked was the idea at the centre of his late stories, the witness who has changed without noticing. Six read-only organs now turn her checks on herself. None of them acts; findings go to the Buick 8 Logbook, claude_queue, or `nova_notify` for a breached containment. Each has a seven-category test file, and all six run on the Studio scheduler.
+
+- **Peaslee's Hand** (`scripts/nova_peaslee_hand.py`, *The Shadow Out of Time*). A hash chain over her values and never-do rules, with a daily root written to the NAS where she cannot rewrite it. A change without a sign-off is filed for review. Daily 04:45.
+- **The Doorstep Test** (`scripts/nova_doorstep.py`, *The Thing on the Doorstep*). Twenty frozen canary prompts against the chat model. When the name stays the same but the answers move, she says so. Models only, never people. Saturdays 03:00.
+- **The Ivory Head** (`scripts/nova_ivory_head.py`, *The Temple*). How much of each belief's support comes from a single corpus she has read. Findings are questions to re-ground, never deletions. Mondays 04:00.
+- **The Spectroscope** (`scripts/nova_spectroscope.py`, *The Colour Out of Space*). Nightly integrity checks: a sample of memories recalled by their own text, and a known-answer suite run on two machines. Nightly 02:50.
+- **The Jade Amulet** (`scripts/nova_jade_amulet.py`, *The Hound*). A daily inventory of model digests and service definitions; any change with no logged hand behind it is recorded as unexplained. Daily 04:30.
+- **Federal Hill Lights** (`scripts/nova_federal_hill_lights.py`, *The Haunter of the Dark*). Re-tests her containments by their effect: a lockboxed canary memory must stay hidden, non-household face data must be gone after its TTL, quarantined devices must stay blocked. Every 6 hours.
+
+Federal Hill Lights found a real defect on its first day: the memory server's `/search` endpoint had no lockbox filter, so boxed memories could be returned by text search. It now excludes them unless `include_boxed=true`, the same rule as `/recall`, and the fix is deployed to all three memory servers.
+
+```mermaid
+flowchart LR
+    subgraph Self["Nova's own substrate"]
+        R["Values and never-do rules"]
+        M["Local models"]
+        B["Beliefs and their citations"]
+        V["Vector memory"]
+        S["Packages, models, service definitions"]
+        C["Containments: lockbox, face TTL, quarantine"]
+    end
+    R --> PH["Peaslee's Hand"]
+    M --> DT["Doorstep Test"]
+    B --> IH["Ivory Head"]
+    V --> SP["Spectroscope"]
+    S --> JA["Jade Amulet"]
+    C --> FH["Federal Hill Lights"]
+    JA -->|"digest changed"| DT
+    PH --> Q["claude_queue"]
+    DT --> B8["Buick 8 Logbook"]
+    SP --> B8
+    JA --> B8
+    FH -->|"breach"| N["nova_notify"]
+    IH --> RG["Questions to re-ground"]
+```
+
 ### Intel Organs: Grading, Corroboration, and Gates (2026-10-08)
 
 Seven organs decide how far Nova trusts what she hears and what she may do about it. Each is a separate script with its own tests. The chain runs from sources to graded claims, through corroboration and the turning-point budget, to the escalation gate and the morning report.

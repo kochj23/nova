@@ -872,10 +872,14 @@ async def text_search(
     n: int = Query(10, ge=1, le=50),
     source: Optional[str] = Query(None),
     mode: str = Query("auto"),
+    include_boxed: bool = Query(False),
 ):
-    """Text search. mode=fts uses tsvector (fast), mode=ilike uses pattern match, mode=auto tries FTS first."""
+    """Text search. mode=fts uses tsvector (fast), mode=ilike uses pattern match, mode=auto tries FTS first.
+    Boxed memories are excluded unless include_boxed=true, the same rule as /recall (found by
+    Federal Hill Lights, 2026-10-08: /search had no lockbox filter)."""
     if not q.strip():
         raise HTTPException(status_code=400, detail="q cannot be empty")
+    boxed = "" if include_boxed else " " + BOXED_CLAUSE
 
     async with _pg_pool.acquire() as conn:
         rows = []
@@ -886,7 +890,7 @@ async def text_search(
                     rows = await conn.fetch(
                         "SELECT id, text, metadata, source, created_at, "
                         "ts_rank(tsv, plainto_tsquery('english', $1)) as rank "
-                        "FROM memories WHERE tsv @@ plainto_tsquery('english', $1) AND source = $2 "
+                        "FROM memories WHERE tsv @@ plainto_tsquery('english', $1) AND source = $2" + boxed + " "
                         "ORDER BY rank DESC LIMIT $3",
                         q, source, n
                     )
@@ -894,7 +898,7 @@ async def text_search(
                     rows = await conn.fetch(
                         "SELECT id, text, metadata, source, created_at, "
                         "ts_rank(tsv, plainto_tsquery('english', $1)) as rank "
-                        "FROM memories WHERE tsv @@ plainto_tsquery('english', $1) "
+                        "FROM memories WHERE tsv @@ plainto_tsquery('english', $1)" + boxed + " "
                         "ORDER BY rank DESC LIMIT $2",
                         q, n
                     )
@@ -906,13 +910,13 @@ async def text_search(
             if source:
                 rows = await conn.fetch(
                     "SELECT id, text, metadata, source, created_at FROM memories "
-                    "WHERE text ILIKE $1 AND source = $2 ORDER BY created_at DESC LIMIT $3",
+                    "WHERE text ILIKE $1 AND source = $2" + boxed + " ORDER BY created_at DESC LIMIT $3",
                     pattern, source, n
                 )
             else:
                 rows = await conn.fetch(
                     "SELECT id, text, metadata, source, created_at FROM memories "
-                    "WHERE text ILIKE $1 ORDER BY created_at DESC LIMIT $2",
+                    "WHERE text ILIKE $1" + boxed + " ORDER BY created_at DESC LIMIT $2",
                     pattern, n
                 )
 
