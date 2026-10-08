@@ -205,6 +205,8 @@ REQUIRED_MOUNTS = [
 # was a no-op that was still logged as "Restarted" ~1,880x/day each. Only agents whose plist is
 # installed are watched (see _check_subagent_heartbeats).
 SUBAGENTS = ["sentinel"]
+SUBAGENT_RESTART_ATTEMPTS = 3      # kickstart retries (transient launchd errors / timeouts)
+SUBAGENT_RESTART_BACKOFF_S = 1.0   # linear backoff: 1s, 2s
 
 # Tasks that must not be interrupted mid-run
 PROTECTED_TASK_PATTERNS = [
@@ -2040,15 +2042,22 @@ def _restart_subagent(name: str) -> bool:
     where com.nova.agent-* do not exist, so it silently did nothing.)
     """
     label = f"gui/{os.getuid()}/com.nova.agent-{name}"
-    try:
-        r = subprocess.run(["launchctl", "kickstart", "-k", label],
-                           capture_output=True, text=True, timeout=15)
-        if r.returncode == 0:
-            return True
-        log(f"Restart of subagent {name} failed (rc={r.returncode}): {(r.stderr or r.stdout).strip()[:160]}",
-            level=LOG_ERROR, source="big-brother")
-    except Exception as e:
-        log(f"Failed to restart subagent {name}: {e}", level=LOG_ERROR, source="big-brother")
+    for attempt in range(1, SUBAGENT_RESTART_ATTEMPTS + 1):
+        try:
+            r = subprocess.run(["launchctl", "kickstart", "-k", label],
+                               capture_output=True, text=True, timeout=15)
+            if r.returncode == 0:
+                return True
+            err = f"rc={r.returncode}: {(r.stderr or r.stdout).strip()[:160]}"
+            if r.returncode == 113:       # "Could not find service" — not transient, don't retry
+                attempt = SUBAGENT_RESTART_ATTEMPTS
+        except Exception as e:
+            err = str(e)[:160]
+        if attempt >= SUBAGENT_RESTART_ATTEMPTS:
+            log(f"Restart of subagent {name} failed after {attempt} attempt(s) ({err})",
+                level=LOG_ERROR, source="big-brother")
+            return False
+        time.sleep(SUBAGENT_RESTART_BACKOFF_S * attempt)
     return False
 
 
