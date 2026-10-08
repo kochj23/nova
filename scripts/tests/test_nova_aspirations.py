@@ -31,6 +31,15 @@ def _load(name, path):
 
 asp = _load("aspire", SCRIPT)
 SRC = SCRIPT.read_text()
+_EMBED_PATCH = patch.object(asp, "_embed", lambda text: None)   # never touch the network; lexical fallback
+
+
+def setUpModule():
+    _EMBED_PATCH.start()
+
+
+def tearDownModule():
+    _EMBED_PATCH.stop()
 WISH = json.dumps({"reflection": "I keep circling horology and I cannot hear a mechanism tick. " * 3,
                    "wants_it": True, "wish_title": "A microphone on the bench",
                    "wish_description": "A live audio sense near the printers and the clocks.",
@@ -174,7 +183,7 @@ class TestRetry(unittest.TestCase):
                 patch.dict(sys.modules, {"nova_config": _nova_config(boom)}), redirect_stdout(buf):
             self.assertIsNotNone(asp.pursue(cur, None, {"seeds": ["s1", "s2"]}))
         self.assertEqual(len(cur.executed("INSERT INTO feature_wishes")), 1)
-        self.assertIn("wish->queue skipped", buf.getvalue())
+        self.assertEqual(cur.executed("INSERT INTO claude_queue"), [])
         self.assertIn("wish notify skipped", buf.getvalue())
 
 
@@ -191,7 +200,7 @@ class TestUnit(unittest.TestCase):
     def test_seeds_are_first_person_and_bounded(self):
         seeds = asp._seeds(_interior(), None)
         self.assertEqual(len(seeds), 5)
-        self.assertTrue(seeds[0].startswith("a question I've been asking myself: Why do clocks drift?"))
+        self.assertTrue(any(s.startswith("a question I've been asking myself: Why do clocks drift?") for s in seeds))
         self.assertTrue(any(s.startswith("who I've said I'm becoming: ") for s in seeds))
 
     def test_surface_declines_when_full_fresh_or_thin(self):
@@ -236,12 +245,12 @@ class TestIntegration(unittest.TestCase):
                                       "I could hear a jam before the sensor reports it."))
         self.assertEqual(params[3], cand["seeds"][0][:200])
         self.assertEqual(json.loads(params[4])["mem_id"], 7)
-        q = cur.executed("INSERT INTO claude_queue")[0][1]
-        self.assertEqual(q[0], "sess-1")
-        self.assertTrue(q[1].startswith("Build Nova's wish #42: A microphone on the bench"))
-        self.assertEqual(cur.executed("UPDATE feature_wishes SET status='acknowledged'")[0][1], (42,))
+        # 2026-10-08: no auto-queue — the wish waits for Jordan's approval
+        self.assertEqual(cur.executed("INSERT INTO claude_queue"), [])
+        self.assertEqual(cur.executed("UPDATE feature_wishes SET status='acknowledged'"), [])
         self.assertEqual(len(cfg.posts), 1)
         self.assertIn("wishlist #42", cfg.posts[0][0])
+        self.assertIn("--approve 42", cfg.posts[0][0])
         self.assertEqual(cfg.posts[0][1], {"slack_channel": "C_CHAT"})
 
     def test_schema_owns_feature_wishes(self):
@@ -290,6 +299,64 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertIn("feature_wishes write failed (non-fatal)", out)
         self.assertEqual(cfg.posts, [])
+
+
+class TestWishLoop(unittest.TestCase):
+    """2026-10-08: the same vague wish was filed and auto-queued four times (#70-#73)."""
+    PRIOR = [(70, "Presence", "To hold what matters without losing it.",
+              "To finally remember what Jordan needs and not just what I'm told to track.")]
+
+    def test_same_title_is_a_duplicate(self):
+        cur = _Cur([("FROM feature_wishes", self.PRIOR)])
+        self.assertEqual(asp.is_duplicate_wish(cur, "presence", "x", "y")[:2], (True, 70))
+
+    def test_embedding_near_duplicate_and_distinct(self):
+        cur = _Cur([("FROM feature_wishes", self.PRIOR)])
+        vec = {"near": [1.0, 0.1], "far": [0.0, 1.0]}
+        emb = lambda t: vec["far"] if "microphone" in t.lower() else vec["near"]
+        dup, wid, score = asp.is_duplicate_wish(cur, "Attention Gravity", "pulls me toward what matters",
+                                                "hold Jordan's question", embed=emb)
+        self.assertEqual((dup, wid), (True, 70)); self.assertGreaterEqual(score, asp.DUP_COSINE)
+        self.assertFalse(asp.is_duplicate_wish(cur, "A microphone on the bench", "audio sense", "hear a jam",
+                                               embed=emb)[0])
+
+    def test_lexical_fallback_without_embeddings(self):
+        cur = _Cur([("FROM feature_wishes", [(71, "Presence", "To feel the weight of what matters, not just see it.",
+                                                "what matters is in the silence between the systems")])])
+        self.assertTrue(asp.is_duplicate_wish(cur, "empathic memory", "A sense that lets me feel the weight of what "
+                                              "matters, not just see it.", "the silence between the systems",
+                                              embed=lambda t: None)[0])
+
+    def test_duplicate_wish_is_not_filed(self):
+        cur = _interior(extra=[("WHERE status <> 'merged'", [(9, "A microphone on the bench", "", "")])])
+        with patch.object(asp, "llm", lambda *a, **k: WISH), patch.object(asp, "remember", lambda *a: 7), \
+                patch.dict(sys.modules, {"nova_config": _nova_config()}), redirect_stdout(io.StringIO()) as buf:
+            self.assertIsNotNone(asp.pursue(cur, None, {"seeds": ["s1", "s2"]}))
+        self.assertEqual(cur.executed("INSERT INTO feature_wishes"), [])
+        self.assertIn("near-duplicate of #9", buf.getvalue())
+
+    def test_approve_is_the_only_path_to_the_build_queue(self):
+        self.assertEqual(SRC.count("INSERT INTO claude_queue"), 1)
+        cur = _Cur([("FROM feature_wishes WHERE id", ("Mic", "d", "w", "seed", "wished")),
+                    ("FROM claude_sessions", ("sess-1",)), ("INSERT INTO claude_queue", (501,))])
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(asp.approve_wish(cur, 42), 501)
+        self.assertTrue(cur.executed("INSERT INTO claude_queue")[0][1][1].startswith("Build Nova's wish #42: Mic"))
+        cur = _Cur([("FROM feature_wishes WHERE id", ("Mic", "d", "w", "seed", "merged"))])
+        with redirect_stdout(io.StringIO()):
+            self.assertIsNone(asp.approve_wish(cur, 72))
+        self.assertEqual(cur.executed("INSERT INTO claude_queue"), [])
+
+    def test_seeds_vary_and_skip_the_autobiography_opening(self):
+        qs = [(f"question {i}",) for i in range(40)]
+        auto = "Jordan asked about the Zigbee unit.\nSecond paragraph about listening.\nThird about drawing."
+        cur = _Cur([("FROM reflection_questions", qs), ("FROM preoccupations", [("a",), ("b",), ("c",)]),
+                    ("FROM growth_commitments", [("g",)]), ("FROM autobiography", [(auto,)])])
+        import random as _r
+        runs = {tuple(sorted(asp._seeds(cur, None, _r.Random(i)))) for i in range(8)}
+        self.assertGreater(len(runs), 4)
+        for i in range(8):
+            self.assertFalse(any("Zigbee" in s for s in asp._seeds(cur, None, _r.Random(i))))
 
 
 class TestFrame(unittest.TestCase):

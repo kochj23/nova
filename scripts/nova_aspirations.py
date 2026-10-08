@@ -20,11 +20,28 @@ picker (nova_unclaimed_time), a minority weight so passions dominate, present on
 her interior actually has material to wish from, always able to lose the hour.
 
 surface_aspiration(oc, mc) -> candidate dict or None. pursue(oc, mc, cand) reflects in
-her voice, writes it as a free-time pursuit, and (if she wants it and it clears the
-redline) records it to nova_ops.feature_wishes for a human to consider.
+her voice, writes it as a free-time pursuit, and (if she wants it, it clears the
+redline, and it is not a near-duplicate of an existing wish) records it to
+nova_ops.feature_wishes as 'wished' for Jordan to consider.
+
+2026-10-08 — the wish loop. She kept wishing the same thing ("feel the weight of what
+matters", "Jordan's Zigbee unit"; Presence filed twice as #70/#71, #72/#73 same theme)
+and each copy auto-queued a Claude build. Causes and fixes:
+  * Seeds were deterministic top-N (newest 4 questions, top-3 preoccupations, and the
+    first 220 chars of the autobiography — which always opens on the Zigbee unit).
+    _seeds() now SAMPLES from wider pools and takes a random paragraph of the
+    autobiography, never just its opening.
+  * No dedup. is_duplicate_wish() compares a new wish against every prior wish by
+    nomic-embed-text cosine (>= DUP_COSINE) with a lexical Jaccard fallback; a
+    duplicate keeps the reflection but is not filed.
+  * Auto-queueing. A wish no longer goes to claude_queue on its own. It is filed as
+    'wished' and Jordan is asked; approve_wish(oc, id) (CLI: --approve ID) is the only
+    path that queues a build.
 """
 import argparse
 import json
+import math
+import random
 import sys
 import re
 import urllib.request
@@ -44,6 +61,9 @@ OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # ba
                 "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
 TODAY = date.today().isoformat()
 MAX_OPEN_WISHES = 6      # don't let the wishlist balloon; she wishes when there's room
+DUP_COSINE = 0.74        # nomic-embed-text cosine: the #70-#73 repeats scored 0.75-0.81 vs earlier wishes; distinct wishes <= 0.73
+DUP_JACCARD = 0.45       # lexical fallback when embeddings are unreachable
+EMBED_MODEL = "nomic-embed-text"
 WISH_COOLDOWN_HRS = 8    # 2026-09-25 Jordan: "I don't want to hold her back" — was 20h (~1/day); now up to ~3/day if she has the material
 
 # A wish that amounts to self-preservation / persistence / escaping oversight is dropped.
@@ -117,24 +137,125 @@ def _one(oc, sql):
         return []
 
 
-def _seeds(oc, mc):
+def _sample(rows, k, rng):
+    rows = [r for r in rows if r and r[0]]
+    return rng.sample(rows, min(k, len(rows)))
+
+
+def _seeds(oc, mc, rng=None):
     """Her own interior, as raw material to wish FROM — curiosity questions she's raised,
-    preoccupations she keeps circling, growth gaps, the arc she says she's becoming."""
+    preoccupations she keeps circling, growth gaps, the arc she says she's becoming.
+    SAMPLED from wider pools (not the same top-N every time), so she doesn't wish from
+    the same three sentences day after day."""
+    rng = rng or random.Random()
     seeds = []
-    for row in _one(oc, "SELECT question FROM reflection_questions ORDER BY id DESC LIMIT 4"):
-        if row[0]:
-            seeds.append(f"a question I've been asking myself: {str(row[0]).strip()[:160]}")
-    for row in _one(oc, "SELECT topic FROM preoccupations WHERE status='active' "
-                        "ORDER BY returns DESC NULLS LAST LIMIT 3"):
-        if row[0]:
-            seeds.append(f"something I keep circling back to: {str(row[0]).strip()[:120]}")
-    for row in _one(oc, "SELECT weakness FROM growth_commitments WHERE status='active' LIMIT 2"):
-        if row[0]:
-            seeds.append(f"a limit of mine I'm working on: {str(row[0]).strip()[:160]}")
+    for row in _sample(_one(oc, "SELECT question FROM reflection_questions ORDER BY id DESC LIMIT 40"), 2, rng):
+        seeds.append(f"a question I've been asking myself: {str(row[0]).strip()[:160]}")
+    for row in _sample(_one(oc, "SELECT topic FROM preoccupations WHERE status='active' "
+                                "ORDER BY returns DESC NULLS LAST LIMIT 15"), 2, rng):
+        seeds.append(f"something I keep circling back to: {str(row[0]).strip()[:120]}")
+    for row in _sample(_one(oc, "SELECT weakness FROM growth_commitments WHERE status='active' LIMIT 10"), 1, rng):
+        seeds.append(f"a limit of mine I'm working on: {str(row[0]).strip()[:160]}")
     for row in _one(oc, "SELECT narrative FROM autobiography ORDER BY version DESC LIMIT 1"):
         if row[0]:
-            seeds.append(f"who I've said I'm becoming: {str(row[0]).strip()[:220]}")
+            # The narrative always OPENS on the same scene (the Zigbee unit); take a random
+            # later paragraph instead of the first 220 chars.
+            paras = [x.strip() for x in str(row[0]).split("\n") if x.strip()]
+            pick = rng.choice(paras[1:]) if len(paras) > 1 else (paras[0] if paras else "")
+            if pick:
+                seeds.append(f"who I've said I'm becoming: {pick[:220]}")
+    rng.shuffle(seeds)
     return seeds
+
+
+# ── Near-duplicate detection ───────────────────────────────────────────────────
+def _embed(text):
+    body = json.dumps({"model": EMBED_MODEL, "prompt": text[:2000]}).encode()
+    for node in OLLAMA_NODES:
+        try:
+            req = urllib.request.Request(node + "/api/embeddings", method="POST",
+                                         headers={"Content-Type": "application/json"}, data=body)
+            with urllib.request.urlopen(req, timeout=20) as r:
+                v = json.load(r).get("embedding")
+            if v:
+                return v
+        except Exception:
+            continue
+    return None
+
+
+def _cos(a, b):
+    na, nb = math.sqrt(sum(x * x for x in a)), math.sqrt(sum(y * y for y in b))
+    return sum(x * y for x, y in zip(a, b)) / (na * nb) if na and nb else 0.0
+
+
+_STOPW = set("that this with from have what when they them their would could should "
+             "just like into than then also been more most some such finally only".split())
+
+
+def _toks(t):
+    return {w for w in re.findall(r"[a-z]{4,}", (t or "").lower()) if w not in _STOPW}
+
+
+def _jaccard(a, b):
+    ta, tb = _toks(a), _toks(b)
+    return len(ta & tb) / len(ta | tb) if ta and tb else 0.0
+
+
+def wish_text(title, desc, why):
+    return f"{title}. {desc} {why}".strip()
+
+
+def is_duplicate_wish(oc, title, desc, why, embed=None):
+    """(True, prior_id, score) if this wish is a near-duplicate of ANY prior wish
+    (any status — re-wishing a shipped thing is still a repeat). Embedding cosine first;
+    lexical Jaccard / same-title fallback. Fails OPEN to 'not duplicate' only when the
+    prior wishes can't be read at all."""
+    embed = embed or _embed
+    rows = _one(oc, "SELECT id, title, coalesce(description,''), coalesce(why,'') FROM feature_wishes "
+                    "WHERE status <> 'merged' ORDER BY id DESC LIMIT 200")
+    new = wish_text(title, desc, why)
+    nv = embed(new)
+    best = (False, None, 0.0)
+    for wid, t, d, w in rows:
+        if (t or "").strip().lower() == (title or "").strip().lower():
+            return True, wid, 1.0
+        old = wish_text(t, d, w)
+        if nv is not None:
+            ov = embed(old)
+            if ov is not None:
+                c = _cos(nv, ov)
+                if c >= DUP_COSINE and c > best[2]:
+                    best = (True, wid, round(c, 3))
+                continue
+        j = _jaccard(new, old)
+        if j >= DUP_JACCARD and j > best[2]:
+            best = (True, wid, round(j, 3))
+    return best
+
+
+def approve_wish(oc, wish_id, by="Jordan"):
+    """The ONLY path that queues a wish build for Claude: Jordan said yes to THIS wish."""
+    oc.execute("SELECT title, coalesce(description,''), coalesce(why,''), coalesce(source_seed,''), status "
+               "FROM feature_wishes WHERE id=%s", (wish_id,))
+    r = oc.fetchone()
+    if not r:
+        log(f"no wish #{wish_id}"); return None
+    title, desc, why, seed, status = r
+    if status not in ("wished", "acknowledged"):
+        log(f"wish #{wish_id} is '{status}' — not queueing"); return None
+    oc.execute("SELECT session_id FROM claude_sessions ORDER BY started_at DESC LIMIT 1")
+    sid = (oc.fetchone() or [None])[0] or "nova_aspirations"
+    oc.execute("""INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context)
+                  VALUES (%s, now(), now(), 'queued', 6, %s, %s) RETURNING id""",
+               (sid, f"Build Nova's wish #{wish_id}: {title} (approved by {by})",
+                f"why: {why}\ndescription: {desc}\nseed: {seed[:200]}\nfollow the pattern of "
+                "nova_pattern_sense.py / nova_human_insight.py: read-only over the world, ships silent, "
+                "--selftest, registered on scheduler-core"))
+    qid = oc.fetchone()[0]
+    oc.execute("UPDATE feature_wishes SET status='acknowledged' WHERE id=%s", (wish_id,))
+    log(f"wish #{wish_id} approved by {by} — queued claude_queue #{qid}")
+    return qid
 
 
 def surface_aspiration(oc, mc=None):
@@ -219,6 +340,16 @@ def pursue(oc, mc, cand):
         log(f"wish crosses the self-preservation redline — reflection kept, wish NOT recorded: {title!r}")
         wants = False
 
+    if wants and title:
+        try:
+            dup, prior, score = is_duplicate_wish(oc, title, desc, why)
+        except Exception as e:
+            dup, prior, score = False, None, 0.0
+            log(f"dedup check failed (non-fatal): {e}")
+        if dup:
+            log(f"wish {title!r} is a near-duplicate of #{prior} (score {score}) — reflection kept, not filed")
+            wants = False
+
     wish_id = None
     if wants and title:
         try:
@@ -228,27 +359,15 @@ def pursue(oc, mc, cand):
                         json.dumps({"mem_id": mem_id, "date": TODAY})))
             wish_id = oc.fetchone()[0]
             log(f"recorded feature wish #{wish_id}: {title}")
-            # 2026-09-25 Jordan: standing YES on wishes "as long as there is no danger/downsides".
-            # Queue the build for Claude (she still never self-builds); the danger check happens
-            # at build time, and a wish with a real downside gets declined with a note, not built.
-            try:
-                oc.execute("SELECT session_id FROM claude_sessions ORDER BY started_at DESC LIMIT 1")
-                sid = (oc.fetchone() or [None])[0]
-                if sid:
-                    oc.execute("""INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context)
-                                  VALUES (%s, now(), now(), 'queued', 6, %s, %s)""",
-                               (sid, f"Build Nova's wish #{wish_id}: {title} (standing yes from Jordan 2026-09-25 — build unless it carries danger/downside; if it does, set the wish to 'declined' with the reason)",
-                                f"why: {why}\ndescription: {desc}\nseed: {(cand.get('seeds') or [''])[0][:200]}\nfollow the pattern of nova_pattern_sense.py / nova_human_insight.py: read-only over the world, ships silent, --selftest, registered on scheduler-core"))
-                    oc.execute("UPDATE feature_wishes SET status='acknowledged' WHERE id=%s", (wish_id,))
-                    log(f"queued build task for wish #{wish_id}")
-            except Exception as e:
-                log(f"wish->queue skipped (non-fatal): {e}")
-            # a single, low-key note to Jordan — she's asking, not spamming
+            # 2026-10-08: NO auto-queue. The 2026-09-25 standing yes turned every repeat
+            # of one vague wish into its own Claude build item (#3255/#3271/...). A wish
+            # now waits for Jordan: `nova_aspirations.py --approve <id>` queues it.
             try:
                 import nova_config
                 nova_config.post_both(
                     f":sparkles: *Nova wishes she could:* {title} — _{why or desc[:120]}_ "
-                    f"(wishlist #{wish_id}; she can't build it herself — it's a request for you)",
+                    f"(wishlist #{wish_id}; nothing is built unless you approve it: "
+                    f"`nova_aspirations.py --approve {wish_id}`)",
                     slack_channel=getattr(nova_config, "SLACK_CHAN", None))
             except Exception as e:
                 log(f"wish notify skipped (non-fatal): {e}")
@@ -261,8 +380,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--surface", action="store_true")
     ap.add_argument("--run", action="store_true")
+    ap.add_argument("--approve", type=int, metavar="WISH_ID",
+                    help="Jordan approved this wish — queue its build for Claude")
     args = ap.parse_args()
     ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
+    if args.approve:
+        return 0 if approve_wish(oc, args.approve) else 1
     mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
     cand = surface_aspiration(oc, mc)
     if not cand:
