@@ -47,11 +47,21 @@ def log(m):
     print(f"[safety-guards {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
 
 
-def _ops_cursor():
+def _ops_cursor(attempts: int = 3, backoff: float = 0.5):
+    """PG cursor; retries a failed connect (transient pg-primary blip) with backoff, then raises
+    so every caller still fails CLOSED."""
+    import time
     import psycopg2
-    conn = psycopg2.connect(OPS_DSN, connect_timeout=4)
-    conn.autocommit = True
-    return conn.cursor()
+    for i in range(attempts):
+        try:
+            conn = psycopg2.connect(OPS_DSN, connect_timeout=4)
+            conn.autocommit = True
+            return conn.cursor()
+        except psycopg2.OperationalError as e:
+            if i == attempts - 1:
+                raise
+            log(f"pg connect failed (attempt {i + 1}/{attempts}): {e}")
+            time.sleep(backoff * (2 ** i))
 
 
 def kill_engaged() -> bool:
@@ -537,13 +547,18 @@ def report_block(oc, *, source: str, action: str, reason: str, guard: str,
 def _notify(msg: str, channel: str = None) -> None:
     if os.environ.get("NOVA_GUARDS_NO_SLACK"):
         return
-    try:
-        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-        import nova_config
-        nova_config.post_both(msg, slack_channel=channel or getattr(nova_config, "SLACK_NOTIFY", None)
-                              or nova_config.SLACK_CHAN)
-    except Exception as e:  # noqa: BLE001
-        log(f"slack skipped: {e}")
+    import time
+    for i in range(3):   # retry with backoff; a guard block must not go unreported on one blip
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import nova_config
+            nova_config.post_both(msg, slack_channel=channel or getattr(nova_config, "SLACK_NOTIFY", None)
+                                  or nova_config.SLACK_CHAN)
+            return
+        except Exception as e:  # noqa: BLE001
+            log(f"slack attempt {i + 1}/3 failed: {e}")
+            if i < 2:
+                time.sleep(0.5 * (2 ** i))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

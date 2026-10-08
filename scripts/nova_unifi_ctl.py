@@ -26,8 +26,15 @@ def _post(payload: dict) -> dict:
     if getattr(u, "_api_key", None):
         headers["X-API-Key"] = u._api_key
     req = urllib.request.Request(CMD_URL, data=data, headers=headers, method="POST")
-    with u._opener.open(req, timeout=15) as r:
-        return json.loads(r.read().decode() or "{}")
+    for i in range(3):   # block-sta/unblock-sta are idempotent: retry a transport error with backoff
+        try:
+            with u._opener.open(req, timeout=15) as r:
+                return json.loads(r.read().decode() or "{}")
+        except (OSError, ValueError) as e:
+            if i == 2:
+                raise
+            print(f"[unifi-ctl] UDM post failed (attempt {i + 1}/3): {e}", file=sys.stderr)
+            time.sleep(1.0 * (2 ** i))
 
 
 def find_client(mac: str) -> dict | None:

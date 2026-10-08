@@ -40,6 +40,8 @@ def tag_private(metadata: dict | None, kind: str = "face") -> dict:
 
 
 def is_face_output(memory: dict) -> bool:
+    if isinstance(memory, str):          # a bare-text memory row: judge it by its text shape
+        return bool(_FACE_TEXT_RX.search(memory))
     if not isinstance(memory, dict):
         return False
     src = str(memory.get("source") or "").lower().removeprefix("quarantine:")
