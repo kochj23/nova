@@ -148,12 +148,22 @@ def llm(prompt, max_tokens=700, temperature=0.85):
     return ""
 
 
-def remember(text, source, metadata):
+def remember(text, source, metadata, attempts=3):
+    """POST to the memory server, retried (2 s, 4 s); re-raises after the last try so the run is
+    marked failed rather than losing the hour's note silently."""
+    import time as _t
     req = urllib.request.Request(
         f"{MEMSRV}/remember", method="POST", headers={"Content-Type": "application/json"},
         data=json.dumps({"text": text, "source": source, "metadata": metadata}).encode())
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.load(r).get("id")
+    for i in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return json.load(r).get("id")
+        except Exception as e:
+            if i == attempts - 1:
+                raise
+            print(f"[unclaimed] remember failed ({e}); retry {i + 1}", file=sys.stderr)
+            _t.sleep(2 * (i + 1))
 
 
 def recall(q, n=4, source=None):
@@ -440,12 +450,18 @@ def should_yield(tasks, now, window_s=YIELD_WINDOW_S, self_id=SELF_TASK):
 
 
 def yield_to_scheduled():
-    try:
-        with urllib.request.urlopen(f"{SCHED_URL}/tasks", timeout=5) as r:
-            tasks = json.load(r)
-    except Exception:
-        return None                      # no scheduler in reach (hand run) — her time is hers
     import time as _t
+    tasks = None
+    for i in range(2):   # one retry: a scheduler mid-restart should not hand her an hour it wanted back
+        try:
+            with urllib.request.urlopen(f"{SCHED_URL}/tasks", timeout=5) as r:
+                tasks = json.load(r)
+            break
+        except Exception:
+            if i == 0:
+                _t.sleep(1)
+    if tasks is None:
+        return None                      # no scheduler in reach (hand run) — her time is hers
     return should_yield(tasks, _t.time())
 
 

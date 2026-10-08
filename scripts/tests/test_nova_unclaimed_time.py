@@ -149,15 +149,15 @@ class TestPerformance(unittest.TestCase):
 
 
 class TestRetry(unittest.TestCase):
-    # RETRY GAP: yield_to_scheduled() — one GET to the scheduler; fails open (None = her time is hers).
+    # yield_to_scheduled() — 2 GETs to the scheduler (1 s apart); then fails open (None = her time is hers).
     def test_yield_fails_open_off_box(self):
         calls = []
 
         def boom(url, timeout=None):
             calls.append(url); raise OSError("connection refused")
-        with mock.patch.object(ut.urllib.request, "urlopen", boom):
+        with mock.patch.object(ut.urllib.request, "urlopen", boom), mock.patch("time.sleep"):
             self.assertIsNone(ut.yield_to_scheduled())
-        self.assertEqual(calls, [f"{ut.SCHED_URL}/tasks"])
+        self.assertEqual(calls, [f"{ut.SCHED_URL}/tasks"] * 2)
 
     def test_yield_with_scheduler_mocked(self):
         now = 1_000_000.0
@@ -180,11 +180,11 @@ class TestRetry(unittest.TestCase):
             self.assertEqual(ut.llm("p"), "")
         self.assertEqual(len(calls), len(ut.OLLAMA_NODES))
 
-    # RETRY GAP: remember() — one POST, no backoff and no catch; recall() fails open to [].
+    # remember() — 3 POSTs with backoff, then raises; recall() fails open to [].
     def test_remember_raises_and_recall_fails_open(self):
         def boom(req, timeout=None):
             raise OSError("memory server down")
-        with mock.patch.object(ut.urllib.request, "urlopen", boom):
+        with mock.patch.object(ut.urllib.request, "urlopen", boom), mock.patch("time.sleep"):
             with self.assertRaises(OSError):
                 ut.remember("t", "unclaimed", {})
             self.assertEqual(ut.recall("q"), [])
