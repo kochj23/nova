@@ -115,6 +115,14 @@ SKILLS = {
         topic="documentary", sources=["documentary"], recent_days=3, web=False,
         hint="documentary",
         focus="Name the two or three channels or films the transcripts come from and what each one actually shows or argues."),
+    "pursue-interest-aviation-ref": dict(   # coagency #148, approved 2026-10-08
+        topic="aviation ref", sources=["aviation_ref"], recent_days=3, web=False,
+        hint="aviation",
+        focus="Name the aircraft, airlines, airports or incidents the sources cover and the concrete facts about each."),
+    "pursue-interest-crime-drama": dict(   # coagency #149, approved 2026-10-08
+        topic="crime drama", sources=["crime_drama"], recent_days=7, web=False,
+        hint="crime drama",
+        focus="Name the shows and episodes the sources come from and what happens in each case."),
     "pursue-interest-nightly": dict(
         topic="nightly", meta=True, success="nightly"),
 }
@@ -693,7 +701,7 @@ def selftest() -> int:
     assert split_next("tail words. NEXT: read z")[1] == "read z"
     assert len(_SENT.split("Rabies in L.A. County [1]. A vote on Nov. 3 [2]. Done.")) == 3
     assert attach_cites("A rose. [1] B fell.[2][3]") == "A rose [1]. B fell [2][3]."
-    assert len(SKILLS) == 10
+    assert len(SKILLS) == 12
     print("selftest OK")
     return 0
 
