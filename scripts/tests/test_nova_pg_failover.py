@@ -39,6 +39,13 @@ def _args(**kw):
 
 
 class TestSecurity(unittest.TestCase):
+
+    def test_federal_hill_failover_probe_is_detached_and_non_fatal(self):
+        src = (Path(__file__).resolve().parent.parent / "nova_pg_failover.py").read_text()
+        i = src.index("nova_federal_hill_lights.py")
+        block = src[src.rindex("try:", 0, i):src.index("except Exception", i) + 120]
+        self.assertIn("start_new_session=True", block)      # never blocks the failover
+        self.assertIn("non-fatal", block)
     def test_no_hardcoded_credentials(self):
         pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
         self.assertIsNone(pat.search(SRC))

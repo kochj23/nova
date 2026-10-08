@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>net.digitalnoise.nova-federal-hill-lights-boot</string>
+  <!-- Federal Hill Lights, boot trigger: re-test every containment once when this Mac comes up
+       (RunAtLoad only). The every-6-h run lives in config/scheduler.yaml (federal_hill_lights);
+       the failover run is fired by nova_pg_failover.py promote. Deliberately launchd, not the
+       scheduler: it must run even if scheduler-core does not come back. StartInterval is not set. -->
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/sh</string>
+    <string>-c</string>
+    <string>sleep 180; exec /opt/homebrew/bin/python3 "__HOME__/.openclaw/scripts/nova_federal_hill_lights.py" --run --trigger boot</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>StandardOutPath</key><string>__HOME__/.openclaw/logs/nova_federal_hill_lights.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.openclaw/logs/nova_federal_hill_lights.log</string>
+</dict>
+</plist>

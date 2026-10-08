@@ -186,6 +186,14 @@ def cmd_promote(args):
         f"nova-core5 now has NO standby of its own — that's the next real gap to close.",
         slack_channel=nova_config.JORDAN_DM,
     )
+    # Federal Hill Lights: re-test every containment after the failover. Detached and best-effort —
+    # the probe must never delay or fail the failover itself.
+    try:
+        subprocess.Popen([sys.executable, str(Path(__file__).parent / "nova_federal_hill_lights.py"),
+                          "--run", "--trigger", "failover"], stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+    except Exception as e:  # noqa: BLE001
+        log(f"Federal Hill Lights probe not started (non-fatal): {e}")
     log("DONE. Slack alert sent.")
     return 0
 
