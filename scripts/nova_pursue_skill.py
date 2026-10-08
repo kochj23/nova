@@ -611,6 +611,19 @@ def pursue_once(oc, mc, card, cfg, topic, trigger, dry_run, allow_web=True):
     return res
 
 
+def _pg_connect(dsn, attempts=3, backoff=2.0):
+    """psycopg2.connect with retry + exponential backoff; raises after the last attempt."""
+    import psycopg2
+    for i in range(attempts):
+        try:
+            return psycopg2.connect(dsn, connect_timeout=10)
+        except psycopg2.OperationalError as e:
+            if i == attempts - 1:
+                raise
+            log(f"PG connect failed ({e}); retry {i + 1}")
+            time.sleep(backoff * (2 ** i))
+
+
 def run_skill(slug, oc=None, mc=None, trigger="manual", dry_run=False, force=False, now=None):
     """Run one approved skill. Returns {'handled': bool, ...}. handled=False means the caller
     (unclaimed time) should spend the hour its own way — retired, unknown, or outside its hours."""
@@ -619,9 +632,8 @@ def run_skill(slug, oc=None, mc=None, trigger="manual", dry_run=False, force=Fal
         return {"handled": False, "why": "unknown skill"}
     own = oc is None
     if own:
-        import psycopg2
-        ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
-        mem = psycopg2.connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
+        ops = _pg_connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
+        mem = _pg_connect(MEM_DSN); mem.autocommit = True; mc = mem.cursor()
     card = load_card(oc, slug)
     allowed = ("implemented", "proposed") if dry_run else ("implemented",)   # a dry run may preview an approved card
     if not card or card["status"] not in allowed:
