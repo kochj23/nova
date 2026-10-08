@@ -951,3 +951,64 @@ tasks:
     schedule: cron 45 19 * * *
     timeout: 180
     overlap: skip
+
+  # ---- 2026-10-08: Clancy intel organs (agent_docs nova-clancy-intel) ----
+  cardinal_score:                  # daily 05:50 — CARDINAL: re-grade every source from its track record + compromise detection (-> Buick 8 log)
+    script: nova_cardinal.py
+    args: ["--score"]
+    schedule: cron 50 5 * * *
+    timeout: 300
+    overlap: skip
+  intent_seed:                     # daily 05:45 — Commander's Intent upsert from live config (keeps Jordan's confirmations; enabling The Shine activates its grant)
+    script: nova_commanders_intent.py
+    args: ["--seed"]
+    schedule: cron 45 5 * * *
+    timeout: 120
+    overlap: skip
+  intent_review:                   # weekly Mon 10:00 — decay, stale/lapse grants, ONE Slack line asking Jordan to reconfirm what is due
+    script: nova_commanders_intent.py
+    args: ["--review"]
+    schedule: cron 0 10 * * 1
+    timeout: 120
+    overlap: skip
+  watch_turnover_0630:             # Watch Bill turnover (logged, never posted); the 07:02 Night Watch PDB reads it
+    script: nova_watch_bill.py
+    args: ["--turnover", "--watch", "0630"]
+    schedule: cron 30 6 * * *
+    timeout: 180
+    overlap: skip
+  watch_turnover_1800:
+    script: nova_watch_bill.py
+    args: ["--turnover", "--watch", "1800"]
+    schedule: cron 0 18 * * *
+    timeout: 180
+    overlap: skip
+  watch_turnover_2300:
+    script: nova_watch_bill.py
+    args: ["--turnover", "--watch", "2300"]
+    schedule: cron 0 23 * * *
+    timeout: 180
+    overlap: skip
+  hotwash_sweep:                   # 06:10 + 18:10 — blameless AARs for false alarms / missed events / wrong predictions / overreach (<24h)
+    script: nova_hotwash.py
+    args: ["--sweep"]
+    schedule: cron 10 6,18 * * *
+    timeout: 300
+    overlap: skip
+  hotwash_rollup:                  # weekly Sun 09:30 — fix items -> gated co-agency proposals (Jordan approves via slack_answers)
+    script: nova_hotwash.py
+    args: ["--rollup"]
+    schedule: cron 30 9 * * 0
+    timeout: 300
+    overlap: skip
+  action_audit:                    # daily 07:15 — red line "no unlogged actions": observed Slack posts / restarts vs every ledger (one Slack line if violations)
+    script: nova_action_audit.py
+    args: ["--audit"]
+    schedule: cron 15 7 * * *
+    timeout: 300
+    overlap: skip
+  face_retention:                  # daily 03:40 — purpose limitation: unknown / non-household face data older than the TTL is deleted (household + enrollments kept)
+    script: nova_face_retention.py
+    schedule: cron 40 3 * * *
+    timeout: 300
+    overlap: skip

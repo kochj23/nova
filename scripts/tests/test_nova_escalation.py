@@ -63,6 +63,14 @@ class TestSecurity(unittest.TestCase):
         self.assertFalse(d["allowed"])
         self.assertIn("MOLINK", d["reason"])
 
+    def test_only_jordan_marks_feedback(self):
+        with self.assertRaises(PermissionError):
+            E.feedback(Cur(), 1, "unneeded", "nova")
+        cur = Cur()
+        cur.rowcount = 1
+        self.assertTrue(E.feedback(cur, 1, "unneeded: routine", "jordan"))
+        self.assertTrue(any("feedback_by=%s WHERE id=%s" in s for s, _ in cur.sql))
+
     def test_preconsent_only_counts_for_life_safety(self):
         self.assertFalse(E.decide("alert", ONE, jordan=CALM, nova=OK, **dict(KW, preconsent=True))["allowed"])
 

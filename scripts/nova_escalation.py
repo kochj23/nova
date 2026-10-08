@@ -37,6 +37,7 @@ life-safety and CLOSED (held + logged) for everything else.
 Library: authorize(oc, source=, kind=, action_class=, item=, life_safety=, urgent=, ...) -> dict
          jordan_state(oc), nova_state(oc), molink_ask(oc, ref, text), molink_status(oc, ref)
 CLI:     --status (both states now)   --log [--hours 24]   --selftest   --help
+         --feedback LOG_ID --note "unneeded: ..." --by jordan   (feeds the hotwash overreach sweep)
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -80,6 +81,8 @@ CREATE TABLE IF NOT EXISTS escalation_log (
   life_safety boolean NOT NULL DEFAULT false,
   jordan_state jsonb, nova_state jsonb);
 CREATE INDEX IF NOT EXISTS escalation_log_ts ON escalation_log (ts DESC);
+ALTER TABLE escalation_log ADD COLUMN IF NOT EXISTS feedback text;
+ALTER TABLE escalation_log ADD COLUMN IF NOT EXISTS feedback_by text;
 """
 
 
@@ -348,6 +351,16 @@ def _record(oc, source, kind, action_class, d, item, life_safety, text) -> None:
             _rollback(oc)
 
 
+def feedback(oc, log_id: int, note: str, by: str) -> bool:
+    """Jordan's verdict on an escalation ('unneeded: ...' / 'right call'). Only jordan* may mark it;
+    'unneeded' rows become overreach hotwashes (nova_hotwash --sweep)."""
+    if not str(by).lower().startswith("jordan"):
+        raise PermissionError("only Jordan marks an escalation")
+    ensure_schema(oc)
+    oc.execute("UPDATE escalation_log SET feedback=%s, feedback_by=%s WHERE id=%s", (note[:500], by, int(log_id)))
+    return oc.rowcount == 1
+
+
 def deferred_since(oc, since: datetime) -> list:
     """Held/deferred escalations since `since` — the Watch Bill turnover and the PDB read these."""
     try:
@@ -472,6 +485,9 @@ def main(argv=None) -> int:
     ap.add_argument("--status", action="store_true")
     ap.add_argument("--log", action="store_true")
     ap.add_argument("--hours", type=int, default=24)
+    ap.add_argument("--feedback", type=int, metavar="LOG_ID", help="mark an escalation (with --note, --by jordan)")
+    ap.add_argument("--note", default="")
+    ap.add_argument("--by", default="")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
@@ -479,6 +495,9 @@ def main(argv=None) -> int:
     import nova_watch_common as W
     conn = W.connect()
     oc = conn.cursor()
+    if a.feedback:
+        print("ok" if feedback(oc, a.feedback, a.note or "unneeded", a.by) else "no such escalation")
+        return 0
     if a.log:
         ensure_schema(oc)
         oc.execute("SELECT ts, source, kind, action_class, allowed, deferred, keys, reason FROM escalation_log "
