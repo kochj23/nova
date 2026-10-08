@@ -112,6 +112,30 @@ def write_climate(room, payload):
             (room, temp_f, hum, lux, bool(motion) if motion is not None else None))
 
 
+WRITE_ATTEMPTS = 3
+WRITE_BACKOFF_S = 0.5
+
+
+def _with_retry(fn, *args):
+    """Run a PG write up to WRITE_ATTEMPTS times with exponential backoff (0.5 s, 1 s); a failure drops
+    the cached connection so the next attempt reconnects. Each failure is printed; the last re-raises."""
+    global _conn
+    for attempt in range(1, WRITE_ATTEMPTS + 1):
+        try:
+            return fn(*args)
+        except Exception as e:
+            print(f"[fp300-bridge] {fn.__name__} attempt {attempt}/{WRITE_ATTEMPTS} failed: {e}", flush=True)
+            try:
+                if _conn is not None:
+                    _conn.close()
+            except Exception:
+                pass
+            _conn = None
+            if attempt == WRITE_ATTEMPTS:
+                raise
+            time.sleep(WRITE_BACKOFF_S * 2 ** (attempt - 1))
+
+
 def on_message(client, userdata, msg):
     device = msg.topic.replace("zigbee2mqtt/", "")
     room = ZIGBEE_PRESENCE.get(device)
@@ -124,9 +148,9 @@ def on_message(client, userdata, msg):
     try:
         if "presence" in payload:
             present = bool(payload["presence"])
-            write_presence(room, present, payload)
+            _with_retry(write_presence, room, present, payload)
             maybe_notify_presence(room, present)
-        write_climate(room, payload)
+        _with_retry(write_climate, room, payload)
     except Exception as e:
         print(f"[fp300-bridge] write error for {device}/{room}: {e}", flush=True)
 
@@ -140,7 +164,15 @@ def main():
             time.sleep(2)
     client = mqtt.Client()
     client.on_message = on_message
-    client.connect(MQTT_HOST, MQTT_PORT, 60)
+    for attempt in range(1, 4):              # broker may still be starting: 3 tries, 2/4 s backoff
+        try:
+            client.connect(MQTT_HOST, MQTT_PORT, 60)
+            break
+        except Exception as e:
+            print(f"[fp300-bridge] MQTT connect attempt {attempt}/3 failed: {e}", flush=True)
+            if attempt == 3:
+                raise
+            time.sleep(2 * 2 ** (attempt - 1))
     for dev in ZIGBEE_PRESENCE:
         client.subscribe(f"zigbee2mqtt/{dev}")
     print(f"[fp300-bridge] watching {len(ZIGBEE_PRESENCE)} FP300(s): "

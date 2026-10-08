@@ -123,7 +123,9 @@ class TestRetry(unittest.TestCase):
             def cursor(self):
                 raise RuntimeError("pg gone")
         zb._conn = Boom()
-        self.assertIsNone(zb.on_message(None, None, _msg("office_presence", {"presence": True})))
+        with patch.object(zb.psycopg2, "connect", side_effect=zb.psycopg2.OperationalError("down")), \
+             patch.object(zb.time, "sleep"):
+            self.assertIsNone(zb.on_message(None, None, _msg("office_presence", {"presence": True})))
 
 
 class TestUnit(unittest.TestCase):

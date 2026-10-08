@@ -108,18 +108,20 @@ class TestPerformance(_Base):
 
 class TestRetry(_Base):
     def test_db_write_errors_are_swallowed(self):
-        # RETRY GAP: write_presence_sync()/write_observation_sync() — one attempt, error logged, no retry
+        # write_presence_sync()/write_observation_sync() — DB_ATTEMPTS tries each, every error logged
         self.connect.return_value = _Conn(fail=True)
-        P.write_presence_sync("office", True, 0.95)
-        P.write_observation_sync("office", "enter")
-        self.assertEqual(self.connect.call_count, 2)
+        with mock.patch.object(P.time, "sleep"):
+            P.write_presence_sync("office", True, 0.95)
+            P.write_observation_sync("office", "enter")
+        self.assertEqual(self.connect.call_count, 2 * P.DB_ATTEMPTS)
         self.assertEqual(P._event_count, 0)
         self.assertIn("DB write error", P.LOG_FILE.read_text())
 
-    def test_connect_failure_is_one_shot(self):
+    def test_connect_failure_is_retried(self):
         self.connect.side_effect = OSError("no route")
-        P.write_presence_sync("office", True, 0.95)
-        self.assertEqual(self.connect.call_count, 1)
+        with mock.patch.object(P.time, "sleep"):
+            P.write_presence_sync("office", True, 0.95)
+        self.assertEqual(self.connect.call_count, P.DB_ATTEMPTS)
 
     def test_shortcut_poll_fails_open(self):
         # RETRY GAP: run_shortcut_poll() — FileNotFoundError/timeout/bad JSON all return False once

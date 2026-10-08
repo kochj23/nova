@@ -79,45 +79,48 @@ def get_sync_conn():
     return psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
 
 
-def write_presence_sync(room, presence, confidence, zones=None, metadata=None):
-    """Write presence reading to telemetry.presence (the engine owns presence_state)."""
-    global _event_count
-    try:
-        conn = get_sync_conn()
+DB_ATTEMPTS = 3
+DB_BACKOFF_S = 0.5
+
+
+def _db_write(sql, params, what):
+    """One INSERT on a fresh connection, retried DB_ATTEMPTS times with exponential backoff
+    (0.5 s, 1 s). Every failed attempt is logged; returns True on success, False after the last."""
+    for attempt in range(1, DB_ATTEMPTS + 1):
         try:
-            with conn.cursor() as cur:
-                # Write to telemetry
-                cur.execute("""
+            conn = get_sync_conn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute(sql, params)
+                conn.commit()
+                return True
+            finally:
+                conn.close()
+        except Exception as e:
+            log(f"{what} error (attempt {attempt}/{DB_ATTEMPTS}): {e}", "ERROR")
+            if attempt < DB_ATTEMPTS:
+                time.sleep(DB_BACKOFF_S * 2 ** (attempt - 1))
+    return False
+
+
+def write_presence_sync(room, presence, confidence, zones=None, metadata=None):
+    """Write presence reading to telemetry.presence (the engine owns presence_state).
+    presence_state is written ONLY by nova_presence_engine (single source of truth, 2026-10-08).
+    mmWave has no identity, so it must not assert "jordan is in <room>"."""
+    global _event_count
+    if _db_write("""
                     INSERT INTO telemetry.presence (ts, person, room, confidence, method, metadata)
                     VALUES (now(), 'jordan', %s, %s, 'mmwave', %s)
-                """, (room, confidence, json.dumps(metadata or {})))
-
-                # presence_state is written ONLY by nova_presence_engine (single source of truth,
-                # 2026-10-08). mmWave has no identity, so it must not assert "jordan is in <room>".
-
-            conn.commit()
-            _event_count += 1
-        finally:
-            conn.close()
-    except Exception as e:
-        log(f"DB write error: {e}", "ERROR")
+                """, (room, confidence, json.dumps(metadata or {})), "DB write"):
+        _event_count += 1
 
 
 def write_observation_sync(room, observation):
     """Write presence transition to shared_observations."""
-    try:
-        conn = get_sync_conn()
-        try:
-            with conn.cursor() as cur:
-                cur.execute("""
+    _db_write("""
                     INSERT INTO shared_observations (observer, category, subject, observation, severity)
                     VALUES ('mmwave_poller', 'presence', %s, %s, 'info')
-                """, (f"room_{room}", observation))
-            conn.commit()
-        finally:
-            conn.close()
-    except Exception as e:
-        log(f"Observation write error: {e}", "ERROR")
+                """, (f"room_{room}", observation), "Observation write")
 
 
 # ── Presence Processing ───────────────────────────────────────────────────────

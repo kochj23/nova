@@ -276,6 +276,23 @@ async def get_wifi_home():
     return results
 
 
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_S = 1.0
+
+
+async def _retry(fn, what, *args):
+    """Run an async PG step up to RETRY_ATTEMPTS times with exponential backoff (1 s, 2 s). A failed
+    attempt is logged (never silent); the last failure is raised so the loop logs and moves on."""
+    for attempt in range(1, RETRY_ATTEMPTS + 1):
+        try:
+            return await fn(*args)
+        except Exception as e:
+            if attempt == RETRY_ATTEMPTS:
+                raise
+            log(f"{what} failed (attempt {attempt}/{RETRY_ATTEMPTS}): {e} — retrying", "WARN")
+            await asyncio.sleep(RETRY_BACKOFF_S * 2 ** (attempt - 1))
+
+
 def _noisy_or(evidence):
     """evidence: iterable of (signal, conf). 1 - prod(1 - rel*conf)."""
     p_absent = 1.0
@@ -462,10 +479,10 @@ async def presence_loop():
 
     while not _shutdown:
         try:
-            new = await compute_occupancy()
+            new = await _retry(compute_occupancy, "compute_occupancy")
             _occupancy.update(new)
             await check_transitions(new)
-            await persist_presence_state(new)
+            await _retry(persist_presence_state, "persist_presence_state", new)
         except Exception as e:
             log(f"Presence loop error: {e}", "ERROR")
         await asyncio.sleep(POLL_INTERVAL)
