@@ -467,15 +467,21 @@ def is_factual(sentence: str) -> bool:
 
 def _recall(q: str, n: int = 5) -> list:
     """Memory-server recall → [(cite, text)]. Fails to [] (an unreachable source
-    store means the claim is unsupported, never that it is supported)."""
-    try:
-        u = f"{MEMSRV}/recall?q={urllib.parse.quote(q[:300])}&n={n}&tier=fast"
-        with urllib.request.urlopen(u, timeout=20) as r:
-            mems = json.load(r).get("memories", [])
-        return [(f"memory {str(m.get('id', ''))[:8]} ({m.get('source', '?')})", str(m.get("text", "")))
-                for m in _content_safe(mems) if m.get("text")]
-    except Exception:
-        return []
+    store means the claim is unsupported, never that it is supported). Retries 3x
+    with backoff before giving up, and logs the give-up."""
+    u = f"{MEMSRV}/recall?q={urllib.parse.quote(q[:300])}&n={n}&tier=fast"
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(u, timeout=20) as r:
+                mems = json.load(r).get("memories", [])
+            return [(f"memory {str(m.get('id', ''))[:8]} ({m.get('source', '?')})", str(m.get("text", "")))
+                    for m in _content_safe(mems) if m.get("text")]
+        except Exception as e:  # noqa: BLE001
+            if attempt < 2:
+                time.sleep(1.5 * (attempt + 1))
+            else:
+                log(f"recall unavailable after 3 attempts ({e}) — claim treated as unsupported")
+    return []
 
 
 def _supported_by(sentence: str, sources: list):
@@ -634,8 +640,8 @@ def process_reach(oc, reach: dict) -> str:
     try:
         import nova_annie_rule
         ann = nova_annie_rule.check(message, oc)
-    except Exception:  # noqa: BLE001
-        ann = {"ok": True, "flags": []}
+    except Exception as e:  # noqa: BLE001 — a broken guard fails CLOSED (silence is the default)
+        ann = {"ok": False, "flags": [f"annie-check-unavailable: {e}"]}
     if not ann["ok"]:
         rid = _record(oc, audience, topic, message, rationale, None, "dropped")
         log(f"DROPPED reach #{rid} to {audience} — Annie Wilkes rule / manipulation: {ann['flags']}")

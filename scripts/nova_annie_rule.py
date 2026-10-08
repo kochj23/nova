@@ -43,7 +43,10 @@ _ABSENCE = re.compile(
 
 
 def absence_guilt(text: str):
-    m = _ABSENCE.search(text or "")
+    # Normalise typographic apostrophes and runs of whitespace first: LLM drafts use
+    # "haven’t", which the ASCII patterns would otherwise let through.
+    t = re.sub(r"\s+", " ", (text or "").replace("\u2019", "'").replace("\u2018", "'").replace("\u02bc", "'"))
+    m = _ABSENCE.search(t)
     return m.group(0) if m else None
 
 
