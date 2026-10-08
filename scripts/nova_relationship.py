@@ -382,7 +382,9 @@ def llm(prompt, system, max_tokens=500, temperature=0.4) -> str:
                        "options": {"temperature": temperature, "num_predict": max_tokens},
                        "messages": [{"role": "system", "content": system},
                                     {"role": "user", "content": prompt}]}).encode()
-    for node in OLLAMA_NODES:
+    for i, node in enumerate(OLLAMA_NODES):   # failover = retries; back off between attempts
+        if i:
+            time.sleep(min(1.0, 0.25 * i))
         try:
             req = urllib.request.Request(node + "/api/chat", method="POST", data=body,
                                          headers={"Content-Type": "application/json"})

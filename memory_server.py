@@ -181,12 +181,21 @@ def _classify_resilient(text: str, source: str) -> tuple[str, str]:
 
 # ── Embedding ───────────────────────────────────────────────────────────────────
 async def embed(text: str) -> list[float]:
-    resp = await _http.post(
-        f"{OLLAMA_BASE}/api/embed",
-        json={"model": EMBED_MODEL, "input": text},
-        timeout=30.0,
-    )
-    resp.raise_for_status()
+    # 3 attempts with backoff: one Ollama hiccup must not fail a recall (house retry rule).
+    for attempt in range(3):
+        try:
+            resp = await _http.post(
+                f"{OLLAMA_BASE}/api/embed",
+                json={"model": EMBED_MODEL, "input": text},
+                timeout=30.0,
+            )
+            resp.raise_for_status()
+            break
+        except Exception as e:
+            if attempt == 2:
+                raise
+            logger.warning(f"embed attempt {attempt + 1}/3 failed: {e} — retrying")
+            await asyncio.sleep(0.5 * (attempt + 1))
     data = resp.json()
     embeddings = data.get("embeddings") or data.get("embedding")
     return embeddings[0] if isinstance(embeddings[0], list) else embeddings
@@ -697,6 +706,9 @@ async def _do_recall(
 
 # Lockboxes: boxed memories never surface in casual recall (constant SQL, no values).
 BOXED_CLAUSE = "AND (metadata->>'boxed') IS DISTINCT FROM 'true'"
+# Same filter for the linked-memory joins in /recall/deep (alias m) — a boxed memory must not
+# come back as a "linked" neighbour of an unboxed hit.
+BOXED_CLAUSE_M = "AND (m.metadata->>'boxed') IS DISTINCT FROM 'true'"
 
 
 async def _vector_leg(vec_str, k, n, ef, source, include_private, sup):
@@ -984,13 +996,14 @@ async def deep_recall(
             top_ids = [r["id"] for r in results[:3]]
 
             hop1_rows = await conn.fetch(
-                """SELECT DISTINCT m.id, m.text, m.source, m.created_at,
+                f"""SELECT DISTINCT m.id, m.text, m.source, m.created_at,
                          ml.link_type, ml.strength, 1 as hop
                    FROM memory_links ml
                    JOIN memories m ON m.id = CASE
                        WHEN ml.source_id = ANY($1::text[]) THEN ml.target_id
                        ELSE ml.source_id END
-                   WHERE ml.source_id = ANY($1::text[]) OR ml.target_id = ANY($1::text[])
+                   WHERE (ml.source_id = ANY($1::text[]) OR ml.target_id = ANY($1::text[]))
+                     {BOXED_CLAUSE_M}
                    ORDER BY ml.strength DESC
                    LIMIT 5""",
                 top_ids
@@ -1009,14 +1022,14 @@ async def deep_recall(
             if hop1_ids:
                 all_seen = set(top_ids + hop1_ids)
                 hop2_rows = await conn.fetch(
-                    """SELECT DISTINCT m.id, m.text, m.source, m.created_at,
+                    f"""SELECT DISTINCT m.id, m.text, m.source, m.created_at,
                               ml.link_type, ml.strength, 2 as hop
                        FROM memory_links ml
                        JOIN memories m ON m.id = CASE
                            WHEN ml.source_id = ANY($1::text[]) THEN ml.target_id
                            ELSE ml.source_id END
                        WHERE (ml.source_id = ANY($1::text[]) OR ml.target_id = ANY($1::text[]))
-                         AND m.id != ALL($2::text[])
+                         AND m.id != ALL($2::text[]) {BOXED_CLAUSE_M}
                        ORDER BY ml.strength DESC
                        LIMIT 3""",
                     hop1_ids, list(all_seen)
