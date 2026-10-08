@@ -216,6 +216,8 @@ def is_private_source(source: str) -> bool:
     if not source:
         return False
     s = source.lower().strip()
+    # nova_memory_quality quarantines by renaming to 'quarantine:<source>' — still the same private data
+    s = s.removeprefix("quarantine:")
     # Exact match
     if s in PRIVATE_SOURCES:
         return True

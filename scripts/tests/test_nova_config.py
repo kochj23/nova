@@ -119,6 +119,9 @@ class TestSecurity(unittest.TestCase):
         self.assertTrue(cfg.is_private_source(cfg._EMPLOYER_PREFIX + "_hr_docs"))
         self.assertTrue(cfg._contains_blocked_content("mentions " + cfg._EMPLOYER_PREFIX + " in passing"))
         self.assertFalse(cfg.is_private_source("reddit"))
+        # quarantined private rows stay private (2026-10-07)
+        self.assertTrue(cfg.is_private_source("quarantine:private_document"))
+        self.assertFalse(cfg.is_private_source("quarantine:sci_fi"))
         self.assertFalse(cfg.is_private_source("television"))
 
     def test_notify_local_escapes_quotes_before_osascript(self):
