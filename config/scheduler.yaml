@@ -133,6 +133,46 @@ tasks:
     timeout: 120
     overlap: skip
 
+  # ── Watch organs (2026-10-08) — Bodach / Night Watch / Buick 8 / Derry Clock / The Shine ──
+  bodach_watch:                      # independent near-home signals clustering (scanner/CHP/heli/new device/night motion); quiet unless >= calibrated threshold and >= 2 types
+    script: nova_bodach_watch.py
+    schedule: every 15m
+    timeout: 180
+    overlap: skip
+  bodach_calibrate:                  # weekly Sun 04:10 — replay 30 days, re-pick threshold so it would have fired <= 2x/30d
+    script: nova_bodach_watch.py
+    args: ["--calibrate"]
+    schedule: cron 10 4 * * 0
+    timeout: 600
+    overlap: skip
+  night_watch:                       # 07:02 daily — 22:00-07:00 evidence summary to #nova-chat (Slack only); one line on quiet nights
+    script: nova_night_watch.py
+    schedule: cron 2 7 * * *
+    timeout: 300
+    overlap: skip
+  buick8_log:                        # every 30m — feed unexplained anomalies into unexplained_events (cause stays 'unknown' without evidence)
+    script: nova_buick8_log.py
+    schedule: every 30m
+    timeout: 600
+    overlap: skip
+  derry_refresh:                     # 04:20 daily — monthly fingerprints -> derry_monthly
+    script: nova_derry_clock.py
+    args: ["--refresh"]
+    schedule: cron 20 4 * * *
+    timeout: 600
+    overlap: skip
+  derry_note:                        # 1st of month 09:05 — "this time last year..." note (info/digest)
+    script: nova_derry_clock.py
+    args: ["--note"]
+    schedule: cron 5 9 1 * *
+    timeout: 600
+    overlap: skip
+  the_shine:                         # every 5m — Jordan-silence check-in escalation. DISABLED by service_config the_shine/enabled=false: observe-only, contacts nobody
+    script: nova_shine.py
+    schedule: every 5m
+    timeout: 120
+    overlap: skip
+
   meshtastic_watch:                  # out-of-band LoRa alert if the critical services vanish
     script: nova_meshtastic_alert.py
     args: ["--watch", "--alert"]
