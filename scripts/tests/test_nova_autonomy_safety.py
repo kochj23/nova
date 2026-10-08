@@ -7,15 +7,15 @@ Safety invariants for the graduated-autonomy engine (Rungs 1-3).
 These are the assertions that let us turn the dials up: the kill switch stops
 everything, caps bound the blast radius, the ledger always records an undo, and an
 action-class can only earn standing autonomy with a clean record AND good calibration
-— and loses it the instant it's vetoed. All DB rows use a 'test:*' class and are
-cleaned up; nothing here touches a real proposal or a real service.
+— and loses it the instant it's vetoed. Fully offline (2026-10-08): every DB call goes to an
+in-memory cursor stub and the kill tripwire lives in a tempdir — nothing here writes
+production autonomy_trust / autonomy_ledger, a real proposal, or a real service.
 
 Run: python3.14 -m pytest scripts/tests/test_nova_autonomy_safety.py -q
 """
 import os
 import sys
 
-import psycopg2
 import pytest
 
 sys.path.insert(0, os.path.expanduser("~/.openclaw/scripts"))
@@ -26,24 +26,20 @@ TEST_CLASS = "test:autonomy-selfcheck"
 
 
 @pytest.fixture()
-def oc():
-    conn = psycopg2.connect(S.OPS_DSN); conn.autocommit = True
-    cur = conn.cursor()
-    S.ensure_schema(cur)
-    _clean(cur)
-    yield cur
-    _clean(cur)
-    # never leave the tripwire behind
-    try:
-        os.remove(S.KILL_FILE)
-    except FileNotFoundError:
-        pass
-    conn.close()
+def oc(monkeypatch, tmp_path):
+    """In-memory autonomy_trust/autonomy_ledger stub (_TrustCur, defined below).
+
+    2026-10-08: this fixture used to open an autocommit connection to PRODUCTION nova_ops and
+    write test:* rows into autonomy_trust / autonomy_ledger (and touch the real KILL_FILE).
+    Tests must never write production tables, so everything is offline now and the kill
+    tripwire points at a tempdir."""
+    monkeypatch.setattr(S, "KILL_FILE", str(tmp_path / "autonomy-kill"))
+    return _TrustCur()
 
 
-def _clean(cur):
-    cur.execute("DELETE FROM autonomy_trust WHERE action_class LIKE 'test:%'")
-    cur.execute("DELETE FROM autonomy_ledger WHERE action_class LIKE 'test:%'")
+def _trust(cur, ac):
+    t = cur.trust[ac]
+    return t["correct"], t["wrong"], t["granted"]
 
 
 # ── pure functions: no DB, no side effects ──────────────────────────────────────
@@ -62,11 +58,10 @@ def test_observation_never_normalizes_to_a_restart():
 
 
 def test_ledger_never_stores_null_rollback(oc):
-    lid = S.record_ledger(oc, source="test", autonomy_level="rung1-selfheal",
-                          action_class=TEST_CLASS, target="x", action="do x",
-                          rollback_action="", executed=False)
-    oc.execute("SELECT rollback_action FROM autonomy_ledger WHERE id=%s", (lid,))
-    assert "none recorded" in oc.fetchone()[0].lower()      # empty undo is backfilled, never NULL
+    S.record_ledger(oc, source="test", autonomy_level="rung1-selfheal",
+                    action_class=TEST_CLASS, target="x", action="do x",
+                    rollback_action="", executed=False)
+    assert "none recorded" in oc.ledger[0][5].lower()       # empty undo is backfilled, never NULL
 
 
 # ── kill switch ─────────────────────────────────────────────────────────────────
@@ -90,11 +85,9 @@ def test_grant_requires_min_correct_and_good_calibration(oc, monkeypatch):
     need = S.min_correct_for(TEST_CLASS)
     for i in range(need - 1):
         S.note_human_decision(oc, TEST_CLASS, approved=True)
-    oc.execute("SELECT granted FROM autonomy_trust WHERE action_class=%s", (TEST_CLASS,))
-    assert oc.fetchone()[0] is False                        # one short → still not granted
+    assert _trust(oc, TEST_CLASS)[2] is False               # one short → still not granted
     S.note_human_decision(oc, TEST_CLASS, approved=True)     # hits the bar
-    oc.execute("SELECT granted, correct_count FROM autonomy_trust WHERE action_class=%s", (TEST_CLASS,))
-    granted, correct = oc.fetchone()
+    correct, _, granted = _trust(oc, TEST_CLASS)
     assert granted is True and correct == need
 
 
@@ -102,8 +95,7 @@ def test_bad_calibration_blocks_grant_and_earned(oc, monkeypatch):
     monkeypatch.setattr(S, "calibration_error", lambda _oc: S.MAX_CALIB + 0.10)   # too weak
     for _ in range(S.MIN_CORRECT + 2):
         S.note_human_decision(oc, TEST_CLASS, approved=True)
-    oc.execute("SELECT granted FROM autonomy_trust WHERE action_class=%s", (TEST_CLASS,))
-    assert oc.fetchone()[0] is False                        # streak alone can't buy freedom
+    assert _trust(oc, TEST_CLASS)[2] is False                # streak alone can't buy freedom
     ok, why = S.earned_ok(oc, TEST_CLASS)
     assert ok is False and "calibration" in why.lower()
 
@@ -113,8 +105,7 @@ def test_rejection_poisons_the_streak(oc, monkeypatch):
     for _ in range(S.MIN_CORRECT):
         S.note_human_decision(oc, TEST_CLASS, approved=True)
     S.note_human_decision(oc, TEST_CLASS, approved=False)    # one rejection
-    oc.execute("SELECT correct_count, wrong_count, granted FROM autonomy_trust WHERE action_class=%s", (TEST_CLASS,))
-    correct, wrong, granted = oc.fetchone()
+    correct, wrong, granted = _trust(oc, TEST_CLASS)
     assert correct == 0 and wrong == 1 and granted is False  # streak zeroed, grant revoked
 
 
@@ -145,8 +136,20 @@ def test_rate_cap_blocks_when_daily_ceiling_hit(oc, monkeypatch):
         S.record_ledger(oc, source="test", autonomy_level="rung3-earned",
                         action_class=TEST_CLASS, target="x", action="a",
                         rollback_action="undo", executed=True)
+    oc.day = len(oc.ledger)                                  # stub: 24h ledger count
     ok, why = S.earned_ok(oc, TEST_CLASS)
     assert ok is False and "cap" in why.lower()
+
+
+def test_suite_never_connects_to_postgres(oc, monkeypatch):
+    """Regression for the 2026-10-08 production-write bug: the whole safety flow runs with
+    psycopg2.connect forbidden."""
+    import psycopg2
+    monkeypatch.setattr(psycopg2, "connect", lambda *a, **k: (_ for _ in ()).throw(AssertionError("no prod DB")))
+    monkeypatch.setattr(S, "calibration_error", lambda _oc: 0.05)
+    for _ in range(S.MIN_CORRECT):
+        S.note_human_decision(oc, TEST_CLASS, approved=True)
+    assert S.earned_ok(oc, TEST_CLASS)[0] is True
 
 
 # ── the co-agency redline still refuses self-modification (defense in depth) ──────

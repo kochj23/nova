@@ -70,7 +70,9 @@ class TestSecurity(unittest.TestCase):
 
     def test_aspirations_queue_insert_is_parameterised(self):
         s = _src("nova_aspirations.py")
-        block = s[s.index("INSERT INTO claude_queue"):s.index("UPDATE feature_wishes SET status='acknowledged'")]
+        # the queue INSERT now sits between the acknowledge and its rollback (order changed after 09-25)
+        i = s.index("INSERT INTO claude_queue")
+        block = s[i:s.index("SET status='wished'", i)]
         self.assertIn("%s", block)
         self.assertNotIn("f\"INSERT", block)
 
@@ -197,9 +199,16 @@ class TestUnit(unittest.TestCase):
         s = _src("nova_unclaimed_time.py")
         self.assertIn('random.random() < 0.15', s)   # tinker
         self.assertIn('random.random() < 0.20', s)   # aspire
+        # Since 4e1cf67 both constants ride the proactivity dial (nova_voice.dial_scale);
+        # the DEFAULT dial setting must still yield the 2026-09-25 values (8h cooldown, 6 open).
         a = _src("nova_aspirations.py")
-        self.assertRegex(a, r"WISH_COOLDOWN_HRS = 8\b")
-        self.assertRegex(a, r"MAX_OPEN_WISHES = 6\b")
+        cool = re.search(r'WISH_COOLDOWN_HRS = _dial_scale\("proactivity", ([\d.]+), ([\d.]+), ([\d.]+)\)', a)
+        wish = re.search(r'MAX_OPEN_WISHES = int\(round\(_dial_scale\("proactivity", ([\d.]+), ([\d.]+), ([\d.]+)\)\)\)', a)
+        self.assertIsNotNone(cool); self.assertIsNotNone(wish)
+        import nova_voice
+        with patch.object(nova_voice, "dials", return_value=dict(nova_voice.DIAL_DEFAULTS)):
+            self.assertEqual(nova_voice.dial_scale("proactivity", *map(float, cool.groups())), 8)
+            self.assertEqual(int(round(nova_voice.dial_scale("proactivity", *map(float, wish.groups())))), 6)
 
     def test_projects_start_prompt_lists_recent_completed(self):
         s = _src("nova_projects.py")
