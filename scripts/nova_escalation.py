@@ -321,7 +321,36 @@ def authorize(oc, *, source: str, kind: str, action_class: str, item: dict | Non
              + ("failing OPEN for life-safety" if life_safety else "held"), "spinnaker": None}
     if not dry:
         _record(oc, source, kind, action_class, d, item, life_safety, text)
+        _reason_from_intent(oc, source, kind, d, life_safety)
     return d
+
+
+def intent_reading(d: dict, life_safety: bool) -> tuple | None:
+    """When fatigue changes what Nova does, which standing order is she reading, and how. Pure.
+    -> (intent_key, reading, decision) or None."""
+    jst = d.get("jordan_state") or {}
+    if not jst.get("depleted"):
+        return None
+    if life_safety and d.get("allowed"):
+        return ("quiet.shine_waking", "Quiet hours protect his rest from the ordinary; a life-safety trigger "
+                "is exactly what his pre-consent covers, so the purpose says go.", "proceed")
+    if d.get("deferred"):
+        return ("quiet.notify_window", "The purpose is to protect his attention; a non-urgent escalation "
+                "can wait for the next turnover without losing anything.", "defer")
+    return None
+
+
+def _reason_from_intent(oc, source, kind, d, life_safety) -> None:
+    """Commander's Intent: log that the circumstance (Jordan depleted) was reasoned from purpose."""
+    r = intent_reading(d, life_safety)
+    if not r:
+        return
+    try:
+        import nova_commanders_intent as CI
+        CI.reason_from_intent(oc, r[0], f"{source}:{kind} while " + "; ".join((d.get('jordan_state') or {})
+                              .get("reasons", [])), reading=r[1], decision=r[2], by="nova_escalation")
+    except Exception:  # noqa: BLE001
+        _rollback(oc)
 
 
 def _record(oc, source, kind, action_class, d, item, life_safety, text) -> None:

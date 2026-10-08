@@ -71,6 +71,13 @@ class TestSecurity(unittest.TestCase):
         self.assertTrue(E.feedback(cur, 1, "unneeded: routine", "jordan"))
         self.assertTrue(any("feedback_by=%s WHERE id=%s" in s for s, _ in cur.sql))
 
+    def test_intent_reading_under_fatigue(self):
+        self.assertIsNone(E.intent_reading({"jordan_state": CALM, "allowed": True}, True))
+        k, _r, dec = E.intent_reading({"jordan_state": TIRED, "allowed": True}, True)
+        self.assertEqual((k, dec), ("quiet.shine_waking", "proceed"))
+        k, _r, dec = E.intent_reading({"jordan_state": TIRED, "allowed": False, "deferred": True}, False)
+        self.assertEqual((k, dec), ("quiet.notify_window", "defer"))
+
     def test_preconsent_only_counts_for_life_safety(self):
         self.assertFalse(E.decide("alert", ONE, jordan=CALM, nova=OK, **dict(KW, preconsent=True))["allowed"])
 

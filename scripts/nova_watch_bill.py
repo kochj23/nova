@@ -175,7 +175,11 @@ def turnover(cur, watch: str) -> dict:
 
 
 def render_turnover(t: dict) -> str:
-    lines = [f"WATCH TURNOVER {t['watch']} ({t['at'][:16]})"]
+    try:
+        at = datetime.fromisoformat(t["at"]).astimezone(W.TZ).strftime("%Y-%m-%d %H:%M")
+    except Exception:  # noqa: BLE001
+        at = str(t.get("at"))[:16]
+    lines = [f"WATCH TURNOVER {t['watch']} ({at})"]
     for key, title in (("degraded", "Degraded"), ("open_loops", "Open loops"), ("standing", "Standing orders"),
                        ("expected", "Expected"), ("surprise", "Would surprise me")):
         items = t.get(key) or []
