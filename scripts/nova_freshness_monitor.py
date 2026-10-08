@@ -181,6 +181,9 @@ MUTED_STREAMS = {
     # stream reads stale. The receiver/poller are healthy; the fix is on the iOS side.
     # Un-mute once the Shortcuts push is restored.
     "telemetry.battery": "HomeKit Shortcuts push stopped 2026-09-12 (device-side); poller healthy",
+    # 2026-10-08: the only producer, nova_jarvis_brain, was retired (its consumer, the chatroom, was
+    # archived 2026-10-06; nothing else reads telemetry.activity). Silence here is intended.
+    "telemetry.activity": "producer nova_jarvis_brain retired 2026-10-08 (plist in retired-launchagents/)",
 }
 
 
