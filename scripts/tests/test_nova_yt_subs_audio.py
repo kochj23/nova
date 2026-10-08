@@ -56,6 +56,13 @@ class TestSubsAudio(unittest.TestCase):
         with patch("urllib.request.urlopen", side_effect=OSError("down")):
             self.assertEqual(m.classify("x", "y"), m.FALLBACK_VECTOR)
 
+    def test_stalled_ytdlp_is_a_failure_not_a_crash(self):
+        import subprocess as sp
+        with patch.object(m.subprocess, "run", side_effect=sp.TimeoutExpired(cmd="yt-dlp", timeout=1)):
+            r = m._yt(["x"], timeout=1)
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("timed out", r.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

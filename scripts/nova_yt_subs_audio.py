@@ -52,8 +52,13 @@ def log(m):
 
 
 def _yt(args, timeout=180):
-    return subprocess.run([YTDLP, "--no-warnings", "--cookies", str(COOKIES), *args],
-                          capture_output=True, text=True, timeout=timeout)
+    """yt-dlp with a 30 s socket timeout. A stalled run (2026-10-07: one download hung the 55-min slice
+    past its scheduler timeout) comes back as a normal failure instead of raising out of the run."""
+    try:
+        return subprocess.run([YTDLP, "--no-warnings", "--socket-timeout", "30", "--cookies", str(COOKIES), *args],
+                              capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, 1, "", f"yt-dlp timed out after {timeout}s")
 
 
 def subscriptions():
@@ -128,7 +133,7 @@ def download_audio(channel_id, vid, name=""):
     r = _yt(["-f", "bestaudio[ext=m4a]/bestaudio", "--no-playlist", "--no-overwrites",
              "--windows-filenames",   # no : ? * etc. on the SMB share
              "-o", str(folder / "%(title).80B [%(id)s].%(ext)s"),
-             f"https://www.youtube.com/watch?v={vid}"], timeout=1800)
+             f"https://www.youtube.com/watch?v={vid}"], timeout=900)
     got = [f for f in folder.iterdir() if f"[{vid}]" in f.name and f.suffix in AUDIO_EXTS]
     if r.returncode != 0 or not got:
         log(f"  download failed {vid}: {r.stderr.strip().splitlines()[-1] if r.stderr.strip() else r.returncode}")
