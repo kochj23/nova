@@ -94,11 +94,12 @@ class TestPerformance(unittest.TestCase):
 
 class TestRetry(unittest.TestCase):
     def test_listing_failure_fails_open(self):
-        # RETRY GAP: recent_ids / vid_live_status — one yt-dlp call each per 6h run; errors -> []/""
-        with patch.object(yw.subprocess, "run", side_effect=subprocess.TimeoutExpired("yt-dlp", 180)) as r:
+        # recent_ids / vid_live_status — 3 yt-dlp attempts each with backoff; then []/"" (logged)
+        with patch.object(yw.subprocess, "run", side_effect=subprocess.TimeoutExpired("yt-dlp", 180)) as r, \
+                patch.object(yw.time, "sleep"):
             self.assertEqual(yw.recent_ids("u"), [])
             self.assertEqual(yw.vid_live_status("v"), "")
-        self.assertEqual(r.call_count, 2)
+        self.assertEqual(r.call_count, 6)
 
     def test_channel_with_no_listing_skipped(self):
         self.assertEqual(_main(set(), []), [])

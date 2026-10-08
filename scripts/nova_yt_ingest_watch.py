@@ -13,6 +13,7 @@ State in PostgreSQL per house rules. Scheduled via launchd (every 6h).
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import psycopg2
@@ -91,9 +92,32 @@ def log(m):
     print(f"[yt-watch] {m}", flush=True)
 
 
-def _db():
-    c = psycopg2.connect(DSN); c.autocommit = True
-    return c
+def _db(attempts=3):
+    for attempt in range(attempts):   # PG failover blips: retry 5 s / 10 s, then raise (launchd logs it)
+        try:
+            c = psycopg2.connect(DSN, connect_timeout=10); c.autocommit = True
+            return c
+        except psycopg2.OperationalError as e:
+            if attempt == attempts - 1:
+                raise
+            log(f"PG connect failed ({e}); retry {attempt + 1}")
+            time.sleep(5 * 2 ** attempt)
+
+
+def _ytdlp(args, timeout, attempts=3):
+    """yt-dlp with retry: a non-zero exit with no output, or a timeout, is retried (3 s / 6 s backoff).
+    Returns the last CompletedProcess, or None if every attempt raised."""
+    r = None
+    for attempt in range(attempts):
+        try:
+            r = subprocess.run([YTDLP, *args], capture_output=True, text=True, timeout=timeout)
+            if r.stdout.strip() or r.returncode == 0:
+                return r
+        except Exception as e:
+            log(f"yt-dlp error ({e}); attempt {attempt + 1}/{attempts}")
+        if attempt < attempts - 1:
+            time.sleep(3 * (attempt + 1))
+    return r
 
 
 def ensure(cur):
@@ -107,10 +131,11 @@ def recent_ids(url):
     live_status: is_live | is_upcoming | was_live | post_live | not_live | None.
     No auth, no subscription (yt-dlp --flat-playlist)."""
     try:
-        r = subprocess.run(
-            [YTDLP, "--flat-playlist", "--no-warnings", "-I", f"1:{RECENT}",
-             "--print", "%(id)s\t%(live_status)s\t%(title)s", url],
-            capture_output=True, text=True, timeout=180)
+        r = _ytdlp(["--flat-playlist", "--no-warnings", "-I", f"1:{RECENT}",
+                    "--print", "%(id)s\t%(live_status)s\t%(title)s", url], timeout=180)
+        if r is None:
+            log(f"list error {url}: yt-dlp failed 3 times")
+            return []
         out = []
         for line in r.stdout.splitlines():
             parts = line.split("\t", 2)
@@ -130,13 +155,12 @@ CAPTURE = str(Path(__file__).parent / "nova_yt_capture.py")
 def vid_live_status(vid):
     """Per-video live status (flat-playlist reports 'NA'): is_live | was_live |
     is_upcoming | post_live | not_live."""
-    try:
-        r = subprocess.run([YTDLP, "--no-warnings", "--print", "%(live_status)s",
-                            f"https://www.youtube.com/watch?v={vid}"],
-                           capture_output=True, text=True, timeout=90)
-        return (r.stdout.strip().splitlines() or [""])[0].strip()
-    except Exception:
+    r = _ytdlp(["--no-warnings", "--print", "%(live_status)s", f"https://www.youtube.com/watch?v={vid}"],
+               timeout=90)
+    if r is None or not r.stdout.strip():
+        log(f"live status unknown for {vid}")
         return ""
+    return (r.stdout.strip().splitlines() or [""])[0].strip()
 
 
 def dispatch(vid, vector, live):
