@@ -70,8 +70,20 @@ def someone_just_arrived(b, within_min=10, min_conf=0.3):
     mins = (datetime.now(timezone.utc) - ent).total_seconds() / 60
     return (p["state"].split("@")[0], round(mins)) if 0 <= mins <= within_min else None
 
+def _connect(attempts=3):
+    """CLI connect with retry (2 s, 4 s); re-raises on the last try."""
+    import time
+    for i in range(attempts):
+        try:
+            return psycopg2.connect(OPS, connect_timeout=8)
+        except Exception as e:
+            if i == attempts - 1:
+                raise
+            print(f"organ_board: PG connect failed ({e}); retry {i + 1}", file=sys.stderr)
+            time.sleep(2 * (i + 1))
+
 def main():
-    conn = psycopg2.connect(OPS, connect_timeout=8); conn.autocommit = True; cur = conn.cursor()
+    conn = _connect(); conn.autocommit = True; cur = conn.cursor()
     ensure_view(cur)
     b = board(cur)
     for o, r in sorted(b.items()):

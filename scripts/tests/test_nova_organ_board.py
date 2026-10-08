@@ -94,10 +94,12 @@ class TestRetry(unittest.TestCase):
         cur.connection.rollback.assert_called_once()
 
     def test_pg_down_is_not_retried(self):
-        # RETRY GAP: main (psycopg2.connect) — the CLI report has no retry; the error escapes to the caller
-        with patch.object(ob.psycopg2, "connect", side_effect=OSError("no pg")):
+        # main (psycopg2.connect) — the CLI retries 3x (2 s / 4 s), then the error escapes to the caller
+        with patch.object(ob.psycopg2, "connect", side_effect=OSError("no pg")) as c, patch("time.sleep"), \
+                patch("sys.stderr"):
             with self.assertRaises(OSError):
                 ob.main()
+        self.assertEqual(c.call_count, 3)
 
 
 class TestUnit(unittest.TestCase):
