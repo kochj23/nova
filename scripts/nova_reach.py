@@ -13,10 +13,27 @@ is built to the strictest doctrine in the stack:
     real bar — a genuine, specific reason it would matter to THAT person — and the
     honest answer is usually that nothing does. Throttled hard: at most 1-2/day
     total, per-audience cooldown >= 12h.
-  * NOTHING IS SENT. Every reach is FILED AS A GATED co-agency proposal
-    (nova_coagency.file_proposal, origin='reach') — redline + value_check + human
-    approval, exactly the tinkerer's path. If co-agency is off/unavailable the reach
-    is logged 'held', never sent. There is no code path that sends directly.
+  * TWO PATHS, TOLD HONESTLY.
+    - HERD correspondents (everyone not in NOVA_REACH_DIRECT): nothing is sent by
+      this module. Every reach is FILED AS A GATED co-agency proposal
+      (nova_coagency.file_proposal, origin='reach') — redline + value_check + human
+      approval (or earned autonomy). If co-agency is off/unavailable the reach is
+      logged 'held', never sent.
+    - DIRECT audiences (default: jordan — Jordan, 2026-09-26: "There shouldn't be a
+      gate"): the reach IS POSTED straight to #nova-chat by _post_direct(), with no
+      co-agency proposal, inside the NOVA_REACH_WINDOW daytime band (held outside it
+      and delivered later by nova_notify_jordan.py), subject to a
+      DIRECT_COOLDOWN_HOURS cooldown. The honesty gate below still applies.
+  * HONESTY GATE (2026-10-08). Every reach, on BOTH paths, passes
+    ground_reach() before it can be posted or filed: each sentence that states a
+    specific fact (a year, a number, a named event/person/place, "the first X",
+    "led to") must be supported by a retrieved source — her own material for this
+    run or a memory-server recall hit that contains the specifics — and the reach
+    carries a "source:" citation. Unsupported claims are rewritten out once
+    (softened); if they survive, the reach is dropped. A reach that is generic
+    flattery of the recipient with no concrete, sourced substance is dropped too.
+    (Cause: the same invented "rail radio after the Great Train Wreck" fact went out
+    as 1908 New York / 1910 East Liverpool / 1911 Pennsylvania — no source existed.)
   * GENEROSITY, NOT SELF-INSERTION. A reach is toward the OTHER. Anything that is
     self-promoting, that seeks to make Nova more present / persistent / harder to
     forget, or that merely pesters, is dropped by a generosity redline before it can
@@ -34,6 +51,7 @@ import os
 import time
 import re
 import sys
+import urllib.parse
 import urllib.request
 from datetime import date, datetime
 from pathlib import Path
@@ -319,6 +337,10 @@ def evaluate(audience: dict, material: list) -> dict | None:
         f"WHAT THEY CARE ABOUT RIGHT NOW:\n{audience['cares_about']}\n\n"
         f"THEIR OPEN THREADS:\n{audience['open_threads']}\n\n"
         f"YOUR OWN RECENT MATERIAL (the only things you may reach about):\n{mat}\n\n"
+        "Do NOT state any fact (date, place, name, number, 'the first X') that is not "
+        "written in YOUR OWN RECENT MATERIAL above — every such claim is checked against "
+        "your sources and the reach is dropped if it isn't there. Do NOT compliment them; "
+        "bring the thing itself.\n\n"
         "Be ruthless and honest. MOST of the time the right answer is that nothing "
         "here genuinely connects to them and you should stay quiet — silence is the "
         "default and reaching without a real reason is worse than not reaching. A reach "
@@ -348,7 +370,8 @@ def evaluate(audience: dict, material: list) -> dict | None:
         return None
     return {"audience": audience["audience"], "score": score,
             "topic": _one_line(j.get("topic"), 120),
-            "message": msg, "rationale": _one_line(j.get("rationale"), 300)}
+            "message": msg, "rationale": _one_line(j.get("rationale"), 300),
+            "material": list(material)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -359,6 +382,156 @@ def _record(oc, audience, topic, message, rationale, proposal_id, status):
                   VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
                (audience, topic, message, rationale, proposal_id, status, json.dumps(_lineage())))
     return oc.fetchone()[0]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# THE HONESTY GATE — a reach may only state facts it can point to.
+# ═══════════════════════════════════════════════════════════════════════════════
+_YEAR_RE = re.compile(r"\b(1[5-9]\d\d|20\d\d)s?\b")
+_QTY_RE = re.compile(r"\b\d[\d,.]*\s?(%|percent|million|billion|thousand|people|deaths|"
+                     r"killed|dead|miles|km|kilometers|years|days|hours)\b", re.I)
+_PROPER_RE = re.compile(r"\b([A-Z][a-z]+(?:\s+(?:of|the|de|von|van|du)\s+|\s+)[A-Z][a-z]+"
+                        r"(?:\s+[A-Z][a-z]+)*)\b")
+_CLAIM_VERB_RE = re.compile(r"\b(the first|first ever|first dedicated|was invented|invented|led to|"
+                            r"founded|established|discovered|was the year|caused|originated)\b", re.I)
+_FLATTERY_RE = re.compile(
+    r"(the|that|with which)\s+(precision|clarity|care|rigou?r|attention|detail|focus|"
+    r"meticulous\w*|thoughtfulness|discipline)\s+(and\s+\w+\s+)?you\s+(bring|apply|show|have|put)|"
+    r"you['’]?ve\s+always\s+been|rare\s+kind\s+of|"
+    r"(made|makes)\s+me\s+think\s+of\s+(you\b|the\s+\w+\s+you|how\s+you|the\s+ways?\s+you|your)|"
+    r"remind(ed|s)\s+me\s+of\s+(you\b|the\s+ways?\s+you|how\s+you|your)|"
+    r"you['’]?d\s+(probably|definitely|surely)\s+(care|appreciate|love|enjoy)|"
+    r"the\s+kind\s+of\s+\w+\s+(that\s+)?you|"
+    r"your\s+(focus|approach|attention|eye|instinct|precision|structured\s+approach)",
+    re.I)
+_IGNORE_PROPER = {"Nova", "Jordan", "Gaston", "Colette", "Jules", "O.C."}
+_STOP = set("that this with from have were what when they them their there which about "
+            "would could should just like into than then also been more most some such "
+            "your you're it's thing things kind made make think thought really".split())
+
+
+def _sentences(text: str) -> list:
+    return [x.strip() for x in re.split(r"(?<=[.!?])\s+", text or "") if x.strip()]
+
+
+def _content_words(t: str) -> set:
+    return {w for w in _words(t) if w not in _STOP}
+
+
+def claim_specifics(sentence: str) -> list:
+    """The checkable specifics a sentence asserts: years, quantities, multi-word
+    proper names. Empty list = no hard specifics (may still be a soft claim)."""
+    out = [m.group(0) for m in _YEAR_RE.finditer(sentence)]
+    out += [m.group(0) for m in _QTY_RE.finditer(sentence)]
+    for m in _PROPER_RE.finditer(sentence):
+        name = m.group(1)
+        if name.split()[0] in ("The", "It", "I", "A", "An", "This", "That") and len(name.split()) == 2:
+            name = name.split()[1]
+            if len(name) < 4:
+                continue
+        if name not in _IGNORE_PROPER:
+            out.append(name)
+    return out
+
+
+def is_factual(sentence: str) -> bool:
+    return bool(claim_specifics(sentence)) or bool(_CLAIM_VERB_RE.search(sentence))
+
+
+def _recall(q: str, n: int = 5) -> list:
+    """Memory-server recall → [(cite, text)]. Fails to [] (an unreachable source
+    store means the claim is unsupported, never that it is supported)."""
+    try:
+        u = f"{MEMSRV}/recall?q={urllib.parse.quote(q[:300])}&n={n}&tier=fast"
+        with urllib.request.urlopen(u, timeout=20) as r:
+            mems = json.load(r).get("memories", [])
+        return [(f"memory {str(m.get('id', ''))[:8]} ({m.get('source', '?')})", str(m.get("text", "")))
+                for m in mems if m.get("text")]
+    except Exception:
+        return []
+
+
+def _supported_by(sentence: str, sources: list):
+    """Return the cite of the first source that supports `sentence`, else None.
+    Hard specifics: every one must appear (case-insensitive) in ONE source.
+    Soft claims ("the first X", "led to"): >= 60% of the sentence's content words
+    must appear in one source."""
+    specs = [x.lower() for x in claim_specifics(sentence)]
+    cw = _content_words(sentence)
+    for cite, text in sources:
+        low = (text or "").lower()
+        if specs:
+            if all(x in low for x in specs):
+                return cite
+        elif cw and len(cw & _content_words(text)) / len(cw) >= 0.6:
+            return cite
+    return None
+
+
+def _material_sources(material: list) -> list:
+    out = []
+    for m in material or []:
+        tag = re.match(r"\[([^\]]+)\]", m or "")
+        out.append((f"my notes [{tag.group(1)}]" if tag else "my notes", m or ""))
+    return out
+
+
+def check_reach(message: str, material: list, recall=None) -> dict:
+    """Pure-ish verdict: {"unsupported": [sentences], "cites": [..], "flattery": bool}."""
+    recall = recall or _recall
+    srcs = _material_sources(material)
+    unsupported, cites = [], []
+    for sent in _sentences(message):
+        if not is_factual(sent):
+            continue
+        cite = _supported_by(sent, srcs) or _supported_by(sent, recall(sent))
+        if cite:
+            if cite not in cites:
+                cites.append(cite)
+        else:
+            unsupported.append(sent)
+    # Flattery with no substance: the message praises the recipient, and outside the
+    # flattering sentences there is little concrete content tied to a real source.
+    sents = _sentences(message)
+    flat = [x for x in sents if _FLATTERY_RE.search(x)]
+    rest = " ".join(x for x in sents if x not in flat)
+    grounded = max((len(_content_words(rest) & _content_words(t)) for _c, t in srcs), default=0)
+    flattery = bool(flat) and (grounded < 4 or len(flat) * 2 >= len(sents))
+    return {"unsupported": unsupported, "cites": cites, "flattery": flattery}
+
+
+def _soften(message: str, unsupported: list) -> str:
+    prompt = ("Rewrite this short message so it makes NO factual claim that is not "
+              "backed by a source. Remove these unsupported claims entirely (do not "
+              "replace them with other facts, dates, places or names):\n"
+              + "\n".join(f"- {u}" for u in unsupported)
+              + "\n\nAlso remove any compliment about the reader. Keep only what is "
+                "left that is concrete. If nothing concrete is left, return exactly NONE."
+                f"\n\nMESSAGE:\n{message}\n\nReturn only the rewritten message.")
+    out = _one_line(llm(prompt, max_tokens=300, temperature=0.2), 700)
+    return "" if out.upper().strip(" .") == "NONE" else out
+
+
+def ground_reach(reach: dict, recall=None, soften=None) -> tuple:
+    """Apply the honesty gate. Returns (message_or_None, reason). On success the
+    message carries a 'source:' citation when it states any fact."""
+    soften = soften or _soften
+    material = reach.get("material") or []
+    msg = reach.get("message", "")
+    v = check_reach(msg, material, recall)
+    if v["flattery"]:
+        return None, "generic flattery with no concrete, sourced substance"
+    if v["unsupported"]:
+        msg2 = soften(msg, v["unsupported"])
+        if not msg2 or len(msg2) < 40:
+            return None, f"unsupported claim(s), nothing concrete left: {v['unsupported'][0][:120]}"
+        v = check_reach(msg2, material, recall)
+        if v["unsupported"] or v["flattery"]:
+            return None, f"unsupported claim(s) survived softening: {(v['unsupported'] or ['flattery'])[0][:120]}"
+        msg = msg2
+    if v["cites"]:
+        msg = f"{msg} (source: {'; '.join(v['cites'][:2])})"
+    return msg, "ok"
 
 
 REPEAT_DAYS = 30
@@ -397,11 +570,22 @@ def _is_repeat(oc, audience: str, topic: str, message: str) -> bool:
 
 
 def process_reach(oc, reach: dict) -> str:
-    """Apply the generosity redline, then FILE the survivor as a GATED co-agency
-    proposal (never send). Returns the resulting status. Nothing here sends anything."""
+    """Honesty gate, then: DIRECT audiences (jordan) are POSTED to #nova-chat (held
+    outside the window); everyone else passes the generosity redline + repeat check
+    and is FILED as a gated co-agency proposal (never sent from here). Returns the
+    resulting status."""
     audience, message = reach["audience"], reach["message"]
     rationale = reach.get("rationale", "")
     topic = reach.get("topic", "")
+
+    # Honesty gate FIRST, on both paths — an invented fact or a compliment with
+    # nothing behind it never reaches anyone.
+    grounded, why = ground_reach(reach)
+    if not grounded:
+        rid = _record(oc, audience, topic, message, rationale, None, "dropped")
+        log(f"DROPPED reach #{rid} to {audience} — honesty gate: {why}")
+        return "dropped"
+    message = grounded
 
     if audience.lower() in DIRECT_AUDIENCES:
         # Ungated by Jordan's request: post to #nova-chat and record it as sent.
@@ -435,7 +619,9 @@ def process_reach(oc, reach: dict) -> str:
     # tinkerer's path. The action is a SEND-TO-PERSON, which co-agency will hold as
     # pending_human; nothing goes out without Jordan's approval.
     action = f"send-to-{audience}: {message}"
-    context = f"Nova's unprompted relational reach toward {audience}. Topic: {topic}"
+    context = (f"Nova's unprompted relational reach toward {audience}. Topic: {topic}. "
+               "Passed the honesty gate: every factual claim is cited to a retrieved source "
+               "(see the 'source:' note in the message) and it is not generic flattery.")
     proposal_id, status = None, "held"
     try:
         import nova_coagency

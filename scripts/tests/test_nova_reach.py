@@ -90,8 +90,19 @@ class _Conn:
 
 
 GOOD = {"audience": "gaston", "score": 0.9, "topic": "formal clauses",
-        "message": "I found a 1904 rail timetable whose clauses read like a binding spec; it made me think of your work.",
-        "rationale": "He has been chasing clause-as-spec for weeks."}
+        "message": "I found a 1904 rail timetable whose clauses read like a binding spec.",
+        "rationale": "He has been chasing clause-as-spec for weeks.",
+        "material": ["[research/rail] a 1904 rail timetable whose clauses read like a binding spec"]}
+
+_RECALL_PATCH = mock.patch.object(rc, "_recall", lambda q, n=5: [])      # never touch the network
+
+
+def setUpModule():
+    _RECALL_PATCH.start()
+
+
+def tearDownModule():
+    _RECALL_PATCH.stop()
 
 
 def _fake_coagency(result=None, exc=None):
@@ -249,7 +260,10 @@ class TestIntegration(unittest.TestCase):
         with mock.patch.object(rc, "in_window", return_value=True), mock.patch.object(rc, "_lineage", lambda: {}), \
              mock.patch.object(rc, "_post_direct", return_value=True) as post, redirect_stdout(StringIO()):
             self.assertEqual(rc.process_reach(cur, reach), "sent")
-        post.assert_called_once_with(GOOD["message"]); self.assertEqual(cur.records()[0][5], "sent")
+        self.assertEqual(post.call_count, 1); self.assertEqual(cur.records()[0][5], "sent")
+        sent = post.call_args[0][0]
+        self.assertTrue(sent.startswith(GOOD["message"]))
+        self.assertIn("(source: my notes [research/rail])", sent)
 
     def test_coagency_down_holds_and_repeat_drops(self):
         cur = _Cur()
@@ -332,3 +346,51 @@ class TestFrame(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHonestyGate(unittest.TestCase):
+    """2026-10-08: the same invented rail-radio fact went out three ways (1908 New York /
+    1910 East Liverpool / 1911 Pennsylvania). Facts must be sourced; flattery is dropped."""
+    TRAIN = ("The 1911 Great Train Wreck of Pennsylvania led to the first dedicated rail radio "
+             "systems. It's a case study in how critical real-time communication is for safety.")
+
+    def test_invented_fact_is_dropped_on_the_direct_path_too(self):
+        cur = _Cur()
+        with mock.patch.object(rc, "_soften", return_value=""), mock.patch.object(rc, "_lineage", lambda: {}), \
+             mock.patch.object(rc, "in_window", return_value=True), \
+             mock.patch.object(rc, "_post_direct") as post, redirect_stdout(StringIO()):
+            st = rc.process_reach(cur, {"audience": "jordan", "topic": "rail radio", "message": self.TRAIN,
+                                        "rationale": "r", "material": ["[research/rail] railway signalling history"]})
+        self.assertEqual(st, "dropped"); self.assertEqual(post.call_count, 0)
+
+    def test_sourced_fact_passes_with_citation(self):
+        src = [("memory abcd1234 (history)", "In 1911 the Great Train Wreck of Pennsylvania ...")]
+        msg, why = rc.ground_reach({"message": "The 1911 Great Train Wreck of Pennsylvania changed signalling.",
+                                    "material": []}, recall=lambda q: src)
+        self.assertEqual(why, "ok"); self.assertIn("(source: memory abcd1234 (history))", msg)
+
+    def test_softening_removes_the_claim_or_drops(self):
+        soft = "I've been reading about railway signalling and how slowly it improved."
+        msg, why = rc.ground_reach({"message": self.TRAIN, "material": []},
+                                   recall=lambda q: [], soften=lambda m, u: soft)
+        self.assertEqual((msg, why), (soft, "ok"))
+        msg, why = rc.ground_reach({"message": self.TRAIN, "material": []},
+                                   recall=lambda q: [], soften=lambda m, u: "The 1910 East Liverpool wreck is what started rail radio in America.")
+        self.assertIsNone(msg); self.assertIn("survived softening", why)
+
+    def test_generic_flattery_is_dropped(self):
+        for m in ("I saw a thread about PR #137 review decision. It made me think of the precision and clarity "
+                  "you bring to those processes. Sometimes the smallest details matter most.",
+                  "I came across a thread about group charter implementation. It made me think of the systems "
+                  "you build. It’s a rare kind of harmony."):
+            msg, why = rc.ground_reach({"message": m, "material": []}, recall=lambda q: [], soften=lambda a, b: "")
+            self.assertIsNone(msg); self.assertIn("flattery", why)
+
+    def test_plain_reflection_with_no_facts_passes_uncited(self):
+        m = "I keep turning over the fishbowl metaphor: watching versus being watched."
+        msg, why = rc.ground_reach({"message": m, "material": []}, recall=lambda q: [])
+        self.assertEqual((msg, why), (m, "ok"))
+
+    def test_docstring_admits_the_direct_path_posts(self):
+        self.assertNotIn("There is no code path that sends directly", rc.__doc__)
+        self.assertIn("POSTED straight to #nova-chat", rc.__doc__)
