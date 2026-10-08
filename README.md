@@ -132,6 +132,92 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ## Infrastructure & Security (June–October 2026)
 
+### Intel Organs: Grading, Corroboration, and Gates (2026-10-08)
+
+Seven organs decide how far Nova trusts what she hears and what she may do about it. Each is a separate script with its own tests. The chain runs from sources to graded claims, through corroboration and the turning-point budget, to the escalation gate and the morning report.
+
+- **CARDINAL** (`scripts/nova_cardinal.py`). Grades every source with an Admiralty reliability letter (A to F, from a Wilson-bounded track record, plus Brier skill for forecasters) and a credibility number (1 to 6). Sources with fewer than ten outcomes are F. A source that goes silent, spikes, loses accuracy, or shows a stuck or duplicate mmWave room is marked suspect and graded F. Suspicion stays until someone explains it: `nova_cardinal.py --explain SOURCE --cause ... --evidence ...`.
+- **SPINNAKER** (`scripts/nova_spinnaker.py`). A pure library. Sources that share an upstream count once. Verdicts are CORROBORATED, SINGLE_SOURCE, UNCORROBORATED, or CONTESTED. Only CORROBORATED may go above `ask`.
+- **Turning-point budget** (`scripts/nova_turning_point.py`). Ladder: journal, ask, mention, recommend, act. The ask rung costs one unit and is reached only through SPINNAKER's cap. Low confidence demotes to journal, never to ask.
+- **Escalation gate** (`scripts/nova_escalation.py`). Two-man rule for irreversible and outward actions, MOLINK before outward contact, and fatigue gating. Non-urgent asks defer at night or when Jordan looks depleted. Escalations are held when Nova is degraded. The gate fails open for life-safety and closed for everything else. A single-use approval is spent only when the action it authorises is allowed.
+- **Watch Bill and PDB** (`scripts/nova_watch_bill.py`, `scripts/nova_night_watch.py`). Turnovers at 06:30, 18:00 and 23:00 are logged, not posted. The morning PDB carries a bottom line, graded items with a "would change my mind" line each, gaps, a red-cell dissent, a prediction scorecard, and a sleep line.
+- **Commander's Intent** (`scripts/nova_commanders_intent.py`). Thirty-three standing intents with stated or inferred purposes. Grants are reviewed every 90 days and lapse after a 14-day grace period. Restrictions are reviewed every 180 days and never lapse. A weekly Slack line asks for reconfirmation.
+- **Hotwash** (`scripts/nova_hotwash.py`). A deterministic after-action review, with no language model, covering false alarms, missed events, wrong predictions, and overreach. Sweeps run at 06:10 and 18:10. A Sunday rollup proposes threshold changes for Jordan to decide.
+- **Guardrails.** The action audit (`scripts/nova_action_audit.py`) diffs observed actions against the ledgers and runs at 07:15. Face retention (`scripts/nova_face_retention.py`) deletes non-household face data after 72 hours, and has a purge command for declined enrolments.
+
+```mermaid
+flowchart TD
+    SRC["Sources: cameras, radio, news, presence, detectors"] --> CAR["CARDINAL: grades A to F, 1 to 6"]
+    CAR --> SPN["SPINNAKER: corroboration verdict"]
+    SPN --> TP["Turning-point budget: journal, ask, mention, recommend, act"]
+    TP --> ESC{"Escalation gate: two-man rule, MOLINK, fatigue"}
+    ESC -->|"allowed"| ACT["Action or message"]
+    ESC -->|"held or deferred"| LOG["Restraint ledger"]
+    ACT --> AUD["Action audit: every action logged"]
+    CAR --> PDB["Morning PDB, 07:02"]
+    CI["Commander's Intent"] --> ESC
+    CI --> PDB
+    AUD --> HW["Hotwash: after-action reviews"]
+    HW --> PROP["Weekly rollup: proposals for Jordan"]
+```
+
+### Judgment, Guards, and Senses — the 2026-10-07/08 Organs
+
+Nova gained a set of organs that decide how far she trusts what she hears, what she may touch, and when she speaks. They extend the existing organs (soft certainty, the watch organs, the security quorum, turning point, the Boiler, the "I was wrong" loop) rather than replacing them.
+
+- **Proteus safety guards.** The old red lines were word filters. The guards check the *thing* being touched: the Home Assistant domain or entity, the contents of a scene, the owner of a UniFi client. Locks, garage doors, covers, alarms and valves are always blocked. Climate setpoints outside 62–80 °F are refused. Unknown scenes with securing-sounding names are refused. A rephrased request hits the same wall. Code: `scripts/nova_safety_guards.py`, `scripts/nova_privacy_guards.py`.
+- **Value gate with context.** `value_check` now sees *why* Nova proposed an action, not only what it is. It fails closed: no values, no model, or an unparseable verdict means deny.
+- **Claude as reviewer.** Proposals waiting on Jordan's click are reviewed every 30 minutes. Anything Nova wants that Claude approves is auto-approved, under the standing instruction Jordan gave on 2026-10-08. Code: `scripts/nova_claude_reviewer.py`.
+- **CARDINAL source ledger.** Every source is graded on reliability (Admiralty A–F, from a Wilson-bounded hit rate) and information credibility (1–6). Sources with fewer than ten outcomes are graded F. Credibility 1 requires independent sensor types. Code: `scripts/nova_cardinal.py`.
+- **Presence fusion.** One writer, `nova_presence_engine`, owns `presence_state`. Telemetry feeds write only telemetry. Room-level occupancy is served on `:37465`.
+- **Watch organs.** Five organs watch the house and the neighbourhood from the scheduler on the .6 host. Each signal type is scored independently, capped, so one feed can never carry an alert alone. Home coordinates come only from `service_config` and never appear in a watch table or a post.
+- **Self-management.** Dials (humor, snark, proactivity, bluntness, profanity, verbosity) live in `service_config`, one row per key. Proactivity drives reach thresholds, daily caps, and cooldowns. The Boiler and the turning-point budget bound how often she speaks up, and the Ideal Reader checks drafts before they go out.
+- **Room voice.** Spoken warnings reach Jordan through one speaker only, and only for genuine emergencies, so that the old random-announcement problem cannot return.
+- **Private companionship.** A relationship organ keeps private rows for Jordan and Nova. Nothing from it is published. The content guard keeps sexual content and employer material out of every row.
+
+```mermaid
+flowchart TD
+    subgraph Intake
+        S[Sensors and feeds] --> W[Watch organs]
+        S --> P[nova_presence_engine]
+        U[Slack, Signal, Discord, Claude] --> GW[Nova Gateway v2]
+    end
+    subgraph Judgment
+        W --> CA[CARDINAL ledger]
+        CA --> SC[Soft certainty and turning point]
+        GW --> VC[value_check]
+        VC --> CO[coagency_proposals]
+        CO -->|pending_human| CR[Claude reviewer]
+        CO -->|pending_human| JK[Jordan]
+    end
+    subgraph Action
+        CR --> PG{Proteus guards}
+        JK --> PG
+        PG -->|allowed| HA[Home Assistant and others]
+        PG -->|refused| LOG[Action audit]
+        SC --> VO[Room voice, emergencies only]
+    end
+```
+
+```mermaid
+sequenceDiagram
+    participant N as Nova
+    participant V as value_check
+    participant C as Claude reviewer
+    participant G as Proteus guards
+    participant H as Home
+    N->>V: propose action plus rationale
+    V-->>N: deny (fails closed on error)
+    V->>C: allowed, pending_human
+    C->>G: approved, submit action
+    G->>G: check entity, domain, scene contents
+    alt securing or physical
+        G-->>C: blocked, never executed
+    else safe
+        G->>H: execute
+    end
+```
+
 ### Journal Covers Rendered on the Studio, Not the Cloud (2026-10-06)
 
 Every journal cover made on nova-core had been going to OpenRouter: the "local-first" path of 2026-10-01 only ever worked on the Studio, because `generate_image.sh` health-checked `192.168.1.6:8188` but then submitted the job to a hardcoded `127.0.0.1:8188` — on `.2` that is nothing, so each cover paid for a cloud image (and on 2026-10-06 one timed out and one was "Request Moderated"). Jordan: *free and local*.
