@@ -134,21 +134,26 @@ async def log_tool_execution(ctx: GatewayContext, session_id: str, tool_name: st
 async def log_trace(ctx: GatewayContext, trace_id: str, channel: str, agent_id: str,
                     user_message: str, response: str, backend_used: str,
                     tool_calls: list, ttft_ms: int, total_ms: int,
-                    tokens_in: int, tokens_out: int):
-    """Write a complete trace record to gateway_traces."""
+                    tokens_in: int, tokens_out: int,
+                    person: str = None, timings: dict = None):
+    """Write a complete trace record to gateway_traces.
+
+    person (2026-10-08): who was talking — 'jordan' for his own channels, 'claude'/'service' otherwise;
+    the recent-conversation lane reads it. timings: per-stage ms (pre/llm/tools/followup) for profiling."""
     pool = await get_pg(ctx)
     try:
         await pool.execute(
             """INSERT INTO gateway_traces
                (trace_id, channel, agent_id, user_message, response,
                 backend_used, tool_calls, ttft_ms, total_ms,
-                tokens_in, tokens_out, created_at)
-               VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,now())
+                tokens_in, tokens_out, created_at, person, timings)
+               VALUES ($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10,$11,now(),$12,$13::jsonb)
                ON CONFLICT (trace_id) DO NOTHING""",
             trace_id, channel, agent_id,
             user_message[:2000], response[:2000],
             backend_used, json.dumps(tool_calls),
             ttft_ms, total_ms, tokens_in, tokens_out,
+            person, json.dumps(timings or {}),
         )
     except Exception as e:
         log.debug(f"[{trace_id}] Failed to write trace: {e}")
@@ -246,6 +251,11 @@ async def ensure_pg_schema(ctx: GatewayContext):
             ON gateway_traces(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_gateway_traces_agent
             ON gateway_traces(agent_id, created_at DESC);
+        ALTER TABLE gateway_traces ADD COLUMN IF NOT EXISTS person TEXT;
+        ALTER TABLE gateway_traces ADD COLUMN IF NOT EXISTS timings JSONB;
+        ALTER TABLE gateway_traces ADD COLUMN IF NOT EXISTS memory_id TEXT;
+        CREATE INDEX IF NOT EXISTS idx_gateway_traces_person
+            ON gateway_traces(person, created_at DESC);
     """)
 
     log.info("PG schema verified (incl. Claude communication tables + tool audit + traces)")

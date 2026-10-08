@@ -206,10 +206,22 @@ async def escalate_scheduler_failure(ctx: GatewayContext, task_id: str, script_p
 
 # ── Agent docs (bootstrap content from PG) ───────────────────────────────────
 
+_DOCS_CACHE: dict = {}          # agent_id -> (loaded_at, rendered text)
+_DOCS_TTL = 300                # s — docs change a few times a day; {{memory_count}} etc. may lag 5 min
+_PERSONA_DOCS = ["identity", "soul", "user", "nova-system-map"]
+
+
 async def _load_agent_docs(ctx: GatewayContext, agent_id: str) -> str:
     """Load bootstrap docs from nova_ops.agent_docs for this agent.
     Falls back to reading MD files if table doesn't exist yet.
+
+    2026-10-08 latency pass: this used to pull EVERY agent_id='all' doc (~330 KB, 0.5 s + a live-doc render)
+    on every message, then _system_prompt kept the first 8,000 chars — which never get past identity+soul.
+    Now: only the persona docs + the system map (+ this agent's own docs), cached for _DOCS_TTL.
     """
+    hit = _DOCS_CACHE.get(agent_id)
+    if hit and time.time() - hit[0] < _DOCS_TTL:
+        return hit[1]
     pool = await get_pg(ctx)
     try:
         # Persona docs + the concise nova-system-map load into the prompt so Nova
@@ -221,20 +233,21 @@ async def _load_agent_docs(ctx: GatewayContext, agent_id: str) -> str:
         # and were silently dropped, so Nova chatted for months without her own soul loaded.
         rows = await pool.fetch(
             """SELECT doc_type, content FROM agent_docs
-               WHERE (agent_id = $1 OR agent_id = 'all')
-                 AND doc_type NOT IN
-                     ('services-launchd','scripts','data-platform','fleet-integrations')
+               WHERE (agent_id = 'all' AND doc_type = ANY($2::text[]))
+                  OR (agent_id = $1 AND doc_type NOT IN
+                      ('services-launchd','scripts','data-platform','fleet-integrations'))
                ORDER BY CASE doc_type WHEN 'identity' THEN 0 WHEN 'soul' THEN 1 WHEN 'user' THEN 2
                                       WHEN 'nova-system-map' THEN 3 ELSE 9 END, doc_type""",
-            agent_id,
+            agent_id, _PERSONA_DOCS,
         )
         if rows:
             joined = "\n\n---\n\n".join(r["content"] for r in rows)
             try:
                 from nova_live_docs import render          # {{memory_count}} etc. -> live values
-                joined = render(joined)
+                joined = await asyncio.get_event_loop().run_in_executor(None, render, joined)
             except Exception as e:
                 log.warning(f"live-doc render skipped: {e}")
+            _DOCS_CACHE[agent_id] = (time.time(), joined)
             return joined
     except Exception:
         pass
@@ -364,25 +377,120 @@ async def _experience_recall(ctx: GatewayContext, question: str) -> str:
             + "\n".join(lines) + "\n[End shared history]\n\n")
 
 
+# Replies that are the gateway talking about itself failing — never a memory of the relationship.
+_CANNED_REPLIES = (
+    "Something went wrong on my end",
+    "I'm taking too long on this one",
+    "I'm having some trouble right now",
+    "I'm just coming back up",
+    "I'm thinking about that but came up empty",
+)
+_JORDAN_CHANNELS = ("slack", "discord", "signal")
+
+
+def _default_person(session_id: str) -> str:
+    """Who is on the other end when the channel did not say: Jordan's own channels -> 'jordan',
+    the Claude Code bridge -> 'claude', anything else (API callers, probes) -> 'service'."""
+    parts = (session_id or "").split(":")
+    ch = parts[1] if len(parts) > 1 else ""
+    if ch in _JORDAN_CHANNELS:
+        return "jordan"
+    if ch.startswith("claude"):
+        return "claude"
+    return "service"
+
+
+def _should_remember(person: str, channel: str, user_msg: str, reply: str, model: str) -> bool:
+    """Every REAL exchange with Jordan becomes a memory; probes, tests and failure replies do not."""
+    if person != "jordan" or model == "none":
+        return False
+    ch = (channel or "").lower()
+    if ch in ("hc", "unknown") or ch.startswith("test"):
+        return False
+    um = (user_msg or "").strip().lower()
+    if not um or um.startswith(("test_ping", "healthcheck:")):
+        return False
+    r = (reply or "").strip()
+    return bool(r) and not r.startswith(_CANNED_REPLIES)
+
+
 async def _remember_exchange(ctx: GatewayContext, session_id: str, agent_id: str,
-                             user_msg: str, reply: str) -> None:
-    """Reflect-after: write the exchange back as a conversation memory so future
-    turns (and the nightly consolidation pass) can recall it. Fire-and-forget."""
+                             user_msg: str, reply: str, trace_id: str = "",
+                             person: str = "jordan", meta: dict = None) -> str:
+    """Reflect-after: write the exchange back as a conversation memory so future turns (and the nightly
+    consolidation pass) can recall it. Runs as a background task — never delays the reply.
+
+    2026-10-08: this was fire-and-forget into the memory server's Redis async queue with failures logged at
+    DEBUG; in 30 days 54 Slack exchanges produced 12 'conversation' rows. Now: synchronous /remember (the
+    caller already runs us in the background), one retry, WARNING on failure, and the memory id is written
+    back onto gateway_traces.memory_id so a missing memory is visible per trace. Returns the id or ""."""
+    parts = session_id.split(":")
+    channel = parts[1] if len(parts) > 1 else "unknown"
+    from datetime import datetime, timezone
+    md = {"type": "chat_turn", "person": person, "channel": channel, "agent": agent_id,
+          "session_id": session_id, "trace_id": trace_id, "privacy": "private",
+          "ts": datetime.now(timezone.utc).isoformat()}
+    md.update({k: v for k, v in (meta or {}).items() if v is not None})
+    who = "Jordan" if person == "jordan" else person.capitalize()
+    text = f"{who}: {user_msg.strip()[:1200]}\nNova: {reply.strip()[:1200]}"
+    last = ""
+    for attempt in (1, 2):
+        try:
+            r = await ctx.http.post(
+                "http://memory-server.digitalnoise.net:18790/remember",
+                json={"text": text, "source": "conversation", "metadata": md}, timeout=20)
+            body = r.json() if r.status_code == 200 else {}
+            mid = body.get("id") or ""
+            if mid:
+                log.info(f"[{trace_id}] remembered exchange as {mid} ({body.get('status')})")
+                if trace_id:
+                    try:
+                        pool = await get_pg(ctx)
+                        await pool.execute("UPDATE gateway_traces SET memory_id = $1 WHERE trace_id = $2",
+                                           mid, trace_id)
+                    except Exception:
+                        pass
+                return mid
+            last = f"HTTP {r.status_code} {str(body)[:120]}"
+            if body.get("status") == "rejected":
+                break                       # quality filter verdict (too short etc.) — retrying won't change it
+        except Exception as e:
+            last = f"{type(e).__name__}: {e}"
+        if attempt == 1:
+            await asyncio.sleep(2)
+    log.warning(f"[{trace_id}] reflect-after memory write failed: {last}")
+    return ""
+
+
+async def _recent_with_jordan(ctx: GatewayContext, session_id: str) -> str:
+    """Recency lane (2026-10-08): the last few real exchanges with Jordan from ANY channel, so Nova knows
+    what they were just talking about even after a restart or a channel switch — vector recall only finds
+    them when the words happen to match. Reads gateway_traces (nova_ops), skips failure replies and the
+    turns already in this session's live history. Fail-open: "" on any error."""
     try:
-        parts = session_id.split(":")
-        channel = parts[1] if len(parts) > 1 else "unknown"
-        text = (f"Jordan: {user_msg.strip()[:1200]}\n"
-                f"Nova: {reply.strip()[:1200]}")
-        await ctx.http.post(
-            "http://memory-server.digitalnoise.net:18790/remember",
-            params={"async": "1"},
-            json={"text": text, "source": "conversation",
-                  "metadata": {"type": "chat_turn", "person": "jordan",
-                               "channel": channel, "agent": agent_id,
-                               "session_id": session_id, "privacy": "private"}},
-            timeout=5)
-    except Exception as e:
-        log.debug(f"reflect-after write failed (non-fatal): {e}")
+        pool = await get_pg(ctx)
+        rows = await pool.fetch(
+            """SELECT channel, user_message, response, created_at FROM gateway_traces
+               WHERE person = 'jordan' AND backend_used <> 'none'
+                 AND created_at > now() - interval '21 days'
+               ORDER BY created_at DESC LIMIT 8""")
+    except Exception:
+        return ""
+    live = {(m.get("content") or "")[-300:] for m in (ctx.sessions.get(session_id) or [])}
+    lines = []
+    for r in rows:
+        um, rp = (r["user_message"] or "").strip(), (r["response"] or "").strip()
+        if not um or not rp or rp.startswith(_CANNED_REPLIES) or any(um[-300:] in x for x in live):
+            continue
+        when = r["created_at"].strftime("%a %b %d %H:%M") if hasattr(r["created_at"], "strftime") else str(r["created_at"])[:16]
+        lines.append(f"- ({r['channel']}, {when}) Jordan: {um[:220]} | Nova: {rp[:220]}")
+        if len(lines) >= 4:
+            break
+    if not lines:
+        return ""
+    return ("--- RECENT CONVERSATIONS WITH LITTLE MISTER (most recent first, any channel) ---\n"
+            "What you two were just talking about. Use it for continuity — don't recite it.\n"
+            + "\n".join(lines))
 
 
 async def _house_facts(ctx: GatewayContext, question: str) -> str:
@@ -956,66 +1064,78 @@ def _gather_sentience_context() -> str:
     return "\n\n".join(parts)
 
 
+async def _self_model_block(ctx: GatewayContext) -> str:
+    """Self-concept injection — Nova reasons FROM her self-model, not just from facts. The nightly
+    nova_self_model.py maintains a versioned self-model; the latest full_text goes in. Non-fatal."""
+    pool = await get_pg(ctx)
+    row = await pool.fetchrow("SELECT full_text FROM self_model ORDER BY ts DESC LIMIT 1")
+    if row and row["full_text"]:
+        return f"--- WHO I AM (my current self-model) ---\n{row['full_text'].strip()[:4000]}"
+    return ""
+
+
+async def _cross_context_block(ctx: GatewayContext, session_id: str) -> str:
+    """Cross-channel context — what was said on Jordan's OTHER channels recently."""
+    pool = await get_pg(ctx)
+    parts = session_id.split(":")          # "gw2:slack:C0AMNQ5GX70" -> "slack"
+    channel_type = parts[1] if len(parts) > 1 else "unknown"
+    cross_ctx = await get_cross_context(pool, exclude_channel=channel_type)
+    return f"[Recent context from other channels]\n{cross_ctx}\n[End cross-context]" if cross_ctx else ""
+
+
+async def _sentience_block() -> str:
+    return await asyncio.get_event_loop().run_in_executor(None, _gather_sentience_context)
+
+
+# Whole-turn wall clock (s). run_agent hard-stops at 120 s; leave headroom for logging and the Slack post.
+TURN_BUDGET_S = 105
+
+
 async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
-                        agent_id: str, trace_id: str) -> str:
+                        agent_id: str, trace_id: str, person: str = None,
+                        meta: dict = None) -> str:
     """Inner agent execution: memory -> context -> LLM -> tool execution -> response.
 
     Isolated from error handling so run_agent can wrap with fault isolation.
     """
     t_start = time.time()
+    deadline = t_start + TURN_BUDGET_S
+    person = person or _default_person(session_id)
+    timings: dict = {}
 
-    # Load bootstrap docs
-    bootstrap = await _load_agent_docs(ctx, agent_id)
+    # 2026-10-08 latency pass: every context source used to run one after another (docs ~0.5 s, sentience
+    # organs ~0.8 s, recall ~1.7 s, ...). They are independent reads, so they now run concurrently; each one
+    # is still individually fail-open.
+    async def _safe(name, coro):
+        try:
+            return await coro
+        except Exception as e:
+            log.debug(f"[{trace_id}] {name} injection failed (non-fatal): {e}")
+            return ""
+
+    async def _no_recent():
+        return ""
+
+    (bootstrap, self_model, extra, cross_ctx, exp_ctx, memory_ctx, recent) = await asyncio.gather(
+        _safe("agent docs", _load_agent_docs(ctx, agent_id)),
+        _safe("self-model", _self_model_block(ctx)),
+        _safe("sentience", _sentience_block()),
+        _safe("cross-context", _cross_context_block(ctx, session_id)),
+        _safe("experiential recall", _experience_recall(ctx, message)),
+        _safe("memory", _inject_memory(ctx, message)),
+        _safe("recent-with-jordan", _recent_with_jordan(ctx, session_id) if person == "jordan" else _no_recent()),
+    )
+    timings["context_ms"] = int((time.time() - t_start) * 1000)
+
     sys_prompt = _system_prompt(agent_id, bootstrap)
+    # Order matters for the backend's prompt cache: the slow-changing blocks first, the per-turn ones last.
+    for block in (self_model, extra, cross_ctx, recent):
+        if block:
+            sys_prompt = f"{sys_prompt}\n\n{block}"
+    if recent:
+        log.info(f"[{trace_id}] recent-with-jordan injected ({len(recent)} chars)")
 
-    # Self-concept injection — Nova reasons FROM her self-model, not just from facts.
-    # The nightly nova_self_model.py maintains a versioned self-model; here we load
-    # the latest full_text so "who I am" is in her working context. Uses the async
-    # pool (never blocks the loop); fully non-fatal. (The sync equivalent for other
-    # callers is nova_self_model.current_self_model().)
-    try:
-        pool = await get_pg(ctx)
-        row = await pool.fetchrow("SELECT full_text FROM self_model ORDER BY ts DESC LIMIT 1")
-        if row and row["full_text"]:
-            sm = row["full_text"].strip()[:4000]
-            sys_prompt = f"{sys_prompt}\n\n--- WHO I AM (my current self-model) ---\n{sm}"
-    except Exception as e:
-        log.debug(f"[{trace_id}] Self-model injection failed (non-fatal): {e}")
-
-    # Sentience-organ injection — the self-model above is a snapshot; these six organs
-    # give Nova the rest of an interior to reason FROM: her model of Jordan, awareness
-    # of her own gaps (continuity), her evidenced mood (affect), what she recently got
-    # wrong (predictions), the arc she's living (autobiography), and her imaginings
-    # (flagged as not-fact). All are cheap single-SELECT reads but SYNC, so they run in
-    # an executor thread; fully non-fatal and best-effort.
-    try:
-        extra = await asyncio.get_event_loop().run_in_executor(None, _gather_sentience_context)
-        if extra:
-            sys_prompt = f"{sys_prompt}\n\n{extra}"
-    except Exception as e:
-        log.debug(f"[{trace_id}] Sentience-organ injection failed (non-fatal): {e}")
-
-    # Cross-channel context injection — share conversation context across channels
-    try:
-        pool = await get_pg(ctx)
-        # session_id format: "gw2:slack:C0AMNQ5GX70" — extract channel type (index 1)
-        parts = session_id.split(":")
-        channel_type = parts[1] if len(parts) > 1 else "unknown"
-        cross_ctx = await get_cross_context(pool, exclude_channel=channel_type)
-        if cross_ctx:
-            sys_prompt = f"{sys_prompt}\n\n[Recent context from other channels]\n{cross_ctx}\n[End cross-context]"
-    except Exception as e:
-        log.debug(f"[{trace_id}] Cross-context injection failed (non-fatal): {e}")
-
-    # Memory injection — resilient: continues without context on failure.
-    # Two lanes since 2026-09-13: the always-on experiential lane (shared
-    # history / Nova's own writing) plus the original intent-gated deep lane.
-    try:
-        exp_ctx, memory_ctx = await asyncio.gather(
-            _experience_recall(ctx, message), _inject_memory(ctx, message))
-    except Exception as e:
-        log.warning(f"[{trace_id}] Memory injection failed (degraded): {e}")
-        exp_ctx, memory_ctx = "", ""
+    exp_ctx, memory_ctx = exp_ctx or "", memory_ctx or ""
     if memory_ctx.startswith("Answer from Nova's OWN LEDGER"):
         # account organ (2026-10-05): the ledger is authoritative for questions about Nova herself —
         # drop the experiential lane (it re-surfaced her previous riff instead of the facts) and put
@@ -1078,22 +1198,42 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
             tools=_TOOLS_PAYLOAD,
             raw_response=True,
             ctx=ctx,
+            budget_s=max(10.0, min(75.0, deadline - time.time() - 25)),
         )
         model = f"router:{ctx.router.active_backend}"
+        timings["llm_ms"] = int((time.time() - t_llm_start) * 1000)
+
+        # Structured tool calls go into the trace too (only legacy ones did, so traces read "0 tools")
+        try:
+            for _tc in (raw_response_data.get("choices", [{}])[0].get("message", {}).get("tool_calls") or []):
+                tool_calls_log.append({"tool": (_tc.get("function") or {}).get("name", "?"), "kind": "structured"})
+        except Exception:
+            pass
 
         # Process structured tool calls from the raw response dict
+        _t_tools = time.time()
         clean_response, tool_output = await execute_tool_calls(
             ctx, raw_response_data, session_id=session_id
         )
+        if tool_output:
+            timings["tools_ms"] = int((time.time() - _t_tools) * 1000)
         raw_response_text = clean_response
         raw_response = raw_response_text  # Keep var for downstream compat
 
     except RuntimeError as e:
         log.error(f"[{trace_id}] ModelRouter: all backends failed: {e}")
-        raw_response_text = "Something went wrong on my end, Little Mister. Give me a moment."
+        # 2026-10-08: before giving up, one compact rescue attempt — no tool schema, a minimal prompt and
+        # the last few turns. The full request is ~10k tokens; most of what failed (slow-node timeouts,
+        # llama.cpp's 8k context) does not fail on a 1-2k-token request.
+        rescue = await _rescue_reply(ctx, history, message, private, deadline, trace_id)
+        if rescue:
+            raw_response_text = rescue
+            model = f"router:{ctx.router.active_backend}:rescue"
+        else:
+            raw_response_text = "Something went wrong on my end, Little Mister. Give me a moment."
+            model = "none"
         raw_response = raw_response_text
         clean_response = raw_response_text
-        model = "none"
     except Exception as e:
         log.warning(f"[{trace_id}] Structured tool call processing failed: {e}")
         # Extract text from raw response if we got one
@@ -1106,7 +1246,7 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
         clean_response = raw_response_text
         model = f"router:{ctx.router.active_backend}"
 
-    ttft_ms = int((time.time() - t_llm_start) * 1000)
+    ttft_ms = timings.get("llm_ms") or int((time.time() - t_llm_start) * 1000)
 
     # ── Legacy fallback: if no structured tool calls, check for exec patterns
     if not tool_output and clean_response:
@@ -1150,6 +1290,7 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
             {"role": "assistant", "content": raw_response_text},
             {"role": "tool",      "content": tool_output},
         ]
+        _t_follow = time.time()
         try:
             clean_response = await ctx.router.route(
                 messages=followup_msgs,
@@ -1158,6 +1299,7 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
                 private=private,
                 tokens=ctx.tokens,
                 ctx=ctx,
+                budget_s=max(5.0, deadline - time.time()),
             )
             # Thinking models (qwen3:30b-a3b) occasionally spend the whole budget thinking and
             # return empty. Retry once with a larger budget so the user never gets a silent reply.
@@ -1170,10 +1312,12 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
                     private=private,
                     tokens=ctx.tokens,
                     ctx=ctx,
+                    budget_s=max(5.0, deadline - time.time()),
                 )
         except Exception:
             # Tool follow-up failed — return the text from the original LLM response
             clean_response = raw_response_text or clean_response
+        timings["followup_ms"] = int((time.time() - _t_follow) * 1000)
         # Last resort: never send an empty message back to the user.
         if not (clean_response or "").strip():
             clean_response = "I pulled the info but couldn't phrase it just now, Little Mister — ask me again?"
@@ -1193,15 +1337,13 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
     await log_turn(ctx, session_id, agent_id, "assistant", clean_response,
                    model=model, turn_index=turn_index + 1)
 
-    # Reflect-after: persist the exchange as a conversation memory (fire-and-forget)
-    asyncio.create_task(_remember_exchange(ctx, session_id, agent_id, message, clean_response))
-
     # Calculate metrics
     total_ms = int((time.time() - t_start) * 1000)
     tokens_in = _count_tokens(message)
     tokens_out = _count_tokens(clean_response)
+    timings["total_ms"] = total_ms
 
-    log.info(f"[{trace_id}] response: {len(clean_response)} chars in {total_ms}ms")
+    log.info(f"[{trace_id}] response: {len(clean_response)} chars in {total_ms}ms {timings}")
 
     # Write trace record
     await log_trace(
@@ -1217,13 +1359,53 @@ async def do_agent_work(ctx: GatewayContext, message: str, session_id: str,
         total_ms=total_ms,
         tokens_in=tokens_in,
         tokens_out=tokens_out,
+        person=person,
+        timings=timings,
     )
+
+    # Reflect-after: every real exchange with Jordan becomes a 'conversation' memory (background task —
+    # after the trace row exists, so the memory id can be written back onto it).
+    channel = session_id.split(":")[1] if ":" in session_id else "unknown"
+    if _should_remember(person, channel, message, clean_response, model):
+        asyncio.create_task(_remember_exchange(ctx, session_id, agent_id, message, clean_response,
+                                               trace_id=trace_id, person=person, meta=meta))
 
     return clean_response
 
 
+async def _rescue_reply(ctx: GatewayContext, history: list, message: str, private: bool,
+                        deadline: float, trace_id: str) -> str:
+    """Last-chance reply after the full request failed on every backend: Nova's short voice, today's date,
+    the last two exchanges and the raw message (no recall blocks, no tool schema). "" if this fails too."""
+    left = deadline - time.time()
+    if left < 8:
+        return ""
+    try:
+        from datetime import datetime
+        from nova_voice import NOVA_VOICE_SHORT
+        system = (f"{NOVA_VOICE_SHORT}\n\nToday is {datetime.now():%A, %B %d, %Y}. Your full memory and tools are "
+                  "unavailable for this one reply — answer from the conversation itself, and say so plainly if "
+                  "the question needs a lookup.")
+    except Exception:
+        system = "You are Nova, Jordan's AI advisor. Call him Little Mister. Be brief and honest."
+    turns = [m for m in history[:-1] if m.get("role") in ("user", "assistant")][-4:]
+    turns = [{"role": m["role"], "content": (m.get("content") or "")[-1500:]} for m in turns]
+    try:
+        out = await ctx.router.route(messages=turns + [{"role": "user", "content": message}], system=system,
+                                     max_tokens=512, private=private, tokens=ctx.tokens, ctx=ctx,
+                                     budget_s=min(35.0, left - 3))
+        out = (out or "").strip() if isinstance(out, str) else ""
+        if out:
+            log.warning(f"[{trace_id}] rescued by compact retry on {ctx.router.active_backend}")
+        return out
+    except Exception as e:
+        log.error(f"[{trace_id}] compact rescue failed too: {e}")
+        return ""
+
+
 async def run_agent(ctx: GatewayContext, message: str, session_id: str,
-                    agent_id: str, stream_callback=None, trace_id: str = "") -> str:
+                    agent_id: str, stream_callback=None, trace_id: str = "",
+                    person: str = None, meta: dict = None) -> str:
     """Full agent execution with fault isolation and circuit breaker.
 
     Wraps do_agent_work with:
@@ -1286,7 +1468,7 @@ async def run_agent(ctx: GatewayContext, message: str, session_id: str,
     # Execute with timeout and error boundary
     try:
         response = await asyncio.wait_for(
-            do_agent_work(ctx, message, session_id, agent_id, trace_id),
+            do_agent_work(ctx, message, session_id, agent_id, trace_id, person=person, meta=meta),
             timeout=120,  # 2 min max per agent response
         )
         return response

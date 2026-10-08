@@ -156,11 +156,12 @@ class TestFunctional(unittest.TestCase):
     def test_ollama_golden_path_payload_and_content(self):
         http = _Http(posts={"/api/chat": OLLAMA_OK})
         r, out = _route(http, system="be nice", max_tokens=100)
-        self.assertEqual(out, "<think>hmm</think> hello")
+        # 2026-10-08: thinking off for chat (latency + the 45 s timeouts); stray think blocks are stripped
+        self.assertEqual(out, "hello")
         body = [j for m, u, j in http.calls if m == "POST"][0]
         self.assertEqual(body["messages"][0], {"role": "system", "content": "be nice"})
-        self.assertEqual(body["options"]["num_predict"], 2148)
-        self.assertTrue(body["think"])
+        self.assertEqual(body["options"]["num_predict"], 100)
+        self.assertFalse(body["think"])
 
     def test_raw_response_carries_tool_calls(self):
         http = _Http(posts={"/api/chat": {"message": {"content": "", "tool_calls": [{"function": {"name": "f"}}]}}})
@@ -175,6 +176,68 @@ class TestFunctional(unittest.TestCase):
         self.assertTrue(s["ollama"]["healthy"])
         self.assertFalse(s["mlx"]["healthy"])
         self.assertEqual(s["active"], "unknown")
+
+
+class TestFailover20261008(unittest.TestCase):
+    """2026-10-08: the 'Something went wrong on my end' replies — one slow ollama node timed out (empty error
+    text), MLX/llama.cpp could not take the request, and the turn died. Now: a second ollama node is tried,
+    llama.cpp gets a request that fits its 8k context, and errors carry their type."""
+
+    def test_second_ollama_node_answers_when_first_times_out(self):
+        class H(_Http):
+            async def post(self, url, json=None, headers=None, timeout=None):
+                self.calls.append(("POST", url, json))
+                if url.startswith("http://slow"):
+                    import httpx
+                    raise httpx.ReadTimeout("")
+                return _Resp({"message": {"content": "from the second node"}})
+        http = H()
+        with patch.object(rt, "_ollama_candidates", return_value=["http://slow:1", "http://fast:2"]):
+            _, out = _route(http)
+        self.assertEqual(out, "from the second node")
+        self.assertEqual([u for m, u, j in http.calls if m == "POST"],
+                         ["http://slow:1/api/chat", "http://fast:2/api/chat"])
+
+    def test_candidates_put_sticky_first_then_warm_hw_order(self):
+        rt._RANK_CACHE.clear()
+        rt._RANK_CACHE.update(ts=9e18, last_ollama="http://192.168.1.7:11434", val={"ollama": [
+            {"url": "http://192.168.1.86:11434", "status": "up", "has_chat_model": True, "loaded": [rt.CHAT_MODEL]},
+            {"url": "http://192.168.1.7:11434", "status": "up", "has_chat_model": True, "loaded": [rt.CHAT_MODEL]},
+            {"url": "http://192.168.1.6:11434", "status": "up", "has_chat_model": True, "loaded": [rt.CHAT_MODEL]},
+        ]})
+        try:
+            with patch.object(rt, "OLLAMA_TRIES", 3):
+                self.assertEqual(rt._ollama_candidates("http://d"),
+                                 ["http://192.168.1.7:11434", "http://192.168.1.6:11434", "http://192.168.1.86:11434"])
+            rt._forget_sticky("http://192.168.1.7:11434")
+            self.assertNotIn("last_ollama", rt._RANK_CACHE)
+        finally:
+            rt._RANK_CACHE.clear(); rt._RANK_CACHE.update(ts=0.0, val=None)
+
+    def test_llamacpp_gets_compact_request_without_tools(self):
+        http = _Http(posts={"/api/chat": RuntimeError("x"), "/v1/chat/completions": OAI_OK})
+        r = rt.ModelRouter()
+        r.BACKENDS = [b for b in r.BACKENDS if b[0] == "llamacpp"]
+        big = [{"role": "user", "content": "q" * 50_000}] * 10
+        with patch.object(rt, "nova_lb", None), patch.object(rt.ModelRouter, "_log_inference", new=AsyncMock()):
+            out = asyncio.run(r.route(big, system="S" * 60_000, tools=[{"type": "function"}],
+                                      ctx=SimpleNamespace(http=http)))
+        self.assertEqual(out, "from mlx")
+        body = [j for m, u, j in http.calls if m == "POST"][0]
+        self.assertNotIn("tools", body)
+        chars = sum(len(m["content"]) for m in body["messages"])
+        self.assertLess(chars / 3.2, rt.LLAMACPP_CTX)
+
+    def test_errors_name_their_type(self):
+        import httpx
+        self.assertEqual(rt._err(httpx.ReadTimeout("")), "ReadTimeout")
+        self.assertEqual(rt._err(ValueError("bad\nmore")), "ValueError: bad")
+
+    def test_budget_exhausted_stops_the_chain(self):
+        http = _Http(posts={"/api/chat": OLLAMA_OK})
+        with self.assertRaises(RuntimeError) as cm:
+            _route(http, budget_s=0.5)
+        self.assertIn("budget", str(cm.exception))
 
 
 class TestFrame(unittest.TestCase):

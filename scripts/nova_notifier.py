@@ -22,6 +22,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 import nova_correlator
 import nova_remediation
+try:  # room voice must never be able to break notification delivery
+    import nova_voice_room
+except Exception:
+    nova_voice_room = None
 
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
@@ -234,6 +238,15 @@ def drain(verbose=False, only_source=None) -> int:
                         if verbose:
                             print(f"  suppressed #{ev['id']} (dedup of #{prior['id']})")
                         continue
+                # 1.2) Room voice (OfficePod): genuine life-safety / security-organ CRITICAL only.
+                #      Placed BEFORE triage (up to 20 s) and correlation so neither delays nor
+                #      folds away a smoke alarm. dispatch() only classifies and spawns a detached
+                #      child (kill switch, quiet hours, rate limit live there); never blocks/raises.
+                try:
+                    if nova_voice_room:
+                        nova_voice_room.dispatch(dict(ev))
+                except Exception:
+                    pass
                 # 1.5) EVIDENCE CHECK before anything is believed (2026-10-05, incident #3675):
                 #      triage runs here, BEFORE correlation, so a detector fault never opens an
                 #      incident, never gets a qwen narrative and never recurs. Every other

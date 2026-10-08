@@ -218,6 +218,70 @@ TOOL_REGISTRY: dict[str, dict] = {
 }
 
 
+# ── Extended tools (2026-10-08) ─────────────────────────────────────────────
+# tools_extended.EXTENDED_TOOLS was written in August but never merged, so Nova could not use any of it.
+# Only the READ-ONLY senses are wired in: camera_snap (a still from a camera) and screenshot (look at the
+# Mac screen). ui_click / ui_type (driving the GUI), camera_clip, summarize_url and the flow_* tools stay
+# out on purpose. A tool is offered to the model only on a host where its binary exists — the active
+# gateway on nova-core (Linux) has neither peekaboo nor camsnap, the .6 standby has both — so the model is
+# never handed a tool that can only fail. Both default to 'notify' in autonomy_rules (Jordan sees each use,
+# like browse_page). The caller-chosen output path is NOT exposed: snapshots land in _SNAP_DIR.
+_EXTENDED_READONLY = ("camera_snap", "screenshot")
+_SNAP_DIR = Path(os.environ.get("NOVA_SNAP_DIR", "/tmp/nova-snaps"))
+
+
+def _merge_extended_tools(registry: dict) -> list:
+    """Add the read-only extended tools to the registry in TOOL_REGISTRY's schema shape
+    ({description, parameters: {props}, required}). Returns the names merged."""
+    try:
+        from nova_gateway import tools_extended as tx
+    except Exception as e:                       # pragma: no cover
+        log.warning(f"extended tools unavailable: {e}")
+        return []
+    binary = {"camera_snap": tx.CAMSNAP, "screenshot": tx.PEEKABOO}
+    merged = []
+    for name in _EXTENDED_READONLY:
+        spec = tx.EXTENDED_TOOLS.get(name)
+        if not spec or name in registry or not os.access(binary[name], os.X_OK):
+            continue
+        params = dict((spec.get("parameters") or {}).get("properties") or {})
+        params.pop("output", None)
+        registry[name] = {"description": spec["description"], "parameters": params,
+                          "required": list((spec.get("parameters") or {}).get("required") or [])}
+        merged.append(name)
+    return merged
+
+
+EXTENDED_MERGED = _merge_extended_tools(TOOL_REGISTRY)
+
+
+# ── home_control -> run_script (2026-10-08) ─────────────────────────────────
+# home_control used to call _tool_run_script directly, so it skipped the run_script approval rule. It is now
+# rewritten to the run_script call it really is BEFORE the autonomy check, and the rules decide:
+# an argument-scoped run_script rule keeps scenes and volume/mute at 'notify' (as before); anything else
+# (power, input, mode, zone2 ...) falls through to run_script's 'approve'. It also builds the arguments the
+# script's CLI actually takes (`bose <dev> ...`, `onkyo <dev> ...`, `scene <name>`) — the old
+# [device] + action.split() form was rejected by nova_home_control.py ("Unknown category: kitchen").
+_BOSE = ("bedroom", "guest_bedroom", "kitchen", "all")
+_ONKYO = ("living_room", "office")
+
+
+def home_control_args(device: str, action: str) -> list:
+    """Translate the home_control tool's {device, action} into nova_home_control.py CLI args."""
+    dev = (device or "").strip().lower().replace(" ", "_")
+    words = (action or "").strip().lower().split()
+    if not dev or not words:
+        raise ValueError("device and action required")
+    if dev == "scene" or words[0] == "scene":
+        name = words[1] if words[0] == "scene" and len(words) > 1 else words[0]
+        return ["scene", name]
+    if dev in _BOSE:
+        return ["bose", dev] + words
+    if dev in _ONKYO:
+        return ["onkyo", dev] + words
+    raise ValueError(f"unknown device '{device}' (bose: {', '.join(_BOSE)}; onkyo: {', '.join(_ONKYO)})")
+
+
 # ── Tool dispatch ────────────────────────────────────────────────────────────
 
 async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict,
@@ -227,6 +291,12 @@ async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict,
     Jordan; approve → park it in autonomy_pending, tell Jordan how to approve, run nothing."""
     if tool_name not in TOOL_REGISTRY:
         return f"[error: unknown tool '{tool_name}']"
+    if tool_name == "home_control":
+        try:
+            args = home_control_args(tool_params.get("device", ""), tool_params.get("action", ""))
+        except ValueError as e:
+            return f"[error: {e}]"
+        tool_name, tool_params = "run_script", {"script": "nova_home_control.py", "args": args}
     level = "auto"
     if enforce and ctx.pg_pool is not None:
         try:
@@ -336,6 +406,16 @@ async def _dispatch_now(ctx: GatewayContext, tool_name: str, tool_params: dict) 
             return await _tool_ops_query(ctx, tool_params)
         elif tool_name == "home_control":
             return await _tool_home_control(ctx, tool_params)
+        elif tool_name in EXTENDED_MERGED:
+            from nova_gateway.tools_extended import dispatch_extended_tool
+            params = {k: v for k, v in tool_params.items() if k != "output"}
+            if tool_name == "camera_snap":
+                cam = re.sub(r"[^A-Za-z0-9_-]", "_", str(params.get("camera", "")))[:64]
+                if not cam:
+                    return "[error: camera name required]"
+                _SNAP_DIR.mkdir(parents=True, exist_ok=True)
+                params = {"camera": cam, "output": str(_SNAP_DIR / f"{cam}-{int(time.time())}.jpg")}
+            return await dispatch_extended_tool(ctx, tool_name, params)
         elif tool_name == "school_report":
             return await _tool_run_script(ctx, {"script": "nova_school_report.py"})
         elif tool_name == "nearest_place":
@@ -1011,6 +1091,10 @@ async def _tool_home_control(ctx: GatewayContext, params: dict) -> str:
 
     if not device or not action:
         return "[error: device and action required]"
-
-    args = [device] + action.split()
+    # Only reached via resolve paths that already passed the rules; dispatch_tool rewrites home_control to
+    # run_script before the autonomy check, so this is the same script call with the corrected CLI args.
+    try:
+        args = home_control_args(device, action)
+    except ValueError as e:
+        return f"[error: {e}]"
     return await _tool_run_script(ctx, {"script": "nova_home_control.py", "args": args})

@@ -195,6 +195,57 @@ class TestFunctional(unittest.TestCase):
         self.assertIn("unknown channel", _run(tl._tool_send_message(_ctx(), {"channel": "fax", "text": "x"})))
 
 
+class TestRulePath20261008(unittest.TestCase):
+    """home_control goes through the run_script rule; read-only extended tools are wired, ui_click is not."""
+
+    def test_home_control_is_checked_as_run_script(self):
+        seen = {}
+
+        async def check(pool, tool, channel, params):
+            seen.update(tool=tool, params=params); return "approve"
+        ctx = _ctx(); ctx.pg_pool = object()
+        with mock.patch("nova_gateway.autonomy.check_autonomy", check), \
+                mock.patch("nova_gateway.autonomy.request_approval", mock.AsyncMock(return_value="p1")), \
+                mock.patch.object(tl, "_slack_notify", mock.AsyncMock()), \
+                mock.patch.object(tl, "_tool_run_script", mock.AsyncMock(return_value="ran")) as rs:
+            out = _run(tl.dispatch_tool(ctx, "home_control", {"device": "living_room", "action": "power off"},
+                                        session_id="gw2:slack:C1"))
+        self.assertEqual(seen["tool"], "run_script")
+        self.assertEqual(seen["params"], {"script": "nova_home_control.py", "args": ["onkyo", "living_room", "power", "off"]})
+        self.assertIn("awaiting Jordan's approval", out)
+        rs.assert_not_called()
+
+    def test_home_control_scene_volume_args_match_the_notify_rule(self):
+        import nova_gateway.autonomy as au
+        pat = (r'^\{"args": \[("scene", "[a-z_]+"|"(bose|onkyo)", "[a-z_]+", ("volume", "[0-9]{1,3}"|"mute"(, "(on|off)")?'
+               r'|"unmute"))\], "script": "nova_home_control\.py"\}$')
+        with mock.patch.object(au, "_cache", {("__scoped__", "run_script"): [("*", re.compile(pat, re.I), "notify", 10)]}):
+            lvl = lambda d, a: au.scoped_level("run_script", "slack", {"script": "nova_home_control.py",
+                                                                      "args": tl.home_control_args(d, a)})
+            self.assertEqual(lvl("scene", "scene movie"), "notify")
+            self.assertEqual(lvl("kitchen", "volume 30"), "notify")
+            self.assertIsNone(lvl("living_room", "power off"))
+            self.assertIsNone(lvl("kitchen", "volume 30; rm -rf /"))
+
+    def test_home_control_args_follow_the_script_cli(self):
+        self.assertEqual(tl.home_control_args("kitchen", "volume 30"), ["bose", "kitchen", "volume", "30"])
+        self.assertEqual(tl.home_control_args("scene", "scene goodnight"), ["scene", "goodnight"])
+        with self.assertRaises(ValueError):
+            tl.home_control_args("garage", "power on")
+
+    def test_only_readonly_extended_tools_can_merge(self):
+        reg = {}
+        with mock.patch.object(tl.os, "access", return_value=True):
+            merged = tl._merge_extended_tools(reg)
+        self.assertEqual(sorted(merged), ["camera_snap", "screenshot"])
+        for bad in ("ui_click", "ui_type", "camera_clip"):
+            self.assertNotIn(bad, reg)
+        self.assertNotIn("output", reg["camera_snap"]["parameters"])
+        self.assertEqual(reg["camera_snap"]["required"], ["camera"])
+        with mock.patch.object(tl.os, "access", return_value=False):
+            self.assertEqual(tl._merge_extended_tools({}), [])
+
+
 class TestFrame(unittest.TestCase):
     def test_import_is_side_effect_free(self):
         r = subprocess.run([sys.executable, "-c", "import nova_gateway.tools as t; print(len(t.TOOL_REGISTRY) > 10)"],

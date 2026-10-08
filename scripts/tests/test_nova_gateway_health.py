@@ -192,8 +192,11 @@ class TestFunctional(_CfgGuard):
         routes, _ = _app(_ctx())
         h = routes[("POST", "/api/chat")]
         with mock.patch.object(hl, "run_agent", mock.AsyncMock(return_value="pong")) as ra:
-            self.assertEqual(_call(h, _Req({"message": "ping"})), (200, {"ok": True, "response": "pong"}))
+            st, body = _call(h, _Req({"message": "ping"}))
+            self.assertEqual((st, body["ok"], body["response"]), (200, True, "pong"))
+            self.assertRegex(body["trace_id"], r"^[0-9a-f]{8}$")      # 2026-10-08: callers can find their trace
         self.assertEqual(ra.await_args[0][2:], ("chatroom:general", "chat"))
+        self.assertEqual(ra.await_args.kwargs["person"], "service")    # API callers are not Jordan by default
         with mock.patch.object(hl, "run_agent", mock.AsyncMock(side_effect=RuntimeError("boom"))), \
              self.assertLogs("nova_gateway_v2", level="ERROR"):
             self.assertEqual(_call(h, _Req({"message": "ping"}))[0], 500)

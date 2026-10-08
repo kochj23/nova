@@ -168,10 +168,15 @@ async def health_server(ctx: GatewayContext):
 
         session_id = data.get("session_id", "chatroom:general")
         agent_id = data.get("agent_id", "chat")
+        # 2026-10-08: callers say who is talking (default 'service' — API callers are not Jordan unless they
+        # say so), and get the trace id back so a caller/test can find the trace + memory row it produced.
+        person = str(data.get("person") or "service")[:40]
+        from nova_gateway.agent import gen_trace_id
+        trace_id = gen_trace_id()
 
         try:
-            response = await run_agent(ctx, message, session_id, agent_id)
-            return web.json_response({"ok": True, "response": response})
+            response = await run_agent(ctx, message, session_id, agent_id, trace_id=trace_id, person=person)
+            return web.json_response({"ok": True, "response": response, "trace_id": trace_id})
         except Exception as e:
             log.error(f"Chat API error: {e}")
             return web.json_response({"ok": False, "error": str(e)}, status=500)

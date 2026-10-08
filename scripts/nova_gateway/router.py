@@ -57,6 +57,19 @@ _MLX_ID_CACHE: dict = {}   # base_url -> (model id, ts)
 
 CHAT_MODEL = os.environ.get("NOVA_CHAT_MODEL", "qwen3:8b")   # the model _call_backend asks ollama for
 CHAT_NODE_ORDER = os.environ.get("NOVA_CHAT_NODE_ORDER", "192.168.1.6,192.168.1.77,192.168.1.7,192.168.1.125,192.168.1.5,192.168.1.86,192.168.1.252").split(",")
+# 2026-10-08: qwen3 thinking is OFF for chat. Measured on the Studio with the real 7.1k-token prompt: think=True
+# 5.7-8.5 s (350-420 hidden tokens, and it invented tool calls for "how are you feeling"), think=False 1.3 s. On the
+# slower pool nodes the hidden thinking ran past the 45 s timeout — the empty-message "failed mid-request:" errors
+# behind the "Something went wrong on my end" replies on 09-26/09-28/10-03. NOVA_CHAT_THINK=1 turns it back on.
+CHAT_THINK = os.environ.get("NOVA_CHAT_THINK", "0") == "1"
+# How many distinct ollama nodes one turn may try before falling through to MLX/llama.cpp.
+OLLAMA_TRIES = max(1, int(os.environ.get("NOVA_OLLAMA_TRIES", "2")))
+# Whole-route wall-clock budget (s). Every backend attempt gets min(its timeout, what is left), so a slow first node
+# can no longer eat the time the fallbacks need (the 10-03 failure spent 2 x 45 s and never reached llama.cpp).
+ROUTE_BUDGET_S = float(os.environ.get("NOVA_ROUTE_BUDGET_S", "75"))
+# llama.cpp on the Studio runs with n_ctx 8192; the full chat prompt (~7k system + 3k tool schema + history) is a
+# guaranteed 400 "exceed_context_size_error" there, which is why it never rescued a turn. It gets a compact request.
+LLAMACPP_CTX = int(os.environ.get("NOVA_LLAMACPP_CTX", "8192"))
 
 
 def _best_url(kind: str, default: str) -> str:
@@ -91,6 +104,57 @@ def _best_url(kind: str, default: str) -> str:
     except Exception:
         pass
     return default
+
+def _ollama_candidates(default: str) -> list:
+    """Ordered ollama base URLs to try for one turn: the sticky/best node first (_best_url), then the other
+    nodes that have the chat model RESIDENT (hardware order), then any other up node with the model.
+    Capped at OLLAMA_TRIES. Never raises; worst case [default]."""
+    first = _best_url("ollama", default)
+    out = [first]
+    try:
+        rows = (_RANK_CACHE.get("val") or {}).get("ollama") or []
+        up = [r for r in rows if r.get("status") == "up" and r.get("has_chat_model")]
+        order = {ip: i for i, ip in enumerate(CHAT_NODE_ORDER)}
+        def _rank(r): return order.get(r["url"].split("//")[-1].split(":")[0], 99)
+        warm = sorted([r for r in up if CHAT_MODEL in (r.get("loaded") or [])], key=_rank)
+        cold = sorted([r for r in up if r not in warm], key=_rank)
+        for r in warm + cold:
+            if r["url"] not in out:
+                out.append(r["url"])
+    except Exception:
+        pass
+    if default not in out:
+        out.append(default)
+    return out[:OLLAMA_TRIES]
+
+
+def _forget_sticky(url: str) -> None:
+    """A node that just failed a real request must not stay the sticky choice for the next turn."""
+    if _RANK_CACHE.get("last_ollama") == url:
+        _RANK_CACHE.pop("last_ollama", None)
+
+
+def _err(e: Exception) -> str:
+    """httpx timeouts stringify to '' — that is why the 09-26..10-03 logs read 'failed mid-request: ' with
+    nothing after it. Always name the exception type."""
+    msg = str(e).split("\n")[0].strip()
+    return f"{type(e).__name__}: {msg}" if msg else type(e).__name__
+
+
+def _compact_for_small_ctx(msgs: list, max_tokens: int, n_ctx: int) -> list:
+    """Fit a chat request into a small context window (llama.cpp n_ctx 8192): keep the system prompt's head and
+    the most recent turns, drop tool-role plumbing. ~3.2 chars/token is conservative for English + markdown."""
+    budget_chars = int(max(1024, n_ctx - max_tokens - 512) * 3.2)
+    system = [m for m in msgs if m.get("role") == "system"][:1]
+    rest = [m for m in msgs if m.get("role") in ("user", "assistant")][-6:]
+    rest = [{"role": m["role"], "content": (m.get("content") or "")[-2500:]} for m in rest]
+    used = sum(len(m["content"]) for m in rest)
+    out = []
+    if system:
+        room = max(800, budget_chars - used)
+        out.append({"role": "system", "content": (system[0].get("content") or "")[:room]})
+    return out + rest
+
 
 class ModelRouter:
     """Routes LLM requests through a priority chain of backends with health checking.
@@ -187,7 +251,7 @@ class ModelRouter:
                     private: bool = False, tokens: dict = None,
                     model_override: str = "",
                     tools: list = None, raw_response: bool = False,
-                    ctx=None) -> str | dict:
+                    ctx=None, budget_s: float = None) -> str | dict:
         """Route a chat completion request through the priority chain.
 
         Args:
@@ -200,6 +264,8 @@ class ModelRouter:
             tools: Optional list of tool definitions in OpenAI function-calling format.
             raw_response: If True, return the full response JSON dict (for tool_calls inspection).
             ctx: GatewayContext instance for accessing shared state.
+            budget_s: wall-clock budget for the whole chain (default ROUTE_BUDGET_S). Each attempt's
+                timeout is clipped to what is left; when it is spent the chain stops.
 
         Returns:
             The assistant's response text (str), or full response dict if raw_response=True.
@@ -209,8 +275,12 @@ class ModelRouter:
         """
         tokens = tokens or {}
         errors = []
+        deadline = time.time() + (budget_s if budget_s else ROUTE_BUDGET_S)
 
         for name, static_base_url, health_path, is_local in self.BACKENDS:
+            if deadline - time.time() < 3:
+                errors.append((name, "route budget exhausted"))
+                break
             # Skip cloud backends for private queries
             if not is_local and private:
                 continue
@@ -253,7 +323,7 @@ class ModelRouter:
                 result = await self._call_backend(
                     name, base_url, messages, system, max_tokens, tokens,
                     model_override, tools=tools, raw_response=raw_response,
-                    ctx=ctx,
+                    ctx=ctx, deadline=deadline,
                 )
                 _elapsed_ms = int((_time.time() - _t0) * 1000)
 
@@ -280,8 +350,8 @@ class ModelRouter:
             except Exception as e:
                 # Mid-request failure — invalidate health and try next
                 self.invalidate_health(name)
-                errors.append((name, str(e)))
-                log.warning(f"ModelRouter: backend '{name}' failed mid-request: {e}")
+                errors.append((name, _err(e)))
+                log.warning(f"ModelRouter: backend '{name}' failed mid-request: {_err(e)}")
                 continue
 
         # All backends failed
@@ -292,7 +362,7 @@ class ModelRouter:
     async def _call_backend(self, name: str, base_url: str, messages: list,
                             system: str, max_tokens: int, tokens: dict,
                             model_override: str, tools: list = None,
-                            raw_response: bool = False, ctx=None) -> str | dict:
+                            raw_response: bool = False, ctx=None, deadline: float = None) -> str | dict:
         """Call a specific backend. All use OpenAI-compatible format.
 
         Args:
@@ -308,29 +378,49 @@ class ModelRouter:
         if system:
             msgs = [{"role": "system", "content": system}] + messages
 
+        def _t(default: float) -> float:
+            """Per-attempt timeout clipped to the route budget."""
+            if deadline is None:
+                return default
+            left = deadline - time.time()
+            if left < 2:
+                raise TimeoutError("route budget exhausted")
+            return min(default, left)
+
         if name == "ollama":
-            base_url = _best_url("ollama", base_url)
-            # Use Ollama's native API with think:true — thinking goes to
-            # separate field, we only return content.
+            # Native API. Thinking is off for chat (CHAT_THINK) — see the note at CHAT_THINK.
             model = model_override or CHAT_MODEL   # 2026-09-18: 30b only on wedged .6 / cold .77; 8b is reliable on the working nodes
             payload = {
                 "model":   model,
                 "messages": msgs,
-                "options": {"num_predict": max_tokens + 2048, "temperature": 0.4},
-                "think":   True,
+                "options": {"num_predict": max_tokens + (2048 if CHAT_THINK else 0), "temperature": 0.4},
+                "think":   CHAT_THINK,
                 "stream":  False,
             }
             if tools:
                 payload["tools"] = tools
-            resp = await http.post(
-                f"{base_url}/api/chat",
-                json=payload,
-                timeout=45,
-            )
-            resp.raise_for_status()
-            data = resp.json()
+            # 2026-10-08: one dead/slow node no longer fails the turn — try the next node holding the chat model
+            # before falling through to MLX. The first try keeps most of the budget; later tries get the rest.
+            data, last_exc = None, None
+            for i, node_url in enumerate(_ollama_candidates(base_url)):
+                try:
+                    resp = await http.post(f"{node_url}/api/chat", json=payload,
+                                           timeout=_t(40 if i == 0 else 30))
+                    resp.raise_for_status()
+                    data = resp.json()
+                    break
+                except Exception as e:
+                    last_exc = e
+                    _forget_sticky(node_url)
+                    log.warning(f"ModelRouter: ollama node {node_url} failed ({_err(e)}) — trying next node")
+                    if isinstance(e, TimeoutError) and "budget" in str(e):
+                        break
+            if data is None:
+                raise last_exc or RuntimeError("no ollama node answered")
             msg = data.get("message", {})
             content = (msg.get("content") or "").strip()
+            if "</think>" in content:          # think=False: a stray inline block must not reach Jordan
+                content = _strip_thinking(content)
             if raw_response:
                 tool_calls = msg.get("tool_calls")
                 oai_msg = {"role": "assistant", "content": content}
@@ -362,37 +452,50 @@ class ModelRouter:
                 "messages":   msgs,
                 "max_tokens": max_tokens,
                 "temperature": 0.7,
+                # Qwen3 MLX servers: no hidden reasoning in chat (ignored by models without the switch).
+                "chat_template_kwargs": {"enable_thinking": False},
             }
             if tools:
                 payload["tools"] = tools
             resp = await http.post(
                 f"{base_url}/v1/chat/completions",
                 json=payload,
-                timeout=45,
+                timeout=_t(45),
             )
             resp.raise_for_status()
             data = resp.json()
+            try:
+                m0 = data["choices"][0]["message"]
+                if "</think>" in (m0.get("content") or ""):
+                    m0["content"] = _strip_thinking(m0["content"])
+            except Exception:
+                pass
             if raw_response:
                 return data
             msg = data["choices"][0]["message"]
             return (msg.get("content") or msg.get("thinking") or "").strip()
 
         elif name == "llamacpp":
-            # llama.cpp server — OpenAI-compatible
+            # llama.cpp server — OpenAI-compatible, n_ctx 8192. It is the last local rescue, so it gets a
+            # request that FITS: no tool schema (~3k tokens), trimmed system prompt, last few turns. A rescued
+            # turn answers without tools rather than not at all.
             payload = {
-                "messages":   msgs,
+                "messages":   _compact_for_small_ctx(msgs, max_tokens, LLAMACPP_CTX),
                 "max_tokens": max_tokens,
                 "temperature": 0.7,
             }
-            if tools:
-                payload["tools"] = tools
             resp = await http.post(
                 f"{base_url}/v1/chat/completions",
                 json=payload,
-                timeout=45,
+                timeout=_t(45),
             )
             resp.raise_for_status()
             data = resp.json()
+            try:
+                m0 = data["choices"][0]["message"]
+                m0["content"] = _strip_thinking((m0.get("content") or "").strip())
+            except Exception:
+                pass
             if raw_response:
                 return data
             return data["choices"][0]["message"]["content"].strip()
@@ -415,7 +518,7 @@ class ModelRouter:
                     "Authorization": f"Bearer {api_key}",
                     "HTTP-Referer": "https://nova.digitalnoise.net",
                 },
-                timeout=120,
+                timeout=_t(120),
             )
             resp.raise_for_status()
             data = resp.json()

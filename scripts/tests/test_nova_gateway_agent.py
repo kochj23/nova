@@ -213,6 +213,84 @@ class TestFunctional(unittest.TestCase):
         rec.assert_awaited_once_with(ctx, "chat", "tt", "bad")
 
 
+class TestRelationshipMemory20261008(unittest.TestCase):
+    def test_only_real_jordan_exchanges_are_remembered(self):
+        ok = ag._should_remember
+        self.assertTrue(ok("jordan", "slack", "how was your day?", "Quiet, Little Mister.", "router:ollama"))
+        self.assertFalse(ok("claude", "claude-code", "status?", "fine", "router:ollama"))
+        self.assertFalse(ok("jordan", "hc", "healthcheck: reply with one word.", "OK", "router:ollama"))
+        self.assertFalse(ok("jordan", "slack", "test_ping_from_tests", "pong", "router:ollama"))
+        self.assertFalse(ok("jordan", "slack", "hi", "Something went wrong on my end, Little Mister.", "none"))
+        self.assertEqual(ag._default_person("gw2:signal:+1"), "jordan")
+        self.assertEqual(ag._default_person("gw2:claude-code:x"), "claude")
+        self.assertEqual(ag._default_person("chatroom:general"), "service")
+
+    def test_remember_is_synchronous_with_metadata_and_writes_back_id(self):
+        pool = _Pool()
+        ctx = _ctx()
+        resp = MagicMock(status_code=200); resp.json.return_value = {"id": "m-1", "status": "stored"}
+        ctx.http.post = AsyncMock(return_value=resp)
+        with patch.object(ag, "get_pg", AsyncMock(return_value=pool)):
+            mid = asyncio.run(ag._remember_exchange(ctx, "gw2:slack:C1", "chat", "hi there nova", "hello",
+                                                    trace_id="t9", meta={"slack_ts": "1.2"}))
+        self.assertEqual(mid, "m-1")
+        kw = ctx.http.post.call_args.kwargs
+        self.assertNotIn("params", kw)                         # no async queue
+        md = kw["json"]["metadata"]
+        self.assertEqual((md["channel"], md["trace_id"], md["slack_ts"], md["person"]), ("slack", "t9", "1.2", "jordan"))
+        self.assertIn("ts", md)
+        self.assertEqual(kw["json"]["source"], "conversation")
+        self.assertIn(("m-1", "t9"), [a for _, a in pool.executed])
+
+    def test_remember_retries_once_then_gives_up(self):
+        ctx = _ctx(); ctx.http.post = AsyncMock(side_effect=ConnectionError("down"))
+        with patch.object(ag.asyncio, "sleep", AsyncMock()):
+            self.assertEqual(asyncio.run(ag._remember_exchange(ctx, "gw2:slack:C1", "chat", "a b c", "d")), "")
+        self.assertEqual(ctx.http.post.call_count, 2)
+
+    def test_reply_to_jordan_schedules_memory_and_recent_lane(self):
+        ctx = _ctx([{"choices": [{"message": {"content": "hey"}}]}])
+        recent = AsyncMock(return_value="--- RECENT CONVERSATIONS WITH LITTLE MISTER ---\n- x")
+        with _patched(_Pool(), _recent_with_jordan=recent):
+            asyncio.run(ag.do_agent_work(ctx, "how are you", "gw2:slack:C1", "chat", "t1"))
+            remember = _patched.last["_remember_exchange"]
+        recent.assert_awaited()
+        self.assertIn("RECENT CONVERSATIONS", ctx.router.route.call_args.kwargs["system"])
+        remember.assert_called_once()
+        self.assertEqual(remember.call_args.kwargs["trace_id"], "t1")
+
+    def test_service_callers_are_not_remembered(self):
+        ctx = _ctx([{"choices": [{"message": {"content": "hey"}}]}])
+        recent = AsyncMock(return_value="")
+        with _patched(_Pool(), _recent_with_jordan=recent):
+            asyncio.run(ag.do_agent_work(ctx, "how are you", "chatroom:general", "chat", "t1"))
+            _patched.last["_remember_exchange"].assert_not_called()
+        recent.assert_not_called()
+
+
+class TestRescue20261008(unittest.TestCase):
+    def test_compact_rescue_answers_when_full_request_fails(self):
+        ctx = _ctx([RuntimeError("All LLM backends unavailable"), "I'm here, Little Mister."])
+        with _patched(_Pool()):
+            out = asyncio.run(ag.do_agent_work(ctx, "you there?", "gw2:slack:C1", "chat", "t1"))
+        self.assertEqual(out, "I'm here, Little Mister.")
+        rescue_kw = ctx.router.route.call_args.kwargs
+        self.assertNotIn("tools", rescue_kw)
+        self.assertEqual(rescue_kw["messages"][-1], {"role": "user", "content": "you there?"})
+        self.assertLessEqual(rescue_kw["budget_s"], 35.0)
+
+    def test_docs_are_cached(self):
+        pool = _Pool(rows=[{"doc_type": "identity", "content": "I am Nova"}])
+        ag._DOCS_CACHE.clear()
+        with patch.object(ag, "get_pg", AsyncMock(return_value=pool)):
+            a = asyncio.run(ag._load_agent_docs(_ctx(), "chat"))
+            pool.rows = [{"doc_type": "identity", "content": "changed"}]
+            b = asyncio.run(ag._load_agent_docs(_ctx(), "chat"))
+        ag._DOCS_CACHE.clear()
+        self.assertEqual(a, b)
+        self.assertIn("I am Nova", a)
+
+
 class TestFrame(unittest.TestCase):
     def test_import_is_clean_and_side_effect_free(self):
         tmp = tempfile.mkdtemp(prefix="gw-agent-frame-"); os.makedirs(os.path.join(tmp, ".openclaw", "logs"))

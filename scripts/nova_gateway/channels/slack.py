@@ -20,6 +20,26 @@ log = logging.getLogger("nova_gateway_v2")
 
 # Channels Nova listens on for Slack messages
 _SLACK_LISTEN_CHANNELS = {SLACK_CHAT_CHANNEL, SLACK_CLAUDE_CHANNEL, JORDAN_DM_CHANNEL}
+_JORDAN_SLACK_USER = "U049EPC2W"
+
+
+def _person_of(event: dict) -> str:
+    """'jordan' for Jordan's Slack user; anyone else in the channel is 'slack:<user>' (not remembered as him)."""
+    u = (event or {}).get("user") or "?"
+    return "jordan" if u == _JORDAN_SLACK_USER else f"slack:{u}"
+
+
+def _remember_direct(ctx, sid: str, text: str, answer: str, trace_id: str, event: dict) -> None:
+    """Direct (no-LLM) answers are exchanges with Jordan too — remember them like agent replies (2026-10-08)."""
+    try:
+        from nova_gateway.agent import _remember_exchange, _should_remember
+        person = _person_of(event)
+        if _should_remember(person, "slack", text, answer, "direct"):
+            asyncio.create_task(_remember_exchange(ctx, sid, "direct", text, answer, trace_id=trace_id,
+                                                   person=person, meta={"slack_ts": event.get("ts"),
+                                                                        "slack_channel": event.get("channel")}))
+    except Exception as e:
+        log.debug(f"direct-answer memory skipped: {e}")
 
 
 async def slack_post_message(ctx: GatewayContext, token: str, channel: str,
@@ -289,6 +309,7 @@ async def _slack_handle_event(ctx: GatewayContext, event: dict, bot_user_id: str
                     if _sa:
                         await slack_post_message(ctx, bot_token, channel, _sa, thread_ts=thread_ts)
                         log.info(f"[{trace_id}] Slack spatial Q&A answered directly")
+                        _remember_direct(ctx, sid, text, _sa, trace_id, event)
                         return
 
                     # Change/status grounding: "what changed today?", "look in the ops DB" —
@@ -304,6 +325,7 @@ async def _slack_handle_event(ctx: GatewayContext, event: dict, bot_user_id: str
                     if _st:
                         await slack_post_message(ctx, bot_token, channel, _st, thread_ts=thread_ts)
                         log.info(f"[{trace_id}] Slack status Q&A answered directly")
+                        _remember_direct(ctx, sid, text, _st, trace_id, event)
                         return
 
                 # Deterministic action routing (#action-router): a "do something" request in
@@ -326,7 +348,10 @@ async def _slack_handle_event(ctx: GatewayContext, event: dict, bot_user_id: str
                     return
 
                 log.info(f"[{trace_id}] Slack: routing to agent — session={sid}")
-                response = await run_agent(ctx, text, sid, agent_id, trace_id=trace_id)
+                response = await run_agent(ctx, text, sid, agent_id, trace_id=trace_id,
+                                           person=_person_of(event),
+                                           meta={"slack_ts": event.get("ts"), "slack_user": event.get("user"),
+                                                 "slack_channel": channel})
                 if not response or not response.strip():
                     log.warning(f"Slack: agent returned empty response for: {text[:60]}")
                     response = "I'm thinking about that but came up empty. Can you rephrase?"
