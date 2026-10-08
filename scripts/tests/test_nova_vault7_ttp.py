@@ -188,6 +188,14 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(len(out), 2)
         self.assertIn("MacBook-Pro @ KOCH-IOT", out[1]["title"])
 
+    def test_persistence_ignores_fim_deletion(self):
+        gone = _ev(desc="File deleted.", log="File '/Users/x/Library/LaunchAgents/a.plist' deleted",
+                   groups=("ossec", "syscheck", "syscheck_entry_deleted"))
+        added = _ev(desc="File added to the system.", log="File '/Users/x/Library/LaunchAgents/b.plist' added",
+                    groups=("ossec", "syscheck", "syscheck_entry_added"))
+        out = v7.rule_rogue_persistence(_Conn([("security_events", [gone, added])]))
+        self.assertEqual([f["title"] for f in out], ["New persistence mechanism on nova-core"])
+
 
 class TestFunctional(unittest.TestCase):
     def test_alert_path_dedups_and_notifies(self):

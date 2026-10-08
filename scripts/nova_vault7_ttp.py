@@ -284,11 +284,15 @@ def rule_rogue_persistence(conn):
     with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as c:
         # (a) new persistence unit outside maintenance
         c.execute(
-            "SELECT id, agent_name, rule_description, full_log, ts FROM security_events "
+            "SELECT id, agent_name, rule_description, rule_groups, full_log, ts FROM security_events "
             "WHERE ts > now() - interval '15 minutes' "
             "AND (rule_groups && ARRAY['systemd','config_changed','ossec']) "
             "ORDER BY ts DESC LIMIT 300")
         for e in c.fetchall():
+            # A FIM deletion under LaunchAgents is persistence being *removed* (planned
+            # retirements fired this 2026-10-08) — the opposite of the Grasshopper fingerprint.
+            if "syscheck_entry_deleted" in (e.get("rule_groups") or []):
+                continue
             blob = f"{e['rule_description']} {e['full_log'] or ''}"
             if _PERSIST_RE.search(blob):
                 findings.append({
