@@ -946,3 +946,8 @@ tasks:
     schedule: cron 30 19 * * *
     timeout: 120
     overlap: skip
+  self_repair_digest:              # Christine rule — daily 19:45: ONE "what I fixed myself" Slack line to Jordan (only if anything happened). Reads BB nova.jsonl (local to .6) + remediation/selfcheck/autonomy ledgers
+    script: nova_self_repair_digest.py
+    schedule: cron 45 19 * * *
+    timeout: 180
+    overlap: skip
