@@ -143,8 +143,8 @@ def _err(e: Exception) -> str:
 
 def _compact_for_small_ctx(msgs: list, max_tokens: int, n_ctx: int) -> list:
     """Fit a chat request into a small context window (llama.cpp n_ctx 8192): keep the system prompt's head and
-    the most recent turns, drop tool-role plumbing. ~3.2 chars/token is conservative for English + markdown."""
-    budget_chars = int(max(1024, n_ctx - max_tokens - 512) * 3.2)
+    the most recent turns, drop tool-role plumbing. ~2.5 chars/token is conservative (English + markdown runs ~4)."""
+    budget_chars = int(max(1024, n_ctx - max_tokens - 512) * 2.5)
     system = [m for m in msgs if m.get("role") == "system"][:1]
     rest = [m for m in msgs if m.get("role") in ("user", "assistant")][-6:]
     rest = [{"role": m["role"], "content": (m.get("content") or "")[-2500:]} for m in rest]
@@ -489,6 +489,10 @@ class ModelRouter:
                 json=payload,
                 timeout=_t(45),
             )
+            if resp.status_code == 400 and "exceed" in (getattr(resp, "text", "") or ""):
+                # token-dense text beat the chars/token estimate — halve the window once and retry
+                payload["messages"] = _compact_for_small_ctx(msgs, max_tokens, LLAMACPP_CTX // 2)
+                resp = await http.post(f"{base_url}/v1/chat/completions", json=payload, timeout=_t(45))
             resp.raise_for_status()
             data = resp.json()
             try:

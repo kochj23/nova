@@ -228,6 +228,26 @@ class TestFailover20261008(unittest.TestCase):
         chars = sum(len(m["content"]) for m in body["messages"])
         self.assertLess(chars / 3.2, rt.LLAMACPP_CTX)
 
+    def test_llamacpp_context_overflow_retries_smaller(self):
+        class H(_Http):
+            n = 0
+            async def post(self, url, json=None, headers=None, timeout=None):
+                self.calls.append(("POST", url, {**json, "messages": list(json["messages"])}))
+                if "/api/chat" in url:
+                    raise RuntimeError("ollama down")
+                H.n += 1
+                if H.n == 1:
+                    r = _Resp({"error": {}}, 400); r.text = "exceed_context_size_error"; return r
+                return _Resp(OAI_OK)
+        http = H()
+        r = rt.ModelRouter(); r.BACKENDS = [b for b in r.BACKENDS if b[0] == "llamacpp"]
+        with patch.object(rt, "nova_lb", None), patch.object(rt.ModelRouter, "_log_inference", new=AsyncMock()):
+            out = asyncio.run(r.route([{"role": "user", "content": "hi"}], system="S" * 40_000,
+                                      ctx=SimpleNamespace(http=http)))
+        self.assertEqual(out, "from mlx")
+        first, second = [j for m, u, j in http.calls if m == "POST"]
+        self.assertLess(len(second["messages"][0]["content"]), len(first["messages"][0]["content"]))
+
     def test_errors_name_their_type(self):
         import httpx
         self.assertEqual(rt._err(httpx.ReadTimeout("")), "ReadTimeout")
