@@ -26,7 +26,7 @@ source just drops out of the sentence; the organ never edits the world.
 ponytail: percentile-vs-hour-of-week is the whole model; add day-type (weekend/holiday) splits
 only if the "usual" bucket starts lying on Saturdays.
 """
-import json, os, sys
+import json, os, sys, time
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -154,10 +154,22 @@ def sentence(s, now):
     return "; ".join(parts) + "."
 
 
+def _connect(attempts=3, backoff=2.0):
+    """psycopg2.connect with 3 attempts (2s, 4s backoff); the last failure raises (never silent)."""
+    for i in range(attempts):
+        try:
+            return psycopg2.connect(DSN, connect_timeout=10)
+        except psycopg2.OperationalError as e:
+            if i == attempts - 1:
+                raise
+            print(f"[time-sense] PG connect attempt {i + 1} failed ({e}); retrying", flush=True)
+            time.sleep(backoff * (2 ** i))
+
+
 def main():
     dry = "--dry-run" in sys.argv
     now = datetime.now(timezone.utc).astimezone()
-    conn = psycopg2.connect(DSN); cur = conn.cursor()
+    conn = _connect(); cur = conn.cursor()
     cur.execute("""CREATE TABLE IF NOT EXISTS time_sense (
                      ts timestamptz PRIMARY KEY DEFAULT now(), tempo text, stretch_h int, sense jsonb, sentence text)""")
     conn.commit()

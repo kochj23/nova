@@ -143,7 +143,7 @@ class TestPerformance(unittest.TestCase):
 
 
 class TestRetry(unittest.TestCase):
-    # RETRY GAP: main() psycopg2.connect — one attempt, no backoff; a down PG raises out of the hourly run.
+    # main() connect retries OperationalError (see test_nova_time_sense_7cat); a non-PG error still raises at once.
     def test_main_does_not_mask_a_dead_pg(self):
         calls = []
 
