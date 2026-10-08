@@ -85,15 +85,15 @@ class TestPerformance(unittest.TestCase):
 
 
 class TestRetry(unittest.TestCase):
-    def test_pg_down_is_single_attempt(self):
-        # RETRY GAP: main()/psycopg2.connect — one attempt; a launchd job, the next run is the retry.
-        # The failure escapes before any post, so nothing half-delivered is marked sent.
+    def test_pg_down_retries_then_raises(self):
+        # main()/psycopg2.connect — 3 attempts with backoff, then the failure escapes before any
+        # post, so nothing half-delivered is marked sent.
         with mock.patch.object(nj.psycopg2, "connect", side_effect=nj.psycopg2.OperationalError("down")) as c, \
-             mock.patch.object(sys, "argv", ["x"]):
+             mock.patch.object(nj.time, "sleep"), mock.patch.object(sys, "argv", ["x"]):
             nj.nova_config.post_both.reset_mock()
             with self.assertRaises(nj.psycopg2.OperationalError):
                 nj.main()
-        self.assertEqual(c.call_count, 1)
+        self.assertEqual(c.call_count, 3)
         nj.nova_config.post_both.assert_not_called()
 
 

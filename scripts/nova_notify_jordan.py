@@ -13,6 +13,7 @@ as ONE bundled #nova-chat post inside the window, once a day. Empty drawer -> no
 """
 import argparse
 import sys
+import time
 from datetime import datetime
 
 import psycopg2
@@ -58,7 +59,16 @@ def turning_point(oc, rows, text):
 def main():
     ap = argparse.ArgumentParser(); ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
-    conn = psycopg2.connect(OPS_DSN, connect_timeout=5); conn.autocommit = True
+    for attempt in range(3):   # house retry rule: PG gets 3 tries with backoff
+        try:
+            conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
+            break
+        except psycopg2.OperationalError as e:
+            if attempt == 2:
+                raise
+            log(f"pg connect failed ({e}) — retry {attempt + 1}/2")
+            time.sleep(2 * (attempt + 1))
+    conn.autocommit = True
     oc = conn.cursor()
     oc.execute("SELECT id, ts, coalesce(topic,''), message FROM reach_log WHERE lower(audience) = ANY(%s) "
                "AND status='held' AND ts > now() - interval '%s days' ORDER BY ts LIMIT %s",

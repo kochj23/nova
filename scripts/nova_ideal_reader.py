@@ -247,18 +247,31 @@ def refresh_darlings(cur) -> list:
 _DARLING_CACHE: list = []
 
 
+def _pg_connect(attempts: int = 3, backoff: float = 0.5):
+    """psycopg2.connect to nova_ops with retry + linear backoff (house retry rule)."""
+    import time
+    import psycopg2
+    for i in range(attempts):
+        try:
+            return psycopg2.connect(OPS_DSN, connect_timeout=3)
+        except psycopg2.OperationalError as e:
+            if i == attempts - 1:
+                raise
+            log(f"pg connect failed ({e}) — retry {i + 1}/{attempts - 1}")
+            time.sleep(backoff * (i + 1))
+
+
 def load_darlings() -> list:
     """Lead-capable darling phrases (PG, cached) + the built-in stock leads."""
     if _DARLING_CACHE:
         return list(_DARLING_CACHE)
     out = list(BUILTIN_LEADS)
     try:
-        import psycopg2
-        with psycopg2.connect(OPS_DSN, connect_timeout=3) as c, c.cursor() as cur:
+        with _pg_connect() as c, c.cursor() as cur:
             cur.execute("SELECT phrase FROM ideal_reader_darlings WHERE lead_docs >= 3 ORDER BY lead_docs DESC")
             out += [r[0] for r in cur.fetchall()]
-    except Exception:
-        pass
+    except Exception as e:  # noqa: BLE001
+        log(f"darlings unavailable ({e}) — built-in leads only")
     _DARLING_CACHE[:] = sorted(set(out), key=len, reverse=True)
     return list(_DARLING_CACHE)
 
@@ -521,8 +534,7 @@ def log_edit(kind: str, title: str, res: dict):
     if os.environ.get("PYTEST_CURRENT_TEST"):
         return
     try:
-        import psycopg2
-        with psycopg2.connect(OPS_DSN, connect_timeout=3) as c, c.cursor() as cur:
+        with _pg_connect() as c, c.cursor() as cur:
             ensure_schema(cur)
             cur.execute("INSERT INTO ideal_reader_log (kind, title, words_before, words_after, cut_pct, applied, cuts) "
                         "VALUES (%s,%s,%s,%s,%s,%s,%s)",

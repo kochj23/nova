@@ -22,6 +22,8 @@ import json
 import re
 import subprocess
 import sys
+import time
+import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime
@@ -61,6 +63,30 @@ def _token():
 
 
 def slack(method, **params):
+    """Slack Web API call, 3 tries with backoff on transient failures (connection errors,
+    429, 5xx, keychain hiccups). A chat.* write is NOT retried after a read timeout —
+    the post may have landed and a retry would double-post."""
+    last = None
+    for attempt in range(3):
+        try:
+            return _slack_once(method, params)
+        except urllib.error.HTTPError as e:
+            if e.code != 429 and e.code < 500:
+                raise
+            last = e
+        except (urllib.error.URLError, subprocess.CalledProcessError) as e:
+            last = e
+        except OSError as e:
+            if method.startswith("chat."):
+                raise
+            last = e
+        log(f"slack {method} failed ({last}) — attempt {attempt + 1}/3")
+        if attempt < 2:
+            time.sleep(1.5 * (attempt + 1))
+    raise last
+
+
+def _slack_once(method, params):
     tok = _token()
     if method.startswith("chat."):
         req = urllib.request.Request(f"https://slack.com/api/{method}", method="POST",
@@ -178,9 +204,18 @@ def decide_proposal(pid, v, note, dry):
     mode = "approve" if v == "yes" else "reject"
     if dry:
         print(f"proposal #{pid} -> {mode} ({note!r})"); return True
-    r = subprocess.run([sys.executable, str(SCRIPTS / "nova_coagency.py"), "--mode", mode, "--id", str(pid),
-                        "--by", "jordan (slack reply)", "--note", note[:200]],
-                       capture_output=True, text=True, timeout=60)
+    argv = [sys.executable, str(SCRIPTS / "nova_coagency.py"), "--mode", mode, "--id", str(pid),
+            "--by", "jordan (slack reply)", "--note", note[:200]]
+    # Spawn failures retry with backoff; a non-zero rc is a real answer (e.g. already decided)
+    # and a timeout may already have applied the decision — neither is retried.
+    for attempt in range(3):
+        try:
+            r = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+            break
+        except OSError as e:
+            if attempt == 2:
+                log(f"coagency {mode} #{pid}: could not run ({e})"); return False
+            time.sleep(1.5 * (attempt + 1))
     log(f"coagency {mode} #{pid}: rc={r.returncode} {(r.stdout or r.stderr)[-120:].strip()}")
     return r.returncode == 0
 

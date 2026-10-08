@@ -144,21 +144,23 @@ class TestPerformance(unittest.TestCase):
 
 
 class TestRetry(unittest.TestCase):
-    # RETRY GAP: slack() — one urlopen, no backoff; every caller must fail open instead.
+    # slack() retries transient failures 3x with backoff; every caller still fails open.
     def test_read_answer_fails_open_when_slack_is_down(self):
         calls = []
 
         def boom(req, timeout=None):
             calls.append(1); raise OSError("slack down")
         with mock.patch.object(sa.subprocess, "check_output", return_value=b"tok"), \
+             mock.patch.object(sa.time, "sleep"), \
              mock.patch.object(sa.urllib.request, "urlopen", boom):
             self.assertEqual(sa.read_answer("C", "1.1"), (None, None))
-        self.assertEqual(len(calls), 2)       # replies, then reactions — each tried exactly once
+        self.assertEqual(len(calls), 6)       # replies, then reactions — each tried 3x
 
     def test_confirm_and_blanket_swallow_errors(self):
         def boom(req, timeout=None):
             raise OSError("slack down")
         with mock.patch.object(sa.subprocess, "check_output", return_value=b"tok"), \
+             mock.patch.object(sa.time, "sleep"), \
              mock.patch.object(sa.urllib.request, "urlopen", boom):
             sa.confirm("C", "1.1", "hi", dry=False)              # no exception escapes
             self.assertEqual(sa.blanket_approvals(_Cur(), dry=False), 0)
