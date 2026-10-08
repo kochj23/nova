@@ -19,7 +19,11 @@ What it reads (22:00 yesterday -> 07:00 today, local):
 
 No street addresses, bearings or home coordinates appear in the post.
 
-Usage: nova_night_watch.py [--dry-run] [--date YYYY-MM-DD]
+Since 2026-10-08 the post is the "PDB for Little Mister" (nova_watch_bill.compose_pdb): BLUF,
+3-6 items graded A1-F6 by CARDINAL, estimative language, what would change my mind, gaps,
+a red-cell dissent line and yesterday's prediction scorecard. --classic gives the old lines.
+
+Usage: nova_night_watch.py [--dry-run] [--date YYYY-MM-DD] [--classic]
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -191,16 +195,33 @@ def compose(g: dict, start, end) -> str:
     return W.journal_safe("\n".join(lines[:5]))
 
 
+def compose_pdb(cur, g: dict, start, end) -> str:
+    """The morning report as a PDB for Little Mister (nova_watch_bill): BLUF, graded items,
+    estimative language, what would change my mind, gaps, red cell, prediction scorecard.
+    Falls back to the classic Night Watch lines if the intel organs are unavailable."""
+    try:
+        import nova_watch_bill as WB
+        t = WB.latest_turnover(cur, "0630", 6)
+        if t is None:
+            t = WB.turnover(cur, "0630")
+        return WB.compose_pdb(cur, g, start, end, t)
+    except Exception as e:  # noqa: BLE001
+        W.log(TAG, f"PDB unavailable ({e}) — classic report")
+        return compose(g, start, end)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--date", help="report the night ending 07:00 on this local date")
+    ap.add_argument("--classic", action="store_true", help="the pre-PDB 3-5 line report")
     a = ap.parse_args(argv)
     day = datetime.strptime(a.date, "%Y-%m-%d").date() if a.date else datetime.now(W.TZ).date()
     start, end = night_bounds(day)
     conn = W.connect()
     cur = conn.cursor()
-    msg = compose(gather(cur, start, end), start, end)
+    g = gather(cur, start, end)
+    msg = compose(g, start, end) if a.classic else compose_pdb(cur, g, start, end)
     print(msg)
     if a.dry_run:
         return 0

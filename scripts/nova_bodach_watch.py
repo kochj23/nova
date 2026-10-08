@@ -21,7 +21,11 @@ score >= the calibrated threshold AND >= 2 present types. The threshold is re-tu
 episodes / 30 days) and stored in service_config('bodach_watch','threshold').
 
 Quiet by default: every window with any signal is recorded to bodach_scores; Jordan is told
-(warning, via nova_notify) only above threshold. Text that could reach the journal is built
+(warning, via nova_notify) only above threshold AND when nova_escalation's two-man rule clears it:
+the present types must survive SPINNAKER as >= 2 independent sensor types, Nova must not be
+degraded, and while Jordan is depleted (late night / hard stretch / asleep) only an URGENT cluster
+(>= 3 types, or night motion + a never-seen device) is sent — the rest is deferred to the next
+Watch Bill turnover and the morning PDB (escalation_log + restraint_ledger 'two-man'). Text that could reach the journal is built
 with journal_safe() — no addresses, no bearings, no home location.
 
 Usage:
@@ -40,6 +44,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_watch_common as W  # noqa: E402
+import nova_spinnaker as SP  # noqa: E402
 
 
 try:  # P3: camera/face data serve safety or presence only, to Jordan or an internal store
@@ -243,6 +248,38 @@ def describe(w: dict, safe: bool) -> str:
     return W.journal_safe(text) if safe else text
 
 
+# ── SPINNAKER / two-man rule (2026-10-08) ───────────────────────────────────
+
+SIGNAL_SOURCES = {"scanner": {"id": "scanner:near-home", "type": "radio"},
+                  "chp": {"id": "chp:cad", "type": "traffic"},
+                  "air": {"id": "adsb:loiter", "type": "adsb"},
+                  "network": {"id": "network:unifi", "type": "network"},
+                  "motion": {"id": "camera:exterior", "type": "camera"}}
+
+
+def signal_item(w: dict) -> dict:
+    """A Bodach window as a SPINNAKER item: one source per PRESENT signal type. Pure."""
+    return {"claim": "independent signals clustering near home",
+            "sources": [SIGNAL_SOURCES[t] for t in w.get("present", []) if t in SIGNAL_SOURCES]}
+
+
+def is_urgent(w: dict) -> bool:
+    """Wakes him even when he is depleted: three or more independent types, or someone moving
+    outside at night together with a never-seen device on the network."""
+    p = set(w.get("present", []))
+    return len(p) >= 3 or {"motion", "network"} <= p
+
+
+def two_man(cur, w: dict) -> dict:
+    """nova_escalation gate for the Bodach alert. Fails CLOSED (held + logged) if the gate errors."""
+    try:
+        import nova_escalation as E
+        return E.authorize(cur, source="nova_bodach_watch", kind="cluster", action_class="alert",
+                           item=signal_item(w), urgent=is_urgent(w), text=describe(w, safe=True))
+    except Exception as e:  # noqa: BLE001
+        return {"allowed": False, "reason": f"escalation gate unavailable ({e})", "keys": [], "spinnaker": {}}
+
+
 # ── modes ───────────────────────────────────────────────────────────────────
 
 def run_live(dry_run: bool) -> int:
@@ -265,11 +302,15 @@ def run_live(dry_run: bool) -> int:
     alerted = False
     if fired:
         cur.execute("SELECT 1 FROM bodach_scores WHERE alerted AND window_end > %s", (we - 2 * WINDOW,))
-        if not cur.fetchone():
+        gate = two_man(cur, w) if not cur.fetchone() else None
+        if gate is not None and not gate["allowed"]:
+            W.log(TAG, f"held by the two-man rule: {gate['reason']}")
+        if gate is not None and gate["allowed"]:
             from nova_notify import notify
             body = (describe(w, safe=False) + f"\n\nBodach score {w['score']} from "
                     f"{len(w['present'])} independent signal types ({', '.join(w['present'])}); "
-                    f"threshold {th}. Evidence only — no cause is implied.")
+                    f"threshold {th}. Evidence only — no cause is implied.\n"
+                    f"{SP.line(gate['spinnaker'])}; keys: {', '.join(gate['keys'])}.")
             alerted = W.retry(notify, "Bodach Watch: independent signals clustering near home", body=body,
                              level="warning", category="local", source="nova_bodach_watch",
                              dedup_key=f"bodach-{we:%Y%m%d%H}",

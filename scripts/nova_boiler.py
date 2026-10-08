@@ -166,6 +166,17 @@ def state_label(p: float, threshold: float = THRESHOLD) -> str:
     return "bleed" if p >= threshold else "rising" if p >= threshold * 0.7 else "ok"
 
 
+def bleed_item(top) -> dict:
+    """SPINNAKER item for the bleed: each pressure component is its own ledger (gateway_traces,
+    scheduler runs, claude_queue, reach_log, ...), i.e. an independent detector. Pure."""
+    srcs = []
+    for t in (top or []):
+        name = (t.get("source") or t.get("name")) if isinstance(t, dict) else (t[0] if isinstance(t, (list, tuple)) else t)
+        if name:
+            srcs.append({"id": f"detector:boiler:{name}", "type": "detector", "upstream": [f"ledger:{name}"]})
+    return {"claim": "open loops are piling up", "sources": srcs}
+
+
 def compose_bleed(total: float, top: list, dropped: list, threshold: float = THRESHOLD) -> str:
     lines = [f"*Bleeding the boiler* — my unresolved load is at {total:.0f} (I bleed at {threshold:.0f}). "
              f"Top of the pile:"]
@@ -219,7 +230,8 @@ def run(oc, dry: bool = False, post=None) -> dict:
             try:
                 import nova_turning_point
                 nova_turning_point.decide(oc, "bleed", stakes=min(1.0, 0.7 * total / THRESHOLD),
-                                          text=bleed_text, ceiling="recommend", force=True)
+                                          text=bleed_text, ceiling="recommend", force=True,
+                                          item=bleed_item(top))
             except Exception as e:  # noqa: BLE001
                 log(f"turning point log skipped: {e}")
             try:

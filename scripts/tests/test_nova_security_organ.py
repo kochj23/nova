@@ -29,6 +29,10 @@ def _load(name, path):
 
 
 so = _load("security_organ_under_test", SCRIPT)
+import nova_escalation  # noqa: E402  — offline: the two-man gate is stubbed (no HTTP probes, no PG)
+_GATE = mock.patch.object(nova_escalation, "authorize",
+                          side_effect=lambda *a, **k: {"allowed": True, "reason": "test", "keys": ["reasoning", "sensors"]})
+_GATE.start()
 KNOWN = "aa:bb:cc:dd:ee:01"
 NEW = "aa:bb:cc:dd:ee:02"
 
@@ -173,8 +177,17 @@ class TestUnit(unittest.TestCase):
         now = 1_000_000.0
         self.assertEqual(so.level_for(None, {"unifi", "arp"}, None, now), ("critical", ""))
         self.assertIn("single witness", so.level_for(now - 10, {"unifi"}, None, now)[1])
-        self.assertTrue(so.level_for(now - 10, {"unifi", "dhcp"}, ("jordan", 3), now)[1].startswith("jordan walked in"))
+        self.assertTrue(so.level_for(now - 10, {"unifi", "arp"}, ("jordan", 3), now)[1].startswith("jordan walked in"))
+        # SPINNAKER: unifi + dhcp are both the UDM -> one independent witness -> warning
+        lvl, why = so.level_for(None, {"unifi", "dhcp"}, None, now)
+        self.assertEqual(lvl, "warning")
+        self.assertIn("share one upstream", why)
+        self.assertEqual(so.independent_witnesses({"unifi", "dhcp", "arp"}), 2)
         self.assertEqual(so.level_for(now - 2 * so.RECENT_S, {"unifi", "arp", "dhcp"}, None, now), ("warning", "UniFi has seen it before"))
+
+    def test_critical_goes_through_two_man_gate(self):
+        self.assertIn('E.authorize(cur, source="nova_security_organ"', SRC)
+        self.assertIn("held at warning by the two-man rule", SRC)
 
     def test_describe_paths(self):
         t, b = so.describe(_client("02:de:ad:be:ef:01"))

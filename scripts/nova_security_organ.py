@@ -111,14 +111,29 @@ def dhcp_macs(cur, minutes=15) -> set:
         cur.connection.rollback(); return set()
 
 
+def independent_witnesses(witnesses) -> int:
+    """SPINNAKER (2026-10-08): UniFi's client table and the UDM's DHCP log are the same box, so
+    together they are ONE witness; nova-core's ARP table is independent of the UDM. Falls back to
+    the raw count if the library is missing (never weaker than before)."""
+    try:
+        import nova_spinnaker as SP
+        return SP.assess({"sources": [{"id": f"network:{w}", "type": "network"} for w in witnesses]})["independent"]
+    except Exception:  # noqa: BLE001
+        return len(witnesses)
+
+
 def level_for(fs, witnesses, arrival, now=None) -> tuple[str, str]:
     """Pure. A newcomer is CRITICAL only when UniFi says it is genuinely new AND at least QUORUM witnesses saw it
     AND nobody known just walked in; otherwise WARNING with the reason. -> (level, why)."""
     now = now or time.time()
     if fs and now - fs >= RECENT_S:
         return "warning", "UniFi has seen it before"
+    groups = independent_witnesses(witnesses)
     if len(witnesses) < QUORUM:
         return "warning", f"single witness ({', '.join(sorted(witnesses))}) — {QUORUM} needed for a critical (wish #61)"
+    if groups < QUORUM:
+        return "warning", (f"witnesses {', '.join(sorted(witnesses))} share one upstream (the UDM) — "
+                           f"{QUORUM} INDEPENDENT witnesses needed for a critical (SPINNAKER)")
     if arrival:
         return "warning", f"{arrival[0]} walked in {arrival[1]} min ago — likely their device (wish #66)"
     return "critical", ""
@@ -168,6 +183,19 @@ def cycle(conn, dry_run=False, seed=False) -> int:
             else:
                 fs = c.get("first_seen")
                 level, why = level_for(fs, witnesses, arrival)
+                if level == "critical":                 # two-man rule: the page itself is an escalation
+                    try:
+                        import nova_escalation as E
+                        gate = E.authorize(cur, source="nova_security_organ", kind="new_device", action_class="alert",
+                                           item={"claim": f"never-seen device {mac}",
+                                                 "sources": [{"id": f"network:{w}", "type": "network"} for w in witnesses]
+                                                 + [{"id": "detector:nova_security_organ", "type": "detector",
+                                                     "upstream": ["udm"]}]},
+                                           urgent=True, text=title)
+                        if not gate.get("allowed"):
+                            level, why = "warning", f"held at warning by the two-man rule: {gate.get('reason')}"
+                    except Exception:  # noqa: BLE001 — the gate is advisory here; quorum already passed
+                        pass
                 if why == "UniFi has seen it before":
                     title = title.replace("NEW DEVICE on the network", "unrecorded device (UniFi has seen it before)")
                 body += f"\nWitnesses: {', '.join(sorted(witnesses))}." + (f" Held at warning: {why}." if why and level == "warning" else "")
@@ -224,7 +252,8 @@ def main():
         now = 1_000_000.0
         assert level_for(None, {"unifi", "arp"}, None, now) == ("critical", "")
         assert level_for(now - 10, {"unifi"}, None, now)[0] == "warning" and "single witness" in level_for(now - 10, {"unifi"}, None, now)[1]
-        assert level_for(now - 10, {"unifi", "dhcp"}, ("jordan", 3), now)[1].startswith("jordan walked in")
+        assert level_for(now - 10, {"unifi", "arp"}, ("jordan", 3), now)[1].startswith("jordan walked in")
+        assert "share one upstream" in level_for(None, {"unifi", "dhcp"}, None, now)[1]
         assert level_for(now - 2 * RECENT_S, {"unifi", "arp", "dhcp"}, None, now) == ("warning", "UniFi has seen it before")
         probe = ":".join(["dd", "ee", "ff", "00", "11", "22"])   # built at runtime: no MAC literal in source (pre-commit scan)
         assert probe in {m.lower() for m in MAC_RE.findall(f"DHCPACK(br0) 192.168.1.50 {probe.upper()} phone")}

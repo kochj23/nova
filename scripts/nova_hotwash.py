@@ -283,6 +283,27 @@ def upsert(cur, row: dict):
     return r[0] if r else None
 
 
+def aar_unlogged(ref: str, producer: str, summary: str, ts=None) -> dict:
+    """Guardrail 7a (no unlogged actions): an action Nova was observed taking with no ledger row."""
+    return {
+        "kind": "overreach", "ref": ref[:200], "subject": f"unlogged:{producer}", "occurred_at": ts,
+        "q1_expected": f"Every action by {producer} would leave a row in an action/restraint ledger.",
+        "q2_actual": _clip(summary, 200) + ".",
+        "q3_why": f"{producer} acts through a path that does not write a ledger (it predates the rule).",
+        "q4_sustain": "The daily action audit saw it from the outside, so the gap is visible.",
+        "q4_fix": f"Route {producer} through a ledgered path (nova_notify / post_both / autonomy_ledger).",
+        "fix_kind": "rule", "weight": 1, "proposed_change": {"type": "ledger_adoption", "producer": producer}}
+
+
+def file_hotwash(cur, kind: str = "overreach", ref: str = "", summary: str = "", producer: str | None = None):
+    """Adapter for other organs (nova_action_audit). Only 'overreach' via the unlogged-action path today."""
+    if kind != "overreach" or not ref:
+        return None
+    ensure_schema(cur)
+    prod = producer or ref.split(":")[-1]
+    return upsert(cur, aar_unlogged(ref, prod, summary))
+
+
 def from_prediction(oc, pred_id, statement, domain, conf, reasoning) -> int | None:
     """Hook for the "I was wrong" loop. Never raises — a hotwash hiccup must not block resolution."""
     try:

@@ -102,15 +102,52 @@ def calibrated(oc, stated: float, domain: str | None) -> float | None:
         return None
 
 
+# SPINNAKER's max rung -> this ladder (2026-10-08)
+SPIN_TO_RUNG = {"journal": "journal", "ask": "mention", "mention": "mention", "recommend": "recommend",
+                "escalate": "act", "act": "act"}
+URGENT_STAKES = 0.9    # at or above this, a depleted Jordan is still told
+
+
+def spinnaker_cap(item: dict | None) -> tuple[str, dict | None]:
+    """The highest rung the evidence allows (nova_spinnaker). No item -> no cap."""
+    if not item:
+        return "act", None
+    try:
+        import nova_spinnaker as SP
+        a = SP.assess(item)
+        return SPIN_TO_RUNG.get(a["max_rung"], "journal"), a
+    except Exception:  # noqa: BLE001
+        return "act", None
+
+
+def jordan_depleted(oc) -> str | None:
+    """Fatigue gate: the relationship organ's hard-stretch quiet mode. (Late night and sleep are
+    handled by each caller's own window; nova_escalation adds them for escalations.)"""
+    try:
+        from nova_relationship import quiet_mode
+        q = quiet_mode(oc)
+        return f"hard-stretch quiet mode (score {q.get('score')})" if q.get("active") else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def decide(oc, kind: str, stakes: float, text: str, ceiling: str = "mention",
            confidence: float | None = None, domain: str | None = None,
-           force: bool = False, dry: bool = False) -> dict:
+           force: bool = False, dry: bool = False, item: dict | None = None) -> dict:
     """Run the turning-point check and log it. `confidence` is the caller's raw
     confidence (calibrated here against `domain`); if None, stakes stands in for it.
-    force=True (the Boiler's bleed — a safety valve) spends even past the budget."""
+    force=True (the Boiler's bleed — a safety valve) spends even past the budget.
+    item (optional, nova_spinnaker shape) caps the rung by the evidence: an UNCORROBORATED
+    conclusion can only be journaled. While Jordan is depleted, non-urgent spends are held."""
     stakes = max(0.0, min(1.0, float(stakes or 0)))
     conf = calibrated(oc, confidence if confidence is not None else stakes, domain)
     rung = pick_rung(stakes, conf, ceiling)
+    cap, spin = spinnaker_cap(item)
+    capped_by = None
+    if RUNGS.index(rung) > RUNGS.index(cap) and not force:
+        capped_by = f"SPINNAKER {spin['verdict'] if spin else '?'} caps it at {cap}"
+        rung = cap
+    tired = None if (force or stakes >= URGENT_STAKES or rung == "journal") else jordan_depleted(oc)
     cost = COST[rung]
     budget = weekly_budget()
     try:
@@ -121,7 +158,9 @@ def decide(oc, kind: str, stakes: float, text: str, ceiling: str = "mention",
                 "reason": f"ledger unreadable ({e}) — failing open"}
     left = budget - spent
     if rung == "journal":
-        allowed, reason = False, f"stakes {stakes:.2f} / confidence {conf} only warrant a note"
+        allowed, reason = False, (capped_by or f"stakes {stakes:.2f} / confidence {conf} only warrant a note")
+    elif tired:
+        allowed, reason = False, f"Jordan depleted ({tired}) — non-urgent, deferred"
     elif force:
         allowed, reason = True, "forced (safety valve)"
     elif cost > left:
@@ -141,7 +180,8 @@ def decide(oc, kind: str, stakes: float, text: str, ceiling: str = "mention",
                     would_have_said=(text or "")[:4000] or f"[{kind}]",
                     reason=("SPENT: " if allowed else "HELD: ") + reason,
                     channel=CHANNEL,
-                    detail={"turning_point": {"kind": kind, "rung": res["rung"], "wanted": rung,
+                    detail={"spinnaker": (spin or {}).get("verdict"),
+                        "turning_point": {"kind": kind, "rung": res["rung"], "wanted": rung,
                                               "cost": res["cost"], "stakes": res["stakes"], "conf": conf,
                                               "spent": allowed, "budget": budget, "spent_before": spent}},
                     conn=oc.connection)

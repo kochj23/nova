@@ -149,6 +149,13 @@ class TestRetry(unittest.TestCase):
 
 
 class TestUnit(unittest.TestCase):
+    def test_bleed_item_one_independent_detector_per_component(self):
+        import nova_spinnaker as SP
+        it = bo.bleed_item([("failed_jobs", {"p": 3}), ("claude_queue", {"p": 2}), ("", {})])
+        self.assertEqual([s["id"] for s in it["sources"]], ["detector:boiler:failed_jobs", "detector:boiler:claude_queue"])
+        self.assertEqual(SP.assess(it)["independent"], 2)
+        self.assertEqual(bo.bleed_item([])["sources"], [])
+
     def test_in_window_bounds(self):
         with mock.patch.object(bo, "WINDOW", "10-20"):
             self.assertFalse(bo.in_window(datetime(2026, 10, 8, 9, 59)))

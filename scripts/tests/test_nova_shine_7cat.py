@@ -20,6 +20,11 @@ sys.path.insert(0, str(SCRIPTS))
 import nova_watch_common as W  # noqa: E402
 import nova_shine as S  # noqa: E402
 
+# The two-man gate (nova_escalation) is tested on its own and below; the send-path tests here run
+# with the gate open so they stay offline (no HTTP probes, no PG).
+_REAL_TWO_MAN = S.two_man
+mock.patch.object(S, "two_man", return_value={"allowed": True, "reason": "test"}).start()
+
 T0 = datetime(2026, 10, 8, 23, 0, tzinfo=timezone.utc)   # 16:00 local, waking hours
 CONTACT = ("Pat", "imessage", "+15550000000")
 
@@ -438,6 +443,32 @@ class TestPrivacyGateFrame(unittest.TestCase):
         self.assertIn("nova_privacy_guards", src)
         self.assertIn('_camera_ok("presence"', src)
 
+
+class TestTwoManAdoption(unittest.TestCase):
+    """2026-10-08: every Shine step goes through nova_escalation as life-safety."""
+
+    def test_item_collapses_phone_upstream(self):
+        import nova_spinnaker as SP
+        a = SP.assess(S.shine_item({}))
+        self.assertEqual(a["independent"], 1)           # silence + "home" both read his phone
+        self.assertEqual(SP.assess(S.shine_item({"medical": 1}))["independent"], 2)
+
+    def test_held_step_contacts_nobody(self):
+        with mock.patch.object(S, "two_man", return_value={"allowed": False, "reason": "no pre-consent"}), \
+             mock.patch("nova_imessage.send_imessage") as im:
+            out = S.act(Cur([CONTACT]), "contact", "r", {"gap_h": 9}, True, False, 1)
+        self.assertIn("held by the two-man rule", out)
+        im.assert_not_called()
+
+    def test_gate_is_life_safety_and_fails_open(self):
+        with mock.patch("nova_escalation.authorize", side_effect=RuntimeError("boom")):
+            self.assertTrue(_REAL_TWO_MAN(Cur(), "voice", {}, "r")["allowed"])
+        with mock.patch("nova_escalation.authorize", return_value={"allowed": True}) as au:
+            _REAL_TWO_MAN(Cur(), "contact", {"medical": 1}, "r")
+        kw = au.call_args.kwargs
+        self.assertTrue(kw["life_safety"])
+        self.assertEqual(kw["action_class"], "outward")
+        self.assertEqual(kw["molink"], "unanswered")
 
 
 if __name__ == "__main__":

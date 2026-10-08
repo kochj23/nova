@@ -185,6 +185,18 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("from nova_cardinal import load_ledger", SRC)
         self.assertNotIn("record_outcome(", SRC.split('"""', 2)[2])
 
+    def test_action_audit_adapter_files_unlogged_overreach(self):
+        cur = _Cur({"INSERT INTO hotwash": [(42,)]})
+        rid = hw.file_hotwash(cur, kind="overreach", ref="action_audit:2026-10-08:big-brother",
+                              summary="1847 of 1847 'big-brother' actions had no ledger row")
+        self.assertEqual(rid, 42)
+        ins = [p for s, p in cur.sql if "INSERT INTO hotwash" in s][0]
+        self.assertEqual(ins[0], "overreach")
+        self.assertIn("unlogged:big-brother", ins)
+        self.assertIsNone(hw.file_hotwash(cur, kind="false_alarm", ref="x", summary="y"))
+        audit = (SCRIPTS / "nova_action_audit.py").read_text()
+        self.assertIn('"file_hotwash"', audit)
+
     def test_predictions_do_resolve_calls_hotwash(self):
         p = (SCRIPTS / "nova_predictions.py").read_text()
         body = p[p.index("def do_resolve"):]

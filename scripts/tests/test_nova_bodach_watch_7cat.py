@@ -18,6 +18,13 @@ sys.path.insert(0, str(SCRIPTS))
 import nova_watch_common as W  # noqa: E402
 import nova_bodach_watch as B  # noqa: E402
 
+# The two-man gate is tested in test_nova_escalation and below; alert-path tests run with it open
+# (offline: no HTTP probes, no PG). keys/spinnaker are what the alert body quotes.
+_REAL_TWO_MAN = B.two_man
+mock.patch.object(B, "two_man", side_effect=lambda cur, w: {
+    "allowed": True, "reason": "test", "keys": ["reasoning", "sensors"],
+    "spinnaker": B.SP.assess(B.signal_item(w))}).start()
+
 T0 = datetime(2026, 10, 8, 9, 0, tzinfo=timezone.utc)   # 02:00 local (night)
 
 
@@ -330,6 +337,28 @@ class TestPrivacyGateFrame(unittest.TestCase):
         self.assertIn("nova_privacy_guards", src)
         self.assertIn('_camera_ok("safety"', src)
 
+
+class TestTwoManAdoption(unittest.TestCase):
+    """2026-10-08: the Bodach alert goes through nova_escalation (SPINNAKER + two-man + fatigue)."""
+
+    def test_signal_item_one_source_per_present_type(self):
+        it = B.signal_item({"present": ["air", "motion", "bogus"]})
+        self.assertEqual([x["id"] for x in it["sources"]], ["adsb:loiter", "camera:exterior"])
+
+    def test_urgency(self):
+        self.assertTrue(B.is_urgent({"present": ["air", "motion", "scanner"]}))
+        self.assertTrue(B.is_urgent({"present": ["motion", "network"]}))
+        self.assertFalse(B.is_urgent({"present": ["air", "motion"]}))
+
+    def test_held_alert_is_not_sent(self):
+        notify = mock.MagicMock(return_value=True)
+        with mock.patch.object(B, "two_man", return_value={"allowed": False, "reason": "Jordan depleted"}):
+            run_live(window(STRONG), Cur(), notify)
+        notify.assert_not_called()
+
+    def test_gate_fails_closed(self):
+        with mock.patch("nova_escalation.authorize", side_effect=RuntimeError("boom")):
+            self.assertFalse(_REAL_TWO_MAN(Cur(), {"present": ["air", "motion"]})["allowed"])
 
 
 if __name__ == "__main__":

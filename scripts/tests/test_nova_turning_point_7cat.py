@@ -78,7 +78,9 @@ class TestPerformance(unittest.TestCase):
     def test_one_budget_query_per_decision(self):
         cur = _Cur(spent=3)
         _decide(cur, stakes=0.7, ceiling="recommend")
-        self.assertEqual(len(cur.sql), 1)
+        # one budget query, plus (since 2026-10-08) at most one fatigue read (quiet_mode)
+        self.assertEqual(len([s for s, _ in cur.sql if "restraint_ledger" in s]), 1)
+        self.assertLessEqual(len(cur.sql), 2)
 
     def test_1k_decisions_fast(self):
         t = time.monotonic()
@@ -129,6 +131,22 @@ class TestRetry(unittest.TestCase):
 
 
 class TestUnit(unittest.TestCase):
+    def test_spinnaker_caps_uncorroborated_to_journal(self):
+        r, _, _ = _decide(_Cur(), stakes=0.95, ceiling="act", item={"sources": [{"id": "nova:reasoning"}]})
+        self.assertFalse(r["allowed"])
+        self.assertIn("SPINNAKER", r["reason"])
+        r2, _, _ = _decide(_Cur(), stakes=0.95, ceiling="act",
+                           item={"sources": [{"id": "camera:a"}, {"id": "camera:b"}]})
+        self.assertEqual(r2["wanted"], "mention")      # one NVR = one source = mention at most
+
+    def test_depleted_jordan_defers_non_urgent(self):
+        with mock.patch.object(tp, "jordan_depleted", return_value="hard-stretch quiet mode"):
+            r, _, _ = _decide(_Cur(), stakes=0.5, ceiling="mention")
+            self.assertFalse(r["allowed"])
+            self.assertIn("depleted", r["reason"])
+            r2, _, _ = _decide(_Cur(), stakes=0.95, ceiling="mention")
+            self.assertTrue(r2["allowed"])
+
     def test_stakes_are_clamped(self):
         self.assertEqual(_decide(_Cur(), stakes=-3)[0]["stakes"], 0.0)
         self.assertEqual(_decide(_Cur(), stakes=7, ceiling="act")[0]["stakes"], 1.0)

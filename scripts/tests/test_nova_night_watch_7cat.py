@@ -56,6 +56,7 @@ def run_main(argv, post_results, quiet_msg="msg"):
     conn = mock.MagicMock()
     with mock.patch.object(W, "connect", return_value=conn), \
             mock.patch.object(N, "gather", return_value=g()), \
+            mock.patch.object(N, "compose_pdb", side_effect=lambda cur, gg, s, e: N.compose(gg, s, e)), \
             mock.patch.object(W, "post_slack", post), mock.patch.object(W.time, "sleep"), \
             mock.patch("nova_config.post_both") as pb, mock.patch("nova_config.post_discord") as pd, \
             redirect_stdout(io.StringIO()) as out:
@@ -278,6 +279,27 @@ class TestPrivacyGateFrame(unittest.TestCase):
         src = (SCRIPTS / "nova_night_watch.py").read_text()
         self.assertIn("nova_privacy_guards", src)
 
+
+class TestPDB(unittest.TestCase):
+    """2026-10-08: the morning post is the PDB for Little Mister (nova_watch_bill.compose_pdb)."""
+
+    def test_main_uses_pdb_unless_classic(self):
+        src = (SCRIPTS / "nova_night_watch.py").read_text()
+        self.assertIn("compose(g, start, end) if a.classic else compose_pdb(cur, g, start, end)", src)
+
+    def test_pdb_falls_back_to_classic(self):
+        with mock.patch.dict(sys.modules, {"nova_watch_bill": None}):
+            msg = N.compose_pdb(mock.MagicMock(), g(), START, END)
+        self.assertIn("Night Watch", msg)
+
+    def test_pdb_uses_morning_turnover(self):
+        wb = mock.MagicMock()
+        wb.latest_turnover.return_value = {"degraded": []}
+        wb.compose_pdb.return_value = "*PDB for Little Mister*"
+        with mock.patch.dict(sys.modules, {"nova_watch_bill": wb}):
+            self.assertEqual(N.compose_pdb(mock.MagicMock(), g(), START, END), "*PDB for Little Mister*")
+        wb.turnover.assert_not_called()
+        self.assertEqual(wb.latest_turnover.call_args.args[1:], ("0630", 6))
 
 
 if __name__ == "__main__":

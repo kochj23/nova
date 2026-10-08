@@ -14,6 +14,12 @@ sensor fires — Nova escalates in steps:
   step 3  after another `step_wait_min`: iMessage the pre-designated humans in shine_contacts,
           one factual message each, once. Nova never claims to know anything is wrong.
 
+TWO-MAN RULE (2026-10-08): every step goes through nova_escalation.authorize as LIFE-SAFETY.
+Step 1 is the MOLINK (the cheapest direct check). Steps 2-3 need two keys: Nova's reasoning plus
+Jordan's pre-consent (enabling The Shine = Commander's Intent grant 'shine.preconsent', reconfirmed
+quarterly with the existing quarterly test). Life-safety is never blocked by Nova being degraded
+or by Jordan being asleep, and the gate fails open.
+
 BUILT DISABLED. service_config('the_shine','enabled') is false and shine_contacts is empty.
 While disabled the organ only OBSERVES: it records what it would have done to shine_log
 (enabled=false, dry_run=true) and contacts nobody, asks nobody, speaks to nobody.
@@ -274,9 +280,44 @@ def settings(cur) -> dict:
 
 # ── actions ─────────────────────────────────────────────────────────────────
 
+SHINE_CLASS = {"ask_jordan": "ask", "voice": "alert", "contact": "outward"}
+
+
+def shine_item(ev: dict) -> dict:
+    """The check-in as a SPINNAKER item: his own signals are ABSENT (one sensor type) while
+    presence fusion says he is home (another); a medical call or fall sensor adds its own. Pure."""
+    # Both read his phone: the silence and the "he is home" come through one upstream, so on
+    # their own they are ONE source — pre-consent has to be the second key.
+    src = [{"id": "absence:jordan-signals", "type": "absence", "upstream": ["jordan-phone"]},
+           {"id": "presence:fusion", "type": "rf_presence", "upstream": ["presence-engine", "jordan-phone"]}]
+    if ev.get("medical"):
+        src.append({"id": "scanner:near-home", "type": "radio"})
+    if ev.get("fall"):
+        src.append({"id": "ha:fall-sensor", "type": "ha"})
+    return {"claim": "Little Mister is home and not responding", "sources": src}
+
+
+def two_man(cur, action: str, ev: dict, reason: str) -> dict:
+    """Life-safety ladder through nova_escalation: pre-consent (the_shine enabled / Commander's
+    Intent grant 'shine.preconsent') is key two; step 1 IS the MOLINK, so steps 2-3 run with
+    molink='unanswered'. Fails OPEN — this is the one organ where silence must not win."""
+    try:
+        import nova_escalation as E
+        return E.authorize(cur, source="nova_shine", kind=action, action_class=SHINE_CLASS[action],
+                           item=shine_item(ev), life_safety=True,
+                           urgent=bool(ev.get("medical") or ev.get("fall")),
+                           molink=None if action == "ask_jordan" else "unanswered", text=reason)
+    except Exception as e:  # noqa: BLE001
+        return {"allowed": True, "reason": f"escalation gate unavailable ({e}) — life-safety fails open"}
+
+
 def act(cur, action, reason, ev, enabled, dry_run, n_contacts) -> str:
     send = enabled and not dry_run
     sent = False
+    if send and action in SHINE_CLASS:
+        gate = two_man(cur, action, ev, reason)
+        if not gate.get("allowed"):
+            return f"held by the two-man rule: {gate.get('reason')}"
     if action == "ask_jordan" and send:
         from nova_notify import notify
         sent = W.retry(notify, "The Shine: checking on you, Little Mister",
