@@ -112,8 +112,8 @@ class TestRetry(unittest.TestCase):
         self.assertEqual(run.call_count, 1)
 
     def test_weather_fetch_fails_open(self):
-        # RETRY GAP: get_weather() — one wttr.in attempt; failure returns None and main skips the cycle
-        with redirect_stdout(io.StringIO()) as out:
+        # get_weather() — 3 wttr.in attempts (3 s / 6 s); then None and main skips the cycle
+        with redirect_stdout(io.StringIO()) as out, patch.object(wh.time, "sleep"):
             self.assertIsNone(wh.get_weather())
             self.assertEqual(wh.check_open_contacts(), [])
         self.assertIn("Weather fetch error", out.getvalue())

@@ -20,6 +20,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 import urllib.request
 from datetime import datetime, date
 from pathlib import Path
@@ -141,8 +142,15 @@ def get_weather():
             "https://wttr.in/burbank,ca?format=j1",
             headers={"User-Agent": "curl/7.0"}
         )
-        with urllib.request.urlopen(req, timeout=10) as r:
-            data = json.loads(r.read())
+        for attempt in range(3):   # wttr.in is flaky: retry 3 s / 6 s before skipping the cycle
+            try:
+                with urllib.request.urlopen(req, timeout=10) as r:
+                    data = json.loads(r.read())
+                break
+            except Exception:
+                if attempt == 2:
+                    raise
+                time.sleep(3 * (attempt + 1))
 
         current = data.get("current_condition", [{}])[0]
         forecast = data.get("weather", [{}])[0]

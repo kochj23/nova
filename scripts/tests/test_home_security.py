@@ -713,7 +713,7 @@ class TestWeatherHomeKit:
 
     def test_get_weather_returns_none_on_failure(self):
         """get_weather returns None on network failure."""
-        with patch("urllib.request.urlopen", side_effect=Exception("timeout")):
+        with patch("urllib.request.urlopen", side_effect=Exception("timeout")), patch("time.sleep"):
             result = self.mod.get_weather()
         assert result is None
 
