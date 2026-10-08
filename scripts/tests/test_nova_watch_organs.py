@@ -233,7 +233,8 @@ class TestIntegration(unittest.TestCase):
 
     def test_night_watch_posts_slack_only_to_chat(self):
         src = (SCRIPTS / "nova_night_watch.py").read_text()
-        self.assertIn('post_both(msg, slack_channel=nova_config.SLACK_CHAN, discord_channel="")', src)
+        self.assertIn("W.retry(W.post_slack, msg, nova_config.SLACK_CHAN", src)
+        self.assertNotIn("post_both(", src)  # never Discord
 
     def test_logbook_counts_each_occurrence_once(self):
         cur = FakeCursor()

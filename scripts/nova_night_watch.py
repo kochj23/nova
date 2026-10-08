@@ -177,7 +177,10 @@ def main(argv=None) -> int:
     if a.dry_run:
         return 0
     import nova_config
-    nova_config.post_both(msg, slack_channel=nova_config.SLACK_CHAN, discord_channel="")
+    # Slack only (never Discord — it describes the house). Retried; a final failure exits 1.
+    if not W.retry(W.post_slack, msg, nova_config.SLACK_CHAN, tag=TAG):
+        W.log(TAG, "post to #nova-chat FAILED after retries")
+        return 1
     W.log(TAG, "posted to #nova-chat")
     return 0
 

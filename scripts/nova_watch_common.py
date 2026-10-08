@@ -61,10 +61,45 @@ def connect(dsn: str = DSN, attempts: int = 3, delay: float = 2.0, _sleep=time.s
     raise last
 
 
-def home():
+def retry(fn, *args, attempts: int = 3, delay: float = 2.0, tag: str = "watch", _sleep=None, **kw):
+    """Call fn(*args, **kw) up to `attempts` times with linear backoff. An exception OR a falsy
+    result (notify/send_imessage/post return False on failure) counts as a failed attempt.
+    Every failure is logged — never silent. Returns the last result (False if it kept raising)."""
+    res = False
+    for i in range(attempts):
+        try:
+            res = fn(*args, **kw)
+            if res:
+                return res
+            log(tag, f"{getattr(fn, '__name__', 'call')} attempt {i + 1}/{attempts} returned {res!r}")
+        except Exception as e:  # noqa: BLE001 — retried, logged
+            res = False
+            log(tag, f"{getattr(fn, '__name__', 'call')} attempt {i + 1}/{attempts} failed: {e}")
+        if i < attempts - 1:
+            (_sleep or time.sleep)(delay * (i + 1))
+    return res
+
+
+def post_slack(text: str, channel: str, timeout: int = 10) -> bool:
+    """Slack-only post that REPORTS failure (nova_config.post_both swallows it), so callers can
+    wrap it in retry(). Returns True only when Slack answered ok."""
+    import urllib.request
+    import nova_config
+    token = nova_config.slack_bot_token()
+    if not token:
+        return False
+    req = urllib.request.Request(
+        f"{nova_config.SLACK_API}/chat.postMessage",
+        data=json.dumps({"channel": channel, "text": text, "mrkdwn": True}).encode(),
+        headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return bool(json.loads(r.read()).get("ok"))
+
+
+def home(_sleep=None):
     """(lat, lon) of home from service_config. Never log the return value."""
     from nova_geo_query import home_coords
-    h = home_coords()
+    h = retry(home_coords, tag="geo", _sleep=_sleep)
     if not h:
         raise RuntimeError("service_config geo/home is not set")
     return h[0], h[1]

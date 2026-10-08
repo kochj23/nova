@@ -242,10 +242,10 @@ def run_live(dry_run: bool) -> int:
             body = (describe(w, safe=False) + f"\n\nBodach score {w['score']} from "
                     f"{len(w['present'])} independent signal types ({', '.join(w['present'])}); "
                     f"threshold {th}. Evidence only — no cause is implied.")
-            alerted = notify("Bodach Watch: independent signals clustering near home", body=body,
+            alerted = W.retry(notify, "Bodach Watch: independent signals clustering near home", body=body,
                              level="warning", category="local", source="nova_bodach_watch",
                              dedup_key=f"bodach-{we:%Y%m%d%H}",
-                             meta={"score": w["score"], "types": w["present"]})
+                             meta={"score": w["score"], "types": w["present"]}, tag=TAG)
     cur.execute(
         "INSERT INTO bodach_scores (window_start, window_end, score, n_types, strengths, evidence, "
         "safe_summary, threshold, fired, alerted) VALUES (%s,%s,%s,%s,%s::jsonb,%s::jsonb,%s,%s,%s,%s) "

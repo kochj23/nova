@@ -283,8 +283,8 @@ def main(argv=None) -> int:
         if not a.dry_run:
             from nova_notify import notify
             title, _, body = note.partition("\n")
-            notify(title.strip("*"), body=body, level="info", category="digest",
-                   source="nova_derry_clock", dedup_key=f"derry-{today:%Y-%m}")
+            W.retry(notify, title.strip("*"), body=body, level="info", category="digest",
+                    source="nova_derry_clock", dedup_key=f"derry-{today:%Y-%m}", tag=TAG)
     return 0
 
 

@@ -114,13 +114,15 @@ def desk_last_input(now: datetime, _run=None):
     the threshold more conservative, never less)."""
     import re
     import subprocess
-    try:
-        out = (_run or subprocess.run)(["ioreg", "-c", "IOHIDSystem"], capture_output=True,
-                                       text=True, timeout=5).stdout
-        m = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', out or "")
-        return now - timedelta(seconds=int(m.group(1)) / 1e9) if m else None
-    except Exception:
-        return None
+    for _attempt in range(2):  # one quick retry; then fail open (None), never raise
+        try:
+            out = (_run or subprocess.run)(["ioreg", "-c", "IOHIDSystem"], capture_output=True,
+                                           text=True, timeout=5).stdout
+            m = re.search(r'"HIDIdleTime"\s*=\s*(\d+)', out or "")
+            return now - timedelta(seconds=int(m.group(1)) / 1e9) if m else None
+        except Exception:
+            continue
+    return None
 
 
 def threshold_hours(p99: float, multiplier: float, floor: float) -> float:
@@ -242,20 +244,22 @@ def settings(cur) -> dict:
 
 def act(cur, action, reason, ev, enabled, dry_run, n_contacts) -> str:
     send = enabled and not dry_run
+    sent = False
     if action == "ask_jordan" and send:
         from nova_notify import notify
-        notify("The Shine: checking on you, Little Mister",
+        sent = W.retry(notify, "The Shine: checking on you, Little Mister",
                body=(f"{reason}. Any activity clears this — message me, move your phone between rooms, "
                      f"or walk past a camera. If I hear nothing I'll speak in the office in "
                      f"{ev['wait']} min, then contact the {n_contacts} people you designated."),
                level="warning", category="shine", source="nova_shine", dedup_key="shine-ask",
-               meta={"step": 1, **{k: v for k, v in ev.items() if k not in ("last_signal_dt", "baseline")}})
+               meta={"step": 1, **{k: v for k, v in ev.items() if k not in ("last_signal_dt", "baseline")}},
+               tag=TAG)
     elif action == "voice" and send:
         from nova_notify import notify
-        notify("The Shine: no response from Jordan at home",
+        sent = W.retry(notify, "The Shine: no response from Jordan at home",
                body=f"{reason}. No activity since the Slack check-in. Speaking in the office now.",
                level="critical", category="life_safety", source="nova_shine", dedup_key="shine-voice",
-               meta={"voice": "life_safety", "step": 2})
+               meta={"voice": "life_safety", "step": 2}, tag=TAG)
     elif action == "contact":
         cur.execute("SELECT name, channel, address FROM shine_contacts WHERE active ORDER BY priority, id")
         contacts = cur.fetchall()
@@ -265,13 +269,16 @@ def act(cur, action, reason, ev, enabled, dry_run, n_contacts) -> str:
             return f"would contact {len(contacts)} designated contact(s)"
         from nova_imessage import send_imessage
         msg = contact_message(ev.get("last_signal_dt"), ev.get("gap_h") or 0)
-        ok = [n for n, ch, addr in contacts if ch == "imessage" and send_imessage(addr, msg, sign=False)]
+        ok = [n for n, ch, addr in contacts
+              if ch == "imessage" and W.retry(send_imessage, addr, msg, sign=False, tag=TAG)]
         from nova_notify import notify
-        notify("The Shine: contacted designated humans",
+        W.retry(notify, "The Shine: contacted designated humans",
                body=f"{reason}. Sent check-in to: {', '.join(ok) or 'nobody (send failed)'}.",
-               level="critical", category="shine", source="nova_shine", dedup_key="shine-contacted")
+               level="critical", category="shine", source="nova_shine", dedup_key="shine-contacted", tag=TAG)
         return f"contacted {len(ok)}/{len(contacts)}"
-    return "sent" if send and action in ("ask_jordan", "voice") else ("observe-only" if action != "none" else "")
+    if send and action in ("ask_jordan", "voice"):
+        return "sent" if sent else "send FAILED after retries"
+    return "observe-only" if action != "none" else ""
 
 
 def evaluate(dry_run: bool) -> int:
@@ -454,7 +461,7 @@ def live_test(confirm: str) -> int:
     from nova_imessage import send_imessage
     msg = contact_message(W.now_utc() - timedelta(hours=9), 9, test=True)
     for name, addr in rows:
-        ok = send_imessage(addr, msg, sign=False)
+        ok = W.retry(send_imessage, addr, msg, sign=False, tag=TAG)
         cur.execute("INSERT INTO shine_log (step, action, reason, evidence, dry_run, enabled) "
                     "VALUES (3,'live_test',%s,'{}'::jsonb,false,true)", (f"{name}: {'sent' if ok else 'failed'}",))
         print(f"{name}: {'sent' if ok else 'FAILED'}")
