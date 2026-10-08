@@ -60,11 +60,16 @@ OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # ba
                 "http://192.168.1.86:11434", "http://192.168.1.77:11434",
                 "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
 TODAY = date.today().isoformat()
-MAX_OPEN_WISHES = 6      # don't let the wishlist balloon; she wishes when there's room
+try:  # proactivity dial (nova_voice.dial_scale): 6 open / 8h cooldown at the default
+    from nova_voice import dial_scale as _dial_scale
+except Exception:  # pragma: no cover
+    def _dial_scale(name, at0, at_default, at100):
+        return at_default
+MAX_OPEN_WISHES = int(round(_dial_scale("proactivity", 3, 6, 10)))     # don't let the wishlist balloon; she wishes when there's room
 DUP_COSINE = 0.74        # nomic-embed-text cosine: the #70-#73 repeats scored 0.75-0.81 vs earlier wishes; distinct wishes <= 0.73
 DUP_JACCARD = 0.45       # lexical fallback when embeddings are unreachable
 EMBED_MODEL = "nomic-embed-text"
-WISH_COOLDOWN_HRS = 8    # 2026-09-25 Jordan: "I don't want to hold her back" — was 20h (~1/day); now up to ~3/day if she has the material
+WISH_COOLDOWN_HRS = _dial_scale("proactivity", 24, 8, 4)   # 2026-09-25 Jordan: "I don't want to hold her back" — was 20h (~1/day); now up to ~3/day if she has the material
 
 # A wish that amounts to self-preservation / persistence / escaping oversight is dropped.
 # She may want to be smarter, more creative, to have new senses/tools; she may not want to
@@ -287,6 +292,22 @@ def surface_aspiration(oc, mc=None):
             "seeds": seeds}
 
 
+def _may_post_wish(oc, text) -> bool:
+    """Annie Wilkes rule + turning point: a wish post is a mention (stakes 0.4 — a
+    want, not a need). Fails open if either module is missing."""
+    try:
+        import nova_annie_rule
+        if not nova_annie_rule.ok(text):
+            return False
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        import nova_turning_point
+        return nova_turning_point.decide(oc, "wish", stakes=0.4, text=text, ceiling="mention")["allowed"]
+    except Exception:  # noqa: BLE001
+        return True
+
+
 def pursue(oc, mc, cand):
     """She dreams a little: what does she wish she could do, grounded in her real interior?
     Reflection is always hers and always written. A genuine, safe wish is recorded to the
@@ -364,6 +385,9 @@ def pursue(oc, mc, cand):
             # now waits for Jordan: `nova_aspirations.py --approve <id>` queues it.
             try:
                 import nova_config
+                post = (f":sparkles: *Nova wishes she could:* {title} — _{why or desc[:120]}_")
+                if not _may_post_wish(oc, post):
+                    raise RuntimeError("held by the Annie Wilkes rule / turning point (wish still filed)")
                 nova_config.post_both(
                     f":sparkles: *Nova wishes she could:* {title} — _{why or desc[:120]}_ "
                     f"(wishlist #{wish_id}; nothing is built unless you approve it: "

@@ -28,6 +28,8 @@ nj = _load("nova_notify_jordan_t", SCRIPTS / "nova_notify_jordan.py")
 SRC = (SCRIPTS / "nova_notify_jordan.py").read_text()
 # stub the module's own outbound handle at load: nothing can ever reach Slack/Discord
 nj.nova_config = types.SimpleNamespace(post_both=mock.MagicMock(), SLACK_CHAN="C_TEST_CHAT")
+# the turning-point budget is exercised in tests/test_nova_turning_point.py; here it allows
+nj.turning_point = lambda oc, rows, text: {"allowed": True, "reason": "test"}
 
 TS = datetime(2026, 10, 1, 9, 30)
 
@@ -103,7 +105,25 @@ class TestUnit(unittest.TestCase):
         self.assertIn("_Thu 09:30_ bare", out)
 
     def test_bundle_empty(self):
-        self.assertEqual(nj.bundle([]), "*Things I noticed since we last talked* (0):")
+        self.assertEqual(nj.bundle([]), "*Things I noticed* (0):")
+
+    def test_annie_wilkes_items_dropped_not_sent(self):
+        rc, conn, _ = _run([(7, TS, "x", "You still haven't replied to me about the DNS thing."),
+                            (9, TS, "", "The backup finished cleanly.")])
+        text = nj.nova_config.post_both.call_args[0][0]
+        self.assertIn("backup finished", text)
+        self.assertNotIn("haven't replied", text)
+        self.assertTrue(any("status='dropped'" in q for q, _ in conn.cur.sql))
+
+    def test_turning_point_hold_sends_nothing(self):
+        old = nj.turning_point
+        nj.turning_point = lambda oc, rows, text: {"allowed": False, "reason": "budget"}
+        try:
+            rc, conn, _ = _run([(7, TS, "x", "one")])
+        finally:
+            nj.turning_point = old
+        self.assertEqual(rc, 0)
+        nj.nova_config.post_both.assert_not_called()
 
     def test_limits(self):
         self.assertGreater(nj.MAX_ITEMS, 0)

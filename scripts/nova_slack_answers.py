@@ -34,7 +34,12 @@ CHANNEL = "C0AMNQ5GX70"
 BOT_USER = "U0ANKLR3SUQ"
 HUMANS = {"U049EPC2W"}            # Jordan. ONLY these users can answer or decide (2026-09-29: Nova's own
                                   # gateway replied "Yes" in her proposal threads and got counted as him).
-PROPOSALS_PER_DAY = 3             # was per RUN every 10m -> 24 posts overnight. Now a daily allowance,
+try:  # proactivity dial — exactly 3 at the default (nova_voice.dial_scale)
+    from nova_voice import dial_scale as _dial_scale
+    _PPD = int(round(_dial_scale("proactivity", 1, 3, 6)))
+except Exception:  # pragma: no cover
+    _PPD = 3
+PROPOSALS_PER_DAY = _PPD             # was per RUN every 10m -> 24 posts overnight. Now a daily allowance,
 POST_HOURS = range(9, 18)         # posted only during his working hours.
 YES_RE = re.compile(r"^\s*(all\s+(approved|good|yes)|approve(d)?\s+all|yes|y|yep|yeah|approve|approved|ok|okay|sure|do it|go|👍|:\+1:|:thumbsup:)(?=\W|$)", re.I)
 BLANKET_RE = re.compile(r"^\s*(all\s+(approved|good|yes)|approve(d)?\s+all)\b", re.I)
@@ -180,6 +185,23 @@ def decide_proposal(pid, v, note, dry):
     return r.returncode == 0
 
 
+def _annie_ok(text):
+    try:
+        import nova_annie_rule
+        return nova_annie_rule.ok(text)
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _turning_point(cur, text, backlog):
+    try:
+        import nova_turning_point
+        return nova_turning_point.decide(cur, "proposal", stakes=min(1.0, 0.65 + 0.05 * backlog),
+                                         text=text, ceiling="recommend")
+    except Exception as e:  # noqa: BLE001
+        return {"allowed": True, "reason": f"turning point unavailable ({e})"}
+
+
 def post_pending_proposals(cur, dry):
     if datetime.now().hour not in POST_HOURS:
         return
@@ -191,11 +213,21 @@ def post_pending_proposals(cur, dry):
                 "WHERE status='pending_human' AND id::text NOT IN "
                 "(SELECT ref_id FROM slack_prompts WHERE kind='proposal') ORDER BY created_at LIMIT %s",
                 (room,))
-    for pid, origin, action, why in cur.fetchall():
+    rows = cur.fetchall()
+    for pid, origin, action, why in rows:
         text = (f"Proposal #{pid} ({origin}): {action}\n_{why}_\n"
                 f"_Reply *yes* or *no* in this thread._")
         if dry:
             print(text); continue
+        # Annie Wilkes rule + turning point: a proposal is a "recommend" — one per post,
+        # stakes rise with how long it has waited for him; held ones wait for next week.
+        if not _annie_ok(text):
+            log(f"proposal #{pid} text fails the Annie Wilkes rule — not posting it")
+            continue
+        tp = _turning_point(cur, text, len(rows))
+        if not tp["allowed"]:
+            log(f"proposal #{pid} held — turning point: {tp['reason']}")
+            break
         d = slack("chat.postMessage", channel=CHANNEL, text=text)
         if d.get("ok"):
             cur.execute("INSERT INTO slack_prompts (kind, ref_id, channel, ts) VALUES ('proposal', %s, %s, %s) "

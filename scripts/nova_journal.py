@@ -602,9 +602,26 @@ _EXPAND_META_RE = re.compile(
     r"here is the|here's the|the draft you|below is the)", re.I)
 
 
+def _verbosity_scale() -> float:
+    """Length multiplier from the verbosity dial: 1.0 at the default (today's table),
+    0.6x at 0 (terse), 1.4x at 100 (expansive). Never raises."""
+    try:
+        from nova_voice import dial_scale
+        return float(dial_scale("verbosity", 0.6, 1.0, 1.4))
+    except Exception:
+        return 1.0
+
+
 def article_length(profile: str | None):
-    """(min, max, policy) for a generator profile, or None when unmapped."""
-    return ARTICLE_LENGTH.get(profile or "")
+    """(min, max, policy) for a generator profile, or None when unmapped. Scaled by the
+    verbosity dial (unchanged at its default)."""
+    row = ARTICLE_LENGTH.get(profile or "")
+    if not row:
+        return row
+    m = _verbosity_scale()
+    if abs(m - 1.0) < 1e-9:
+        return row
+    return (int(row[0] * m), int(row[1] * m), row[2])
 
 
 def longform_overrides() -> list:
@@ -1248,6 +1265,21 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
     # 5000-word section floor; see ARTICLE_LENGTH / longform_expand).
     body = longform_expand(title, body, section, sources, profile=profile, min_words=min_words,
                            slug=stable_slug)
+
+    # Second pass — the Ideal Reader (On Writing: 2nd draft = 1st - 10%; nova_ideal_reader).
+    # Deletion-only: a model may CHOOSE sentences to cut but never writes; stock lead-ins,
+    # adverb clutter and grandiosity go; Sources, the Damien bit and caveats are protected;
+    # the quality guard re-runs on the result. Any failure -> the body as it was.
+    if os.environ.get("NOVA_IDEAL_READER", "1") != "0":
+        try:
+            from nova_ideal_reader import edit_article, claude_chooser
+            left = _task_time_left()
+            chooser = (claude_chooser if (left is None or left > LONGFORM_RESERVE_S + 240)
+                       and len(body.split()) >= 300 and not os.environ.get("PYTEST_CURRENT_TEST") else None)
+            row = article_length(profile)
+            body = edit_article(title, body, floor_words=(row[0] if row else None), chooser=chooser)
+        except Exception as e:
+            log(f"[ideal-reader] skipped ({e})")
 
     try:  # prepend the live backyard-weather dateline to the BODY (never the title)
         from nova_weather_blurb import weather_dateline_line

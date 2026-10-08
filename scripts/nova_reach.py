@@ -74,13 +74,22 @@ TODAY = date.today().isoformat()
 # ── Throttle (env-overridable, mainly for deterministic testing) ────────────────
 # Silence is the default. A single scan files AT MOST ONE reach; a whole day is
 # capped low; each audience gets a long cooldown so a reach never becomes a habit.
-DAILY_CAP = int(os.environ.get("NOVA_REACH_DAILY_CAP", "1"))     # 1-2/day total
+# 2026-10-08: the proactivity dial (nova_voice.dial_scale) sets these; at the default
+# (50) each returns exactly the old constant. An env var still wins (tests, ops).
+try:
+    from nova_voice import dial_scale as _dial_scale
+except Exception:                                            # pragma: no cover
+    def _dial_scale(name, at0, at_default, at100):
+        return at_default
+DAILY_CAP = int(os.environ.get("NOVA_REACH_DAILY_CAP") or round(_dial_scale("proactivity", 0, 1, 3)))  # 1-2/day total
 COOLDOWN_HOURS = int(os.environ.get("NOVA_REACH_COOLDOWN_H", "12"))
 # 2026-10-05 Jordan: "stop with the notifications" — direct audiences keep their ungated
 # channel (straight to #nova-chat, no co-agency proposal) but get a cooldown so a reach
 # never becomes a flood. Set NOVA_REACH_DIRECT_COOLDOWN_H=0 to restore fully-uncapped.
-DIRECT_COOLDOWN_HOURS = int(os.environ.get("NOVA_REACH_DIRECT_COOLDOWN_H", "6"))
-CARE_THRESHOLD = float(os.environ.get("NOVA_REACH_THRESHOLD", "0.6"))  # bar to file
+DIRECT_COOLDOWN_HOURS = int(os.environ.get("NOVA_REACH_DIRECT_COOLDOWN_H")
+                            or round(_dial_scale("proactivity", 24, 6, 2)))
+CARE_THRESHOLD = float(os.environ.get("NOVA_REACH_THRESHOLD")
+                       or _dial_scale("proactivity", 0.9, 0.6, 0.3))  # bar to file
 MAX_HERD = int(os.environ.get("NOVA_REACH_MAX_HERD", "2"))      # herd members weighed
 # 2026-09-26 Jordan: "make it so Nova can ping me about random things whenever she wants
 # through the nova-chat slack channel. There shouldn't be a gate." Audiences listed here
@@ -155,6 +164,12 @@ def passes_generosity(text: str) -> bool:
     if len(t) < 15:
         return False
     return not _GENEROSITY_REDLINE.search(t)
+
+
+try:
+    from nova_annie_rule import PROMPT_RULE as _ANNIE_PROMPT
+except Exception:                                            # pragma: no cover
+    _ANNIE_PROMPT = "Never mention whether they have replied or been away."
 
 
 def log(m):
@@ -340,7 +355,7 @@ def evaluate(audience: dict, material: list) -> dict | None:
         "Do NOT state any fact (date, place, name, number, 'the first X') that is not "
         "written in YOUR OWN RECENT MATERIAL above — every such claim is checked against "
         "your sources and the reach is dropped if it isn't there. Do NOT compliment them; "
-        "bring the thing itself.\n\n"
+        "bring the thing itself. " + _ANNIE_PROMPT + "\n\n"
         "Be ruthless and honest. MOST of the time the right answer is that nothing "
         "here genuinely connects to them and you should stay quiet — silence is the "
         "default and reaching without a real reason is worse than not reaching. A reach "
@@ -569,6 +584,16 @@ def _is_repeat(oc, audience: str, topic: str, message: str) -> bool:
     return False
 
 
+def _turning_point(oc, reach: dict, message: str) -> dict:
+    try:
+        import nova_turning_point
+        score = float(reach.get("score") or 0)
+        return nova_turning_point.decide(oc, "reach", stakes=score, text=message, ceiling="mention",
+                                         confidence=score, domain="relationship")
+    except Exception as e:  # noqa: BLE001 — never block a reach on the budget's own failure
+        return {"allowed": True, "reason": f"turning point unavailable ({e})"}
+
+
 def process_reach(oc, reach: dict) -> str:
     """Honesty gate, then: DIRECT audiences (jordan) are POSTED to #nova-chat (held
     outside the window); everyone else passes the generosity redline + repeat check
@@ -587,6 +612,23 @@ def process_reach(oc, reach: dict) -> str:
         return "dropped"
     message = grounded
 
+    # Second pass (nova_ideal_reader, deletion-only — the citation is protected), then
+    # the Annie Wilkes rule: no guilt about silence or absence, no manipulation.
+    try:
+        from nova_ideal_reader import edit_reach
+        message = edit_reach(message)
+    except Exception as e:  # noqa: BLE001
+        log(f"editor skipped: {e}")
+    try:
+        import nova_annie_rule
+        ann = nova_annie_rule.check(message)
+    except Exception:  # noqa: BLE001
+        ann = {"ok": True, "flags": []}
+    if not ann["ok"]:
+        rid = _record(oc, audience, topic, message, rationale, None, "dropped")
+        log(f"DROPPED reach #{rid} to {audience} — Annie Wilkes rule / manipulation: {ann['flags']}")
+        return "dropped"
+
     if audience.lower() in DIRECT_AUDIENCES:
         # Ungated by Jordan's request: post to #nova-chat and record it as sent.
         # 2026-10-02 (skill #118 notify-jordan-of-system-observations): outside his attention window
@@ -595,6 +637,14 @@ def process_reach(oc, reach: dict) -> str:
             rid = _record(oc, audience, topic, message, rationale, None, "held")
             log(f"HELD direct reach #{rid} to {audience} until the {WINDOW_HOURS} window: {topic}")
             return "held"
+        # Turning point (nova_turning_point): stakes = her care score, confidence
+        # calibrated in the 'relationship' domain; a reach is at most a mention, and it
+        # spends from the weekly intervention budget (logged to restraint_ledger).
+        tp = _turning_point(oc, reach, message)
+        if not tp["allowed"]:
+            rid = _record(oc, audience, topic, message, rationale, None, "journaled")
+            log(f"JOURNALED reach #{rid} to {audience} (turning point: {tp['reason']}): {topic}")
+            return "journaled"
         ok = _post_direct(message)
         rid = _record(oc, audience, topic, message, rationale, None, "sent" if ok else "held")
         log(f"{'SENT' if ok else 'HELD (post failed)'} direct reach #{rid} to {audience}: {topic}")
