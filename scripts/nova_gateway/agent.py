@@ -841,6 +841,8 @@ async def _generate_cross_channel_summary(ctx: GatewayContext, session_id: str, 
 # ── Session ID helpers ────────────────────────────────────────────────────────
 
 _APPROVAL_RE = re.compile(r"^(approve|deny)\s+([0-9a-f-]{8,})\s*$", re.IGNORECASE)
+# 2026-10-08: Jordan's answer to a safety-guard confirmation request (nova_safety_guards.request_confirmation).
+_CONFIRM_RE = re.compile(r"^confirm\s+#?(\d{1,12})\s*$", re.IGNORECASE)
 
 
 def session_id(channel: str, channel_id: str) -> str:
@@ -1505,6 +1507,10 @@ async def run_agent(ctx: GatewayContext, message: str, session_id: str,
     if m:
         from nova_gateway.tools import resolve_and_run
         return await resolve_and_run(ctx, m.group(2), m.group(1).lower() == "approve", by=session_id or "jordan")
+    m = _CONFIRM_RE.match((message or "").strip())
+    if m and (person or _default_person(session_id)) == "jordan":
+        from nova_gateway.tools import confirm_and_run
+        return await confirm_and_run(ctx, int(m.group(1)), by=session_id or "jordan")
     # 2026-10-08: "set humor to 60" / "show dials" is a command, answered deterministically through the
     # normal tool path (autonomy notify + the cell gate: only Jordan can turn her dials).
     from nova_gateway.tools import parse_dial_command, dispatch_tool

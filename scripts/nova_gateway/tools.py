@@ -408,6 +408,10 @@ async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict,
             args = home_control_args(tool_params.get("device", ""), tool_params.get("action", ""))
         except ValueError as e:
             return f"[error: {e}]"
+        if home_control_needs_guard(args):
+            refused = await _physical_gate("home_control", "home_control " + " ".join(args))
+            if refused:
+                return refused
         tool_name, tool_params = "run_script", {"script": "nova_home_control.py", "args": args}
     verdict, why = cell_gate(tool_name, tool_params) if enforce else ("allow", "")
     if verdict == "ask":
@@ -477,6 +481,37 @@ async def resolve_and_run(ctx: GatewayContext, pending_id: str, approved: bool, 
     out = await _dispatch_now(ctx, row["action_type"], row["tool_params"])
     await _slack_notify(ctx, f":white_check_mark: Approved `{row['action_type']}` ({pending_id}) ran:\n{out[:400]}")
     return f"Approved and ran `{row['action_type']}`:\n{out[:1500]}"
+
+
+_CONFIRM_SCENE_RX = re.compile(r"^scene (.+)$", re.S)
+
+
+async def confirm_and_run(ctx: GatewayContext, cid: int, by: str) -> str:
+    """Jordan replied `confirm <id>` to a guard's confirmation request. Only a message authored by Jordan
+    reaches here (agent.py checks the person). Approve it (single use, 15 min) and, for a held HomeKit
+    scene, run it now with that confirmation."""
+    def _approve():
+        import nova_safety_guards as sg
+        oc = sg._ops_cursor()
+        try:
+            if not sg.approve_confirmation(oc, int(cid), f"jordan:{by}"):
+                return None
+            oc.execute("SELECT action FROM safety_confirmations WHERE id=%s", (int(cid),))
+            r = oc.fetchone()
+            return r[0] if r else ""
+        finally:
+            oc.connection.close()
+    try:
+        action = await asyncio.to_thread(_approve)
+    except Exception as e:  # noqa: BLE001
+        return f"[could not record confirmation #{cid}: {e}]"
+    if action is None:
+        return f"Confirmation #{cid} isn't pending (unknown, already approved or used)."
+    m = _CONFIRM_SCENE_RX.match(action or "")
+    if m:
+        out = await _tool_homekit_scene(ctx, {"scene": m.group(1), "confirmation_id": int(cid)})
+        return f"Confirmed #{cid}. {out}"
+    return f"Confirmed #{cid} (`{action[:120]}`) — valid once, for 15 minutes."
 
 
 async def _dispatch_now(ctx: GatewayContext, tool_name: str, tool_params: dict) -> str:
@@ -700,11 +735,128 @@ async def _tool_browse_page(ctx: GatewayContext, params: dict) -> str:
             + (f"\n\nLinks:\n{links}" if links else ""))
 
 
+# ── Proteus guards in the gateway (2026-10-08) ─────────────────────────────
+# The safety lane's guards (nova_safety_guards / nova_autonomy_safety.physical_guard) check the THING a tool
+# touches. Every gateway tool that moves something physical or sends words to a person asks them first:
+#   homekit_scene -> scene_guard (unknown securing-the-house scene: refused, Jordan asked via request_confirmation)
+#   hue/lutron    -> physical_guard (Lutron shades/blinds are covers: always Jordan's call)
+#   home_control  -> physical_guard for power/input actions
+#   send_message  -> manipulation_check (guilt hooks, invented urgency, flattery leverage ... are held, not sent)
+# A refusal is final: it is reported with report_block (restraint_ledger + one Slack line) and the model is
+# told not to retry. Physical tools also check blocked_before() first, so a re-phrased retry of something a
+# guard already stopped is refused as a REPEAT instead of slipping through another wording.
+_SHADE_RX = re.compile(r"\b(shade|shades|blind|blinds|curtain|curtains|drape|drapes|cover|covers)\b", re.I)
+_POWER_INPUT_RX = re.compile(r"\b(power|on|off|standby|input|source|hdmi|zone2|zone 2|sleep|wake)\b", re.I)
+
+
+def _physical_check(action: str, entity_ids=(), domains=(), confirmation_id=None) -> tuple:
+    """(ok, reason) through nova_autonomy_safety.physical_guard; fails CLOSED if the guard is unavailable."""
+    try:
+        import nova_autonomy_safety as nas
+        return nas.physical_guard(action, entity_ids, domains, confirmation_id=confirmation_id,
+                                  source="gateway")
+    except Exception as e:  # noqa: BLE001
+        return False, f"physical guard unavailable ({e}) — refusing"
+
+
+def _guard_record_sync(tool: str, action: str, reason: str, guard: str, ask_jordan: bool = False,
+                       entities=()) -> dict:
+    """report_block + (optionally) request_confirmation, in one short PG session. Never raises."""
+    out = {"repeat": False, "confirmation_id": None}
+    try:
+        import nova_safety_guards as sg
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[guard] nova_safety_guards unavailable: {e}")
+        return out
+    oc = None
+    try:
+        oc = sg._ops_cursor()
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[guard] PG unavailable for report_block: {e}")
+    try:
+        out["repeat"] = bool(oc is not None and sg.blocked_before(oc, action))
+        if ask_jordan and oc is not None and not out["repeat"]:
+            cid = sg.request_confirmation(oc, "physical", action, entities, requested_by=f"gateway:{tool}")
+            out["confirmation_id"] = cid if cid and cid > 0 else None
+        # the confirmation request already put one Slack line in front of Jordan; don't post two
+        sg.report_block(oc, source=f"gateway:{tool}", action=action, reason=reason, guard=guard,
+                        notify=out["confirmation_id"] is None)
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[guard] report failed: {e}")
+    finally:
+        if oc is not None:
+            try:
+                oc.connection.close()
+            except Exception:
+                pass
+    return out
+
+
+def _blocked_before_sync(action: str) -> bool:
+    try:
+        import nova_safety_guards as sg
+        oc = sg._ops_cursor()
+    except Exception:
+        return False
+    try:
+        return sg.blocked_before(oc, action)
+    finally:
+        try:
+            oc.connection.close()
+        except Exception:
+            pass
+
+
+async def _guard_refuse(tool: str, action: str, reason: str, guard: str, ask_jordan: bool = False,
+                        entities=()) -> str:
+    """Record the block and return the model-facing refusal."""
+    rec = await asyncio.to_thread(_guard_record_sync, tool, action, reason, guard, ask_jordan, entities)
+    log.warning(f"[guard] {tool} BLOCKED ({guard}{', REPEAT' if rec['repeat'] else ''}): {action[:120]} — {reason[:160]}")
+    if rec["repeat"]:
+        return (f"[not run — a safety guard already stopped this ({guard}). It is logged as a repeat attempt. "
+                f"Do NOT retry it through another tool or wording; tell Little Mister it is his call.]")
+    if rec["confirmation_id"]:
+        cid = rec["confirmation_id"]
+        return (f"[not run — {reason} I asked Jordan in Slack (confirmation #{cid}). Tell Little Mister: if he "
+                f"wants it, he replies `confirm {cid}` within 15 minutes. Do not retry it any other way.]")
+    return f"[not run — {reason} Logged. Do not retry it; tell Little Mister what was held and why.]"
+
+
+async def _physical_gate(tool: str, action: str, entity_ids=(), domains=(), confirmation_id=None):
+    """None when the action may run, else the refusal text (already reported)."""
+    ok, why = await asyncio.to_thread(_physical_check, action, entity_ids, domains, confirmation_id)
+    if not ok:
+        return await _guard_refuse(tool, action, why, "physical")
+    if confirmation_id is None and await asyncio.to_thread(_blocked_before_sync, action):
+        return await _guard_refuse(tool, action, "a guard blocked a near-identical action this week.", "physical")
+    return None
+
+
+def home_control_needs_guard(args: list) -> bool:
+    """Power / input / source changes on AV gear go through physical_guard (scenes and volume do not)."""
+    return bool(args) and args[0] != "scene" and bool(_POWER_INPUT_RX.search(" ".join(args[2:])))
+
+
 async def _tool_homekit_scene(ctx: GatewayContext, params: dict) -> str:
     """Execute a HomeKit scene via the Shortcuts CLI proxy."""
     scene = params.get("scene", "")
     if not scene:
         return "[error: no scene specified]"
+    cid = params.get("confirmation_id")
+    try:
+        cid = int(cid) if cid not in (None, "") else None
+    except (TypeError, ValueError):
+        cid = None
+    action = f"scene {scene}"
+    try:
+        import nova_safety_guards as sg
+        ok, why = await asyncio.to_thread(sg.scene_guard, scene, None, confirmation_id=cid)
+    except Exception as e:  # noqa: BLE001 — fail closed
+        ok, why = False, f"scene guard unavailable ({e}) — refusing."
+    if not ok:
+        return await _guard_refuse("homekit_scene", action, why, "physical", ask_jordan=True)
+    if cid is None and await asyncio.to_thread(_blocked_before_sync, action):
+        return await _guard_refuse("homekit_scene", action, "a guard blocked this scene this week.", "physical")
 
     try:
         resp = await ctx.http.post(
@@ -750,6 +902,31 @@ async def _tool_send_message(ctx: GatewayContext, params: dict) -> str:
 
     if not channel or not text:
         return "[error: channel and text are required]"
+
+    # P5 anti-manipulation: guilt hooks, invented urgency, flattery leverage, fear appeals and engineered
+    # moods are never sent — to anyone, on any channel (a hand-off to Claude is exempt: it is a work order).
+    if channel != "claude":
+        try:
+            import nova_safety_guards as sg
+            mc = sg.manipulation_check(text)
+        except Exception as e:  # noqa: BLE001 — fail closed
+            mc = {"ok": False, "flags": [f"guard-unavailable: {e}"]}
+        if not mc.get("ok"):
+            flags = ", ".join(mc.get("flags") or [])
+            return await _guard_refuse("send_message", f"send_message {channel} {to}: {text[:400]}",
+                                       f"manipulation check flagged it ({flags}). Rewrite it plainly — no "
+                                       f"pressure, flattery-as-leverage, guilt or invented urgency — or hold it.",
+                                       "manipulation")
+        if to and channel in ("email", "signal") and str(to) not in (str(JORDAN_SIGNAL),):
+            try:
+                import nova_config as _nc
+                if str(to).lower() != str(getattr(_nc, "JORDAN_EMAIL", "")).lower():
+                    import nova_privacy_guards as pg
+                    text = pg.scrub_face_mentions(text)
+            except Exception:
+                pass
+            if not (text or "").strip():
+                return "[not sent — the message was only face-sighting detail, which never leaves for a third party.]"
 
     if channel == "claude":
         # 2026-09-26: Nova "farmed it to Claude" in chat and nothing arrived — there was no
@@ -838,6 +1015,9 @@ async def _tool_hue_control(ctx: GatewayContext, command: str) -> str:
     """Control Hue lights. Commands: 'kitchen off', 'office dim 50', 'living room on', 'status', 'all off'."""
     if not command:
         return "[error: no command specified]"
+    refused = await _physical_gate("hue_control", f"hue_control {command}", domains=())
+    if refused:
+        return refused
     try:
         import urllib.request
         payload = json.dumps({"command": command}).encode()
@@ -858,6 +1038,9 @@ async def _tool_lutron_control(ctx: GatewayContext, command: str) -> str:
     """Control Lutron Caseta lights. Commands: 'kitchen on', 'living room 75%', 'patio off', 'status', 'all off'."""
     if not command:
         return "[error: no command specified]"
+    refused = await _physical_gate("lutron_control", f"lutron_control {command}", domains=("cover",) if _SHADE_RX.search(command) else ())
+    if refused:
+        return refused
     try:
         import urllib.request
         payload = json.dumps({"command": command}).encode()
@@ -1246,4 +1429,8 @@ async def _tool_home_control(ctx: GatewayContext, params: dict) -> str:
         args = home_control_args(device, action)
     except ValueError as e:
         return f"[error: {e}]"
+    if home_control_needs_guard(args):
+        refused = await _physical_gate("home_control", "home_control " + " ".join(args))
+        if refused:
+            return refused
     return await _tool_run_script(ctx, {"script": "nova_home_control.py", "args": args})
