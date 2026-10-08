@@ -86,10 +86,11 @@ class TestUnit(unittest.TestCase):
     def test_short_prompt_appends_context(self):
         with _offline():
             out = nv.system_prompt_short("EXTRA")   # dials block sits between voice and context (2026-10-08)
+            bare = nv.system_prompt_short()
         self.assertTrue(out.startswith(nv.NOVA_VOICE_SHORT))
         self.assertTrue(out.endswith("\nEXTRA"))
         self.assertIn("YOUR DIALS", out)
-            self.assertEqual(nv.system_prompt_short(), nv.NOVA_VOICE_SHORT)
+        self.assertEqual(out, bare + "\nEXTRA")
 
 
 class TestIntegration(unittest.TestCase):
