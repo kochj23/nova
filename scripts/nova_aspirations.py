@@ -269,18 +269,33 @@ def approve_wish(oc, wish_id, by="Jordan"):
     if not r:
         log(f"no wish #{wish_id}"); return None
     title, desc, why, seed, status = r
-    if status not in ("wished", "acknowledged"):
-        log(f"wish #{wish_id} is '{status}' — not queueing"); return None
+    # 2026-10-08 idempotency: only a 'wished' wish queues. 'acknowledged' means it was already
+    # approved and queued once; approving it again used to queue the build a second time.
+    if status != "wished":
+        log(f"wish #{wish_id} is '{status}' — not queueing (already approved or closed)"); return None
+    oc.execute("SELECT id FROM claude_queue WHERE description LIKE %s AND status <> 'cancelled' LIMIT 1",
+               (f"Build Nova's wish #{wish_id}:%",))
+    prior = oc.fetchone()
+    if prior:
+        log(f"wish #{wish_id} already has build item claude_queue #{prior[0]} — not queueing again"); return None
+    # claim the wish first (conditional on 'wished') so two concurrent approvers can't both queue it
+    oc.execute("UPDATE feature_wishes SET status='acknowledged' WHERE id=%s AND status='wished'", (wish_id,))
+    if getattr(oc, "rowcount", 1) == 0:
+        log(f"wish #{wish_id} was approved concurrently — not queueing again"); return None
     oc.execute("SELECT session_id FROM claude_sessions ORDER BY started_at DESC LIMIT 1")
     sid = (oc.fetchone() or [None])[0] or "nova_aspirations"
-    oc.execute("""INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context)
-                  VALUES (%s, now(), now(), 'queued', 6, %s, %s) RETURNING id""",
-               (sid, f"Build Nova's wish #{wish_id}: {title} (approved by {by})",
-                f"why: {why}\ndescription: {desc}\nseed: {seed[:200]}\nfollow the pattern of "
-                "nova_pattern_sense.py / nova_human_insight.py: read-only over the world, ships silent, "
-                "--selftest, registered on scheduler-core"))
-    qid = oc.fetchone()[0]
-    oc.execute("UPDATE feature_wishes SET status='acknowledged' WHERE id=%s", (wish_id,))
+    try:
+        oc.execute("""INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context)
+                      VALUES (%s, now(), now(), 'queued', 6, %s, %s) RETURNING id""",
+                   (sid, f"Build Nova's wish #{wish_id}: {title} (approved by {by})",
+                    f"why: {why}\ndescription: {desc}\nseed: {seed[:200]}\nfollow the pattern of "
+                    "nova_pattern_sense.py / nova_human_insight.py: read-only over the world, ships silent, "
+                    "--selftest, registered on scheduler-core"))
+        qid = oc.fetchone()[0]
+    except Exception:
+        # never leave a wish 'acknowledged' with no build item behind it
+        oc.execute("UPDATE feature_wishes SET status='wished' WHERE id=%s AND status='acknowledged'", (wish_id,))
+        raise
     log(f"wish #{wish_id} approved by {by} — queued claude_queue #{qid}")
     return qid
 

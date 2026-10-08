@@ -614,7 +614,14 @@ def file_proposal(oc, origin, action, rationale="", target_service=None, context
             "value_available": vc.get("available"), "reason": ""}
 
 
-def mode_decide(oc, mode, pid, decision, note, by):
+REVIEWER_BY = "claude-reviewer"   # nova_claude_reviewer.py (Jordan standing order 2026-10-08)
+
+
+def mode_decide(oc, mode, pid, decision, note, by, expect_status=None):
+    """Record a human (or claude-reviewer) decision. expect_status: refuse unless the proposal is
+    still in that status (the reviewer passes 'pending_human' so it never re-decides a row).
+    A claude-reviewer decision does NOT feed the earned-autonomy track record: Nova graduates a
+    class only on Jordan's own approvals, never on Claude's stand-in click."""
     if mode == "off":
         clog(oc, mode, "disabled", f"mode=off — refusing to record decision on #{pid}")
         return 1
@@ -625,13 +632,15 @@ def mode_decide(oc, mode, pid, decision, note, by):
     cur_status, rp, vc = r
     if cur_status == "blocked":
         clog(oc, mode, "decide_refused", f"#{pid} is redline-blocked — cannot be approved"); return 1
+    if expect_status and cur_status != expect_status:
+        clog(oc, mode, "decide_refused", f"#{pid} is '{cur_status}', not '{expect_status}' — already decided"); return 1
     new_status = "approved" if decision == "approve" else "rejected"
     oc.execute("""UPDATE coagency_proposals
                   SET status=%s, decided_at=now(), decided_by=%s, decision_note=%s WHERE id=%s""",
                (new_status, by, note, pid))
     clog(oc, mode, f"decided_{new_status}", f"#{pid} by {by}: {note or ''}")
     # ── Build (or poison) the earned-autonomy track record for this action-class ──
-    if _safety is not None:
+    if _safety is not None and not str(by or "").startswith(REVIEWER_BY):
         try:
             oc.execute("SELECT target_service, proposed_action FROM coagency_proposals WHERE id=%s", (pid,))
             tgt, act = oc.fetchone()
@@ -648,8 +657,10 @@ def mode_decide(oc, mode, pid, decision, note, by):
 def hand_to_claude(oc, pid, action):
     """File an approved non-restart proposal as a claude_queue item. Returns the queue id or None."""
     try:
-        oc.execute("SELECT origin, rationale FROM coagency_proposals WHERE id=%s", (pid,))
-        origin, rationale = oc.fetchone()
+        oc.execute("SELECT origin, rationale, decided_by FROM coagency_proposals WHERE id=%s", (pid,))
+        row = oc.fetchone()
+        origin, rationale = row[0], row[1]
+        approver = (row[2] if len(row) > 2 else None) or "Jordan"
         oc.execute("SELECT 1 FROM claude_queue WHERE description LIKE %s", (f"Execute approved co-agency proposal #{pid}:%",))
         if oc.fetchone():
             return None
@@ -658,7 +669,7 @@ def hand_to_claude(oc, pid, action):
         oc.execute("""INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context)
                       VALUES (%s, now(), now(), 'queued', 4, %s, %s) RETURNING id""",
                    (sid, f"Execute approved co-agency proposal #{pid}: {action}",
-                    f"origin: {origin}\nrationale: {rationale or ''}\napproved by Jordan; do it if it is safe and worth "
+                    f"origin: {origin}\nrationale: {rationale or ''}\napproved by {approver}; do it if it is safe and worth "
                     f"doing, otherwise close it with a one-line reason. Never anything that touches credentials, deletes, "
                     f"reboots, networking or self-preservation."))
         return oc.fetchone()[0]
