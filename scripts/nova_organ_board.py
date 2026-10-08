@@ -2,7 +2,7 @@
 """nova_organ_board.py — wish #66: the table the organs share.
 
 One view, nova_ops.organ_board, with the LATEST row of every organ side by side (affect, time_sense,
-attention_focus, core_liveness, security_organ, presence, embodiment, contact_sense). presence is Jordan's
+attention_focus, core_liveness, security_organ, presence, embodiment, contact_sense, boiler). presence is Jordan's
 presence_state row (the single source of truth for occupancy, 2026-10-08); embodiment and time_sense read it too., and board(cur) -> dict so any
 organ can read the others before it talks to Jordan. First consumer: nova_security_organ downgrades a
 "new device" when a known person walked in minutes ago (a phone arriving with its owner is not an intruder
@@ -41,6 +41,10 @@ SELECT 'embodiment', computed_at, house_state, occupancy
 UNION ALL
 SELECT 'contact_sense', last_at, mouth, jsonb_build_object('count_24h', count_24h, 'detail', detail)
   FROM (SELECT * FROM contact_sense ORDER BY last_at DESC NULLS LAST LIMIT 1) k
+UNION ALL
+SELECT 'boiler', ts, CASE WHEN pressure >= threshold THEN 'bleed' WHEN pressure >= 0.7 * threshold THEN 'rising' ELSE 'ok' END,
+       jsonb_build_object('pressure', pressure, 'threshold', threshold, 'top', top, 'bled', bled)
+  FROM (SELECT * FROM boiler_state ORDER BY ts DESC LIMIT 1) bo
 """
 
 def ensure_view(cur):
