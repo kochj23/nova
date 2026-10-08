@@ -84,6 +84,20 @@ def log(m):
     print(f"[autonomy-safety {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
 
 
+def _connect(attempts: int = 3, backoff_s: float = 1.0):
+    """psycopg2.connect to nova_ops with 3 attempts and exponential backoff (1s, 2s).
+    Each failure is logged; the last one is re-raised."""
+    import time
+    for i in range(attempts):
+        try:
+            return psycopg2.connect(OPS_DSN)
+        except Exception as e:  # noqa: BLE001
+            log(f"pg connect attempt {i + 1}/{attempts} failed: {e}")
+            if i == attempts - 1:
+                raise
+            time.sleep(backoff_s * (2 ** i))
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Schema (idempotent; safe to call every run)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -415,7 +429,7 @@ def autonomy_status(oc=None) -> dict:
     own = False
     if oc is None:
         try:
-            conn = psycopg2.connect(OPS_DSN); conn.autocommit = True; oc = conn.cursor(); own = True
+            conn = _connect(); conn.autocommit = True; oc = conn.cursor(); own = True
         except Exception:
             return {"line": ""}
     try:
@@ -450,7 +464,7 @@ def autonomy_status(oc=None) -> dict:
 # ── CLI: quick status + kill/unkill from the shell ──────────────────────────────
 if __name__ == "__main__":
     import sys
-    conn = psycopg2.connect(OPS_DSN); conn.autocommit = True; oc = conn.cursor()
+    conn = _connect(); conn.autocommit = True; oc = conn.cursor()
     ensure_schema(oc)
     cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
     if cmd == "regrade":

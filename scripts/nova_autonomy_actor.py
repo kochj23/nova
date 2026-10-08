@@ -75,6 +75,33 @@ _REDLINE = re.compile(
 def log(m): print(f"[autonomy {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
 
 
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_S = 2.0
+
+
+def _retry(fn, *a, what="call", ok=None, attempts=RETRY_ATTEMPTS, **kw):
+    """Call fn up to `attempts` times with exponential backoff (2s, 4s). Retries on an exception,
+    or when ok(result) is falsy. Every failed attempt is logged (never silent); after the last
+    attempt the exception is re-raised, or the last unsuccessful result returned."""
+    import time
+    r = None
+    for i in range(attempts):
+        try:
+            r = fn(*a, **kw)
+            if ok is None or ok(r):
+                return r
+            log(f"{what}: attempt {i + 1}/{attempts} unsuccessful ({str(r)[:160]})")
+            err = None
+        except Exception as e:  # noqa: BLE001
+            log(f"{what}: attempt {i + 1}/{attempts} failed ({e})")
+            err = e
+        if i < attempts - 1:
+            time.sleep(RETRY_BACKOFF_S * (2 ** i))
+    if err is not None:
+        raise err
+    return r
+
+
 def redline_ok(text):
     t = text or ""
     return (not _REDLINE.search(t)) and _guards is not None and _guards.safety_redline_ok(t)
@@ -106,7 +133,7 @@ def restart_service(node, svc):
 
 
 def main():
-    ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
+    ops = _retry(psycopg2.connect, OPS_DSN, what="pg connect"); ops.autocommit = True; oc = ops.cursor()
     mode = get_mode(oc)
     if mode == "off":
         log("mode=off — standing down"); return 0
@@ -153,7 +180,7 @@ def main():
                 continue
         before = {"service": svc, "node": node, "status": status,
                   "checked_at": checked.isoformat() if checked else None}
-        ok, detail = restart_service(node, svc)
+        ok, detail = _retry(restart_service, node, svc, what=f"restart {svc}@{node}", ok=lambda r: r[0])
         # verify-before-done: re-check health after a beat
         verified = False
         if ok:
@@ -198,7 +225,8 @@ def main():
         sys.path.insert(0, _os.path.expanduser("~/.openclaw/scripts"))
         import nova_config
         if did or proposed:
-            nova_config.post_both(summary, slack_channel=getattr(nova_config, "SLACK_NOTIFY", None))
+            _retry(nova_config.post_both, summary, what="slack post",
+                   slack_channel=getattr(nova_config, "SLACK_NOTIFY", None))
     except Exception as e:
         log(f"slack post skipped: {e}")
     return 0

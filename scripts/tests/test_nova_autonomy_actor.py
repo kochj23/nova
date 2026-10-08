@@ -138,12 +138,12 @@ class TestPerformance(unittest.TestCase):
 
 class TestRetry(unittest.TestCase):
     def test_slack_failure_never_escapes_main(self):
-        # RETRY GAP: nova_config.post_both — one attempt, failure is logged and swallowed
+        # nova_config.post_both is retried (3 attempts, backoff); a persistent failure is logged, swallowed
         cur = _Cur(_rules())
         boom = mock.MagicMock(side_effect=OSError("slack down"))
         rc, cfg, _ = _run_main(cur, post_both=boom)
         self.assertEqual(rc, 0)
-        self.assertEqual(boom.call_count, 1)
+        self.assertEqual(boom.call_count, actor.RETRY_ATTEMPTS)
 
     def test_fleet_restart_fails_open_without_retry(self):
         # RETRY GAP: restart_service (nova_fleet_exec) — one subprocess attempt, (False, detail) on error
