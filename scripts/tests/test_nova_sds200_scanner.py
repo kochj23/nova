@@ -82,20 +82,21 @@ class TestPerformance(unittest.TestCase):
 
 class TestRetry(unittest.TestCase):
     def test_store_sinks_fail_open(self):
-        # RETRY GAP: Store.save — one memory POST + one PG insert, each best-effort; failures only logged
+        # Store.save — memory POST + PG insert each retried 3x with backoff (2026-10-08), then logged
         with mock.patch.object(sd.urllib.request, "urlopen", side_effect=OSError("down")) as uo, \
-                mock.patch("psycopg2.connect", side_effect=OSError("pg down")) as pc, _quiet() as out:
+                mock.patch("psycopg2.connect", side_effect=OSError("pg down")) as pc, \
+                mock.patch.object(sd.time, "sleep"), _quiet() as out:
             sd.Store().save("engine 5 respond", TAG, "fire")
-        self.assertEqual((uo.call_count, pc.call_count), (1, 2))       # ensure_table + insert
+        self.assertEqual((uo.call_count, pc.call_count), (3, 4))       # ensure_table + 3 insert attempts
         self.assertIn("memory post failed", out.getvalue())
 
-    def test_metadata_feed_backs_off_20s_when_scanner_offline(self):
+    def test_metadata_feed_backs_off_exponentially_when_scanner_offline(self):
         feed = sd.MetadataFeed("10.99.0.1")
         with mock.patch.object(sd, "Scanner", side_effect=[OSError("no route"), OSError("no route")]), \
                 mock.patch.object(sd.time, "sleep", side_effect=[None, KeyboardInterrupt]) as sl, _quiet():
             with self.assertRaises(KeyboardInterrupt):
                 feed.run_forever()
-        self.assertEqual([c[0][0] for c in sl.call_args_list], [20, 20])
+        self.assertEqual([c[0][0] for c in sl.call_args_list], [10, 20])
 
     def test_cfg_pg_down_returns_default(self):
         with mock.patch("psycopg2.connect", side_effect=OSError("down")):
@@ -154,6 +155,8 @@ class TestFunctional(unittest.TestCase):
                 mock.patch.object(sd, "MetadataFeed", return_value=feed), \
                 mock.patch.object(sd.threading, "Thread"), \
                 mock.patch.object(sd, "Store", return_value=store), \
+                mock.patch.object(sd, "Health"), \
+                mock.patch.object(sd, "probe_tcp", return_value="up"), \
                 mock.patch.object(sd.subprocess, "Popen", return_value=proc), \
                 mock.patch.object(sd.time, "sleep", side_effect=KeyboardInterrupt), _quiet():
             with self.assertRaises(KeyboardInterrupt):      # stream end -> restart backoff -> test exits

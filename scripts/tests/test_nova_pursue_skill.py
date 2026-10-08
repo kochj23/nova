@@ -29,6 +29,7 @@ def _load(name, path):
 
 
 ps = _load("ps_under_test", SCRIPT)
+ps._RANK_CACHE.update(ts=float("inf"), val=None)   # no live PG read: static GPU-first endpoint list
 SRC = SCRIPT.read_text()
 SLUGS = ["pursue-fascination-the-watch-fishbowl", "pursue-local-news-interest", "pursue-interest-geopolitics",
          "pursue-fascination-he-man-and-80s-cartoons", "pursue-interest-infrastructure", "pursue-interest-email",

@@ -54,6 +54,18 @@ HANG_MS = 700           # trailing silence that closes a segment
 MIN_SEG_MS = 700        # ignore blips shorter than this
 MAX_SEG_MS = 30000      # hard cap per transmission
 
+# --- reachability / backoff (2026-10-08) -------------------------------------
+# telemetry.sds200_calls stayed EMPTY because the scanner at sds200_host has been off the LAN
+# (ARP incomplete, "Host is down") almost continuously since 09-16; the one time RTSP answered it
+# said 400. The old loop restarted ffmpeg + GSI every 10-20 s forever (9.7 MB of log, 38k
+# "Host is down") and never said so anywhere Nova looks. Now: probe before connecting, back off
+# exponentially, and publish up/down to health_checks so the outage is visible.
+BACKOFF_BASE_S = 10
+BACKOFF_MAX_S = 300
+PROBE_TIMEOUT_S = 3
+HEALTH_EVERY_S = 300
+CHECKED_BY = "nova_sds200_scanner"
+
 # service_type / department -> the memory `source` Nova's airwaves reports bucket by
 _SOURCE_RULES = [
     ("fire", "fire"), ("ems", "fire"), ("medical", "fire"),
@@ -93,6 +105,73 @@ def source_for(tag: dict) -> str:
         if needle in hay:
             return src
     return "scanner"
+
+
+def backoff_s(fails: int) -> int:
+    """Exponential backoff for consecutive failures: 10, 20, 40 ... capped at BACKOFF_MAX_S."""
+    return int(min(BACKOFF_MAX_S, BACKOFF_BASE_S * (2 ** max(0, min(fails, 10) - 1)))) if fails > 0 else 0
+
+
+def probe_tcp(host: str, port: int = 554, timeout: float = PROBE_TIMEOUT_S) -> str:
+    """'up' (port open), 'refused' (host on the LAN, service not listening), 'down' (unreachable)."""
+    import socket
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return "up"
+    except ConnectionRefusedError:
+        return "refused"
+    except Exception:  # noqa: BLE001 — timeout / host down / no route
+        return "down"
+
+
+def _retry(fn, attempts=3, base=0.5):
+    """Call fn() up to `attempts` times with exponential backoff; re-raise the last error."""
+    last = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            last = e
+            if i < attempts - 1:
+                time.sleep(base * (2 ** i))
+    raise last
+
+
+class Health:
+    """Publish scanner reachability to health_checks: on every state change, else every HEALTH_EVERY_S."""
+
+    def __init__(self, host):
+        self.host = host
+        self.state = None
+        self.since = time.time()
+        self._last_write = 0.0
+
+    def report(self, component: str, status: str, error: str = ""):
+        now = time.time()
+        changed = status != self.state
+        if changed:
+            log(f"{component}: {self.state or 'start'} -> {status}" + (f" ({error})" if error else ""))
+            self.state, self.since = status, now
+        if not changed and now - self._last_write < HEALTH_EVERY_S:
+            return
+        self._last_write = now
+        try:
+            import psycopg2
+
+            def once():
+                c = psycopg2.connect(DSN, connect_timeout=5)
+                try:
+                    c.cursor().execute(
+                        "INSERT INTO health_checks (service_name, node_name, checked_by, status, latency_ms, "
+                        "error_message, checked_at) VALUES (%s,%s,%s,%s,NULL,%s,now())",
+                        ("sds200", self.host, CHECKED_BY, "up" if status == "up" else "down",
+                         (f"{component}: {error}" if error else component)[:500]))
+                    c.commit()
+                finally:
+                    c.close()
+            _retry(once)
+        except Exception as e:  # noqa: BLE001
+            log(f"health write failed after retries: {e}")
 
 
 def rms(pcm: bytes) -> float:
@@ -137,33 +216,39 @@ class Store:
                 "metadata": {"kind": "sds200", "location": "Burbank, CA",
                              "receiver": "Uniden SDS200", **tag},
             }).encode()
-            urllib.request.urlopen(urllib.request.Request(
-                MEM + "?async=1", data=body, headers={"Content-Type": "application/json"}), timeout=15)
+            _retry(lambda: urllib.request.urlopen(urllib.request.Request(
+                MEM + "?async=1", data=body, headers={"Content-Type": "application/json"}), timeout=15).close())
         except Exception as e:
-            log(f"memory post failed: {e}")
+            log(f"memory post failed after retries: {e}")
         # 2) structured PG row
         try:
             import psycopg2
-            c = psycopg2.connect(DSN)
-            c.cursor().execute(
-                "INSERT INTO telemetry.sds200_calls (system,department,site,channel,tgid,"
-                "frequency_mhz,service_type,p25_status,source,transcript,metadata) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                (tag.get("system"), tag.get("department"), tag.get("site"), tag.get("channel"),
-                 tag.get("tgid"), tag.get("frequency_mhz"), tag.get("service_type"),
-                 tag.get("p25_status"), source, text, json.dumps(tag)))
-            c.commit()
-            c.close()
+
+            def once():
+                c = psycopg2.connect(DSN, connect_timeout=5)
+                try:
+                    c.cursor().execute(
+                        "INSERT INTO telemetry.sds200_calls (system,department,site,channel,tgid,"
+                        "frequency_mhz,service_type,p25_status,source,transcript,metadata) "
+                        "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                        (tag.get("system"), tag.get("department"), tag.get("site"), tag.get("channel"),
+                         tag.get("tgid"), tag.get("frequency_mhz"), tag.get("service_type"),
+                         tag.get("p25_status"), source, text, json.dumps(tag, default=str)))
+                    c.commit()
+                finally:
+                    c.close()
+            _retry(once)
         except Exception as e:
-            log(f"PG insert failed: {e}")
+            log(f"PG insert failed after retries: {e}")
 
 
 # ---------------------------------------------------------------------------
 class MetadataFeed:
     """Wraps pysds200.Scanner.stream(); exposes the current call context."""
 
-    def __init__(self, host):
+    def __init__(self, host, health=None):
         self.host = host
+        self.health = health
         self._cur = {}          # last tag() seen while squelch open
         self._lock = threading.Lock()
         self._scanner = None
@@ -178,26 +263,43 @@ class MetadataFeed:
             with self._lock:
                 self._cur = info.tag()
 
-    def run_forever(self):
+    def run_once(self):
+        """Connect + stream until error. Raises when the scanner does not answer GSI/MDL —
+        UDP connect() always 'succeeds', so an empty model() is the real offline signal."""
+        self._scanner = Scanner(self.host).connect()
+        model = (self._scanner.model() or "").strip()
+        if not model:
+            raise ConnectionError("no MDL reply (scanner not answering on UDP 50536)")
+        log(f"scanner {model} at {self.host} — metadata stream up")
+        self._scanner.on_info = self._on_info
+        self._scanner.stream(hz=5, background=False)   # blocks until error
+
+    def run_forever(self, sleep=None):
+        sleep = sleep or time.sleep
+        fails = 0
         while True:
             try:
-                self._scanner = Scanner(self.host).connect()
-                log(f"scanner {self._scanner.model()} at {self.host} — metadata stream up")
-                self._scanner.on_info = self._on_info
-                self._scanner.stream(hz=5, background=False)   # blocks until error
+                self.run_once()
+                fails = 0
             except Exception as e:
-                log(f"scanner offline ({e}); retrying in 20s")
-                time.sleep(20)
+                fails += 1
+                wait = backoff_s(fails)
+                if fails == 1 or fails % 20 == 0:
+                    log(f"scanner metadata offline ({e}); fail #{fails}, retrying in {wait}s")
+                sleep(wait)
 
 
 # ---------------------------------------------------------------------------
-def audio_command(source: str, host: str):
-    """ffmpeg argv producing s16le/16k/mono on stdout from RTSP or ALSA."""
+def audio_command(source: str, host: str, transport: str = "udp"):
+    """ffmpeg argv producing s16le/16k/mono on stdout from RTSP or ALSA.
+    transport alternates udp/tcp after a failure on a reachable host (the one RTSP answer we ever
+    got, 09-16, was '400 Bad Request' to the UDP SETUP)."""
     base = ["ffmpeg", "-nostdin", "-loglevel", "error"]
     if source.startswith("alsa:"):
         base += ["-f", "alsa", "-i", source.split(":", 1)[1]]
     else:  # rtsp (default)
-        base += ["-rtsp_transport", "udp", "-i", f"rtsp://{host}/au:scanner.au"]
+        transport = transport if transport in ("udp", "tcp") else "udp"
+        base += ["-rtsp_transport", transport, "-i", f"rtsp://{host}/au:scanner.au"]
     return base + ["-ar", str(SR), "-ac", "1", "-f", "s16le", "-"]
 
 
@@ -228,16 +330,30 @@ def run_service(host, source, model_name):
     model = WhisperModel(model_name, device="cpu", compute_type="int8")
     log(f"whisper '{model_name}' loaded; audio source = {source}")
 
-    feed = MetadataFeed(host)
+    health = Health(host)
+    feed = MetadataFeed(host, health)
     threading.Thread(target=feed.run_forever, name="sds200-meta", daemon=True).start()
     store = Store()
 
     hang_frames = HANG_MS // FRAME_MS
+    fails = 0
+    transport = "udp"
     while True:  # ffmpeg supervisor loop
         proc = None
+        if fails:
+            time.sleep(backoff_s(fails))
+        if not source.startswith("alsa:"):
+            st = probe_tcp(host, 554)
+            if st != "up":
+                fails += 1
+                health.report("rtsp", "down", f"{host}:554 {st}"
+                              + (" — scanner off the LAN (power/cable/Wi-Fi)" if st == "down" else
+                                 " — scanner up but RTSP not serving (Menu > Settings > Network)"))
+                continue
         try:
-            proc = subprocess.Popen(audio_command(source, host), stdout=subprocess.PIPE)
-            log("audio capture up")
+            proc = subprocess.Popen(audio_command(source, host, transport), stdout=subprocess.PIPE)
+            log(f"audio capture up (rtsp_transport={transport})")
+            got_audio = False
             seg = bytearray()
             silent = 0
             seg_tag = {}
@@ -245,6 +361,10 @@ def run_service(host, source, model_name):
                 chunk = proc.stdout.read(FRAME_BYTES)
                 if not chunk:
                     raise RuntimeError("audio stream ended")
+                if not got_audio:
+                    got_audio = True
+                    fails = 0
+                    health.report("rtsp", "up")
                 loud = rms(chunk) >= RMS_OPEN
                 if loud:
                     if not seg:                       # segment opens
@@ -265,8 +385,11 @@ def run_service(host, source, model_name):
                                 log(f"[{src}] {lbl} :: {text[:90]}")
                         seg = bytearray(); silent = 0; seg_tag = {}
         except Exception as e:
-            log(f"audio error ({e}); restarting in 10s")
-            time.sleep(10)
+            fails += 1
+            if not source.startswith("alsa:"):
+                transport = "tcp" if transport == "udp" else "udp"
+            health.report("rtsp", "down", f"audio error: {e}")
+            log(f"audio error ({e}); fail #{fails}, retrying in {backoff_s(fails)}s (next transport {transport})")
         finally:
             if proc and proc.poll() is None:
                 proc.terminate()

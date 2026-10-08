@@ -60,13 +60,26 @@ LLM_MODEL = os.environ.get("NOVA_PURSUE_MODEL", "qwen3:8b")
 # OpenAI-compatible endpoints, first non-empty wins. The fleet Ollama batch nodes serve qwen3:8b
 # (the inference router has no qwen3:8b class — its 'fast' class lands on llama3.2:3b, so it is the
 # last resort only). reasoning_effort=none + /no_think keeps qwen3 out of its thinking channel.
-LLM_ENDPOINTS = [e for e in os.environ.get("NOVA_PURSUE_LLM", "").split(",") if e] or [
-    "http://192.168.1.125:11434/v1/chat/completions|qwen3:8b",
+# 2026-10-08: the order is no longer static. It follows nova_llm_ping's live ranking
+# (service_config nova_llm_ping/ranking): up nodes with qwen3:8b, model-resident first, fastest first —
+# and CPU-only boxes (nova-core7/.125: 8-21 s for ONE token) always behind every GPU node. The old
+# list sent every pursuit to .125 first. NOVA_PURSUE_LLM (comma list of url|model) still overrides all.
+LLM_ENDPOINTS_ENV = [e for e in os.environ.get("NOVA_PURSUE_LLM", "").split(",") if e]
+CPU_ONLY_HOSTS = {h for h in os.environ.get("NOVA_PURSUE_CPU_ONLY", "192.168.1.125").split(",") if h}
+ROUTER_FALLBACK = "http://192.168.1.2:37475/v1/chat/completions|fast"
+# Static fallback when the ranking is unreadable: GPU nodes first, CPU-only last, router last of all.
+LLM_ENDPOINTS = LLM_ENDPOINTS_ENV or [
+    "http://192.168.1.6:11434/v1/chat/completions|qwen3:8b",
+    "http://192.168.1.77:11434/v1/chat/completions|qwen3:8b",
+    "http://192.168.1.7:11434/v1/chat/completions|qwen3:8b",
+    "http://192.168.1.252:11434/v1/chat/completions|qwen3:8b",
     "http://192.168.1.5:11434/v1/chat/completions|qwen3:8b",
     "http://192.168.1.86:11434/v1/chat/completions|qwen3:8b",
-    "http://192.168.1.77:11434/v1/chat/completions|qwen3:8b",
-    "http://192.168.1.2:37475/v1/chat/completions|fast",
+    "http://192.168.1.125:11434/v1/chat/completions|qwen3:8b",
+    ROUTER_FALLBACK,
 ]
+RANK_TTL_S = 120
+_RANK_CACHE = {"ts": 0.0, "val": None}
 NIGHT_HOURS = set(range(21, 24)) | set(range(0, 8))     # Jordan's day is 08:00-20:59
 NIGHTLY_STEPS = int(os.environ.get("NOVA_PURSUE_NIGHTLY_STEPS", "3"))
 NIGHTLY_SECONDS = int(os.environ.get("NOVA_PURSUE_NIGHTLY_SECONDS", "420"))
@@ -364,9 +377,58 @@ def _http_json(req, timeout=30, attempts=3, backoff=1.5):
     raise last
 
 
+def _host(url: str) -> str:
+    return url.split("//")[-1].split("/")[0].split(":")[0]
+
+
+def load_ranking() -> dict | None:
+    """nova_llm_ping's ranking row, cached RANK_TTL_S. Retried (3x, backoff); None if unreadable."""
+    now = time.time()
+    if now - _RANK_CACHE["ts"] < RANK_TTL_S:
+        return _RANK_CACHE["val"]
+    val = None
+    try:
+        conn = _pg_connect(OPS_DSN, attempts=3, backoff=0.5)
+        try:
+            cur = conn.cursor()
+            cur.execute("SELECT value FROM service_config WHERE service=%s AND key=%s", ("nova_llm_ping", "ranking"))
+            row = cur.fetchone()
+        finally:
+            conn.close()
+        v = row[0] if row else None
+        val = v if isinstance(v, dict) else (json.loads(v) if v else None)
+    except Exception as e:  # noqa: BLE001 — fail open to the static list, but say so
+        log(f"llm ranking unreadable ({e}); using static GPU-first endpoint list")
+    _RANK_CACHE.update(ts=now, val=val)
+    return val
+
+
+def ranked_endpoints(ranking: dict | None) -> list[str]:
+    """Order url|model endpoints by the llm-ping ranking. Rules: GPU before CPU-only (always),
+    then status up before slow (down dropped), LLM_MODEL resident before cold, then the ping's own order (fastest first).
+    Static endpoints not in the ranking follow (ranked-down ones dropped), the router stays last."""
+    if LLM_ENDPOINTS_ENV:
+        return list(LLM_ENDPOINTS_ENV)
+    rows = [r for r in ((ranking or {}).get("ollama") or []) if isinstance(r, dict) and r.get("url")]
+    order = {"up": 0, "slow": 1}
+    usable = [(i, r) for i, r in enumerate(rows)
+              if r.get("status") in order and r.get("has_chat_model", True)]
+    usable.sort(key=lambda t: (_host(t[1]["url"]) in CPU_ONLY_HOSTS, order[t[1]["status"]],
+                               LLM_MODEL not in (t[1].get("loaded") or []), t[0]))
+    ranked = [f"{r['url'].rstrip('/')}/v1/chat/completions|{LLM_MODEL}" for _, r in usable]
+    seen = {_host(e) for e in ranked}
+    dead = {_host(r["url"]) for r in rows if r.get("status") not in order}
+    static = [e for e in LLM_ENDPOINTS if e != ROUTER_FALLBACK and _host(e) not in seen and _host(e) not in dead]
+    cpu = lambda e: _host(e) in CPU_ONLY_HOSTS   # noqa: E731
+    out = ([e for e in ranked if not cpu(e)] + [e for e in static if not cpu(e)]
+           + [e for e in ranked if cpu(e)] + [e for e in static if cpu(e)])
+    return out + [ROUTER_FALLBACK]
+
+
 def llm(prompt: str, max_tokens: int = 650, temperature: float = 0.4) -> str:
-    """Local fleet only. Each endpoint tried in turn (node failover is the retry); '' if all fail."""
-    for ep in LLM_ENDPOINTS:
+    """Local fleet only. Endpoints in llm-ping ranking order (best GPU node first); each tried in
+    turn — node failover is the retry; '' if all fail."""
+    for ep in ranked_endpoints(None if LLM_ENDPOINTS_ENV else load_ranking()):
         url, _, model = ep.partition("|")
         body = json.dumps({"model": model or LLM_MODEL, "reasoning_effort": "none",
                            "temperature": temperature, "max_tokens": max_tokens,
