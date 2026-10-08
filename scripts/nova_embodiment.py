@@ -61,6 +61,7 @@ Written by Jordan Koch.
 import json
 import os
 import sys
+import time
 import urllib.request
 from datetime import datetime, timezone
 
@@ -136,12 +137,20 @@ def llm(prompt, system, max_tokens=70, temperature=0.4):
     return ""
 
 
-def remember(text, source, metadata):
-    req = urllib.request.Request(
-        f"{MEMSRV}/remember", method="POST", headers={"Content-Type": "application/json"},
-        data=json.dumps({"text": text, "source": source, "metadata": metadata}).encode())
-    with urllib.request.urlopen(req, timeout=60) as r:
-        return json.load(r).get("id")
+def remember(text, source, metadata, attempts=3, backoff=2.0):
+    """POST one memory; retries a transient memory-server failure (2s, 4s backoff), then raises."""
+    data = json.dumps({"text": text, "source": source, "metadata": metadata}).encode()
+    for i in range(attempts):
+        req = urllib.request.Request(
+            f"{MEMSRV}/remember", method="POST", headers={"Content-Type": "application/json"}, data=data)
+        try:
+            with urllib.request.urlopen(req, timeout=60) as r:
+                return json.load(r).get("id")
+        except Exception as e:
+            if i == attempts - 1:
+                raise
+            log(f"memory write attempt {i + 1} failed ({e}); retrying")
+            time.sleep(backoff * (2 ** i))
 
 
 # ── Tiny query helpers (fail-safe: a missing/stale source returns None) ──────────
@@ -605,9 +614,21 @@ def demo_degraded(oc):
     return 0
 
 
+def _connect_retry(attempts=3, backoff=2.0):
+    """psycopg2.connect with 3 attempts (2s, 4s backoff); the last failure raises (never silent)."""
+    for i in range(attempts):
+        try:
+            return psycopg2.connect(OPS_DSN, connect_timeout=10)
+        except psycopg2.OperationalError as e:
+            if i == attempts - 1:
+                raise
+            log(f"PG connect attempt {i + 1} failed ({e}); retrying")
+            time.sleep(backoff * (2 ** i))
+
+
 def main():
     argv = sys.argv[1:]
-    ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
+    ops = _connect_retry(); ops.autocommit = True; oc = ops.cursor()
     ensure_table(oc)
 
     if "--demo-degraded" in argv:

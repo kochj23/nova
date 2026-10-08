@@ -193,19 +193,21 @@ class TestRetry(unittest.TestCase):
             self.assertEqual(emb.llm("p", "s"), "The house feels calm.")
         self.assertEqual(calls, [n + "/api/chat" for n in emb.OLLAMA_NODES[:3]])
 
-    def test_memory_write_has_no_retry_but_main_still_stores(self):
-        # RETRY GAP: remember — one urlopen attempt; main() catches the failure and stores the state anyway
-        with mock.patch.object(emb.urllib.request, "urlopen", side_effect=OSError("memsrv down")) as uo:
+    def test_memory_write_retries_then_main_still_stores(self):
+        # remember — 3 attempts with backoff (fixed 2026-10-08); main() catches the final failure and stores the state anyway
+        with mock.patch.object(emb.urllib.request, "urlopen", side_effect=OSError("memsrv down")) as uo, \
+             mock.patch.object(emb.time, "sleep"), redirect_stdout(io.StringIO()):
             with self.assertRaises(OSError):
                 emb.remember("t", "embodiment", {})
-        self.assertEqual(uo.call_count, 1)
+        self.assertEqual(uo.call_count, 3)
         cur = _world(**OFF)
 
         def flaky(req, timeout=60):
             if req.full_url.endswith("/remember"):
                 raise OSError("memsrv down")
             return _Resp({"message": {"content": ""}})
-        rc, uo, out = _run_main(cur, urlopen=mock.MagicMock(side_effect=flaky))
+        with mock.patch.object(emb.time, "sleep"):
+            rc, uo, out = _run_main(cur, urlopen=mock.MagicMock(side_effect=flaky))
         self.assertEqual(rc, 0)
         self.assertIn("memory write failed (state still stored)", out)
         (_, p), = cur.stmts("INSERT INTO embodiment_state")
