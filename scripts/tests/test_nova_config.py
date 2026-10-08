@@ -174,7 +174,7 @@ class TestRetry(unittest.TestCase):
                 cfg._keychain("nova-absent-svc", required=True)
 
     def test_post_both_fails_open_on_slack_error(self):
-        # RETRY GAP: post_both — one urlopen; a network error is logged, never raised, never retried
+        # post_both — connection/429/5xx errors retry via _urlopen_retry (test_nova_config_7cat); other errors logged, never raised
         with patch.object(cfg, "slack_bot_token", return_value="xoxb-test"), \
              patch("urllib.request.urlopen", side_effect=OSError("down")) as u, \
              patch.object(cfg, "post_discord") as d, redirect_stderr(io.StringIO()) as err:
@@ -184,7 +184,7 @@ class TestRetry(unittest.TestCase):
         d.assert_called_once_with("hello", cfg.DISCORD_NOTIFY)
 
     def test_post_discord_fails_open(self):
-        # RETRY GAP: post_discord — single attempt, returns False on any error
+        # post_discord — retries via _urlopen_retry (test_nova_config_7cat); a final error returns False
         with patch.object(cfg, "discord_bot_token", return_value="tok"), \
              patch("urllib.request.urlopen", side_effect=OSError("down")) as u, redirect_stderr(io.StringIO()):
             self.assertFalse(cfg.post_discord("x", "123"))

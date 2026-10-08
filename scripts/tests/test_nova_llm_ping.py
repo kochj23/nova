@@ -94,7 +94,7 @@ class TestRetry(unittest.TestCase):
         self.assertEqual((r["status"], r["model"], r["has_chat_model"]), ("up", "tiny", False))
 
     def test_probe_fails_open_to_down(self):
-        # RETRY GAP: probe — one /api/tags attempt per run (runs every 10 min); failure -> status down, never raises
+        # probe: _get retries internally (see test_nova_llm_ping_7cat); a final failure -> status down, never raises
         with patch.object(lp, "_get", side_effect=OSError("refused")) as g:
             r = lp.probe(("n", "mlx", "http://n"))
         self.assertEqual((r["status"], g.call_count), ("down", 1))

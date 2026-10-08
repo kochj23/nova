@@ -60,16 +60,32 @@ def log(m):
     print(f"[llm-ping {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
 
 
+def _retry(fn, attempts=3, base=0.5):
+    """Call fn() up to `attempts` times with exponential backoff (base, 2*base, ...). A timeout is not retried —
+    it already spent the whole budget; a refused/reset connection or a 5xx is. The last error is re-raised."""
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            if i == attempts - 1 or isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
+                raise
+            time.sleep(base * 2 ** i)
+
+
 def _get(url, timeout):
-    with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout) as r:
-        return json.load(r)
+    def once():
+        with urllib.request.urlopen(urllib.request.Request(url), timeout=timeout) as r:
+            return json.load(r)
+    return _retry(once)
 
 
 def _post(url, payload, timeout):
     req = urllib.request.Request(url, data=json.dumps(payload).encode(),
                                  headers={"Content-Type": "application/json"}, method="POST")
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return json.load(r)
+    def once():
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r)
+    return _retry(once)
 
 
 # ── pure logic (covered by --selftest) ─────────────────────────────────────────
@@ -193,7 +209,7 @@ def main():
     prev, cur = {}, None
     if not args.dry_run:
         import psycopg2
-        conn = psycopg2.connect(OPS_DSN, connect_timeout=5); conn.autocommit = True; cur = conn.cursor()
+        conn = _retry(lambda: psycopg2.connect(OPS_DSN, connect_timeout=5)); conn.autocommit = True; cur = conn.cursor()
         prev = load_prev(cur)
     for r in results:  # consecutive non-up runs, carried in the ranking row (pre-#145 rows lack it: a bad prev = 1)
         p = prev.get((r["kind"], r["node"])) or {}

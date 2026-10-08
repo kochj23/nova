@@ -104,7 +104,7 @@ class TestPerformance(unittest.TestCase):
 
 class TestRetry(unittest.TestCase):
     def test_warm_fails_open_per_model(self):
-        # RETRY GAP: warm (_get /api/ps, _post generate/embed) — one attempt each; a failure is reported, never raised
+        # warm: _get/_post retry inside (see test_nova_model_warm_7cat); a final failure is reported, never raised
         with patch.object(mw, "_get", MagicMock(side_effect=OSError("refused"))):
             self.assertTrue(mw.warm("http://h:11434", "qwen3:8b").startswith("fail: ps"))
         with patch.object(mw, "_get", lambda url, timeout=5: _ps()), patch.object(mw, "_post", MagicMock(side_effect=OSError("x" * 200))):
@@ -116,11 +116,13 @@ class TestRetry(unittest.TestCase):
             mw.status({"http://a:11434": ["qwen3:8b"], "http://b:11434": ["qwen3:8b"]})
         self.assertIn("http://a:11434: unreachable", out.getvalue()); self.assertIn("http://b:11434: loaded=['qwen3:8b']", out.getvalue())
 
-    def test_pg_down_is_not_retried(self):
-        # RETRY GAP: main (psycopg2.connect) — the scheduler re-runs every 10 min; a PG outage escapes to its log
-        with patch.object(mw.psycopg2, "connect", side_effect=OSError("no pg")), patch.object(sys, "argv", ["x"]):
+    def test_pg_down_is_retried_then_raised(self):
+        # main (psycopg2.connect) retries 3x with backoff; a lasting PG outage still escapes to the scheduler log
+        with patch.object(mw.psycopg2, "connect", side_effect=OSError("no pg")) as c, patch.object(mw.time, "sleep"), \
+                patch.object(sys, "argv", ["x"]):
             with self.assertRaises(OSError):
                 mw.main()
+        self.assertEqual(c.call_count, 3)
 
 
 class TestUnit(unittest.TestCase):

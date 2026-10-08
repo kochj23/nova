@@ -334,6 +334,24 @@ def discord_bot_token() -> str:
     return ""
 
 
+def _urlopen_retry(req, timeout=10, attempts=3, base=0.5):
+    """urlopen with up to 3 attempts and backoff, retrying ONLY when the post can't have landed (connection
+    refused/reset, DNS) or the server asks for it (429/5xx). A timeout or 4xx is not retried: a timed-out post
+    may already be in the channel, and re-sending would duplicate it."""
+    import time, urllib.error, urllib.request
+    for i in range(attempts):
+        try:
+            return urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as e:
+            if i == attempts - 1 or not (e.code == 429 or e.code >= 500):
+                raise
+        except (urllib.error.URLError, ConnectionError) as e:
+            reason = getattr(e, "reason", e)
+            if i == attempts - 1 or isinstance(e, TimeoutError) or isinstance(reason, TimeoutError):
+                raise
+        time.sleep(base * 2 ** i)
+
+
 def post_discord(message: str, channel_id: str = DISCORD_CHAT) -> bool:
     """Post a message to a Discord channel. Returns True on success."""
     import json, urllib.request
@@ -351,7 +369,7 @@ def post_discord(message: str, channel_id: str = DISCORD_CHAT) -> bool:
         }
     )
     try:
-        with urllib.request.urlopen(req, timeout=10) as r:
+        with _urlopen_retry(req, timeout=10) as r:
             return r.status == 200
     except Exception as e:
         print(f"[nova_config] Discord post failed: {e}", file=sys.stderr)
@@ -394,7 +412,7 @@ def post_both(message: str, slack_channel: str = SLACK_CHAN, discord_channel: st
             headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json; charset=utf-8"}
         )
         try:
-            with urllib.request.urlopen(req, timeout=10) as r:
+            with _urlopen_retry(req, timeout=10) as r:
                 resp = json.loads(r.read())
                 if not resp.get("ok"):
                     print(f"[nova_config] Slack post failed: {resp.get('error')}", file=sys.stderr)

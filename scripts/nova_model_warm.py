@@ -37,13 +37,29 @@ DEFAULT_PLACEMENT = {                                   # seeded into service_co
 def log(m): print(f"[model-warm {time.strftime('%H:%M:%S')}] {m}", flush=True)
 
 
+def _retry(fn, attempts=3, base=0.5):
+    """Call fn() up to `attempts` times with exponential backoff (base, 2*base, ...). A timeout is not retried —
+    it already spent the whole budget; a refused/reset connection or a 5xx is. The last error is re-raised."""
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            if i == attempts - 1 or isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
+                raise
+            time.sleep(base * 2 ** i)
+
+
 def _get(url, timeout=5):
-    with urllib.request.urlopen(url, timeout=timeout) as r: return json.load(r)
+    def once():
+        with urllib.request.urlopen(url, timeout=timeout) as r: return json.load(r)
+    return _retry(once)
 
 
 def _post(url, body, timeout=600):
     req = urllib.request.Request(url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=timeout) as r: return json.load(r)
+    def once():
+        with urllib.request.urlopen(req, timeout=timeout) as r: return json.load(r)
+    return _retry(once)
 
 
 def placement(cur):
@@ -86,7 +102,7 @@ def status(place):
 
 
 def main():
-    conn = psycopg2.connect(DSN); conn.autocommit = True; cur = conn.cursor()
+    conn = _retry(lambda: psycopg2.connect(DSN, connect_timeout=5)); conn.autocommit = True; cur = conn.cursor()
     place = placement(cur)
     if "--status" in sys.argv: status(place); return 0
     cold, fails = [], []
