@@ -14,6 +14,7 @@ Usage: nova_watches_and_friends.py [--days 7] [--dry-run]
 import argparse
 import re
 import sys
+import time
 from collections import OrderedDict
 from pathlib import Path
 
@@ -35,6 +36,18 @@ MODEL = "anthropic/claude-sonnet-4"             # call_openrouter maps any "sonn
 
 def log(m):
     nj.log(f"[watches-and-friends] {m}")
+
+
+def _connect(dsn, attempts=3):
+    """psycopg2.connect with retry (PG failover blips), backoff 5 s / 10 s, re-raise on the last try."""
+    for attempt in range(attempts):
+        try:
+            return psycopg2.connect(dsn, connect_timeout=10)
+        except psycopg2.OperationalError as e:
+            if attempt == attempts - 1:
+                raise
+            log(f"PG connect failed ({e}); retry {attempt + 1}")
+            time.sleep(5 * 2 ** attempt)
 
 
 def group_videos(rows, per_video, max_videos):
@@ -90,14 +103,14 @@ def main():
 
     news_keys = [c["key"] for c in CHANNELS if c["vector"] == "horology"]
     news_names = [c["name"] for c in CHANNELS if c["vector"] == "horology" and c.get("name")]
-    ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
+    ops = _connect(OPS_DSN); ops.autocommit = True; oc = ops.cursor()
     oc.execute("SELECT video_id FROM yt_ingest_seen WHERE channel = ANY(%s)", (news_keys,))
     news_vids = [r[0] for r in oc.fetchall()]
     oc.execute("SELECT name, channels, summary FROM fishbowl_people WHERE kind='cast' AND summary IS NOT NULL "
                "ORDER BY n_mem DESC NULLS LAST LIMIT 12")
     dossiers = oc.fetchall()
 
-    mc = psycopg2.connect(MEM_DSN).cursor()
+    mc = _connect(MEM_DSN).cursor()
     mc.execute("""SELECT text, created_at, metadata FROM memories
                   WHERE created_at > now() - make_interval(days => %s)
                     AND coalesce(metadata->>'part', 'transcript') = 'transcript'
