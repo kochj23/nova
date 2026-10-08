@@ -117,11 +117,33 @@ def log(msg, level="INFO"):
 
 
 def _keychain(service):
+    try:
+        return _keychain_run(service)
+    except subprocess.TimeoutExpired:
+        log(f"Keychain lookup for {service} timed out", "ERROR")
+        return None
+
+
+def _keychain_run(service):
     result = subprocess.run(
         ["security", "find-generic-password", "-a", "nova", "-s", service, "-w"],
-        capture_output=True, text=True
+        capture_output=True, text=True, timeout=15
     )
     return result.stdout.strip() if result.returncode == 0 else None
+
+
+HTTP_ATTEMPTS, HTTP_BACKOFF = 3, 1.0
+
+
+def _urlopen_json(req, timeout):
+    """One HA HTTP call with 3 attempts (1s, 2s backoff); the last failure raises to the caller's log."""
+    for i in range(HTTP_ATTEMPTS):
+        try:
+            return json.loads(urllib.request.urlopen(req, timeout=timeout).read())
+        except Exception:
+            if i == HTTP_ATTEMPTS - 1:
+                raise
+            time.sleep(HTTP_BACKOFF * (2 ** i))
 
 
 def get_ha_token():
@@ -141,8 +163,7 @@ def get_ha_token():
 
     try:
         req = urllib.request.Request(f"{HA_URL}/auth/token", data=form_data)
-        resp = urllib.request.urlopen(req, timeout=10)
-        result = json.loads(resp.read())
+        result = _urlopen_json(req, 10)
         _access_token = result["access_token"]
         _token_expires = time.time() + 1800
         return _access_token
@@ -158,8 +179,7 @@ def ha_get_states():
     try:
         req = urllib.request.Request(f"{HA_URL}/api/states",
             headers={"Authorization": f"Bearer {token}"})
-        resp = urllib.request.urlopen(req, timeout=15)
-        return json.loads(resp.read())
+        return _urlopen_json(req, 15)
     except Exception as e:
         log(f"HA API error: {e}", "ERROR")
         return None
@@ -377,9 +397,6 @@ async def write_device_tracker(states):
         changed = prev != state
         if not changed and time.time() - _last_tracker_write.get(person, 0) < GPS_HEARTBEAT_S:
             continue
-        _prev_tracker_state[person] = state
-        _last_tracker_write[person] = time.time()
-
         is_home = state == "home"
         confidence = 0.99 if is_home else 0.0
         metadata = {
@@ -393,6 +410,9 @@ async def write_device_tracker(states):
                 INSERT INTO telemetry.presence (ts, person, room, confidence, method, metadata)
                 VALUES (now(), $1, 'home', $2, 'gps_tracker', $3)
             """, person, confidence, json.dumps(metadata))
+        # mark seen only once the row landed: a failed write is retried next poll, not lost
+        _prev_tracker_state[person] = state
+        _last_tracker_write[person] = time.time()
 
         if not changed:
             continue

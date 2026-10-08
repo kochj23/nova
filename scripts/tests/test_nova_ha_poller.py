@@ -121,12 +121,13 @@ class TestRetry(unittest.TestCase):
             self.assertIsNone(ha.ha_get_states())
         uo.assert_not_called()
 
-    def test_ha_api_error_one_shot(self):
-        # RETRY GAP: ha_get_states — one urlopen; poll_loop's next tick (30s) is the retry
+    def test_ha_api_error_retries_then_logs(self):
+        # ha_get_states — 3 attempts with backoff (fixed 2026-10-08), then logged and None
         ha._access_token = "t"; ha._token_expires = time.time() + 100
-        with patch.object(ha.urllib.request, "urlopen", side_effect=OSError("refused")) as uo, _q():
+        with patch.object(ha.urllib.request, "urlopen", side_effect=OSError("refused")) as uo, \
+                patch.object(ha.time, "sleep"), _q():
             self.assertIsNone(ha.ha_get_states())
-        self.assertEqual(uo.call_count, 1)
+        self.assertEqual(uo.call_count, 3)
         self.assertIn("HA API error", ha.LOG_FILE.read_text())
 
     def test_scene_write_failure_logged_not_raised(self):
