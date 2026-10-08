@@ -206,10 +206,32 @@ class TestFunctional(unittest.TestCase):
         self.assertTrue(ae._zone_on["patio"])
         self.assertNotIn("office", ae._zone_on)               # dark_only zone stays off in daylight
         stale = {"ep": time.time() - ae.PRESENCE_OFF_DELAY_S - 60}
-        with patch.object(ae, "get_pool", AsyncMock(return_value=_Pool(_Conn(fetchrow=stale)))):
+        # source alive (fetchval = a recent reading from the source) -> genuinely vacant -> OFF
+        with patch.object(ae, "get_pool", AsyncMock(return_value=_Pool(_Conn(fetchrow=stale, fetchval=time.time())))):
             asyncio.run(ae.rule_presence_devices())
         self.assertFalse(ae._zone_on["patio"])
         self.assertEqual([c.args[1] for c in ae._hk_power.call_args_list].count(False), 2)
+
+    def test_presence_devices_hold_when_sensor_dead(self):
+        # P8 dead-man: a silent presence source is not an empty room — never power OFF on it
+        _reset()
+        ae._zone_on["patio"] = True
+        stale = {"ep": time.time() - ae.PRESENCE_OFF_DELAY_S - 60}
+        with patch.object(ae, "get_pool", AsyncMock(return_value=_Pool(_Conn(fetchrow=stale, fetchval=None)))):
+            asyncio.run(ae.rule_presence_devices())
+        self.assertTrue(ae._zone_on["patio"])
+        self.assertNotIn(False, [c.args[1] for c in ae._hk_power.call_args_list])
+
+    def test_kill_switch_holds_state_and_guard_refuses_lock_scene(self):
+        import nova_safety_guards as g
+        with patch.object(g, "kill_engaged", return_value=True):
+            self.assertFalse(ae._actuation_ok("hue light 3 off"))
+        with patch.object(g, "kill_engaged", return_value=False), \
+             patch.object(ae, "_report_block") as rb:
+            self.assertFalse(ae._actuation_ok("scene Lock Up", scene="Lock Up"))
+            self.assertTrue(ae._actuation_ok("scene movie", scene="movie"))
+            self.assertFalse(ae._actuation_ok("power Garage Door Opener on"))
+        self.assertTrue(rb.called)
 
 
 class TestFrame(unittest.TestCase):

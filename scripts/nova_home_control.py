@@ -652,8 +652,18 @@ class scenes:
 
     @staticmethod
     def _shortcuts_run(shortcut_name: str) -> bool:
-        """Run a macOS Shortcut (for HomeKit light control)."""
+        """Run a macOS Shortcut (for HomeKit light control). Proteus rule (P1): a shortcut whose
+        name means locking, sealing or arming the house is refused (Jordan must confirm)."""
         import subprocess
+        try:
+            import nova_safety_guards as _g
+            ok, why = _g.physical_guard(f"shortcut {shortcut_name}")
+            if not ok or _g.kill_engaged():
+                print(f"[home_control] not running shortcut '{shortcut_name}': {why if not ok else 'kill switch engaged'}",
+                      file=sys.stderr)
+                return False
+        except Exception:
+            return False                       # guards unavailable — fail closed
         try:
             result = subprocess.run(
                 ["shortcuts", "run", shortcut_name],
@@ -809,7 +819,7 @@ class scenes:
 
     @classmethod
     def away(cls) -> dict:
-        """Away: all AV off, all lights off, lock up."""
+        """Away: all AV off, all lights off. Never locks anything (P1 — Nova does not lock up)."""
         cls._log_scene("away")
         results = {}
         try:

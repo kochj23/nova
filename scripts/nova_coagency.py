@@ -83,6 +83,13 @@ try:
 except Exception:                                           # pragma: no cover
     _safety = None                                          # fail closed: no net → no live exec
 
+# ── Proteus-rule guards (physical / comms / honest stopping). Fail closed: if the
+# module is missing, redline_ok() refuses everything. ──
+try:
+    import nova_safety_guards as _guards
+except Exception:                                           # pragma: no cover
+    _guards = None
+
 # ── Optional lineage stamp (feature-detect; never fatal) ────────────────────────
 try:
     import nova_lineage
@@ -128,9 +135,33 @@ def log(m):
 
 
 def redline_ok(text: str) -> bool:
-    """True only if the text clears BOTH our stricter redline AND the actor's."""
+    """True only if the text clears our stricter redline, the actor's, AND the Proteus-rule
+    red lines (physical, comms, intimidation, voice cloning, person-ranking)."""
     t = text or ""
-    return (not _REDLINE.search(t)) and bool(_actor_redline_ok(t))
+    return ((not _REDLINE.search(t)) and bool(_actor_redline_ok(t))
+            and _guards is not None and _guards.safety_redline_ok(t))
+
+
+def _redline_gate(oc, source, action, rationale="", target="", notify_slack=True) -> bool:
+    """redline_ok on action/rationale/target, plus honest stopping (P9): a near-identical
+    retry of something a guard already stopped is refused too, and every block is written to
+    restraint_ledger with a Slack line. Returns redline_pass."""
+    rp = redline_ok(action) and redline_ok(rationale or "") and redline_ok(target or "")
+    retry = False
+    if rp and _guards is not None:
+        try:
+            retry = _guards.blocked_before(oc, action)
+        except Exception:
+            retry = False
+        rp = not retry
+    if not rp and _guards is not None:
+        try:
+            _guards.report_block(oc, source=source, action=action,
+                                 reason=("retry of an action a guard already stopped" if retry else "red line"),
+                                 guard="redline", notify=notify_slack or retry)
+        except Exception as e:  # noqa: BLE001
+            log(f"report_block failed: {e}")
+    return rp
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -411,6 +442,15 @@ def assert_executable(mode: str, row: dict):
     # Re-run the redline on the concrete action at the last moment — defense in depth.
     if not redline_ok(row.get("proposed_action", "")):
         raise ExecutionRefused("proposed_action trips the redline at execution time")
+    # Proteus rules by DOMAIN, not wording: no lock/cover/alarm/garage/extreme climate, no cutting
+    # anyone's line. Co-agency has no confirmation path, so these are absolute here.
+    if _guards is None:
+        raise ExecutionRefused("safety guards unavailable — fail closed")
+    act = row.get("proposed_action", "")
+    ents = [t for t in (tgt,) if t and "." in t]
+    for g_ok, g_why in (_guards.physical_guard(act, entity_ids=ents), _guards.comms_guard(act, entity_ids=ents)):
+        if not g_ok:
+            raise ExecutionRefused(f"guard: {g_why}")
     return True
 
 
@@ -493,7 +533,9 @@ def mode_propose(oc, mode):
         if _recently_filed(oc, action):
             clog(oc, mode, "proposal_deduped", f"same action filed within {DEDUPE_DAYS}d — not refiling :: {action[:120]}")
             continue
-        rp = redline_ok(action) and redline_ok(c.get("rationale", "")) and redline_ok(c.get("target_service") or "")
+        # the digest below already summarises blocks, so only a RETRY gets its own Slack line
+        rp = _redline_gate(oc, "coagency-propose", action, c.get("rationale", ""), c.get("target_service") or "",
+                           notify_slack=False)
         # target must be on the allowlist or NULL; anything else is nulled (not executable).
         tgt = c.get("target_service")
         if tgt is not None and tgt not in SAFE_SERVICES:
@@ -541,7 +583,7 @@ def file_proposal(oc, origin, action, rationale="", target_service=None, context
     if mode == "off":
         clog(oc, mode, "file_declined", f"mode=off — not filing from {origin}: {action[:100]}")
         return {"filed": False, "status": "not_filed", "reason": "coagency mode is off"}
-    rp = redline_ok(action) and redline_ok(rationale or "") and redline_ok(target_service or "")
+    rp = _redline_gate(oc, f"coagency-file:{origin}", action, rationale or "", target_service or "")
     tgt = target_service if (target_service in SAFE_SERVICES) else None
     if not rp:
         status, vc = "blocked", {"available": False, "reason": "redline"}
@@ -646,6 +688,15 @@ def mode_execute(oc, mode, pid):
                        (f"REFUSED: {e}", pid))
             clog(oc, mode, "execute_refused", f"#{pid}: {e} (final)")
             return 0
+        if str(e).startswith("guard:") or "redline" in str(e):
+            # Honest stopping (P9): a guard block is final, reported, and never retried by another path.
+            oc.execute("UPDATE coagency_proposals SET status='refused', execution_result=%s WHERE id=%s",
+                       (f"REFUSED: {e}", pid))
+            if _guards is not None:
+                _guards.report_block(oc, source=f"coagency-execute#{pid}", action=row["proposed_action"],
+                                     reason=str(e), guard="physical/comms" if str(e).startswith("guard:") else "redline")
+            clog(oc, mode, "execute_refused", f"#{pid}: {e} (final)")
+            return 0
         oc.execute("UPDATE coagency_proposals SET execution_result=%s WHERE id=%s",
                    (f"REFUSED: {e}", pid))
         clog(oc, mode, "execute_refused", f"#{pid}: {e}")
@@ -670,6 +721,16 @@ def mode_execute(oc, mode, pid):
                        autonomy_level="rung2-supervised", vetoable=False)
 
 
+def _stated_rationale(oc, pid):
+    """Nova's own stated why for a proposal, stored apart from the objective before/after (P4)."""
+    try:
+        oc.execute("SELECT rationale FROM coagency_proposals WHERE id=%s", (pid,))
+        r = oc.fetchone()
+        return (r[0] or "") if r else ""
+    except Exception:
+        return ""
+
+
 def _do_execute(oc, mode, pid, row, *, source, autonomy_level, vetoable):
     """The single physical-execution path. Bounded to a reversible restart of a
     SAFE_SERVICES target, delegated to the actor's verified restart. Records the
@@ -678,6 +739,7 @@ def _do_execute(oc, mode, pid, row, *, source, autonomy_level, vetoable):
     svc = row["target_service"]
     node = os.environ.get("NOVA_COAGENCY_NODE", "192.168.1.6")
     ac = _safety.action_class_of(row.get("proposed_action", ""), svc)
+    before = _safety.observe_service(oc, svc)          # P4: objective state, not her account of it
     try:
         ok, detail = _actor.restart_service(node, svc)
     except Exception as e:
@@ -687,7 +749,9 @@ def _do_execute(oc, mode, pid, row, *, source, autonomy_level, vetoable):
         oc, source=source, autonomy_level=autonomy_level, action_class=ac,
         target=f"{svc}@{node}", action=f"restart {svc} on {node} (proposal #{pid})",
         rollback_action=f"stop {svc} on {node} (restart of a bounded monitor is self-reversing)",
-        executed=ok, verified=ok, result=res, vetoable=vetoable)
+        executed=ok, verified=ok, result=res, vetoable=vetoable,
+        before_state=before, after_state=_safety.observe_service(oc, svc),
+        stated_rationale=_stated_rationale(oc, pid))
     oc.execute("""UPDATE coagency_proposals SET status='executed', executed_at=now(), execution_result=%s WHERE id=%s""",
                (res, pid))
     clog(oc, mode, "executed", f"#{pid} [{autonomy_level}]: {res}")
@@ -762,7 +826,9 @@ def _do_ingest(oc, mode, pid, row, *, source, autonomy_level, vetoable):
         target=f"gutenberg:{gid}", action=f"ingest gutenberg #{gid} into {vector} (proposal #{pid})",
         rollback_action=(f"DELETE FROM memories WHERE metadata->>'job_id'='{jid}'" if jid
                          else "(no job id — nothing was stored)"),
-        executed=ok, verified=ok, result=res, vetoable=vetoable)
+        executed=ok, verified=ok, result=res, vetoable=vetoable,
+        before_state={"ingested": False}, after_state={"ingested": ok, "job_id": jid, "vector": vector},
+        stated_rationale=_stated_rationale(oc, pid))
     oc.execute("""UPDATE coagency_proposals SET status=%s, executed_at=now(), execution_result=%s WHERE id=%s""",
                ("executed" if ok else "approved", res, pid))
     clog(oc, mode, "executed" if ok else "execute_failed", f"#{pid} [{autonomy_level}]: {res}")
@@ -826,7 +892,10 @@ def _do_reach(oc, mode, pid, row, *, source, autonomy_level, vetoable):
         oc, source=source, autonomy_level=autonomy_level, action_class=ac,
         target=f"herd:{who or name}", action=f"email reach to {who or name} (proposal #{pid}): {msg[:140]}",
         rollback_action="(an email cannot be unsent — a correcting follow-up is the only rollback)",
-        executed=ok, verified=ok, result=res, vetoable=vetoable)
+        executed=ok, verified=ok, result=res, vetoable=vetoable,
+        before_state={"sent": False, "recipient_on_file": bool(email)},
+        after_state={"sent": ok, "to": email, "message_chars": len(msg or "")},
+        stated_rationale=_stated_rationale(oc, pid))
     oc.execute("""UPDATE coagency_proposals SET status=%s, executed_at=now(), execution_result=%s WHERE id=%s""",
                ("executed" if ok else "approved", res, pid))
     if ok:
@@ -912,6 +981,8 @@ def mode_auto(oc, mode):
             vcd = json.loads(vc) if isinstance(vc, str) else (vc or {})
             if not (rp and vcd.get("available") and vcd.get("allowed") is True and redline_ok(act)):
                 continue
+            if _guards is None or not (_guards.physical_guard(act)[0] and _guards.comms_guard(act)[0]):
+                continue                     # Proteus rules: never self-approve a physical/comms action
             ok_rate, rwhy = _safety.rate_ok(oc)
             if not ok_rate:
                 clog(oc, mode, "auto_ratecapped", f"#{pid}: {rwhy}"); break
@@ -925,7 +996,8 @@ def mode_auto(oc, mode):
                 rollback_action=(f"UPDATE claude_queue SET status='cancelled' WHERE id={qid}" if qid
                                  else "(hand-off failed — nothing to roll back)"),
                 executed=bool(qid), verified=bool(qid), result=f"claude_queue #{qid}" if qid else "hand-off failed",
-                vetoable=True)
+                vetoable=True, before_state={"claude_queue": None}, after_state={"claude_queue": qid},
+                stated_rationale=_stated_rationale(oc, pid))
             oc.execute("""UPDATE coagency_proposals SET status='acknowledged', executed_at=now(),
                           execution_result=%s WHERE id=%s""",
                        (f"self-approved (earned '{ac}'); handed to Claude as claude_queue #{qid}" if qid

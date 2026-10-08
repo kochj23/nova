@@ -189,7 +189,27 @@ def get_weather():
 # ── HomeKit integration ──────────────────────────────────────────────────────
 
 def execute_scene(scene_name):
-    """Execute a HomeKit scene via HomekitControl API."""
+    """Execute a HomeKit scene via HomekitControl API. Proteus rule (P1): a scene that may lock
+    doors / close the garage / arm an alarm is refused unless Jordan confirmed it, and the kill
+    switch holds state."""
+    try:
+        import nova_safety_guards as _g
+        if _g.kill_engaged():
+            log(f"kill switch engaged — not running scene '{scene_name}'")
+            return False
+        ok, why = _g.scene_guard(scene_name)
+        if not ok:
+            log(why)
+            try:
+                oc = _g._ops_cursor()
+                _g.report_block(oc, source="weather-homekit", action=f"scene {scene_name}", reason=why, guard="physical")
+                oc.connection.close()
+            except Exception:
+                pass
+            return False
+    except Exception as e:
+        log(f"safety guards unavailable ({e}) — refusing scene '{scene_name}'")
+        return False
     try:
         data = json.dumps({"name": scene_name}).encode()
         req = urllib.request.Request(

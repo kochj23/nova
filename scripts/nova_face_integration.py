@@ -32,9 +32,16 @@ def log(msg):
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}", flush=True)
 
 def remember(text, source="vision"):
-    """Store to vector memory."""
+    """Store to vector memory. Face outputs are tagged private (P3: camera/face data serve safety
+    and presence only — never journal/reach material); see nova_privacy_guards."""
     try:
-        data = json.dumps({"text": text, "source": source}).encode()
+        try:
+            sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+            import nova_privacy_guards
+            md = nova_privacy_guards.tag_private({}, kind="face")
+        except Exception:
+            md = {"privacy": "private", "data_class": "face", "no_content_generation": True}
+        data = json.dumps({"text": text, "source": source, "metadata": md}).encode()
         req = urllib.request.Request(
             f"{MEMORY_URL}/remember",
             data=data,

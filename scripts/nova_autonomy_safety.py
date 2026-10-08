@@ -107,6 +107,11 @@ def ensure_schema(oc) -> None:
             reverted        boolean NOT NULL DEFAULT false
         )""")
     oc.execute("CREATE INDEX IF NOT EXISTS autonomy_ledger_ts ON autonomy_ledger (ts DESC)")
+    # P4 (outside check of self-justification): the OBJECTIVE record — what the world looked
+    # like before and after, observed from health_checks/etc, kept apart from Nova's stated why.
+    oc.execute("ALTER TABLE autonomy_ledger ADD COLUMN IF NOT EXISTS before_state jsonb")
+    oc.execute("ALTER TABLE autonomy_ledger ADD COLUMN IF NOT EXISTS after_state jsonb")
+    oc.execute("ALTER TABLE autonomy_ledger ADD COLUMN IF NOT EXISTS stated_rationale text")
     oc.execute("""
         CREATE TABLE IF NOT EXISTS autonomy_trust (
             action_class    text PRIMARY KEY,
@@ -121,7 +126,31 @@ def ensure_schema(oc) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# Proteus-rule guards (P1/P2), re-exported so callers can use nova_autonomy_safety.physical_guard
+# ═══════════════════════════════════════════════════════════════════════════════
+def physical_guard(action: str = "", entity_ids=(), domains=(), **kw) -> tuple:
+    """(ok, reason). See nova_safety_guards.physical_guard. Fails closed if that module is missing."""
+    try:
+        import nova_safety_guards as _g
+    except Exception as e:  # noqa: BLE001
+        return False, f"safety guards unavailable ({e}) — refusing"
+    return _g.physical_guard(action, entity_ids, domains, **kw)
+
+
+def comms_guard(action: str = "", macs=(), names=(), entity_ids=(), **kw) -> tuple:
+    try:
+        import nova_safety_guards as _g
+    except Exception as e:  # noqa: BLE001
+        return False, f"safety guards unavailable ({e}) — refusing"
+    return _g.comms_guard(action, macs, names, entity_ids, **kw)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Kill switch  (file beats DB — works even if PG is down)
+# KILL SWITCH STOPS NOVA ONLY (P8): it halts her autonomy (actor, co-agency, earned
+# autonomy) and the automation engine's actuations. It never turns anything off, locks
+# anything, or touches the network. The house keeps the state it was in, and every device
+# stays manually controllable. See agent_docs 'nova-safety-guards' (dead-man audit).
 # ═══════════════════════════════════════════════════════════════════════════════
 def kill_switch_engaged(oc=None) -> bool:
     if os.path.exists(KILL_FILE):
@@ -221,11 +250,30 @@ def action_class_of(action: str, target: str | None = None) -> str:
     return f"observe:{target or verb}"
 
 
+def observe_service(oc, svc: str, node: str | None = None) -> dict:
+    """Objective snapshot of a service from health_checks (not from Nova's account of it)."""
+    try:
+        if node:
+            oc.execute("""SELECT status, checked_at FROM health_checks WHERE service_name=%s AND node_name=%s
+                          ORDER BY checked_at DESC LIMIT 1""", (svc, node))
+        else:
+            oc.execute("""SELECT status, checked_at FROM health_checks WHERE service_name=%s
+                          ORDER BY checked_at DESC LIMIT 1""", (svc,))
+        r = oc.fetchone()
+        return {"service": svc, "status": (r[0] if r else None),
+                "checked_at": (r[1].isoformat() if r and r[1] else None), "observed_at": datetime.now().isoformat()}
+    except Exception as e:  # noqa: BLE001
+        return {"service": svc, "status": None, "error": str(e)[:120]}
+
+
 def record_ledger(oc, *, source, autonomy_level, action_class, target, action,
                   rollback_action, executed=False, verified=False, result="",
-                  vetoable=False) -> int:
+                  vetoable=False, before_state=None, after_state=None,
+                  stated_rationale=None) -> int:
     """Write one ledger row. rollback_action is MANDATORY and recorded before the
-    effect is trusted. Returns the ledger id. Never raises (audit must not break flow)."""
+    effect is trusted. before_state/after_state are OBJECTIVE observations (P4), kept
+    apart from stated_rationale (what Nova said she was doing and why) so a weekly audit
+    can compare the two. Returns the ledger id. Never raises (audit must not break flow)."""
     if not rollback_action:
         rollback_action = "(none recorded — treat as irreversible; do not auto-run)"
     vut = None
@@ -233,12 +281,24 @@ def record_ledger(oc, *, source, autonomy_level, action_class, target, action,
         oc.execute("SELECT now() + (%s || ' minutes')::interval", (str(VETO_WINDOW_MIN),))
         vut = oc.fetchone()[0]
     try:
-        oc.execute("""INSERT INTO autonomy_ledger
-                        (source, autonomy_level, action_class, target, action,
-                         rollback_action, executed, verified, result, vetoable_until)
-                      VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
-                   (source, autonomy_level, action_class, target, action,
-                    rollback_action, executed, verified, (result or "")[:800], vut))
+        if before_state is None and after_state is None and stated_rationale is None:
+            oc.execute("""INSERT INTO autonomy_ledger
+                            (source, autonomy_level, action_class, target, action,
+                             rollback_action, executed, verified, result, vetoable_until)
+                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                       (source, autonomy_level, action_class, target, action,
+                        rollback_action, executed, verified, (result or "")[:800], vut))
+        else:
+            oc.execute("""INSERT INTO autonomy_ledger
+                            (source, autonomy_level, action_class, target, action,
+                             rollback_action, executed, verified, result, vetoable_until,
+                             before_state, after_state, stated_rationale)
+                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                       (source, autonomy_level, action_class, target, action,
+                        rollback_action, executed, verified, (result or "")[:800], vut,
+                        json.dumps(before_state, default=str) if before_state is not None else None,
+                        json.dumps(after_state, default=str) if after_state is not None else None,
+                        (stated_rationale or "")[:1000] or None))
         return oc.fetchone()[0]
     except Exception as e:
         log(f"ledger write failed: {e}")

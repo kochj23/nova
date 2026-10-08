@@ -75,10 +75,48 @@ async def get_pool():
     return _pool
 
 
+# ── Proteus-rule guards (P1/P8/P9) ──────────────────────────────────────────
+# Every actuation passes through _actuation_ok(): the kill switch halts Nova's actuations
+# (state is HELD, never switched off), and the physical guard refuses locks, covers, alarms,
+# garage doors and secure-the-house scenes. A guard block is reported once and never retried.
+try:
+    import nova_safety_guards as _guards
+except Exception:                                   # fail closed: no guards -> no actuation
+    _guards = None
+
+
+def _report_block(action: str, reason: str) -> None:
+    try:
+        oc = _guards._ops_cursor()
+        try:
+            _guards.report_block(oc, source="automation-engine", action=action, reason=reason, guard="physical")
+        finally:
+            oc.connection.close()
+    except Exception as e:
+        log(f"block report failed: {e}", "WARN")
+
+
+def _actuation_ok(action: str, *, scene: str = None) -> bool:
+    if _guards is None:
+        log(f"safety guards unavailable — refusing actuation: {action}", "WARN")
+        return False
+    if _guards.kill_engaged():
+        log(f"kill switch engaged — holding state, not actuating: {action}")
+        return False
+    ok, why = _guards.scene_guard(scene) if scene is not None else _guards.physical_guard(action)
+    if not ok:
+        log(f"GUARD refused '{action}': {why}", "WARN")
+        if not action_cooldown(f"guard:{action}", 86400):
+            _report_block(action, why)
+    return ok
+
+
 # ── Actions ─────────────────────────────────────────────────────────────────
 
 async def hue_set_light(light_id: int, on: bool, brightness: int = None):
     """Set a Hue light state."""
+    if not _actuation_ok(f"hue light {light_id} {'on' if on else 'off'}"):
+        return False
     import urllib.request
     body = {"on": on}
     if brightness is not None and on:
@@ -99,6 +137,8 @@ async def hue_set_light(light_id: int, on: bool, brightness: int = None):
 
 async def run_scene(scene_name: str):
     """Trigger a predefined scene via nova_home_control."""
+    if not await asyncio.to_thread(_actuation_ok, f"scene {scene_name}", scene=scene_name):
+        return False
     try:
         result = subprocess.run(
             ["/opt/homebrew/bin/python3", str(Path(__file__).parent / "nova_home_control.py"), "scene", scene_name],
@@ -240,10 +280,17 @@ PRESENCE_DEVICE_ZONES = {
 }
 PRESENCE_OFF_DELAY_S = 15 * 60   # power OFF this long after the LAST positive presence reading
 PRESENCE_FRESH_S = 5 * 60        # a positive reading within this window counts as "present now" (drives ON)
+# Dead-man rule (P8): "no presence" must never be inferred from a DEAD sensor. OFF only fires
+# while the zone's presence source is provably alive (any reading, any room, within this window).
+# If the source goes silent, the zone HOLDS its state — lamps stay on rather than plunging an
+# occupied room into the dark.
+SOURCE_ALIVE_S = 30 * 60
 _zone_on = {}                    # zone -> bool: are its devices currently commanded ON
 
 
 def _hk_power(name: str, on: bool) -> bool:
+    if not _actuation_ok(f"power {name} {'on' if on else 'off'}"):
+        return False
     import urllib.request, urllib.parse
     url = f"{NOVAHOMEKIT_POWER}?name={urllib.parse.quote(name)}&on={'true' if on else 'false'}"
     try:
@@ -281,6 +328,16 @@ async def rule_presence_devices():
                 _rule_history.append({"ts": datetime.now().isoformat(),
                     "rule": "presence_devices_on", "room": zone, "action": f"on: {', '.join(devices)}"})
         elif _zone_on.get(zone) and age >= PRESENCE_OFF_DELAY_S:   # no presence for OFF_DELAY -> power OFF
+            async with pool.acquire() as conn:
+                alive = await conn.fetchval(
+                    "SELECT extract(epoch from max(ts)) FROM telemetry.presence "
+                    "WHERE ($1::text IS NULL OR metadata->>'source' = $1) AND ts > now() - make_interval(secs => $2)",
+                    src, float(SOURCE_ALIVE_S))
+            if alive is None:
+                if not action_cooldown(f"presence_hold:{zone}", 3600):
+                    log(f"RULE presence_devices: {zone} source '{src}' silent >{SOURCE_ALIVE_S // 60}m — "
+                        f"HOLDING devices on (a dead sensor is not an empty room)", "WARN")
+                continue
             for d in devices:
                 await asyncio.to_thread(_hk_power, d, False)
             _zone_on[zone] = False

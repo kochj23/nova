@@ -40,6 +40,14 @@ if [ "$SCENE_NAME" = "--list" ]; then
     exit 0
 fi
 
+# Proteus rule (P1): refuse a scene that may lock doors / close the garage / arm an alarm
+# unless Jordan confirmed it. Guard exit 0 = allowed; anything else (incl. python missing) = refuse.
+GUARD_PY="$(command -v python3 || echo /opt/homebrew/bin/python3)"
+if ! "$GUARD_PY" "$(dirname "$0")/nova_safety_guards.py" scene-check "$SCENE_NAME" >&2; then
+    echo "{\"error\": \"refused by physical guard: scene '$SCENE_NAME'\"}" >&2
+    exit 3
+fi
+
 # Execute scene — try API first
 result=$(curl -s --connect-timeout 3 -X POST \
     -H "Content-Type: application/json" \

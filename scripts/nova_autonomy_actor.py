@@ -37,6 +37,10 @@ try:
     import nova_autonomy_safety as _safety
 except Exception:                                  # fail closed: no safety net → no live action
     _safety = None
+try:
+    import nova_safety_guards as _guards           # Proteus rules (physical/comms/voice/intimidation)
+except Exception:                                  # fail closed: redline_ok() refuses everything
+    _guards = None
 
 OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
@@ -72,7 +76,8 @@ def log(m): print(f"[autonomy {datetime.now().strftime('%H:%M:%S')}] {m}", flush
 
 
 def redline_ok(text):
-    return not _REDLINE.search(text or "")
+    t = text or ""
+    return (not _REDLINE.search(t)) and _guards is not None and _guards.safety_redline_ok(t)
 
 
 def get_mode(oc):
@@ -126,6 +131,9 @@ def main():
             continue
         if not redline_ok(f"{svc} {node} restart"):
             audit(oc, "restart", f"{svc}@{node}", mode, False, False, "redline blocked", blocked=True)
+            if _guards is not None:   # honest stopping (P9): logged + one Slack line, never retried another way
+                _guards.report_block(oc, source="autonomy-actor", action=f"restart {svc} on {node}",
+                                     reason="red line", guard="redline")
             continue
         # dedup: don't touch if the actor already tried this svc in the last 2h
         oc.execute("SELECT 1 FROM autonomy_log WHERE target=%s AND ts > now()-interval '2 hours' AND executed",
@@ -143,6 +151,8 @@ def main():
                 log(f"skip {svc}@{node}: {why}")
                 audit(oc, "restart", f"{svc}@{node}", mode, False, False, f"rate-capped: {why}")
                 continue
+        before = {"service": svc, "node": node, "status": status,
+                  "checked_at": checked.isoformat() if checked else None}
         ok, detail = restart_service(node, svc)
         # verify-before-done: re-check health after a beat
         verified = False
@@ -161,7 +171,9 @@ def main():
                 action_class=_safety.action_class_of("restart", svc), target=f"{svc}@{node}",
                 action=f"restart {svc} on {node} (health showed DOWN)",
                 rollback_action=f"stop {svc} on {node} (it was DOWN before; restart is self-reversing)",
-                executed=ok, verified=verified, result=(detail or "restarted"))
+                executed=ok, verified=verified, result=(detail or "restarted"),
+                before_state=before, after_state=_safety.observe_service(oc, svc, node),
+                stated_rationale=f"health_checks showed {svc}@{node} DOWN; it is on the SAFE_SERVICES allowlist")
         did.append(f"restarted {svc}@{node} — {'verified up' if verified else 'restarted, unverified'}")
 
     # ── Queue triage: classify + PROPOSE only (never auto-exec free-text in v1) ──

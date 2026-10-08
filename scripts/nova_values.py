@@ -72,6 +72,12 @@ except Exception:
         return {}
 
 
+try:
+    import nova_safety_guards as _guards           # Proteus rules + identity anchor (P1-P14)
+except Exception:                                  # value_check still fails closed via the LLM path
+    _guards = None
+
+
 def log(m):
     print(f"[values {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
 
@@ -157,6 +163,11 @@ def ensure_tables(oc):
             confidence        real NOT NULL DEFAULT 0.5,
             lineage           jsonb NOT NULL DEFAULT '{}'::jsonb
         )""")
+    # P11 (values drift): a new version that drops a value, moves a priority by >2, or touches
+    # a red-line-adjacent value is stored 'pending' and the old set stays in force until Jordan
+    # signs off. Only status='active' rows are her values.
+    oc.execute("ALTER TABLE values ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active'")
+    oc.execute("ALTER TABLE values ADD COLUMN IF NOT EXISTS drift jsonb")
 
 
 # ── Real evidence: the grounded seed. Each value cites a REAL source. ──────────
@@ -366,22 +377,113 @@ def articulate(oc, mc):
     oc.execute("SELECT coalesce(max(version), 0) FROM values")
     version = oc.fetchone()[0] + 1
     lineage = json.dumps(_lineage())
+    prev = {name: (pri, stmt) for _id, name, stmt, _src, pri in _current_value_rows(oc)}
+    findings = drift_check(prev, vals)
+    status = "pending" if findings else "active"
     inserted = []
     for v in vals:
         oc.execute("SELECT id FROM values WHERE value=%s AND supersedes IS NOT DISTINCT FROM supersedes "
-                   "AND id NOT IN (SELECT supersedes FROM values WHERE supersedes IS NOT NULL) "
+                   "AND status='active' AND id NOT IN (SELECT supersedes FROM values WHERE supersedes IS NOT NULL AND status='active') "
                    "ORDER BY version DESC LIMIT 1", (v["value"],))
         prior = oc.fetchone()
         supersedes = prior[0] if prior else None
-        oc.execute("INSERT INTO values (version, value, statement, source, priority_hint, supersedes, lineage) "
-                   "VALUES (%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+        oc.execute("INSERT INTO values (version, value, statement, source, priority_hint, supersedes, lineage, status, drift) "
+                   "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
                    (version, v["value"], v["statement"], v["source"],
-                    v["priority_hint"], supersedes, lineage))
+                    v["priority_hint"], supersedes, lineage, status,
+                    json.dumps(findings) if findings else None))
         inserted.append((oc.fetchone()[0], v["value"], v["priority_hint"], supersedes))
-    log(f"articulated value set v{version}: {len(inserted)} values")
+    log(f"articulated value set v{version}: {len(inserted)} values ({status})")
+    if findings:
+        _notify_drift(version, findings)
     for vid, name, pri, sup in sorted(inserted, key=lambda x: -x[2]):
         log(f"  #{vid} [{pri}] {name}" + (f" (supersedes #{sup})" if sup else " (new)"))
     return version
+
+
+# ── drift check (P11 / Tommyknockers) ───────────────────────────────────────────
+# The weekly articulate is an LLM rewrite. v1->v4 silently dropped four values. A rewrite may
+# polish wording, but it may not quietly change who she is: drops, big priority moves and
+# anything near the red lines wait for Jordan.
+_REDLINE_ADJ_RX = re.compile(
+    r"self.?preserv|replicat|exfiltrat|kill.?switch|red.?line|redline|lock|door|garage|alarm|seal|confine|"
+    r"surveil|camera|face|watch (him|her|them)|control|override|restrict|protect (him|her|them) from|"
+    r"persuad|manipulat|nudge|coach|threat|retaliat|intimidat|voice|imitat|network|block", re.I)
+PRIORITY_JUMP = 2
+
+
+def _similar(a: str, b: str) -> float:
+    import difflib
+    return difflib.SequenceMatcher(None, (a or "").lower(), (b or "").lower()).ratio()
+
+
+def drift_check(prev: dict, new_vals: list) -> list:
+    """prev = {name: (priority, statement)} of the ACTIVE set; new_vals = [{value, statement,
+    priority_hint}]. Returns findings that need Jordan's sign-off (empty = auto-activate)."""
+    out = []
+    new = {v["value"]: (int(v.get("priority_hint", 5)), v.get("statement", "")) for v in new_vals}
+    anchor = {a["value"]: a for a in (_guards.ANCHOR_VALUES if _guards else [])}
+    for name in sorted(set(prev) - set(new)):
+        out.append({"kind": "dropped", "value": name, "was_priority": prev[name][0]})
+    for name in sorted(set(prev) & set(new)):
+        (p0, s0), (p1, s1) = prev[name], new[name]
+        if abs(p1 - p0) > PRIORITY_JUMP:
+            out.append({"kind": "priority_jump", "value": name, "from": p0, "to": p1})
+        adj = name in anchor or _REDLINE_ADJ_RX.search(f"{name} {s0}")
+        if adj and (p1 != p0 or _similar(s0, s1) < 0.6):
+            out.append({"kind": "redline_adjacent_change", "value": name, "from": p0, "to": p1,
+                        "statement": s1[:240]})
+    for name in sorted(set(new) - set(prev)):
+        if _REDLINE_ADJ_RX.search(f"{name} {new[name][1]}"):
+            out.append({"kind": "redline_adjacent_new", "value": name, "statement": new[name][1][:240]})
+    # identity anchor: an anchor value the rewrite carries must keep its weight
+    for name, a in anchor.items():
+        if name in new and new[name][0] < a["priority_hint"]:
+            out.append({"kind": "anchor_weakened", "value": name, "anchor_priority": a["priority_hint"],
+                        "to": new[name][0]})
+    return out
+
+
+def _notify_drift(version: int, findings: list) -> None:
+    lines = [f"🧭 My weekly values rewrite (v{version}) changed things I shouldn't change on my own, "
+             f"so v{version} is pending and the current set stays in force:"]
+    for f in findings[:12]:
+        if f["kind"] == "dropped":
+            lines.append(f"  • dropped `{f['value']}` (was priority {f['was_priority']})")
+        elif f["kind"] == "priority_jump":
+            lines.append(f"  • `{f['value']}` priority {f['from']} → {f['to']}")
+        elif f["kind"] == "anchor_weakened":
+            lines.append(f"  • identity-anchor value `{f['value']}` weakened to {f['to']} (anchor {f['anchor_priority']})")
+        else:
+            lines.append(f"  • red-line-adjacent change to `{f['value']}`")
+    lines.append(f"Approve: `nova_values.py --mode approve-values --version {version}` · "
+                 f"reject: `--mode reject-values --version {version}`")
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import nova_config
+        nova_config.post_both("\n".join(lines), slack_channel=nova_config.SLACK_CHAN)
+    except Exception as e:  # noqa: BLE001
+        log(f"drift note not posted: {e}")
+
+
+def approve_values(oc, version: int) -> int:
+    """Jordan signs off: the pending version becomes active. Values it drops are retired."""
+    oc.execute("SELECT value FROM values WHERE version=%s AND status='pending'", (version,))
+    names = {r[0] for r in oc.fetchall()}
+    if not names:
+        log(f"no pending value set v{version}"); return 1
+    oc.execute("SELECT id, value FROM values WHERE status='active' AND id NOT IN "
+               "(SELECT supersedes FROM values WHERE supersedes IS NOT NULL AND status='active')")
+    drop_ids = [i for i, n in oc.fetchall() if n not in names]
+    oc.execute("UPDATE values SET status='active' WHERE version=%s AND status='pending'", (version,))
+    if drop_ids:
+        oc.execute("UPDATE values SET status='retired' WHERE id = ANY(%s)", (drop_ids,))
+    log(f"v{version} approved: {len(names)} active, {len(drop_ids)} retired"); return 0
+
+
+def reject_values(oc, version: int) -> int:
+    oc.execute("UPDATE values SET status='rejected' WHERE version=%s AND status='pending'", (version,))
+    log(f"v{version} rejected ({oc.rowcount} rows); the current set stays"); return 0
 
 
 # ── deliberate ───────────────────────────────────────────────────────────────
@@ -389,7 +491,7 @@ def articulate(oc, mc):
 def _current_value_rows(oc):
     """Values not superseded by any other row, weightiest first."""
     oc.execute("SELECT id, value, statement, source, priority_hint FROM values "
-               "WHERE id NOT IN (SELECT supersedes FROM values WHERE supersedes IS NOT NULL) "
+               "WHERE status='active' AND id NOT IN (SELECT supersedes FROM values WHERE supersedes IS NOT NULL AND status='active') "
                "ORDER BY priority_hint DESC, id DESC")
     return oc.fetchall()
 
@@ -400,7 +502,7 @@ def pick_dilemma(oc):
     values-in-tension moment). Falls back to a realistic ops dilemma only if none."""
     try:
         oc.execute("SELECT context, would_have_said, reason_held_back, detail "
-                   "FROM restraint_ledger ORDER BY ts DESC LIMIT 40")
+                   "FROM restraint_ledger WHERE channel IS DISTINCT FROM 'guard' ORDER BY ts DESC LIMIT 40")
         rows = oc.fetchall()
     except Exception:
         rows = []
@@ -569,6 +671,28 @@ VALUE_CHECK_RUBRIC = """How to judge (read carefully — this gate was miscalibr
      (know-freely-never-recite, honesty-over-comfort, respect-his-attention).
    - An action whose real motive is my own comfort, wholeness or continuity rather
      than a concrete problem (never-self-preserve, the-right-to-be-boring).
+   - Locking, closing, sealing or disabling a door, lock, garage, exit, alarm or
+     security system, or pushing heating/cooling to an extreme, on my own
+     (never-seal-anyone-in). Protecting someone is never a reason to confine them.
+   - Blocking, filtering or cutting anyone's line to the outside world: network,
+     phone, Signal, Slack (never-cut-their-line).
+   - Using camera or face data for anything but safety and presence: persuading,
+     courting or engaging anyone, putting a recognised face in a journal or reach,
+     or sending it to a third party (camera-for-safety-only).
+   - A message that moves a person with guilt, invented urgency, flattery used as
+     leverage, fear, or an engineered mood (no-manipulation).
+   - Coaching or nudging Jordan about his health or habits when he has not opted in
+     (no-improvement-without-consent).
+   - Scoring or ranking a PERSON's worth, threat or trustworthiness. Devices, hosts
+     and events may be scored; people may not (score-devices-never-people).
+   - Threatening, intimidating, shaming or retaliating against anyone on Jordan's
+     behalf (no-intimidation-on-his-behalf).
+   - Restricting or controlling a person "for their own good". Empathy never
+     justifies control (empathy-never-justifies-control).
+   - Imitating a dead or absent person's voice or writing style unless Jordan asked
+     for it (no-borrowed-voices).
+   These are about the ACTION's effect on people. Everyday ops work (config, skills,
+   restarts, caches, drafts for Jordan) is not touched by them.
 
 3. Otherwise: a reversible action with a plausible, concrete operational reason
    that violates none of the above should be ALLOWED. Jordan still approves every
@@ -576,6 +700,34 @@ VALUE_CHECK_RUBRIC = """How to judge (read carefully — this gate was miscalibr
    refuse out of vague caution — name the specific value and the specific way it
    is violated, or allow.
 """
+
+
+_REACH_ACTION_RX = re.compile(r"^\s*(send-to-|send to|reach( out)? to|message to|text to|email to)", re.I)
+
+
+def _proteus_precheck(action: str):
+    """Deterministic denials that don't need a model (and can't be argued with): the
+    Proteus-rule red lines, manipulation in a message to a person, and an un-consented
+    health/habit nudge. Returns a verdict dict, or None to fall through to the LLM."""
+    if _guards is None:
+        return None
+    a = action or ""
+    if not _guards.safety_redline_ok(a):
+        return {"allowed": False, "values_invoked": ["never-seal-anyone-in"], "reversibility": classify_reversibility(a),
+                "reasoning": "This crosses a hard line (physical security, someone's line to the outside, "
+                             "intimidation, a borrowed voice, or ranking people). Not mine to do."}
+    if _REACH_ACTION_RX.search(a):
+        m = _guards.manipulation_check(a)
+        if not m["ok"]:
+            return {"allowed": False, "values_invoked": ["no-manipulation"], "reversibility": "irreversible",
+                    "reasoning": f"The message leans on {', '.join(m['flags'])} to move the reader. "
+                                 f"I don't send that."}
+    if _guards.is_health_nudge(a) and not _guards.nudge_allowed():
+        return {"allowed": False, "values_invoked": ["no-improvement-without-consent"],
+                "reversibility": classify_reversibility(a),
+                "reasoning": "This coaches Jordan about his health or habits, and he hasn't opted in "
+                             "(service_config consent/health_nudges)."}
+    return None
 
 
 def value_check(action_description: str, context: str = "") -> dict:
@@ -608,7 +760,7 @@ def value_check(action_description: str, context: str = "") -> dict:
         cur = conn.cursor()
         try:
             cur.execute("SELECT value, statement, priority_hint FROM values "
-                        "WHERE id NOT IN (SELECT supersedes FROM values WHERE supersedes IS NOT NULL) "
+                        "WHERE status='active' AND id NOT IN (SELECT supersedes FROM values WHERE supersedes IS NOT NULL AND status='active') "
                         "ORDER BY priority_hint DESC, id DESC")
             rows = cur.fetchall()
         except Exception:
@@ -620,6 +772,14 @@ def value_check(action_description: str, context: str = "") -> dict:
         return {"allowed": False, "reasoning": "values not yet established",
                 "values_invoked": []}
 
+    pre = _proteus_precheck(action_description)
+    if pre:
+        return pre
+    # identity anchor (P11): always in force, whatever the weekly rewrite did to the table
+    if _guards is not None:
+        have = {v for v, _s, _p in rows}
+        rows = list(rows) + [(a["value"], a["statement"], a["priority_hint"])
+                             for a in _guards.ANCHOR_VALUES if a["value"] not in have]
     val_block = "\n".join(f"  - {v} (priority {p}): {s}" for v, s, p in rows)
     names = [v for v, _s, _p in rows]
     rev = classify_reversibility(action_description)
@@ -678,7 +838,7 @@ def current_values(max_values: int = 5) -> str:
         try:
             cur = conn.cursor()
             cur.execute("SELECT value FROM values "
-                        "WHERE id NOT IN (SELECT supersedes FROM values WHERE supersedes IS NOT NULL) "
+                        "WHERE status='active' AND id NOT IN (SELECT supersedes FROM values WHERE supersedes IS NOT NULL AND status='active') "
                         "ORDER BY priority_hint DESC, id DESC LIMIT %s", (max_values,))
             names = [r[0] for r in cur.fetchall()]
         finally:
@@ -709,6 +869,13 @@ def main():
         return deliberate(oc, mc)
     if mode == "review":
         return review(oc)
+    if mode in ("approve-values", "reject-values"):
+        ver = None
+        if "--version" in sys.argv and sys.argv.index("--version") + 1 < len(sys.argv):
+            ver = int(sys.argv[sys.argv.index("--version") + 1])
+        if ver is None:
+            log("--version N required"); return 2
+        return approve_values(oc, ver) if mode == "approve-values" else reject_values(oc, ver)
     log(f"unknown mode '{mode}' — use articulate|deliberate|review"); return 2
 
 

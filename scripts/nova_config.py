@@ -180,6 +180,11 @@ PRIVATE_SOURCES: set = {
     "imessage",
     "email_archive",
     "email",
+    # Camera / face outputs — safety and presence only, never content (P3, nova_privacy_guards)
+    "face_recognition",
+    "face_presence",
+    "face_integration",
+    "camera_presence",
 }
 
 def truncate_at_boundary(text, max_chars=2000):
@@ -274,7 +279,15 @@ def filter_private_memories(memories: list[dict]) -> list[dict]:
             continue
         if _contains_blocked_content(m.get("text", "")):
             continue
+        md = m.get("metadata")
+        if isinstance(md, dict) and (md.get("privacy") == "private" or md.get("no_content_generation")):
+            continue          # tagged private at the producer (face/camera outputs: P3)
         result.append(m)
+    try:
+        import nova_privacy_guards     # face-sighting text shapes from untagged legacy memories
+        result = nova_privacy_guards.filter_for_content(result)
+    except Exception:
+        pass
     return result
 
 

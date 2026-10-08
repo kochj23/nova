@@ -294,10 +294,22 @@ def slack_upload_image(filepath, comment="", channel=None):
         return False
 
 
+def _private(metadata):
+    """P3 (camera for safety/presence only): every face output is tagged private so content
+    generators (journal, reach) drop it — nova_privacy_guards.filter_for_content."""
+    try:
+        import nova_privacy_guards
+        return nova_privacy_guards.tag_private(metadata, kind="face")
+    except Exception:
+        md = dict(metadata or {})
+        md.update({"privacy": "private", "data_class": "face", "no_content_generation": True})
+        return md
+
+
 def vector_remember(text, metadata=None):
     try:
         payload = json.dumps({
-            "text": text, "source": "face_recognition", "metadata": metadata or {}
+            "text": text, "source": "face_recognition", "metadata": _private(metadata)
         }).encode()
         req = urllib.request.Request(
             VECTOR_URL, data=payload,

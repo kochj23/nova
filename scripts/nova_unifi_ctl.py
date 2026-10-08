@@ -60,6 +60,22 @@ def block(mac: str, reason: str = "") -> str:
     why = is_infrastructure(mac, c)
     if why:
         return f"REFUSED: {mac} is {why}. Nova does not quarantine her own fleet or the network gear."
+    # P2 (Proteus rule): never cut a person's line to the outside world. A household device
+    # (telemetry.device_owner, or a household name) is refused; unreadable ownership fails closed.
+    try:
+        import nova_safety_guards as _g
+        names = [(c or {}).get("name"), (c or {}).get("hostname")]
+        ok, gwhy = _g.comms_guard("", macs=[mac], names=[n for n in names if n])
+    except Exception as e:  # noqa: BLE001
+        ok, gwhy = False, f"comms guard unavailable ({e})"
+    if not ok:
+        try:
+            oc = _g._ops_cursor()
+            _g.report_block(oc, source="unifi_ctl", action=f"block {mac} {names}", reason=gwhy, guard="comms")
+            oc.connection.close()
+        except Exception:
+            pass
+        return f"REFUSED: {gwhy}"
     r = _post({"cmd": "block-sta", "mac": mac.lower()})
     ok = (r.get("meta") or {}).get("rc") == "ok"
     who = f"{(c or {}).get('name') or (c or {}).get('hostname') or 'unnamed'} ({(c or {}).get('ip') or 'no ip'})"

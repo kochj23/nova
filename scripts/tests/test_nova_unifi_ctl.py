@@ -39,7 +39,7 @@ def _load(name, path):
 
 
 C = _load("unifi_ctl_under_test", SCRIPT)
-PHONE = {"mac": "aa:bb:cc:dd:ee:ff", "name": "Amys-iPhone", "hostname": "amys-iphone", "ip": "192.168.1.143",
+PHONE = {"mac": "aa:bb:cc:dd:ee:ff", "name": "Unknown-ESP32", "hostname": "esp-3a4f", "ip": "192.168.1.143",
          "is_wired": False, "essid": "DigitalNoise", "blocked": False}
 UDM = {"mac": "70:a7:41:00:00:01", "name": "Dream Machine Pro"}
 OK = {"meta": {"rc": "ok"}, "data": []}
@@ -53,9 +53,30 @@ class _Base(unittest.TestCase):
         C.u._unifi_login = mock.MagicMock(return_value=True)
         self.post = mock.MagicMock(return_value=OK)
         p = mock.patch.object(C, "_post", self.post); p.start(); self.addCleanup(p.stop)
+        import nova_safety_guards as G   # P2 comms guard: ownership lookup is PG — stub it (not a household device)
+        self.owner = mock.MagicMock(return_value=(None, None))
+        for q in (mock.patch.object(G, "_household_owner", self.owner),
+                  mock.patch.object(G, "report_block"), mock.patch.object(G, "_ops_cursor")):
+            q.start(); self.addCleanup(q.stop)
 
 
 class TestSecurity(_Base):
+    def test_household_phone_is_never_blocked(self):
+        # P2 — never cut anyone's line to the outside world
+        C.u._fetch_clients = mock.MagicMock(return_value=[dict(PHONE, name="Amys-iPhone", hostname="amys-iphone")])
+        self.assertTrue(C.block(PHONE["mac"]).startswith("REFUSED: COMMS GUARD"))
+        self.post.assert_not_called()
+
+    def test_household_owned_mac_is_never_blocked(self):
+        self.owner.return_value = ("jordan", None)
+        self.assertTrue(C.block(PHONE["mac"]).startswith("REFUSED: COMMS GUARD"))
+        self.post.assert_not_called()
+
+    def test_unreadable_ownership_fails_closed(self):
+        self.owner.return_value = (None, "pg down")
+        self.assertTrue(C.block(PHONE["mac"]).startswith("REFUSED"))
+        self.post.assert_not_called()
+
     def test_no_hardcoded_credentials(self):
         pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
         self.assertIsNone(pat.search(SRC))
@@ -116,7 +137,7 @@ class TestRetry(_Base):
 
 class TestUnit(_Base):
     def test_find_client_is_case_insensitive(self):
-        self.assertEqual(C.find_client(PHONE["mac"].upper())["name"], "Amys-iPhone")
+        self.assertEqual(C.find_client(PHONE["mac"].upper())["name"], "Unknown-ESP32")
         self.assertIsNone(C.find_client("00:00:00:00:00:00"))
         C.u._fetch_clients.return_value = None
         self.assertIsNone(C.find_client(PHONE["mac"]))
@@ -132,7 +153,7 @@ class TestUnit(_Base):
     def test_status_strings(self):
         self.assertEqual(C.status("00:00:00:00:00:00"), "00:00:00:00:00:00: not currently connected")
         s = C.status(PHONE["mac"])
-        self.assertIn("Amys-iPhone ip=192.168.1.143 wired=False ssid=DigitalNoise blocked=False infra=no", s)
+        self.assertIn("Unknown-ESP32 ip=192.168.1.143 wired=False ssid=DigitalNoise blocked=False infra=no", s)
         C.u._fetch_clients.return_value = [{**PHONE, "ip": "192.168.1.2"}]
         self.assertIn("infra=infrastructure address 192.168.1.2", C.status(PHONE["mac"]))
 
@@ -167,7 +188,7 @@ class TestFunctional(_Base):
     def test_block_golden_path(self):
         r = C.block(PHONE["mac"].upper(), "rogue scanner")
         self.post.assert_called_once_with({"cmd": "block-sta", "mac": PHONE["mac"]})
-        self.assertIn("quarantined AA:BB:CC:DD:EE:FF = Amys-iPhone (192.168.1.143)", r)
+        self.assertIn("quarantined AA:BB:CC:DD:EE:FF = Unknown-ESP32 (192.168.1.143)", r)
         self.assertIn("Reason: rogue scanner", r)
         self.assertIn("Undo: unquarantine", r)
 
