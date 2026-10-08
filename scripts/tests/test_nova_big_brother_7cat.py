@@ -53,7 +53,7 @@ class TestSecurity(_LockCase):
             self.assertEqual(p.read_text(), str(os.getpid()))
 
     def test_locks_stay_in_the_run_dir(self):
-        self.assertEqual(bb.PID_FILE.parent.name, "run")
+        self.assertIn('PID_FILE = Path.home() / ".openclaw/run/big-brother.pid"', SRC)   # default run dir (other suites repoint PID_FILE)
         self.assertIsNone(bb._acquire_single_instance("service", self.dir))
         self.assertEqual(sorted(os.listdir(self.dir)), ["big-brother-service.lock"])
 
