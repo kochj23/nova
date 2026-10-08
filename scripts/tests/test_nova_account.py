@@ -128,26 +128,26 @@ class TestPerformance(unittest.TestCase):
 
 class TestRetry(unittest.TestCase):
     def test_query_helper_fails_open_with_error_dict(self):
-        # RETRY GAP: _q — one attempt, no backoff; an unreachable ledger is reported, never guessed around
+        # _q — 2 attempts (1 s apart); an unreachable ledger is reported, never guessed around
         def boom(*a, **k):
             raise OSError("pg down")
-        with patch.object(acct.psycopg2, "connect", boom):
+        with patch.object(acct.psycopg2, "connect", boom), patch("time.sleep"):
             r = acct._q(acct.OPS, "SELECT 1")
         self.assertIsInstance(r, dict)
         self.assertIn("OSError", r["error"])
 
     def test_git_helper_fails_open_as_error_string(self):
-        # RETRY GAP: _git — subprocess is tried once; a failure becomes a string the trace can show
+        # _git — local git, tried once by design (deterministic); a failure becomes a string the trace can show
         def boom(*a, **k):
             raise subprocess.TimeoutExpired("git", 30)
         with patch.object(acct.subprocess, "run", boom):
             self.assertTrue(acct._git(["status"]).startswith("error:"))
 
     def test_http_helper_fails_open(self):
-        # RETRY GAP: _http — one HEAD; network error -> None, HTTP error -> its code, never an exception
+        # _http — network error retried once (1 s) -> None; HTTP error -> its code, never an exception
         def boom(*a, **k):
             raise OSError("no route")
-        with patch.object(acct.urllib.request, "urlopen", boom):
+        with patch.object(acct.urllib.request, "urlopen", boom), patch("time.sleep"):
             self.assertIsNone(acct._http("https://example.invalid/x"))
 
         def gone(*a, **k):

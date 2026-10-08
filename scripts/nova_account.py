@@ -28,12 +28,17 @@ SELF_VECTORS = ("unclaimed", "gravel", "imagination", "learning", "projects", "s
                 "self_model", "principal_model", "becoming")
 
 
-def _q(dsn, sql, args=()):
-    try:
-        c = psycopg2.connect(dsn, connect_timeout=5); cur = c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
-        cur.execute(sql, args); rows = [dict(r) for r in cur.fetchall()]; c.close(); return rows
-    except Exception as e:
-        return {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+def _q(dsn, sql, args=(), attempts=2):
+    """Rows as dicts, or {'error': ...}. A failed connect/query is retried once after 1 s (PG failover blip)."""
+    import time
+    for i in range(attempts):
+        try:
+            c = psycopg2.connect(dsn, connect_timeout=5); cur = c.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(sql, args); rows = [dict(r) for r in cur.fetchall()]; c.close(); return rows
+        except Exception as e:
+            if i == attempts - 1:
+                return {"error": f"{type(e).__name__}: {str(e)[:120]}"}
+            time.sleep(1)
 
 
 def _d(s): return date.fromisoformat(s) if s else date.today()
@@ -137,12 +142,18 @@ def _git(args, cwd=JOURNAL, timeout=30):
     except Exception as e: return f"error: {e}"
 
 
-def _http(url):
-    try:
-        req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "nova-account"})
-        return urllib.request.urlopen(req, timeout=10).status
-    except urllib.error.HTTPError as e: return e.code
-    except Exception: return None
+def _http(url, attempts=2):
+    """HEAD status; an HTTP error is an answer (its code), a network error is retried once, then None."""
+    import time
+    for i in range(attempts):
+        try:
+            req = urllib.request.Request(url, method="HEAD", headers={"User-Agent": "nova-account"})
+            return urllib.request.urlopen(req, timeout=10).status
+        except urllib.error.HTTPError as e: return e.code
+        except Exception:
+            if i == attempts - 1:
+                return None
+            time.sleep(1)
 
 
 def article(query: str, day: date | None = None) -> dict:
