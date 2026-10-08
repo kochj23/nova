@@ -446,9 +446,22 @@ def apply_goal_retirements(oc):
     return done
 
 
+def propose_lockboxes(oc, mc):
+    """Wish #70 Dan's Lockboxes (2026-10-08): letting go of a PAINFUL memory means boxing it, not
+    deleting it — proposed here, boxed only on Jordan's yes (nova_relationship.py lockbox approve <id>);
+    a boxed memory drops out of casual recall but stays retrievable on explicit request."""
+    try:
+        import nova_relationship
+        return nova_relationship.propose_boxes(oc, mc)
+    except Exception as e:  # noqa: BLE001
+        log(f"lockbox proposals skipped: {e}")
+        return 0
+
+
 def run_review(oc, mc):
     apply_goal_retirements(oc)
     propose_goal_retirements(oc)
+    propose_lockboxes(oc, mc)
     cands = nominate_preoccupations(oc, mc) + nominate_projects(oc) + nominate_taste(oc)
     log(f"nominated {len(cands)} candidate(s) by heuristic")
     if not cands:

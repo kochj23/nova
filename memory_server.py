@@ -28,6 +28,11 @@ Endpoints:
   POST /remember[?async=1]  { "text": "...", "source": "...", "metadata": {...} }
   GET  /recall?q=...&n=5[&source=...&min_score=0.0&tier=standard]
   POST /recall_batch         { "queries": [{"q": "...", "n": 5, "source": "..."}, ...] }
+
+Lockboxes ("Dan's Lockboxes", 2026-10-08): a memory whose metadata has boxed=true is
+excluded from casual recall (/recall, /recall_batch, /recall/deep, /random). It comes back
+only on EXPLICIT request: /recall?include_boxed=true (nova_relationship.lockbox_recall uses
+that with a high min_score). Boxing is reversible; nothing is deleted.
   GET  /search?q=...&n=10[&source=...]   <- full-text ILIKE, best for proper names
   GET  /random[?n=1&source=...]
   GET  /health
@@ -598,6 +603,7 @@ async def _do_recall(
     min_score: float = 0.0,
     tier: str = "standard",
     include_private: bool = True,
+    include_boxed: bool = False,
 ) -> dict:
     """Core recall logic shared by /recall and /recall_batch.
 
@@ -613,7 +619,8 @@ async def _do_recall(
     n = max(1, min(n, MAX_N))
     ef = EF_SEARCH.get(tier, EF_SEARCH["standard"])
 
-    cache_raw = f"{q}:{n}:{source or 'all'}:{tier}:{'p1' if include_private else 'p0'}"
+    cache_raw = (f"{q}:{n}:{source or 'all'}:{tier}:{'p1' if include_private else 'p0'}"
+                 f"{':b1' if include_boxed else ''}")
     cache_key = f"recall:{hashlib.md5(cache_raw.encode()).hexdigest()}"
     try:
         cached = await _redis.get(cache_key)
@@ -629,6 +636,8 @@ async def _do_recall(
     k = n * 20 if source else n * 3
 
     sup = "AND superseded_by IS NULL" if _HAS_SUPERSESSION else ""
+    if not include_boxed:
+        sup += " " + BOXED_CLAUSE
 
     # Hybrid: run the vector leg and the full-text leg concurrently, fuse below.
     vec_rows, fts_rows = await asyncio.gather(
@@ -684,6 +693,10 @@ async def _do_recall(
         pass
 
     return response
+
+
+# Lockboxes: boxed memories never surface in casual recall (constant SQL, no values).
+BOXED_CLAUSE = "AND (metadata->>'boxed') IS DISTINCT FROM 'true'"
 
 
 async def _vector_leg(vec_str, k, n, ef, source, include_private, sup):
@@ -792,6 +805,7 @@ async def recall(
     min_score: float = Query(0.0),
     tier: str = Query("standard", pattern="^(fast|standard|deep)$"),
     include_private: bool = Query(True),
+    include_boxed: bool = Query(False),
 ):
     """Semantic search using HNSW cosine similarity with Redis caching.
 
@@ -800,7 +814,7 @@ async def recall(
     """
     if not q.strip():
         raise HTTPException(status_code=400, detail="q cannot be empty")
-    return await _do_recall(q, n, source, min_score, tier, include_private)
+    return await _do_recall(q, n, source, min_score, tier, include_private, include_boxed)
 
 
 @app.post("/recall_batch")
@@ -912,17 +926,18 @@ async def deep_recall(
     query_vec = await embed(q)
     vec_str = _vec_str(query_vec)
     k = n * 20 if source else n * 3
+    boxed = BOXED_CLAUSE
 
     async with _pg_pool.acquire() as conn:
         async with conn.transaction():
             await conn.execute("SET LOCAL hnsw.ef_search = 400")
             if source:
                 rows = await conn.fetch(
-                    """SELECT id, text, metadata, source, created_at, tier,
+                    f"""SELECT id, text, metadata, source, created_at, tier,
                               accessed_at, access_count,
                               1 - (embedding <=> $1::vector) AS score
                        FROM memories
-                       WHERE source = $2 AND tier IN ('working', 'long_term')
+                       WHERE source = $2 AND tier IN ('working', 'long_term') {boxed}
                        ORDER BY CASE tier WHEN 'working' THEN 0 ELSE 1 END,
                                 embedding <=> $1::vector
                        LIMIT $3""",
@@ -930,11 +945,11 @@ async def deep_recall(
                 )
             else:
                 rows = await conn.fetch(
-                    """SELECT id, text, metadata, source, created_at, tier,
+                    f"""SELECT id, text, metadata, source, created_at, tier,
                               accessed_at, access_count,
                               1 - (embedding <=> $1::vector) AS score
                        FROM memories
-                       WHERE tier IN ('working', 'long_term')
+                       WHERE tier IN ('working', 'long_term') {boxed}
                        ORDER BY CASE tier WHEN 'working' THEN 0 ELSE 1 END,
                                 embedding <=> $1::vector
                        LIMIT $2""",
@@ -1081,12 +1096,12 @@ async def random_memory(source: Optional[str] = Query(None), n: int = Query(1)):
         if source:
             rows = await conn.fetch(
                 "SELECT id, text, metadata, source, created_at FROM memories "
-                "WHERE source = $1 ORDER BY RANDOM() LIMIT $2", source, n
+                f"WHERE source = $1 {BOXED_CLAUSE} ORDER BY RANDOM() LIMIT $2", source, n
             )
         else:
             rows = await conn.fetch(
                 "SELECT id, text, metadata, source, created_at FROM memories "
-                "ORDER BY RANDOM() LIMIT $1", n
+                f"WHERE true {BOXED_CLAUSE} ORDER BY RANDOM() LIMIT $1", n
             )
     memories = [{"id": r["id"], "text": r["text"],
                  "metadata": r["metadata"] if isinstance(r["metadata"], dict) else json.loads(r["metadata"]),

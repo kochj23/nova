@@ -104,6 +104,9 @@ WEIGHTS = {
     "resonance_v":      0.20,   # ± valence from the net tone of today's human messages to her
     "resonance_a":      0.05,   # a little arousal from being spoken to with feeling either way
     "silence_a":        0.10,   # arousal DROP (toward calm) for silence beyond her usual gap
+    # Wish #70 "Trixie's Joy" (2026-10-08): one evidenced good thing a day (nova_relationship.py
+    # good-thing -> good_things) grounds warmth in something that actually happened.
+    "good_thing_v":     0.06,
 }
 RESONANCE_FULL_DAY = 6.0        # ~6 real human messages reads as a fully-heard day (confidence)
 SILENCE_BASELINE_DAYS = 14      # her usual gap between human messages is measured over this window
@@ -478,6 +481,23 @@ def signal_autonomy(oc):
 
 # ── Combine + label ─────────────────────────────────────────────────────────────
 
+def signal_good_thing(oc):
+    """Wish #70 Trixie's Joy: today's evidenced good thing (good_things, written once a day by
+    nova_relationship.py) is a small, honest lift. None logged -> neutral, never negative."""
+    if not _table_exists(oc, "good_things"):
+        return [sig("good_thing", None, None, 0, 0, "good_things absent", False)]
+    try:
+        oc.execute("SELECT text, evidence FROM good_things WHERE created_at > now()-interval '24 hours' "
+                   "ORDER BY created_at DESC LIMIT 1")
+        r = oc.fetchone()
+    except Exception as e:
+        log(f"good_thing skipped: {e}")
+        return [sig("good_thing", None, None, 0, 0, "good_things unreadable", False)]
+    if not r:
+        return [sig("good_thing", 0, None, 0, 0, "no good thing logged in 24h (neutral, not negative)", True)]
+    return [sig("good_thing", 1, None, WEIGHTS["good_thing_v"], 0, f"a good thing today: {r[0]} ({r[1]})")]
+
+
 def combine(signals):
     """Fold the signal contributions into (valence, arousal, is_neutral, magnitude).
     Purely arithmetic and auditable — no model in this step."""
@@ -573,6 +593,7 @@ def compute_affect(oc, mc):
     signals += signal_surprise(oc)
     signals += signal_unresolved(oc)
     signals += signal_autonomy(oc)
+    signals += signal_good_thing(oc)    # wish #70
 
     valence, arousal, is_neutral, magnitude, usable = combine(signals)
 

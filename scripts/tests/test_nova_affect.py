@@ -269,7 +269,8 @@ class TestIntegration(unittest.TestCase):
             st = aff.compute_affect(oc, mc)
         names = [s["signal"] for s in st["signals"]]
         self.assertEqual(names, ["alert_paging", "criticals", "open_incidents", "infra_health", "creative_output",
-                                 "social_contact", "resonance", "silence", "surprise", "unresolved_load", "autonomy"])
+                                 "social_contact", "resonance", "silence", "surprise", "unresolved_load", "autonomy",
+                                 "good_thing"])
         self.assertFalse(st["neutral"])
         self.assertEqual(st["labelled_by"], "llm-named")
         by = {s["signal"]: s for s in st["signals"]}

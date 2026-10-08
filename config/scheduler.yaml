@@ -880,3 +880,29 @@ tasks:
     schedule: cron 40 8,12,17,21 * * *
     timeout: 120
     overlap: skip
+
+  # ---- 2026-10-08: wish #70 relationship & companionship organs (nova_relationship.py) ----
+  relationship_brief:              # daily — lexicon usage + evidenced ledger brief into agent_docs 'user' (gateway loads it)
+    script: nova_relationship.py
+    args: ["brief", "--write"]
+    schedule: cron 40 5 * * *
+    timeout: 120
+    overlap: skip
+  relationship_interlude:          # weekly Sun — 0-3 LLM-proposed, trace-cited, deduped ledger entries from the week
+    script: nova_relationship.py
+    args: ["interlude"]
+    schedule: cron 30 19 * * 0
+    timeout: 600
+    overlap: skip
+  hard_stretch:                    # hourly — tentative hard-stretch score -> service_config nova_quiet_mode/state; <=1 warm line per stretch, 09-21 only
+    script: nova_relationship.py
+    args: ["stretch"]
+    schedule: cron 17 * * * *
+    timeout: 120
+    overlap: skip
+  good_thing:                      # daily 19:30 — one evidenced good thing -> good_things (affect's 20:00 run reads it)
+    script: nova_relationship.py
+    args: ["good-thing"]
+    schedule: cron 30 19 * * *
+    timeout: 120
+    overlap: skip
