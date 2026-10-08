@@ -378,9 +378,17 @@ POOL = [MANDOA, KLINGON, MIDDLEEARTH, VALYRIAN, BELTER, DOVAHZUL, NAVI, WITCHER,
 SAMPLE_PER_ARTICLE = 8   # +1 (was 7) so the horror shelf gets airtime without crowding the others   # how many tongues to offer each run (Nova uses 2-4 of them)
 
 
-def _conn():
+def _conn(attempts=2):
+    """nova_ops connection; one retry after 1 s (the rule is seasoning — never worth a long stall)."""
+    import time
     import psycopg2
-    return psycopg2.connect(DSN)
+    for attempt in range(attempts):
+        try:
+            return psycopg2.connect(DSN, connect_timeout=5)
+        except psycopg2.OperationalError:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(1)
 
 
 def ferengi_rule(topic: str = "", conn=None):
@@ -406,7 +414,9 @@ def ferengi_rule(topic: str = "", conn=None):
                     return row
             cur.execute("SELECT number, text FROM public.ferengi_rules ORDER BY random() LIMIT 1")
             return cur.fetchone()
-    except Exception:
+    except Exception as e:
+        import sys
+        print(f"[lexicon] ferengi_rule unavailable ({type(e).__name__}: {e}) — seasoning without it", file=sys.stderr)
         return None
     finally:
         if own and conn:
