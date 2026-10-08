@@ -78,9 +78,9 @@ def _check(cur, notify=None):
     conn = _conn(cur)
     buf = io.StringIO()
     with patch.object(bm.psycopg2, "connect", MagicMock(return_value=conn)) as connect, \
-         patch.object(bm.nova_notify, "notify", n), redirect_stdout(buf):
+         patch.object(bm.nova_notify, "notify", n), patch.object(bm.time, "sleep"), redirect_stdout(buf):
         issues = bm.check()
-    connect.assert_called_once_with(bm.DSN)
+    connect.assert_called_once_with(bm.DSN, connect_timeout=10)
     return issues, n, buf.getvalue(), conn
 
 
@@ -124,22 +124,23 @@ class TestPerformance(unittest.TestCase):
 
 class TestRetry(unittest.TestCase):
     def test_pg_connect_failure_is_one_shot_and_raises(self):
-        # RETRY GAP: check()/psycopg2.connect — a single attempt; the OSError escapes so launchd sees a
+        # check()/psycopg2.connect — 3 attempts (5 s / 10 s); then the OSError escapes so launchd sees a
         # non-zero exit rather than a silent "healthy" (no safe default is possible without the table)
         connect = MagicMock(side_effect=OSError("pg-primary unreachable"))
-        with patch.object(bm.psycopg2, "connect", connect):
+        with patch.object(bm.psycopg2, "connect", connect), patch.object(bm.time, "sleep"):
             with self.assertRaises(OSError):
                 bm.check()
-        self.assertEqual(connect.call_count, 1)
+        self.assertEqual(connect.call_count, 3)
 
     def test_notify_failure_fails_open_to_stdout(self):
-        # RETRY GAP: emit() — nova_notify.notify is tried once; on failure the line is printed, never re-sent
+        # emit() — nova_notify.notify is tried 3x (2 s / 4 s); then the failure and the line go to stdout
         n = MagicMock(side_effect=RuntimeError("bus down"))
         buf = io.StringIO()
-        with patch.object(bm.nova_notify, "notify", n), redirect_stdout(buf):
+        with patch.object(bm.nova_notify, "notify", n), patch.object(bm.time, "sleep"), redirect_stdout(buf):
             bm.emit("Backups healthy", "nas: 1.0h ago", "info", "backup-digest")
-        self.assertEqual(n.call_count, 1)
-        self.assertEqual(buf.getvalue().strip(), "[info] Backups healthy: nas: 1.0h ago")
+        self.assertEqual(n.call_count, 3)
+        self.assertIn("notify failed after 3 tries: bus down", buf.getvalue())
+        self.assertEqual(buf.getvalue().strip().splitlines()[-1], "[info] Backups healthy: nas: 1.0h ago")
 
     def test_notify_failure_inside_check_still_returns_issues(self):
         cur = _Cur(last={p: None for p in bm.JOBS})

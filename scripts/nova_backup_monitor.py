@@ -15,6 +15,7 @@ PG-only (no filesystem access needed). Routes via nova_notify; never raises.
 Restore-verification lives in the agent's weekly full run (it has src+dest access).
 """
 import sys
+import time
 from datetime import datetime, timezone
 
 import psycopg2
@@ -34,15 +35,33 @@ JOBS = {
 }
 
 
-def emit(title, body, level, dedup_key):
+def emit(title, body, level, dedup_key, attempts=3):
+    """Notify via the bus, retried (2 s, 4 s) — a stale-backup alert must not die on one bus blip.
+    Falls back to stdout (the launchd log) with the reason if every attempt fails."""
+    err = "nova_notify unavailable"
     if nova_notify:
-        try:
-            nova_notify.notify(title=title, body=body, level=level,
-                               category="backup", source=SOURCE, dedup_key=dedup_key)
-            return
-        except Exception:
-            pass
+        for attempt in range(attempts):
+            try:
+                nova_notify.notify(title=title, body=body, level=level,
+                                   category="backup", source=SOURCE, dedup_key=dedup_key)
+                return
+            except Exception as e:
+                err = e
+                if attempt < attempts - 1:
+                    time.sleep(2 * (attempt + 1))
+        print(f"[backup-monitor] notify failed after {attempts} tries: {err}")
     print(f"[{level}] {title}: {body}")
+
+
+def _connect(attempts=3):
+    """PG connect with retry (5 s, 10 s); re-raises so launchd sees a non-zero exit, never a false 'healthy'."""
+    for attempt in range(attempts):
+        try:
+            return psycopg2.connect(DSN, connect_timeout=10)
+        except Exception:
+            if attempt == attempts - 1:
+                raise
+            time.sleep(5 * 2 ** attempt)
 
 
 def _describe(prefix, age_h, job, elapsed_s, files, nbytes, errors):
@@ -56,7 +75,7 @@ def _describe(prefix, age_h, job, elapsed_s, files, nbytes, errors):
 
 
 def check():
-    conn = psycopg2.connect(DSN)
+    conn = _connect()
     conn.autocommit = True
     issues, healthy = [], []
     with conn.cursor() as cur:
