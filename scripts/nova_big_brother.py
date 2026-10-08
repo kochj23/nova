@@ -4615,6 +4615,39 @@ def _api_server_thread():
 
 # ── PID file management ───────────────────────────────────────────────────────
 
+# Single-instance guard (2026-10-08). Three copies ran at once — the 10-03 system LaunchDaemon
+# (domain=all) PLUS the two #511 split user agents (service, system) — so every sweep, heal and
+# alert happened up to 3x and two processes fought over :37461. Each domain holds an exclusive
+# flock; 'all' needs both, so 'all' can never coexist with either split daemon (or itself).
+_INSTANCE_LOCKS = []  # open fds — held for the life of the process; the kernel drops them on exit
+
+
+def _domain_lock_names(domain):
+    return ["service", "system"] if domain == "all" else [domain]
+
+
+def _acquire_single_instance(domain=None, run_dir=None):
+    """Take the per-domain flock(s). Returns None on success, else the domain already held."""
+    domain = domain or BB_DOMAIN
+    run_dir = Path(run_dir) if run_dir else PID_FILE.parent
+    run_dir.mkdir(parents=True, exist_ok=True)
+    taken = []
+    for name in _domain_lock_names(domain):
+        fd = os.open(str(run_dir / f"big-brother-{name}.lock"), os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            for t in taken:
+                os.close(t)
+            return name
+        os.ftruncate(fd, 0)
+        os.write(fd, str(os.getpid()).encode())
+        taken.append(fd)
+    _INSTANCE_LOCKS.extend(taken)
+    return None
+
+
 def _write_pid():
     PID_FILE.parent.mkdir(parents=True, exist_ok=True)
     PID_FILE.write_text(str(os.getpid()))
@@ -4648,6 +4681,12 @@ def main():
     signal.signal(signal.SIGINT, _handle_sigterm)
     signal.signal(signal.SIGUSR1, _handle_sigusr1)
 
+    held = _acquire_single_instance()
+    if held:
+        # exit 0 so launchd (KeepAlive Crashed) does not respawn-loop a duplicate
+        log(f"Big Brother domain={BB_DOMAIN}: '{held}' already owned by another instance — exiting",
+            level=LOG_WARN, source="big-brother")
+        return
     _write_pid()
     log(f"Big Brother v{VERSION} starting (PID {os.getpid()}, domain={BB_DOMAIN})", level=LOG_INFO, source="big-brother")
 

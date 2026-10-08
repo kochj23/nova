@@ -225,8 +225,8 @@ def _code_mtime(script: str, host=None):
 # these (not all ~70 launchd jobs) so ordinary dev-churn on unrelated scripts doesn't cry stale.
 # auto=True: a pure poller safe to bounce unattended (idempotent). auto=False: may be mid-task
 # (the scheduler) — flag + queue for a human, never auto-restart. Extend as monitors are added.
-# Local daemons carry their exact launchd `label` so we read the RIGHT process (three of these
-# share one script under different labels); remote daemons carry their systemd `unit`.
+# Local daemons carry their exact launchd `label` so we read the RIGHT process (a script may
+# run under more than one label); remote daemons carry their systemd `unit`.
 def _L(name, script, label, auto=True):
     return {"name": name, "script": script, "host": None, "label": label, "auto": auto}
 
@@ -234,11 +234,10 @@ def _L(name, script, label, auto=True):
 MONITOR_DAEMONS = [
     _L("nova-capacity",        "nova_capacity.py",       "net.digitalnoise.nova-capacity"),
     _L("nova-snmp-poller",     "nova_snmp_poller.py",    "net.digitalnoise.nova-snmp-poller"),
-    # nova_big_brother.py runs under three separate launchd labels (each its own process); check &
-    # reload each so a fix isn't left stranded in the two that share the script.
-    _L("big-brother",          "nova_big_brother.py",    "net.digitalnoise.big-brother"),
-    _L("nova-service-monitor", "nova_big_brother.py",    "net.digitalnoise.nova-service-monitor"),
-    _L("nova-system-monitor",  "nova_big_brother.py",    "net.digitalnoise.nova-system-monitor"),
+    # nova_big_brother.py runs as ONE system LaunchDaemon (domain=all, survives reboot with nobody
+    # logged in). The #511 split user agents (nova-service-monitor / nova-system-monitor) were retired
+    # 2026-10-08 after all three ran at once; a per-domain flock in the script now forbids overlap.
+    {**_L("big-brother", "nova_big_brother.py", "net.digitalnoise.daemon.big-brother"), "domain": "system"},
     _L("nova-backup-monitor",  "nova_backup_monitor.py", "net.digitalnoise.nova-backup-monitor"),
     _L("nova-core-liveness",   "nova_core_liveness.py",  "net.digitalnoise.core-liveness"),
     # Added 2026-08-13: an 18-day-stale security-scan daemon held aide's timeout at 600 for weeks
@@ -254,6 +253,8 @@ _STALE_GRACE_S = 300  # code must be newer than the process by > this to count (
 def _restart_cmd(d):
     if d["host"]:
         return f"sudo systemctl restart {d['unit']}"
+    if d.get("domain") == "system":
+        return f"sudo -n launchctl kickstart -k system/{d['label']}"
     return f"launchctl kickstart -k gui/{os.getuid()}/{d['label']}"
 
 
@@ -261,7 +262,11 @@ def _pid_of(d):
     if d["host"]:
         out = _sh(f"systemctl show {d['unit']} -p MainPID --value", d["host"])
         return int(out) if out.isdigit() and int(out) > 0 else None
-    # exact per-label PID (not pgrep-by-script — three labels share one script)
+    # exact per-label PID (not pgrep-by-script — a script may run under several labels)
+    if d.get("domain") == "system":  # root daemons aren't in the user's `launchctl list`
+        out = _sh(f"launchctl print system/{d['label']}")
+        m = re.search(r'^\s*pid = (\d+)', out, re.M)
+        return int(m.group(1)) if m else None
     out = _sh(f"launchctl list {d['label']}")
     m = re.search(r'"PID"\s*=\s*(\d+)', out)
     return int(m.group(1)) if m else None

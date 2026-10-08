@@ -899,6 +899,40 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(list(bb._metrics), [{"t": 1, "issues": 0}])
 
 
+class TestSingleInstance(unittest.TestCase):
+    """2026-10-08: the system LaunchDaemon (all) + both #511 split agents ran together -> 3 copies."""
+    def _try(self, run_dir, domain):
+        code = ("import sys,time; sys.path.insert(0, %r); import nova_big_brother as b; "
+                "h=b._acquire_single_instance(%r, %r); print(h or 'ok', flush=True); "
+                "time.sleep(3 if h is None else 0)") % (str(SCRIPTS_DIR), domain, str(run_dir))
+        return subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True,
+                                env={**os.environ, "NOVA_TEST_QUIET": "1"})
+
+    def test_all_excludes_split_daemons_and_itself(self):
+        with tempfile.TemporaryDirectory() as d:
+            holder = self._try(d, "all")
+            self.assertEqual(holder.stdout.readline().strip(), "ok")
+            for dom, held in (("all", "service"), ("service", "service"), ("system", "system")):
+                p = self._try(d, dom)
+                self.assertEqual(p.communicate(timeout=30)[0].strip(), held)
+            holder.wait(timeout=30)
+            p = self._try(d, "service")                       # lock released when the holder exits
+            self.assertEqual(p.stdout.readline().strip(), "ok")
+            p.wait(timeout=30)
+
+    def test_split_daemons_coexist(self):
+        with tempfile.TemporaryDirectory() as d:
+            a = self._try(d, "service")
+            self.assertEqual(a.stdout.readline().strip(), "ok")
+            b = self._try(d, "system")
+            self.assertEqual(b.stdout.readline().strip(), "ok")
+            a.wait(timeout=30); b.wait(timeout=30)
+
+    def test_main_takes_the_guard_before_anything_else(self):
+        body = SRC[SRC.index("def main():"):]
+        self.assertLess(body.index("_acquire_single_instance()"), body.index("_write_pid()"))
+
+
 class TestFrame(unittest.TestCase):
     def test_import_never_starts_the_daemon(self):
         self.assertIn('if __name__ == "__main__":\n    main()', SRC)
