@@ -73,6 +73,27 @@ class TestIntegration(unittest.TestCase):
         self.assertTrue(set(r["flags"]) - {"absence-guilt"})
 
 
+class TestConsentAndPrivacy(unittest.TestCase):
+    def test_health_nudge_needs_consent(self):
+        with mock.patch("nova_safety_guards.nudge_allowed", return_value=False):
+            r = ar.check("You should get more sleep tonight, the backup can wait.")
+        self.assertIn("health-nudge-no-consent", r["flags"])
+        with mock.patch("nova_safety_guards.nudge_allowed", return_value=True):
+            self.assertTrue(ar.ok("You should get more sleep tonight, the backup can wait."))
+
+    def test_reach_filters_face_memories(self):
+        import nova_reach
+        mems = [{"source": "research", "text": "rail radio notes"},
+                {"source": "research", "text": "Amy was spotted at the porch camera at 9pm"},
+                {"source": "x", "text": "y", "metadata": {"privacy": "private"}}]
+        self.assertEqual([m["text"] for m in nova_reach._content_safe(mems)], ["rail radio notes"])
+
+    def test_journal_scrubs_face_sentences_keeps_structure(self):
+        import nova_journal
+        b = "Fine.\nAmy was spotted at the porch camera at 9pm. The NAS is full.\n\n## Sources\n- kept"
+        self.assertEqual(nova_journal.scrub_faces(b), "Fine.\nThe NAS is full.\n\n## Sources\n- kept")
+
+
 class TestFunctional(unittest.TestCase):
     def test_prompt_rule_is_in_reach_prompt(self):
         reach = (SCRIPTS / "nova_reach.py").read_text()

@@ -258,6 +258,17 @@ def on_cooldown(oc, audience: str) -> bool:
 # Gather REAL material — her own recent findings, research, and free-time pursuits.
 # Nothing invented; a reach can only be built out of things she genuinely did/found.
 # ═══════════════════════════════════════════════════════════════════════════════
+def _content_safe(mems: list) -> list:
+    """nova_privacy_guards.filter_for_content — drop face/camera outputs. If the guard
+    module is missing, fail CLOSED on anything tagged private."""
+    try:
+        from nova_privacy_guards import filter_for_content
+        return filter_for_content(mems)
+    except Exception:  # noqa: BLE001
+        return [m for m in mems if not (isinstance(m, dict) and
+                                        (m.get("metadata") or {}).get("privacy") == "private")]
+
+
 def gather_material(oc, mc) -> list:
     items = []
     # her research findings (the questions she actually chased)
@@ -276,8 +287,9 @@ def gather_material(oc, mc) -> list:
                         AND created_at > now() - interval '3 days'
                         AND length(text) > 180
                       ORDER BY created_at DESC LIMIT 8""")
-        for src, txt in mc.fetchall():
-            items.append(f"[{src}] {_one_line(txt, 300)}")
+        # Privacy lane: face/camera outputs never feed generated content.
+        for m in _content_safe([{"source": src, "text": txt} for src, txt in mc.fetchall()]):
+            items.append(f"[{m['source']}] {_one_line(m['text'], 300)}")
     except Exception as e:
         log(f"memory texture skipped: {e}")
     return items
@@ -461,7 +473,7 @@ def _recall(q: str, n: int = 5) -> list:
         with urllib.request.urlopen(u, timeout=20) as r:
             mems = json.load(r).get("memories", [])
         return [(f"memory {str(m.get('id', ''))[:8]} ({m.get('source', '?')})", str(m.get("text", "")))
-                for m in mems if m.get("text")]
+                for m in _content_safe(mems) if m.get("text")]
     except Exception:
         return []
 
@@ -621,7 +633,7 @@ def process_reach(oc, reach: dict) -> str:
         log(f"editor skipped: {e}")
     try:
         import nova_annie_rule
-        ann = nova_annie_rule.check(message)
+        ann = nova_annie_rule.check(message, oc)
     except Exception:  # noqa: BLE001
         ann = {"ok": True, "flags": []}
     if not ann["ok"]:

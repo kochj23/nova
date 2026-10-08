@@ -1208,6 +1208,30 @@ def longform_expand(title: str, body: str, section: str, sources: str | None,
         return body
 
 
+def scrub_faces(body: str) -> str:
+    """Privacy lane (nova_privacy_guards.scrub_face_mentions): drop sentences that report
+    a face sighting. Applied per prose line so paragraphs/markdown survive (the guard
+    re-joins sentences with spaces); the Sources section is left as is. Never raises."""
+    try:
+        from nova_privacy_guards import scrub_face_mentions
+    except Exception:
+        return body
+    m = re.search(r"^#{1,6}\s*\**\s*(sources|references|attribution)\b", body or "", re.I | re.M)
+    head, tail = (body[:m.start()], body[m.start():]) if m else (body or "", "")
+    out, n = [], 0
+    for ln in head.split("\n"):
+        st = ln.strip()
+        if st and st[0] not in "#>|!-*+<`" and "](" not in st:
+            new = scrub_face_mentions(st)
+            if new != st:
+                n += 1
+                ln = new
+        out.append(ln)
+    if n:
+        log(f"[privacy] scrubbed face-sighting sentences from {n} paragraph(s)")
+    return "\n".join(out) + tail
+
+
 def publish_hugo(title: str, body: str, section: str, tags: list[str],
                  description: str, image_path: str | None = None, emoji: str = "",
                  stable_slug: str | None = None,
@@ -1246,6 +1270,8 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
         old = title
         title = f"{section.title()} Dispatch — {today_str()}"
         log(f"[title-guard] replaced degenerate title {old!r} -> {title!r}")
+
+    body = scrub_faces(body)
 
     # Publish gate: never let a refusal / clarifying-question / placeholder reach the site.
     from nova_journal_guard import is_publishable

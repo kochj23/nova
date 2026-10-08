@@ -41,7 +41,7 @@ def bundle(rows):
 def _annie_ok(text):
     try:
         import nova_annie_rule
-        return nova_annie_rule.ok(text)
+        return nova_annie_rule.ok(text)   # manipulation_check + absence guilt + nudge consent
     except Exception:  # noqa: BLE001
         return True
 
