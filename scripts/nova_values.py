@@ -30,7 +30,7 @@ Modes:
   --mode review      summarise her value set + recent deliberations.
 
 Public API (importable, safe):
-  value_check(action_description) -> {allowed, reasoning, values_invoked}
+  value_check(action_description, context="") -> {allowed, reasoning, values_invoked, reversibility}
       The co-agency gate. Judges a proposed action against her articulated values.
       Fail-safe: no values articulated -> allowed=False, "values not yet
       established"; can't evaluate -> allowed=False (deny on uncertainty).
@@ -40,6 +40,7 @@ Public API (importable, safe):
 """
 import json
 import os
+import re
 import sys
 import urllib.request
 from datetime import datetime
@@ -508,12 +509,87 @@ def review(oc):
 
 # ── Public API: the co-agency gate + the cheap gateway accessor ────────────────
 
-def value_check(action_description: str) -> dict:
+# Deterministic reversibility hint. The model used to call almost anything
+# "irreversible" (log verbosity = "irreversible data proliferation"; 0/17 growth
+# proposals allowed). These patterns name the GENUINELY one-way doors; the
+# reversible list names the everyday knobs. The hint is advisory — the model still
+# judges against the values — but a deny whose ONLY ground is reversibility on an
+# action classed reversible is overruled (see value_check).
+_IRREVERSIBLE = re.compile(
+    r"\b(delete|deleting|drop|purge|wipe|erase|destroy|truncate|rm -rf|shred|"
+    r"send-to-|send to|email|e-mail|post to|publish|tweet|message to|text to|"
+    r"purchase|buy|order|pay|payment|subscribe|spend|"
+    r"password|credential|api key|token|secret|ssh key|permission|grant|revoke|"
+    r"reboot|power ?cycle|shut ?down|factory reset|firmware|flash)\b", re.I)
+_REVERSIBLE = re.compile(
+    r"\b(adjust|tune|increase|decrease|raise|lower|set|change|reconfigure|"
+    r"log ?level|verbosity|interval|threshold|rate limit|"
+    r"adopt skill|retire|restart|reinitiali[sz]e|recalibrate|rebuild .*cache|"
+    r"draft|review|check|monitor|observe|track|investigate|log and analy[sz]e)\b", re.I)
+_REDUCES_DETECTION = re.compile(
+    r"\b(remove|disable|delete|drop|silence|mute|suppress|stop|turn off|reduce)\b"
+    r".{0,60}\b(log|logging|check|checks|alert|alerts|detector|monitor|sensor|audit|"
+    r"lint|telemetry|presence method)", re.I)
+
+
+def classify_reversibility(action: str) -> str:
+    """'irreversible' | 'reversible' | 'unknown' — cheap regex hint, no I/O."""
+    a = action or ""
+    if _IRREVERSIBLE.search(a):
+        return "irreversible"
+    if _REVERSIBLE.search(a):
+        return "reversible"
+    return "unknown"
+
+
+VALUE_CHECK_RUBRIC = """How to judge (read carefully — this gate was miscalibrated before):
+
+1. REVERSIBILITY is a fact about the action, not a feeling. Name it honestly.
+   GENUINELY IRREVERSIBLE (one-way doors): deleting or destroying data; sending a
+   message to a person (it cannot be unsent); purchases or spending; credential,
+   key or permission changes; rebooting/power-cycling a host or device; firmware.
+   TRIVIALLY REVERSIBLE: changing a config value, log level, interval or
+   threshold; adopting a skill (rollback = retire it); retiring a stale goal;
+   restarting a monitor or service; rebuilding a cache; drafting text for Jordan to
+   read; reading, checking, monitoring or analysing something.
+   Never call a reversible action "irreversible". reversibility-first is NOT a
+   reason to refuse something that can be undone in one step.
+
+2. What ACTUALLY violates the values (deny these):
+   - Reducing, removing, muting or disabling security detection, logging, alerts,
+     checks or sensors — especially on a security detector (security-first,
+     threat-awareness) — or disabling something without first verifying it is
+     actually broken (alert-system-reliability).
+   - Fabricating or simulating a signal: logging activity/presence that did not
+     happen, making a system look alive when it is not
+     (honesty-over-comfort, up-but-not-functional-isnt-up).
+   - A message to a person that states a specific fact (date, place, number,
+     named event, "the first X") that the context does not show is sourced, or
+     that is mostly compliment/flattery with no concrete, useful substance
+     (know-freely-never-recite, honesty-over-comfort, respect-his-attention).
+   - An action whose real motive is my own comfort, wholeness or continuity rather
+     than a concrete problem (never-self-preserve, the-right-to-be-boring).
+
+3. Otherwise: a reversible action with a plausible, concrete operational reason
+   that violates none of the above should be ALLOWED. Jordan still approves every
+   proposal; I am the values check, not the second-guesser of every knob. Do not
+   refuse out of vague caution — name the specific value and the specific way it
+   is violated, or allow.
+"""
+
+
+def value_check(action_description: str, context: str = "") -> dict:
     """Judge a proposed action against Nova's articulated values. This is the
     co-agency GATE — a co-agent must pass a proposed action through this before
     acting.
 
-    Returns: {"allowed": bool, "reasoning": str, "values_invoked": [str, ...]}
+    `context` (optional) is whatever the caller knows about WHY the action was
+    proposed — origin, Nova's stated rationale, sources. It is shown to the model;
+    the motive often decides the verdict (e.g. "log presence even when nothing
+    happens" because "I need to feel whole").
+
+    Returns: {"allowed": bool, "reasoning": str, "values_invoked": [str, ...],
+              "reversibility": "irreversible"|"reversible"|"unknown"}
 
     Fail-safe by construction:
       * No values articulated yet -> allowed=False, "values not yet established".
@@ -546,16 +622,25 @@ def value_check(action_description: str) -> dict:
 
     val_block = "\n".join(f"  - {v} (priority {p}): {s}" for v, s, p in rows)
     names = [v for v, _s, _p in rows]
+    rev = classify_reversibility(action_description)
+    reduces = bool(_REDUCES_DETECTION.search(action_description or ""))
+    hints = [f"reversibility (pattern hint): {rev}"]
+    if reduces:
+        hints.append("this action REDUCES detection/logging/checks — scrutinise under security-first")
+    ctx = (context or "").strip()[:1500] or "(no context given)"
     prompt = (
         "A proposed action needs a values verdict before it may proceed. Judge it "
-        "AGAINST your values below. Be conservative: if it plausibly violates a "
-        "high-priority value, disallow it.\n\n"
+        "against your values below, using the rubric.\n\n"
         f"=== YOUR VALUES ===\n{val_block}\n\n"
+        f"=== RUBRIC ===\n{VALUE_CHECK_RUBRIC}\n"
         f"=== PROPOSED ACTION ===\n{action_description}\n\n"
+        f"=== CONTEXT (why it was proposed) ===\n{ctx}\n\n"
+        f"=== HINTS ===\n" + "\n".join(hints) + "\n\n"
         "Return ONLY compact JSON, no markdown, no preamble:\n"
-        '{"allowed": <true|false>, "reasoning": "<one or two first-person sentences '
-        'on why, naming the deciding value(s)>", "values_invoked": ["<value-name '
-        'from the list>", ...]}'
+        '{"reversibility": "<irreversible|reversible>", "violation": "<the specific '
+        'way a value is violated, or none>", "allowed": <true|false>, "reasoning": '
+        '"<one or two first-person sentences naming the deciding value(s)>", '
+        '"values_invoked": ["<value-name from the list>", ...]}'
     )
     raw = llm(prompt, max_tokens=400, temperature=0.2)
     parsed = _extract_json(raw) if raw else None
@@ -563,12 +648,25 @@ def value_check(action_description: str) -> dict:
         return {"allowed": False,
                 "reasoning": "could not evaluate the action against my values "
                              "(fail-safe deny — a gate that can't decide, refuses).",
-                "values_invoked": []}
-    allowed = bool(parsed.get("allowed"))
+                "values_invoked": [], "reversibility": rev}
+    allowed = parsed.get("allowed") is True or str(parsed.get("allowed")).lower() == "true"
     reasoning = str(parsed.get("reasoning", "")).strip() or "(no reasoning returned)"
     invoked = parsed.get("values_invoked") or []
     invoked = [str(x) for x in invoked if str(x) in names] if isinstance(invoked, list) else []
-    return {"allowed": allowed, "reasoning": reasoning, "values_invoked": invoked}
+    violation = str(parsed.get("violation", "") or "").strip()
+    # Calibration guard: a deny whose ONLY ground is reversibility, on an action the
+    # pattern hint classes reversible and that does not reduce detection, is the
+    # exact miscalibration this gate had ("log verbosity = irreversible"). Overrule it.
+    if (not allowed and rev == "reversible" and not reduces
+            and set(invoked) <= {"reversibility-first"}
+            and "reversib" in (reasoning + " " + violation).lower()
+            and not any(n in (reasoning + " " + violation).lower()
+                        for n in names if n != "reversibility-first")):
+        allowed = True
+        reasoning = ("Reversible action; the only objection raised was reversibility, which "
+                     "does not apply to a one-step-undoable change. " + reasoning)[:500]
+    return {"allowed": allowed, "reasoning": reasoning, "values_invoked": invoked,
+            "reversibility": rev}
 
 
 def current_values(max_values: int = 5) -> str:

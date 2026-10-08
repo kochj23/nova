@@ -231,6 +231,19 @@ class TestUnit(unittest.TestCase):
         bad = types.SimpleNamespace(value_check=lambda a, c=None: {"nope": 1})
         with mock.patch.dict(sys.modules, {"nova_values": bad}):
             self.assertFalse(C.run_value_check(_Cur(), "a", "c")["available"])
+        # the context actually reaches a two-arg value_check (pre-2026-10-08 it never did)
+        seen = []
+        two = types.SimpleNamespace(value_check=lambda action, context="": seen.append(context) or {"allowed": True})
+        with mock.patch.dict(sys.modules, {"nova_values": two}):
+            C.run_value_check(_Cur(), "a", C._vc_context("tinker", "I need to feel whole"))
+        self.assertIn("I need to feel whole", seen[0]); self.assertIn("origin: tinker", seen[0])
+        # a TypeError raised INSIDE the check is an error, not a cue to drop the context
+        inner = types.SimpleNamespace(value_check=mock.MagicMock(side_effect=TypeError("bug inside")))
+        with mock.patch.dict(sys.modules, {"nova_values": inner}):
+            self.assertFalse(C.run_value_check(_Cur(), "a", "c")["available"])
+        one = types.SimpleNamespace(value_check=lambda action: {"allowed": False})
+        with mock.patch.dict(sys.modules, {"nova_values": one}):
+            self.assertTrue(C.run_value_check(_Cur(), "a", "c")["available"])
         boom = types.SimpleNamespace(value_check=mock.MagicMock(side_effect=RuntimeError("x")))
         with mock.patch.dict(sys.modules, {"nova_values": boom}):
             self.assertIn("errored", C.run_value_check(_Cur(), "a", "c")["reason"])

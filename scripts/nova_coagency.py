@@ -226,16 +226,32 @@ def llm(prompt, max_tokens=700, temperature=0.7):
 # proposal is NOT approvable. We try, in order: a Python module `nova_values` with a
 # callable `value_check`, then a DB function nova_values.value_check(text).
 # ═══════════════════════════════════════════════════════════════════════════════
+def _vc_context(origin, rationale, extra="") -> str:
+    """What value_check sees as the WHY of a proposal: origin + Nova's own stated
+    rationale first (the motive often decides it), then any caller context."""
+    parts = [f"origin: {origin}", f"Nova's stated rationale: {rationale or '(none)'}"]
+    if extra:
+        parts.append(f"background: {str(extra)[:1200]}")
+    return "\n".join(parts)[:2000]
+
+
 def run_value_check(oc, proposed_action: str, context: str) -> dict:
     # (1) Python module nova_values.value_check(action, context=...)
     try:
         import nova_values  # type: ignore
         fn = getattr(nova_values, "value_check", None)
         if callable(fn):
+            # nova_values.value_check(action, context="") — context is the WHY (origin,
+            # rationale). Pre-2026-10-08 it took one arg, so this call raised TypeError
+            # and the old fallback judged the bare action string with no context at all.
+            # Only fall back for a genuinely one-arg implementation (inspect, don't
+            # swallow a TypeError raised from inside the check).
+            import inspect
             try:
-                res = fn(proposed_action, context)
-            except TypeError:
-                res = fn(proposed_action)
+                n_params = len(inspect.signature(fn).parameters)
+            except (TypeError, ValueError):
+                n_params = 2
+            res = fn(proposed_action, context) if n_params >= 2 else fn(proposed_action)
             if isinstance(res, dict) and isinstance(res.get("allowed"), bool):
                 res.setdefault("available", True)
                 return res
@@ -485,7 +501,8 @@ def mode_propose(oc, mode):
         if not rp:
             status, vc = "blocked", {"available": False, "reason": "redline"}
         else:
-            vc = run_value_check(oc, action, json.dumps(ctx)[:2000])
+            vc = run_value_check(oc, action, _vc_context(c["origin"], c.get("rationale", ""),
+                                                         json.dumps(ctx)[:1200]))
             status = "pending_human"
         oc.execute("""INSERT INTO coagency_proposals
                         (origin, proposed_action, rationale, target_service, redline_pass, value_check, status, lineage)
@@ -529,7 +546,7 @@ def file_proposal(oc, origin, action, rationale="", target_service=None, context
     if not rp:
         status, vc = "blocked", {"available": False, "reason": "redline"}
     else:
-        vc = run_value_check(oc, action, (context or "")[:2000])
+        vc = run_value_check(oc, action, _vc_context(origin, rationale, context))
         status = "pending_human"
     oc.execute("""INSERT INTO coagency_proposals
                     (origin, proposed_action, rationale, target_service, redline_pass, value_check, status, lineage)

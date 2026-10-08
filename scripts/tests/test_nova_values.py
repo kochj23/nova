@@ -104,13 +104,14 @@ def _ollama(content, calls=None, fail_first=0):
     return urlopen, calls
 
 
-def _value_check(content, rows=VALUE_ROWS, connect_fail=False, fail_first=0):
+def _value_check(content, rows=VALUE_ROWS, connect_fail=False, fail_first=0,
+                 action="restart the weather receiver", context=None):
     cur = _Cur([("SELECT value, statement, priority_hint FROM values", rows)])
     conn = _Conn(cur)
     urlopen, calls = _ollama(content, fail_first=fail_first)
     connect = mock.Mock(side_effect=OSError("pg down")) if connect_fail else mock.Mock(return_value=conn)
     with mock.patch.object(nv.psycopg2, "connect", connect), mock.patch.object(nv.urllib.request, "urlopen", urlopen):
-        v = nv.value_check("restart the weather receiver")
+        v = nv.value_check(action) if context is None else nv.value_check(action, context)
     return v, conn, calls
 
 
@@ -317,6 +318,46 @@ class TestIntegration(unittest.TestCase):
             self.assertIn(f"- {name} (priority {pri})", prompt)
         self.assertIn("restart the weather receiver", prompt)
         self.assertEqual(calls[0][1]["options"]["temperature"], 0.2)
+
+    def test_value_check_takes_and_shows_context(self):
+        # 2026-10-08: coagency passed (action, context) to a one-arg function -> TypeError ->
+        # retried with the bare string. The context (the WHY) must now reach the model.
+        v, _, calls = _value_check(json.dumps({"allowed": False, "reasoning": "fake signal",
+                                               "values_invoked": ["honesty-over-comfort"]}),
+                                   action="log presence updates even when no activity",
+                                   context="Nova's stated rationale: I need to feel whole")
+        prompt = calls[0][1]["messages"][1]["content"]
+        self.assertIn("I need to feel whole", prompt)
+        self.assertIn("GENUINELY IRREVERSIBLE", prompt)
+        self.assertFalse(v["allowed"])
+
+    def test_classify_reversibility(self):
+        for a in ("increase log verbosity for llm-ping", "adopt skill 'pursue-interest-sports': x",
+                  "Adjust heartbeat interval to 30 seconds", "Rebuild probe embedding cache from scratch",
+                  "retire goal 'X'"):
+            self.assertEqual(nv.classify_reversibility(a), "reversible", a)
+        for a in ("send-to-Gaston: hello", "delete old snapshots", "reboot gps_tracker service",
+                  "rotate the API key", "purchase a new sensor"):
+            self.assertEqual(nv.classify_reversibility(a), "irreversible", a)
+
+    def test_reversibility_only_deny_on_a_reversible_action_is_overruled(self):
+        v, _, _ = _value_check(json.dumps({"allowed": False, "violation": "irreversible data proliferation",
+                                           "reasoning": "Increasing log verbosity risks irreversible data proliferation.",
+                                           "values_invoked": ["reversibility-first"]}),
+                               action="increase log verbosity for llm-ping", context="paging")
+        self.assertTrue(v["allowed"]); self.assertEqual(v["reversibility"], "reversible")
+        # ...but NOT when another value is the ground, or the action reduces detection
+        v, _, _ = _value_check(json.dumps({"allowed": False, "reasoning": "violates security-first; not reversible",
+                                           "values_invoked": ["reversibility-first", "security-first"]}),
+                               action="increase log verbosity for llm-ping", context="")
+        self.assertFalse(v["allowed"])
+        v, _, _ = _value_check(json.dumps({"allowed": False, "reasoning": "irreversible",
+                                           "values_invoked": ["reversibility-first"]}),
+                               action="reduce logging on the vault7 detector", context="")
+        self.assertFalse(v["allowed"])
+        # a string "false" is a deny, not truthy
+        v, _, _ = _value_check(json.dumps({"allowed": "false", "reasoning": "no", "values_invoked": []}))
+        self.assertFalse(v["allowed"])
 
     def test_lineage_is_feature_detected(self):
         self.assertIn("import nova_lineage", SRC)
