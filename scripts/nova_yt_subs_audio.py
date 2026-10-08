@@ -331,6 +331,10 @@ def main():
             sys.exit(1)
         baseline(cur, todo, existing, a.max_minutes)
         return
+    cur.execute("SELECT 1 FROM service_config WHERE service = %s AND key = %s", DONE_KEY)
+    if not cur.fetchone() and not a.only:   # the daily update starts once the baseline pass has finished
+        log("baseline not finished yet — daily update waits")
+        return
     done = 0
     for cid, handle, name in todo:
         if done >= a.max or ni._shutdown:
@@ -344,6 +348,8 @@ def main():
         if cur.fetchone():
             continue
         log(f"{name}: {title[:80]}")
+        if not a.dry_run:
+            wait_for_rate(cur)   # same 30/h ceiling as the baseline
         audio = None if a.dry_run else download_audio(cid, vid, name)
         stored = transcribe_and_remember(audio, name, title, vid, existing, a.dry_run) if audio else 0
         status = "dry_run" if a.dry_run else ("ingested" if stored else "failed")

@@ -849,17 +849,16 @@ tasks:
 
   yt_subs_audio:                   # audio-only transcript ingest of the ~770 subscribed channels no other pipeline covers; latest video per channel only, local MLX Whisper (Jordan 2026-10-06)
     script: nova_yt_subs_audio.py
-    args: ["--max", "60"]
-    schedule: cron 15 */3 * * *
-    timeout: 10800
+    args: ["--max", "800"]         # every subscribed channel's new upload, once a day
+    schedule: cron 15 2 * * *      # daily (Jordan 2026-10-07); no-ops until yt_subs_baseline/done is set
+    timeout: 79200
     overlap: skip
-    enabled: false                 # paused 2026-10-06: Jordan wants a baseline first, then decide update cadence
 
   yt_subs_baseline:                # ONE rate-limited pass (30/h) over every never-downloaded subscribed channel; status to #nova-info; hourly kick = resume after reboot; exits at once when service_config yt_subs_baseline/done is set
     script: nova_yt_subs_audio.py
     args: ["--baseline", "--max-minutes", "55"]   # hourly slices -> clean exits, so the scheduler/Big Brother see successes
     schedule: cron 5 * * * *
-    timeout: 3600
+    timeout: 5400
     overlap: skip
 
   # ---- 2026-10-05 ----
