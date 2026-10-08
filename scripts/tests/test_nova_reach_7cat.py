@@ -454,5 +454,96 @@ class TestQuietFrame(unittest.TestCase):
         self.assertTrue(callable(rc.quiet_active))
 
 
+# ── herd on_cooldown: one pending reach at a time; sent reaches count (2026-10-08) ──
+from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+
+_EVIL = "o'brien'); SELECT pg_sleep(9); --"
+
+
+class _CoolCur:
+    """Scripted cursor for on_cooldown: pending -> row or None; last -> datetime or None."""
+    def __init__(self, pending=False, last=None, boom=False):
+        self.pending, self.last, self.boom, self.sql, self.params = pending, last, boom, [], []
+
+    def execute(self, sql, params=None):
+        if self.boom:
+            raise RuntimeError("pg down")
+        self.sql.append(sql); self.params.append(params)
+
+    def fetchone(self):
+        q = self.sql[-1]
+        if "SELECT 1" in q:
+            return (1,) if self.pending else None
+        return (self.last,)
+
+
+def _ago(h):
+    return _dt.now(_tz.utc) - _td(hours=h)
+
+
+class TestCooldownSecurity(unittest.TestCase):
+    def test_audience_is_parameterised(self):
+        c = _CoolCur()
+        rc.on_cooldown(c, _EVIL)
+        for s, p in zip(c.sql, c.params):
+            self.assertNotIn("pg_sleep", s)
+            self.assertEqual(p, (_EVIL,))
+
+
+class TestCooldownPerformance(unittest.TestCase):
+    def test_pending_short_circuits_one_query(self):
+        c = _CoolCur(pending=True)
+        self.assertTrue(rc.on_cooldown(c, "oc"))
+        self.assertEqual(len(c.sql), 1)
+        self.assertIn("LIMIT 1", c.sql[0])
+
+
+class TestCooldownRetry(unittest.TestCase):
+    def test_db_error_is_loud_not_silent(self):
+        # on_cooldown runs on the caller's cursor (connect retries live in the caller); a query
+        # error must propagate rather than silently report "not on cooldown" and file a 2nd reach.
+        with self.assertRaises(RuntimeError):
+            rc.on_cooldown(_CoolCur(boom=True), "oc")
+
+
+class TestCooldownUnit(unittest.TestCase):
+    def test_no_history_not_on_cooldown(self):
+        self.assertFalse(rc.on_cooldown(_CoolCur(), "oc"))
+
+    def test_old_pending_still_blocks(self):
+        self.assertTrue(rc.on_cooldown(_CoolCur(pending=True, last=_ago(72)), "oc"))
+
+    def test_recent_sent_blocks(self):
+        self.assertTrue(rc.on_cooldown(_CoolCur(last=_ago(1)), "oc"))
+
+    def test_old_sent_clears(self):
+        self.assertFalse(rc.on_cooldown(_CoolCur(last=_ago(rc.COOLDOWN_HOURS + 1)), "oc"))
+
+
+class TestCooldownIntegration(unittest.TestCase):
+    def test_window_query_counts_sent(self):
+        c = _CoolCur(last=None)
+        rc.on_cooldown(c, "oc")
+        self.assertIn("'sent'", c.sql[-1])
+
+
+class TestCooldownFunctional(unittest.TestCase):
+    def test_second_oc_reach_refused_while_one_pending(self):
+        """Regression: a 13h-old filed O.C. reach let a second one be filed."""
+        self.assertTrue(rc.on_cooldown(_CoolCur(pending=True, last=_ago(13)), "oc"))
+
+    def test_direct_audience_ignores_pending_probe(self):
+        aud = next(iter(rc.DIRECT_AUDIENCES))
+        c = _CoolCur(pending=True, last=None)
+        self.assertFalse(rc.on_cooldown(c, aud))
+        self.assertNotIn("SELECT 1", " ".join(c.sql))
+
+
+class TestCooldownFrame(unittest.TestCase):
+    def test_signature(self):
+        import inspect
+        self.assertEqual(list(inspect.signature(rc.on_cooldown).parameters), ["oc", "audience"])
+
+
 if __name__ == "__main__":
     unittest.main()

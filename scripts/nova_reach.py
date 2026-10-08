@@ -255,7 +255,13 @@ def on_cooldown(oc, audience: str) -> bool:
             return False
         age_h = (datetime.now(last.tzinfo) - last).total_seconds() / 3600.0
         return age_h < DIRECT_COOLDOWN_HOURS
-    oc.execute("SELECT max(ts) FROM reach_log WHERE audience=%s AND status IN ('filed','held')",
+    # Herd: one pending reach at a time, however old — a reach still awaiting approval
+    # blocks the next one. Then the window applies to sent reaches too.
+    oc.execute("SELECT 1 FROM reach_log WHERE audience=%s AND status IN ('filed','held') LIMIT 1",
+               (audience,))
+    if oc.fetchone():
+        return True
+    oc.execute("SELECT max(ts) FROM reach_log WHERE audience=%s AND status IN ('sent','filed','held')",
                (audience,))
     last = oc.fetchone()[0]
     if not last:
