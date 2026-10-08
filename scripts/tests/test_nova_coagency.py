@@ -367,6 +367,47 @@ class TestFunctional(unittest.TestCase):
         self.assertFalse(cur.stmts("FROM coagency_proposals WHERE status"))
 
 
+class TestReachSendGate(unittest.TestCase):
+    """2026-10-08 audit (ledger #123/#124): two approved reaches to O.C. went out 3.6s apart."""
+    ROW = {"proposed_action": "send-to-O.C.: a thought about fishbowls"}
+
+    def _reach(self, already_this_pid=None, recent_to_person=None):
+        cur = _Cur([("pg_advisory", (True,)),
+                    ("FROM herd_correspondents", ("O.C.", "oc@example.invalid")),
+                    ("action LIKE %s ORDER BY id", (already_this_pid,) if already_this_pid else None),
+                    ("AND target=%s AND action LIKE", (recent_to_person, datetime(2026, 10, 6)) if recent_to_person else None),
+                    ("INSERT INTO autonomy_ledger", (3,))] + _rules(mode='"live"'))
+        sm = types.SimpleNamespace(send_mail=mock.MagicMock(return_value=True))
+        with mock.patch.dict(sys.modules, {"nova_send_mail": sm}), mock.patch.object(C, "notify"), \
+             redirect_stdout(io.StringIO()):
+            rc = C._do_reach(cur, "live", 135, self.ROW, source="coagency",
+                             autonomy_level="rung2-supervised", vetoable=False)
+        return rc, cur, sm.send_mail
+
+    def test_first_reach_sends_under_a_per_recipient_lock(self):
+        rc, cur, send = self._reach()
+        self.assertEqual(rc, 0)
+        send.assert_called_once()
+        locks = [p[0] for s, p in zip(cur.sql, cur.params) if "pg_advisory" in s]
+        self.assertEqual(locks, ["nova-reach:oc@example.invalid"] * 2)   # lock + unlock
+        self.assertTrue(cur.stmts("SET status=%s, executed_at=now()"))
+
+    def test_second_reach_to_same_person_within_spacing_is_deferred(self):
+        rc, cur, send = self._reach(recent_to_person=123)
+        self.assertEqual(rc, 0)
+        send.assert_not_called()
+        self.assertFalse(cur.stmts("INSERT INTO autonomy_ledger"))
+        self.assertFalse(cur.stmts("coagency_proposals SET"))              # stays 'approved' for later
+        self.assertEqual(cur.stmts("INSERT INTO coagency_log")[0][1][1], "execute_deferred")
+
+    def test_same_proposal_is_never_mailed_twice(self):
+        rc, cur, send = self._reach(already_this_pid=123)
+        self.assertEqual(rc, 0)
+        send.assert_not_called()
+        self.assertIn("already emailed", cur.stmts("coagency_proposals SET status='executed'")[0][1][0])
+        self.assertEqual(cur.stmts("INSERT INTO coagency_log")[0][1][1], "execute_duplicate")
+
+
 class TestFrame(unittest.TestCase):
     def test_help_exits_zero(self):
         r = subprocess.run([sys.executable, str(SCRIPT), "--help"], cwd=SCRIPTS,

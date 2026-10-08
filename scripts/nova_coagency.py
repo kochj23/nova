@@ -865,6 +865,32 @@ def _herd_email(oc, name: str):
         return (None, None)
 
 
+# 2026-10-08 (self-justification audit, ledger #123/#124): Jordan bulk-approved every pending
+# herd reach and two DIFFERENT proposals to O.C. (#122 filed 10-03, #135 filed 10-06) were each
+# executed on approval, 3.6s apart. Nothing at send time spaced reaches per recipient, and nothing
+# stopped one proposal being mailed twice if two executors (.2 primary + .6 standby) overlapped.
+HERD_REACH_SPACING_H = float(os.environ.get("NOVA_HERD_REACH_SPACING_H", "24"))
+
+
+def _reach_send_gate(oc, pid, target):
+    """Idempotency + per-recipient spacing for herd reach email, checked against the ledger.
+    Returns None (send), ('duplicate', why) — this proposal already went out — or
+    ('deferred', why) — this person heard from Nova within HERD_REACH_SPACING_H."""
+    oc.execute("""SELECT id FROM autonomy_ledger WHERE executed AND action LIKE %s ORDER BY id LIMIT 1""",
+               (f"email reach to % (proposal #{pid}):%",))
+    r = oc.fetchone()
+    if r:
+        return ("duplicate", f"proposal #{pid} was already emailed (ledger #{r[0]}) — not sent again")
+    oc.execute("""SELECT id, ts FROM autonomy_ledger WHERE executed AND target=%s AND action LIKE 'email reach to %%'
+                  AND ts > now() - make_interval(secs => %s) ORDER BY ts DESC LIMIT 1""",
+               (target, HERD_REACH_SPACING_H * 3600))
+    r = oc.fetchone()
+    if r:
+        return ("deferred", f"{target} already got a reach (ledger #{r[0]}) within {HERD_REACH_SPACING_H:g}h — "
+                            "held for the next window")
+    return None
+
+
 def _do_reach(oc, mode, pid, row, *, source, autonomy_level, vetoable):
     """Deliver an approved 'send-to-<herd member>: …' reach by email through nova_send_mail
     (Keychain SMTP; herd_mail's hard content block applies). 2026-10-01: before this, every
@@ -874,6 +900,29 @@ def _do_reach(oc, mode, pid, row, *, source, autonomy_level, vetoable):
     name, msg = _reach_parts(row.get("proposed_action", ""))
     ac = _safety.action_class_of(row.get("proposed_action", ""), None)
     who, email = _herd_email(oc, name)
+    target = f"herd:{who or name}"
+    # Serialise sends per recipient across hosts/processes (session-level advisory lock; the
+    # cursor is autocommit), then re-check the ledger inside the lock — the idempotency key is
+    # the proposal id, the spacing key the recipient.
+    lock_key = f"nova-reach:{(email or name).lower()}"
+    oc.execute("SELECT pg_advisory_lock(hashtext(%s))", (lock_key,))
+    try:
+        return _do_reach_locked(oc, mode, pid, name, msg, ac, who, email, target,
+                                source=source, autonomy_level=autonomy_level, vetoable=vetoable)
+    finally:
+        oc.execute("SELECT pg_advisory_unlock(hashtext(%s))", (lock_key,))
+
+
+def _do_reach_locked(oc, mode, pid, name, msg, ac, who, email, target, *, source, autonomy_level, vetoable):
+    gate = _reach_send_gate(oc, pid, target) if email else None
+    if gate:
+        kind, why = gate
+        if kind == "duplicate":
+            oc.execute("UPDATE coagency_proposals SET status='executed', execution_result=%s WHERE id=%s "
+                       "AND status <> 'executed'", (why, pid))
+        clog(oc, mode, f"execute_{kind}", f"#{pid}: {why}")
+        log(f"#{pid}: {why}")
+        return 0
     ok, res = False, ""
     if not email:
         res = f"reach to {name}: no herd address on file — not sent"
@@ -890,7 +939,7 @@ def _do_reach(oc, mode, pid, row, *, source, autonomy_level, vetoable):
             res = f"reach to {who} <{email}>: failed — {str(e)[:160]}"
     _safety.record_ledger(
         oc, source=source, autonomy_level=autonomy_level, action_class=ac,
-        target=f"herd:{who or name}", action=f"email reach to {who or name} (proposal #{pid}): {msg[:140]}",
+        target=target, action=f"email reach to {who or name} (proposal #{pid}): {msg[:140]}",
         rollback_action="(an email cannot be unsent — a correcting follow-up is the only rollback)",
         executed=ok, verified=ok, result=res, vetoable=vetoable,
         before_state={"sent": False, "recipient_on_file": bool(email)},
