@@ -281,24 +281,32 @@ def auto_select_vector(topic, sample, existing):
         if scores[best] >= 2.0:
             log(f"Auto-selected vector: '{best}' (score={scores[best]:.1f})")
             return best
-    try:
-        # Recall on the topic plus a content sample; only trust a clear majority of the 7 nearest
-        # memories (a plurality of 5 was effectively random).
-        q = (topic + " " + (sample[:300] if sample != topic else "")).strip()
-        url = "http://memory-server.digitalnoise.net:18790/recall?q=" + urllib.parse.quote(q) + "&n=7"
-        with urllib.request.urlopen(url, timeout=8) as r:
-            results = json.loads(r.read())
-            if isinstance(results, dict):   # /recall returns {"memories": [...]}; iterating the dict always threw
-                results = results.get("memories", [])
-            sources = [m.get("source", "") for m in results if m.get("source")]
-            if sources:
-                from collections import Counter
-                best, n = Counter(sources).most_common(1)[0]
-                if n >= 4:
-                    log(f"Semantic vector: '{best}' ({n}/7)")
-                    return best
-    except Exception:
-        pass
+    # Recall on the topic plus a content sample; only trust a clear majority of the 7 nearest
+    # memories (a plurality of 5 was effectively random).
+    q = (topic + " " + (sample[:300] if sample != topic else "")).strip()
+    url = "http://memory-server.digitalnoise.net:18790/recall?q=" + urllib.parse.quote(q) + "&n=7"
+    for attempt in range(3):   # memory-server restarts are brief: retry before deriving a new vector
+        try:
+            with urllib.request.urlopen(url, timeout=8) as r:
+                results = json.loads(r.read())
+            break
+        except Exception as e:
+            if attempt == 2:
+                log(f"Semantic vector recall failed after 3 tries ({e}) — deriving from the topic", "WARN")
+                results = []
+            else:
+                time.sleep(1 + attempt)
+    if isinstance(results, dict):   # /recall returns {"memories": [...]}; iterating the dict always threw
+        results = results.get("memories", [])
+    if not isinstance(results, list):
+        results = []
+    sources = [m.get("source", "") for m in results if isinstance(m, dict) and m.get("source")]
+    if sources:
+        from collections import Counter
+        best, n = Counter(sources).most_common(1)[0]
+        if n >= 4:
+            log(f"Semantic vector: '{best}' ({n}/7)")
+            return best
     d = _derive(topic)
     log(f"New vector: '{d}'")
     return d

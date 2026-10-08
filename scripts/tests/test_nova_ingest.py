@@ -237,7 +237,8 @@ class TestUnit(_Quiet):
     def test_auto_select_vector_scoring(self):
         self.assertEqual(NI.auto_select_vector("Marine Biology", "", []), "marine_biology")
         self.assertEqual(NI.auto_select_vector("Marine Biology", "fish", ["marine_biology", "cooking"]), "marine_biology")
-        with mock.patch.object(NI.urllib.request, "urlopen", side_effect=OSError("off")):
+        with mock.patch.object(NI.urllib.request, "urlopen", side_effect=OSError("off")), \
+                mock.patch.object(NI.time, "sleep"):
             self.assertEqual(NI.auto_select_vector("Volcanoes", "", ["cooking"]), "volcanoes")
 
 
