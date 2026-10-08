@@ -53,7 +53,7 @@ class TestSubsAudio(unittest.TestCase):
             self.assertEqual(m.classify("Chisholm Hunter", "Omega Bond Seamasters"), "horology")
         with patch("urllib.request.urlopen", return_value=fake("other")):
             self.assertEqual(m.classify("x", "y"), m.FALLBACK_VECTOR)
-        with patch("urllib.request.urlopen", side_effect=OSError("down")):
+        with patch("urllib.request.urlopen", side_effect=OSError("down")), patch.object(m.time, "sleep"):
             self.assertEqual(m.classify("x", "y"), m.FALLBACK_VECTOR)
 
     def test_stalled_ytdlp_is_a_failure_not_a_crash(self):

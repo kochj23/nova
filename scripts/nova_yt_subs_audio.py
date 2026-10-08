@@ -97,8 +97,15 @@ MAX_SECONDS = 3 * 3600   # 7-hour auction livestream replays: hours of download,
 
 def latest_video(channel_id):
     """(video_id, title) of the newest finished upload under MAX_SECONDS, or None."""
-    r = _yt(["--flat-playlist", "-I", "1:5", "--print", "%(id)s\t%(live_status)s\t%(duration)s\t%(title)s",
-             f"https://www.youtube.com/channel/{channel_id}/videos"])
+    for attempt in range(3):   # transient yt-dlp errors must not count a channel as "no video"
+        r = _yt(["--flat-playlist", "-I", "1:5", "--print", "%(id)s\t%(live_status)s\t%(duration)s\t%(title)s",
+                 f"https://www.youtube.com/channel/{channel_id}/videos"])
+        if r.returncode == 0:
+            break
+        if attempt < 2:
+            time.sleep(5 * (attempt + 1))
+    else:
+        log(f"  listing {channel_id} failed after 3 tries: {(r.stderr or '').strip()[-200:]}")
     for line in r.stdout.splitlines():
         vid, live, dur, title = (line.split("\t", 3) + ["", "", ""])[:4]
         too_long = dur.replace(".", "", 1).isdigit() and float(dur) > MAX_SECONDS
@@ -166,14 +173,18 @@ def classify(channel, title):
               f"Answer with the label only.\nChannel: {channel}\nTitle: {title}")
     body = {"model": CLASSIFIER_MODEL, "think": False, "stream": False, "options": {"temperature": 0},
             "messages": [{"role": "user", "content": prompt}]}
-    try:
-        req = urllib.request.Request(CLASSIFIER_URL, json.dumps(body).encode(), {"Content-Type": "application/json"})
-        out = json.loads(urllib.request.urlopen(req, timeout=120).read())["message"]["content"]
-        label = re.sub(r"[^a-z]", " ", out.rsplit("</think>", 1)[-1].lower()).split()  # qwen3 may still think aloud
-        return TOPICS.get(label[0] if label else "", FALLBACK_VECTOR)
-    except Exception as e:
-        log(f"  classifier failed ({e}) -> {FALLBACK_VECTOR}")
-        return FALLBACK_VECTOR
+    for attempt in range(3):   # Ollama mid-model-swap: retry with backoff before the fallback vector
+        try:
+            req = urllib.request.Request(CLASSIFIER_URL, json.dumps(body).encode(), {"Content-Type": "application/json"})
+            out = json.loads(urllib.request.urlopen(req, timeout=120).read())["message"]["content"]
+            label = re.sub(r"[^a-z]", " ", out.rsplit("</think>", 1)[-1].lower()).split()  # qwen3 may still think aloud
+            return TOPICS.get(label[0] if label else "", FALLBACK_VECTOR)
+        except Exception as e:
+            if attempt < 2:
+                time.sleep(5 * (attempt + 1))
+                continue
+            log(f"  classifier failed after 3 tries ({e}) -> {FALLBACK_VECTOR}")
+    return FALLBACK_VECTOR
 
 
 def transcribe_and_remember(audio, name, title, vid, existing, dry_run):
