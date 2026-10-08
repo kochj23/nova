@@ -647,6 +647,38 @@ def spawn_curiosity(oc, statement, conf, outcome, surprise, reasoning):
         log(f"  belief_revision_candidate write failed: {e}")
 
 
+def own_mistake(oc, pred_id, statement, domain, conf, reasoning):
+    """The "I was wrong" step (2026-10-08). Every resolved-WRONG prediction leaves a
+    short, owned note in memory (source='self_correction') — not a curiosity question,
+    an admission — carrying what her calibration now does about it. The feedback itself
+    is mechanical: nova_soft_certainty.calibrate(domain=...) shrinks future confidence in
+    this domain toward its base rate by her Brier skill there, so the miss changes the
+    next number she states. Fails open: a memory-server hiccup never blocks resolution."""
+    cal = ""
+    try:
+        import nova_soft_certainty as sc
+        db = sc.domain_brier(oc, domain)
+        if db:
+            cal = (f" My {domain} forecasts: {db['n']} resolved, base rate {db['base']:.0%}, "
+                   f"Brier {db['brier']:.3f} vs {db['brier_ref']:.3f} for just saying the base rate "
+                   f"(skill {db['skill']:+.2f}). So a {conf:.0%} call in {domain} now comes out "
+                   f"as {sc.brier_calibrate(conf, db):.0%}.")
+    except Exception:
+        pass
+    why = " ".join((reasoning or "").split())[:240]
+    text = (f"[Self-correction {NOW().date().isoformat()}] I was wrong. I said \"{statement[:240]}\" "
+            f"at {conf:.0%} and it didn't happen. {('What happened: ' + why) if why else ''}"
+            f"{cal}").strip()
+    try:
+        remember(text, "self_correction",
+                 {"type": "self_correction", "prediction_id": pred_id, "domain": domain,
+                  "confidence": conf, "date": NOW().date().isoformat(), "privacy": "private",
+                  "lineage": _stamp()})
+    except Exception as e:
+        log(f"  self_correction write failed: {e}")
+    return text
+
+
 def do_resolve(oc, mc, force_now=False):
     if force_now:
         oc.execute("""SELECT id, statement, domain, confidence, resolution_criteria,
@@ -685,6 +717,8 @@ def do_resolve(oc, mc, force_now=False):
         log(f"#{_id} {outcome} conf={conf:.2f} surprise={surprise:.3f}{tag}")
         if surprise > HIGH_SURPRISE:
             spawn_curiosity(oc, statement, conf, outcome, surprise, reasoning)
+        if outcome == "incorrect":
+            own_mistake(oc, _id, statement, domain, conf, reasoning)
         resolved.append((_id, outcome, surprise))
     return resolved
 

@@ -181,6 +181,22 @@ class TestUnit(unittest.TestCase):
         cur = _Cur([STATE, ("avg((outcome='correct')::int)", (0.0, 3))])
         self.assertEqual(sc.calibrate(0.9, cur, domain="thin"), sc.calibrate(0.9, _Cur([STATE])))  # too few -> global
 
+    def test_domain_brier_shrinks_a_skill_free_domain_to_its_base_rate(self):
+        # 2026-10-08: same confidence on hits and misses -> no skill -> collapse toward base rate
+        rows = [("incorrect", 0.56)] * 57 + [("correct", 0.55)] * 47
+        cur = _Cur([STATE, ("SELECT outcome, confidence", rows)])
+        db = sc.domain_brier(cur, "self")
+        self.assertEqual(db["n"], 104); self.assertAlmostEqual(db["base"], 47 / 104, 3)
+        self.assertLess(db["skill"], 0)
+        out = sc.calibrate(0.8, cur, domain="self")
+        self.assertAlmostEqual(out, round(0.8 + (db["base"] - 0.8) * 104 / 114, 4), 4)
+        self.assertGreater(sc.calibrate(0.2, cur, domain="self"), 0.2)    # underconfident pulls UP too
+        # a skilled domain keeps most of its spread
+        good = [("correct", 0.9)] * 8 + [("incorrect", 0.1)] * 8
+        cur = _Cur([("SELECT outcome, confidence", good)])
+        self.assertGreater(sc.domain_brier(cur, "ops")["skill"], 0.9)
+        self.assertGreater(sc.calibrate(0.9, cur, domain="ops"), 0.85)
+
     def test_current_stance_text(self):
         self.assertIn("I lean overconfident (recently ~63% sure, ~45% right — off by ~18 points)",
                       sc.current_stance(_Cur([STATE])))

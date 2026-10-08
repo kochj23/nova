@@ -103,6 +103,44 @@ def domain_stats(oc, domain, min_n=5):
         return None
 
 
+def domain_brier(oc, domain, min_n=5, window=200):
+    """Per-domain Brier calibration (2026-10-08, the "I was wrong" loop). Her confidence
+    was the same whether she turned out right or wrong (self: 0.55 on hits, 0.56 on
+    misses) — it carried no information. Brier skill vs. the domain's base rate says how
+    much: skill = 1 - BS / BS_ref, where BS_ref is what always forecasting the base rate
+    would have scored. skill <= 0 means 'just say the base rate'.
+    Returns {"n","base","brier","brier_ref","skill"} or None if too few / unreadable."""
+    try:
+        oc.execute("SELECT outcome, confidence FROM predictions "
+                   "WHERE status='resolved' AND outcome IN ('correct','incorrect','partial') "
+                   "AND confidence IS NOT NULL AND domain=%s "
+                   "ORDER BY resolved_at DESC NULLS LAST LIMIT %s", (domain, window))
+        rows = oc.fetchall() or []
+    except Exception:
+        return None
+    hitv = {"correct": 1.0, "partial": 0.5, "incorrect": 0.0}
+    pairs = [(float(c), hitv[o]) for o, c in rows if o in hitv and c is not None]
+    n = len(pairs)
+    if n < min_n:
+        return None
+    base = sum(h for _, h in pairs) / n
+    brier = sum((c - h) ** 2 for c, h in pairs) / n
+    brier_ref = sum((base - h) ** 2 for _, h in pairs) / n
+    skill = (1.0 - brier / brier_ref) if brier_ref > 1e-9 else (1.0 if brier < 1e-9 else 0.0)
+    return {"n": n, "base": round(base, 4), "brier": round(brier, 4),
+            "brier_ref": round(brier_ref, 4), "skill": round(skill, 4)}
+
+
+def brier_calibrate(stated, db):
+    """Shrink a stated confidence toward the domain base rate by her lack of skill there:
+    target = base + max(0, skill) * (stated - base), moved toward by evidence weight
+    n/(n+10). No skill -> her number collapses toward the base rate (up OR down)."""
+    lam = _clamp(db["skill"], 0.0, 1.0)
+    target = db["base"] + lam * (stated - db["base"])
+    w = db["n"] / (db["n"] + 10.0)
+    return round(_clamp(stated + (target - stated) * w, 0.03, 0.97), 4)
+
+
 def calibrate(stated, oc=None, domain=None):
     """Soft-calibrate a stated confidence [0,1] toward her realized accuracy. A gentle
     nudge, not a hard clamp: adjusted = stated + (hit_rate - stated) * shrink, only when
@@ -129,6 +167,9 @@ def calibrate(stated, oc=None, domain=None):
     # domain's realized hit-rate with a shrink that grows with evidence (n/(n+10)); e.g.
     # 'relationship' (0/7 right at 64%) -> ~0.26. Falls back to the global state below.
     if domain and oc is not None:
+        db = domain_brier(oc, domain)
+        if db:
+            return brier_calibrate(stated, db)
         ds = domain_stats(oc, domain)
         if ds:
             hit_rate, n = ds

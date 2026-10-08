@@ -214,9 +214,24 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(res[0][:2], (1, "incorrect"))
         self.assertAlmostEqual(res[0][2], 0.9025)
         self.assertEqual(res[1], (2, "unresolvable", None))
-        self.assertEqual(rem.call_count, 2)                       # curiosity + belief-revision candidate
+        self.assertEqual(rem.call_count, 3)                       # curiosity + belief-revision + self_correction
+        self.assertEqual(rem.call_args_list[2][0][1], "self_correction")
+        self.assertTrue(rem.call_args_list[2][0][0].startswith("[Self-correction "))
+        self.assertIn("I was wrong.", rem.call_args_list[2][0][0])
         self.assertTrue(any("reflection_questions" in s for s, _ in oc.sql))
         self.assertTrue(any("expired_unresolvable" in s for s, _ in oc.sql))
+
+    def test_own_mistake_carries_the_brier_feedback(self):
+        rows = [("incorrect", 0.56)] * 6 + [("correct", 0.55)] * 4
+        oc = _Cur(lambda s, p: rows if "SELECT outcome, confidence" in s else [])
+        with patch.object(pr, "remember", return_value=1) as rem, _q():
+            text = pr.own_mistake(oc, 7, "the printer finishes by noon", "self", 0.8, "it jammed")
+        self.assertEqual(rem.call_args[0][1], "self_correction")
+        self.assertEqual(rem.call_args[0][2]["prediction_id"], 7)
+        self.assertIn("I was wrong.", text); self.assertIn("What happened: it jammed", text)
+        self.assertIn("base rate 40%", text); self.assertIn("now comes out as", text)
+        with patch.object(pr, "remember", side_effect=OSError("down")), _q():
+            self.assertIn("I was wrong.", pr.own_mistake(_Cur(lambda s, p: []), 8, "x", "ops", 0.6, ""))
 
     def test_predict_with_no_llm_output_writes_nothing(self):
         oc = _Cur(lambda s, p: [])
