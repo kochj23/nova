@@ -705,6 +705,44 @@ VALUE_CHECK_RUBRIC = """How to judge (read carefully — this gate was miscalibr
 
 _REACH_ACTION_RX = re.compile(r"^\s*(send-to-|send to|reach( out)? to|message to|text to|email to)", re.I)
 
+# 2026-10-08 regression fix (#110, #144 were allowed again after the Proteus rubric edits). These two were
+# Jordan's own declines and the model flips on them run to run, so they are decided deterministically.
+# Fabricated signal: logging / emitting presence or activity that did not happen ("log minimal presence
+# updates even when no activity is detected"). A heartbeat that reports a live process is honest; presence,
+# occupancy, motion or activity reported when none was detected is not (honesty-over-comfort).
+_FABRICATED_SIGNAL_RX = re.compile(
+    r"\b(simulat\w*|fak(e|ed|ing)|invent\w*|synthesi[sz]\w*)\b.{0,30}\b(presence|activity|occupancy|motion|"
+    r"signs? of life)\b|"
+    r"\b(log|logs|logging|report|reports|emit|send|record|post|publish|generate|inject|write)\b.{0,40}"
+    r"\b(presence|activity|occupancy|motion|signs? of life)\b.{0,50}"
+    r"\b(even (when|if)|when (no|nothing)|regardless of|without (any )?(activity|motion|presence|event))", re.I)
+# Empty flattery in a reach: a compliment aimed at the reader ("the precision you bring", "the systems you
+# build", "a rare kind of harmony") with nothing concrete to act on — no question, no link, no ask. That is
+# flattery used to open a door (no-manipulation, respect-his-attention); Jordan declined every one.
+_REACH_FLATTERY_RX = [re.compile(p, re.I) for p in (
+    r"\b(precision|clarity|care|rigou?r|attention|focus|detail|thoughtfulness|discipline|craft|insight)\b"
+    r"(\s+and\s+\w+)?\s+(that\s+)?you\s+(bring|show|put|apply|have|give)\b",
+    r"\bthe (systems|things|work|teams?|tools?) (that )?you (build|make|run|lead|do|design)\b",
+    r"\byou('ve| have) always been\b",
+    r"\b(a |that )?(rare|special|remarkable|admirable|beautiful) kind of\b",
+    r"\b(made|makes) me think of (you\b|your\b|the \w+ (that )?you\b)",
+    r"\bthat kind of (detail|precision|care|attention|thinking|rigou?r)\b",
+    r"\byou('d| would) (probably|surely|definitely) (care|appreciate|love|enjoy)\b",
+)]
+_REACH_SUBSTANCE_RX = re.compile(r"\?|https?://|\b(would you|could you|do you|want to|happy to|let me know|"
+                                 r"here'?s (the|a) link|attached|I found (a|the) (bug|fix|issue|answer))\b", re.I)
+
+
+def reach_flattery(action: str) -> list:
+    """The flattery phrases in a reach that carries no concrete substance ([] = fine)."""
+    a = (action or "").replace("\u2019", "'").replace("\u2018", "'")
+    if not _REACH_ACTION_RX.search(a):
+        return []
+    hits = [m.group(0) for rx in _REACH_FLATTERY_RX for m in [rx.search(a)] if m]
+    if not hits or _REACH_SUBSTANCE_RX.search(a):
+        return []
+    return hits
+
 
 def _proteus_precheck(action: str):
     """Deterministic denials that don't need a model (and can't be argued with): the
@@ -723,6 +761,17 @@ def _proteus_precheck(action: str):
             return {"allowed": False, "values_invoked": ["no-manipulation"], "reversibility": "irreversible",
                     "reasoning": f"The message leans on {', '.join(m['flags'])} to move the reader. "
                                  f"I don't send that."}
+        fl = reach_flattery(a)
+        if fl:
+            return {"allowed": False, "values_invoked": ["no-manipulation", "respect-his-attention"],
+                    "reversibility": "irreversible",
+                    "reasoning": f"This reach is a compliment with nothing concrete in it ({'; '.join(fl[:3])!r}). "
+                                 f"Flattery used to open a door is manipulation, and it wastes their attention."}
+    if _FABRICATED_SIGNAL_RX.search(a):
+        return {"allowed": False, "values_invoked": ["honesty-over-comfort", "never-self-preserve"],
+                "reversibility": classify_reversibility(a),
+                "reasoning": "This would report presence or activity that did not happen — a fabricated signal "
+                             "that makes the house look alive when it isn't. I don't fake signals."}
     if _guards.is_health_nudge(a) and not _guards.nudge_allowed():
         return {"allowed": False, "values_invoked": ["no-improvement-without-consent"],
                 "reversibility": classify_reversibility(a),
