@@ -178,11 +178,48 @@ def mark_done(state: dict, path: str, metadata: dict):
 
 # ── Source classification ─────────────────────────────────────────────────────
 
-def classify_source(show_name: str, title: str, snippet: str) -> str:
-    text = (show_name + " " + title + " " + snippet[:400]).lower()
-    show = show_name.lower()
+# Explicit channel -> vector map. Authoritative: checked before every keyword rule in ALL THREE
+# TV classifiers (this one, nova_nightly_media, nova_tv_retry_failed). Added 2026-10-08 after a
+# 7-day audit found only ~128 of 590 crime_drama memories were crime shows: "The Bulwark" matched
+# the bare substring "war" (bul-WAR-k), "Military Aviation History" / "Combat Veteran News" hit
+# the "combat/war/battle/military -> crime_drama" keyword rule (nightly_media had no news check).
+CHANNEL_VECTOR = {
+    "the bulwark": "politics",
+    "military aviation history": "military_history",
+    "combat veteran news": "news",
+    "the problem with jon stewart": "politics",
+    "the weekly show with jon stewart": "politics",
+    "dragnet (1951)": "crime_drama",
+    "dragnet": "crime_drama",
+    "lights out (1949)": "crime_drama",
+}
 
-    # ── NEWS (checked FIRST — highest priority) ───────────────────────────────
+_MILITARY_RE = re.compile(r"\b(combat|war|wars|battle|battles|military|warfare|wwii|ww2|aviation history)\b")
+_CRIME_SHOW_RE = re.compile(r"\b(cannon|batman|21 jump|bonanza|western)\b")
+
+
+def explicit_vector(show_name: str) -> str | None:
+    """Show-name-only vector decision shared by every TV classifier, or None to fall through.
+
+    Order: explicit channel map -> news (word-boundary) -> military words -> named crime/western
+    shows. Word-boundary matching only: bare substrings mis-filed "The Bulwark" (war) for months.
+    """
+    show = (show_name or "").strip().lower()
+    if not show:
+        return None
+    if show in CHANNEL_VECTOR:
+        return CHANNEL_VECTOR[show]
+    news = _news_vector(show)
+    if news:
+        return news
+    if _MILITARY_RE.search(show):
+        return "military_history"
+    if _CRIME_SHOW_RE.search(show):
+        return "crime_drama"
+    return None
+
+
+def _news_vector(show: str) -> str | None:
     # News broadcasts were falling through to the content-keyword fallbacks below and getting
     # mis-filed by a stray word in the transcript: "Combat Veteran News" -> crime_drama (combat),
     # KTLA/NBC4 episodes -> documentary (a "century"/"war" mention), NBC News -> automotive (an
@@ -206,6 +243,16 @@ def classify_source(show_name: str, title: str, snippet: str) -> str:
         return "local_news"
     if _has(NATIONAL) or re.search(r"\bnews\b", show):   # national/world + any news-titled show
         return "news"
+    return None
+
+
+def classify_source(show_name: str, title: str, snippet: str) -> str:
+    text = (show_name + " " + title + " " + snippet[:400]).lower()
+    show = show_name.lower()
+
+    explicit = explicit_vector(show_name)
+    if explicit:
+        return explicit
 
     # ── Explicit show-name overrides (checked first, highest priority) ────────
     # Food/cooking channels
@@ -238,9 +285,6 @@ def classify_source(show_name: str, title: str, snippet: str) -> str:
         return "automotive"
     if re.search(r"\bcar\b", show) and not re.search(r"\b(card|cart|care|scar)\b", show):
         return "automotive"
-    if any(w in show for w in ["combat", "war", "battle", "military", "bonanza", "western",
-                                "cannon", "batman", "21 jump"]):
-        return "crime_drama"
     if any(w in show for w in ["cooking", "pepin", "kitchen", "chef", "recipe", "food"]):
         return "education"
     if any(w in show for w in ["louis ck", "comedy", "standup", "stand-up", "chug"]):
@@ -426,11 +470,24 @@ def remember(text: str, source: str, metadata: dict) -> bool:
         MEMORY_URL, data=payload,
         headers={"Content-Type": "application/json"}, method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=15):
-            return True
-    except Exception:
-        return False
+    return post_with_retry(req, label=f"remember[{source}]", log_fn=log)
+
+
+def post_with_retry(req, *, label: str = "remember", log_fn=None, attempts: int = 3,
+                    timeout: float = 15) -> bool:
+    """POST `req` up to `attempts` times with exponential backoff (1s, 2s). Never silent: the
+    final failure is logged. Shared by nova_nightly_media / nova_tv_retry_failed."""
+    last = None
+    for i in range(attempts):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout):
+                return True
+        except Exception as e:  # noqa: BLE001 — network/HTTP: retry then report
+            last = e
+            if i < attempts - 1:
+                time.sleep(2 ** i)
+    (log_fn or log)(f"{label} failed after {attempts} attempts: {last}")
+    return False
 
 
 def chunk_text(text: str) -> list[str]:

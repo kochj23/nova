@@ -515,11 +515,8 @@ def remember(text: str, source: str, metadata: dict) -> bool:
         headers={"Content-Type": "application/json"},
         method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=15):
-            return True
-    except Exception:
-        return False
+    import nova_tv_ingest
+    return nova_tv_ingest.post_with_retry(req, label=f"remember[{source}]", log_fn=log)
 
 
 def classify_source(show_name: str, title: str, snippet: str) -> str:
@@ -527,6 +524,12 @@ def classify_source(show_name: str, title: str, snippet: str) -> str:
     show = show_name.lower()
 
     # ── Authoritative show-name matches (never overridden by content keywords) ──
+    # Shared show-name rules (channel map, news, word-boundary military) — nova_tv_ingest is the
+    # single source of truth so the three TV classifiers can't drift apart again (2026-10-08).
+    import nova_tv_ingest
+    explicit = nova_tv_ingest.explicit_vector(show_name)
+    if explicit:
+        return explicit
 
     if any(w in show for w in ["thesmokingtire", "smoking tire", "smokingtire",
                                 "brian scotto", "vinwiki", "vin wiki",
@@ -572,10 +575,6 @@ def classify_source(show_name: str, title: str, snippet: str) -> str:
                                 "finnegan", "car wizard", "chasing classic", "dream car",
                                 "build or bust", "car craft"]):
         return "automotive"
-
-    if any(w in show for w in ["combat", "war", "battle", "military", "bonanza", "western",
-                                "cannon", "batman", "21 jump"]):
-        return "crime_drama"
 
     if any(w in show for w in ["cooking", "pepin", "kitchen", "chef", "recipe", "food"]):
         return "cooking"

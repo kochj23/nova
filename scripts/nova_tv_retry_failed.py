@@ -284,6 +284,13 @@ def classify_source(show_name: str, title: str, snippet: str) -> str:
     text = (show_name + " " + title + " " + snippet[:400]).lower()
     show = show_name.lower()
 
+    # Shared show-name rules (channel map, news, word-boundary military) — nova_tv_ingest is the
+    # single source of truth so the three TV classifiers can't drift apart again (2026-10-08).
+    import nova_tv_ingest
+    explicit = nova_tv_ingest.explicit_vector(show_name)
+    if explicit:
+        return explicit
+
     if any(w in show for w in ["meat church", "arnitex", "arnie tex",
                                 "good eats", "binging with babish", "babish",
                                 "ethan chlebowski", "food wishes"]):
@@ -308,9 +315,6 @@ def classify_source(show_name: str, title: str, snippet: str) -> str:
                                 "finnegan", "car wizard", "chasing classic", "dream car",
                                 "build or bust", "car craft"]):
         return "automotive"
-    if any(w in show for w in ["combat", "war", "battle", "military", "bonanza", "western",
-                                "cannon", "batman", "21 jump"]):
-        return "crime_drama"
     if any(w in show for w in ["cooking", "pepin", "kitchen", "chef", "recipe", "food"]):
         return "education"
     if any(w in show for w in ["louis ck", "comedy", "standup", "stand-up", "chug"]):
@@ -342,11 +346,8 @@ def remember(text: str, source: str, metadata: dict) -> bool:
         MEMORY_URL, data=payload,
         headers={"Content-Type": "application/json"}, method="POST",
     )
-    try:
-        with urllib.request.urlopen(req, timeout=15):
-            return True
-    except Exception:
-        return False
+    import nova_tv_ingest
+    return nova_tv_ingest.post_with_retry(req, label=f"remember[{source}]", log_fn=log)
 
 
 def chunk_text(text: str) -> list[str]:
