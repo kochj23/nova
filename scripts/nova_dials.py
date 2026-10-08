@@ -20,11 +20,18 @@ OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 SERVICE = "nova_dials"
 
 
-def _connect():
+def _connect(attempts=3):
+    import time
     import psycopg2
-    conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
-    conn.autocommit = True
-    return conn
+    for i in range(attempts):
+        try:
+            conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
+            conn.autocommit = True
+            return conn
+        except psycopg2.OperationalError:
+            if i == attempts - 1:
+                raise
+            time.sleep(0.5 * 2 ** i)
 
 
 def show(vals=None) -> str:

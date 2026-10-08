@@ -19,6 +19,7 @@ import argparse
 import json
 import re
 import sys
+import time
 import urllib.request
 from datetime import date, datetime, timedelta
 
@@ -27,6 +28,7 @@ MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 CHANNEL = "C0AMNQ5GX70"   # #nova-chat (same as nova_config.SLACK_CHAN / nova_slack_answers.CHANNEL)
 MAX_ITEMS = 4
+_SLACK_TRANSIENT = {"ratelimited", "internal_error", "fatal_error", "service_unavailable", "request_timeout"}
 
 SCHEMA = """CREATE TABLE IF NOT EXISTS nova_care_checkins (
     id bigserial PRIMARY KEY,
@@ -125,14 +127,29 @@ def summarize(week, items, reply, verdicts) -> str:
             + f". His words: \"{reply.strip()[:500]}\"")
 
 
+def _retry(fn, attempts=3, base=1.0, what="call"):
+    """Run fn() up to `attempts` times with exponential backoff; re-raises the last error."""
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            if i == attempts - 1:
+                raise
+            log(f"{what} attempt {i + 1} failed ({e}); retrying")
+            time.sleep(base * 2 ** i)
+
+
 def remember(text, metadata):
-    """Store to vector memory; returns id or None (never raises)."""
+    """Store to vector memory (3 tries, backoff); returns id or None (never raises)."""
     body = json.dumps({"text": text, "source": "jordan_feedback", "metadata": metadata}).encode()
-    try:
+
+    def _go():
         req = urllib.request.Request(MEMSRV + "/remember", method="POST", data=body,
                                      headers={"Content-Type": "application/json"})
         with urllib.request.urlopen(req, timeout=30) as r:
             return json.load(r).get("id")
+    try:
+        return _retry(_go, what="remember")
     except Exception as e:  # noqa: BLE001
         log(f"remember failed: {e}")
         return None
@@ -168,7 +185,15 @@ def ask(dry=False):
     if dry:
         print(msg); return 0
     import nova_slack_answers as nsa
-    res = nsa.slack("chat.postMessage", channel=CHANNEL, text=msg)
+    def _post():
+        r = nsa.slack("chat.postMessage", channel=CHANNEL, text=msg)
+        if not r.get("ok") and r.get("error") in _SLACK_TRANSIENT:
+            raise RuntimeError(r.get("error"))
+        return r
+    try:
+        res = _retry(_post, what="slack post")   # weekly job: a blip must not lose the week
+    except Exception as e:  # noqa: BLE001
+        res = {"ok": False, "error": str(e)}
     if not res.get("ok"):
         log(f"post failed: {res.get('error')}"); return 1
     oc.execute("INSERT INTO nova_care_checkins (week, items, message, asked_at, slack_channel, slack_ts) "

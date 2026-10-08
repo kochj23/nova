@@ -355,17 +355,24 @@ def dials(refresh: bool = False) -> dict:
     now = _t.time()
     if not refresh and _DIAL_CACHE["vals"] is not None and now - _DIAL_CACHE["at"] < DIAL_TTL:
         return dict(_DIAL_CACHE["vals"])
-    vals = dict(DIAL_DEFAULTS)
-    try:
-        import psycopg2
-        with psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj",
-                              connect_timeout=3) as conn, conn.cursor() as cur:
-            cur.execute("SELECT key, value FROM service_config WHERE service = %s", ("nova_dials",))
-            for k, v in cur.fetchall():
-                if k in vals:
-                    vals[k] = _clamp_dial(k, v)
-    except Exception:
-        vals = dict(DIAL_DEFAULTS)
+    vals = None
+    for attempt in range(2):                      # one retry on a PG blip, then fail open
+        try:
+            import psycopg2
+            got = dict(DIAL_DEFAULTS)
+            with psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj",
+                                  connect_timeout=3) as conn, conn.cursor() as cur:
+                cur.execute("SELECT key, value FROM service_config WHERE service = %s", ("nova_dials",))
+                for k, v in cur.fetchall():
+                    if k in got:
+                        got[k] = _clamp_dial(k, v)
+            vals = got
+            break
+        except Exception:
+            if attempt == 0:
+                _t.sleep(0.2)
+    if vals is None:  # outage: keep the last values read (a blip must not reset her dials), else defaults
+        vals = dict(_DIAL_CACHE["vals"]) if _DIAL_CACHE["vals"] is not None else dict(DIAL_DEFAULTS)
     _DIAL_CACHE.update(at=now, vals=vals)
     return dict(vals)
 

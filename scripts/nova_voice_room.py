@@ -293,11 +293,19 @@ def dispatch(ev: dict) -> bool:
         return False
 
 
-def _event(event_id):
-    with _conn() as c, c.cursor() as cur:
-        cur.execute("SELECT id, source, level, category, title, dedup_key, meta FROM telemetry.events "
-                    "WHERE id=%s", (event_id,))
-        return cur.fetchone()
+def _event(event_id, attempts=3):
+    """Fetch the event row; 3 tries with backoff (one PG blip must not drop a smoke alarm)."""
+    for i in range(attempts):
+        try:
+            with _conn() as c, c.cursor() as cur:
+                cur.execute("SELECT id, source, level, category, title, dedup_key, meta FROM telemetry.events "
+                            "WHERE id=%s", (event_id,))
+                return cur.fetchone()
+        except Exception as e:
+            if i == attempts - 1:
+                raise
+            log(f"event {event_id} read attempt {i + 1} failed: {e}")
+            time.sleep(1 * (i + 1))
 
 
 def main(argv=None):
