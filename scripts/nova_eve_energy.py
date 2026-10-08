@@ -18,6 +18,8 @@ import urllib.request
 
 import psycopg2
 
+import nova_homekit_client as hk  # Bearer token (NovaHomeKit 51e7a91)
+
 SRC = "http://127.0.0.1:37433/api/accessories"
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 WATT = "e863f10c"      # real-time watts
@@ -37,7 +39,7 @@ def num(v):
 
 
 def main():
-    with urllib.request.urlopen(SRC, timeout=10) as r:
+    with urllib.request.urlopen(urllib.request.Request(SRC, headers=hk.auth_headers()), timeout=10) as r:
         data = json.load(r)
     acc = data if isinstance(data, list) else data.get("accessories", [])
     rows = []

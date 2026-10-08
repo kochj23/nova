@@ -18,9 +18,10 @@ import json
 import signal
 import sys
 import time
-import urllib.request
 
 import psycopg2
+
+import nova_homekit_client as hk  # Bearer token (NovaHomeKit 51e7a91) + retry/backoff
 
 NOVAHOMEKIT_URL = "http://127.0.0.1:37433/api/accessories"
 PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
@@ -47,9 +48,7 @@ def log(msg, level="INFO"):
 
 def fetch_fp2_occupancy():
     """Return {room: occupied_bool} for every FP2 currently reporting a value."""
-    req = urllib.request.Request(NOVAHOMEKIT_URL)
-    with urllib.request.urlopen(req, timeout=8) as r:
-        accs = json.loads(r.read())
+    accs = hk.get_json(NOVAHOMEKIT_URL, timeout=8, retries=3)
     out = {}
     for a in accs:
         name = str(a.get("name", ""))

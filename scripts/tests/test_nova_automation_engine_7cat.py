@@ -94,7 +94,11 @@ class TestSecurity(_Base):
 
     def test_device_name_cannot_inject_query_params(self):
         self.ae._hk_power("Lamp&on=true", False)
-        url = self.urlopen.call_args[0][0]
+        req = self.urlopen.call_args[0][0]
+        url = req.full_url                       # NovaHomeKit 51e7a91: a POST Request with the Bearer token
+        self.assertEqual(req.get_method(), "POST")
+        self.assertTrue(req.get_header("Authorization", "").startswith("Bearer ") or
+                        req.get_header("Authorization") is None)
         q = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
         self.assertEqual(q["name"], ["Lamp&on=true"])
         self.assertEqual(q["on"], ["false"])
@@ -205,7 +209,7 @@ class TestIntegration(_Base):
 
     def test_live_sensor_vacancy_powers_off_through_guard_and_http(self):
         self._zone_run(3600, time.time() - 60)
-        url = self.urlopen.call_args[0][0]
+        url = self.urlopen.call_args[0][0].full_url
         self.assertIn("name=Bug%20Zapper", url)
         self.assertIn("on=false", url)
         self.assertFalse(self.ae._zone_on["patio"])

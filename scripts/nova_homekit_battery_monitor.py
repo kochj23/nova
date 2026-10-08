@@ -16,6 +16,8 @@ from pathlib import Path
 
 import psycopg2
 
+import nova_homekit_client as hk  # Bearer token (NovaHomeKit 51e7a91)
+
 sys.path.insert(0, str(Path(__file__).parent))
 try:
     from nova_notify import notify
@@ -34,7 +36,7 @@ def fetch_accessories(retries=6):
     import time as _t
     for i in range(retries):
         try:
-            with urllib.request.urlopen(HOMEKIT_URL, timeout=15) as r:
+            with urllib.request.urlopen(urllib.request.Request(HOMEKIT_URL, headers=hk.auth_headers()), timeout=15) as r:
                 raw = r.read()
             if raw and len(raw) > 1000:
                 return json.loads(raw)

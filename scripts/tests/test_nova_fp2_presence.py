@@ -11,6 +11,7 @@ import sys
 import time
 import types
 import unittest
+from types import SimpleNamespace
 from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -93,7 +94,11 @@ def _run_main(accs=ACCS, cur=None, iterations=1, urlopen_exc=None, connect_fail_
         if urlopen_exc:
             raise urlopen_exc
         return _Resp(accs)
-    with patch.object(fp2.signal, "signal", MagicMock()), patch.object(fp2.time, "sleep", sleep), \
+    # fp2 now fetches through nova_homekit_client (Bearer token + in-call retry); its backoff sleeps must not
+    # count as poll-loop ticks, so give it a private no-op clock.
+    with patch.object(fp2.hk, "time", SimpleNamespace(sleep=lambda s: None)), \
+         patch.object(fp2.hk, "_log", lambda m: None), \
+         patch.object(fp2.signal, "signal", MagicMock()), patch.object(fp2.time, "sleep", sleep), \
          patch.object(fp2.psycopg2, "connect", connect), patch("urllib.request.urlopen", urlopen), \
          redirect_stdout(io.StringIO()) as out:
         fp2.main()
@@ -152,7 +157,7 @@ class TestRetry(unittest.TestCase):
         self.assertIn("reconnect failed: still down", out)
 
     def test_bridge_outage_fails_open_and_counts(self):
-        # RETRY GAP: fetch_fp2_occupancy()/urlopen — no in-call retry; the loop swallows the error, logs the first 3
+        # fetch_fp2_occupancy() retries 3x in-call via nova_homekit_client; when all fail the loop swallows the error, logs the first 3
         # then every 30th, and simply tries again next POLL_INTERVAL. No row is written, no exception escapes.
         cur = _Cur()
         _, conns, out = _run_main(cur=cur, iterations=4, urlopen_exc=OSError("bridge down"))

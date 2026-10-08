@@ -35,6 +35,11 @@ ZIGBEE_PRESENCE = {
     "patio_presence": "patio",
 }
 
+# Climate-only FP300s: report temp/humidity but are not an occupancy room Nova fuses.
+ZIGBEE_CLIMATE_ONLY = {
+    "garage_presence": "garage",
+}
+
 PRESENCE_CONFIDENCE = 0.85  # FP300 mmWave is a high-confidence indoor signal
 
 # Slack info ping on presence. mmWave fires constantly, so we only ping on an
@@ -97,19 +102,32 @@ def write_presence(room, present, payload):
         # an identity-less mmWave hit must not assert "jordan is in <room>".
 
 
-def write_climate(room, payload):
-    """temp/humidity/lux -> telemetry.climate (only when present in this message)."""
+def write_climate(room, payload, device=None):
+    """temp/humidity/lux -> telemetry.climate (only when present in this message).
+
+    Writes BOTH climate feeds the retired collectors produced (2026-10-08: ZHA was disabled
+    so zigbee2mqtt is again the sole coordinator owner, and nova_climate_poller's ZHA path
+    goes quiet):
+      - source='fp300'  -> clean room label, presence rooms only
+      - source='zigbee' -> zigbee2mqtt friendly_name (room + '_presence'), every FP300"""
     temp_f = _c_to_f(payload.get("temperature"))
     hum = payload.get("humidity")
     lux = payload.get("illuminance")
     motion = payload.get("presence")
     if temp_f is None and hum is None and lux is None:
         return
+    motion_b = bool(motion) if motion is not None else None
     with _db().cursor() as cur:
-        cur.execute(
-            "INSERT INTO telemetry.climate (ts, room, source, temp_f, humidity, light_lux, motion) "
-            "VALUES (now(), %s, 'fp300', %s, %s, %s, %s)",
-            (room, temp_f, hum, lux, bool(motion) if motion is not None else None))
+        if device is None or device in ZIGBEE_PRESENCE:
+            cur.execute(
+                "INSERT INTO telemetry.climate (ts, room, source, temp_f, humidity, light_lux, motion) "
+                "VALUES (now(), %s, 'fp300', %s, %s, %s, %s)",
+                (room, temp_f, hum, lux, motion_b))
+        if device:
+            cur.execute(
+                "INSERT INTO telemetry.climate (ts, room, source, temp_f, humidity, light_lux, motion) "
+                "VALUES (now(), %s, 'zigbee', %s, %s, %s, %s)",
+                (device, temp_f, hum, lux, motion_b))
 
 
 WRITE_ATTEMPTS = 3
@@ -138,19 +156,19 @@ def _with_retry(fn, *args):
 
 def on_message(client, userdata, msg):
     device = msg.topic.replace("zigbee2mqtt/", "")
-    room = ZIGBEE_PRESENCE.get(device)
+    room = ZIGBEE_PRESENCE.get(device) or ZIGBEE_CLIMATE_ONLY.get(device)
     if not room:
-        return  # not one of our presence sensors
+        return  # not one of our FP300s
     try:
         payload = json.loads(msg.payload.decode())
     except Exception:
         return
     try:
-        if "presence" in payload:
+        if "presence" in payload and device in ZIGBEE_PRESENCE:
             present = bool(payload["presence"])
             _with_retry(write_presence, room, present, payload)
             maybe_notify_presence(room, present)
-        _with_retry(write_climate, room, payload)
+        _with_retry(write_climate, room, payload, device)
     except Exception as e:
         print(f"[fp300-bridge] write error for {device}/{room}: {e}", flush=True)
 
@@ -173,7 +191,7 @@ def main():
             if attempt == 3:
                 raise
             time.sleep(2 * 2 ** (attempt - 1))
-    for dev in ZIGBEE_PRESENCE:
+    for dev in list(ZIGBEE_PRESENCE) + list(ZIGBEE_CLIMATE_ONLY):
         client.subscribe(f"zigbee2mqtt/{dev}")
     print(f"[fp300-bridge] watching {len(ZIGBEE_PRESENCE)} FP300(s): "
           f"{', '.join(ZIGBEE_PRESENCE.values())}", flush=True)

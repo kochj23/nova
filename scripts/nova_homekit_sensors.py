@@ -19,6 +19,8 @@ from pathlib import Path
 
 import psycopg2
 
+import nova_homekit_client as hk  # Bearer token (NovaHomeKit 51e7a91)
+
 HOMEKIT_URL = "http://127.0.0.1:37433/api/accessories"
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 SOURCE = "homekit"
@@ -44,7 +46,7 @@ def fetch(retries=6):
     import time as _t
     for i in range(retries):
         try:
-            with urllib.request.urlopen(HOMEKIT_URL, timeout=15) as r:
+            with urllib.request.urlopen(urllib.request.Request(HOMEKIT_URL, headers=hk.auth_headers()), timeout=15) as r:
                 raw = r.read()
             if raw and len(raw) > 1000:
                 return json.loads(raw)

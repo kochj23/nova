@@ -177,8 +177,9 @@ class TestFunctional(unittest.TestCase):
         zb.on_message(None, None, _msg("patio_presence", {"presence": True, "temperature": 20, "humidity": 40,
                                                           "illuminance": 300}))
         tables = [s.split("INTO ")[1].split(" ")[0] for s, _ in zb._conn.sql]
-        self.assertEqual(tables, ["telemetry.presence", "telemetry.climate"])
-        self.assertEqual(zb._conn.sql[-1][1], ("patio", 68.0, 40, 300, True))
+        self.assertEqual(tables, ["telemetry.presence", "telemetry.climate", "telemetry.climate"])  # fp300 + legacy zigbee feed
+        self.assertEqual(zb._conn.sql[-2][1], ("patio", 68.0, 40, 300, True))
+        self.assertEqual(zb._conn.sql[-1][1], ("patio_presence", 68.0, 40, 300, True))
         self.assertIn("Patio", zb.notify.call_args[0][0])
 
     def test_climate_only_message(self):

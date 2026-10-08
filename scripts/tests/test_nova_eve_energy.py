@@ -193,7 +193,9 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(rc, 0)
         connect.assert_called_once_with(ee.DSN)
         self.assertTrue(conn.autocommit); self.assertTrue(conn.closed)
-        self.assertEqual(u.call_args[0][0], ee.SRC)
+        req = u.call_args[0][0]                   # NovaHomeKit 51e7a91: Request carrying the Bearer token
+        self.assertEqual(req.full_url, ee.SRC)
+        self.assertEqual(req.get_method(), "GET")
         sql, params = conn.cur.sql[0]
         self.assertTrue(sql.startswith("INSERT INTO telemetry.energy (ts, device_id, device_name, watts, kwh_total, on_state)"))
         self.assertEqual(params, ("eve:Strip", "Strip", 552.0, 1.25, True))

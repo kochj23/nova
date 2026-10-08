@@ -166,7 +166,7 @@ class TestUnit(unittest.TestCase):
 
     def test_urlopen_uses_the_long_homekit_timeout(self):
         mod, *_ = _boot([[]])
-        self.assertEqual(mod._test_polls, [(mod.HOMEKIT_URL, 120)])
+        self.assertEqual([(getattr(u, "full_url", u), t) for u, t in mod._test_polls], [(mod.HOMEKIT_URL, 120)])
 
 
 class TestIntegration(unittest.TestCase):

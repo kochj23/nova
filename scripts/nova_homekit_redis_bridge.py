@@ -6,6 +6,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import redis
 
+import nova_homekit_client as hk  # Bearer token (NovaHomeKit 51e7a91); loop re-polls every 60s
+
 HOMEKIT_URL = "http://127.0.0.1:37433/api/accessories"
 REDIS_KEY = "nova:homekit:accessories"
 INTERVAL = 60
@@ -19,7 +21,7 @@ r = redis.Redis(host='127.0.0.1', port=6379, decode_responses=True)
 
 while not _shutdown:
     try:
-        resp = urllib.request.urlopen(HOMEKIT_URL, timeout=120)
+        resp = urllib.request.urlopen(urllib.request.Request(HOMEKIT_URL, headers=hk.auth_headers()), timeout=120)
         data = resp.read().decode()
         r.setex(REDIS_KEY, 300, data)  # Cache for 5 min
         accessories = json.loads(data)

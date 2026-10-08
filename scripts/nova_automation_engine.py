@@ -314,7 +314,11 @@ def _hk_power(name: str, on: bool) -> bool:
     import urllib.request, urllib.parse
     url = f"{NOVAHOMEKIT_POWER}?name={urllib.parse.quote(name)}&on={'true' if on else 'false'}"
     try:
-        _with_retry(lambda: urllib.request.urlopen(url, timeout=6).read(), f"hk_power '{name}'")
+        # NovaHomeKit 51e7a91: state changes are POST-only and need the Bearer token.
+        from nova_homekit_client import auth_headers as _hk_auth
+        _with_retry(lambda: urllib.request.urlopen(urllib.request.Request(
+            url, method="POST", data=b"", headers=_hk_auth()), timeout=6).read(),
+            f"hk_power '{name}'")
         return True
     except Exception as e:
         log(f"hk_power '{name}'={on} failed after {RETRY_ATTEMPTS} attempts: {e}", "WARN")

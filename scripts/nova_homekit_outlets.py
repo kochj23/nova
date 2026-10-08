@@ -33,6 +33,8 @@ import urllib.request
 
 import psycopg2
 
+import nova_homekit_client as hk  # Bearer token (NovaHomeKit 51e7a91)
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 try:
     from nova_notify import notify
@@ -53,7 +55,7 @@ LEFT_ON_WATCHLIST = {}
 
 
 def fetch():
-    req = urllib.request.Request(HK_URL, headers={"Accept": "application/json"})
+    req = urllib.request.Request(HK_URL, headers=hk.auth_headers())
     return json.loads(urllib.request.urlopen(req, timeout=15).read())
 
 

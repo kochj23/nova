@@ -79,7 +79,8 @@ class TestSecurity(unittest.TestCase):
 
     def test_homekit_endpoint_is_loopback_and_read_only(self):
         self.assertTrue(hb.HOMEKIT_URL.startswith("http://127.0.0.1:37433/"))
-        self.assertNotIn("urllib.request.Request(", SRC)                # a plain GET, never a write to HomeKit
+        self.assertNotIn("method=", SRC)                                # a plain GET, never a write to HomeKit
+        self.assertIn("hk.auth_headers()", SRC)                        # NovaHomeKit 51e7a91 Bearer token
 
 
 class TestPerformance(unittest.TestCase):

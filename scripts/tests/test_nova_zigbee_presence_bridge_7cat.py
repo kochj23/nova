@@ -148,7 +148,7 @@ class TestFunctional(_Base):
     def test_arrival_golden_path(self):
         zb.on_message(None, None, msg("dylans_room_presence", {"presence": True, "temperature": 22, "illuminance": 5}))
         tables = [s.split("INTO ")[1].split()[0] for s, _ in self.all_sql()]
-        self.assertEqual(tables, ["telemetry.presence", "telemetry.climate"])
+        self.assertEqual(tables, ["telemetry.presence", "telemetry.climate", "telemetry.climate"])  # fp300 + legacy zigbee feed
         zb.notify.assert_called_once()
 
     def test_pg_outage_drops_message_without_crashing(self):
@@ -165,6 +165,68 @@ class TestFrame(unittest.TestCase):
                            cwd=str(SCRIPTS), env={**os.environ})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "5")
+
+
+# ── 2026-10-08: ZHA disabled, zigbee2mqtt sole coordinator owner again ─────────────────────────────
+# The SLZB-06U (.23:6638) takes one TCP client; ZHA (.6) and zigbee2mqtt (.2) were both configured for it
+# and stole it from each other ~10x/day, and ZHA has no quirk exposing FP300 (lumi.sensor_occupy.agl8)
+# occupancy -> FP300 presence was dark since 2026-07-30. The bridge now also writes the legacy
+# source='zigbee' climate feed nova_climate_poller produced from ZHA, and garage climate (no presence).
+class TestOwnershipCutover(_Base):
+    # Security: a climate-only device can never assert presence
+    def test_security_garage_never_writes_presence(self):
+        zb.on_message(None, None, msg("garage_presence", {"presence": True, "temperature": 30}))
+        joined = " ".join(s for s, _ in self.all_sql())
+        self.assertNotIn("telemetry.presence", joined)
+        zb.notify.assert_not_called()
+
+    # Performance: one message -> at most 3 statements
+    def test_performance_statement_count_bounded(self):
+        zb.on_message(None, None, msg("office_presence", {"presence": True, "temperature": 20, "humidity": 40}))
+        self.assertLessEqual(len(self.all_sql()), 3)
+
+    # Retry: the dual climate write is retried as one unit (reconnects, then both rows land)
+    def test_retry_dual_climate_write(self):
+        first = {"n": 0}
+
+        def flaky(dsn):
+            first["n"] += 1
+            c = Conn(fail=1 if first["n"] == 1 else 0)
+            self.conns.append(c)
+            return c
+        with patch.object(zb.psycopg2, "connect", side_effect=flaky):
+            zb.on_message(None, None, msg("office_presence", {"humidity": 41}))
+        sources = [s.split("'")[1] for s, _ in self.all_sql() if "telemetry.climate" in s]
+        self.assertEqual(sources, ["fp300", "zigbee"])
+        self.assertGreaterEqual(self.sleep.call_count, 1)
+
+    # Unit: both feeds carry the right room label
+    def test_unit_room_labels(self):
+        zb.on_message(None, None, msg("living_room_presence", {"humidity": 50}))
+        rows = [(s.split("'")[1], p[0]) for s, p in self.all_sql()]
+        self.assertEqual(rows, [("fp300", "living_room"), ("zigbee", "living_room_presence")])
+
+    # Integration: the bridge subscribes to every FP300 including climate-only ones
+    def test_integration_subscribes_all_six(self):
+        client = MagicMock()
+        with patch.object(zb.mqtt, "Client", return_value=client), patch.object(zb, "_db"):
+            client.loop_forever.side_effect = KeyboardInterrupt
+            with self.assertRaises(KeyboardInterrupt):
+                zb.main()
+        topics = sorted(c.args[0] for c in client.subscribe.call_args_list)
+        self.assertEqual(len(topics), 6)
+        self.assertIn("zigbee2mqtt/garage_presence", topics)
+
+    # Functional: garage climate lands only in the legacy zigbee feed
+    def test_functional_garage_climate_only(self):
+        zb.on_message(None, None, msg("garage_presence", {"temperature": 30, "humidity": 20}))
+        rows = [(s.split("'")[1], p[0]) for s, p in self.all_sql()]
+        self.assertEqual(rows, [("zigbee", "garage_presence")])
+
+    # Frame: maps are disjoint and sane
+    def test_frame_maps_disjoint(self):
+        self.assertFalse(set(zb.ZIGBEE_PRESENCE) & set(zb.ZIGBEE_CLIMATE_ONLY))
+        self.assertTrue(all(k.endswith("_presence") for k in list(zb.ZIGBEE_PRESENCE) + list(zb.ZIGBEE_CLIMATE_ONLY)))
 
 
 if __name__ == "__main__":
