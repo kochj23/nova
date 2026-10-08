@@ -2,11 +2,15 @@
 """
 nova_presence_engine.py — Room-level occupancy intelligence for Nova.
 
-Fuses multiple signals into confident room-level presence:
-  - BLE RSSI (telemetry.presence via nova_ble_monitor — every 30-40s)
-  - Hue motion sensors (telemetry.climate with motion=true)
-  - UniFi network clients (telemetry.network — device on WiFi = person home)
-  - Power draw patterns (telemetry.energy — desk lamp on = room occupied)
+Fuses multiple signals into confident room-level presence (noisy-OR over per-signal reliability):
+  identity signals (say WHO):  BLE RSSI (ble_rssi), UniFi AP association (wifi_rssi), UniFi client
+                               hostname (telemetry.network), HA companion-app zone (gps_tracker)
+  room signals (say WHERE):    Aqara FP2 mmWave (mmwave), YOLO camera (camera_vision), Hue motion
+  Feeds older than FEED_MAX_AGE_MIN are DEGRADED: excluded from fusion and listed in
+  presence_state.detail.degraded_feeds and /health — never silently read as "nobody there".
+
+presence_state (written here, one row per resident) is the SINGLE SOURCE OF TRUTH for occupancy:
+nova_embodiment, nova_time_sense and the organ board read it instead of re-deriving "who is home".
 
 Outputs:
   - Writes fused presence to shared_observations (for Nova to act on)
@@ -20,6 +24,7 @@ Written by Jordan Koch.
 
 import asyncio
 import json
+import os
 import signal
 import sys
 import time
@@ -54,18 +59,41 @@ PERSON_DEVICES = {
         "wifi_macs": [],  # populated from UniFi
         "phone_hostname": "Jordans-iPhone",
     },
+    # Added 2026-10-08 so presence_state covers every resident and embodiment/time_sense can read it
+    # as the single source of truth for "who is home" instead of re-deriving it.
+    "amy": {
+        "phone_hostname": "Amys-iPhone",
+    },
 }
 
-# Confidence weights for each signal source
-# mmWave is most reliable — no false negatives while stationary
+# Signal RELIABILITY (0..1): how much one reading, at full confidence, proves the person is where we
+# say. Fused by noisy-OR — 1 - prod(1 - rel*conf) — so independent evidence ADDS UP and a sensor that
+# doesn't cover the room (or is down) simply contributes nothing. Until 2026-10-08 this was a weighted
+# average divided by the sum of ALL weights, so dead feeds (mmwave since the 10-06 reboot) and sensors
+# that never cover Jordan's office capped confidence at ~0.2 even with BLE + WiFi + GPS all agreeing.
 WEIGHTS = {
-    "mmwave": 0.30,
-    "camera_vision": 0.28,  # high-confidence room occupancy (YOLOv8), freshest indoor signal
-    "ble_rssi": 0.22,
-    "hue_motion": 0.15,
-    "vehicle_vision": 0.08,
-    "wifi_home": 0.05,
+    "mmwave": 0.90,
+    "camera_vision": 0.85,  # high-confidence room occupancy (YOLOv8), no identity
+    "gps_tracker": 0.80,    # HA companion app zone: home/not_home (identity, no room)
+    "wifi_rssi": 0.75,      # phone associated to an AP (identity + AP zone)
+    "ble_rssi": 0.70,       # phone heard by the office BLE scanner (identity, coarse room)
+    "wifi_home": 0.60,      # phone hostname present in UniFi client list (identity, no room)
+    "hue_motion": 0.50,
+    "vehicle_vision": 0.30,
 }
+
+# Feeds and how old their newest row may be before the feed is DEGRADED. A degraded feed is excluded
+# from fusion and reported (presence_state.detail.degraded_feeds, /health) instead of silently reading
+# as "nobody there". gps_tracker is heartbeated every 15 min by nova_ha_poller.
+FEED_MAX_AGE_MIN = {
+    "mmwave": 10, "camera_vision": 15, "ble_rssi": 10, "wifi_rssi": 15, "gps_tracker": 45,
+}
+
+# BLE "rooms" that are proximity bands, not places: the phone WAS heard (so: home), but where is unknown.
+BLE_NON_ROOMS = ("away", "nearby", "unknown")
+NON_ROOMS = ("away", "nearby", "unknown", "home", "")
+# Minimum rel*conf for a single signal to name a room on its own.
+ROOM_EVIDENCE_MIN = 0.25
 
 AWAY_THRESHOLD_MIN = 30
 HOME_CONFIDENCE_THRESHOLD = 0.5
@@ -80,10 +108,22 @@ _last_transition = {}
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
 
 
+def _stdout_is_logfile():
+    """launchd's StandardOutPath IS LOG_FILE, so print() already lands there; appending as well wrote
+    every line twice. Only append when stdout is somewhere else (tests, a terminal)."""
+    try:
+        a, b = os.fstat(sys.stdout.fileno()), os.stat(LOG_FILE)
+        return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+    except Exception:
+        return False
+
+
 def log(msg, level="INFO"):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[presence {ts}] [{level}] {msg}"
     print(line, flush=True)
+    if _stdout_is_logfile():
+        return
     try:
         with open(LOG_FILE, "a") as f:
             f.write(line + "\n")
@@ -128,17 +168,65 @@ async def get_camera_presence():
 
 
 async def get_ble_presence():
-    """Get latest BLE presence per person."""
+    """Latest BLE reading per person. method = 'ble_rssi' ONLY — the old `method != 'mmwave'` filter
+    let camera/vehicle/wifi/HA rows (person='unknown', 'vehicle', ...) masquerade as BLE (fixed 2026-10-08)."""
     pool = await get_pool()
     async with pool.acquire() as conn:
         rows = await conn.fetch("""
             SELECT DISTINCT ON (person)
                 person, room, confidence, ts
             FROM telemetry.presence
-            WHERE method != 'mmwave' AND ts > now() - interval '2 minutes'
+            WHERE method = 'ble_rssi' AND ts > now() - interval '2 minutes'
             ORDER BY person, ts DESC
         """)
     return {r["person"]: {"room": r["room"], "confidence": r["confidence"], "ts": r["ts"]} for r in rows}
+
+
+async def get_wifi_rssi_presence():
+    """Latest UniFi AP association per person (nova_wifi_presence) — identity + AP zone."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT DISTINCT ON (person)
+                person, room, confidence, ts
+            FROM telemetry.presence
+            WHERE method = 'wifi_rssi' AND ts > now() - interval '5 minutes'
+            ORDER BY person, ts DESC
+        """)
+    return {r["person"]: {"room": r["room"], "confidence": r["confidence"], "ts": r["ts"]} for r in rows}
+
+
+async def get_gps_presence():
+    """Latest HA companion-app zone per person (gps_tracker; confidence 0.99 = home, 0.0 = not_home)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT DISTINCT ON (person)
+                person, confidence, ts
+            FROM telemetry.presence
+            WHERE method = 'gps_tracker' AND ts > now() - interval '45 minutes'
+            ORDER BY person, ts DESC
+        """)
+    return {r["person"]: {"home": (r["confidence"] or 0) >= 0.5, "ts": r["ts"]} for r in rows}
+
+
+async def get_feed_health():
+    """{feed: minutes since newest row} for each FEED_MAX_AGE_MIN feed (None = no row in 2 days)."""
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        rows = await conn.fetch("""
+            SELECT method, extract(epoch FROM now() - max(ts)) / 60 AS age_min
+            FROM telemetry.presence
+            WHERE ts > now() - interval '2 days' AND method = ANY($1::text[])
+            GROUP BY method
+        """, list(FEED_MAX_AGE_MIN))
+    ages = {r["method"]: float(r["age_min"]) for r in rows}
+    return {feed: ages.get(feed) for feed in FEED_MAX_AGE_MIN}
+
+
+def degraded_feeds(health):
+    """Feeds whose newest row is older than allowed (or missing) — excluded from fusion."""
+    return sorted(f for f, age in health.items() if age is None or age > FEED_MAX_AGE_MIN[f])
 
 
 async def get_vehicle_presence():
@@ -188,11 +276,23 @@ async def get_wifi_home():
     return results
 
 
+def _noisy_or(evidence):
+    """evidence: iterable of (signal, conf). 1 - prod(1 - rel*conf)."""
+    p_absent = 1.0
+    for sig, conf in evidence:
+        p_absent *= 1.0 - WEIGHTS[sig] * max(0.0, min(1.0, float(conf or 0)))
+    return 1.0 - p_absent
+
+
 async def compute_occupancy():
-    """Fuse all signals into room-level occupancy map."""
-    mmwave = await get_mmwave_presence()
-    camera = await get_camera_presence()
-    ble = await get_ble_presence()
+    """Fuse all signals into a per-person {home, room, confidence} map."""
+    health = await get_feed_health()
+    degraded = set(degraded_feeds(health))
+    mmwave = {} if "mmwave" in degraded else await get_mmwave_presence()
+    camera = {} if "camera_vision" in degraded else await get_camera_presence()
+    ble = {} if "ble_rssi" in degraded else await get_ble_presence()
+    wifi_rssi = {} if "wifi_rssi" in degraded else await get_wifi_rssi_presence()
+    gps = {} if "gps_tracker" in degraded else await get_gps_presence()
     motion = await get_hue_motion()
     wifi = await get_wifi_home()
     vehicles = await get_vehicle_presence()
@@ -200,66 +300,80 @@ async def compute_occupancy():
     occupancy = {}
     for person, cfg in PERSON_DEVICES.items():
         signals = {}
-        room = "unknown"
-        total_confidence = 0.0
+        home_ev = []      # evidence the person is home at all
+        room_votes = {}   # room -> strength (rel*conf), from identity signals that name a room
 
-        # BLE signal — gives us room-level person identification
+        # BLE (office scanner): a real room when strong; 'away'/'nearby' are proximity bands —
+        # the phone WAS heard, so it is home evidence, never "away" and never a room.
         if person in ble:
-            ble_data = ble[person]
-            room = ble_data["room"]
-            signals["ble_rssi"] = {"room": room, "confidence": ble_data["confidence"]}
-            total_confidence += ble_data["confidence"] * WEIGHTS["ble_rssi"]
+            b = ble[person]
+            signals["ble_rssi"] = {"room": b["room"], "confidence": b["confidence"]}
+            home_ev.append(("ble_rssi", b["confidence"]))
+            if b["room"] not in BLE_NON_ROOMS:
+                room_votes[b["room"]] = room_votes.get(b["room"], 0) + WEIGHTS["ble_rssi"] * (b["confidence"] or 0)
 
-        # mmWave — strongest presence signal (detects stationary humans)
-        # If BLE gave us a room, check if mmWave confirms it
-        # If no BLE, check all mmWave rooms for presence
-        if room != "unknown" and room in mmwave:
-            mw = mmwave[room]
-            signals["mmwave"] = {"room": room, "confidence": mw["confidence"]}
-            total_confidence += mw["confidence"] * WEIGHTS["mmwave"]
-        elif room == "unknown":
-            # No BLE — use mmWave occupied rooms as candidates
-            occupied_rooms = [r for r, data in mmwave.items() if data["confidence"] > 0.5]
-            if len(occupied_rooms) == 1:
-                room = occupied_rooms[0]
-                signals["mmwave"] = {"room": room, "confidence": mmwave[room]["confidence"]}
-                total_confidence += mmwave[room]["confidence"] * WEIGHTS["mmwave"]
+        # WiFi AP association — identity + the AP's zone.
+        if person in wifi_rssi:
+            w = wifi_rssi[person]
+            signals["wifi_rssi"] = {"room": w["room"], "confidence": w["confidence"]}
+            home_ev.append(("wifi_rssi", w["confidence"]))
+            if w["room"] not in NON_ROOMS:
+                room_votes[w["room"]] = room_votes.get(w["room"], 0) + WEIGHTS["wifi_rssi"] * (w["confidence"] or 0)
 
-        # Camera vision — high-confidence room occupancy (no person identity).
-        # Corroborates a known room, or locates the person when nothing else has.
-        if room != "unknown" and room in camera and camera[room]["confidence"] > 0.5:
-            signals["camera_vision"] = {"room": room, "confidence": camera[room]["confidence"]}
-            total_confidence += camera[room]["confidence"] * WEIGHTS["camera_vision"]
-        elif room == "unknown":
-            cam_rooms = [r for r, d in camera.items() if d["confidence"] > 0.5]
-            if len(cam_rooms) == 1:
-                room = cam_rooms[0]
-                signals["camera_vision"] = {"room": room, "confidence": camera[room]["confidence"]}
-                total_confidence += camera[room]["confidence"] * WEIGHTS["camera_vision"]
-
-        # Hue motion corroboration
-        if room in motion:
-            signals["hue_motion"] = {"room": room, "triggered": True}
-            total_confidence += 0.9 * WEIGHTS["hue_motion"]
-
-        # WiFi home check
         if wifi.get(person):
             signals["wifi_home"] = True
-            total_confidence += 1.0 * WEIGHTS["wifi_home"]
+            home_ev.append(("wifi_home", 1.0))
 
-        # Vehicle detection (home/away signal, not room-level)
+        # GPS zone is authoritative for AWAY: if the phone says not_home, it is.
+        gps_away = False
+        if person in gps:
+            signals["gps_tracker"] = {"home": gps[person]["home"]}
+            if gps[person]["home"]:
+                home_ev.append(("gps_tracker", 0.99))
+            else:
+                gps_away = True
+
+        best = max(room_votes, key=room_votes.get) if room_votes else None
+        room = best if best and room_votes[best] >= ROOM_EVIDENCE_MIN else "unknown"
+
+        # mmWave/camera/hue: room-level, NO identity. They corroborate the identity room, or — if the
+        # person is otherwise known to be home but unplaced — locate them when exactly one room is lit up.
+        room_ev = []
+        if room == "unknown" and home_ev and not gps_away:
+            # identity-less sensors may PLACE a person already known to be home; they can never make a
+            # specific person home on their own (a camera hit in the kitchen could be anyone).
+            for feed in (mmwave, camera):
+                hits = [r for r, d in feed.items() if d["confidence"] > 0.5]
+                if len(hits) == 1:
+                    room = hits[0]
+                    break
+        if room != "unknown":
+            for sig, feed in (("mmwave", mmwave), ("camera_vision", camera)):
+                if room in feed and feed[room]["confidence"] > 0.5:
+                    signals[sig] = {"room": room, "confidence": feed[room]["confidence"]}
+                    room_ev.append((sig, feed[room]["confidence"]))
+        if room != "unknown" and room in motion:
+            signals["hue_motion"] = {"room": room, "triggered": True}
+            room_ev.append(("hue_motion", 0.9))
+
         if person in vehicles:
             signals["vehicle_vision"] = {"vehicle_seen": True, "camera_room": vehicles[person]["room"]}
-            total_confidence += vehicles[person]["confidence"] * WEIGHTS["vehicle_vision"]
+            home_ev.append(("vehicle_vision", vehicles[person]["confidence"]))
 
-        final_confidence = min(total_confidence / sum(WEIGHTS.values()), 1.0) if total_confidence > 0 else 0
+        if gps_away and room == "unknown":
+            # phone's zone says not_home and nothing in the house can name a room for this person
+            # (a weak BLE band alone doesn't outvote GPS; a live AP association in a room does).
+            home, confidence = False, WEIGHTS["gps_tracker"]
+        else:
+            home = bool(home_ev or room_ev)
+            confidence = _noisy_or(home_ev + room_ev) if home else 0.0
 
-        vehicle_home = person in vehicles
         occupancy[person] = {
-            "room": room if final_confidence > 0.3 else "unknown",
-            "confidence": round(final_confidence, 2),
-            "home": wifi.get(person, False) or (person in ble) or (room != "unknown" and room in mmwave) or (room != "unknown" and room in camera) or vehicle_home,
+            "room": room if home else "unknown",
+            "confidence": round(confidence, 2),
+            "home": home,
             "signals": signals,
+            "degraded_feeds": sorted(degraded),
             "ts": datetime.now(timezone.utc).isoformat(),
         }
 
@@ -321,9 +435,13 @@ async def persist_presence_state(new_occupancy):
                 room = "away"
             else:
                 room = state["room"] if state["room"] != "unknown" else "home"
+            detail = {"home": bool(state["home"]),
+                      "signals": sorted(state.get("signals", {})),
+                      "degraded_feeds": state.get("degraded_feeds", [])}
             await conn.execute("""
-                INSERT INTO presence_state (person, room, confidence, source, activity_state, entered_at, last_confirmed)
-                VALUES ($1, $2, $3, 'fusion', $4, now(), now())
+                INSERT INTO presence_state (person, room, confidence, source, activity_state, entered_at,
+                                            last_confirmed, detail)
+                VALUES ($1, $2, $3, 'fusion', $4, now(), now(), $5::jsonb)
                 ON CONFLICT (person) DO UPDATE SET
                     room = EXCLUDED.room,
                     confidence = EXCLUDED.confidence,
@@ -331,9 +449,10 @@ async def persist_presence_state(new_occupancy):
                     activity_state = EXCLUDED.activity_state,
                     entered_at = CASE WHEN presence_state.room <> EXCLUDED.room
                                       THEN now() ELSE presence_state.entered_at END,
-                    last_confirmed = now()
+                    last_confirmed = now(),
+                    detail = EXCLUDED.detail
             """, person, room, float(state["confidence"]),
-                 state.get("signals", {}).get("activity_state", "unknown"))
+                 state.get("signals", {}).get("activity_state", "unknown"), json.dumps(detail))
 
 
 async def presence_loop():
@@ -360,6 +479,7 @@ async def handle_health(request):
         "service": "nova_presence_engine",
         "version": VERSION,
         "uptime_s": int(time.time() - _start_time),
+        "degraded_feeds": next(iter(_occupancy.values()), {}).get("degraded_feeds", []),
     })
 
 

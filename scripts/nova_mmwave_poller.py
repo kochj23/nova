@@ -6,7 +6,7 @@ Accepts presence data via two methods:
 1. HTTP webhook (POST /presence) — from Apple HomeKit automations
 2. Apple Shortcuts polling — Shortcut reads FP2 state and POSTs here
 
-Stores zone-level presence in telemetry.presence and updates presence_state.
+Stores zone-level presence in telemetry.presence (nova_presence_engine fuses it into presence_state).
 
 FP2 sensors use Apple MFi auth so can't pair with HA directly.
 Instead, Apple Home automations fire webhooks on occupancy change.
@@ -80,7 +80,7 @@ def get_sync_conn():
 
 
 def write_presence_sync(room, presence, confidence, zones=None, metadata=None):
-    """Write presence reading to telemetry.presence and update presence_state."""
+    """Write presence reading to telemetry.presence (the engine owns presence_state)."""
     global _event_count
     try:
         conn = get_sync_conn()
@@ -92,17 +92,8 @@ def write_presence_sync(room, presence, confidence, zones=None, metadata=None):
                     VALUES (now(), 'jordan', %s, %s, 'mmwave', %s)
                 """, (room, confidence, json.dumps(metadata or {})))
 
-                # Upsert presence_state
-                if presence:
-                    cur.execute("""
-                        INSERT INTO presence_state (person, room, confidence, source, activity_state)
-                        VALUES ('jordan', %s, %s, 'mmwave', 'unknown')
-                        ON CONFLICT (person) DO UPDATE SET
-                            room = EXCLUDED.room,
-                            confidence = EXCLUDED.confidence,
-                            last_confirmed = now(),
-                            source = 'mmwave'
-                    """, (room, confidence))
+                # presence_state is written ONLY by nova_presence_engine (single source of truth,
+                # 2026-10-08). mmWave has no identity, so it must not assert "jordan is in <room>".
 
             conn.commit()
             _event_count += 1

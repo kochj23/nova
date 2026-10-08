@@ -90,7 +90,9 @@ def _routes(**over):
         "FROM contact_sense WHERE updated_at": (NOW - timedelta(minutes=42),),
         "SELECT mouth FROM contact_sense": ("imessage",),
         "FROM telemetry.incidents": (NOW - timedelta(hours=50),),
-        "FROM article_citations": (NOW - timedelta(hours=3, minutes=5),),
+        "category = 'journal'": (NOW - timedelta(hours=3, minutes=5),),
+        "FROM article_citations": (NOW - timedelta(days=2),),
+        "FROM presence_state": ("office", 0.92, 1.0),
         "FROM reach_log": (NOW - timedelta(days=1),),
         "SELECT min(computed_at)": (NOW - timedelta(hours=5),),     # before the affect_state route: it contains it
         "SELECT label, computed_at FROM affect_state": ("keyed-up", NOW - timedelta(hours=1)),
@@ -162,7 +164,7 @@ class TestRetry(unittest.TestCase):
         self.assertIsNone(s["since_critical_min"])
         self.assertNotIn("mood", s)
         self.assertEqual(cur.connection.rollbacks, 3)                   # each failed read rolled back
-        self.assertIn("the house has been usual for 3 h", ts.sentence(s, NOW))
+        self.assertIn("my event stream has been usual for 3 h", ts.sentence(s, NOW))
 
 
 class TestUnit(unittest.TestCase):
@@ -210,7 +212,7 @@ class TestUnit(unittest.TestCase):
                           (19, "evening"), (23, "late night")):
             self.assertIn(f"It is {tod} on tuesday", ts.sentence(s, NOW.replace(hour=hour)))
         self.assertEqual(ts.sentence(s, NOW),
-                         "It is afternoon on tuesday, an ordinary hour of the week; the house has been quiet for 2 h.")
+                         "It is afternoon on tuesday, an ordinary hour of the week; my event stream has been quiet for 2 h.")
 
 
 class TestIntegration(unittest.TestCase):
@@ -225,10 +227,26 @@ class TestIntegration(unittest.TestCase):
                          (40, 5, 0.6, "usual", 3))
         self.assertEqual(s["mouth"], "imessage")
         text = ts.sentence(s, NOW)
-        self.assertEqual(text, "It is afternoon on tuesday, an ordinary hour of the week; the house has been "
-                               "usual for 3 h; Little Mister last spoke to me 42 min ago (through imessage); "
+        self.assertEqual(text, "It is afternoon on tuesday, an ordinary hour of the week; my event stream has been "
+                               "usual for 3 h; Little Mister is home, in the office; "
+                               "Little Mister last spoke to me 42 min ago (through imessage); "
                                "nothing has been critical for 2 days; I last published 3 h 05 ago; "
                                "I have felt keyed-up for 5 h 00.")
+
+    def test_published_reads_journal_publishes_not_citations(self):
+        # 2026-10-08: "I last published 2 days ago" came from article_citations on a day with 5 journal posts
+        s = ts.sense(_Cur(_routes()), NOW)
+        self.assertAlmostEqual(s["since_published_min"], 185, delta=1)
+        s = ts.sense(_Cur(_routes(**{"category = 'journal'": (None,)})), NOW)   # no publish events -> fallback
+        self.assertAlmostEqual(s["since_published_min"], 2 * 1440, delta=1)
+
+    def test_presence_comes_from_presence_state(self):
+        for row, phrase in ((("away", 0.8, 1.0), "Little Mister is away from home"),
+                            (("home", 0.6, 1.0), "Little Mister is home;"),
+                            (("office", 0.9, 30.0), "I can't tell where Little Mister is")):
+            s = ts.sense(_Cur(_routes(**{"FROM presence_state": row})), NOW)
+            self.assertIn(phrase, ts.sentence(s, NOW) .replace(".", ";"))
+        self.assertNotIn("the house has been", ts.sentence(ts.sense(_Cur(_routes()), NOW), NOW))
 
     def test_contact_sense_outranks_gateway_fallback(self):
         cur = _Cur(_routes())
@@ -272,11 +290,13 @@ class TestFunctional(unittest.TestCase):
         cur = _Cur(_routes(**{"FROM contact_sense WHERE updated_at": RuntimeError("x"),
                               "FROM gateway_traces": RuntimeError("x"),
                               "FROM telemetry.incidents": RuntimeError("x"),
+                              "category = 'journal'": RuntimeError("x"),
                               "FROM article_citations": RuntimeError("x"),
+                              "FROM presence_state": RuntimeError("x"),
                               "FROM reach_log": RuntimeError("x"),
                               "SELECT label, computed_at FROM affect_state": RuntimeError("x")}))
         out = self._main(cur)
-        self.assertIn("the house has been usual for 3 h.", out)
+        self.assertIn("my event stream has been usual for 3 h.", out)
         self.assertEqual(sum(s.startswith("INSERT INTO time_sense") for s in cur.sql), 1)
 
 

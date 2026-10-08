@@ -7,11 +7,14 @@ crosses a human threshold. This is the continuous part: every hour she takes the
 own present and keeps ONE sentence of it in front of her for every reply.
 What she senses (all read-only, all her own data, nova_ops):
   tempo     — events this hour vs her 28-day baseline for this hour-of-week (telemetry.events):
-              quiet / usual / busy / frantic, by percentile against the baseline
+              quiet / usual / busy / frantic, by percentile against the baseline. This is the pace of
+              her EVENT STREAM, not occupancy — the sentence says "my event stream", never "the house"
+  presence  — where Little Mister is, read from presence_state (nova_presence_engine, the single
+              source of truth for occupancy; embodiment reads the same row)
   stretch   — how many consecutive hours the tempo has been in the same bucket (time_sense table)
   since     — minutes since Little Mister last spoke (gateway_traces, non-machine channels),
               since the last critical incident (telemetry.incidents), since she last published
-              (article_citations), since she last reached out (reach_log), and how long her
+              (journal publish events in telemetry.events; article_citations as fallback), since she last reached out (reach_log), and how long her
               current mood has held (affect_state)
   phase     — where this hour sits in her own week: her busiest and quietest hours, derived,
               not assumed ("this is the slow part of the week")
@@ -34,6 +37,7 @@ except Exception:  # pragma: no cover
     MACHINE_CHANNELS = ("scheduler", "cron", "system", "claude-code", "internal", "selfcheck", "machine")
 
 DSN = os.environ.get("NOVA_OPS_DSN", "dbname=nova_ops user=kochj host=pg-primary.digitalnoise.net port=5432")
+PRESENCE_FRESH_MIN = 10  # presence_state older than this = presence engine silent
 BUCKETS = [(0.20, "quiet"), (0.80, "usual"), (0.95, "busy"), (9.99, "frantic")]
 
 
@@ -96,7 +100,25 @@ def sense(cur, now):
     else:
         s["since_jordan_min"] = mins("SELECT max(created_at) FROM gateway_traces WHERE coalesce(channel,'') NOT IN %s AND coalesce(user_message,'') <> ''", (tuple(MACHINE_CHANNELS),))
     s["since_critical_min"] = mins("SELECT max(opened_at) FROM telemetry.incidents WHERE severity ILIKE 'crit%%'")
-    s["since_published_min"] = mins("SELECT max(created_at) FROM article_citations")
+    # She publishes to the Hugo journal; every successful publish posts a "Nova Journal — <section>: <title>"
+    # event (nova_journal.notify_slack). article_citations only records memory citations, so reading it said
+    # "I last published 2 days ago" on days she published five times (fixed 2026-10-08). It stays as fallback.
+    s["since_published_min"] = mins("SELECT max(ts) FROM telemetry.events WHERE category = 'journal' "
+                                    "AND source = 'nova_journal.py' AND title LIKE 'Nova Journal — %%' "
+                                    "AND ts > now() - interval '60 days'")
+    if s["since_published_min"] is None:
+        s["since_published_min"] = mins("SELECT max(created_at) FROM article_citations")
+    # occupancy: presence_state is the single source of truth (nova_presence_engine). Tempo above is the
+    # pace of her EVENT STREAM, not whether anyone is home — the two used to be conflated in the sentence.
+    try:
+        cur.execute("SELECT room, confidence, extract(epoch FROM now() - last_confirmed) / 60 "
+                    "FROM presence_state WHERE person = 'jordan'")
+        r = cur.fetchone()
+        if r:
+            s["jordan_room"], s["jordan_conf"] = r[0], r[1]
+            s["presence_fresh"] = r[2] is not None and float(r[2]) <= PRESENCE_FRESH_MIN
+    except Exception:
+        cur.connection.rollback()
     s["since_reach_min"] = mins("SELECT max(created_at) FROM reach_log")
     try:
         cur.execute("SELECT label, computed_at FROM affect_state ORDER BY computed_at DESC LIMIT 1")
@@ -114,7 +136,17 @@ def sense(cur, now):
 def sentence(s, now):
     day = now.strftime("%A").lower(); hour = now.hour
     tod = "small hours" if hour < 5 else "early morning" if hour < 9 else "morning" if hour < 12 else "afternoon" if hour < 17 else "evening" if hour < 22 else "late night"
-    parts = [f"It is {tod} on {day}, {s.get('phase', 'an ordinary hour of the week')}; the house has been {s['tempo']} for {s['stretch_h']} h"]
+    parts = [f"It is {tod} on {day}, {s.get('phase', 'an ordinary hour of the week')}; my event stream has been {s['tempo']} for {s['stretch_h']} h"]
+    if "jordan_room" in s:
+        room = s["jordan_room"]
+        if not s.get("presence_fresh"):
+            parts.append("I can't tell where Little Mister is right now (presence is silent)")
+        elif room == "away":
+            parts.append("Little Mister is away from home")
+        elif room == "home":
+            parts.append("Little Mister is home")
+        else:
+            parts.append(f"Little Mister is home, in the {room.replace('_', ' ')}")
     if s.get("since_jordan_min") is not None: parts.append(f"Little Mister last spoke to me {_ago(s['since_jordan_min'])} ago" + (f" (through {s['mouth']})" if s.get("mouth") else ""))
     if s.get("since_critical_min") is not None: parts.append(f"nothing has been critical for {_ago(s['since_critical_min'])}")
     if s.get("since_published_min") is not None: parts.append(f"I last published {_ago(s['since_published_min'])} ago")

@@ -100,7 +100,7 @@ def _world(when=_FakeDT.fixed, presence=(("jordan", "office"), ("amy", "away")),
     means = means or {"occupancy": 1.0, "indoor_activity": 20.0, "lights_on": 3.0, "av_on": 0.2, "power_w": 400.0}
     return _Cur([("AS dow", _baseline(means, when)),
                  ("FROM telemetry.device_owner", [("jordan",), ("amy",)]),
-                 ("DISTINCT ON (person)", list(presence)),
+                 ("FROM presence_state", list(presence)),
                  ("'30 minutes' AND person = ANY", (act30,) if act30 is not None else None),
                  ("DISTINCT ON (light_id)", (lights,) if lights is not None else None),
                  ("DISTINCT ON (device_id) device_id, power", (av,) if av is not None else None),
@@ -163,7 +163,7 @@ class TestSecurity(unittest.TestCase):
         self.assertNotIn("nova_notify", SRC)                                 # raises no alerts
 
     def test_llm_cannot_invent_the_state(self):
-        st = _compute(_world(presence=(), any_indoor=0))
+        st = _compute(_world(presence=(("jordan", "away"), ("amy", "away")), any_indoor=0))
         with mock.patch.object(emb, "llm", return_value="Someone is busy in the kitchen right now."):
             head, by = emb.name_state(st, ["x"])
         self.assertEqual(by, "deterministic")
@@ -252,7 +252,7 @@ class TestUnit(unittest.TestCase):
 class TestIntegration(unittest.TestCase):
     def test_states_are_deterministic_from_telemetry(self):
         self.assertEqual(_compute(_world())["house_state"], "calm")
-        self.assertEqual(_compute(_world(presence=(), any_indoor=0))["house_state"], "empty")
+        self.assertEqual(_compute(_world(presence=(("jordan", "away"), ("amy", "away")), any_indoor=0))["house_state"], "empty")
         night = datetime(2026, 10, 6, 3, 0)
         st = _compute(_world(when=night, lights=0, act30=1, means={"occupancy": 1.0, "indoor_activity": 2.0, "lights_on": 0.0, "av_on": 0.0, "power_w": 400.0}), when=night)
         self.assertEqual(st["house_state"], "asleep")
@@ -260,6 +260,22 @@ class TestIntegration(unittest.TestCase):
         st = _compute(_world(**OFF))
         self.assertEqual((st["house_state"], st["base_state"]), ("off_rhythm", "busy"))
         self.assertGreaterEqual(st["magnitude"], emb.OFF_RHYTHM_SIGMA)
+
+    def test_occupancy_comes_from_presence_state_only(self):
+        # 2026-10-08: embodiment re-derived occupancy from the newest raw telemetry.presence row, so a
+        # flapping BLE 'away' band said "house is empty" while presence_state said Jordan was in the office.
+        cur = _world(presence=(("jordan", "office"),))
+        st = _compute(cur)
+        self.assertEqual(st["occupancy"]["residents_home"], ["jordan"])
+        occ_sql = [q for q, _ in cur.stmts("FROM presence_state")]
+        self.assertEqual(len(occ_sql), 1)
+        self.assertIn("last_confirmed", occ_sql[0])
+        self.assertFalse(cur.stmts("DISTINCT ON (person)"))
+
+    def test_silent_presence_engine_is_unknown_not_empty(self):
+        st = _compute(_world(presence=(), any_indoor=0))
+        self.assertNotEqual(st["house_state"], "empty")
+        self.assertIn("unknown", st["occupancy"]["summary"])
 
     def test_thin_telemetry_never_claims_off_rhythm(self):
         st = _compute(_world(lights=None, av=None, power=None, act30=None, presence=(("jordan", "office"),)))

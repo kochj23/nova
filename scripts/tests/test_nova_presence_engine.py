@@ -70,10 +70,13 @@ class FakePool:
     def acquire(self): return _Acq(self)
 
 
-def _answers(mmwave=(), camera=(), ble=(), motion=(), wifi=(), vehicle=()):
-    return {"method = 'mmwave'": list(mmwave), "method = 'camera_vision'": list(camera),
-            "method != 'mmwave'": list(ble), "telemetry.climate": list(motion),
-            "telemetry.network": list(wifi), "method = 'vehicle_vision'": list(vehicle)}
+def _answers(mmwave=(), camera=(), ble=(), motion=(), wifi=(), vehicle=(), wifi_rssi=(), gps=(), stale=()):
+    health = [{"method": f, "age_min": 999.0 if f in stale else 1.0} for f in pe.FEED_MAX_AGE_MIN]
+    return {"GROUP BY method": health,
+            "method = 'mmwave'": list(mmwave), "method = 'camera_vision'": list(camera),
+            "method = 'ble_rssi'": list(ble), "telemetry.climate": list(motion),
+            "telemetry.network": list(wifi), "method = 'vehicle_vision'": list(vehicle),
+            "method = 'wifi_rssi'": list(wifi_rssi), "method = 'gps_tracker'": list(gps)}
 
 
 class _Base(unittest.TestCase):
@@ -143,10 +146,48 @@ class TestUnit(_Base):
     def test_single_mmwave_room_locates_person(self):
         st = self.occ(mmwave=[{"room": "office", "confidence": 1.0, "ts": NOW(), "metadata": None}],
                       camera=[{"room": "office", "confidence": 0.9, "ts": NOW()}],
-                      motion=[{"room": "hue_office_motion_sensor_1", "ts": NOW()}])
+                      motion=[{"room": "hue_office_motion_sensor_1", "ts": NOW()}],
+                      wifi=[{"client_name": "Jordans-iPhone"}])
         self.assertEqual(st["room"], "office")
         self.assertTrue(st["home"])
-        self.assertEqual(set(st["signals"]), {"mmwave", "camera_vision", "hue_motion"})
+        self.assertEqual(set(st["signals"]), {"mmwave", "camera_vision", "hue_motion", "wifi_home"})
+
+    def test_identityless_sensor_alone_never_makes_a_person_home(self):
+        # a camera/mmWave hit could be anyone (Amy, a guest) — it can place a known-home person, not invent one
+        st = self.occ(camera=[{"room": "kitchen", "confidence": 0.9, "ts": NOW()}])
+        self.assertEqual((st["home"], st["room"]), (False, "unknown"))
+
+    def test_ble_query_is_ble_only(self):
+        # Regression 2026-10-08: `method != 'mmwave'` counted camera/vehicle/wifi/HA rows as BLE.
+        self.occ()
+        ble_sql = [q for q in self.pool.fetches if "DISTINCT ON (person)" in q and "2 minutes" in q]
+        self.assertTrue(ble_sql)
+        self.assertTrue(all("method = 'ble_rssi'" in q for q in ble_sql))
+
+    def test_ble_proximity_band_is_home_not_a_room(self):
+        st = self.occ(ble=[{"person": "jordan", "room": "away", "confidence": 0.4, "ts": NOW()}])
+        self.assertTrue(st["home"])                   # the phone WAS heard
+        self.assertEqual(st["room"], "unknown")
+
+    def test_agreeing_identity_signals_give_high_confidence_and_keep_room(self):
+        st = self.occ(ble=[{"person": "jordan", "room": "office", "confidence": 0.9, "ts": NOW()}],
+                      wifi_rssi=[{"person": "jordan", "room": "office", "confidence": 0.52, "ts": NOW()}],
+                      gps=[{"person": "jordan", "confidence": 0.99, "ts": NOW()}],
+                      wifi=[{"client_name": "Jordans-iPhone"}])
+        self.assertEqual((st["home"], st["room"]), (True, "office"))
+        self.assertGreater(st["confidence"], 0.9)     # was capped ~0.2 by dead-feed weights
+
+    def test_gps_not_home_means_away(self):
+        st = self.occ(gps=[{"person": "jordan", "confidence": 0.0, "ts": NOW()}],
+                      camera=[{"room": "kitchen", "confidence": 0.9, "ts": NOW()}])
+        self.assertFalse(st["home"])
+
+    def test_degraded_feed_is_excluded_and_reported(self):
+        st = self.occ(stale=("mmwave",), wifi=[{"client_name": "Jordans-iPhone"}],
+                      mmwave=[{"room": "office", "confidence": 1.0, "ts": NOW(), "metadata": None}])
+        self.assertNotIn("mmwave", st["signals"])
+        self.assertEqual(st["degraded_feeds"], ["mmwave"])
+        self.assertFalse(any("method = 'mmwave'" in q for q in self.pool.fetches))
 
     def test_ambiguous_mmwave_does_not_guess(self):
         st = self.occ(mmwave=[{"room": r, "confidence": 0.9, "ts": NOW(), "metadata": None} for r in ("office", "kitchen")])
@@ -154,7 +195,7 @@ class TestUnit(_Base):
 
     def test_weak_confidence_hides_room(self):
         st = self.occ(ble=[{"person": "jordan", "room": "garage", "confidence": 0.2, "ts": NOW()}])
-        self.assertEqual(st["room"], "unknown")      # 0.2*0.22/1.08 < 0.3
+        self.assertEqual(st["room"], "unknown")      # 0.2*0.70 < ROOM_EVIDENCE_MIN
         self.assertTrue(st["home"])                   # but BLE still says home
 
 
@@ -170,6 +211,13 @@ class TestIntegration(_Base):
         asyncio.run(pe.persist_presence_state({"a": {"home": False, "room": "office", "confidence": 0.1},
                                                "b": {"home": True, "room": "unknown", "confidence": 0.4}}))
         self.assertEqual([a[1] for _, a in self.pool.executed], ["away", "home"])
+
+    def test_persist_keeps_room_and_detail(self):
+        asyncio.run(pe.persist_presence_state({"jordan": {"home": True, "room": "office", "confidence": 0.95,
+                                                          "signals": {"ble_rssi": {}}, "degraded_feeds": ["mmwave"]}}))
+        sql, args = self.pool.executed[0]
+        self.assertEqual(args[1], "office")
+        self.assertEqual(json.loads(args[4]), {"home": True, "signals": ["ble_rssi"], "degraded_feeds": ["mmwave"]})
 
 
 class TestFunctional(_Base):

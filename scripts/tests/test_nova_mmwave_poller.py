@@ -130,14 +130,12 @@ class TestRetry(_Base):
 
 
 class TestUnit(_Base):
-    def test_write_presence_upserts_state_only_when_present(self):
+    def test_write_presence_never_touches_presence_state(self):
+        # presence_state has exactly one writer: nova_presence_engine (2026-10-08)
         P.write_presence_sync("office", False, 0.05)
-        self.assertEqual(len(self.conn.cur.sql), 1)
-        self.assertIn("INSERT INTO telemetry.presence", self.conn.cur.sql[0])
         P.write_presence_sync("office", True, 0.95)
-        self.assertEqual(len(self.conn.cur.sql), 3)
-        self.assertIn("INSERT INTO presence_state", self.conn.cur.sql[2])
-        self.assertIn("ON CONFLICT (person) DO UPDATE", self.conn.cur.sql[2])
+        self.assertEqual(len(self.conn.cur.sql), 2)
+        self.assertTrue(all("INSERT INTO telemetry.presence" in q for q in self.conn.cur.sql))
         self.assertEqual((self.conn.commits, P._event_count, self.conn.closed), (2, 2, True))
 
     def test_process_presence_update_state_machine(self):
@@ -150,7 +148,7 @@ class TestUnit(_Base):
             self.assertEqual(len(self.conn.cur.sql), n)
         with mock.patch.object(P.time, "time", return_value=1061.0):
             self.assertFalse(P.process_presence_update("office", True))                     # heartbeat: write, no observation
-            self.assertEqual(len(self.conn.cur.sql), n + 2)
+            self.assertEqual(len(self.conn.cur.sql), n + 1)                                   # telemetry row only
             self.assertTrue(P.process_presence_update("office", False))                     # leave
             self.assertEqual(self.conn.cur.params[-1][1], "mmWave: leave detected in office")
         self.assertEqual(P._last_state["office"]["presence"], False)
@@ -188,7 +186,7 @@ class TestIntegration(_Base):
     def test_webhook_feeds_the_same_tables_the_zigbee_bridge_mirrors(self):
         h = _handler("/presence", json.dumps({"room": "office", "presence": True, "source": "homekit"}).encode()); h.do_POST()
         tables = [re.search(r"INSERT INTO ([\w.]+)", s).group(1) for s in self.conn.cur.sql]
-        self.assertEqual(tables, ["telemetry.presence", "presence_state", "shared_observations"])
+        self.assertEqual(tables, ["telemetry.presence", "shared_observations"])
         self.assertEqual(self.conn.cur.params[0][1], 0.95)
         self.assertEqual(json.loads(self.conn.cur.params[0][2])["source"], "homekit")
 

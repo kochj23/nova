@@ -2,7 +2,8 @@
 """nova_organ_board.py — wish #66: the table the organs share.
 
 One view, nova_ops.organ_board, with the LATEST row of every organ side by side (affect, time_sense,
-attention_focus, core_liveness, security_organ, presence, contact_sense), and board(cur) -> dict so any
+attention_focus, core_liveness, security_organ, presence, embodiment, contact_sense). presence is Jordan's
+presence_state row (the single source of truth for occupancy, 2026-10-08); embodiment and time_sense read it too., and board(cur) -> dict so any
 organ can read the others before it talks to Jordan. First consumer: nova_security_organ downgrades a
 "new device" when a known person walked in minutes ago (a phone arriving with its owner is not an intruder
 at 03:00 levels). Read-only. --report --selftest. Approved 2026-10-04.
@@ -31,8 +32,12 @@ SELECT 'security_organ', checked_at, status,
   FROM (SELECT * FROM health_checks WHERE service_name='security_organ' ORDER BY checked_at DESC LIMIT 1) s
 UNION ALL
 SELECT 'presence', last_confirmed, person || '@' || coalesce(room, '?'),
-       jsonb_build_object('confidence', confidence, 'entered_at', entered_at, 'activity', activity_state, 'source', source)
-  FROM (SELECT * FROM presence_state ORDER BY last_confirmed DESC NULLS LAST LIMIT 1) p
+       jsonb_build_object('confidence', confidence, 'entered_at', entered_at, 'activity', activity_state, 'source', source,
+                          'degraded_feeds', detail->'degraded_feeds')
+  FROM (SELECT * FROM presence_state ORDER BY (person = 'jordan') DESC, last_confirmed DESC NULLS LAST LIMIT 1) p
+UNION ALL
+SELECT 'embodiment', computed_at, house_state, occupancy
+  FROM (SELECT * FROM embodiment_state ORDER BY computed_at DESC LIMIT 1) e
 UNION ALL
 SELECT 'contact_sense', last_at, mouth, jsonb_build_object('count_24h', count_24h, 'detail', detail)
   FROM (SELECT * FROM contact_sense ORDER BY last_at DESC NULLS LAST LIMIT 1) k

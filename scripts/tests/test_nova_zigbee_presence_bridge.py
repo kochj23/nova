@@ -157,14 +157,13 @@ class TestIntegration(unittest.TestCase):
 
     def test_presence_mirrors_mmwave_tables(self):
         zb.write_presence("office", True, {"pir_detection": True})
-        (s1, p1), (s2, p2) = zb._conn.sql
+        [(s1, p1)] = zb._conn.sql                           # presence_state is the engine's alone
         self.assertIn("INSERT INTO telemetry.presence", s1)
         self.assertIn("'mmwave'", s1)
         self.assertEqual(p1[:2], ("office", zb.PRESENCE_CONFIDENCE))
-        self.assertIn("ON CONFLICT (person) DO UPDATE", s2)
         zb._conn.sql.clear()
         zb.write_presence("office", False, {})
-        self.assertEqual(len(zb._conn.sql), 1)              # absence never moves presence_state
+        self.assertEqual(len(zb._conn.sql), 1)
         self.assertEqual(zb._conn.sql[0][1][1], 0.0)
 
 
@@ -176,7 +175,7 @@ class TestFunctional(unittest.TestCase):
         zb.on_message(None, None, _msg("patio_presence", {"presence": True, "temperature": 20, "humidity": 40,
                                                           "illuminance": 300}))
         tables = [s.split("INTO ")[1].split(" ")[0] for s, _ in zb._conn.sql]
-        self.assertEqual(tables, ["telemetry.presence", "presence_state", "telemetry.climate"])
+        self.assertEqual(tables, ["telemetry.presence", "telemetry.climate"])
         self.assertEqual(zb._conn.sql[-1][1], ("patio", 68.0, 40, 300, True))
         self.assertIn("Patio", zb.notify.call_args[0][0])
 

@@ -94,7 +94,8 @@ OFF_RHYTHM_SIGMA = 1.8          # |rhythm_deviation| at/above this ⇒ 'off_rhyt
 MIN_USABLE_SIGNALS = 2          # fewer live signals than this ⇒ don't claim off_rhythm
 NIGHT_START, NIGHT_END = 23, 6  # asleep window (local hours), [23:00, 06:00)
 MEM_COOLDOWN_HOURS = 3          # don't write an off-rhythm memory more often than this
-AWAY_ROOMS = ("away", "nearby")  # presence rooms that mean "not in the house"
+AWAY_ROOMS = ("away", "nearby")  # raw telemetry.presence rooms that aren't in-house activity (baselines)
+PRESENCE_FRESH_MIN = 10  # presence_state older than this = engine down -> occupancy unknown, not "empty"
 # Rooms that count as genuine in-home interior activity zones (for coarse active_area).
 INTERIOR_ROOMS = ("living_room", "office", "kitchen", "hall", "dining", "laundry",
                   "master_bedroom", "bedroom", "guest_bedroom", "dylans_room",
@@ -231,14 +232,18 @@ def compute(oc):
 
     # 1) OCCUPANCY — residents home right now (0..N). Core rhythm signal: is the
     #    house usually occupied at this time? Also drives the coarse occupancy jsonb.
+    #    WHO is home comes from presence_state — the presence engine's fused verdict and the single
+    #    source of truth (2026-10-08). Re-deriving it here from the newest raw telemetry.presence row
+    #    made Nova's senses contradict each other: a flapping BLE 'away' band (phone heard weakly)
+    #    turned "Jordan home in the office" into "house is empty" for embodiment only.
     home_now, away_now = [], []
     try:
         oc.execute(
-            "SELECT person, room FROM (SELECT DISTINCT ON (person) person, room FROM "
-            "telemetry.presence WHERE person = ANY(%s) AND ts > now() - interval '30 minutes' "
-            "ORDER BY person, ts DESC) x", (residents,))
+            "SELECT person, room FROM presence_state WHERE person = ANY(%s) "
+            "AND last_confirmed > now() - interval '%d minutes'" % ("%s", PRESENCE_FRESH_MIN),
+            (residents,))
         for person, room in oc.fetchall():
-            (away_now if (room in AWAY_ROOMS) else home_now).append(person)
+            (away_now if (room == "away") else home_now).append(person)
     except Exception as e:
         log(f"occupancy read failed: {e}")
     occ_now = float(len(home_now))
@@ -348,8 +353,11 @@ def compute(oc):
     else:
         lively = (av_val >= 1 and lights_val >= 4) or act_val >= 60
 
-    if not somebody_home:
+    presence_known = bool(home_now or away_now)
+    if not somebody_home and presence_known:
         base_state = "empty"
+    elif not somebody_home:
+        base_state = "calm"   # presence engine silent: don't claim an empty house we can't see
     elif is_night and quiet and resident_home:
         base_state = "asleep"
     elif lively:
@@ -365,7 +373,9 @@ def compute(oc):
         house_state = base_state
 
     # Coarse occupancy summary (presence only — no movement logging).
-    if not somebody_home:
+    if not somebody_home and not presence_known:
+        occ_phrase = "occupancy unknown (presence engine silent)"
+    elif not somebody_home:
         occ_phrase = "house is empty"
     elif not resident_home and any_indoor:
         occ_phrase = "someone's here (not a recognised resident)"

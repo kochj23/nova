@@ -5,7 +5,7 @@ climate into Nova's existing pipelines.
 
 The FP2 sensors reach Nova via an HTTP webhook (HomeKit). The FP300s pair over
 Zigbee instead, so this subscribes to their MQTT topics and writes:
-  - presence (mmWave) -> telemetry.presence (method='mmwave') + presence_state
+  - presence (mmWave) -> telemetry.presence (method='mmwave'); nova_presence_engine owns presence_state
     (exactly what nova_mmwave_poller does, so nova_presence_engine fuses it).
   - temperature/humidity/illuminance -> telemetry.climate (source='fp300').
 
@@ -84,7 +84,7 @@ def _c_to_f(c):
 
 
 def write_presence(room, present, payload):
-    """Mirror nova_mmwave_poller.write_presence_sync: telemetry.presence + presence_state."""
+    """Mirror nova_mmwave_poller.write_presence_sync: telemetry.presence only (engine owns presence_state)."""
     meta = {"source": "fp300", "pir": payload.get("pir_detection"),
             "target_distance": payload.get("target_distance"),
             "illuminance": payload.get("illuminance")}
@@ -93,14 +93,8 @@ def write_presence(room, present, payload):
             "INSERT INTO telemetry.presence (ts, person, room, confidence, method, metadata) "
             "VALUES (now(), 'jordan', %s, %s, 'mmwave', %s)",
             (room, PRESENCE_CONFIDENCE if present else 0.0, json.dumps(meta)))
-        if present:
-            cur.execute(
-                "INSERT INTO presence_state (person, room, confidence, source, activity_state, "
-                "entered_at, last_confirmed) "
-                "VALUES ('jordan', %s, %s, 'fp300', 'present', now(), now()) "
-                "ON CONFLICT (person) DO UPDATE SET room=EXCLUDED.room, "
-                "confidence=EXCLUDED.confidence, source=EXCLUDED.source, last_confirmed=now()",
-                (room, PRESENCE_CONFIDENCE))
+        # presence_state is written ONLY by nova_presence_engine (single source of truth, 2026-10-08);
+        # an identity-less mmWave hit must not assert "jordan is in <room>".
 
 
 def write_climate(room, payload):
