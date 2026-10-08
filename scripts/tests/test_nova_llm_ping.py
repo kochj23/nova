@@ -146,7 +146,8 @@ class TestFunctional(unittest.TestCase):
         return rc, cur, nn.notify, out.getvalue()
 
     def test_writes_health_rows_ranking_and_alerts(self):
-        prev = json.dumps({"ollama": [{"node": "b", "status": "down"}]})
+        # a: bad last run too (pre-#145 row without bad_runs) -> sustained -> alert; b: alerted outage ended -> recovered
+        prev = json.dumps({"ollama": [{"node": "a", "status": "slow"}, {"node": "b", "status": "down", "bad_runs": 3}]})
         rc, cur, notify, _ = self._main([R("a", "ollama", "down", None), R("b", "ollama", "up")], prev=prev)
         self.assertEqual(rc, 0)
         hc = [p for s, p in cur.stmts if "INSERT INTO health_checks" in s]
@@ -155,6 +156,23 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(ranking["ollama"][0]["node"], "b")
         titles = [c.kwargs["title"] for c in notify.call_args_list]
         self.assertEqual(titles, ["LLM DOWN: ollama on a", "LLM recovered: ollama on b"])
+
+    def test_single_blip_is_silent_both_ways(self):
+        # coagency #145: one slow run then a fast one must page NOTHING (was SLOW + "recovered" every time)
+        rc, cur, notify, _ = self._main([R("a", "ollama", "slow", 12000)], prev=None)
+        notify.assert_not_called()
+        ranking = json.loads([p for s, p in cur.stmts if "INSERT INTO service_config" in s][0][1])
+        self.assertEqual(ranking["ollama"][0]["bad_runs"], 1)
+        _, _, notify, _ = self._main([R("a", "ollama", "up")], prev=json.dumps(ranking))
+        notify.assert_not_called()
+
+    def test_sustained_then_recovery(self):
+        prev = json.dumps({"ollama": [{"node": "a", "status": "slow", "bad_runs": 1}]})
+        _, cur, notify, _ = self._main([R("a", "ollama", "slow", 12000)], prev=prev)
+        self.assertEqual([c.kwargs["title"] for c in notify.call_args_list], ["LLM SLOW: ollama on a"])
+        ranking = json.loads([p for s, p in cur.stmts if "INSERT INTO service_config" in s][0][1])
+        _, _, notify, _ = self._main([R("a", "ollama", "up")], prev=json.dumps(ranking))
+        self.assertEqual([c.kwargs["title"] for c in notify.call_args_list], ["LLM recovered: ollama on a"])
 
     def test_dry_run_writes_nothing(self):
         with patch("psycopg2.connect") as pc, patch.object(lp, "probe", return_value=R("a", "mlx", "up")), \

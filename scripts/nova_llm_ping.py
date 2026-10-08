@@ -32,6 +32,10 @@ CHAT_MODEL = "qwen3:8b"          # what the gateway asks Ollama for (router.py _
 MLX_CHAT_MATCH = "qwen2.5-32b-4bit"   # the --model both MLX servers run; the id is a path that differs per box, so match by name
 SLOW_MS = 8000
 DEAD_MS = 30000
+# 2026-10-07 (coagency #145): page only on a SUSTAINED problem. nova-core7/.125 is CPU-only; a single busy
+# moment made qwen3:8b take 8-21 s for one token, which raised SLOW, then the next run (130 ms) sent
+# "LLM recovered" — 60 recovery posts in 3 days for blips the gateway had already routed around.
+ALERT_AFTER_RUNS = 2   # consecutive non-up runs (every 5 min) before a warning; recovery only follows a warning
 TAGS_TIMEOUT = 5
 GEN_TIMEOUT = 35
 
@@ -88,7 +92,7 @@ def rank(results: list) -> dict:
         rows = [r for r in results if r["kind"] == kind]
         rows.sort(key=lambda r: (order.get(r["status"], 3), not r.get("has_chat_model", False),
                                  r.get("latency_ms") if r.get("latency_ms") is not None else 10**9))
-        out[kind] = [{k: r.get(k) for k in ("node", "url", "status", "latency_ms", "has_chat_model", "model", "loaded")} for r in rows]
+        out[kind] = [{k: r.get(k) for k in ("node", "url", "status", "latency_ms", "has_chat_model", "model", "loaded", "bad_runs")} for r in rows]
     return out
 
 
@@ -166,6 +170,18 @@ def probe(ep):
     return r
 
 
+def load_prev(cur) -> dict:
+    """Previous ranking rows keyed (kind, node) — for debounce + recovery detection."""
+    cur.execute("SELECT value FROM service_config WHERE service=%s AND key='ranking'", (CHECKED_BY,))
+    row = cur.fetchone(); prev = {}
+    if row and row[0]:
+        v = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+        for kind, rows in v.items():
+            if isinstance(rows, list):
+                for x in rows: prev[(kind, x.get("node"))] = x
+    return prev
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true")
@@ -174,19 +190,19 @@ def main():
         results = list(ex.map(probe, ENDPOINTS))
     for r in results:
         log(f"{r['kind']:8} {r['node']:16} {r['status']:5} {str(r['latency_ms'])+'ms' if r['latency_ms'] is not None else '-':>8}  model={r['model']}  loaded={len(r['loaded'])}  {r['error']}")
+    prev, cur = {}, None
+    if not args.dry_run:
+        import psycopg2
+        conn = psycopg2.connect(OPS_DSN, connect_timeout=5); conn.autocommit = True; cur = conn.cursor()
+        prev = load_prev(cur)
+    for r in results:  # consecutive non-up runs, carried in the ranking row (pre-#145 rows lack it: a bad prev = 1)
+        p = prev.get((r["kind"], r["node"])) or {}
+        p_bad = p.get("bad_runs", 1 if p.get("status") in ("down", "slow") else 0) or 0
+        r["bad_runs"] = p_bad + 1 if r["status"] in ("down", "slow") else 0
+        r["prev_bad_runs"] = p_bad
     ranking = rank(results); ranking["ts"] = datetime.now().isoformat(timespec="seconds"); ranking["chat_model"] = CHAT_MODEL
     if args.dry_run:
         print(json.dumps({k: v for k, v in ranking.items() if k != "ts"}, indent=1)[:1500]); return 0
-    import psycopg2
-    conn = psycopg2.connect(OPS_DSN, connect_timeout=5); conn.autocommit = True; cur = conn.cursor()
-    # previous statuses for recovery detection
-    cur.execute("SELECT value FROM service_config WHERE service=%s AND key='ranking'", (CHECKED_BY,))
-    row = cur.fetchone(); prev = {}
-    if row and row[0]:
-        v = row[0] if isinstance(row[0], dict) else json.loads(row[0])
-        for kind, rows in v.items():
-            if isinstance(rows, list):
-                for x in rows: prev[(kind, x.get("node"))] = x.get("status")
     for r in results:
         cur.execute("""INSERT INTO health_checks (service_name, node_name, checked_by, status, latency_ms, error_message, checked_at)
                        VALUES (%s,%s,%s,%s,%s,%s,now())""",
@@ -198,12 +214,11 @@ def main():
         import nova_notify
         for r in results:
             key = f"llm-ping:{r['kind']}:{r['node']}"
-            was = prev.get((r["kind"], r["node"]))
-            if r["status"] in ("down", "slow"):
+            if r["bad_runs"] >= ALERT_AFTER_RUNS:
                 nova_notify.notify(title=f"LLM {r['status'].upper()}: {r['kind']} on {r['node']}",
                                    body=f"{r['url']} — {'no answer: '+r['error'] if r['status']=='down' else str(r['latency_ms'])+' ms for one token'} (model {r['model']}). The gateway will route around it.",
                                    level="warning", category="fleet", source=CHECKED_BY, dedup_key=key)
-            elif was in ("down", "slow"):
+            elif r["bad_runs"] == 0 and r["prev_bad_runs"] >= ALERT_AFTER_RUNS:
                 nova_notify.notify(title=f"LLM recovered: {r['kind']} on {r['node']}", body=f"{r['latency_ms']} ms for one token (model {r['model']})",
                                    level="info", category="fleet", source=CHECKED_BY, dedup_key=key + ":recovered")
     except Exception as e:  # noqa: BLE001
