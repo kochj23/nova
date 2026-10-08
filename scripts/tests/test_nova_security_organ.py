@@ -32,7 +32,14 @@ so = _load("security_organ_under_test", SCRIPT)
 import nova_escalation  # noqa: E402  — offline: the two-man gate is stubbed (no HTTP probes, no PG)
 _GATE = mock.patch.object(nova_escalation, "authorize",
                           side_effect=lambda *a, **k: {"allowed": True, "reason": "test", "keys": ["reasoning", "sensors"]})
-_GATE.start()
+
+
+def setUpModule():
+    _GATE.start()
+
+
+def tearDownModule():
+    _GATE.stop()
 KNOWN = "aa:bb:cc:dd:ee:01"
 NEW = "aa:bb:cc:dd:ee:02"
 

@@ -21,9 +21,17 @@ import nova_bodach_watch as B  # noqa: E402
 # The two-man gate is tested in test_nova_escalation and below; alert-path tests run with it open
 # (offline: no HTTP probes, no PG). keys/spinnaker are what the alert body quotes.
 _REAL_TWO_MAN = B.two_man
-mock.patch.object(B, "two_man", side_effect=lambda cur, w: {
+_GATE = mock.patch.object(B, "two_man", side_effect=lambda cur, w: {
     "allowed": True, "reason": "test", "keys": ["reasoning", "sensors"],
-    "spinnaker": B.SP.assess(B.signal_item(w))}).start()
+    "spinnaker": B.SP.assess(B.signal_item(w))})
+
+
+def setUpModule():
+    _GATE.start()
+
+
+def tearDownModule():
+    _GATE.stop()
 
 T0 = datetime(2026, 10, 8, 9, 0, tzinfo=timezone.utc)   # 02:00 local (night)
 

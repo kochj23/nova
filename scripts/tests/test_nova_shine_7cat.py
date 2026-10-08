@@ -23,7 +23,15 @@ import nova_shine as S  # noqa: E402
 # The two-man gate (nova_escalation) is tested on its own and below; the send-path tests here run
 # with the gate open so they stay offline (no HTTP probes, no PG).
 _REAL_TWO_MAN = S.two_man
-mock.patch.object(S, "two_man", return_value={"allowed": True, "reason": "test"}).start()
+_GATE = mock.patch.object(S, "two_man", return_value={"allowed": True, "reason": "test"})
+
+
+def setUpModule():
+    _GATE.start()
+
+
+def tearDownModule():
+    _GATE.stop()
 
 T0 = datetime(2026, 10, 8, 23, 0, tzinfo=timezone.utc)   # 16:00 local, waking hours
 CONTACT = ("Pat", "imessage", "+15550000000")
