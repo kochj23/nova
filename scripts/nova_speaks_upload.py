@@ -58,8 +58,30 @@ def refresh_cookies():
     Needs a GUI/TCC context; when that is missing (bare launchd) the last good jar is reused."""
     import subprocess, tempfile
     tmp = tempfile.mktemp(suffix=".txt")
-    r = subprocess.run(["/opt/homebrew/bin/yt-dlp", "--cookies-from-browser", "safari", "--cookies", tmp, "--skip-download",
-                        "--print", "%(id)s", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"], capture_output=True, text=True, timeout=120)
+    # The raw export holds EVERY Safari cookie: umask 077 so yt-dlp writes it 0600, and it is always removed.
+    old_umask = os.umask(0o077)
+    try:
+        for attempt in range(2):   # TCC / Safari hiccups: one retry before falling back to the last good jar
+            try:
+                r = subprocess.run(["/opt/homebrew/bin/yt-dlp", "--cookies-from-browser", "safari", "--cookies", tmp,
+                                    "--skip-download", "--print", "%(id)s", "https://www.youtube.com/watch?v=dQw4w9WgXcQ"],
+                                   capture_output=True, text=True, timeout=120)
+            except subprocess.TimeoutExpired:
+                r = subprocess.CompletedProcess([], 1, "", "yt-dlp cookie export timed out")
+            if r.returncode == 0 and os.path.exists(tmp):
+                break
+            if attempt == 0:
+                import time; time.sleep(5)
+    finally:
+        os.umask(old_umask)
+    try:
+        _store_jar(tmp, r)
+    finally:
+        if os.path.exists(tmp):
+            os.unlink(tmp)
+
+
+def _store_jar(tmp, r):
     if r.returncode != 0 or not os.path.exists(tmp):
         log(f"safari cookie export failed, reusing {COOKIES.name}: {r.stderr[-120:].strip()}"); return
     rows = [l for l in open(tmp) if not l.startswith("#") and l.count("\t") >= 6]
@@ -72,10 +94,10 @@ def refresh_cookies():
     if not ({"SAPISID", "LOGIN_INFO"} & names):
         # A partial export (no login cookies — seen 2026-10-07 15:09 from a context without full Safari
         # access) replaced a good jar and logged out the uploader AND yt_subs_audio. Keep the last good one.
-        log(f"safari export has no login cookies ({len(yt)} rows) — keeping {COOKIES.name}"); os.unlink(tmp); return
+        log(f"safari export has no login cookies ({len(yt)} rows) — keeping {COOKIES.name}"); return
     keep = ["# Netscape HTTP Cookie File\n"] + yt
     COOKIES.parent.mkdir(parents=True, exist_ok=True)
-    COOKIES.write_text("".join(keep)); COOKIES.chmod(0o600); os.unlink(tmp)
+    COOKIES.write_text("".join(keep)); COOKIES.chmod(0o600)
     log(f"cookies refreshed from Safari ({len(keep)} lines)")
 
 
@@ -146,10 +168,15 @@ def main():
     cur.execute("UPDATE nova_speaks_renders SET youtube_id=%s, youtube_uploaded_at=now() WHERE slug=%s", (vid, a.slug))
     log(f"DONE https://youtu.be/{vid} ({a.privacy})")
     if replacing:
-        try:
-            ok = retire(s, old)
-        except Exception as e:
-            log(f"retire {old} failed: {e}"); ok = False
+        ok = False
+        for attempt in range(3):   # idempotent (PRIVATE + out of playlist): safe to retry
+            try:
+                ok = retire(s, old)
+                break
+            except Exception as e:
+                log(f"retire {old} failed (attempt {attempt + 1}/3): {e}")
+                if attempt < 2:
+                    import time; time.sleep(5 * (attempt + 1))
         cur.execute("UPDATE nova_speaks_renders SET old_youtube_retired=%s, note=concat_ws(' | ', note, %s) WHERE slug=%s",
                     (ok, f"replaced old youtube_id {old} -> {vid}; old " + ("set PRIVATE + removed from playlist" if ok else "NEEDS MANUAL HIDE"), a.slug))
     print(vid); return 0

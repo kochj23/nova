@@ -344,13 +344,13 @@ class TestPerformance(unittest.TestCase):
 
 class TestRetry(unittest.TestCase):
     def test_cookie_export_failure_fails_open_and_keeps_the_last_jar(self):
-        # RETRY GAP: refresh_cookies()/yt-dlp — one attempt; on failure the previous jar is reused and no exception escapes
+        # refresh_cookies()/yt-dlp — 2 attempts (5 s apart); then the previous jar is reused and no exception escapes
         jar = Path(tempfile.mkdtemp()) / "jar.txt"; jar.write_text("old")
         buf = io.StringIO()
         with patch("subprocess.run", return_value=MagicMock(returncode=1, stderr="Safari: TCC denied")) as run, \
-             patch.object(up, "COOKIES", jar), redirect_stdout(buf):
+             patch("time.sleep"), patch.object(up, "COOKIES", jar), redirect_stdout(buf):
             up.refresh_cookies()
-        self.assertEqual(run.call_count, 1)
+        self.assertEqual(run.call_count, 2)
         self.assertEqual(jar.read_text(), "old")
         self.assertIn("reusing jar.txt", buf.getvalue())
 
