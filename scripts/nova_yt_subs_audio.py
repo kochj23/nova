@@ -51,11 +51,12 @@ def log(m):
     print(f"[yt-subs-audio {time.strftime('%H:%M:%S')}] {m}", flush=True)
 
 
-def _yt(args, timeout=180):
+def _yt(args, timeout=180, cookies=True):
     """yt-dlp with a 30 s socket timeout. A stalled run (2026-10-07: one download hung the 55-min slice
     past its scheduler timeout) comes back as a normal failure instead of raising out of the run."""
     try:
-        return subprocess.run([YTDLP, "--no-warnings", "--socket-timeout", "30", "--cookies", str(COOKIES), *args],
+        return subprocess.run([YTDLP, "--no-warnings", "--socket-timeout", "30",
+                               *(["--cookies", str(COOKIES)] if cookies else []), *args],
                               capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return subprocess.CompletedProcess(args, 1, "", f"yt-dlp timed out after {timeout}s")
@@ -130,10 +131,14 @@ def channel_folder(channel_id, name):
 
 def download_audio(channel_id, vid, name=""):
     folder = channel_folder(channel_id, name)
-    r = _yt(["-f", "bestaudio[ext=m4a]/bestaudio", "--no-playlist", "--no-overwrites",
-             "--windows-filenames",   # no : ? * etc. on the SMB share
-             "-o", str(folder / "%(title).80B [%(id)s].%(ext)s"),
-             f"https://www.youtube.com/watch?v={vid}"], timeout=900)
+    args = ["-f", "bestaudio[ext=m4a]/bestaudio", "--no-playlist", "--no-overwrites",
+            "--windows-filenames",   # no : ? * etc. on the SMB share
+            "-o", str(folder / "%(title).80B [%(id)s].%(ext)s"), f"https://www.youtube.com/watch?v={vid}"]
+    # Anonymous first: on 2026-10-07 YouTube started 403ing media for the logged-in jar while the same
+    # video downloaded fine without it. Cookies are the fallback (members-only / age-gated videos).
+    r = _yt(args, timeout=900, cookies=False)
+    if r.returncode != 0:
+        r = _yt(args, timeout=900)
     got = [f for f in folder.iterdir() if f"[{vid}]" in f.name and f.suffix in AUDIO_EXTS]
     if r.returncode != 0 or not got:
         log(f"  download failed {vid}: {r.stderr.strip().splitlines()[-1] if r.stderr.strip() else r.returncode}")
