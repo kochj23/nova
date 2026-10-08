@@ -50,6 +50,7 @@ recent_lettings(n=3) exposes the latest releases as short first-person strings
 """
 import json
 import sys
+import time
 import urllib.request
 from datetime import datetime
 from pathlib import Path
@@ -452,10 +453,23 @@ def propose_lockboxes(oc, mc):
     a boxed memory drops out of casual recall but stays retrievable on explicit request."""
     try:
         import nova_relationship
-        return nova_relationship.propose_boxes(oc, mc)
     except Exception as e:  # noqa: BLE001
         log(f"lockbox proposals skipped: {e}")
         return 0
+    for attempt in range(3):  # proposals are ON CONFLICT DO NOTHING, so a retry is idempotent
+        try:
+            return nova_relationship.propose_boxes(oc, mc)
+        except Exception as e:  # noqa: BLE001
+            log(f"lockbox proposals attempt {attempt + 1} failed: {e}")
+            for c in (oc, mc):
+                try:
+                    c.connection.rollback()
+                except Exception:
+                    pass
+            if attempt < 2:
+                time.sleep(0.5 * (2 ** attempt))
+    log("lockbox proposals skipped after 3 attempts")
+    return 0
 
 
 def run_review(oc, mc):

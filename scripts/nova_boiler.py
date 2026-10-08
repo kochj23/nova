@@ -35,6 +35,7 @@ import json
 import math
 import os
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -225,7 +226,15 @@ def run(oc, dry: bool = False, post=None) -> dict:
                 if post is None:
                     import nova_config
                     post = lambda t: nova_config.post_both(t, slack_channel=nova_config.SLACK_CHAN)  # noqa: E731
-                post(bleed_text)
+                for attempt in range(3):  # retry the post with backoff before giving up
+                    try:
+                        post(bleed_text)
+                        break
+                    except Exception as e:  # noqa: BLE001
+                        if attempt == 2:
+                            raise
+                        log(f"bleed post attempt {attempt + 1} failed: {e}")
+                        time.sleep(1.0 * (2 ** attempt))
                 bled = True
                 log(f"BLED: triage note posted ({len(dropped)} stale drafts dropped)")
             except Exception as e:  # noqa: BLE001
@@ -239,11 +248,22 @@ def run(oc, dry: bool = False, post=None) -> dict:
     return {"pressure": total, "state": st, "top": top, "bled": bled, "text": bleed_text}
 
 
+def connect(retries: int = 3):
+    for attempt in range(retries):
+        try:
+            return psycopg2.connect(OPS_DSN, connect_timeout=8)
+        except psycopg2.OperationalError as e:
+            if attempt == retries - 1:
+                raise
+            log(f"pg connect attempt {attempt + 1} failed: {e}")
+            time.sleep(2.0 * (2 ** attempt))
+
+
 def main():
     ap = argparse.ArgumentParser(description="Nova's Boiler — unresolved-load gauge + daily bleed")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
-    c = psycopg2.connect(OPS_DSN, connect_timeout=8)
+    c = connect()
     c.autocommit = True
     r = run(c.cursor(), dry=a.dry_run)
     print(json.dumps({"pressure": r["pressure"], "state": r["state"], "bled": r["bled"],

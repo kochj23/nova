@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -70,7 +71,23 @@ def pick_rung(stakes: float, confidence: float | None, ceiling: str = "act") -> 
     return rung
 
 
-def spent_this_week(oc) -> int:
+def spent_this_week(oc, retries: int = 3) -> int:
+    """Units spent in 7 days. Transient PG errors retry with backoff; the last one raises
+    (decide() then fails open)."""
+    for attempt in range(retries):
+        try:
+            return _spent_once(oc)
+        except Exception:
+            try:
+                oc.connection.rollback()
+            except Exception:
+                pass
+            if attempt == retries - 1:
+                raise
+            time.sleep(0.25 * (2 ** attempt))
+
+
+def _spent_once(oc) -> int:
     oc.execute("SELECT coalesce(sum((detail->'turning_point'->>'cost')::int), 0) FROM restraint_ledger "
                "WHERE channel=%s AND ts > now() - interval '7 days' "
                "AND (detail->'turning_point'->>'spent')::boolean", (CHANNEL,))
@@ -99,10 +116,6 @@ def decide(oc, kind: str, stakes: float, text: str, ceiling: str = "mention",
     try:
         spent = spent_this_week(oc)
     except Exception as e:  # noqa: BLE001 — fail open, logged
-        try:
-            oc.connection.rollback()
-        except Exception:
-            pass
         return {"rung": ceiling, "allowed": True, "cost": COST[ceiling], "stakes": stakes,
                 "confidence": conf, "budget": budget, "spent": None,
                 "reason": f"ledger unreadable ({e}) — failing open"}
@@ -120,19 +133,28 @@ def decide(oc, kind: str, stakes: float, text: str, ceiling: str = "mention",
     res = {"rung": rung if allowed else "journal", "wanted": rung, "allowed": allowed, "cost": cost if allowed else 0,
            "stakes": round(stakes, 3), "confidence": conf, "budget": budget, "spent": spent, "reason": reason}
     if not dry:
-        try:
-            from nova_restraint import record_restraint
-            record_restraint(
-                context=f"turning-point {kind}",
-                would_have_said=(text or "")[:4000] or f"[{kind}]",
-                reason=("SPENT: " if allowed else "HELD: ") + reason,
-                channel=CHANNEL,
-                detail={"turning_point": {"kind": kind, "rung": res["rung"], "wanted": rung,
-                                          "cost": res["cost"], "stakes": res["stakes"], "conf": conf,
-                                          "spent": allowed, "budget": budget, "spent_before": spent}},
-                conn=oc.connection)
-        except Exception:
-            pass
+        for attempt in range(3):  # the ledger write retries with backoff; a final failure is logged
+            try:
+                from nova_restraint import record_restraint
+                record_restraint(
+                    context=f"turning-point {kind}",
+                    would_have_said=(text or "")[:4000] or f"[{kind}]",
+                    reason=("SPENT: " if allowed else "HELD: ") + reason,
+                    channel=CHANNEL,
+                    detail={"turning_point": {"kind": kind, "rung": res["rung"], "wanted": rung,
+                                              "cost": res["cost"], "stakes": res["stakes"], "conf": conf,
+                                              "spent": allowed, "budget": budget, "spent_before": spent}},
+                    conn=oc.connection)
+                break
+            except Exception as e:  # noqa: BLE001
+                try:
+                    oc.connection.rollback()
+                except Exception:
+                    pass
+                if attempt == 2:
+                    print(f"[turning-point] ledger write failed after 3 attempts: {e}", file=sys.stderr)
+                else:
+                    time.sleep(0.25 * (2 ** attempt))
     return res
 
 
@@ -147,6 +169,13 @@ def status(oc) -> dict:
 
 if __name__ == "__main__":
     import psycopg2
-    c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj", connect_timeout=5)
+    for _a in range(3):
+        try:
+            c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj", connect_timeout=5)
+            break
+        except psycopg2.OperationalError:
+            if _a == 2:
+                raise
+            time.sleep(2.0 * (2 ** _a))
     c.autocommit = True
     print(json.dumps(status(c.cursor()), indent=2))

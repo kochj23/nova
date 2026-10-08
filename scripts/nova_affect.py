@@ -59,6 +59,7 @@ from __future__ import annotations
 
 import json
 import sys
+import time
 import urllib.request
 from datetime import datetime, timezone
 
@@ -486,13 +487,22 @@ def signal_good_thing(oc):
     nova_relationship.py) is a small, honest lift. None logged -> neutral, never negative."""
     if not _table_exists(oc, "good_things"):
         return [sig("good_thing", None, None, 0, 0, "good_things absent", False)]
-    try:
-        oc.execute("SELECT text, evidence FROM good_things WHERE created_at > now()-interval '24 hours' "
-                   "ORDER BY created_at DESC LIMIT 1")
-        r = oc.fetchone()
-    except Exception as e:
-        log(f"good_thing skipped: {e}")
-        return [sig("good_thing", None, None, 0, 0, "good_things unreadable", False)]
+    r = None
+    for attempt in range(3):  # transient PG errors retry with backoff before giving up
+        try:
+            oc.execute("SELECT text, evidence FROM good_things WHERE created_at > now()-interval '24 hours' "
+                       "ORDER BY created_at DESC LIMIT 1")
+            r = oc.fetchone()
+            break
+        except Exception as e:
+            log(f"good_thing read attempt {attempt + 1} failed: {e}")
+            try:
+                oc.connection.rollback()
+            except Exception:
+                pass
+            if attempt == 2:
+                return [sig("good_thing", None, None, 0, 0, "good_things unreadable", False)]
+            time.sleep(0.5 * (2 ** attempt))
     if not r:
         return [sig("good_thing", 0, None, 0, 0, "no good thing logged in 24h (neutral, not negative)", True)]
     return [sig("good_thing", 1, None, WEIGHTS["good_thing_v"], 0, f"a good thing today: {r[0]} ({r[1]})")]
