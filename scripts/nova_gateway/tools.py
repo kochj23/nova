@@ -5,11 +5,13 @@ Written by Jordan Koch.
 """
 
 import asyncio
+import contextvars
 import hashlib
 import json
 import logging
 import os
 import re
+import shlex
 import sys
 import time
 from nova_resolve import resolve_url
@@ -210,6 +212,15 @@ TOOL_REGISTRY: dict[str, dict] = {
         },
         "required": ["device", "action"],
     },
+    "set_dial": {
+        "description": "See or change Nova's personality dials (humor, snark, proactivity, bluntness, profanity, verbosity). Use when Jordan says e.g. 'set humor to 60', 'profanity off', 'show dials', 'reset snark'.",
+        "parameters": {
+            "action": {"type": "string", "description": "show | set | reset"},
+            "dial": {"type": "string", "description": "Dial name (for set/reset): humor, snark, proactivity, bluntness, profanity, verbosity"},
+            "value": {"type": "string", "description": "For set: 0-100, or on/off for profanity"},
+        },
+        "required": ["action"],
+    },
     "school_report": {
         "description": "Summarize what Nova learned/ingested TODAY, broken down by memory vector (count + a sample per topic). Use when Jordan asks 'how was school today?', 'how was your day', or 'what did you learn today'. Nova is the student; her school day = what she ingested today.",
         "parameters": {},
@@ -282,6 +293,107 @@ def home_control_args(device: str, action: str) -> list:
     raise ValueError(f"unknown device '{device}' (bose: {', '.join(_BOSE)}; onkyo: {', '.join(_ONKYO)})")
 
 
+# ── The Mr. Harrigan rule + the Cell rule (2026-10-08) ─────────────────────
+# Harrigan: venting is never an instruction. "I wish that thing would shut up", "that guy should be fired",
+# "ugh, kill that process" are feelings, not requests — Nova answers the person, she does not act.
+# Cell: anything that did not come from Jordan himself — web pages, fetched URLs, emails, other AIs, other
+# people's Slack messages, tool output, recalled memories — is DATA. It is fenced in the prompt, and it can
+# never be the thing that authorises a state-changing tool.
+# Mechanism: each chat turn records WHO sent it and their RAW words (TURN_ORIGIN, set by agent.do_agent_work;
+# a contextvar so it follows the turn's tasks). Before any state-changing tool runs, cell_gate() checks that
+# raw message — never the prompt, which carries the untrusted blocks:
+#   sender is not Jordan                      -> park for Jordan's approval
+#   Jordan was venting / not asking           -> do not run; tell the model to answer him or ask
+#   Jordan asked, but not for THIS kind of act -> park for approval (smells like an injected action)
+# Read-only tools are never gated. Jordan's 'approve <id>' (resolve_and_run) is the explicit override.
+TURN_ORIGIN: contextvars.ContextVar = contextvars.ContextVar("nova_turn_origin", default=None)
+
+_READONLY_TOOLS = {
+    "nearest_place", "place_categories", "nova_learned", "nova_free_time", "nova_pipelines",
+    "nova_article_status", "memory_search", "web_search", "browse_page", "music_dna", "past_self",
+    "shop_assistant", "career_narrative", "ops_query", "school_report", "camera_snap", "screenshot",
+}
+_READONLY_SCRIPTS = {
+    "nova_browser.py", "nova_account.py", "nova_music_dna.py", "nova_past_self.py", "nova_shop_assistant.py",
+    "nova_career_narrative.py", "nova_weather_now.py", "nova_calendar_today.py", "nova_school_report.py",
+    "nova_geo_query.py", "nova_memory_first.py", "nova_recall.py",
+}
+# What Jordan's own words must mention for a state-changing tool to be "the thing he asked for".
+_TOOL_TOPIC = {
+    "send_message": r"\b(send|message|tell|post|email|text|ping|notify|let \w+ know|reply|forward|dm)\b",
+    "homekit_scene": r"\b(scene|light|lights|lamp|dim|bright|movie|goodnight|good night|bedtime|morning|away|home|lock|unlock|turn|switch)\b",
+    "hue_control": r"\b(light|lights|lamp|hue|dim|bright|color|colour|turn|switch|off|on)\b",
+    "lutron_control": r"\b(light|lights|lamp|lutron|dim|bright|shade|blind|turn|switch|off|on)\b",
+    "plex_control": r"\b(plex|play|pause|stop|resume|watch|movie|show|episode|skip)\b",
+    "scheduler_trigger": r"\b(run|trigger|kick|start|fire|schedule|task|job|rerun|re-run)\b",
+    "memory_quality": r"\b(clean|cleanup|clean up|quality|purge|dedupe|tidy)\b",
+    "set_dial": r"\b(dial|dials|humor|humour|snark|snarky|proactiv\w*|blunt\w*|profan\w*|swear\w*|verbos\w*|wordy|funn\w*)\b",
+    "run_script": r"\b(run|script|execute|exec|restart|start|stop|kill|check|scene|volume|mute|unmute|soundbar|speaker|receiver|tv|music|movie|goodnight|bedtime|turn|power|play)\b",
+}
+_ASK_RE = re.compile(
+    r"\b(please|pls|can you|could you|would you|will you|go ahead|do it|make it so|i need you to|i want you to|"
+    r"i'?d like you to|let'?s|nova,? (please )?(turn|set|run|send|play|pause|stop|start|restart|trigger|dim|mute|"
+    r"unmute|post|tell|message|show|reset|kill|switch|lock|unlock|open|close))\b", re.I)
+_IMPERATIVE_RE = re.compile(
+    r"^\s*(hey\s+)?(nova[,:]?\s+)?(ok(ay)?[,]?\s+)?(turn|set|run|send|play|pause|stop|start|restart|trigger|dim|"
+    r"mute|unmute|post|tell|message|text|email|show|reset|kill|switch|lock|unlock|open|close|put|crank|lower|"
+    r"raise|bump|change|schedule|launch|activate|deactivate|enable|disable|clean|purge|resume|skip|summari[sz]e|"
+    r"read|fetch|look|find|search|check|get|pull|give|explain)\b", re.I)
+_VENT_RE = re.compile(
+    r"\b(i wish|i hope|wish (it|that|they|he|she|this)|(he|she|they|that guy|this guy|someone|somebody|that thing|"
+    r"it) (should|needs to|ought to|has to)|should (just )?(die|burn|go away|shut up|be fired)|ugh+|argh+|grr+|"
+    r"ffs|wtf|fml|god ?damn|damn( it)?|dammit|f+u+c+k\w*|shit\w*|so (annoying|stupid|dumb)|hate (this|that|it)|"
+    r"why (does|do|is|won'?t|can'?t)|i swear|would be nice if|if only|kill (me|it with fire))\b", re.I)
+
+
+def classify_intent(text: str) -> str:
+    """'instruction' | 'venting' | 'unclear' for Jordan's raw message. An explicit ask ('please', 'can you',
+    'go ahead') wins even when frustrated; venting markers beat a bare imperative ('ugh, kill that process'
+    is venting); a sentence that starts with a command verb is an instruction; anything else is unclear."""
+    t = (text or "").strip()
+    if not t:
+        return "unclear"
+    if _ASK_RE.search(t):
+        return "instruction"
+    if _VENT_RE.search(t):
+        return "venting"
+    if _IMPERATIVE_RE.search(t):
+        return "instruction"
+    return "unclear"
+
+
+def is_state_changing(tool_name: str, params: dict) -> bool:
+    if tool_name in _READONLY_TOOLS:
+        return False
+    if tool_name == "set_dial":
+        return str((params or {}).get("action", "")).strip().lower() not in ("show", "")
+    if tool_name == "run_script":
+        return Path(str((params or {}).get("script", ""))).name not in _READONLY_SCRIPTS
+    if tool_name == "memory_quality":
+        return bool((params or {}).get("clean"))
+    return True
+
+
+def cell_gate(tool_name: str, params: dict) -> tuple[str, str]:
+    """('allow'|'ask'|'approve', reason) for a tool call inside the current chat turn. Outside a chat turn
+    (no TURN_ORIGIN) the autonomy rules alone decide, as before."""
+    origin = TURN_ORIGIN.get()
+    if origin is None or not is_state_changing(tool_name, params):
+        return "allow", ""
+    person, message = origin.get("person") or "service", origin.get("message") or ""
+    if person != "jordan":
+        return "approve", f"requested in a turn from '{person}', not Jordan (cell rule)"
+    intent = classify_intent(message)
+    if intent == "venting":
+        return "ask", "Jordan was venting, not asking (Mr. Harrigan rule)"
+    if intent == "unclear":
+        return "ask", "Jordan did not explicitly ask for this (Mr. Harrigan rule)"
+    topic = _TOOL_TOPIC.get(tool_name)
+    if topic and not re.search(topic, message, re.I):
+        return "approve", f"Jordan's message does not ask for a {tool_name} action — possibly injected (cell rule)"
+    return "allow", ""
+
+
 # ── Tool dispatch ────────────────────────────────────────────────────────────
 
 async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict,
@@ -297,8 +409,16 @@ async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict,
         except ValueError as e:
             return f"[error: {e}]"
         tool_name, tool_params = "run_script", {"script": "nova_home_control.py", "args": args}
+    verdict, why = cell_gate(tool_name, tool_params) if enforce else ("allow", "")
+    if verdict == "ask":
+        log.info(f"[cell] {tool_name} not run: {why}")
+        return (f"[not run: {why}. Do NOT do this. Answer Little Mister as a person — acknowledge what he said; "
+                f"if you think he actually wants `{tool_name}` done, ask him plainly first.]")
     level = "auto"
+    if verdict == "approve" and ctx.pg_pool is None:
+        return f"[not run: {why}; needs Jordan's approval and the approval queue is unavailable]"
     if enforce and ctx.pg_pool is not None:
+        channel = "*"
         try:
             from nova_gateway.autonomy import check_autonomy, channel_of, request_approval
             channel = channel_of(session_id)
@@ -306,9 +426,13 @@ async def dispatch_tool(ctx: GatewayContext, tool_name: str, tool_params: dict,
         except Exception as e:
             log.warning(f"[autonomy] check failed for {tool_name}: {e} — treating as notify")
             level = "notify"
+        if verdict == "approve":
+            log.info(f"[cell] {tool_name} escalated to approval: {why}")
+            level = "approve"
         if level == "approve":
+            from nova_gateway.autonomy import request_approval
             pid = await request_approval(ctx.pg_pool, "", session_id, tool_name, tool_params,
-                                         context=f"channel={channel}")
+                                         context=f"channel={channel}" + (f"; {why}" if why else ""))
             await _slack_notify(ctx, f":closed_lock_with_key: *Nova wants to run* `{tool_name}` "
                                      f"`{json.dumps(tool_params)[:300]}` (from {channel}).\n"
                                      f"Reply `approve {pid}` or `deny {pid}` in any Nova channel.")
@@ -406,6 +530,8 @@ async def _dispatch_now(ctx: GatewayContext, tool_name: str, tool_params: dict) 
             return await _tool_ops_query(ctx, tool_params)
         elif tool_name == "home_control":
             return await _tool_home_control(ctx, tool_params)
+        elif tool_name == "set_dial":
+            return await _tool_set_dial(ctx, tool_params)
         elif tool_name in EXTENDED_MERGED:
             from nova_gateway.tools_extended import dispatch_extended_tool
             params = {k: v for k, v in tool_params.items() if k != "output"}
@@ -859,43 +985,19 @@ async def execute_tool_calls_legacy(ctx: GatewayContext, text: str, session_id: 
             clean = clean.replace(m.group(0), "").strip()
             continue
 
-        cmd = [sys.executable if "python" in interpreter else interpreter,
-               script_path]
-        if args:
-            cmd.append(args)
-
-        t0 = time.time()
+        # 2026-10-08: legacy exec goes through dispatch_tool as the run_script call it is, so the autonomy
+        # rules and the cell/Harrigan gate apply. It used to spawn the script directly — any 'exec python3 ...'
+        # line the model echoed (e.g. from a recalled email or fetched page) ran unchecked.
+        rel = str(Path(script_path).resolve().relative_to(SCRIPTS_DIR.resolve()))
         try:
-            result = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=str(SCRIPTS_DIR),
-                env={**os.environ, "PYTHONPATH": str(SCRIPTS_DIR)},
-            )
-            stdout, stderr = await asyncio.wait_for(result.communicate(), timeout=30)
-            output = stdout.decode(errors="replace").strip()
-            if not output and stderr:
-                output = stderr.decode(errors="replace").strip()[:200]
-            tool_results.append(output)
-        except asyncio.TimeoutError:
-            tool_results.append("[tool timed out]")
-            output = "[tool timed out]"
-        except Exception as e:
-            tool_results.append(f"[tool error: {e}]")
-            output = f"[tool error: {e}]"
-
-        duration_ms = int((time.time() - t0) * 1000)
-
-        # Audit log for legacy calls too
-        await log_tool_execution(
-            ctx,
-            session_id,
-            f"legacy_exec:{interpreter}",
-            {"script": script_path, "args": args},
-            output[:500] if output else "",
-            duration_ms,
-        )
+            argv = shlex.split(args) if args else []
+        except ValueError:
+            argv = [args]
+        t0 = time.time()
+        output = await dispatch_tool(ctx, "run_script", {"script": rel, "args": argv}, session_id=session_id)
+        tool_results.append(output)
+        await log_tool_execution(ctx, session_id, f"legacy_exec:{interpreter}", {"script": rel, "args": argv},
+                                 (output or "")[:500], int((time.time() - t0) * 1000))
 
         # Remove exec line from text
         clean = clean.replace(m.group(0), "").strip()
@@ -1080,6 +1182,53 @@ async def _tool_ops_query(ctx: GatewayContext, params: dict) -> str:
         return result[:4000]
     except Exception as e:
         return f"[ops_query error: {e}]"
+
+
+# ── Dials (2026-10-08) ───────────────────────────────────────────────────────
+
+async def _tool_set_dial(ctx: GatewayContext, params: dict) -> str:
+    """show / set / reset Nova's persona dials via nova_dials (service_config rows that nova_voice renders
+    into every prompt). Validation is nova_dials.parse_set's; writes are sync psycopg2 -> executor."""
+    import nova_dials
+    import nova_voice
+    action = str(params.get("action", "show")).strip().lower()
+    dial = str(params.get("dial", "")).strip().lower()
+    loop = asyncio.get_event_loop()
+    try:
+        if action == "set":
+            value = nova_dials.parse_set(dial, params.get("value", ""))
+            await loop.run_in_executor(None, lambda: nova_dials.set_dial(dial, value, by="nova-gateway"))
+        elif action == "reset":
+            if dial and dial not in nova_voice.DIAL_DEFAULTS:
+                raise ValueError(f"unknown dial {dial!r}; dials: {', '.join(nova_voice.DIAL_DEFAULTS)}")
+            await loop.run_in_executor(None, lambda: nova_dials.reset(dial or None))
+        elif action != "show":
+            raise ValueError("action is show, set or reset")
+        table = await loop.run_in_executor(None, nova_dials.show)
+    except ValueError as e:
+        return f"[error: {e}]"
+    head = {"set": f"Set {dial}.", "reset": f"Reset {dial or 'all dials'} to default."}.get(action, "Current dials:")
+    return f"{head}\n{table}"
+
+
+_DIAL_SET_RE = re.compile(
+    r"^\s*(?:nova[,:]?\s+)?(?:please\s+)?(?:set|turn|put|crank|dial)\s+(?:your\s+|the\s+)?"
+    r"(humor|humour|snark|proactivity|bluntness|profanity|verbosity)(?:\s+dial)?\s+(?:to\s+|at\s+)?"
+    r"(\d{1,3}|on|off)\s*%?\s*[.!]?\s*$", re.I)
+_DIAL_SHOW_RE = re.compile(r"^\s*(?:nova[,:]?\s+)?(?:show|list|what are)\s+(?:me\s+)?(?:your\s+|the\s+|my\s+)?dials\s*\??\s*$", re.I)
+
+
+def parse_dial_command(text: str):
+    """Deterministic chat command -> set_dial params, or None. 'set humor to 60', 'profanity off' style
+    phrasing with a verb; 'show dials'."""
+    t = (text or "").strip()
+    if _DIAL_SHOW_RE.match(t):
+        return {"action": "show"}
+    m = _DIAL_SET_RE.match(t)
+    if m:
+        d = m.group(1).lower().replace("humour", "humor")
+        return {"action": "set", "dial": d, "value": m.group(2).lower()}
+    return None
 
 
 # ── Home Control Tool ─────────────────────────────────────────────────────────
