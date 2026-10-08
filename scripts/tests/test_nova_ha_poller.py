@@ -66,7 +66,7 @@ class _Resp:
 def _reset(pool=None):
     ha._pool = pool
     for d in (ha._prev_light_state, ha._prev_media_state, ha._prev_motion_state, ha._prev_scene_state,
-              ha._prev_tracker_state):
+              ha._prev_tracker_state, ha._last_tracker_write):
         d.clear()
     ha._access_token = None; ha._token_expires = 0
 
@@ -192,6 +192,25 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(len(pool.calls), 4)
         self.assertIn("Lights turned on in office", pool.calls[2][1])
         self.assertEqual(pool.calls[3][1], ("Movie",))
+
+    def test_gps_tracker_heartbeats_but_observes_only_on_change(self):
+        # 2026-10-08: change-only writes made a steady "home" look days stale to the presence engine.
+        pool = _Pool(); _reset(pool)
+        tracker = [s for s in STATES if s["entity_id"].startswith("device_tracker.")]
+        with _q():
+            asyncio.run(ha.write_device_tracker(tracker))     # first sight: row + observation
+            asyncio.run(ha.write_device_tracker(tracker))     # unchanged, inside heartbeat: nothing
+            ha._last_tracker_write["jordan"] -= ha.GPS_HEARTBEAT_S + 1
+            asyncio.run(ha.write_device_tracker(tracker))     # heartbeat due: row only
+        tables = [re.search(r"INSERT INTO ([\w.]+)", s).group(1) for s, _ in pool.calls]
+        self.assertEqual(tables, ["telemetry.presence", "shared_observations", "telemetry.presence"])
+
+    def test_log_writes_once_when_stdout_is_the_log_file(self):
+        # launchd points stdout at LOG_FILE; log() used to print AND append -> every line twice.
+        ha.LOG_FILE.write_text("")
+        with open(ha.LOG_FILE, "a") as fh, redirect_stdout(fh):
+            ha.log("once-only")
+        self.assertEqual(ha.LOG_FILE.read_text().count("once-only"), 1)
 
     def test_climate_without_temperature_writes_nothing(self):
         pool = _Pool(); _reset(pool)

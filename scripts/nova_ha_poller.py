@@ -14,6 +14,7 @@ Written by Jordan Koch.
 
 import asyncio
 import json
+import os
 import signal
 import subprocess
 import sys
@@ -85,15 +86,29 @@ _token_expires = 0
 _prev_light_state = {}  # room -> bool (any light on)
 _prev_motion_state = {}
 _prev_media_state = {}  # room -> active/idle
+_last_tracker_write = {}  # person -> epoch of last gps_tracker row (heartbeat)
+GPS_HEARTBEAT_S = 900
 _prev_scene_state = {}  # scene entity_id -> last-seen activation timestamp (str)
 
 LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+
+def _stdout_is_logfile():
+    """launchd points StandardOutPath at LOG_FILE, so print() already lands there — appending
+    too wrote every line twice (fixed 2026-10-08). Only append when stdout is somewhere else."""
+    try:
+        a, b = os.fstat(sys.stdout.fileno()), os.stat(LOG_FILE)
+        return (a.st_dev, a.st_ino) == (b.st_dev, b.st_ino)
+    except Exception:
+        return False
 
 
 def log(msg, level="INFO"):
     ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[ha_poller {ts}] [{level}] {msg}"
     print(line, flush=True)
+    if _stdout_is_logfile():
+        return
     try:
         with open(LOG_FILE, "a") as f:
             f.write(line + "\n")
@@ -355,10 +370,15 @@ async def write_device_tracker(states):
         else:
             continue
 
+        # Write on change, plus a heartbeat every GPS_HEARTBEAT_S. The iPhone only reports on zone
+        # changes, so change-only rows made a perfectly healthy "home" look 2 days stale to the
+        # presence engine and freshness checks (2026-10-08).
         prev = _prev_tracker_state.get(person)
-        if prev == state:
+        changed = prev != state
+        if not changed and time.time() - _last_tracker_write.get(person, 0) < GPS_HEARTBEAT_S:
             continue
         _prev_tracker_state[person] = state
+        _last_tracker_write[person] = time.time()
 
         is_home = state == "home"
         confidence = 0.99 if is_home else 0.0
@@ -374,6 +394,8 @@ async def write_device_tracker(states):
                 VALUES (now(), $1, 'home', $2, 'gps_tracker', $3)
             """, person, confidence, json.dumps(metadata))
 
+        if not changed:
+            continue
         event = "arrived home" if is_home else "left home"
         log(f"Device tracker: {person} {event}")
         async with pool.acquire() as conn:
