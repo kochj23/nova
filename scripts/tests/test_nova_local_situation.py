@@ -28,6 +28,8 @@ def _load(name, path):
 
 
 ls = _load("ls", SCRIPT)
+# Home now comes from the private service_config 'home' row; tests pin a public ZIP centroid.
+TEST_HOME = (34.169, -118.325)   # Burbank 91506 ZIP centroid (public), not the house
 HELI = ("a1b2c3", "N911LA", 12, 900, 0.8, True)
 PLANE = ("d4e5f6", "SWA123", 6, 2200, 1.5, False)
 NEAR_FIRE = ("Vehicle Fire", "Olive Ave / Buena Vista", "Burbank", 34.175, -118.33)     # ~0.5 mi
@@ -72,7 +74,9 @@ def _run(cur, minutes=20, alert=False, notify=None):
     conn = _Conn(cur)
     nn = types.ModuleType("nova_notify"); nn.notify = notify or MagicMock()
     out = io.StringIO()
-    with patch.object(ls.psycopg2, "connect", MagicMock(return_value=conn)), patch.dict(sys.modules, {"nova_notify": nn}), redirect_stdout(out):
+    with patch.object(ls.psycopg2, "connect", MagicMock(return_value=conn)), patch.dict(sys.modules, {"nova_notify": nn}), \
+            patch.object(ls, "home_coords", MagicMock(return_value=TEST_HOME)), patch.object(ls.time, "sleep"), \
+            redirect_stdout(out):
         rc = ls.main(minutes, alert)
     return rc, out.getvalue(), conn, nn.notify
 
@@ -104,7 +108,7 @@ class TestPerformance(unittest.TestCase):
     def test_miles_10k_under_bound(self):
         t0 = time.perf_counter()
         for i in range(10_000):
-            ls.miles(ls.HOME_LAT, ls.HOME_LON, 34.0 + i / 100_000, -118.0 - i / 100_000)
+            ls.miles(*TEST_HOME, 34.0 + i / 100_000, -118.0 - i / 100_000)
         self.assertLess(time.perf_counter() - t0, 0.5)
 
     def test_main_scales_with_10k_chp_rows(self):
@@ -125,23 +129,26 @@ class TestRetry(unittest.TestCase):
         notify.assert_called_once()
 
     def test_pg_connect_failure_escapes_without_alerting(self):
-        # RETRY GAP: main()/psycopg2.connect — one attempt; the error escapes (launchd re-runs the timer) and nothing is posted
+        # psycopg2.connect is retried 3x with backoff; after that the error escapes (launchd re-runs) and nothing is posted
         nn = types.ModuleType("nova_notify"); nn.notify = MagicMock()
-        with patch.object(ls.psycopg2, "connect", MagicMock(side_effect=ls.psycopg2.OperationalError("pg down"))), patch.dict(sys.modules, {"nova_notify": nn}):
+        conn = MagicMock(side_effect=ls.psycopg2.OperationalError("pg down"))
+        with patch.object(ls.psycopg2, "connect", conn), patch.dict(sys.modules, {"nova_notify": nn}), \
+                patch.object(ls.time, "sleep"), redirect_stdout(io.StringIO()):
             with self.assertRaises(ls.psycopg2.OperationalError):
                 ls.main(20, True)
+        self.assertEqual(conn.call_count, 3)
         nn.notify.assert_not_called()
 
 
 class TestUnit(unittest.TestCase):
     def test_miles_known_distances(self):
-        self.assertEqual(ls.miles(ls.HOME_LAT, ls.HOME_LON, ls.HOME_LAT, ls.HOME_LON), 0.0)
+        self.assertEqual(ls.miles(*TEST_HOME, *TEST_HOME), 0.0)
         self.assertAlmostEqual(ls.miles(34.0, -118.0, 35.0, -118.0), 69.09, delta=0.1)          # one degree of latitude
         self.assertAlmostEqual(ls.miles(34.169, -118.325, 33.9425, -118.408), 16.3, delta=0.5)  # home -> LAX
 
     def test_constants(self):
         self.assertEqual((ls.NEAR_MI, ls.LOW_FT), (2.0, 2500))
-        self.assertAlmostEqual(ls.HOME_LAT, 34.169)
+        self.assertFalse(hasattr(ls, "HOME_LAT"))   # coordinates are private config, not code
 
     def test_empty_world_is_quiet(self):
         rc, out, _, notify = _run(_Cur(), alert=True)
@@ -200,7 +207,7 @@ class TestFunctional(unittest.TestCase):
     def test_error_path_notify_failure_is_logged_and_rc_stays_zero(self):
         rc, out, conn, _ = _run(_Cur(flights=[HELI], chp=[NEAR_FIRE]), alert=True, notify=MagicMock(side_effect=RuntimeError("bus down")))
         self.assertEqual(rc, 0)
-        self.assertIn("notify failed: bus down", out)
+        self.assertIn("notify failed after 3 attempts: bus down", out)
         self.assertTrue(conn.closed)
 
 

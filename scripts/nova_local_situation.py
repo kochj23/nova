@@ -15,21 +15,67 @@ self-report, several independent ones agreeing is a witnessed fact. One low heli
 noise. A low helicopter plus a nearby incident plus scanner traffic is a situation.
 """
 import argparse
+import json
 import math
 import sys
+import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import psycopg2
 
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
-HOME_LAT, HOME_LON = 34.169, -118.325
+# Home coordinates are PRIVATE: they live in nova_ops.service_config (key 'home',
+# {"lat", "lon", "label"}), never in code, logs or any message this script sends.
+HOME_CONFIG_KEY = "home"
 NEAR_MI = 2.0
 LOW_FT = 2500
+RETRY_ATTEMPTS = 3
+RETRY_BACKOFF_S = 1.0
 
 
 def log(m):
     print(f"[local-situation] {m}", flush=True)
+
+
+def _retry(fn, *a, what="call", attempts=RETRY_ATTEMPTS, backoff=None, **kw):
+    """fn(*a, **kw) up to `attempts` times with exponential backoff; every failure is logged and
+    the last exception re-raised (never silent)."""
+    backoff = RETRY_BACKOFF_S if backoff is None else backoff
+    for i in range(attempts):
+        try:
+            return fn(*a, **kw)
+        except Exception as e:  # noqa: BLE001
+            log(f"{what}: attempt {i + 1}/{attempts} failed ({type(e).__name__})")
+            if i == attempts - 1:
+                raise
+            time.sleep(backoff * (2 ** i))
+
+
+def home_coords(cur):
+    """(lat, lon) from the private service_config 'home' row, or None if absent/malformed.
+    Never logs the values."""
+    try:
+        cur.execute("SELECT value FROM service_config WHERE key=%s", (HOME_CONFIG_KEY,))
+        row = cur.fetchone()
+    except Exception as e:  # noqa: BLE001
+        log(f"home coordinates unreadable ({type(e).__name__}) — skipping distance checks")
+        return None
+    if not row or row[0] is None:
+        log("home coordinates not configured (service_config 'home') — skipping distance checks")
+        return None
+    v = row[0]
+    try:
+        if isinstance(v, str):
+            v = json.loads(v)
+        lat, lon = float(v["lat"]), float(v["lon"])
+    except Exception:  # noqa: BLE001
+        log("home coordinates malformed in service_config — skipping distance checks")
+        return None
+    if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+        log("home coordinates out of range in service_config — skipping distance checks")
+        return None
+    return lat, lon
 
 
 def miles(lat1, lon1, lat2, lon2):
@@ -41,10 +87,12 @@ def miles(lat1, lon1, lat2, lon2):
 
 
 def main(minutes, alert):
-    conn = psycopg2.connect(DSN)
+    minutes = int(minutes)
+    conn = _retry(psycopg2.connect, DSN, what="pg connect")
     conn.autocommit = True
     cur = conn.cursor()
     signals, score = [], 0
+    home = home_coords(cur)
 
     # ── 1. Aircraft loitering low and close ──────────────────────────────────
     # A helicopter that ORBITS is different from one transiting: same aircraft, many samples,
@@ -73,8 +121,8 @@ def main(minutes, alert):
         SELECT DISTINCT ON (type, location) type, location, area, lat, lon
         FROM telemetry.chp_incidents
         WHERE ts > now() - interval '{minutes} minutes' AND lat IS NOT NULL""")
-    for typ, loc, area, lat, lon in cur.fetchall():
-        d = miles(HOME_LAT, HOME_LON, float(lat), float(lon))
+    for typ, loc, area, lat, lon in (cur.fetchall() if home else []):
+        d = miles(home[0], home[1], float(lat), float(lon))
         blob = f"{typ} {loc}".lower()
         if d <= 1.5 and any(k in blob for k in SERIOUS):
             signals.append(f"CHP: {typ} at {loc} — {d:.1f} mi away")
@@ -127,10 +175,10 @@ def main(minutes, alert):
         if alert:
             try:
                 from nova_notify import notify
-                notify(msg, level="warning", category="local")
+                _retry(notify, msg, level="warning", category="local", what="notify")
                 log("alerted")
             except Exception as e:
-                log(f"notify failed: {e}")
+                log(f"notify failed after {RETRY_ATTEMPTS} attempts: {e}")
     elif signals:
         log("below threshold — individually unremarkable, staying quiet")
     conn.close()
