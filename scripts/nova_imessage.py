@@ -198,6 +198,16 @@ def vector_remember(text, metadata=None):
 
 # ── Send via AppleScript ─────────────────────────────────────────────────────
 
+def _ledger_outbound(recipient, text):
+    """'No unlogged actions' red line: every iMessage Nova sends gets an outbound_ledger row.
+    Never raises, never blocks a send (nova_action_audit.record_outbound swallows everything)."""
+    try:
+        import nova_action_audit
+        nova_action_audit.record_outbound("imessage", recipient, text, source="nova_imessage")
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def send_imessage(recipient, text, sign=True):
     """Send an iMessage via Messages.app AppleScript.
 
@@ -232,11 +242,15 @@ end tell
         )
         if result.returncode == 0:
             log(f"Sent iMessage to {recipient}")
+            _ledger_outbound(recipient, text)
             return True
         else:
             log(f"Send failed: {result.stderr.strip()[:200]}")
             # Try alternate approach
-            return send_imessage_alternate(recipient, text)
+            ok = send_imessage_alternate(recipient, text)
+            if ok:
+                _ledger_outbound(recipient, text)
+            return ok
     except Exception as e:
         log(f"Send error: {e}")
         return False

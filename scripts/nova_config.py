@@ -396,6 +396,16 @@ def notify_local(title: str, message: str, sound: str = "Glass", critical: bool 
             pass
 
 
+def _ledger_outbound(kind: str, target: str, text: str) -> None:
+    """'No unlogged actions' red line (nova_action_audit): every Slack post that goes through
+    post_both gets an outbound_ledger row. Never raises, never blocks a post."""
+    try:
+        import nova_action_audit
+        nova_action_audit.record_outbound(kind, target, text)
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def post_both(message: str, slack_channel: str = SLACK_CHAN, discord_channel: str = None) -> bool:
     """Post to both Slack and the corresponding Discord channel.
 
@@ -424,6 +434,7 @@ def post_both(message: str, slack_channel: str = SLACK_CHAN, discord_channel: st
                 resp = json.loads(r.read())
                 if resp.get("ok"):
                     slack_ok = True
+                    _ledger_outbound("slack", slack_channel, message)
                 else:
                     print(f"[nova_config] Slack post failed: {resp.get('error')}", file=sys.stderr)
         except Exception as e:
