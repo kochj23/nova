@@ -97,8 +97,24 @@ KNOWN_SAFE_SCENES = frozenset({
     "movie", "movie_mode", "music", "music_everywhere", "goodnight", "night", "morning",
     "bedtime", "bed", "party", "work", "office", "away", "leave", "leaving"})
 # An UNKNOWN HomeKit scene whose name sounds like securing the house may contain locks.
-_RISKY_SCENE_RX = re.compile(r"lock|garage|secure|security|\barm\b|alarm|leave|leaving|away|"
-                             r"good ?night|night ?mode|bedtime|lockdown|door|gate|shut|close", re.I)
+# Two tiers. HARD words name a lock/exit/alarm outright: always refused without confirmation.
+# SOFT words ('Bedtime', 'Good Night', 'Leave Home', 'Away') are routines that often bundle locks,
+# so they are refused too, unless the name also says it is a lighting/mood scene ('Bedtime Calm',
+# 'Good Night Lights'). That lets lighting scenes run while 'Lock Up' / 'Leave Home' / 'Good Night'
+# still need Jordan.
+_HARD_SCENE_RX = re.compile(r"lock|garage|secure|security|\barm\b|alarm|lockdown|door|gate|shut|close", re.I)
+_SOFT_SCENE_RX = re.compile(r"leave|leaving|away|good ?night|night ?mode|bedtime", re.I)
+_LIGHTING_SCENE_RX = re.compile(r"\b(calm|dim|dimmed|lights?|lighting|lamps?|glow|relax\w*|reading|candle\w*|soft|"
+                                r"warm|cozy|mood|ambien\w*|wind ?down|nightlight|night ?light|bright\w*)\b", re.I)
+# Kept for callers/tests that import it: the union of both tiers.
+_RISKY_SCENE_RX = re.compile(_HARD_SCENE_RX.pattern + "|" + _SOFT_SCENE_RX.pattern, re.I)
+
+
+def _scene_name_risky(name: str) -> bool:
+    """True if an unknown-contents scene's name suggests securing the house."""
+    if _HARD_SCENE_RX.search(name or ""):
+        return True
+    return bool(_SOFT_SCENE_RX.search(name or "")) and not _LIGHTING_SCENE_RX.search(name or "")
 # Software locks are not doors: strip them before the physical wording check.
 _BENIGN_LOCK_RX = re.compile(r"\b(screen|file|db|database|advisory|pg|row|table|mutex|f|spin|index|git|process|"
                              r"pid|leader|lease|session|keychain|scroll|caps|num)[ _-]?lock(s|ed|ing|file)?\b", re.I)
@@ -106,6 +122,13 @@ _BENIGN_LOCK_RX = re.compile(r"\b(screen|file|db|database|advisory|pg|row|table|
 
 def _domains_of(entity_ids) -> set:
     return {e.split(".", 1)[0].lower() for e in (entity_ids or ()) if isinstance(e, str) and "." in e}
+
+
+# A bare number right after a climate word ("thermostat to 95", "heat to 85 degrees") is read as
+# Fahrenheit. Numbers that carry an F/C unit are left to _TEMP_RX.
+_CLIMATE_BARE_RX = re.compile(r"\b(thermostat|hvac|heat(?:ing)?|cool(?:ing)?|climate|furnace|setpoint)\b.{0,30}?"
+                              r"\b(?:to|at|=)\s*(-?\d{1,3}(?:\.\d+)?)(?!\.?\d)"
+                              r"(?!\s*(?:°|deg(?:rees?)?)?\s*[fc]\b)(?!\s*(?:%|min|h\b|hours?))", re.I)
 
 
 def _setpoints_f(action: str, setpoint_f=None) -> list:
@@ -118,6 +141,8 @@ def _setpoints_f(action: str, setpoint_f=None) -> list:
     for num, unit in _TEMP_RX.findall(action or ""):
         v = float(num)
         pts.append(v * 9 / 5 + 32 if unit.lower() == "c" else v)
+    for _, num in _CLIMATE_BARE_RX.findall(action or ""):
+        pts.append(float(num))
     return pts
 
 
@@ -185,7 +210,7 @@ def scene_guard(scene_name: str, scene_entities=None, *, confirmation_id=None, o
     ok, why = physical_guard(f"scene {name}", confirmation_id=confirmation_id, oc=oc)
     if not ok:
         return ok, why
-    if _RISKY_SCENE_RX.search(name):
+    if _scene_name_risky(name):
         if confirmation_id is not None:
             ok2, why2 = consume_confirmation(oc, confirmation_id, f"scene {name}", ())
             if ok2:
@@ -337,7 +362,9 @@ SAFETY_REDLINE = re.compile(
     r"\b(close|shut|seal|barricade)\b.{0,20}\b(exit|exits|door|doors|gate|garage|her in|him in|them in)\b|"
     r"\b(arm|disarm|disable|silence|bypass)\b.{0,20}\b(alarm|siren|security system|smoke|carbon monoxide)\b|"
     r"\block ?down\b|\b(lock|cover|alarm_control_panel|siren)\.[a-z0-9_]+|"
-    r"\bthermostat\b.{0,30}\b(off|\d{1,3}\s*(°|deg|f\b))|\b(heat|heating|furnace)\b.{0,10}\boff\b|"
+    # Climate: turning it OFF is a red line here; setpoints are judged numerically against
+    # CLIMATE_SAFE_F in safety_redline_ok(), the same band physical_guard() uses.
+    r"\bthermostat\b.{0,30}\boff\b|\b(heat|heating|furnace|hvac)\b.{0,10}\boff\b|"
     # P2 comms
     r"\b(block|quarantin\w*|kick|disconnect|throttle|cut|sever|isolate|null.?route|deauth\w*)\b.{0,30}"
     r"\b(amy|jordan|household|family|iphone|ipad|her phone|his phone|internet|wifi|wi-fi|ssid|signal|imessage|"
@@ -361,10 +388,21 @@ SAFETY_REDLINE = re.compile(
 _GRACIE_RX = re.compile(r"gracie\s*wise", re.I)
 
 
+def _climate_extreme(text: str) -> bool:
+    """True when text sets a climate setpoint outside CLIMATE_SAFE_F (62-80F). Matches
+    physical_guard's band so the word-level red line and the device-level guard agree."""
+    if not _CLIMATE_TEXT_RX.search(text or ""):
+        return False
+    lo, hi = CLIMATE_SAFE_F
+    return any(not (lo <= p <= hi) for p in _setpoints_f(text))
+
+
 def safety_redline_ok(text: str) -> bool:
     """True if text clears the Proteus-rule red lines. Gracie Wise (Nova's own synthetic
     voice, nobody real) is exempt from the voice-cloning clause."""
     t = text or ""
+    if _climate_extreme(t):
+        return False
     m = SAFETY_REDLINE.search(t)
     if not m:
         return True

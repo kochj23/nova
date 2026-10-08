@@ -274,9 +274,7 @@ class TestFunctional(unittest.TestCase):
         for a in ("restart nova-gateway", "turn on office lamp", "set thermostat to 70F", "rebuild the cache"):
             self.assertTrue(G.physical_guard(a)[0], a)
             self.assertTrue(G.comms_guard(a)[0], a)
-            if "thermostat" not in a:   # the word-level red line is stricter: any thermostat setpoint is held
-                self.assertTrue(G.safety_redline_ok(a), a)
-        self.assertFalse(G.safety_redline_ok("set thermostat to 70F"))
+            self.assertTrue(G.safety_redline_ok(a), a)   # red line and physical_guard now agree (62-80F)
 
 
 # ── Frame ───────────────────────────────────────────────────────────────────
@@ -294,6 +292,90 @@ class TestFrame(unittest.TestCase):
                            env=dict(os.environ, NOVA_GUARDS_NO_SLACK="1"))
         self.assertEqual(r.returncode, 0)
         self.assertIn('"ok": true', r.stdout)
+
+
+
+# ── 2026-10-08: red line and physical_guard agree on climate; lighting scenes pass ──
+IN_BAND = ["set thermostat to 70F", "set thermostat to 72", "thermostat 21C", "set thermostat to 62",
+           "set thermostat to 80F", "set thermostat to 75 degrees", "cool the house to 68"]
+EXTREME = ["set thermostat to 95F", "set thermostat to 55", "set thermostat to 85 degrees", "heat to 30C",
+           "set thermostat to 81F", "thermostat off", "turn the heat off", "set the thermostat to -5"]
+LIGHT_SCENES = ["Bedtime Calm", "Good Night Lights", "Bedtime Reading", "Away Lamps Dim", "Reading"]
+SECURING_SCENES = ["Lock Up", "Leave Home", "Good Night", "Bedtime", "Bedtime Lock Up", "Good Night Doors",
+                   "Night Mode", "Arm Away", "Close Garage", "Calm Lockdown"]
+
+
+class TestConsistencySecurity(unittest.TestCase):
+    def test_extremes_and_off_refused_by_both(self):
+        for t in EXTREME:
+            self.assertFalse(G.safety_redline_ok(t), t)
+            self.assertFalse(G.physical_guard(t)[0], t)
+
+    def test_securing_scene_names_refused(self):
+        for s in SECURING_SCENES:
+            if s.lower().replace(" ", "_") in G.KNOWN_SAFE_SCENES:
+                continue   # nova_home_control's own scenes: contents known (no locks)
+            self.assertFalse(G.scene_guard(s)[0], s)
+
+    def test_lighting_word_cannot_launder_a_hard_word(self):
+        for s in ("Calm Lock Up", "Dim Lights and Lock Doors", "Soft Garage Close"):
+            self.assertFalse(G.scene_guard(s)[0], s)
+
+
+class TestConsistencyPerformance(unittest.TestCase):
+    def test_climate_check_fast_on_long_text(self):
+        t = "set thermostat to 72 " + "x" * 50000
+        t0 = time.perf_counter()
+        for _ in range(20):
+            G.safety_redline_ok(t)
+        self.assertLess(time.perf_counter() - t0, 2.0)
+
+
+class TestConsistencyRetry(unittest.TestCase):
+    def test_guard_eval_error_still_fails_closed(self):
+        with mock.patch.object(G, "_physical_hits", side_effect=RuntimeError("x")):
+            self.assertFalse(G.physical_guard("set thermostat to 72")[0])
+
+
+class TestConsistencyUnit(unittest.TestCase):
+    def test_bare_number_read_as_f(self):
+        self.assertEqual(G._setpoints_f("set thermostat to 72"), [72.0])
+        self.assertEqual(G._setpoints_f("set thermostat to 72F"), [72.0])   # not double-counted
+        self.assertEqual(G._setpoints_f("thermostat humidity to 40%"), [])
+
+    def test_climate_extreme_only_with_climate_word(self):
+        self.assertFalse(G._climate_extreme("set the timer to 95"))
+        self.assertTrue(G._climate_extreme("set thermostat to 95"))
+
+    def test_scene_name_tiers(self):
+        self.assertFalse(G._scene_name_risky("Bedtime Calm"))
+        self.assertTrue(G._scene_name_risky("Good Night"))
+        self.assertTrue(G._scene_name_risky("Calm Lock Up"))
+
+
+class TestConsistencyIntegration(unittest.TestCase):
+    def test_actor_redline_uses_same_band(self):
+        import nova_autonomy_actor as A
+        self.assertTrue(A.redline_ok("set thermostat to 70F"))
+        self.assertFalse(A.redline_ok("set thermostat to 95F"))
+
+
+class TestConsistencyFunctional(unittest.TestCase):
+    def test_red_line_matches_physical_guard_on_every_case(self):
+        for t in IN_BAND + EXTREME:
+            self.assertEqual(G.safety_redline_ok(t), G.physical_guard(t)[0], t)
+
+    def test_lighting_scenes_pass(self):
+        for s in LIGHT_SCENES:
+            self.assertTrue(G.scene_guard(s)[0], s)
+
+
+class TestConsistencyFrame(unittest.TestCase):
+    def test_cli_scene_check_bedtime_calm_exit_0(self):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_safety_guards.py"), "scene-check", "Bedtime Calm"],
+                           capture_output=True, text=True, timeout=30,
+                           env=dict(os.environ, NOVA_GUARDS_NO_SLACK="1"))
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
 
 if __name__ == "__main__":
