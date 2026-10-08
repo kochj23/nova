@@ -937,8 +937,32 @@ def next_franchise():
     return franchise
 
 
+def _retry(fn, what, attempts=3, base=5):
+    """fn() with retry: an exception or empty result is retried (5 s, 10 s); the last failure is logged."""
+    for attempt in range(attempts):
+        try:
+            out = fn()
+            if out:
+                return out
+            err = "empty result"
+        except Exception as e:
+            err = e
+        if attempt < attempts - 1:
+            log(f"{what} failed ({err}); retry {attempt + 1}")
+            time.sleep(base * 2 ** attempt)
+    log(f"{what} failed after {attempts} tries: {err}")
+    return None
+
+
+def _connect():
+    conn = _retry(lambda: psycopg2.connect(DSN, connect_timeout=10), "PG connect")
+    if conn is None:
+        raise RuntimeError("PG unreachable after 3 tries")
+    return conn
+
+
 def gather_today_status():
-    conn = psycopg2.connect(DSN); conn.autocommit = True
+    conn = _connect(); conn.autocommit = True
     cur = conn.cursor()
     cur.execute("""SELECT node_name, status, count(*) FROM service_registry
                    WHERE node_name IN ('mac-studio','nova-core','nova-core2','nova-core3',
@@ -995,7 +1019,7 @@ OUTPUT EXACTLY THIS SHAPE:\nTITLE: <short punchy title, no quotes>\n<blank line>
     _h = nova_article_history.recent_articles_context("operations")
     if _h:
         material = material + "\n\n" + _h
-    raw = call_llm(system, material, max_tokens=3000)
+    raw = _retry(lambda: call_llm(system, material, max_tokens=3000), "LLM")
     if not raw:
         log("LLM produced nothing — aborting")
         return 1

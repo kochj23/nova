@@ -98,10 +98,11 @@ class TestPerformance(unittest.TestCase):
 
 class TestRetry(unittest.TestCase):
     def test_empty_llm_aborts_without_publishing(self):
-        # RETRY GAP: main()/call_llm — one LLM attempt; empty output returns 1 and publishes nothing
-        rc, llm = _main(raw="")
+        # main()/call_llm — 3 LLM attempts (5 s / 10 s backoff); still empty -> returns 1 and publishes nothing
+        with patch.object(fd.time, "sleep"):
+            rc, llm = _main(raw="")
         self.assertEqual(rc, 1)
-        self.assertEqual(llm.call_count, 1)
+        self.assertEqual(llm.call_count, 3)
         fd.nj.publish_hugo.assert_not_called()
 
     def test_image_failure_is_non_fatal(self):
