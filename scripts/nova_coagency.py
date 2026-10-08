@@ -914,6 +914,28 @@ def _reach_send_gate(oc, pid, target):
     return None
 
 
+GATE_ATTEMPTS, GATE_BACKOFF_S = 3, 1.0
+
+
+def _checked_send_gate(oc, pid, target, sleep=time.sleep):
+    """_reach_send_gate with 3 attempts + exponential backoff on PG errors. If the ledger
+    still can't be read, FAIL CLOSED: defer (logged, stays 'approved') — never mail blind.
+    The email itself is deliberately NOT retried in-process: a timed-out send may have gone
+    out, and a blind resend is exactly the double-send this gate exists to stop. A failed
+    send is ledgered + notified and the 15-min execute_approved batch is its retry."""
+    err = None
+    for i in range(GATE_ATTEMPTS):
+        try:
+            return _reach_send_gate(oc, pid, target)
+        except Exception as e:  # noqa: BLE001
+            err = e
+            log(f"reach gate #{pid} attempt {i + 1}/{GATE_ATTEMPTS} failed: {e}")
+            if i + 1 < GATE_ATTEMPTS:
+                sleep(GATE_BACKOFF_S * (2 ** i))
+    return ("deferred", f"send gate unavailable after {GATE_ATTEMPTS} attempts ({str(err)[:120]}) — "
+                        "not sent (fail closed)")
+
+
 def _do_reach(oc, mode, pid, row, *, source, autonomy_level, vetoable):
     """Deliver an approved 'send-to-<herd member>: …' reach by email through nova_send_mail
     (Keychain SMTP; herd_mail's hard content block applies). 2026-10-01: before this, every
@@ -937,7 +959,7 @@ def _do_reach(oc, mode, pid, row, *, source, autonomy_level, vetoable):
 
 
 def _do_reach_locked(oc, mode, pid, name, msg, ac, who, email, target, *, source, autonomy_level, vetoable):
-    gate = _reach_send_gate(oc, pid, target) if email else None
+    gate = _checked_send_gate(oc, pid, target) if email else None
     if gate:
         kind, why = gate
         if kind == "duplicate":
