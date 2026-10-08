@@ -233,5 +233,104 @@ class TestFrame(unittest.TestCase):
         rc.assert_called_once_with(7, False)
 
 
+
+# ── P3 privacy gate (camera_use_ok before camera/face data; outputs tagged private) ──
+class _GateCur:
+    """Records SQL; returns no rows."""
+    def __init__(self):
+        self.sql = []
+
+    def execute(self, sql, params=()):
+        self.sql.append(sql)
+
+    def fetchall(self):
+        return []
+
+    def fetchone(self):
+        return (None, None, 0)
+
+
+class TestPrivacyGateSecurity(unittest.TestCase):
+    def test_refused_guard_means_no_camera_query(self):
+        with mock.patch.object(B._privacy, "camera_use_ok", return_value=(False, "no")):
+            self.assertFalse(B._camera_ok("safety", "internal"))
+
+    def test_missing_guard_fails_closed(self):
+        with mock.patch.object(B, "_privacy", None):
+            self.assertFalse(B._camera_ok("safety", "internal"))
+
+    def test_third_party_recipient_refused(self):
+        self.assertFalse(B._camera_ok("safety", "a neighbour"))
+        self.assertFalse(B._camera_ok("marketing", "internal"))
+
+    def test_private_tag_shape(self):
+        md = B._private({"n": 1}, "face")
+        self.assertEqual(md["privacy"], "private")
+        self.assertTrue(md["no_third_party"])
+
+
+class TestPrivacyGatePerformance(unittest.TestCase):
+    def test_gate_is_cheap(self):
+        t = time.perf_counter()
+        for _ in range(5000):
+            B._camera_ok("presence", "internal")
+        self.assertLess(time.perf_counter() - t, 1.0)
+
+
+class TestPrivacyGateRetry(unittest.TestCase):
+    def test_guard_exception_fails_closed_and_is_logged(self):
+        logs = []
+        with mock.patch.object(B._privacy, "camera_use_ok", side_effect=RuntimeError("boom")), \
+                mock.patch.object(W, "log", side_effect=lambda tag, m: logs.append(m)):
+            self.assertFalse(B._camera_ok("safety", "internal"))
+        self.assertTrue(any("boom" in m for m in logs))   # never silent
+
+
+class TestPrivacyGateUnit(unittest.TestCase):
+    def test_allowed_purposes_pass(self):
+        self.assertTrue(B._camera_ok("safety", "internal"))
+        self.assertTrue(B._camera_ok("presence", "slack:jordan"))
+
+    def test_private_without_guard_still_marks_private(self):
+        with mock.patch.object(B, "_privacy", None):
+            self.assertEqual(B._private({}, "face")["privacy"], "private")
+
+
+class TestPrivacyGateIntegration(unittest.TestCase):
+    def test_feeds_skip_camera_load_when_refused(self):
+        with mock.patch.object(B, "_camera_ok", return_value=False), \
+                mock.patch.object(W, "load_ext_detections") as led, \
+                mock.patch.object(W, "home", return_value=(0.0, 0.0)), \
+                mock.patch.object(W, "load_scanner_near", return_value=[]), \
+                mock.patch.object(W, "load_chp_near", return_value=[]), \
+                mock.patch.object(W, "load_heli", return_value=[]), \
+                mock.patch.object(W, "load_new_devices", return_value=[]):
+            f = B.Feeds(_GateCur(), T0 - B.WINDOW, T0)
+        led.assert_not_called()
+        self.assertEqual(f.person_ts, [])
+
+
+class TestPrivacyGateFunctional(unittest.TestCase):
+    def test_motion_evidence_tagged_private(self):
+        with mock.patch.object(W, "home", return_value=(0.0, 0.0)), \
+                mock.patch.object(W, "load_scanner_near", return_value=[]), \
+                mock.patch.object(W, "load_chp_near", return_value=[]), \
+                mock.patch.object(W, "load_heli", return_value=[]), \
+                mock.patch.object(W, "load_new_devices", return_value=[]), \
+                mock.patch.object(W, "load_ext_detections", return_value=[]):
+            w = B.Feeds(_GateCur(), T0 - B.WINDOW, T0).window(T0 - B.WINDOW, T0)
+        self.assertEqual(w["evidence"]["motion"]["privacy"], "private")
+        self.assertEqual(w["evidence"]["motion"]["data_class"], "camera")
+        B.describe(w, safe=True)   # describe still works on tagged evidence
+
+
+class TestPrivacyGateFrame(unittest.TestCase):
+    def test_module_wires_guard(self):
+        src = (SCRIPTS / "nova_bodach_watch.py").read_text()
+        self.assertIn("nova_privacy_guards", src)
+        self.assertIn('_camera_ok("safety"', src)
+
+
+
 if __name__ == "__main__":
     unittest.main()

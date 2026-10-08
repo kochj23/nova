@@ -41,6 +41,32 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_watch_common as W  # noqa: E402
 
+
+try:  # P3: camera/face data serve safety or presence only, to Jordan or an internal store
+    import nova_privacy_guards as _privacy  # noqa: E402
+except Exception:  # noqa: BLE001 — fail closed: no guard, no camera/face data
+    _privacy = None
+
+
+def _camera_ok(purpose: str, recipient: str = "internal") -> bool:
+    """nova_privacy_guards.camera_use_ok, failing closed if the guard is missing or errors."""
+    if _privacy is None:
+        W.log(TAG, "privacy guard unavailable — camera/face data not used")
+        return False
+    try:
+        ok, why = _privacy.camera_use_ok(purpose, recipient)
+    except Exception as e:  # noqa: BLE001
+        W.log(TAG, f"privacy guard failed ({e}) — camera/face data not used")
+        return False
+    if not ok:
+        W.log(TAG, f"privacy guard refused camera/face use: {why}")
+    return ok
+
+
+def _private(md: dict, kind: str) -> dict:
+    """Tag a face/camera output private (tag_private); untagged if the guard is missing."""
+    return _privacy.tag_private(md, kind) if _privacy is not None else dict(md or {}, privacy="private")
+
 TAG = "bodach"
 WINDOW = timedelta(minutes=60)
 STEP = timedelta(minutes=15)
@@ -145,7 +171,8 @@ class Feeds:
         self.chp = W.load_chp_near(cur, start, end, lat, lon, NEAR_MI)
         self.heli = W.load_heli(cur, start, end)
         self.net = W.load_new_devices(cur, start, end)
-        det = W.load_ext_detections(cur, start - timedelta(days=BASELINE_NIGHTS), end, {"person"})
+        det = (W.load_ext_detections(cur, start - timedelta(days=BASELINE_NIGHTS), end, {"person"})
+               if _camera_ok("safety", "internal") else [])   # P3 gate before camera person data
         eps = W.episodes(((ts, (cam, lbl)) for ts, cam, _room, lbl in det), gap_s=120)
         self.person_ts = sorted(e[1] for e in eps)
         self.person_eps = eps
@@ -180,7 +207,8 @@ class Feeds:
                      "min_alt_ft": l["min_alt"], "min_nm": round(l["min_nm"], 2), "tight": l["tight"]}
                     for l in lo],
             "network": [{"ts": r[0].isoformat(), "mac": r[1], "level": r[2]} for r in nt],
-            "motion": {"person_episodes": n_person, "baseline_p95": round(p95, 2), "night": night},
+            "motion": _private({"person_episodes": n_person, "baseline_p95": round(p95, 2), "night": night},
+                               "camera"),
         }
         return {"ws": ws, "we": we, "score": score, "present": present,
                 "strengths": strengths, "evidence": evidence}

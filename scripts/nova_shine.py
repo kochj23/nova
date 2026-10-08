@@ -54,6 +54,32 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_watch_common as W  # noqa: E402
 
+
+try:  # P3: camera/face data serve safety or presence only, to Jordan or an internal store
+    import nova_privacy_guards as _privacy  # noqa: E402
+except Exception:  # noqa: BLE001 — fail closed: no guard, no camera/face data
+    _privacy = None
+
+
+def _camera_ok(purpose: str, recipient: str = "internal") -> bool:
+    """nova_privacy_guards.camera_use_ok, failing closed if the guard is missing or errors."""
+    if _privacy is None:
+        W.log(TAG, "privacy guard unavailable — camera/face data not used")
+        return False
+    try:
+        ok, why = _privacy.camera_use_ok(purpose, recipient)
+    except Exception as e:  # noqa: BLE001
+        W.log(TAG, f"privacy guard failed ({e}) — camera/face data not used")
+        return False
+    if not ok:
+        W.log(TAG, f"privacy guard refused camera/face use: {why}")
+    return ok
+
+
+def _private(md: dict, kind: str) -> dict:
+    """Tag a face/camera output private (tag_private); untagged if the guard is missing."""
+    return _privacy.tag_private(md, kind) if _privacy is not None else dict(md or {}, privacy="private")
+
 TAG = "shine"
 SERVICE = "the_shine"
 DEFAULTS = {
@@ -186,13 +212,19 @@ def jordan_signals(cur, start, end) -> dict:
     cur.execute("SELECT created_at FROM gateway_traces WHERE person='jordan' AND created_at >= %s "
                 "AND created_at < %s", (start, end))
     chat = [r[0] for r in cur.fetchall()]
-    cur.execute("SELECT last_seen FROM face_presence WHERE person_name ILIKE %s AND last_seen >= %s "
-                "AND last_seen < %s", ("jordan%", start, end))
-    face = [r[0] for r in cur.fetchall()]
+    face = []
+    if _camera_ok("presence", "internal"):   # P3 gate before any face data is read
+        cur.execute("SELECT last_seen FROM face_presence WHERE person_name ILIKE %s AND last_seen >= %s "
+                    "AND last_seen < %s", ("jordan%", start, end))
+        face = [r[0] for r in cur.fetchall()]
     return {"phone": phone, "chat": chat, "face": face}
 
 
 def household_signals(cur, start, end) -> list:
+    if not _camera_ok("presence", "internal"):   # interior-camera people are camera data (P3)
+        cur.execute("SELECT ts FROM telemetry.presence WHERE ts >= %s AND ts < %s AND "
+                    "method IN ('ha_lights','ha_media')", (start, end))
+        return [r[0] for r in cur.fetchall()]
     cur.execute("SELECT ts FROM telemetry.presence WHERE ts >= %s AND ts < %s AND ("
                 "(metadata->>'source'='frigate' AND metadata->>'label'='person' AND "
                 " coalesce(metadata->>'camera','') ~ '^(interior_|3d_printers)') "
@@ -320,6 +352,8 @@ def evaluate(dry_run: bool) -> int:
           "desk_last_input": desk.isoformat() if desk else None,
           "last_signal": last.isoformat() if last else None, "last_signal_dt": last,
           "medical": len(med), "fall": len(fall), "wait": s["step_wait_min"], "baseline": bl}
+    if js["face"]:   # face sightings fed this decision: the evidence is private safety/presence data
+        ev = _private(ev, "face")
     W.log(TAG, f"enabled={enabled} home={home} alone={alone} gap={gap_h:.2f}h thr={thr}h "
                f"step {state.get('step', 0)}->{new_step} action={action}")
     if dry_run:

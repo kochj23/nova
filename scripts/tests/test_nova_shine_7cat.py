@@ -341,5 +341,104 @@ class TestFrame(unittest.TestCase):
             self.assertTrue(callable(getattr(S, n)))
 
 
+
+# ── P3 privacy gate (camera_use_ok before camera/face data; outputs tagged private) ──
+class _GateCur:
+    """Records SQL; returns no rows."""
+    def __init__(self):
+        self.sql = []
+
+    def execute(self, sql, params=()):
+        self.sql.append(sql)
+
+    def fetchall(self):
+        return []
+
+    def fetchone(self):
+        return (None, None, 0)
+
+
+class TestPrivacyGateSecurity(unittest.TestCase):
+    def test_refused_guard_means_no_camera_query(self):
+        with mock.patch.object(S._privacy, "camera_use_ok", return_value=(False, "no")):
+            self.assertFalse(S._camera_ok("safety", "internal"))
+
+    def test_missing_guard_fails_closed(self):
+        with mock.patch.object(S, "_privacy", None):
+            self.assertFalse(S._camera_ok("safety", "internal"))
+
+    def test_third_party_recipient_refused(self):
+        self.assertFalse(S._camera_ok("safety", "a neighbour"))
+        self.assertFalse(S._camera_ok("marketing", "internal"))
+
+    def test_private_tag_shape(self):
+        md = S._private({"n": 1}, "face")
+        self.assertEqual(md["privacy"], "private")
+        self.assertTrue(md["no_third_party"])
+
+
+class TestPrivacyGatePerformance(unittest.TestCase):
+    def test_gate_is_cheap(self):
+        t = time.perf_counter()
+        for _ in range(5000):
+            S._camera_ok("presence", "internal")
+        self.assertLess(time.perf_counter() - t, 1.0)
+
+
+class TestPrivacyGateRetry(unittest.TestCase):
+    def test_guard_exception_fails_closed_and_is_logged(self):
+        logs = []
+        with mock.patch.object(S._privacy, "camera_use_ok", side_effect=RuntimeError("boom")), \
+                mock.patch.object(W, "log", side_effect=lambda tag, m: logs.append(m)):
+            self.assertFalse(S._camera_ok("safety", "internal"))
+        self.assertTrue(any("boom" in m for m in logs))   # never silent
+
+
+class TestPrivacyGateUnit(unittest.TestCase):
+    def test_allowed_purposes_pass(self):
+        self.assertTrue(S._camera_ok("safety", "internal"))
+        self.assertTrue(S._camera_ok("presence", "slack:jordan"))
+
+    def test_private_without_guard_still_marks_private(self):
+        with mock.patch.object(S, "_privacy", None):
+            self.assertEqual(S._private({}, "face")["privacy"], "private")
+
+
+class TestPrivacyGateIntegration(unittest.TestCase):
+    def test_face_query_skipped_when_refused(self):
+        cur = _GateCur()
+        with mock.patch.object(S, "_camera_ok", return_value=False):
+            js = S.jordan_signals(cur, T0 - timedelta(days=1), T0)
+            S.household_signals(cur, T0 - timedelta(days=1), T0)
+        self.assertEqual(js["face"], [])
+        self.assertFalse(any("face_presence" in q for q in cur.sql))
+        self.assertFalse(any("frigate" in q for q in cur.sql))
+
+    def test_face_query_runs_when_allowed(self):
+        cur = _GateCur()
+        S.jordan_signals(cur, T0 - timedelta(days=1), T0)
+        self.assertTrue(any("face_presence" in q for q in cur.sql))
+
+
+class TestPrivacyGateFunctional(unittest.TestCase):
+    def test_evaluate_tags_evidence_private_when_face_used(self):
+        src = (SCRIPTS / "nova_shine.py").read_text()
+        self.assertIn('ev = _private(ev, "face")', src)
+        ev = S._private({"gap_h": 1}, "face")
+        self.assertTrue(ev["no_content_generation"])
+
+    def test_contact_message_has_no_face_or_camera_detail(self):
+        msg = S.contact_message(T0, 9.0)
+        self.assertNotRegex(msg.lower(), r"face|camera")
+
+
+class TestPrivacyGateFrame(unittest.TestCase):
+    def test_module_wires_guard(self):
+        src = (SCRIPTS / "nova_shine.py").read_text()
+        self.assertIn("nova_privacy_guards", src)
+        self.assertIn('_camera_ok("presence"', src)
+
+
+
 if __name__ == "__main__":
     unittest.main()

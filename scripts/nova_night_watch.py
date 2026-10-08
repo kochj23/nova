@@ -32,6 +32,32 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_watch_common as W  # noqa: E402
 
+
+try:  # P3: camera/face data serve safety or presence only, to Jordan or an internal store
+    import nova_privacy_guards as _privacy  # noqa: E402
+except Exception:  # noqa: BLE001 — fail closed: no guard, no camera/face data
+    _privacy = None
+
+
+def _camera_ok(purpose: str, recipient: str = "internal") -> bool:
+    """nova_privacy_guards.camera_use_ok, failing closed if the guard is missing or errors."""
+    if _privacy is None:
+        W.log(TAG, "privacy guard unavailable — camera/face data not used")
+        return False
+    try:
+        ok, why = _privacy.camera_use_ok(purpose, recipient)
+    except Exception as e:  # noqa: BLE001
+        W.log(TAG, f"privacy guard failed ({e}) — camera/face data not used")
+        return False
+    if not ok:
+        W.log(TAG, f"privacy guard refused camera/face use: {why}")
+    return ok
+
+
+def _private(md: dict, kind: str) -> dict:
+    """Tag a face/camera output private (tag_private); untagged if the guard is missing."""
+    return _privacy.tag_private(md, kind) if _privacy is not None else dict(md or {}, privacy="private")
+
 TAG = "night-watch"
 NEAR_MI = 1.0
 VEHICLE_LABELS = {"car", "truck", "motorcycle", "bus", "bicycle", "vehicle"}
@@ -56,7 +82,9 @@ def hhmm(ts) -> str:
 
 
 def gather(cur, start, end) -> dict:
-    det = W.load_ext_detections(cur, start - timedelta(days=BASELINE_NIGHTS), end)
+    # P3: the report goes to Jordan's own #nova-chat; check before any camera data is read.
+    det = (W.load_ext_detections(cur, start - timedelta(days=BASELINE_NIGHTS), end)
+           if _camera_ok("safety", "slack:jordan") else [])
     eps = W.episodes(((ts, (cam, classify(lbl), room)) for ts, cam, room, lbl in det), gap_s=120)
     tonight = [e for e in eps if start <= e[1] < end]
     by_class: dict = {}
