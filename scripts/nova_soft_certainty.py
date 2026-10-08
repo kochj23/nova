@@ -136,6 +136,15 @@ def domain_brier(oc, domain, min_n=5, window=200):
         return None
     hitv = {"correct": 1.0, "partial": 0.5, "incorrect": 0.0}
     pairs = [(float(c), hitv[o]) for o, c in rows if o in hitv and c is not None]
+    return brier_stats(pairs, min_n)
+
+
+def brier_stats(pairs, min_n=5):
+    """Brier calibration for ANY forecaster, not just Nova's predictions (2026-10-08,
+    CARDINAL: nova_cardinal scores every source — cameras, scanners, news feeds, LLM
+    tools, presence methods — with this same arithmetic). pairs = [(stated_p, outcome
+    0..1)]. Returns {"n","base","brier","brier_ref","skill"} or None if fewer than min_n."""
+    pairs = [(float(c), float(h)) for c, h in pairs if c is not None and h is not None]
     n = len(pairs)
     if n < min_n:
         return None
