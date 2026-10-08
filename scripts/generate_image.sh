@@ -78,10 +78,19 @@ if not prompt_id:
 
 # Poll for completion
 deadline = time.time() + int(TIMEOUT)
+poll_errors = 0
 while time.time() < deadline:
     time.sleep(3)
-    with urllib.request.urlopen(f"{COMFY}/history/{prompt_id}", timeout=5) as r:
-        hist = json.loads(r.read())
+    try:   # one dropped /history poll must not kill a job that is still rendering
+        with urllib.request.urlopen(f"{COMFY}/history/{prompt_id}", timeout=5) as r:
+            hist = json.loads(r.read())
+        poll_errors = 0
+    except Exception as e:
+        poll_errors += 1
+        if poll_errors >= 5:
+            print(f"ERROR: ComfyUI /history unreachable ({e})", file=sys.stderr)
+            sys.exit(1)
+        continue
     if not hist:
         continue
     job = hist.get(prompt_id, {})
@@ -101,27 +110,28 @@ while time.time() < deadline:
                     # Try SwarmUI output dir as fallback
                     today = datetime.now().strftime("%Y-%m-%d")
                     src = Path(OUTPUT_BASE) / today / fname
-                                # Download from ComfyUI /view endpoint (most reliable path)
-                    dest = Path(WORKSPACE) / fname
-                    view_url = f"{COMFY}/view?filename={urllib.parse.quote(fname)}&subfolder={urllib.parse.quote(subdir)}&type=output"
-                    try:
-                        with urllib.request.urlopen(view_url, timeout=30) as img_resp:
-                            dest.write_bytes(img_resp.read())
-                        # Also copy to SwarmUI output for compatibility
-                        today = datetime.now().strftime("%Y-%m-%d")
-                        out_dir = Path(OUTPUT_BASE) / today
-                        out_dir.mkdir(parents=True, exist_ok=True)
-                        import shutil
-                        shutil.copy2(dest, out_dir / fname)
-                        swarm_path = out_dir / fname
-                        print(f"Image generated successfully.")
-                        print(f"SwarmUI path: {swarm_path}")
-                        print(f"Workspace copy: {dest}")
-                        print(f"Open with: open \"{dest}\"")
-                        sys.exit(0)
-                    except Exception as e:
-                        print(f"ERROR downloading image: {e}", file=sys.stderr)
-                        sys.exit(1)
+                # Download from ComfyUI /view endpoint (most reliable path). Was nested under
+                # "if not src.exists()", so a file already in the local output dir polled until TIMEOUT.
+                dest = Path(WORKSPACE) / fname
+                view_url = f"{COMFY}/view?filename={urllib.parse.quote(fname)}&subfolder={urllib.parse.quote(subdir)}&type=output"
+                try:
+                    with urllib.request.urlopen(view_url, timeout=30) as img_resp:
+                        dest.write_bytes(img_resp.read())
+                    # Also copy to SwarmUI output for compatibility
+                    today = datetime.now().strftime("%Y-%m-%d")
+                    out_dir = Path(OUTPUT_BASE) / today
+                    out_dir.mkdir(parents=True, exist_ok=True)
+                    import shutil
+                    shutil.copy2(dest, out_dir / fname)
+                    swarm_path = out_dir / fname
+                    print(f"Image generated successfully.")
+                    print(f"SwarmUI path: {swarm_path}")
+                    print(f"Workspace copy: {dest}")
+                    print(f"Open with: open \"{dest}\"")
+                    sys.exit(0)
+                except Exception as e:
+                    print(f"ERROR downloading image: {e}", file=sys.stderr)
+                    sys.exit(1)
     elif status.get("status_str") in ("error", "failed"):
         msgs = status.get("messages", [])
         for msg in msgs:

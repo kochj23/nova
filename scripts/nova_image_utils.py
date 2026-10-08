@@ -22,8 +22,8 @@ from pathlib import Path
 
 GENERATE_IMAGE_SH = Path.home() / ".openclaw/scripts/generate_image.sh"
 SWARMUI_URL = "http://192.168.1.6:7801"
-MAX_RETRIES = 2
-RETRY_DELAY = 10
+MAX_RETRIES = 3     # standing rule: image gen gets 3 tries, 15 s apart, after a backend health check
+RETRY_DELAY = 15
 TIMEOUT = 600   # 2026-10-01: FLUX on MPS needs more than 300s; covers use the Hyper SDXL model anyway
 
 # ── ComfyUI location (2026-10-06) ─────────────────────────────────────────────
