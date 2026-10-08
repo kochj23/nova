@@ -198,16 +198,18 @@ class TestRetry(unittest.TestCase):
             self.assertEqual(nv.llm("p"), "")
         self.assertEqual(len(calls), len(nv.OLLAMA_NODES))
 
-    # RETRY GAP: value_check() / current_values() psycopg2.connect — one attempt; value_check denies, current_values returns "".
+    # value_check() retries psycopg2.connect 3x with backoff (2026-10-08), then denies; current_values()
+    # stays one attempt (gateway hot path) and returns "".
     def test_pg_down_is_a_deny_for_the_gate_and_blank_for_the_gateway(self):
         calls = []
 
         def boom(*a, **k):
             calls.append(1); raise OSError("pg down")
-        with mock.patch.object(nv.psycopg2, "connect", boom):
+        with mock.patch.object(nv.psycopg2, "connect", boom), mock.patch.object(nv.time, "sleep"), \
+                redirect_stdout(io.StringIO()):
             self.assertFalse(nv.value_check("anything")["allowed"])
             self.assertEqual(nv.current_values(), "")
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 4)
 
     # RETRY GAP: gather_evidence() memory recall — one GET per query, swallowed; evidence degrades to the fixed floor.
     def test_evidence_degrades_gracefully(self):

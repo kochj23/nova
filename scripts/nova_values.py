@@ -42,6 +42,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 from datetime import datetime
 
@@ -730,6 +731,22 @@ def _proteus_precheck(action: str):
     return None
 
 
+def _connect_ops(attempts: int = 3, backoff: float = 0.5):
+    """psycopg2.connect to nova_ops with retry + exponential backoff (0.5s, 1s). A pg blip
+    must not turn the gate into a spurious deny on the first failed attempt; after the last
+    attempt the error is raised (value_check then fails closed)."""
+    last = None
+    for i in range(attempts):
+        try:
+            return psycopg2.connect(OPS_DSN, connect_timeout=3)
+        except Exception as e:  # noqa: BLE001
+            last = e
+            log(f"value store connect attempt {i + 1}/{attempts} failed: {e}")
+            if i < attempts - 1:
+                time.sleep(backoff * (2 ** i))
+    raise last
+
+
 def value_check(action_description: str, context: str = "") -> dict:
     """Judge a proposed action against Nova's articulated values. This is the
     co-agency GATE — a co-agent must pass a proposed action through this before
@@ -751,7 +768,7 @@ def value_check(action_description: str, context: str = "") -> dict:
     every gateway turn.
     """
     try:
-        conn = psycopg2.connect(OPS_DSN, connect_timeout=3)
+        conn = _connect_ops()
     except Exception as e:
         return {"allowed": False,
                 "reasoning": f"could not reach the value store (fail-safe deny): {e}",

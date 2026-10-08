@@ -19,6 +19,7 @@ Prints per-case verdicts and overall agreement. Read-only (SELECTs only).
 import argparse
 import os
 import sys
+import time
 
 import psycopg2
 
@@ -62,6 +63,20 @@ def context_for(origin, rationale):
     return f"origin: {origin}\nNova's stated rationale: {rationale or '(none)'}"
 
 
+def connect_ops(attempts=3, backoff=1.0):
+    """psycopg2.connect with retry + exponential backoff (1s, 2s); raises after the last try."""
+    last = None
+    for i in range(attempts):
+        try:
+            return psycopg2.connect(OPS_DSN, connect_timeout=5)
+        except Exception as e:  # noqa: BLE001
+            last = e
+            print(f"pg connect attempt {i + 1}/{attempts} failed: {e}", file=sys.stderr, flush=True)
+            if i < attempts - 1:
+                time.sleep(backoff * (2 ** i))
+    raise last
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-context", action="store_true")
@@ -69,7 +84,7 @@ def main():
     a = ap.parse_args()
     import nova_values as nv
 
-    conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
+    conn = connect_ops()
     cur = conn.cursor()
     cur.execute("SELECT id, origin, proposed_action, rationale FROM coagency_proposals "
                 "WHERE id = ANY(%s) ORDER BY id", (list(LABELS),))
