@@ -111,12 +111,13 @@ class TestPerformance(unittest.TestCase):
 
 class TestRetry(unittest.TestCase):
     def test_presence_fetch_failure_fails_open(self):
-        # RETRY GAP: rule_presence_lights — one urlopen attempt; failure returns quietly, no lights
+        # rule_presence_lights — urlopen retried RETRY_ATTEMPTS times with backoff, then no lights
         _reset()
         import urllib.request
-        with patch.object(urllib.request, "urlopen", MagicMock(side_effect=OSError("down"))) as m:
+        with patch.object(urllib.request, "urlopen", MagicMock(side_effect=OSError("down"))) as m, \
+                patch.object(ae.time, "sleep"):
             asyncio.run(ae.rule_presence_lights())
-        self.assertEqual(m.call_count, 1)
+        self.assertEqual(m.call_count, ae.RETRY_ATTEMPTS)
         ae.hue_set_light.assert_not_called()
 
     def test_is_dark_falls_back_to_clock_when_pg_down(self):
@@ -124,13 +125,14 @@ class TestRetry(unittest.TestCase):
         self.assertIsInstance(asyncio.run(ae.is_dark()), bool)
 
     def test_hk_power_failure_returns_false(self):
-        # RETRY GAP: _hk_power — single attempt, False on failure
+        # _hk_power — RETRY_ATTEMPTS attempts with backoff, False on persistent failure
         import urllib.request
         fresh = _load()
         fresh.LOG_FILE = TMP / "a.log"
-        with patch.object(urllib.request, "urlopen", MagicMock(side_effect=OSError("x"))) as m:
+        with patch.object(urllib.request, "urlopen", MagicMock(side_effect=OSError("x"))) as m, \
+                patch.object(fresh.time, "sleep"), patch.object(fresh, "_actuation_ok", return_value=True):
             self.assertFalse(fresh._hk_power("Bug Zapper", True))
-        self.assertEqual(m.call_count, 1)
+        self.assertEqual(m.call_count, fresh.RETRY_ATTEMPTS)
 
 
 class TestUnit(unittest.TestCase):

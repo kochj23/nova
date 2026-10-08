@@ -128,10 +128,10 @@ async def hue_set_light(light_id: int, on: bool, brightness: int = None):
             data=data, method="PUT",
             headers={"Content-Type": "application/json"}
         )
-        urllib.request.urlopen(req, timeout=5)
+        await asyncio.to_thread(_with_retry, lambda: urllib.request.urlopen(req, timeout=5), f"hue light {light_id}")
         return True
     except Exception as e:
-        log(f"Hue action failed (light {light_id}): {e}", "WARN")
+        log(f"Hue action failed after {RETRY_ATTEMPTS} attempts (light {light_id}): {e}", "WARN")
         return False
 
 
@@ -140,10 +140,10 @@ async def run_scene(scene_name: str):
     if not await asyncio.to_thread(_actuation_ok, f"scene {scene_name}", scene=scene_name):
         return False
     try:
-        result = subprocess.run(
+        result = await asyncio.to_thread(_with_retry, lambda: subprocess.run(
             ["/opt/homebrew/bin/python3", str(Path(__file__).parent / "nova_home_control.py"), "scene", scene_name],
             capture_output=True, text=True, timeout=15
-        )
+        ), f"scene {scene_name}")
         log(f"Scene '{scene_name}' triggered (rc={result.returncode})")
         return result.returncode == 0
     except Exception as e:
@@ -159,6 +159,25 @@ async def notify_slack(msg: str):
             INSERT INTO shared_observations (observer, category, subject, observation, severity)
             VALUES ('automation_engine', 'automation', 'trigger', $1, 'info')
         """, msg)
+
+
+RETRY_ATTEMPTS = 3          # every external call (Hue, HomeKit power, presence, scene subprocess)
+RETRY_BACKOFF_S = 0.5       # 0.5s, 1s between attempts — never fail silently on the first try
+
+
+def _with_retry(fn, what: str):
+    """Call fn() up to RETRY_ATTEMPTS times with exponential backoff; re-raise the last error.
+    Blocking (time.sleep) — async callers run it via asyncio.to_thread."""
+    last = None
+    for i in range(RETRY_ATTEMPTS):
+        try:
+            return fn()
+        except Exception as e:
+            last = e
+            if i < RETRY_ATTEMPTS - 1:
+                log(f"{what}: attempt {i + 1}/{RETRY_ATTEMPTS} failed ({e}) — retrying", "WARN")
+                time.sleep(RETRY_BACKOFF_S * (2 ** i))
+    raise last
 
 
 def action_cooldown(action_key: str, cooldown_s: int = 600) -> bool:
@@ -216,9 +235,10 @@ async def rule_presence_lights():
     """Turn on lights when Jordan enters a room, off when leaving."""
     import urllib.request
     try:
-        resp = urllib.request.urlopen(PRESENCE_URL, timeout=5)
-        data = json.loads(resp.read())
-    except Exception:
+        data = await asyncio.to_thread(
+            _with_retry, lambda: json.loads(urllib.request.urlopen(PRESENCE_URL, timeout=5).read()), "presence fetch")
+    except Exception as e:
+        log(f"presence fetch failed after {RETRY_ATTEMPTS} attempts: {e}", "WARN")
         return
 
     if not data.get("ok"):
@@ -294,10 +314,10 @@ def _hk_power(name: str, on: bool) -> bool:
     import urllib.request, urllib.parse
     url = f"{NOVAHOMEKIT_POWER}?name={urllib.parse.quote(name)}&on={'true' if on else 'false'}"
     try:
-        urllib.request.urlopen(url, timeout=6).read()
+        _with_retry(lambda: urllib.request.urlopen(url, timeout=6).read(), f"hk_power '{name}'")
         return True
     except Exception as e:
-        log(f"hk_power '{name}'={on} failed: {e}", "WARN")
+        log(f"hk_power '{name}'={on} failed after {RETRY_ATTEMPTS} attempts: {e}", "WARN")
         return False
 
 

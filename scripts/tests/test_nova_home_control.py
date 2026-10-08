@@ -102,16 +102,17 @@ class TestPerformance(_Base):
 
 
 class TestRetry(_Base):
-    def test_device_errors_surface_as_connection_errors_single_attempt(self):
-        # RETRY GAP: bose._soap_request / onkyo._send_command — one attempt; error -> ConnectionError
+    def test_device_errors_surface_as_connection_errors_after_retries(self):
+        # bose._soap_request / onkyo._send_command connect — 3 attempts with backoff, then ConnectionError
         self.urlopen.side_effect = urllib.error.URLError("no route")
         with self.assertRaises(ConnectionError):
             hc.bose.mute("bedroom")
-        self.assertEqual(self.urlopen.call_count, 1)
+        self.assertEqual(self.urlopen.call_count, hc.RETRY_ATTEMPTS)
         self.sock.connect.side_effect = OSError("refused")
         with self.assertRaises(ConnectionError):
             hc.onkyo.power_on("office")
-        self.sock.close.assert_called_once()
+        self.assertEqual(self.sock.close.call_count, hc.RETRY_ATTEMPTS)
+        self.sock.sendall.assert_not_called()
 
     def test_status_and_scenes_fail_open(self):
         self.urlopen.side_effect = urllib.error.URLError("down")

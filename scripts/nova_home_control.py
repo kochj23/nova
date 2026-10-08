@@ -36,6 +36,9 @@ from xml.etree import ElementTree
 sys.path.insert(0, str(Path.home()) + "/.openclaw/scripts")
 import nova_config
 
+RETRY_ATTEMPTS = 3        # every device call: 3 attempts, 0.5s/1s backoff — never fail silently on try #1
+RETRY_BACKOFF_S = 0.5
+
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 # Device Registry
 # ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -141,11 +144,18 @@ class bose:
             "SOAPAction": f'"{service_type}#{action}"',
         }
         req = urllib.request.Request(url, data=envelope.encode("utf-8"), headers=headers)
-        try:
-            with urllib.request.urlopen(req, timeout=bose.TIMEOUT) as resp:
-                return resp.read().decode("utf-8")
-        except urllib.error.URLError as e:
-            raise ConnectionError(f"Bose SOAP request failed ({ip}): {e}")
+        last = None
+        for attempt in range(RETRY_ATTEMPTS):
+            try:
+                with urllib.request.urlopen(req, timeout=bose.TIMEOUT) as resp:
+                    return resp.read().decode("utf-8")
+            except urllib.error.HTTPError as e:          # the device answered — don't hammer it
+                raise ConnectionError(f"Bose SOAP request failed ({ip}): {e}")
+            except (urllib.error.URLError, OSError) as e:
+                last = e
+                if attempt < RETRY_ATTEMPTS - 1:
+                    time.sleep(RETRY_BACKOFF_S * (2 ** attempt))
+        raise ConnectionError(f"Bose SOAP request failed ({ip}) after {RETRY_ATTEMPTS} attempts: {last}")
 
     @staticmethod
     def _rendering_action(ip: str, action: str, body_xml: str) -> str:
@@ -347,10 +357,19 @@ class onkyo:
     def _send_command(cls, ip: str, command: str, expect_response: bool = True) -> str:
         """Send an eISCP command and optionally wait for a response."""
         packet = cls._build_eiscp(command)
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(cls.TIMEOUT)
+        # Retry only the CONNECT (2 retries, backoff): a command is never sent twice.
+        for attempt in range(RETRY_ATTEMPTS):
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(cls.TIMEOUT)
+            try:
+                sock.connect((ip, cls.PORT))
+                break
+            except (socket.error, OSError) as e:
+                sock.close()
+                if attempt == RETRY_ATTEMPTS - 1:
+                    raise ConnectionError(f"Onkyo eISCP failed ({ip}) after {RETRY_ATTEMPTS} attempts: {e}")
+                time.sleep(RETRY_BACKOFF_S * (2 ** attempt))
         try:
-            sock.connect((ip, cls.PORT))
             sock.sendall(packet)
             if expect_response:
                 # Read response — may need multiple reads
@@ -592,7 +611,14 @@ class weather:
         """Get latest weather reading from telemetry.weather."""
         import psycopg2
         try:
-            conn = psycopg2.connect(host="localhost", dbname="nova_ops", user="kochj")
+            for attempt in range(RETRY_ATTEMPTS):
+                try:
+                    conn = psycopg2.connect(host="localhost", dbname="nova_ops", user="kochj", connect_timeout=5)
+                    break
+                except psycopg2.OperationalError:
+                    if attempt == RETRY_ATTEMPTS - 1:
+                        raise
+                    time.sleep(RETRY_BACKOFF_S * (2 ** attempt))
             cur = conn.cursor()
             cur.execute("""
                 SELECT ts, temperature_f, humidity, pressure_inhg,
@@ -664,14 +690,20 @@ class scenes:
                 return False
         except Exception:
             return False                       # guards unavailable — fail closed
-        try:
-            result = subprocess.run(
-                ["shortcuts", "run", shortcut_name],
-                capture_output=True, timeout=10
-            )
-            return result.returncode == 0
-        except Exception:
-            return False
+        for attempt in range(RETRY_ATTEMPTS):           # retry with backoff; lights shortcuts are idempotent
+            try:
+                result = subprocess.run(
+                    ["shortcuts", "run", shortcut_name],
+                    capture_output=True, timeout=10
+                )
+                if result.returncode == 0:
+                    return True
+            except Exception:
+                pass
+            if attempt < RETRY_ATTEMPTS - 1:
+                time.sleep(RETRY_BACKOFF_S * (2 ** attempt))
+        print(f"[home_control] shortcut '{shortcut_name}' failed after {RETRY_ATTEMPTS} attempts", file=sys.stderr)
+        return False
 
     @classmethod
     def movie_mode(cls) -> dict:

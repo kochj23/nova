@@ -17,8 +17,10 @@ API_URL="http://127.0.0.1:37400"
 # (network, auth, etc.) can never break scene execution — only log on success.
 log_scene_activation() {
     local name="$1"
-    psql -h pg-primary.digitalnoise.net -d nova_ops \
-        -c "INSERT INTO public.home_scene_activations (ts, scene_name) VALUES (now(), \$\$${name}\$\$)" \
+    # Bound as a psql variable (:'scene' = properly quoted literal) — a scene name containing $$
+    # could otherwise break out of dollar-quoting and inject SQL.
+    echo "INSERT INTO public.home_scene_activations (ts, scene_name) VALUES (now(), :'scene')" | \
+        psql -h pg-primary.digitalnoise.net -d nova_ops -v scene="$name" \
         >/dev/null 2>&1 || true
 }
 
@@ -48,10 +50,20 @@ if ! "$GUARD_PY" "$(dirname "$0")/nova_safety_guards.py" scene-check "$SCENE_NAM
     exit 3
 fi
 
-# Execute scene — try API first
-result=$(curl -s --connect-timeout 3 -X POST \
+# Kill switch (P8): Nova's actuations stop; the house holds its state.
+if [ -e "$HOME/.openclaw/.autonomy-kill" ]; then
+    echo "{\"error\": \"kill switch engaged: not running scene\"}" >&2
+    exit 3
+fi
+
+# JSON-escape the scene name (backslash, then double quote) so it can't break the request body.
+SCENE_JSON="${SCENE_NAME//\\/\\\\}"
+SCENE_JSON="${SCENE_JSON//\"/\\\"}"
+
+# Execute scene — try API first (2 retries with backoff on connection failure)
+result=$(curl -s --connect-timeout 3 --retry 2 --retry-delay 1 --retry-connrefused -X POST \
     -H "Content-Type: application/json" \
-    -d "{\"name\": \"$SCENE_NAME\"}" \
+    -d "{\"name\": \"$SCENE_JSON\"}" \
     "$API_URL/api/homekit/scenes/execute" 2>/dev/null) || true
 
 if echo "$result" | grep -q '"status" *: *"executed"'; then
@@ -62,11 +74,18 @@ fi
 
 # Fallback to Shortcuts CLI
 echo "API failed, trying Shortcuts CLI..." >&2
-echo "$SCENE_NAME" | shortcuts run "Execute HomeKit Scene" --input-type public.plain-text --output-type public.plain-text 2>/dev/null
+# (Tested inside `if` so set -e can't kill the script silently before the error JSON; 3 attempts, backoff.)
+sc_ok=0
+for delay in 1 2 0; do
+    if echo "$SCENE_NAME" | shortcuts run "Execute HomeKit Scene" --input-type public.plain-text --output-type public.plain-text 2>/dev/null; then
+        sc_ok=1; break
+    fi
+    [ "$delay" -gt 0 ] && sleep "$delay"
+done
 
-if [ $? -eq 0 ]; then
+if [ "$sc_ok" -eq 1 ]; then
     log_scene_activation "$SCENE_NAME"
-    echo "{\"status\": \"executed\", \"scene\": \"$SCENE_NAME\", \"backend\": \"Shortcuts CLI\"}"
+    echo "{\"status\": \"executed\", \"scene\": \"$SCENE_JSON\", \"backend\": \"Shortcuts CLI\"}"
 else
     echo "{\"error\": \"Failed to execute scene '$SCENE_NAME'\"}" >&2
     exit 1
