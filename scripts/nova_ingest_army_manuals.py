@@ -32,14 +32,37 @@ PUB = re.compile(r"\b(FM|TM|TC|ATP|ADP|ADRP|ATTP|AR|ST|GTA|DA\s*PAM)[\s_-]*\d|fi
 SKIP = re.compile(r"leaked|conspiracy|re-?education|fouo|for official use|classified", re.I)
 
 
-def get(url, timeout=60):
-    return urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=timeout).read()
+MAX_PAGES = 100   # 500 rows/page; the real result set is a few thousand, so this only stops a runaway loop
+
+
+def get(url, timeout=60, attempts=3):
+    """GET with retry: archive.org 5xx/timeouts are common; backoff 5 s, 10 s, then re-raise."""
+    for attempt in range(attempts):
+        try:
+            return urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=timeout).read()
+        except Exception as e:
+            if attempt == attempts - 1:
+                raise
+            ni.log(f"GET {url[:80]} failed ({e}); retry {attempt + 1}")
+            time.sleep(5 * 2 ** attempt)
+
+
+def _connect(attempts=3):
+    """nova_ops connection with retry (PG failover blips), backoff 5 s / 10 s, re-raise on the last try."""
+    for attempt in range(attempts):
+        try:
+            return psycopg2.connect(OPS_DSN, connect_timeout=10)
+        except psycopg2.OperationalError as e:
+            if attempt == attempts - 1:
+                raise
+            ni.log(f"PG connect failed ({e}); retry {attempt + 1}")
+            time.sleep(5 * 2 ** attempt)
 
 
 def search():
     """-> [(identifier, title, date)] most-downloaded first, filtered to real Army pubs."""
     out, page = [], 1
-    while True:
+    while page <= MAX_PAGES:
         qs = urllib.parse.urlencode([("q", QUERY), ("fl[]", "identifier"), ("fl[]", "title"), ("fl[]", "date"),
                                      ("rows", "500"), ("page", str(page)), ("sort[]", "downloads desc"),
                                      ("output", "json")])
@@ -51,9 +74,12 @@ def search():
             if PUB.search(t) and not SKIP.search(t):
                 out.append((d["identifier"], t[:300], str(d.get("date") or "")[:10]))
         page += 1
+    ni.log(f"search stopped at the {MAX_PAGES}-page cap")
+    return out
 
 
 def ocr_text(ident):
+    ident = urllib.parse.quote(ident, safe="")   # identifiers come from the search API; keep them one path segment
     files = json.loads(get(f"https://archive.org/metadata/{ident}/files")).get("result", [])
     txt = next((f["name"] for f in files if f["name"].endswith("_djvu.txt")), None)
     if not txt:
@@ -68,7 +94,7 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
 
-    oc = psycopg2.connect(OPS_DSN); oc.autocommit = True; cur = oc.cursor()
+    oc = _connect(); oc.autocommit = True; cur = oc.cursor()
     cur.execute("""CREATE TABLE IF NOT EXISTS ia_ingest_seen (identifier text PRIMARY KEY, title text,
                    chunks int, at timestamptz DEFAULT now())""")
     cur.execute("SELECT identifier FROM ia_ingest_seen")
