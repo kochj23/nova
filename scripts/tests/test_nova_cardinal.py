@@ -104,7 +104,8 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(C.reliability(100, 30, "labelled"), "E")
         self.assertEqual(C.reliability(1000, 999, "fusion-agreement"), "B")       # capped
         self.assertEqual(C.reliability(0, 0, "corroboration", corroborated=2), "F")
-        self.assertEqual(C.reliability(0, 0, "corroboration", corroborated=9), "C")
+        self.assertEqual(C.reliability(0, 0, "corroboration", corroborated=9), "F")   # under 10 -> F
+        self.assertEqual(C.reliability(0, 0, "corroboration", corroborated=10), "C")
 
     def test_brier_skill_drags_letter_down(self):
         self.assertEqual(C.reliability(200, 190, "labelled", skill=-0.2), "E")

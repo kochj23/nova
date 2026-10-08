@@ -135,8 +135,8 @@ def cap(letter: str, ceiling: str | None) -> str:
 def reliability(n: int, hits: float, truth_kind: str, skill: float | None = None,
                 corroborated: int | None = None, min_n: int = MIN_N) -> str:
     """Admiralty letter from a track record. Pure."""
-    if truth_kind == "corroboration":
-        return "C" if (corroborated or 0) >= 3 else "F"
+    if truth_kind == "corroboration":   # outcomes = corroborated transmissions; absence is not a miss
+        return "C" if (corroborated or 0) >= min_n else "F"
     if n < min_n:
         return "F"
     lo, _hi = wilson(hits, n)
@@ -330,6 +330,29 @@ def record_outcome(oc, source_id: str, source_type: str, outcome: float, p: floa
     ensure_schema(oc)
     oc.execute("INSERT INTO source_outcomes (source_id, source_type, p, outcome, ref, recorded_by) "
                "VALUES (%s,%s,%s,%s,%s,%s)", (source_id, source_type, p, float(outcome), ref, recorded_by))
+
+
+def explain(source_id: str, cause: str, evidence: str, by: str = "jordan") -> None:
+    """Clear a suspect source once someone has evidenced what happened (Buick 8 rule: no cause
+    without evidence). The logbook entry is resolved with the same cause and evidence."""
+    import nova_watch_common as W
+    from nova_buick8_log import resolve, validate_resolution
+    validate_resolution(cause, evidence)
+    conn = W.connect()
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT compromise_suspect FROM source_ledger WHERE source_id=%s", (source_id,))
+        row = cur.fetchone()
+        if not row or not row[0]:
+            raise ValueError(f"{source_id} is not marked suspect")
+        cur.execute("SELECT id FROM unexplained_events WHERE kind='source_behaviour_change' "
+                    "AND signature=%s AND status<>'resolved'", (source_id,))
+        for (eid,) in cur.fetchall():
+            resolve(eid, cause, {"evidence": evidence}, by=by, cur=cur)
+        cur.execute("UPDATE source_ledger SET compromise_suspect=false, compromise_reason=%s WHERE source_id=%s",
+                    (f"explained by {by}: {cause}", source_id))
+    finally:
+        conn.close()
 
 
 def write_rows(cur, rows: list) -> int:
@@ -689,7 +712,13 @@ def score_all(dry: bool = False) -> list:
         series = vols.get(r["source_id"]) or vols.get(re.sub(r"\.py$", "", r["source_id"]))
         r["baseline"] = {"daily": series} if series else {}
         why = "; ".join(x for x in (r.pop("_flag", None), detect_compromise(r, series)) if x) or None
+        old = prior.get(r["source_id"]) or {}
+        if not why and old.get("compromise_suspect"):   # stays suspect until explained (explain())
+            why = f"not yet explained: {old.get('compromise_reason') or 'unknown'}"
         r["compromise_suspect"], r["compromise_reason"] = bool(why), why
+        if why:
+            r["detail"] = dict(r.get("detail") or {}, graded_before_suspect=r["reliability"])
+            r["reliability"] = "F"
         r.pop("_series", None)
         if why and not (prior.get(r["source_id"]) or {}).get("compromise_suspect"):
             flagged.append(r)
@@ -729,7 +758,8 @@ def selftest() -> int:
     assert reliability(200, 196, "labelled") == "A"
     assert reliability(100, 30, "labelled") == "E" and reliability(100, 50, "labelled") == "D"
     assert reliability(500, 495, "fusion-agreement") == "B"
-    assert reliability(0, 0, "corroboration", corroborated=4) == "C"
+    assert reliability(0, 0, "corroboration", corroborated=10) == "C"
+    assert reliability(0, 0, "corroboration", corroborated=9) == "F"
     led = {"camera:front_door": {"reliability": "C"}, "scanner:Burbank PD": {"reliability": "C"},
            "detector:x": {"reliability": "A", "compromise_suspect": True}}
     g = grade({"sources": [{"id": "camera:front_door"}, {"id": "scanner:Burbank PD"}]}, ledger=led)
@@ -758,9 +788,19 @@ def main(argv=None) -> int:
     ap.add_argument("--json", action="store_true")
     ap.add_argument("--grade", help="item JSON to grade against the live ledger")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--explain", metavar="SOURCE_ID", help="clear a suspect source; needs --cause and --evidence")
+    ap.add_argument("--cause")
+    ap.add_argument("--evidence")
+    ap.add_argument("--by", default="jordan")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
+    if a.explain:
+        if not (a.cause and a.evidence):
+            ap.error("--explain needs --cause and --evidence")
+        explain(a.explain, a.cause, a.evidence, a.by)
+        print(f"explained: {a.explain}")
+        return 0
     if a.score:
         rows = score_all(dry=a.dry_run)
         if a.dry_run:

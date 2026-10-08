@@ -18,9 +18,10 @@ message, it goes through this test:
 
 Verdicts:
   CORROBORATED     >= 2 independent sensor groups (3 when it confirms an expectation).
-  SINGLE_SOURCE    one independent group, no motive: may ask/mention, never escalate.
-  UNCORROBORATED   single source WITH motive, or nothing but reasoning: cannot trigger action.
-  CONTESTED        an independent source contradicts it: may mention the contest, nothing more.
+  SINGLE_SOURCE    one independent group, no motive: may ask, never mention or above.
+  UNCORROBORATED   single source WITH motive, or nothing but reasoning: journal only.
+  CONTESTED        an independent source contradicts it: may ask, nothing more.
+Only CORROBORATED may trigger anything above "ask".
 
 may_trigger(item, rung) is the gate other organs call. Rungs, least to most invasive:
 journal < ask < mention < recommend < escalate < act.
@@ -192,7 +193,8 @@ def assess(item: dict, overrides: dict | None = None) -> dict:
             reasons.append(f"it confirms what Nova already expected — needs {needed} independent sources, has {indep}")
     if expected:
         reasons.append("confirmation of expectation: the bar is one independent source higher")
-    max_rung = {"CORROBORATED": "act", "SINGLE_SOURCE": "mention", "CONTESTED": "mention",
+    # only CORROBORATED may go above "ask"; SINGLE_SOURCE and CONTESTED may ask, never mention or act
+    max_rung = {"CORROBORATED": "act", "SINGLE_SOURCE": "ask", "CONTESTED": "ask",
                 "UNCORROBORATED": "journal"}[verdict]
     return {"verdict": verdict, "independent": indep, "independent_types": types,
             "groups": [[s["id"] for s in g] for g in groups],

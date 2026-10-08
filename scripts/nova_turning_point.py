@@ -10,7 +10,8 @@ the Boiler's bleed):
 
   (a) STAKES  — a 0..1 estimate supplied by the caller from its own data (care score,
       item count, boiler pressure, proposal backlog);
-  (b) LADDER  — journal (note it, tell no one) -> mention -> recommend -> act. The
+  (b) LADDER  — journal (note it, tell no one) -> ask (one question to Jordan) -> mention ->
+      recommend -> act. The
       stakes pick the lowest rung that would work; a kind can never go above its own
       ceiling (a reach is at most a mention); low CALIBRATED confidence (nova_soft_
       certainty.calibrate, which shrinks overconfident domains) drops one rung;
@@ -36,10 +37,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-RUNGS = ("journal", "mention", "recommend", "act")
-COST = {"journal": 0, "mention": 1, "recommend": 2, "act": 4}
+RUNGS = ("journal", "ask", "mention", "recommend", "act")
+COST = {"journal": 0, "ask": 1, "mention": 1, "recommend": 2, "act": 4}
 # Stakes needed before each rung is warranted (the lowest rung whose bar the stakes clear).
-STAKES_FOR = {"journal": 0.0, "mention": 0.35, "recommend": 0.65, "act": 0.9}
+# ask shares mention's bar on purpose: stakes alone never pick it, so existing callers see no new
+# questions. It is reached only when SPINNAKER caps a conclusion at ask (single or contested source).
+STAKES_FOR = {"journal": 0.0, "ask": 0.35, "mention": 0.35, "recommend": 0.65, "act": 0.9}
 MIN_CONF = 0.35        # calibrated confidence below this drops one rung
 LATE_STAKES = 0.7      # with < 25% of the weekly budget left, only this much stakes spends
 CHANNEL = "turning-point"
@@ -67,7 +70,10 @@ def pick_rung(stakes: float, confidence: float | None, ceiling: str = "act") -> 
         if stakes >= STAKES_FOR[r]:
             rung = r
     if confidence is not None and confidence < MIN_CONF and rung != "journal":
-        rung = rungs[rungs.index(rung) - 1]
+        # demote one rung, skipping ask: a low-confidence mention is only noted, never a new question
+        # to Jordan. ask is reached only through SPINNAKER's cap.
+        steps = [r for r in rungs if r != "ask"]
+        rung = steps[steps.index(rung) - 1] if rung in steps else rungs[rungs.index(rung) - 1]
     return rung
 
 
@@ -103,7 +109,7 @@ def calibrated(oc, stated: float, domain: str | None) -> float | None:
 
 
 # SPINNAKER's max rung -> this ladder (2026-10-08)
-SPIN_TO_RUNG = {"journal": "journal", "ask": "mention", "mention": "mention", "recommend": "recommend",
+SPIN_TO_RUNG = {"journal": "journal", "ask": "ask", "mention": "mention", "recommend": "recommend",
                 "escalate": "act", "act": "act"}
 URGENT_STAKES = 0.9    # at or above this, a depleted Jordan is still told
 

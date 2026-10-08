@@ -67,8 +67,8 @@ class TestRetry(unittest.TestCase):
 
 class TestUnit(unittest.TestCase):
     def test_ladder_least_to_most_invasive(self):
-        self.assertEqual(tp.ladder(), ["journal", "mention", "recommend", "act"])
-        self.assertEqual(tp.ladder("mention"), ["journal", "mention"])
+        self.assertEqual(tp.ladder(), ["journal", "ask", "mention", "recommend", "act"])
+        self.assertEqual(tp.ladder("mention"), ["journal", "ask", "mention"])
 
     def test_lowest_rung_that_stakes_warrant(self):
         self.assertEqual(tp.pick_rung(0.2, 0.9), "journal")

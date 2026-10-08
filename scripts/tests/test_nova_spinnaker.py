@@ -89,7 +89,7 @@ class TestUnit(unittest.TestCase):
         a = SP.assess({"sources": [{"id": "camera:a"}, {"id": "scanner:x"}],
                        "contradicted_by": [{"id": "presence:mmwave"}]})
         self.assertEqual(a["verdict"], "CONTESTED")
-        self.assertEqual(a["max_rung"], "mention")
+        self.assertEqual(a["max_rung"], "ask")
 
     def test_same_talkgroup_is_one_dispatcher(self):
         a = SP.assess({"sources": [{"id": "scanner:Burbank PD", "upstream": []}, {"id": "scanner:burbank pd"}]})
@@ -115,7 +115,7 @@ class TestFunctional(unittest.TestCase):
     def test_gate_ladder(self):
         single = {"sources": [{"id": "camera:a"}]}
         self.assertTrue(SP.may_trigger(single, "ask")[0])
-        self.assertTrue(SP.may_trigger(single, "mention")[0])
+        self.assertFalse(SP.may_trigger(single, "mention")[0])   # only corroborated goes above ask
         self.assertFalse(SP.may_trigger(single, "escalate")[0])
         corr = {"sources": [{"id": "camera:a"}, {"id": "chp:1"}]}
         self.assertTrue(SP.may_trigger(corr, "act")[0])

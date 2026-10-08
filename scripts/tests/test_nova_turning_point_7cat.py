@@ -137,7 +137,7 @@ class TestUnit(unittest.TestCase):
         self.assertIn("SPINNAKER", r["reason"])
         r2, _, _ = _decide(_Cur(), stakes=0.95, ceiling="act",
                            item={"sources": [{"id": "camera:a"}, {"id": "camera:b"}]})
-        self.assertEqual(r2["wanted"], "mention")      # one NVR = one source = mention at most
+        self.assertEqual(r2["wanted"], "ask")          # one NVR = one source = ask at most
 
     def test_depleted_jordan_defers_non_urgent(self):
         with mock.patch.object(tp, "jordan_depleted", return_value="hard-stretch quiet mode"):

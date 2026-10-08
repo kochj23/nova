@@ -288,8 +288,19 @@ def preconsent_active(oc, key: str = "shine.preconsent") -> bool:
 
 
 def jordan_confirmation(oc, confirmation_id) -> bool:
+    """Is Jordan's approval valid? Read-only: the approval is consumed by authorize() only when the
+    action is actually allowed, so a held or deferred escalation does not burn it."""
     if confirmation_id in (None, "", -1):
         return False
+    try:
+        from nova_safety_guards import peek_confirmation
+        return bool(peek_confirmation(oc, confirmation_id))
+    except Exception:  # noqa: BLE001
+        _rollback(oc)
+        return False
+
+
+def _consume(oc, confirmation_id) -> bool:
     try:
         from nova_safety_guards import consume_confirmation
         ok, _why = consume_confirmation(oc, confirmation_id)
@@ -314,6 +325,10 @@ def authorize(oc, *, source: str, kind: str, action_class: str, item: dict | Non
         d = decide(action_class, item, life_safety=life_safety, urgent=urgent, jordan=jst, nova=nst,
                    jordan_key=jk, preconsent=pc, molink=molink)
         d["jordan_state"], d["nova_state"] = jst, nst
+        if d.get("allowed") and jk and confirmation_id not in (None, "", -1) and not jordan_confirmed \
+                and molink != "answered_confirm" and not dry:
+            if not _consume(oc, confirmation_id):   # single-use: spent only on an allowed action
+                d = dict(d, allowed=bool(life_safety), reason=d.get("reason", "") + " (approval no longer valid)")
     except Exception as e:  # noqa: BLE001
         _rollback(oc)
         d = {"allowed": bool(life_safety), "deferred": False, "keys": [], "missing": [],

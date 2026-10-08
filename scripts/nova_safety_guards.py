@@ -264,6 +264,18 @@ def approve_confirmation(oc, cid: int, approved_by: str = "jordan") -> bool:
     return oc.rowcount == 1
 
 
+def peek_confirmation(oc, cid) -> bool:
+    """Read-only: is this confirmation valid right now (approved by Jordan, unexpired, unused)?
+    Does NOT consume it. Callers that act on it must call consume_confirmation afterwards."""
+    try:
+        ensure_schema(oc)
+        oc.execute("""SELECT 1 FROM safety_confirmations WHERE id=%s AND approved_by LIKE 'jordan%%'
+                      AND used_at IS NULL AND expires_at > now()""", (int(cid),))
+        return oc.fetchone() is not None
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def consume_confirmation(oc, cid, action: str = "", entity_ids=()) -> tuple:
     """(ok, why). Valid = approved by Jordan, unexpired, unused. Marks it used (single-use)."""
     own = False
