@@ -730,6 +730,11 @@ def do_resolve(oc, mc, force_now=False):
             spawn_curiosity(oc, statement, conf, outcome, surprise, reasoning)
         if outcome == "incorrect":
             own_mistake(oc, _id, statement, domain, conf, reasoning)
+            try:   # Hotwash (2026-10-08): blameless after-action review of the miss; never blocks resolution
+                import nova_hotwash
+                nova_hotwash.from_prediction(oc, _id, statement, domain, conf, reasoning)
+            except Exception as e:  # noqa: BLE001
+                log(f"  hotwash failed: {e}")
         resolved.append((_id, outcome, surprise))
     return resolved
 
