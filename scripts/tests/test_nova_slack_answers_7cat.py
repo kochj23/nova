@@ -27,6 +27,7 @@ def _load():
     spec = importlib.util.spec_from_file_location("nova_slack_answers_7cat", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    mod._QUIET = False   # quiet mode is covered by the TestQuiet* classes
     return mod
 
 
@@ -245,6 +246,71 @@ class TestFrame(unittest.TestCase):
         for name in ("main", "demo", "slack", "_slack_once", "decide_proposal", "post_pending_proposals"):
             self.assertTrue(callable(getattr(sa, name)), name)
         self.assertIn('if __name__ == "__main__":', SRC)
+
+
+# ══ 2026-10-08: quiet mode — hold proposal prompts (nags) and shorten thread confirmations ═══════
+class _QuietEnv(unittest.TestCase):
+    def setUp(self):
+        self._saved = sa._QUIET
+
+    def tearDown(self):
+        sa._QUIET = self._saved
+
+
+class TestQuietSecurity(_QuietEnv):
+    def test_quiet_never_auto_approves_anything(self):
+        sa._QUIET = True
+        cur = _Cur()
+        with mock.patch.object(sa, "datetime", mock.Mock(now=lambda: datetime(2026, 10, 8, 11))), \
+                mock.patch.object(sa, "slack") as s, redirect_stdout(io.StringIO()):
+            sa.post_pending_proposals(cur, dry=False)
+        s.assert_not_called()
+
+
+class TestQuietPerformance(_QuietEnv):
+    def test_quiet_skips_all_proposal_queries(self):
+        sa._QUIET = True
+        cur = _Cur()
+        with mock.patch.object(sa, "datetime", mock.Mock(now=lambda: datetime(2026, 10, 8, 11))), \
+                redirect_stdout(io.StringIO()):
+            sa.post_pending_proposals(cur, dry=False)
+        self.assertEqual(cur.sql, [])
+
+
+class TestQuietRetry(_QuietEnv):
+    def test_quiet_mode_error_fails_open(self):
+        bad = types.SimpleNamespace(quiet_mode=mock.Mock(side_effect=RuntimeError("pg")))
+        with mock.patch.dict(sys.modules, {"nova_relationship": bad}):
+            self.assertFalse(sa.quiet_active(None))
+
+
+class TestQuietUnit(_QuietEnv):
+    def test_quiet_active_reads_flag(self):
+        for v in (True, False):
+            rel = types.SimpleNamespace(quiet_mode=lambda cur=None, v=v: {"active": v})
+            with mock.patch.dict(sys.modules, {"nova_relationship": rel}):
+                self.assertIs(sa.quiet_active(None), v)
+
+
+class TestQuietIntegration(_QuietEnv):
+    def test_confirm_is_terse_while_quiet(self):
+        sa._QUIET = True
+        with mock.patch.object(sa, "slack") as s:
+            sa.confirm("C", "1.0", "Recorded: approved #5 via your reply. Handed to Claude.", dry=False)
+        self.assertEqual(s.call_args.kwargs["text"], "Recorded.")
+
+
+class TestQuietFunctional(_QuietEnv):
+    def test_not_quiet_confirm_unchanged(self):
+        sa._QUIET = False
+        with mock.patch.object(sa, "slack") as s:
+            sa.confirm("C", "1.0", "Recorded: Q#3.", dry=False)
+        self.assertEqual(s.call_args.kwargs["text"], "Recorded: Q#3.")
+
+
+class TestQuietFrame(_QuietEnv):
+    def test_quiet_api_present(self):
+        self.assertTrue(callable(sa.quiet_active)); self.assertTrue(hasattr(sa, "_QUIET"))
 
 
 if __name__ == "__main__":

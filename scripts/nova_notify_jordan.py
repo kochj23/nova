@@ -27,16 +27,29 @@ try:  # proactivity dial — exactly 6 at the default
 except Exception:  # pragma: no cover
     MAX_ITEMS = 6
 MAX_AGE_DAYS = 7
+QUIET_MAX_ITEMS = 1   # quiet mode: the bundle shrinks to the single oldest item; the rest stay held
 
 
 def log(m): print(f"[notify-jordan {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
 
 
-def bundle(rows):
+def bundle(rows, quiet=False):
+    if quiet:   # lower verbosity during a hard stretch: no header, no timestamps
+        return "\n".join(f"• {msg.strip()}" for _, _, _, msg in rows)
     lines = [f"*Things I noticed* ({len(rows)}):"]   # Annie Wilkes rule: no "since we last talked"
     for _, ts, topic, msg in rows:
         lines.append(f"• _{ts.strftime('%a %H:%M')}_ {('[' + topic + '] ') if topic else ''}{msg.strip()}")
     return "\n".join(lines)
+
+
+def quiet_active(cur=None) -> bool:
+    """nova_relationship.quiet_mode(): during a hard stretch, hold non-urgent nags and say less.
+    Fails open to 'not quiet' (quiet_mode itself never raises; a missing module reads inactive)."""
+    try:
+        import nova_relationship
+        return bool(nova_relationship.quiet_mode(cur).get("active"))
+    except Exception:  # noqa: BLE001
+        return False
 
 
 def _annie_ok(text):
@@ -82,14 +95,20 @@ def main():
         log(f"dropped {len(bad)} held reach(es) that failed the Annie Wilkes rule")
     if not rows:
         log("drawer empty — nothing to deliver"); return 0
-    text = bundle(rows)
+    quiet = quiet_active(oc)
+    if quiet and len(rows) > QUIET_MAX_ITEMS:
+        log(f"quiet mode — delivering {QUIET_MAX_ITEMS} of {len(rows)}; the rest stay held")
+        rows = rows[:QUIET_MAX_ITEMS]
+    text = bundle(rows, quiet=quiet)
     if args.dry_run:
         print(text); return 0
     # Turning point: the bundle is one mention; stakes grow with how much is in the drawer.
     tp = turning_point(oc, rows, text)
     if not tp["allowed"]:
         log(f"holding the drawer — turning point: {tp['reason']}"); return 0
-    nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN)
+    if not nova_config.post_both(text, slack_channel=nova_config.SLACK_CHAN):
+        # nothing delivered — leave the drawer 'held' so the next run retries
+        log("post failed — drawer left held for the next run"); return 1
     oc.execute("UPDATE reach_log SET status='sent' WHERE id = ANY(%s)", ([r[0] for r in rows],))
     log(f"delivered {len(rows)} held reach(es) to #nova-chat")
     return 0

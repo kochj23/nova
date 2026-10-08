@@ -211,9 +211,9 @@ def main():
         if dry:
             _log("DRY RUN — would post:\n" + msg)
         else:
-            nova_config.post_both(msg, slack_channel=DIGEST_CHANNEL)
-            posted = True
-            _log("posted proactive digest to Slack")
+            posted = bool(nova_config.post_both(msg, slack_channel=DIGEST_CHANNEL))
+            _log("posted proactive digest to Slack" if posted
+                 else "proactive digest post delivered nowhere — logged posted=false")
     else:
         _log("nothing cleared the bar — posting nothing (silence is fine)")
 

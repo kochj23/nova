@@ -59,7 +59,41 @@ def compose(qid, question):
             f"_Reply in this thread — a word is enough — and I'll remember the answer._")
 
 
-def slack_post(text):
+def quiet_active(cur=None) -> bool:
+    """nova_relationship.quiet_mode(): during a hard stretch, hold non-urgent nags and say less.
+    Fails open to 'not quiet' (quiet_mode itself never raises; a missing module reads inactive)."""
+    try:
+        import nova_relationship
+        return bool(nova_relationship.quiet_mode(cur).get("active"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def slack_post(text, attempts=3, base=2.0):
+    """chat.postMessage with retry on transport errors (connection/5xx/429). A Slack-level
+    {ok:false} is a real answer and is raised immediately, never retried."""
+    import time
+    import urllib.error
+    last = None
+    for i in range(attempts):
+        try:
+            return _slack_post_once(text)
+        except urllib.error.HTTPError as e:
+            last = e
+            if not (e.code == 429 or e.code >= 500):
+                raise
+        except (urllib.error.URLError, ConnectionError) as e:
+            # a read timeout may mean the post landed — never re-send (no double question)
+            if isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
+                raise
+            last = e
+        if i < attempts - 1:
+            log(f"slack post failed ({last}) — retry {i + 1}/{attempts - 1}")
+            time.sleep(base * (2 ** i))
+    raise last
+
+
+def _slack_post_once(text):
     import subprocess
     tok = subprocess.check_output(["security", "find-generic-password", "-a", "nova",
                                    "-s", "nova-slack-bot-token", "-w"]).decode().strip() \
@@ -75,14 +109,28 @@ def slack_post(text):
     return d["ts"]
 
 
+def _pg_connect(attempts=3, base=2.0):
+    import time
+    for i in range(attempts):
+        try:
+            return psycopg2.connect(OPS_DSN, connect_timeout=5)
+        except psycopg2.OperationalError as e:
+            if i == attempts - 1:
+                raise
+            log(f"pg connect failed ({e}) — retry {i + 1}/{attempts - 1}")
+            time.sleep(base * (i + 1))
+
+
 def main():
     dry = "--dry-run" in sys.argv
-    conn = psycopg2.connect(OPS_DSN, connect_timeout=5); conn.autocommit = True; cur = conn.cursor()
+    conn = _pg_connect(); conn.autocommit = True; cur = conn.cursor()
     ensure_schema(cur)
     cur.execute("SELECT count(*) FROM slack_prompts WHERE kind='question' AND resolved_at IS NULL "
                 "AND posted_at > now() - (%s || ' days')::interval", (str(OPEN_MAX_DAYS),))
     if cur.fetchone()[0]:
         log("a question is still open — not stacking another"); return 0
+    if quiet_active(cur):
+        log("quiet mode (hard stretch) — skipping today's question"); return 0
     cur.execute("SELECT id, question, memory_source, asked_at FROM reflection_questions "
                 "WHERE answer IS NULL AND id NOT IN (SELECT ref_id::int FROM slack_prompts WHERE kind='question') "
                 "ORDER BY asked_at DESC LIMIT 40")

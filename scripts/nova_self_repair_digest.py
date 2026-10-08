@@ -54,6 +54,14 @@ def _retry(fn, what: str, attempts: int = 3, base_delay: float = 1.0):
             time.sleep(base_delay * (2 ** i))
 
 
+def _post_or_raise(nova_config, body: str) -> bool:
+    """post_both returns falsy when nothing was delivered — turn that into an error so
+    _retry backs off and the day is never marked posted for a message nobody saw."""
+    if not nova_config.post_both(body, slack_channel=nova_config.SLACK_CHAN):
+        raise RuntimeError("post_both delivered nowhere")
+    return True
+
+
 def bb_heals(since: datetime, files=None) -> Counter:
     """Counter of 'issue → fix' lines from Big Brother in the window (service-level, deduped)."""
     out = Counter()
@@ -164,7 +172,7 @@ def main(argv=None) -> int:
         return 0
     import nova_config
     # a failure after all retries raises, so the day is NOT marked posted and the next run retries
-    _retry(lambda: nova_config.post_both(body, slack_channel=nova_config.SLACK_CHAN), "slack post")
+    _retry(lambda: _post_or_raise(nova_config, body), "slack post")
     oc.execute("INSERT INTO self_repair_digest_log (day, body) VALUES (%s,%s) ON CONFLICT (day) DO UPDATE SET body=EXCLUDED.body, posted_at=now()",
                (today, body))
     return 0

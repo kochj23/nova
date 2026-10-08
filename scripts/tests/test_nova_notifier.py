@@ -172,7 +172,7 @@ class TestRetry(unittest.TestCase):
     def test_slack_failure_marks_error_and_continues(self):
         # RETRY GAP: nova_config.post_both — one attempt; the row goes to status='error' instead of being lost
         cur = _Cur([_ev(id=1), _ev(id=2, dedup_key="other")])
-        nf.nova_config.post_both = MagicMock(side_effect=[OSError("slack 500"), None])
+        nf.nova_config.post_both = MagicMock(side_effect=[OSError("slack 500"), True])
         with patch.object(nf, "_connect", lambda: _Conn(cur)), patch.dict(sys.modules, {"nova_alert_triage": _triage_stub(None)}), \
              redirect_stderr(io.StringIO()):
             self.assertEqual(nf.drain(), 1)

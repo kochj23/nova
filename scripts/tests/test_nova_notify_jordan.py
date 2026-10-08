@@ -25,6 +25,7 @@ def _load(name, path):
 
 
 nj = _load("nova_notify_jordan_t", SCRIPTS / "nova_notify_jordan.py")
+nj.quiet_active = lambda cur=None: False   # quiet mode has its own 7cat tests
 SRC = (SCRIPTS / "nova_notify_jordan.py").read_text()
 # stub the module's own outbound handle at load: nothing can ever reach Slack/Discord
 nj.nova_config = types.SimpleNamespace(post_both=mock.MagicMock(), SLACK_CHAN="C_TEST_CHAT")

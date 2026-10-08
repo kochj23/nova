@@ -32,7 +32,7 @@ with patch("psycopg2.connect", side_effect=OSError("offline test")):
     rc = _load("review_custody_t", SCRIPT)
 SRC = SCRIPT.read_text()
 POSTS = []
-rc.nova_config = types.SimpleNamespace(post_both=lambda m, **k: POSTS.append((m, k)), SLACK_CHAN="C-CHAT")
+rc.nova_config = types.SimpleNamespace(post_both=lambda m, **k: POSTS.append((m, k)) or True, SLACK_CHAN="C-CHAT")
 rc.HAVE_CONFIG = True
 rc.psycopg2 = MagicMock()
 rc.psycopg2.connect.side_effect = RuntimeError("psycopg2.connect not mocked in test")

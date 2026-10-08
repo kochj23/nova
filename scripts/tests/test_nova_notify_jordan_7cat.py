@@ -23,6 +23,7 @@ def _load():
     spec = importlib.util.spec_from_file_location("nova_notify_jordan_7cat", SCRIPT)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
+    mod.quiet_active = lambda cur=None: False   # quiet mode is covered in its own tests
     mod.nova_config = types.SimpleNamespace(post_both=mock.MagicMock(), SLACK_CHAN="C_TEST_CHAT")
     return mod
 
@@ -185,6 +186,69 @@ class TestFrame(unittest.TestCase):
         self.assertTrue(callable(nj.main))
         self.assertIn('if __name__ == "__main__":', SRC)
         self.assertIsInstance(nj.MAX_ITEMS, int)
+
+
+# ══ 2026-10-08: quiet mode — the drawer shrinks to QUIET_MAX_ITEMS, terse, the rest stay held ═══
+def _run_quiet(rows, active):
+    with mock.patch.object(nj, "quiet_active", lambda cur=None: active):
+        return _run(rows)
+
+
+class TestQuietSecurity(unittest.TestCase):
+    def test_annie_rule_still_applies_while_quiet(self):
+        rows = [(1, TS, "", "You haven't replied in days.")]
+        with mock.patch.object(nj, "quiet_active", lambda cur=None: True):
+            _, conn, _, _ = _run(rows, annie=lambda t: False)
+        nj.nova_config.post_both.assert_not_called()
+
+
+class TestQuietPerformance(unittest.TestCase):
+    def test_quiet_sends_at_most_quiet_max(self):
+        rows = [(i, TS, "", f"item {i}") for i in range(5)]
+        _run_quiet(rows, True)
+        txt = nj.nova_config.post_both.call_args[0][0]
+        self.assertEqual(txt.count("•"), nj.QUIET_MAX_ITEMS)
+
+
+class TestQuietRetry(unittest.TestCase):
+    def test_failed_post_leaves_drawer_held(self):
+        rows = [(1, TS, "", "The NAS scrub finished.")]
+        conn = _Conn(rows)
+        with mock.patch.object(nj.psycopg2, "connect", return_value=conn), \
+                mock.patch.object(nj, "turning_point", lambda *a: {"allowed": True, "reason": "t"}), \
+                mock.patch.object(nj, "_annie_ok", lambda t: True), \
+                mock.patch.object(sys, "argv", ["nova_notify_jordan.py"]), redirect_stdout(io.StringIO()):
+            nj.nova_config.post_both = mock.MagicMock(return_value=False)
+            self.assertEqual(nj.main(), 1)
+        self.assertFalse(any("status='sent'" in s for s, _ in conn.cur.sql))
+
+
+class TestQuietUnit(unittest.TestCase):
+    def test_terse_bundle(self):
+        t = nj.bundle([(1, TS, "nas", "scrub done")], quiet=True)
+        self.assertEqual(t, "• scrub done")
+        self.assertIn("Things I noticed", nj.bundle([(1, TS, "nas", "scrub done")]))
+
+
+class TestQuietIntegration(unittest.TestCase):
+    def test_only_delivered_ids_marked_sent(self):
+        rows = [(i, TS, "", f"item {i}") for i in (11, 12, 13)]
+        _, conn, _, _ = _run_quiet(rows, True)
+        sql, params = next(q for q in conn.cur.sql if "status='sent'" in q[0])
+        self.assertEqual(params, ([11],))
+
+
+class TestQuietFunctional(unittest.TestCase):
+    def test_not_quiet_full_bundle(self):
+        rows = [(i, TS, "", f"item {i}") for i in range(3)]
+        _run_quiet(rows, False)
+        self.assertIn("Things I noticed* (3)", nj.nova_config.post_both.call_args[0][0])
+
+
+class TestQuietFrame(unittest.TestCase):
+    def test_quiet_constants(self):
+        self.assertGreaterEqual(nj.QUIET_MAX_ITEMS, 1)
+        self.assertLessEqual(nj.QUIET_MAX_ITEMS, nj.MAX_ITEMS)
 
 
 if __name__ == "__main__":

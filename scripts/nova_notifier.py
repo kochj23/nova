@@ -312,7 +312,10 @@ def drain(verbose=False, only_source=None) -> int:
                 # else: fail open — triage unavailable/junk; post normally, unmodified.
 
                 try:
-                    nova_config.post_both(msg, slack_channel=channel)
+                    # post_both returns falsy when no destination accepted the message —
+                    # never mark such an event 'sent' (it would vanish unseen).
+                    if not nova_config.post_both(msg, slack_channel=channel):
+                        raise RuntimeError(f"post_both delivered nowhere (channel={channel})")
                     if ev["level"] == "critical":
                         _mesh_relay(ev["title"], ev.get("body"))
                     cur.execute(

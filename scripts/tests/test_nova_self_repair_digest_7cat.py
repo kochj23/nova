@@ -170,7 +170,7 @@ class TestRetry:
 
     def test_slack_transient_failure_recovers(self, tmp_path):
         cur = FakeCursor({"autonomy": ["restart soil — verified"]})
-        post = mock.MagicMock(side_effect=[OSError("blip"), None])
+        post = mock.MagicMock(side_effect=[OSError("blip"), True])
         rc, _, _ = run_main(cur, [], post=post, bb_lines=[], tmp_path=tmp_path)
         assert rc == 0 and post.call_count == 2 and len(cur.log_writes()) == 1
 

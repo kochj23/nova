@@ -99,6 +99,16 @@ DIRECT_AUDIENCES = set(a.strip().lower() for a in os.environ.get("NOVA_REACH_DIR
 WINDOW_HOURS = os.environ.get("NOVA_REACH_WINDOW", "8-21")    # Jordan 2026-10-06: "during the day, just dont set off alerts" — daytime band; posts go to #nova-chat (SLACK_CHAN), never alert channels
 
 
+def quiet_active(cur=None) -> bool:
+    """nova_relationship.quiet_mode(): during a hard stretch, hold non-urgent nags and say less.
+    Fails open to 'not quiet' (quiet_mode itself never raises; a missing module reads inactive)."""
+    try:
+        import nova_relationship
+        return bool(nova_relationship.quiet_mode(cur).get("active"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def in_window(now=None) -> bool:
     lo, hi = (int(x) for x in WINDOW_HOURS.split("-"))
     h = (now or datetime.now()).hour
@@ -651,6 +661,12 @@ def process_reach(oc, reach: dict) -> str:
         # Ungated by Jordan's request: post to #nova-chat and record it as sent.
         # 2026-10-02 (skill #118 notify-jordan-of-system-observations): outside his attention window
         # it is HELD, and nova_notify_jordan.py delivers the drawer as one bundle inside the window.
+        # Quiet mode (nova_relationship): during a hard stretch a non-urgent reach is a nag —
+        # hold it for the drawer (nova_notify_jordan shrinks that too). urgent=True still goes.
+        if not reach.get("urgent") and quiet_active(oc):
+            rid = _record(oc, audience, topic, message, rationale, None, "held")
+            log(f"HELD direct reach #{rid} to {audience} — quiet mode (hard stretch): {topic}")
+            return "held"
         if not in_window():
             rid = _record(oc, audience, topic, message, rationale, None, "held")
             log(f"HELD direct reach #{rid} to {audience} until the {WINDOW_HOURS} window: {topic}")

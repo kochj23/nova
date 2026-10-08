@@ -165,8 +165,24 @@ def record_question(cur, qid, answer, dry):
         cur.execute("UPDATE reflection_questions SET answer=%s, answered_at=now() WHERE id=%s", (answer, int(qid)))
 
 
+def quiet_active(cur=None) -> bool:
+    """nova_relationship.quiet_mode(): during a hard stretch, hold non-urgent nags and say less.
+    Fails open to 'not quiet' (quiet_mode itself never raises; a missing module reads inactive)."""
+    try:
+        import nova_relationship
+        return bool(nova_relationship.quiet_mode(cur).get("active"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+_QUIET = None   # memoised per run by main(); None = not yet read
+
+
 def confirm(channel, ts, text, dry):
-    """One short line in the thread so he knows it was recorded (and the chat agent stays out of it)."""
+    """One short line in the thread so he knows it was recorded (and the chat agent stays out of it).
+    Quiet mode lowers verbosity: just "Recorded." """
+    if _QUIET:
+        text = "Recorded."
     if dry:
         print(f"   (would confirm in thread {ts}: {text})"); return
     try:
@@ -240,6 +256,8 @@ def _turning_point(cur, text, backlog):
 def post_pending_proposals(cur, dry):
     if datetime.now().hour not in POST_HOURS:
         return
+    if _QUIET if _QUIET is not None else quiet_active(cur):
+        log("quiet mode (hard stretch) — holding proposal prompts"); return
     cur.execute("SELECT count(*) FROM slack_prompts WHERE kind='proposal' AND posted_at > now() - interval '24 hours'")
     room = PROPOSALS_PER_DAY - cur.fetchone()[0]
     if room <= 0:
@@ -273,6 +291,8 @@ def post_pending_proposals(cur, dry):
 def main():
     dry = "--dry-run" in sys.argv
     conn = psycopg2.connect(OPS_DSN, connect_timeout=5); conn.autocommit = True; cur = conn.cursor()
+    global _QUIET
+    _QUIET = quiet_active(cur)
     cur.execute("""CREATE TABLE IF NOT EXISTS slack_prompts (
         id bigserial PRIMARY KEY, kind text NOT NULL, ref_id text NOT NULL,
         channel text NOT NULL, ts text NOT NULL, posted_at timestamptz NOT NULL DEFAULT now(),

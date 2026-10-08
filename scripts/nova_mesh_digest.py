@@ -109,7 +109,8 @@ def main() -> int:
         print(body)
         return 0
     try:
-        nc.post_both(body, slack_channel=nc.SLACK_CHAN, discord_channel=None)
+        if not nc.post_both(body, slack_channel=nc.SLACK_CHAN, discord_channel=None):
+            raise RuntimeError("post_both delivered nowhere")
         print(f"mesh_digest: posted ({len(msgs)} msgs, {participants} people)")
     except Exception as e:
         print(f"mesh_digest: post failed: {e}", file=sys.stderr)

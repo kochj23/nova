@@ -379,5 +379,80 @@ class TestFrame(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
 
+# ══ 2026-10-08: quiet mode (nova_relationship.quiet_mode) — hold non-urgent direct reaches ══════
+def _rel(active, boom=False):
+    if boom:
+        return types.SimpleNamespace(quiet_mode=mock.Mock(side_effect=RuntimeError("pg down")))
+    return types.SimpleNamespace(quiet_mode=mock.Mock(return_value={"active": active}))
+
+
+def _direct(active, reach=None):
+    cur = _Cur()
+    with _Patches(mock.patch.object(rc, "in_window", return_value=True),
+                  mock.patch.dict(sys.modules, {"nova_relationship": _rel(active)}),
+                  mock.patch.object(rc, "_turning_point", return_value={"allowed": True, "reason": "t"}),
+                  post=mock.patch.object(rc, "_post_direct", return_value=True)) as P, redirect_stdout(StringIO()):
+        st = rc.process_reach(cur, reach or dict(CLEAN))
+    return st, cur, P.post
+
+
+class TestQuietSecurity(unittest.TestCase):
+    def test_quiet_never_bypasses_honesty_or_annie_gates(self):
+        cur = _Cur()
+        r = dict(CLEAN, urgent=True, message="You still haven't replied to me, but I keep turning over the fishbowl metaphor.")
+        with _Patches(mock.patch.object(rc, "in_window", return_value=True),
+                      mock.patch.dict(sys.modules, {"nova_relationship": _rel(True)}),
+                      post=mock.patch.object(rc, "_post_direct")) as P, redirect_stdout(StringIO()):
+            self.assertEqual(rc.process_reach(cur, r), "dropped")
+        P.post.assert_not_called()
+
+
+class TestQuietPerformance(unittest.TestCase):
+    def test_quiet_hold_is_one_insert_no_post(self):
+        st, cur, post = _direct(True)
+        self.assertEqual(st, "held"); post.assert_not_called()
+        self.assertEqual(sum("INSERT INTO reach_log" in s for s in cur.sql), 1)
+
+
+class TestQuietRetry(unittest.TestCase):
+    def test_quiet_mode_error_fails_open(self):
+        with mock.patch.dict(sys.modules, {"nova_relationship": _rel(False, boom=True)}):
+            self.assertFalse(rc.quiet_active(None))
+
+
+class TestQuietUnit(unittest.TestCase):
+    def test_quiet_active_reads_flag(self):
+        for v in (True, False):
+            with mock.patch.dict(sys.modules, {"nova_relationship": _rel(v)}):
+                self.assertIs(rc.quiet_active(None), v)
+
+
+class TestQuietIntegration(unittest.TestCase):
+    def test_passes_cursor_to_quiet_mode(self):
+        rel = _rel(True); cur = _Cur()
+        with mock.patch.dict(sys.modules, {"nova_relationship": rel}):
+            rc.quiet_active(cur)
+        rel.quiet_mode.assert_called_once_with(cur)
+
+
+class TestQuietFunctional(unittest.TestCase):
+    def test_quiet_holds_non_urgent(self):
+        st, cur, post = _direct(True)
+        self.assertEqual(st, "held"); self.assertEqual(cur.statuses(), ["held"]); post.assert_not_called()
+
+    def test_quiet_lets_urgent_through(self):
+        st, _, post = _direct(True, dict(CLEAN, urgent=True))
+        self.assertEqual(st, "sent"); post.assert_called_once()
+
+    def test_not_quiet_sends(self):
+        st, _, post = _direct(False)
+        self.assertEqual(st, "sent"); post.assert_called_once()
+
+
+class TestQuietFrame(unittest.TestCase):
+    def test_quiet_active_exposed(self):
+        self.assertTrue(callable(rc.quiet_active))
+
+
 if __name__ == "__main__":
     unittest.main()

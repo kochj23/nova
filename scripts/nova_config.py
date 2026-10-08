@@ -396,11 +396,19 @@ def notify_local(title: str, message: str, sound: str = "Glass", critical: bool 
             pass
 
 
-def post_both(message: str, slack_channel: str = SLACK_CHAN, discord_channel: str = None) -> None:
-    """Post to both Slack and the corresponding Discord channel."""
+def post_both(message: str, slack_channel: str = SLACK_CHAN, discord_channel: str = None) -> bool:
+    """Post to both Slack and the corresponding Discord channel.
+
+    Returns True when at least one destination accepted the message, False when
+    every attempted destination failed (or none could be attempted — no tokens,
+    retired channel). Callers that record "sent"/"posted" state MUST check this:
+    a falsy return means nobody saw it. Failures are also logged to stderr.
+    """
     import json, urllib.request
     if discord_channel is None:
         discord_channel = CHANNEL_MAP.get(slack_channel, DISCORD_CHAT)
+    slack_ok = False
+    discord_ok = False
     # Slack — #nova-notifications was retired (renamed 2026-06-21); silently drop posts to it
     # instead of erroring channel_not_found on every article/agent notification.
     token = slack_bot_token()
@@ -414,10 +422,17 @@ def post_both(message: str, slack_channel: str = SLACK_CHAN, discord_channel: st
         try:
             with _urlopen_retry(req, timeout=10) as r:
                 resp = json.loads(r.read())
-                if not resp.get("ok"):
+                if resp.get("ok"):
+                    slack_ok = True
+                else:
                     print(f"[nova_config] Slack post failed: {resp.get('error')}", file=sys.stderr)
         except Exception as e:
             print(f"[nova_config] Slack post failed: {e}", file=sys.stderr)
     # Discord — CHANNEL_MAP value of "" means Slack-only (feed/digest tiers)
     if discord_channel:
-        post_discord(message, discord_channel)
+        discord_ok = bool(post_discord(message, discord_channel))
+    ok = slack_ok or discord_ok
+    if not ok:
+        print(f"[nova_config] post_both delivered nowhere (slack={slack_channel!r}, "
+              f"discord={discord_channel!r})", file=sys.stderr)
+    return ok

@@ -176,9 +176,9 @@ def main():
     else:
         if HAVE_CONFIG:
             try:
-                nova_config.post_both(msg, slack_channel=nova_config.SLACK_CHAN)
-                posted = True
-                _log("posted witness to #nova-chat")
+                posted = bool(nova_config.post_both(msg, slack_channel=nova_config.SLACK_CHAN))
+                _log("posted witness to #nova-chat" if posted
+                     else "post delivered nowhere — recording posted=false")
             except Exception as e:
                 _log(f"slack post failed ({e}) — still recording to PG")
         else:

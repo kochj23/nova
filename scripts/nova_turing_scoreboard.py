@@ -476,7 +476,9 @@ def blinded_eval(mc, oc):
            f"```\n{snippet}\n```\n"
            "_(Your reply is recorded to the Turing scoreboard.)_")
     if "--dry-run" not in sys.argv:
-        nova_config.post_both(msg, slack_channel=nova_config.SLACK_CHAN)
+        if not nova_config.post_both(msg, slack_channel=nova_config.SLACK_CHAN):
+            _log("blinded-eval post delivered nowhere — not recording it as pending")
+            return 1
         _store(oc, "blinded_eval_pending", None,
                {"memory_id": str(mid), "snippet": snippet, "posted_at": datetime.now().isoformat(),
                 "TODO": "gateway should capture Jordan's 1-5 reply and INSERT metric="
