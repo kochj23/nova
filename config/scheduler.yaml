@@ -867,3 +867,16 @@ tasks:
     schedule: every 10m
     timeout: 900
     overlap: skip
+
+  # ---- 2026-10-08: Baymax care check-in (nova_care_checkin.py) ----
+  care_checkin_ask:                # Sunday 6pm — "are you satisfied with your care?" to #nova-chat: 3-4 items from the week, reply "1 yes 2 no 3 meh"; row in nova_care_checkins
+    script: nova_care_checkin.py
+    args: ["--ask"]
+    schedule: cron 0 18 * * 0
+    timeout: 120
+    overlap: skip
+  care_checkin_harvest:            # read Jordan's thread reply to open check-ins (14d) -> nova_care_checkins.reply/verdicts + memory source=jordan_feedback
+    script: nova_care_checkin.py
+    schedule: cron 40 8,12,17,21 * * *
+    timeout: 120
+    overlap: skip
