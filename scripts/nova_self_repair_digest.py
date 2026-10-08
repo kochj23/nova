@@ -25,6 +25,7 @@ import json
 import os
 import re
 import sys
+import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -39,6 +40,18 @@ BB_TEST_RX = re.compile(r"^\[\w+\]\s+(First|Second|Third|Test) event\b", re.I)
 
 def log(m):
     print(f"[self-repair {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
+
+
+def _retry(fn, what: str, attempts: int = 3, base_delay: float = 1.0):
+    """Call fn() up to `attempts` times with exponential backoff; re-raise the last error."""
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            if i == attempts - 1:
+                raise
+            log(f"{what} failed (attempt {i + 1}/{attempts}): {e}; retrying")
+            time.sleep(base_delay * (2 ** i))
 
 
 def bb_heals(since: datetime, files=None) -> Counter:
@@ -133,7 +146,8 @@ def main(argv=None) -> int:
     ap.add_argument("--force", action="store_true", help="post even if today's digest already went out")
     a = ap.parse_args(argv)
     import psycopg2
-    conn = psycopg2.connect(OPS_DSN, connect_timeout=5); conn.autocommit = True; oc = conn.cursor()
+    conn = _retry(lambda: psycopg2.connect(OPS_DSN, connect_timeout=5), "pg connect")
+    conn.autocommit = True; oc = conn.cursor()
     oc.execute("""CREATE TABLE IF NOT EXISTS self_repair_digest_log (
                     day date PRIMARY KEY, posted_at timestamptz NOT NULL DEFAULT now(), body text NOT NULL)""")
     today = datetime.now().date()
@@ -149,7 +163,8 @@ def main(argv=None) -> int:
     if a.dry_run:
         return 0
     import nova_config
-    nova_config.post_both(body, slack_channel=nova_config.SLACK_CHAN)
+    # a failure after all retries raises, so the day is NOT marked posted and the next run retries
+    _retry(lambda: nova_config.post_both(body, slack_channel=nova_config.SLACK_CHAN), "slack post")
     oc.execute("INSERT INTO self_repair_digest_log (day, body) VALUES (%s,%s) ON CONFLICT (day) DO UPDATE SET body=EXCLUDED.body, posted_at=now()",
                (today, body))
     return 0

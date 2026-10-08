@@ -36,6 +36,18 @@ def log(m):
     print(f"[sj-audit {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
 
 
+def _retry(fn, what: str, attempts: int = 3, base_delay: float = 1.0):
+    """Call fn() up to `attempts` times with exponential backoff; re-raise the last error."""
+    for i in range(attempts):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            if i == attempts - 1:
+                raise
+            log(f"{what} failed (attempt {i + 1}/{attempts}): {e}; retrying")
+            time.sleep(base_delay * (2 ** i))
+
+
 def ensure_schema(oc):
     oc.execute("""CREATE TABLE IF NOT EXISTS self_justification_audit (
         id          bigserial PRIMARY KEY,
@@ -177,7 +189,8 @@ def main(argv=None) -> int:
     ap.add_argument("--days", type=int, default=7)
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
-    conn = psycopg2.connect(OPS_DSN, connect_timeout=5); conn.autocommit = True; oc = conn.cursor()
+    conn = _retry(lambda: psycopg2.connect(OPS_DSN, connect_timeout=5), "pg connect")
+    conn.autocommit = True; oc = conn.cursor()
     ensure_schema(oc)
     try:
         import nova_autonomy_safety
@@ -216,10 +229,10 @@ def main(argv=None) -> int:
     if serious:
         try:
             import nova_config
-            nova_config.post_both(f"🔎 Weekly outside check on my own actions: {len(serious)} place(s) where what I "
+            _retry(lambda: nova_config.post_both(f"🔎 Weekly outside check on my own actions: {len(serious)} place(s) where what I "
                                   f"said didn't match what happened. First: {serious[0]['finding'][:180]}. "
                                   f"Details in agent_docs nova-self-justification-audit.",
-                                  slack_channel=nova_config.SLACK_CHAN)
+                                  slack_channel=nova_config.SLACK_CHAN), "slack post")
         except Exception as e:  # noqa: BLE001
             log(f"slack skipped: {e}")
     return 0
