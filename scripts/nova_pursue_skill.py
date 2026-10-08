@@ -111,6 +111,10 @@ SKILLS = {
         topic="nova articles", sources=["nova_articles"], recent_days=7, web=False,
         hint="Nova journal article",
         focus="Pick the three most substantial articles and say in a sentence each what they argue."),
+    "pursue-interest-documentary": dict(   # coagency #143, approved 2026-10-07
+        topic="documentary", sources=["documentary"], recent_days=3, web=False,
+        hint="documentary",
+        focus="Name the two or three channels or films the transcripts come from and what each one actually shows or argues."),
     "pursue-interest-nightly": dict(
         topic="nightly", meta=True, success="nightly"),
 }
@@ -689,7 +693,7 @@ def selftest() -> int:
     assert split_next("tail words. NEXT: read z")[1] == "read z"
     assert len(_SENT.split("Rabies in L.A. County [1]. A vote on Nov. 3 [2]. Done.")) == 3
     assert attach_cites("A rose. [1] B fell.[2][3]") == "A rose [1]. B fell [2][3]."
-    assert len(SKILLS) == 9
+    assert len(SKILLS) == 10
     print("selftest OK")
     return 0
 
