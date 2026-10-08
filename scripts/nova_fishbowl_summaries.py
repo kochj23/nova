@@ -238,9 +238,22 @@ def summarize(name, channels, mems, signature=None):
     return nj.call_openrouter(system, user, max_tokens=700, temperature=0.4)
 
 
+def _connect(dsn, attempts=3):
+    """psycopg2.connect with retry (PG failover blips): 5 s / 10 s backoff, re-raise on the last try."""
+    import time
+    for attempt in range(attempts):
+        try:
+            return psycopg2.connect(dsn, connect_timeout=10)
+        except psycopg2.OperationalError as e:
+            if attempt == attempts - 1:
+                raise
+            log(f"PG connect failed ({e}); retry {attempt + 1}")
+            time.sleep(5 * 2 ** attempt)
+
+
 def main():
-    memc = psycopg2.connect(MEM_DSN); memc.autocommit = True; memcur = memc.cursor()
-    opsc = psycopg2.connect(OPS_DSN); opsc.autocommit = True; opscur = opsc.cursor()
+    memc = _connect(MEM_DSN); memc.autocommit = True; memcur = memc.cursor()
+    opsc = _connect(OPS_DSN); opsc.autocommit = True; opscur = opsc.cursor()
     ensure_people(opscur)
     discover_guests(memcur, opscur)          # catch guests from who's speaking
     roster = [dict(p) for p in PEOPLE]
