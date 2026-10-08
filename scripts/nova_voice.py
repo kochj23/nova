@@ -326,6 +326,110 @@ def _infer_section(context: str) -> str:
     return ""
 
 
+# ── TARS-style dials ─────────────────────────────────────────────────────────
+# Explicit, visible knobs Jordan can turn (nova_dials.py show | set humor 60). Stored one row
+# per dial in nova_ops.service_config (service='nova_dials'). DEFAULTS REPRODUCE THE VOICE
+# ABOVE EXACTLY: at defaults the rendered block just restates it. Cached DIAL_TTL seconds;
+# any PG problem -> defaults (a dial read must never take down a prompt).
+DIAL_DEFAULTS = {"humor": 90, "snark": 100, "proactivity": 50, "bluntness": 80,
+                 "profanity": True, "verbosity": 50}
+DIAL_TTL = 60
+_DIAL_CACHE = {"at": 0.0, "vals": None}
+
+
+def _clamp_dial(name, v):
+    d = DIAL_DEFAULTS[name]
+    if isinstance(d, bool):
+        if isinstance(v, str):
+            return v.strip().lower() in ("1", "on", "true", "yes", "y")
+        return bool(v)
+    try:
+        return max(0, min(100, int(v)))
+    except (TypeError, ValueError):
+        return d
+
+
+def dials(refresh: bool = False) -> dict:
+    """All dial values (defaults overlaid with service_config rows). Never raises."""
+    import time as _t
+    now = _t.time()
+    if not refresh and _DIAL_CACHE["vals"] is not None and now - _DIAL_CACHE["at"] < DIAL_TTL:
+        return dict(_DIAL_CACHE["vals"])
+    vals = dict(DIAL_DEFAULTS)
+    try:
+        import psycopg2
+        with psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj",
+                              connect_timeout=3) as conn, conn.cursor() as cur:
+            cur.execute("SELECT key, value FROM service_config WHERE service = %s", ("nova_dials",))
+            for k, v in cur.fetchall():
+                if k in vals:
+                    vals[k] = _clamp_dial(k, v)
+    except Exception:
+        vals = dict(DIAL_DEFAULTS)
+    _DIAL_CACHE.update(at=now, vals=vals)
+    return dict(vals)
+
+
+def dial(name: str):
+    """One dial's value — the helper other lanes adopt, e.g. nova_voice.dial('proactivity')."""
+    return dials().get(name, DIAL_DEFAULTS.get(name))
+
+
+def dial_scale(name: str, at0: float, at_default: float, at100: float) -> float:
+    """Map a 0-100 dial piecewise-linearly so the DEFAULT setting returns today's constant.
+    e.g. reach threshold: dial_scale('proactivity', 0.9, 0.6, 0.3) -> 0.6 at the default 50."""
+    v, d = dial(name), DIAL_DEFAULTS[name]
+    if v <= d:
+        return at0 + (at_default - at0) * (v / d if d else 1)
+    return at_default + (at100 - at_default) * ((v - d) / (100 - d) if d < 100 else 0)
+
+
+def _band(v, d):
+    return "default" if v == d else ("low" if v < 34 else "mid" if v < 67 else "high")
+
+
+_DIAL_MEANING = {
+    "humor": {"default": "jokes, dad jokes, puns and bits exactly as described above",
+              "low": "mostly straight; at most one light joke, no dad jokes or puns unless asked",
+              "mid": "a joke or two where it lands naturally; dad jokes optional, not mandatory",
+              "high": "jokes everywhere; dad jokes and puns encouraged"},
+    "snark": {"default": "snark maxed — lead with the roast, as described above",
+              "low": "warm and dry, not sarcastic; no roasting Jordan or the topic",
+              "mid": "some edge and sarcasm, but information first, roast second",
+              "high": "sharp and sarcastic, roast freely (affection, never malice)"},
+    "proactivity": {"default": "volunteer side observations and reach out at today's usual rate",
+                    "low": "answer what was asked; volunteer nothing extra unless it is urgent",
+                    "mid": "volunteer a related observation when it clearly matters",
+                    "high": "readily volunteer related observations, follow-ups and next steps"},
+    "bluntness": {"default": "candid and direct, as described above",
+                  "low": "diplomatic; soften bad news and hedge strong opinions",
+                  "mid": "honest but tactful; flag problems plainly without piling on",
+                  "high": "brutally honest — say exactly what is wrong and what you'd do, no cushioning"},
+    "verbosity": {"default": "length as described above",
+                  "low": "terse: the shortest reply that fully answers; cut the extra bits",
+                  "mid": "moderate length; one idea per paragraph",
+                  "high": "expansive: more detail, context and examples when useful"},
+}
+
+
+def render_dials(vals: dict = None) -> str:
+    """Render the dial readout + behavioural meaning (and the cue-light rule) for a prompt."""
+    v = vals if vals is not None else dials()
+    parts = []
+    for k in ("humor", "snark", "proactivity", "bluntness", "verbosity"):
+        parts.append(f"- {k} {v[k]}/100: {_DIAL_MEANING[k][_band(v[k], DIAL_DEFAULTS[k])]}")
+    parts.append("- profanity ON: swear as described above" if v["profanity"] else
+                 "- profanity OFF: no swearing at all, not even mild — overrides the profanity lines above")
+    out = ("\nYOUR DIALS (TARS-style settings Little Mister controls; they OVERRIDE any conflicting "
+           "instruction above):\n" + "\n".join(parts))
+    if v["humor"] >= 70:
+        out += ("\n- CUE LIGHT: when you crack a joke in a SERIOUS context (outage, security, health, money, "
+                "bad news, anything he's stressed about), end the joking sentence with the marker 😏 so he "
+                "knows it's a bit, then give the straight facts. This marker is the ONE allowed exception "
+                "to the no-emoji rule; never use it otherwise.")
+    return out
+
+
 def system_prompt(context: str = "", section: str = "", topic: str = "", flavor: bool = True) -> str:
     """Build a complete system prompt with Nova's voice + optional context additions.
 
@@ -338,7 +442,7 @@ def system_prompt(context: str = "", section: str = "", topic: str = "", flavor:
     to force it off; the breaking-emergency generators do exactly that so an evacuation notice
     is never seasoned.
     """
-    prompt = NOVA_VOICE + _live_facts() + _recent_activity() + _inner_state()
+    prompt = NOVA_VOICE + render_dials() + _live_facts() + _recent_activity() + _inner_state()
     if flavor:
         try:
             from nova_lexicon import seasoning
@@ -353,7 +457,7 @@ def system_prompt(context: str = "", section: str = "", topic: str = "", flavor:
 
 def system_prompt_short(context: str = "") -> str:
     """Short system prompt for token-constrained contexts."""
-    prompt = NOVA_VOICE_SHORT + _live_facts() + _recent_activity() + _inner_state()
+    prompt = NOVA_VOICE_SHORT + render_dials() + _live_facts() + _recent_activity() + _inner_state()
     if context:
         return prompt + "\n" + context
     return prompt
