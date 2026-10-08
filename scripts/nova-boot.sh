@@ -93,8 +93,8 @@ if [[ "${1:-}" == "--restart" ]]; then
     log "RESTART MODE: stopping all services first..."
 
     # Stop in reverse dependency order
-    for svc in com.nova.agent-sentinel com.nova.agent-librarian com.nova.agent-coder \
-               com.nova.agent-lookout com.nova.agent-analyst com.nova.watchdog \
+    for svc in com.nova.agent-sentinel \
+               com.nova.watchdog \
                com.nova.scheduler com.nova.slack-preprocessor \
                com.digitalnoise.nova.general-monitor \
                net.digitalnoise.openwebui net.digitalnoise.tinychat \
@@ -551,8 +551,8 @@ fi
 log ""
 log "── TIER 4: Agents & Watchdog ──"
 
-for agent in com.nova.agent-sentinel com.nova.agent-librarian \
-             com.nova.agent-coder com.nova.agent-lookout com.nova.agent-analyst \
+# lookout/analyst/librarian/coder retired 2026-10-08 (plists in ~/.openclaw/retired-launchagents/)
+for agent in com.nova.agent-sentinel \
              com.nova.watchdog com.digitalnoise.nova.general-monitor; do
     launchctl start "$agent" 2>/dev/null
 done
@@ -567,8 +567,8 @@ log "── TIER 4: Validation Tests ──"
 
 AGENTS_OK=0
 AGENTS_TOTAL=0
-for agent in com.nova.agent-sentinel com.nova.agent-librarian \
-             com.nova.agent-coder com.nova.agent-lookout com.nova.agent-analyst \
+# lookout/analyst/librarian/coder retired 2026-10-08 (plists in ~/.openclaw/retired-launchagents/)
+for agent in com.nova.agent-sentinel \
              com.nova.watchdog; do
     AGENTS_TOTAL=$((AGENTS_TOTAL + 1))
     AGENT_LINE=$(launchctl list 2>/dev/null | grep "$agent")

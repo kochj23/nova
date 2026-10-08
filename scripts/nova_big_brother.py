@@ -200,7 +200,11 @@ REQUIRED_MOUNTS = [
     ("/Volumes/MoreData", "PostgreSQL data (1.4M memories)"),
 ]
 
-SUBAGENTS = ["sentinel", "lookout", "analyst", "librarian", "coder"]
+# lookout/analyst/librarian/coder were RETIRED 2026-10-08: nothing publishes to their task channels,
+# their plists were never loaded, and the old "restart" (launchctl start from this system daemon)
+# was a no-op that was still logged as "Restarted" ~1,880x/day each. Only agents whose plist is
+# installed are watched (see _check_subagent_heartbeats).
+SUBAGENTS = ["sentinel"]
 
 # Tasks that must not be interrupted mid-run
 PROTECTED_TASK_PATTERNS = [
@@ -2019,6 +2023,8 @@ def _check_subagent_heartbeats() -> list:
         r = redis.from_url("redis://127.0.0.1:6379", decode_responses=True)
         stale = []
         for name in SUBAGENTS:
+            if not (Path.home() / "Library/LaunchAgents" / f"com.nova.agent-{name}.plist").exists():
+                continue          # not installed (retired) — nothing to heal
             status = r.get(f"nova:agent:{name}:status")
             if status != "running":
                 stale.append(name)
@@ -2027,14 +2033,23 @@ def _check_subagent_heartbeats() -> list:
         return []
 
 
-def _restart_subagent(name: str):
+def _restart_subagent(name: str) -> bool:
+    """kickstart -k the agent in the user's gui domain. Returns True only if launchd accepted it.
+
+    (BB is a system LaunchDaemon; a bare `launchctl start <label>` resolves in the system domain,
+    where com.nova.agent-* do not exist, so it silently did nothing.)
+    """
+    label = f"gui/{os.getuid()}/com.nova.agent-{name}"
     try:
-        subprocess.run(
-            ["/bin/zsh", str(SCRIPTS / "nova_subagent_ctl.sh"), "restart", name],
-            capture_output=True, timeout=15,
-        )
+        r = subprocess.run(["launchctl", "kickstart", "-k", label],
+                           capture_output=True, text=True, timeout=15)
+        if r.returncode == 0:
+            return True
+        log(f"Restart of subagent {name} failed (rc={r.returncode}): {(r.stderr or r.stdout).strip()[:160]}",
+            level=LOG_ERROR, source="big-brother")
     except Exception as e:
         log(f"Failed to restart subagent {name}: {e}", level=LOG_ERROR, source="big-brother")
+    return False
 
 
 # ── Slack Preprocessor TCC Fix ────────────────────────────────────────────────
@@ -3579,9 +3594,11 @@ def _full_sweep():
         stale = _check_subagent_heartbeats()
         for agent in stale:
             issues.append(f"Subagent {agent} stale/missing")
-            _restart_subagent(agent)
-            fixes.append(f"Restarted subagent {agent}")
-            _record_event("warning", f"Subagent {agent} stale", f"Restarted via subagent_ctl.sh", agent)
+            if _restart_subagent(agent):
+                fixes.append(f"Restarted subagent {agent}")
+                _record_event("warning", f"Subagent {agent} stale", "Restarted via launchctl kickstart", agent)
+            else:
+                _record_event("warning", f"Subagent {agent} stale", "restart failed — needs a look", agent)
 
         # ── PostgreSQL idle cleanup ───────────────────────────────────────────────
         if _port_open("127.0.0.1", 5432):

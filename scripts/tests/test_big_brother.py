@@ -86,8 +86,30 @@ class TestServiceConfig(unittest.TestCase):
 
     def test_subagents_list(self):
         from nova_big_brother import SUBAGENTS
-        expected = {"sentinel", "lookout", "analyst", "librarian", "coder"}
-        self.assertEqual(set(SUBAGENTS), expected)
+        # lookout/analyst/librarian/coder retired 2026-10-08 (restart treadmill, no task producers)
+        self.assertEqual(set(SUBAGENTS), {"sentinel"})
+
+    def test_uninstalled_subagent_not_flagged(self):
+        """An agent with no installed plist is never reported stale (no restart treadmill)."""
+        from unittest import mock
+        import nova_big_brother as bb
+        fake = mock.MagicMock(); fake.get.return_value = None
+        with mock.patch.object(bb, "SUBAGENTS", ["sentinel", "retired-x"]), \
+             mock.patch("redis.from_url", return_value=fake), \
+             mock.patch.object(bb.Path, "exists", lambda self: "retired-x" not in str(self)):
+            self.assertEqual(bb._check_subagent_heartbeats(), ["sentinel"])
+
+    def test_restart_subagent_reports_failure(self):
+        """A launchctl failure must return False so BB never logs a phantom 'Restarted'."""
+        from unittest import mock
+        import nova_big_brother as bb
+        with mock.patch.object(bb.subprocess, "run",
+                               return_value=mock.Mock(returncode=113, stderr="Could not find service", stdout="")), \
+             mock.patch.object(bb, "log"):
+            self.assertFalse(bb._restart_subagent("sentinel"))
+        with mock.patch.object(bb.subprocess, "run", return_value=mock.Mock(returncode=0, stderr="", stdout="")) as run:
+            self.assertTrue(bb._restart_subagent("sentinel"))
+            self.assertIn("kickstart", run.call_args[0][0])
 
 
 class TestProtectedTasks(unittest.TestCase):
