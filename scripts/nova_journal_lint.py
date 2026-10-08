@@ -164,15 +164,23 @@ def git_commit_and_push(files_fixed: int):
         )
         if result.returncode == 0:
             # Rebase onto origin BEFORE pushing so a diverged clone can't silently strand commits.
-            pull = subprocess.run(["git", "pull", "--rebase", "--autostash", "origin", "main"],
-                                  cwd=HUGO_ROOT, capture_output=True, text=True, timeout=180)
-            if pull.returncode != 0:
-                subprocess.run(["git", "rebase", "--abort"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
-                log(f"Push ABORTED — pull --rebase failed (diverged/conflict): {pull.stderr[:200]}")
-            else:
+            # Up to 3 rounds: a push rejected because another publisher just pushed re-pulls and retries.
+            for attempt in range(1, 4):
+                pull = subprocess.run(["git", "pull", "--rebase", "--autostash", "origin", "main"],
+                                      cwd=HUGO_ROOT, capture_output=True, text=True, timeout=180)
+                if pull.returncode != 0:
+                    subprocess.run(["git", "rebase", "--abort"], cwd=HUGO_ROOT, capture_output=True, timeout=30)
+                    log(f"Push ABORTED — pull --rebase failed (diverged/conflict): {pull.stderr[:200]}")
+                    break
                 p = subprocess.run(["git", "push"], cwd=HUGO_ROOT, capture_output=True, text=True, timeout=30)
-                log(f"Pushed auto-fix commit: {files_fixed} file(s)" if p.returncode == 0
-                    else f"Push FAILED (commit NOT on origin): {p.stderr[:200]}")
+                if p.returncode == 0:
+                    log(f"Pushed auto-fix commit: {files_fixed} file(s)")
+                    break
+                if attempt == 3:
+                    log(f"Push FAILED after 3 tries (commit NOT on origin): {p.stderr[:200]}")
+                else:
+                    log(f"Push rejected (attempt {attempt}/3), re-pulling: {p.stderr[:120]}")
+                    time.sleep(5 * attempt)
         elif "nothing to commit" in (result.stdout + result.stderr):
             log("No changes to commit after lint")
     except subprocess.TimeoutExpired:
