@@ -47,6 +47,7 @@ import json
 import os
 import re
 import sys
+import time
 import urllib.request
 from datetime import datetime
 
@@ -457,12 +458,24 @@ def assert_executable(mode: str, row: dict):
 # ═══════════════════════════════════════════════════════════════════════════════
 # Slack notify (feature-detect nova_config)
 # ═══════════════════════════════════════════════════════════════════════════════
+NOTIFY_ATTEMPTS = 3
+
+
 def notify(message: str):
+    """Slack post, retried with backoff (2026-10-08 7-cat retry rule); never raises."""
     try:
         import nova_config
-        nova_config.post_both(message, slack_channel=getattr(nova_config, "SLACK_CHAN", SLACK_CHAN_DEFAULT))
-    except Exception as e:
-        log(f"slack post skipped: {e}")
+    except Exception as e:  # noqa: BLE001
+        log(f"slack post skipped: {e}"); return
+    for attempt in range(1, NOTIFY_ATTEMPTS + 1):
+        try:
+            nova_config.post_both(message, slack_channel=getattr(nova_config, "SLACK_CHAN", SLACK_CHAN_DEFAULT))
+            return
+        except Exception as e:  # noqa: BLE001
+            log(f"slack post attempt {attempt}/{NOTIFY_ATTEMPTS} failed: {e}")
+            if attempt < NOTIFY_ATTEMPTS:
+                time.sleep(2 ** (attempt - 1))
+    log("slack post skipped: all attempts failed")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -731,6 +744,9 @@ def _stated_rationale(oc, pid):
         return ""
 
 
+RESTART_ATTEMPTS = 3
+
+
 def _do_execute(oc, mode, pid, row, *, source, autonomy_level, vetoable):
     """The single physical-execution path. Bounded to a reversible restart of a
     SAFE_SERVICES target, delegated to the actor's verified restart. Records the
@@ -740,10 +756,17 @@ def _do_execute(oc, mode, pid, row, *, source, autonomy_level, vetoable):
     node = os.environ.get("NOVA_COAGENCY_NODE", "192.168.1.6")
     ac = _safety.action_class_of(row.get("proposed_action", ""), svc)
     before = _safety.observe_service(oc, svc)          # P4: objective state, not her account of it
-    try:
-        ok, detail = _actor.restart_service(node, svc)
-    except Exception as e:
-        ok, detail = False, str(e)[:200]
+    ok, detail = False, ""
+    for attempt in range(1, RESTART_ATTEMPTS + 1):   # bounded retry with backoff (7-cat retry rule)
+        try:
+            ok, detail = _actor.restart_service(node, svc)
+        except Exception as e:
+            ok, detail = False, str(e)[:200]
+        if ok:
+            break
+        log(f"restart {svc}@{node} attempt {attempt}/{RESTART_ATTEMPTS} failed: {detail}")
+        if attempt < RESTART_ATTEMPTS:
+            time.sleep(2 * attempt)
     res = f"restart {svc}@{node}: {'ok' if ok else 'failed'} — {detail}"
     _safety.record_ledger(
         oc, source=source, autonomy_level=autonomy_level, action_class=ac,

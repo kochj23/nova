@@ -173,21 +173,23 @@ class TestRetry(unittest.TestCase):
         self.assertEqual(calls, [n + "/api/chat" for n in C.OLLAMA_NODES[:3]])
 
     def test_notify_fails_open(self):
-        # RETRY GAP: notify — one post_both attempt, failure logged and swallowed
+        # notify retries with backoff (NOTIFY_ATTEMPTS), then logs and swallows
         cfg = types.SimpleNamespace(post_both=mock.MagicMock(side_effect=OSError("slack down")), SLACK_CHAN="C")
-        with mock.patch.dict(sys.modules, {"nova_config": cfg}), redirect_stdout(io.StringIO()):
+        with mock.patch.dict(sys.modules, {"nova_config": cfg}), mock.patch.object(C.time, "sleep"), \
+             redirect_stdout(io.StringIO()):
             C.notify("x")
-        self.assertEqual(cfg.post_both.call_count, 1)
+        self.assertEqual(cfg.post_both.call_count, C.NOTIFY_ATTEMPTS)
 
     def test_physical_restart_failure_is_ledgered_not_raised(self):
-        # RETRY GAP: _actor.restart_service — one attempt; failure lands in the ledger + proposal row
+        # _actor.restart_service retried RESTART_ATTEMPTS times; final failure lands in the ledger + proposal row
         cur = _Cur(_rules())
         cfg = types.SimpleNamespace(post_both=mock.MagicMock(), SLACK_CHAN="C")
         with mock.patch.object(C._actor, "restart_service", side_effect=OSError("ssh down")) as rs, \
-             mock.patch.dict(sys.modules, {"nova_config": cfg}), redirect_stdout(io.StringIO()):
+             mock.patch.dict(sys.modules, {"nova_config": cfg}), mock.patch.object(C.time, "sleep"), \
+             redirect_stdout(io.StringIO()):
             rc = C._do_execute(cur, "live", 5, dict(GOOD_ROW), source="coagency", autonomy_level="rung2-supervised", vetoable=False)
         self.assertEqual(rc, 1)
-        self.assertEqual(rs.call_count, 1)
+        self.assertEqual(rs.call_count, C.RESTART_ATTEMPTS)
         (_, lp), = cur.stmts("INSERT INTO autonomy_ledger")
         self.assertFalse(lp[6])                                   # executed=False recorded
         self.assertIn("failed — ssh down", cur.stmts("SET status='executed'")[0][1][0])
