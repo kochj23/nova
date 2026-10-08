@@ -457,7 +457,13 @@ async def _slack_notify(ctx: GatewayContext, text: str) -> None:
         if not token:
             return
         from nova_gateway.channels.slack import slack_post_message
-        await slack_post_message(ctx, token, SLACK_NOTIFY_CHANNEL, text)
+        # approval prompts must reach Jordan: 3 tries, backoff 1 s then 2 s, WARNING if all fail
+        for attempt in (1, 2, 3):
+            if await slack_post_message(ctx, token, SLACK_NOTIFY_CHANNEL, text) is not False:
+                return
+            if attempt < 3:
+                await asyncio.sleep(attempt)
+        log.warning(f"[autonomy] slack notify failed after 3 tries: {text[:120]}")
     except Exception as e:
         log.warning(f"[autonomy] slack notify failed: {e}")
 

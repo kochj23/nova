@@ -446,7 +446,7 @@ async def _remember_exchange(ctx: GatewayContext, session_id: str, agent_id: str
     who = "Jordan" if person == "jordan" else person.capitalize()
     text = f"{who}: {user_msg.strip()[:1200]}\nNova: {reply.strip()[:1200]}"
     last = ""
-    for attempt in (1, 2):
+    for attempt in (1, 2, 3):              # 3 tries, backoff 1 s then 2 s (7-category retry rule)
         try:
             r = await ctx.http.post(
                 "http://memory-server.digitalnoise.net:18790/remember",
@@ -468,8 +468,8 @@ async def _remember_exchange(ctx: GatewayContext, session_id: str, agent_id: str
                 break                       # quality filter verdict (too short etc.) — retrying won't change it
         except Exception as e:
             last = f"{type(e).__name__}: {e}"
-        if attempt == 1:
-            await asyncio.sleep(2)
+        if attempt < 3:
+            await asyncio.sleep(attempt)
     log.warning(f"[{trace_id}] reflect-after memory write failed: {last}")
     return ""
 

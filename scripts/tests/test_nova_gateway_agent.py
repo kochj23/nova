@@ -242,11 +242,11 @@ class TestRelationshipMemory20261008(unittest.TestCase):
         self.assertEqual(kw["json"]["source"], "conversation")
         self.assertIn(("m-1", "t9"), [a for _, a in pool.executed])
 
-    def test_remember_retries_once_then_gives_up(self):
+    def test_remember_retries_twice_then_gives_up(self):
         ctx = _ctx(); ctx.http.post = AsyncMock(side_effect=ConnectionError("down"))
         with patch.object(ag.asyncio, "sleep", AsyncMock()):
             self.assertEqual(asyncio.run(ag._remember_exchange(ctx, "gw2:slack:C1", "chat", "a b c", "d")), "")
-        self.assertEqual(ctx.http.post.call_count, 2)
+        self.assertEqual(ctx.http.post.call_count, 3)
 
     def test_reply_to_jordan_schedules_memory_and_recent_lane(self):
         ctx = _ctx([{"choices": [{"message": {"content": "hey"}}]}])

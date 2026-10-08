@@ -43,8 +43,9 @@ def _remember_direct(ctx, sid: str, text: str, answer: str, trace_id: str, event
 
 
 async def slack_post_message(ctx: GatewayContext, token: str, channel: str,
-                              text: str, thread_ts: str = ""):
-    """Post a message to Slack via chat.postMessage REST API."""
+                              text: str, thread_ts: str = "") -> bool:
+    """Post a message to Slack via chat.postMessage REST API. Returns True when Slack said ok (callers that
+    must not lose the message retry on False; errors are logged, never raised)."""
     payload = {"channel": channel, "text": text, "mrkdwn": True}
     if thread_ts:
         payload["thread_ts"] = thread_ts
@@ -58,8 +59,11 @@ async def slack_post_message(ctx: GatewayContext, token: str, channel: str,
         data = resp.json()
         if not data.get("ok"):
             log.error(f"Slack post failed: {data.get('error', 'unknown')}")
+            return False
+        return True
     except Exception as e:
         log.error(f"Slack post exception: {e}")
+        return False
 
 
 async def _slack_get_bot_user_id(ctx: GatewayContext, token: str) -> str:

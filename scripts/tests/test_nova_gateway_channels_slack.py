@@ -134,7 +134,7 @@ class TestRetry(unittest.TestCase):
     def test_post_failure_fails_open(self):
         ctx = _Ctx()
         ctx.http.post = mock.AsyncMock(side_effect=OSError("down"))
-        self.assertIsNone(asyncio.run(sl.slack_post_message(ctx, "t", "C1", "x")))
+        self.assertFalse(asyncio.run(sl.slack_post_message(ctx, "t", "C1", "x")))   # False = not delivered, never raises
         self.assertEqual(asyncio.run(sl._slack_get_bot_user_id(ctx, "t")), "")
 
 
