@@ -759,6 +759,25 @@ def _physical_check(action: str, entity_ids=(), domains=(), confirmation_id=None
         return False, f"physical guard unavailable ({e}) — refusing"
 
 
+GUARD_PG_TRIES = 3
+GUARD_PG_BACKOFF_S = 0.25
+
+
+def _guard_cursor(sg):
+    """PG cursor for guard bookkeeping: 3 tries with exponential backoff (0.25s, 0.5s); None + a warning
+    after the last failure — never silent."""
+    last = None
+    for i in range(GUARD_PG_TRIES):
+        try:
+            return sg._ops_cursor()
+        except Exception as e:  # noqa: BLE001
+            last = e
+            if i < GUARD_PG_TRIES - 1:
+                time.sleep(GUARD_PG_BACKOFF_S * (2 ** i))
+    log.warning(f"[guard] PG unavailable after {GUARD_PG_TRIES} tries: {last}")
+    return None
+
+
 def _guard_record_sync(tool: str, action: str, reason: str, guard: str, ask_jordan: bool = False,
                        entities=()) -> dict:
     """report_block + (optionally) request_confirmation, in one short PG session. Never raises."""
@@ -768,11 +787,7 @@ def _guard_record_sync(tool: str, action: str, reason: str, guard: str, ask_jord
     except Exception as e:  # noqa: BLE001
         log.warning(f"[guard] nova_safety_guards unavailable: {e}")
         return out
-    oc = None
-    try:
-        oc = sg._ops_cursor()
-    except Exception as e:  # noqa: BLE001
-        log.warning(f"[guard] PG unavailable for report_block: {e}")
+    oc = _guard_cursor(sg)
     try:
         out["repeat"] = bool(oc is not None and sg.blocked_before(oc, action))
         if ask_jordan and oc is not None and not out["repeat"]:
@@ -795,9 +810,12 @@ def _guard_record_sync(tool: str, action: str, reason: str, guard: str, ask_jord
 def _blocked_before_sync(action: str) -> bool:
     try:
         import nova_safety_guards as sg
-        oc = sg._ops_cursor()
-    except Exception:
+    except Exception as e:  # noqa: BLE001
+        log.warning(f"[guard] blocked_before unavailable: {e}")
         return False
+    oc = _guard_cursor(sg)
+    if oc is None:
+        return False   # the guard itself (physical_guard) still ran; only the repeat memory is unavailable
     try:
         return sg.blocked_before(oc, action)
     finally:
