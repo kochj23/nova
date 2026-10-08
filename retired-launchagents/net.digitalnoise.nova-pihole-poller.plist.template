@@ -6,7 +6,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/python3</string>
-        <string>/Users/kochj/.openclaw/scripts/nova_pihole_poller.py</string>
+        <string>__HOME__/.openclaw/scripts/nova_pihole_poller.py</string>
     </array>
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
@@ -14,7 +14,7 @@
     <key>StandardErrorPath</key><string>/tmp/nova-pihole-poller.log</string>
     <key>EnvironmentVariables</key>
     <dict>
-        <key>HOME</key><string>/Users/kochj</string>
+        <key>HOME</key><string>__HOME__</string>
         <key>PATH</key><string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
     </dict>
     <key>ThrottleInterval</key><integer>30</integer>

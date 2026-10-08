@@ -7,7 +7,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/opt/homebrew/bin/python3</string>
-        <string>/Users/kochj/.openclaw/scripts/nova_nas_rsync.py</string>
+        <string>__HOME__/.openclaw/scripts/nova_nas_rsync.py</string>
     </array>
     <key>StartCalendarInterval</key>
     <dict>
@@ -21,13 +21,13 @@
         <key>PATH</key>
         <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
         <key>PYTHONPATH</key>
-        <string>/Users/kochj/.openclaw/scripts</string>
+        <string>__HOME__/.openclaw/scripts</string>
     </dict>
     <key>WorkingDirectory</key>
-    <string>/Users/kochj/.openclaw/scripts</string>
+    <string>__HOME__/.openclaw/scripts</string>
     <key>StandardOutPath</key>
-    <string>/Users/kochj/.openclaw/logs/nas-rsync.log</string>
+    <string>__HOME__/.openclaw/logs/nas-rsync.log</string>
     <key>StandardErrorPath</key>
-    <string>/Users/kochj/.openclaw/logs/nas-rsync.log</string>
+    <string>__HOME__/.openclaw/logs/nas-rsync.log</string>
 </dict>
 </plist>
