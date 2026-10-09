@@ -1738,7 +1738,7 @@ def git_push(section: str, title: str):
                 orig = p.read_text()
             except (OSError, UnicodeDecodeError):
                 continue
-            fixed = scrub_household(_MAC_RE.sub("[redacted-mac]", orig))
+            fixed = scrub_home_paths(scrub_household(_MAC_RE.sub("[redacted-mac]", orig)))  # one leaky article must not wedge the queue
             if fixed != orig:
                 p.write_text(fixed)
                 subprocess.run(["git", "add", rel], cwd=HUGO_ROOT, timeout=30)
