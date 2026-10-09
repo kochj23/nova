@@ -218,6 +218,9 @@ def file_item(cur, desc: str, context: str, days: int | None) -> int | None:
                     "LIMIT 1", (desc, days))
     if cur.fetchone():
         return None
+    # claude_queue.session_id is a foreign key: register the organ's session first (failed 2026-10-09 05:20).
+    cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES (%s,'active') "
+                "ON CONFLICT (session_id) DO NOTHING", (QUEUE_SESSION,))
     cur.execute("INSERT INTO claude_queue (session_id, status, priority, description, context) "
                 "VALUES (%s,'pending',3,%s,%s) RETURNING id", (QUEUE_SESSION, desc, context[:3000]))
     return cur.fetchone()[0]
