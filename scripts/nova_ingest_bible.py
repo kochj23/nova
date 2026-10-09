@@ -63,6 +63,26 @@ def split_books(text: str) -> list:
     return [(OT_BOOKS[k], "\n".join(lines[starts[k] + 1:starts[k + 1]])) for k in range(len(OT_BOOKS))]
 
 
+def split_books_nt(text: str) -> list:
+    """-> [(book name, body text)] for the 27 New Testament books, in canonical order. The table of contents
+    lists the titles right after the New Testament heading; each body starts at the next occurrence of its
+    title after the table of contents, and the last book ends at the Project Gutenberg footer. Pure."""
+    lines = text.splitlines()
+    toc = next(i for i, l in enumerate(lines) if l.strip() == NT_HEADING)
+    titles, i = [], toc + 1
+    while len(titles) < 27 and i < len(lines):
+        if lines[i].strip():
+            titles.append(lines[i].strip())
+        i += 1
+    end = next((k for k in range(i, len(lines)) if "END OF THE PROJECT GUTENBERG" in lines[k].upper()), len(lines))
+    starts, pos = [], i
+    for t in titles:
+        pos = next(k for k in range(pos, end) if lines[k].strip() == t)
+        starts.append(pos)
+    starts.append(end)
+    return [(titles[k], "\n".join(lines[starts[k] + 1:starts[k + 1]])) for k in range(len(titles))]
+
+
 def verses(body: str) -> list:
     """-> [(chapter, verse, text)] from a book body with wrapped lines. Pure."""
     flat = " ".join(body.split())
@@ -74,7 +94,7 @@ def verses(body: str) -> list:
     return out
 
 
-def chunks(book: str, vs: list, size: int = CHUNK_CHARS) -> list:
+def chunks(book: str, vs: list, size: int = CHUNK_CHARS, testament: str = "Old Testament") -> list:
     """Group whole verses into chunks of about `size` chars, never across a chapter.
     -> [(text, meta)]. Pure."""
     out, cur, ch = [], [], None
@@ -86,7 +106,7 @@ def chunks(book: str, vs: list, size: int = CHUNK_CHARS) -> list:
             body = " ".join(f"{v} {t}" for _c, v, t in cur)
             out.append((f"[{ref} (KJV)] {body}", {"book": book, "chapter": c, "verses": f"{v1}-{v2}",
                                                    "translation": "King James Version",
-                                                   "testament": "Old Testament", "type": "scripture",
+                                                   "testament": testament, "type": "scripture",
                                                    "url": URL, "title": f"{book} {c}"}))
             cur.clear()
 
@@ -102,11 +122,13 @@ def chunks(book: str, vs: list, size: int = CHUNK_CHARS) -> list:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--file", help="read a local copy of pg10.txt instead of downloading")
+    ap.add_argument("--testament", choices=["old", "new"], default="old")
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     text = Path(a.file).read_text(errors="replace") if a.file else fetch()
-    books = split_books(text)
-    plan = [(b, chunks(b, verses(body))) for b, body in books]
+    books = split_books(text) if a.testament == "old" else split_books_nt(text)
+    testament = "Old Testament" if a.testament == "old" else "New Testament"
+    plan = [(b, chunks(b, verses(body), testament=testament)) for b, body in books]
     total = sum(len(c) for _b, c in plan)
     if a.dry_run:
         for b, c in plan:

@@ -36,6 +36,27 @@ class TestSecurity(unittest.TestCase):
         self.assertFalse(any("New Testament text" in body for _b, body in books))
 
 
+class TestNewTestament(unittest.TestCase):
+    def test_new_testament_splits_into_27_books_in_order(self):
+        body = []
+        for i in range(27):
+            body += [f"Book {i}", "", f"1:1 First verse of book {i}.", ""]
+        nt = "\n".join(["Header", B.NT_HEADING] + [f"Book {i}" for i in range(27)] + ["", *body,
+                        "END OF THE PROJECT GUTENBERG EBOOK"])
+        books = B.split_books_nt(nt)
+        self.assertEqual(len(books), 27)
+        self.assertEqual(books[0][0], "Book 0")
+        self.assertIn("First verse of book 0", books[0][1])
+
+    def test_real_text_gives_27_books_and_7957_verses(self):
+        f = Path(os.environ.get("NOVA_KJV_FILE", ""))
+        if not f.is_file():
+            self.skipTest("set NOVA_KJV_FILE to a local copy of Gutenberg #10 to run this check")
+        books = B.split_books_nt(f.read_text(errors="replace"))
+        self.assertEqual(len(books), 27)
+        self.assertEqual(sum(len(B.verses(b)) for _n, b in books), 7957)
+
+
 class TestPerformance(unittest.TestCase):
     def test_chunk_10k_verses_fast(self):
         vs = [(c, v, "word " * 20) for c in range(1, 101) for v in range(1, 101)]
