@@ -138,7 +138,10 @@ def collect_metrics():
 
     try:
         if platform.system() == "Darwin":
-            r = subprocess.run(["df", "-k", "/"], capture_output=True, text=True, timeout=5)
+            # "/" on macOS is the sealed system volume (always ~half full); the data volume is what fills
+            # (2026-10-08: the Studio read 54% here while /System/Volumes/Data sat at 99%).
+            vol = "/System/Volumes/Data" if os.path.isdir("/System/Volumes/Data") else "/"
+            r = subprocess.run(["df", "-k", vol], capture_output=True, text=True, timeout=5)
             lines = r.stdout.strip().splitlines()
             if len(lines) > 1:
                 parts = lines[1].split()

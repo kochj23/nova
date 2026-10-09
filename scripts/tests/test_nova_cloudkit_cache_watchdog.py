@@ -112,6 +112,38 @@ class TestSecurity(unittest.TestCase):
         self.assertIn("du", SRC); self.assertNotIn("shell=True", SRC)
 
 
+class TestGhostsAndLowFree(unittest.TestCase):
+    def test_evict_ghosts_calls_brctl_only_for_existing_items(self):
+        import tempfile
+        from pathlib import Path as P
+        root = P(tempfile.mkdtemp())
+        (root / "Pictures").mkdir()
+        (root / "Pictures" / "ghost.pkg").mkdir()
+        calls = []
+        def fake_run(cmd, **kw):
+            calls.append(cmd)
+            return MagicMock(returncode=0, stdout="evicted", stderr="")
+        with patch.object(ck.subprocess, "run", side_effect=fake_run), patch.object(ck, "log"):
+            n = ck.evict_ghosts(root, ["Pictures/ghost.pkg", "Pictures/missing.pkg"])
+        self.assertEqual(n, 1)
+        self.assertEqual(calls[0][:2], ["brctl", "evict"])
+
+    def test_evict_failure_fails_open(self):
+        import tempfile
+        from pathlib import Path as P
+        root = P(tempfile.mkdtemp()); (root / "g.pkg").mkdir()
+        with patch.object(ck.subprocess, "run", side_effect=OSError("no brctl")), patch.object(ck, "log"):
+            self.assertEqual(ck.evict_ghosts(root, ["g.pkg"]), 0)
+
+    def test_low_free_alerts_with_its_own_dedup_key(self):
+        with patch.object(ck, "evict_ghosts", return_value=0), \
+             patch.object(ck, "dir_size_gb", return_value=1.0), \
+             patch.object(ck, "free_gb", return_value=12.0), \
+             patch.object(ck, "log"), patch.object(ck, "notify") as n:
+            ck.main()
+        self.assertTrue(any(c.kwargs.get("dedup_key") == "studio-boot-ssd-low" for c in n.call_args_list))
+
+
 class TestPerformance(unittest.TestCase):
     def test_purge_300_containers_and_parse_10k_sizes_fast(self):
         _bird(containers=300)
@@ -213,7 +245,7 @@ class TestFunctional(unittest.TestCase):
         ck.nova_notify = MagicMock()
         sizes = iter([120.0, 1.5])
         cur = _Cur()
-        with patch.object(ck, "dir_size_gb", lambda p: next(sizes)), patch.object(ck, "free_gb", MagicMock(side_effect=[20.0, 138.0])), \
+        with patch.object(ck, "evict_ghosts", lambda: 0), patch.object(ck, "dir_size_gb", lambda p: next(sizes)), patch.object(ck, "free_gb", MagicMock(side_effect=[20.0, 138.0, 138.0])), \
              patch("psycopg2.connect", _pg(cur)), redirect_stdout(io.StringIO()) as out:
             ck.main()
         self.assertFalse((ck.BIRD_CACHE / "container-0" / "Assets").exists())
@@ -228,7 +260,8 @@ class TestFunctional(unittest.TestCase):
     def test_under_threshold_touches_nothing(self):
         _bird(containers=1)
         ck.nova_notify = MagicMock()
-        with patch.object(ck, "dir_size_gb", lambda p: 12.0), patch("psycopg2.connect") as pg, redirect_stdout(io.StringIO()) as out:
+        with patch.object(ck, "evict_ghosts", lambda: 0), patch.object(ck, "free_gb", lambda: 200.0), \
+             patch.object(ck, "dir_size_gb", lambda p: 12.0), patch("psycopg2.connect") as pg, redirect_stdout(io.StringIO()) as out:
             ck.main()
         self.assertTrue((ck.BIRD_CACHE / "container-0" / "Assets" / "blob").exists())
         ck.nova_notify.assert_not_called(); pg.assert_not_called()

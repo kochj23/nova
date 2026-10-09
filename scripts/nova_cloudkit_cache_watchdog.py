@@ -12,6 +12,13 @@ Behavior: runs hourly via launchd. If the bird cache exceeds THRESHOLD_GB,
 purge the Assets dir(s) (bird rebuilds lazily). Logs every run; posts to Slack
 #nova-notifications + shared_observations only when it actually purges.
 
+2026-10-08 (third recurrence): the cache stayed small (8GB) while a 128GB 2014
+package in iCloud Drive Pictures re-downloaded onto the boot SSD (99% full), so
+every run now also evicts the known ghost items back to cloud-only (brctl evict,
+non-destructive, a no-op when already evicted) and alerts when the boot data
+volume has less than LOW_FREE_GB free, whatever the cause. This job had been
+disabled in launchd since 2026-06-12; it was re-enabled the same day.
+
 Written by Jordan Koch / Nova.
 """
 
@@ -28,6 +35,11 @@ from nova_notify import notify as nova_notify
 
 BIRD_CACHE = Path.home() / "Library/Caches/CloudKit/com.apple.bird"
 THRESHOLD_GB = 50          # purge if bird cache exceeds this
+LOW_FREE_GB = 50           # alert when the boot data volume has less free than this
+ICLOUD_DRIVE = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs"
+# Items iCloud keeps re-downloading onto the boot SSD (2026-06-04, 06-09, 10-08).
+# ponytail: fixed list; add a path here when brctl status shows another big re-download.
+GHOSTS = ["Pictures/.com-apple-bird-noname-51289994-C7EB-4876-8464-84CB77E838AD.pkg"]
 LOG = Path.home() / ".openclaw/logs/cloudkit_cache_watchdog.log"
 DB = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
@@ -79,12 +91,29 @@ def purge_assets() -> int:
     return purged
 
 
-def notify(msg: str, severity: str = "info"):
+def evict_ghosts(root: Path = ICLOUD_DRIVE, ghosts=None) -> int:
+    """brctl evict each known ghost item (cloud-only again; no data lost). Returns count evicted."""
+    n = 0
+    for rel in ghosts if ghosts is not None else GHOSTS:
+        p = root / rel
+        if not p.exists():
+            continue
+        try:
+            r = subprocess.run(["brctl", "evict", str(p)], capture_output=True, text=True, timeout=300)
+            if r.returncode == 0:
+                n += 1
+            log(f"evict {rel}: rc={r.returncode} {(r.stdout or r.stderr).strip()[:120]}")
+        except Exception as e:  # noqa: BLE001 — fail open; the cache check still runs
+            log(f"evict {rel} failed: {e}")
+    return n
+
+
+def notify(msg: str, severity: str = "info", dedup_key: str = "cloudkit-cache-watchdog"):
     parts = msg.split("\n", 1)
     title = parts[0].lstrip(": ").replace("floppy_disk:", "").strip()
     body = parts[1] if len(parts) > 1 else None
     nova_notify(title, body=body, level=severity, category="storage",
-                dedup_key="cloudkit-cache-watchdog", meta={"host": "mac-studio"})
+                dedup_key=dedup_key, meta={"host": "mac-studio"})
     try:
         import psycopg2
         conn = psycopg2.connect(DB)
@@ -100,6 +129,7 @@ def notify(msg: str, severity: str = "info"):
 
 
 def main():
+    evict_ghosts()
     size = dir_size_gb(BIRD_CACHE)
     free = free_gb()
     log(f"bird cache: {size:.1f}GB | free: {free:.1f}GB | threshold: {THRESHOLD_GB}GB")
@@ -119,6 +149,12 @@ def main():
         notify(msg, severity="warning")
     else:
         log("Under threshold — nothing to do.")
+    free = free_gb()
+    if 0 <= free < LOW_FREE_GB:
+        notify(f":floppy_disk: *Studio boot SSD low: {free:.0f}GB free*\n"
+               f"/System/Volumes/Data is below {LOW_FREE_GB}GB free. iCloud re-downloads have filled it "
+               f"three times (2026-06-04, 06-09, 10-08); check `brctl status` for a large download.",
+               severity="warning", dedup_key="studio-boot-ssd-low")
 
 
 if __name__ == "__main__":
