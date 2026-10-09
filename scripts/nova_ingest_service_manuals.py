@@ -40,7 +40,8 @@ SERVICES = {
                  '(title:(manual) AND (creator:(navy) OR publisher:(navy) OR subject:("united states navy"))))',
         "pub": r"\b(NAVEDTRA|NAVPERS|NWP|NTTP|NAVSEA|NAVAIR|OPNAV(?:INST)?|BUPERS)[\s_-]*\d[\w.-]*|bluejackets?'? manual|"
                r"rate training manual|naval .*manual|navy .*manual",
-        "exclude": r"british|royal navy|^\s*brandon",
+        "exclude": r"british|royal navy|^\s*brandon|^\s*DTIC\b|debaters|navy medicine|owners' and operators'|"
+                   r"laying the keel|performance evaluation report|hospital organization|freedmen|rechecked by",
     },
     "marines": {
         "label": "U.S. Marine Corps doctrinal publication",
@@ -76,10 +77,18 @@ SERVICES = {
                  'title:(training) OR title:(handbook) OR title:(NGR) OR title:(drill))',
         "pub": r"\b(NGR|ANGI|NGB)[\s_-]*\d[\w.-]*|national guard .*(manual|regulation|pamphlet|handbook|training|drill)|"
                r"(manual|handbook|regulation|drill).* national guard",
-        "exclude": r"remedial|restoration|environmental|investigation report|souvenir|legislature",
+        "exclude": r"remedial|restoration|environmental|investigation report|souvenir|legislature|^\s*DTIC\b|"
+                   r"^\s*CIA Reading Room|hearing",
     },
 }
-PUBNO = re.compile(r"\b([A-Z]{2,8})[\s_-]*(\d[\w.-]*)", re.I)
+PUBNO = re.compile(r"\b([A-Z]{2,8})[\s_-]*(\d[\w.-]*(?:[\s_-]\d[\w.]*)*)", re.I)
+# Archive mirrors prefix titles with their own catalogue number ("ERIC ED123456: Fireman"); it is not the pub number.
+MIRROR_PREFIX = re.compile(r"^\s*(ERIC\s+ED\d+|DTIC\s+[A-Z0-9]+|CIA Reading Room\s+[\w-]+)\s*:\s*", re.I)
+# Only public-release documents go into memory (2026-10-08: a possibly distribution-limited NWP was queued).
+RESTRICTED = re.compile(r"for official use only|\bFOUO\b|\bNOFORN\b|controlled unclassified|\bCUI\b|"
+                        r"distribution statement\s*[B-F]\b|distribution authorized to|distribution limited|"
+                        r"not releasable|\bsecret\b//|limited distribution", re.I)
+RESTRICT_SCAN_CHARS = 8000   # covers, title pages and the distribution block
 
 
 def keep(service: str, title: str) -> bool:
@@ -92,10 +101,17 @@ def keep(service: str, title: str) -> bool:
 
 def pub_key(title: str) -> str:
     """One key per publication: its series and number (e.g. 'MCWP 3-15.1'), else the normalised title. Pure."""
-    m = PUBNO.search(title or "")
+    t = MIRROR_PREFIX.sub("", title or "")
+    m = PUBNO.search(t)
     if m and m.group(1).upper() not in {"THE", "AND", "FOR", "WITH", "FROM"}:
-        return f"{m.group(1).upper()} {m.group(2).upper().rstrip('.-')}"
-    return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()
+        num = re.sub(r"[\s_]+", "-", m.group(2).upper()).rstrip(".-")   # "3 11.2" == "3-11.2"
+        return f"{m.group(1).upper()} {num}"
+    return re.sub(r"[^a-z0-9]+", " ", t.lower()).strip()
+
+
+def restricted(text: str) -> bool:
+    """True when the opening pages carry a restriction marking: such documents are never ingested. Pure."""
+    return bool(RESTRICTED.search((text or "")[:RESTRICT_SCAN_CHARS]))
 
 
 def pick(service: str, docs: list, seen_keys: set) -> list:
@@ -165,6 +181,12 @@ def main(argv=None) -> int:
             ni.log(f"{ident}: fetch failed: {e}")
             continue
         n = 0
+        if restricted(text):
+            ni.log(f"[{svc} {i}/{len(pubs)}] {title[:80]}: SKIPPED, restriction marking on its opening pages")
+            if not a.dry_run:
+                cur.execute("INSERT INTO ia_ingest_seen (identifier, title, chunks, service) VALUES (%s, %s, 0, %s) "
+                            "ON CONFLICT (identifier) DO NOTHING", (ident, title, svc))
+            continue
         meta = {"url": f"https://archive.org/details/{ident}", "type": "document", "site": "archive.org",
                 "topic": label, "service": svc, "title": title, "date": date}
         for c in ni.chunk_prose(ni.clean_text(text)):

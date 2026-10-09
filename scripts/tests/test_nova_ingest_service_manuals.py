@@ -44,6 +44,25 @@ class TestSecurity(unittest.TestCase):
             self.assertFalse(S.keep("navy" if "NAV" in t else "marines" if "MCRP" in t else "air_force", t), t)
 
 
+class TestReleaseAndDedup(unittest.TestCase):
+    def test_restricted_markings_block_ingest(self):
+        for marked in ("DISTRIBUTION STATEMENT C: Distribution authorized to U.S. Government agencies only",
+                       "FOR OFFICIAL USE ONLY", "NOFORN", "CUI"):
+            self.assertTrue(S.restricted("cover page\n" + marked + "\nbody"), marked)
+        self.assertFalse(S.restricted("DISTRIBUTION STATEMENT A: Approved for public release; distribution is unlimited."))
+        self.assertFalse(S.restricted("x" * S.RESTRICT_SCAN_CHARS + " FOUO"))   # only the opening pages count
+
+    def test_mirror_prefixes_and_spacing_do_not_split_a_publication(self):
+        self.assertEqual(S.pub_key("ERIC ED123456: Opticalman 3 & 2 NAVEDTRA 10215"),
+                         S.pub_key("Opticalman 3 & 2 NAVEDTRA 10215"))
+        self.assertEqual(S.pub_key("MCWP 3 11.2 Marine Rifle Squad"), S.pub_key("MCWP 3-11.2 Marine Rifle Squad"))
+
+    def test_navy_off_target_titles_dropped(self):
+        for t in ("DTIC AD0663541: CIC test study NAVPERS 1", "Army and navy manual for debaters",
+                  "Navy Medicine Owners' and Operators' Manual 2011"):
+            self.assertFalse(S.keep("navy", t), t)
+
+
 class TestPerformance(unittest.TestCase):
     def test_pick_10k_titles_fast(self):
         docs = [(f"id{i}", f"MCWP 3-{i % 500}.1 Machine Guns", "") for i in range(10000)]
