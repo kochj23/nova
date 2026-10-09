@@ -39,7 +39,10 @@ LOW_FREE_GB = 50           # alert when the boot data volume has less free than 
 ICLOUD_DRIVE = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs"
 # Items iCloud keeps re-downloading onto the boot SSD (2026-06-04, 06-09, 10-08).
 # ponytail: fixed list; add a path here when brctl status shows another big re-download.
-GHOSTS = ["Pictures/.com-apple-bird-noname-51289994-C7EB-4876-8464-84CB77E838AD.pkg"]
+# Both are unnamed copies of one 2014 Aperture library (~128 GB each); iCloud cannot finish
+# downloading either (stuck at "99%" for months), so they stay cloud-only.
+GHOSTS = ["Pictures/.com-apple-bird-noname-51289994-C7EB-4876-8464-84CB77E838AD.pkg",
+          "Pictures/.com-apple-bird-noname-B59493E7-459D-48E6-BC00-26D18FB8BEB1.pkg"]
 LOG = Path.home() / ".openclaw/logs/cloudkit_cache_watchdog.log"
 DB = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 
