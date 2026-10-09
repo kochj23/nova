@@ -175,6 +175,9 @@ def file_note(cur, desc: str, ctx: str):
     head = desc.split(":")[0] + ":%"
     if _q(cur, "SELECT id FROM claude_queue WHERE session_id=%s AND description LIKE %s LIMIT 1", (QUEUE_SESSION, head)):
         return None
+    # claude_queue.session_id is a foreign key: register this organ's session first (2026-10-09 audit).
+    cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES (%s,'active') "
+                "ON CONFLICT (session_id) DO NOTHING", (QUEUE_SESSION,))
     cur.execute("INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context) "
                 "VALUES (%s, now(), now(), 'queued', 3, %s, %s) RETURNING id", (QUEUE_SESSION, desc, ctx))
     return cur.fetchone()[0]

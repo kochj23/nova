@@ -256,6 +256,9 @@ def file_queue(cur, rows: list):
         cur.execute("UPDATE claude_queue SET description=%s, context=%s, updated_at=now() WHERE id=%s",
                     (desc, ctx, open_[0][0]))
         return open_[0][0]
+    # claude_queue.session_id is a foreign key: register this organ's session first (2026-10-09 audit).
+    cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES (%s,'active') "
+                "ON CONFLICT (session_id) DO NOTHING", (QUEUE_SESSION,))
     cur.execute("INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context) "
                 "VALUES (%s, now(), now(), 'queued', 3, %s, %s) RETURNING id", (QUEUE_SESSION, desc, ctx))
     return cur.fetchone()[0]

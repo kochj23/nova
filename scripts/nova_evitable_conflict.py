@@ -167,6 +167,9 @@ def file_question(cur, start, res: dict, why: str):
     rows = _q(cur, "SELECT id FROM claude_queue WHERE description=%s LIMIT 1", (desc,))
     if rows:
         return rows[0][0]
+    # claude_queue.session_id is a foreign key: register this organ's session first (2026-10-09 audit).
+    cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES (%s,'active') "
+                "ON CONFLICT (session_id) DO NOTHING", (QUEUE_SESSION,))
     cur.execute("INSERT INTO claude_queue (session_id, status, priority, description, context) "
                 "VALUES (%s,'pending',3,%s,%s) RETURNING id",
                 (QUEUE_SESSION, desc, "A question, not a verdict: why does triage treat Nova's own components "

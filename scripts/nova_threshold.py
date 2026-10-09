@@ -241,6 +241,9 @@ def file_queue(cur, unpurposed: list, new: list) -> int | None:
            "or propose rotation/revocation to Little Mister. Revocation is his decision.\n\n"
            + "\n".join(line(r) for r in unpurposed[:150])
            + ("\n\nNew since the last run:\n" + "\n".join(line(r) for r in new) if new else ""))
+    # claude_queue.session_id is a foreign key: register this organ's session first (2026-10-09 audit).
+    cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES (%s,'active') "
+                "ON CONFLICT (session_id) DO NOTHING", (QUEUE_SESSION,))
     cur.execute("INSERT INTO claude_queue (session_id, status, priority, description, context) "
                 "VALUES (%s,'pending',4,%s,%s) RETURNING id", (QUEUE_SESSION, QUEUE_DESC, ctx))
     return cur.fetchone()[0]

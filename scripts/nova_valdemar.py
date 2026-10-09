@@ -229,6 +229,9 @@ def seven_months(dry: bool = False) -> list:
             desc = f"Valdemar Register: the ten oldest holds, {now:%Y-%m}"
             cur.execute("SELECT 1 FROM claude_queue WHERE description=%s LIMIT 1", (desc,))
             if not cur.fetchone():
+                # claude_queue.session_id is a foreign key: register this organ's session first (2026-10-09 audit).
+                cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES (%s,'active') "
+                            "ON CONFLICT (session_id) DO NOTHING", (QUEUE_SESSION,))
                 cur.execute("INSERT INTO claude_queue (session_id, status, priority, description, context) "
                             "VALUES (%s,'pending',4,%s,%s)",
                             (QUEUE_SESSION, desc, "Renew each with fresh evidence or release it gradually:\n"
