@@ -1305,6 +1305,16 @@ def publish_hugo(title: str, body: str, section: str, tags: list[str],
 
     body = scrub_faces(body)
 
+    # Nova's Crystal Ball: a labelled, sourced "what could happen" block for news, local and security (2026-10-09).
+    # Any failure leaves the article as written.
+    try:
+        import nova_crystal_ball as _crystal
+        block = _crystal.for_article(title, body, section)
+        if block:
+            body = body + block
+    except Exception:  # noqa: BLE001
+        pass
+
     # Publish gate: never let a refusal / clarifying-question / placeholder reach the site.
     from nova_journal_guard import is_publishable
     ok, reason = is_publishable(title, body)
