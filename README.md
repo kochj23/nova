@@ -132,6 +132,39 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ## Infrastructure & Security (June–October 2026)
 
+### Nova's Crystal Ball: the Paranoia Organ, Kept Honest (2026-10-09)
+
+Nova's Crystal Ball is the "what could happen" lens that closes news, local and security articles. It asks what
+a story would mean if its most alarming line were true, grades how capable the actors are, and says what would
+confirm or rule the scenario out. It never says a named person is planning an attack, and it never uses
+false-flag or martial-law framing. Those are dropped in code, not left to the prompt.
+
+Pieces:
+- `nova_crystal_ball.py`: builds up to three scenarios per article on the local model (`qwen3:8b`). Each must
+  quote the article, carry a capability grade, and give a confirming and a ruling-out indicator. Failed checks
+  drop the scenario; if none survive, the article publishes without a block.
+- `nova_journal.publish_hugo`: calls the module for the `news`, `local` and `security` sections, after the
+  household scrub. Any failure leaves the article as written.
+- Fiction stays fiction: a satirical piece (*The Goats Are Not Running the Government*) uses invented people
+  and countries, and the Crystal Ball does not run on the essays section.
+
+Tests: `tests/test_nova_crystal_ball.py` (seven categories, model faked).
+
+```mermaid
+flowchart LR
+    ART["draft article: news, local or security"] --> PUB["nova_journal.publish_hugo"]
+    PUB --> SCRUB["household scrub"]
+    SCRUB --> CB["nova_crystal_ball.for_article"]
+    CB --> MODEL["local model qwen3:8b"]
+    MODEL --> CHECK{"checks: quote, indicators, capability, no named-intent or false-flag framing"}
+    CHECK -->|pass| BLOCK["Nova's Crystal Ball block appended"]
+    CHECK -->|fail| DROP["scenario dropped"]
+    DROP -->|none left| PLAIN["article published as written"]
+    BLOCK --> SITE["nova.digitalnoise.net"]
+    PLAIN --> SITE
+```
+
+
 ### Oversight Tools: Reachability, Action Why, Rule Review, Digest, Wargames (2026-10-09)
 
 Five tools that make Nova's state and reasoning visible, plus the logging change that feeds them. Each is
