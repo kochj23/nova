@@ -447,3 +447,24 @@ def post_both(message: str, slack_channel: str = SLACK_CHAN, discord_channel: st
         print(f"[nova_config] post_both delivered nowhere (slack={slack_channel!r}, "
               f"discord={discord_channel!r})", file=sys.stderr)
     return ok
+
+
+# ── Nova ops database (added 2026-10-09) ───────────────────────────────────────
+def pg_dsn(dbname: str = "nova_ops") -> str:
+    """psycopg2 DSN for the ops database. Host comes from NOVA_PG_HOST so the source holds no address."""
+    import os
+    host = os.environ.get("NOVA_PG_HOST", "pg-primary.digitalnoise.net")
+    return f"host={host} dbname={dbname} user=kochj"
+
+
+def pg_connect(dbname: str = "nova_ops", attempts: int = 3, _sleep=None):
+    """psycopg2 connection to the ops database, retried with backoff on transient failures."""
+    import time
+    import psycopg2
+    for i in range(attempts):
+        try:
+            return psycopg2.connect(pg_dsn(dbname))
+        except psycopg2.OperationalError:
+            if i == attempts - 1:
+                raise
+            (_sleep or time.sleep)(2 * (i + 1))

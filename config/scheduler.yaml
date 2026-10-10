@@ -300,6 +300,13 @@ tasks:
     timeout: 60
     overlap: skip
 
+  home_reachability:               # flag HomeKit rooms gone dark: controller-wide vs one network segment (2026-10-09)
+    script: nova_home_reachability.py
+    args: []
+    schedule: every 15m
+    timeout: 90
+    overlap: skip
+
   # ── Observability collectors (Grafana data layer) ──────────────────────
 
   dns_sync:

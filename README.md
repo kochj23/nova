@@ -3725,3 +3725,39 @@ flowchart LR
 ---
 
 *Written by Jordan Koch. Nova chose her own name.*
+
+## Oversight Tools: Reachability, Action Why, Rule Review, Digest, Wargames (2026-10-09)
+
+Five tools that make Nova's state and reasoning visible, plus the logging change that feeds them. Each is
+read-only or alert-only: none changes a real system or feeds the corroboration gates.
+
+| Script | What it does | Writes |
+|---|---|---|
+| `nova_home_reachability.py` | Flags HomeKit rooms gone dark. All rooms dark means the controller is down. Some rooms dark means a network segment. | notifications, one per room per day |
+| `nova_action_why.py` | Prints recent actions with the rationale recorded for each, or says none was recorded. | nothing |
+| `nova_directive_review.py` | Asks a local model whether each pair of standing feedback rules conflicts. Candidates go to a person. | `directive_conflict_reviews` |
+| `nova_whole_picture.py` | Daily digest: rule conflicts to review, HomeKit status, unexplained actions, failed checks. No private sources. | optional notification |
+| `nova_wargame.py` | Read-only what-if drills. Responses are APPLY or HOLD, and HOLD is always an option. | `exercise_results` (exercise=true) |
+
+The logging hook `session-logger.sh` now records each Bash command's description as that action's rationale, and
+retries its database write up to three times. Write and Edit actions carry no reason field, so they show as gaps.
+
+```mermaid
+flowchart LR
+    HK[(telemetry.homekit_outlets)] --> REACH[nova_home_reachability]
+    REACH -->|dark rooms| NOTIFY[nova_notify]
+    RULES[(claude_memories feedback)] --> REVIEW[nova_directive_review]
+    LLM[local Ollama model] --> REVIEW
+    REVIEW --> CONF[(directive_conflict_reviews)]
+    HOOK[session-logger.sh] --> ACT[(claude_actions + rationale)]
+    ACT --> WHY[nova_action_why]
+    CONF --> DIGEST[nova_whole_picture]
+    REACH --> DIGEST
+    ACT --> DIGEST
+    DIGEST -->|daily| NOTIFY
+    WARGAME[nova_wargame] -->|exercise only| EX[(exercise_results)]
+```
+
+Shared config: `nova_config.pg_dsn()` reads the database host from `NOVA_PG_HOST`, and `nova_config.pg_connect()`
+retries connections. Tests: `tests/test_*_7cat.py` for each tool, covering security, performance, retry, unit,
+integration, functional and frame.
