@@ -24,10 +24,13 @@ and untouched. Sample sizes are always shown: small buckets are noisy. The tag u
 self-influence (unlogged actions are invisible), which flatters the clean bucket. No silent
 control set until Little Mister has agreed to one.
 
-CLI:      --run [--dry-run]   --show   --selftest
+Merged into Charles on 2026-10-09 (organ audit M8a): the scheduled entry point is
+`nova_charles.py --forecasts`, which calls run() here. This CLI is a thin wrapper onto it.
+
+CLI:      --run [--dry-run]   --show   (-> nova_charles.py --forecasts)   --selftest
 Table:    prediction_axioms (one row per resolved prediction; a side table, predictions is not altered)
 Config:   service_config ('seldon_axioms','latest') -> per-bucket Brier for CARDINAL / the PDB
-Schedule: weekly, Monday 05:40 (before CARDINAL's 05:50 run).
+Schedule: weekly, Monday 05:40 (before CARDINAL's 05:50 run), as nova_charles.py --forecasts.
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -47,6 +50,7 @@ from nova_charles import _q, own_actions  # noqa: E402
 from nova_predictions import extract_check  # noqa: E402
 
 SERVICE = "seldon_axioms"
+MERGED_ON = "2026-10-09"   # organ audit M8a: survivor is nova_charles.py --forecasts
 HIT = {"correct": 1.0, "partial": 0.5, "incorrect": 0.0}
 # First match wins. ponytail: keyword rules; a field on the prediction itself would be exact.
 N_CLASSES = (("little_mister", r"\b(jordan|little mister|he|his|him)\b"),
@@ -232,11 +236,10 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
-    if a.run:
-        run(dry=a.dry_run)
-        return 0
-    if a.show:
-        return show()
+    if a.run or a.show:
+        import nova_charles
+        log(f"merged into nova_charles.py --forecasts on {MERGED_ON}; delegating")
+        return nova_charles.main(["--forecasts"] + (["--dry-run"] if a.dry_run else []) + (["--show"] if a.show else []))
     ap.print_help()
     return 0
 

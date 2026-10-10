@@ -1,291 +1,38 @@
 #!/usr/bin/env python3
-
 """
-Nova Self-Audit — cross-checks claimed capabilities against reality.
+Nova Self-Audit — MERGED into nova_reconciler.py (`--self-audit`) on 2026-10-09 (organ audit M14).
 
-Verifies:
-1. Scripts referenced in scheduler.yaml actually exist on disk
-2. Scripts on disk that aren't in the scheduler (undocumented capabilities)
-3. Expected services/ports are actually listening
-4. Processes that should be running (scheduler, gateway, subagents, etc.)
-
-Posts discrepancies to Slack. Designed to be run on-demand or weekly via cron.
+Thin wrapper, kept runnable so the existing scheduler-core entry keeps working until it is moved:
+  nova_self_audit.py   ==   nova_reconciler.py --self-audit
+Same checks and outputs as before (scheduler scripts exist on disk, expected ports listen,
+expected processes run; stdout report, ~/.openclaw/logs/self-audit.log, self_audit_state.json,
+notify bus with dedup_key "self-audit" only when the issue set changes). Exits 0 either way.
 
 Written by Jordan Koch.
 """
 
-import json
-import logging
-import os
-import re
-import socket
-import subprocess
 import sys
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-import nova_config
-from nova_notify import notify
+import nova_reconciler as R  # noqa: E402
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[
-        logging.FileHandler(os.path.expanduser("~/.openclaw/logs/self-audit.log")),
-        logging.StreamHandler(),
-    ],
-)
+MERGED = "2026-10-09"
 
-SCRIPTS_DIR = Path.home() / ".openclaw/scripts"
-SCHEDULER_YAML = Path.home() / ".openclaw/config/scheduler.yaml"
-
-EXPECTED_SERVICES = {
-    18792: {"name": "Nova Gateway v2", "path": "/health", "host": "192.168.1.2"},
-    18790: {"name": "Memory Server", "path": "/health", "host": "192.168.1.6"},
-    11434: {"name": "Ollama", "path": "/", "host": "192.168.1.6"},
-    37400: {"name": "NovaControl", "path": "/api/status", "host": "127.0.0.1"},
-}
-
-EXPECTED_PROCESSES = [
-    {"name": "Scheduler", "match": "nova_scheduler.py"},
-    {"name": "Gateway v2", "match": "nova_gateway_v2.py"},
-    {"name": "Memory Server", "match": "memory_server.py"},
-    # NOTE: cloudflared moved OFF .6 to HA connectors on .2 + .10 (2026-06-21).
-    # It is watched by nova_prober's cloudflared_tunnel probe (connector health),
-    # not by a local-process check here.
-]
-
-
-AUDIT_STATE_FILE = Path.home() / ".openclaw/workspace/state/self_audit_state.json"
-
-
-def _load_last_audit_state():
-    try:
-        if AUDIT_STATE_FILE.exists():
-            with open(AUDIT_STATE_FILE) as f:
-                return json.load(f)
-    except Exception:
-        pass
-    return {}
-
-
-def _save_audit_state(state):
-    AUDIT_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
-    with open(AUDIT_STATE_FILE, "w") as f:
-        json.dump(state, f)
-
-
-def _scripts_on_disk():
-    scripts = set()
-    for ext in ("*.py", "*.sh"):
-        for p in SCRIPTS_DIR.glob(ext):
-            scripts.add(p.name)
-    return scripts
-
-
-def _scripts_in_file(path):
-    if not path.exists():
-        return set()
-    text = path.read_text()
-    pattern = re.compile(r'(?:nova_[a-z0-9_]+\.(?:py|sh)|dream_[a-z0-9_]+\.(?:py|sh))')
-    return set(pattern.findall(text))
-
-
-def _scripts_in_scheduler():
-    if not SCHEDULER_YAML.exists():
-        return {}
-    text = SCHEDULER_YAML.read_text()
-    refs = {}
-    disabled_tasks = set()
-    current_task = None
-    for line in text.split("\n"):
-        stripped = line.strip()
-        if stripped.endswith(":") and not stripped.startswith("#") and not stripped.startswith("-"):
-            candidate = stripped.rstrip(":")
-            if candidate not in ("tasks", "scheduler", "slack"):
-                current_task = candidate
-        if "script:" in stripped and current_task:
-            script_name = stripped.split("script:")[1].strip()
-            refs[current_task] = script_name
-        if "enabled:" in stripped and "false" in stripped.lower() and current_task:
-            disabled_tasks.add(current_task)
-    # Remove disabled tasks
-    for t in disabled_tasks:
-        refs.pop(t, None)
-    return refs
-
-
-def _port_listening(port, host="127.0.0.1"):
-    try:
-        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-            s.settimeout(2)
-            s.connect((host, port))
-            return True
-    except (ConnectionRefusedError, TimeoutError, OSError):
-        return False
-
-
-def _process_running(match_str):
-    try:
-        result = subprocess.run(
-            ["pgrep", "-f", match_str],
-            capture_output=True, text=True, timeout=5,
-        )
-        return result.returncode == 0
-    except Exception:
-        return False
-
-
-def audit_scripts():
-    issues = []
-    info = []
-
-    on_disk = _scripts_on_disk()
-    scheduler_refs = _scripts_in_scheduler()
-    scheduler_scripts = set(scheduler_refs.values())
-
-    # Scripts in scheduler but missing from disk
-    for task, script in sorted(scheduler_refs.items()):
-        if script not in on_disk:
-            issues.append(f"Scheduler task `{task}` references `{script}` but it doesn't exist")
-
-    # Scripts on disk but not in scheduler (undocumented)
-    nova_scripts = {s for s in on_disk if s.startswith("nova_") or s.startswith("dream_")}
-    undocumented = nova_scripts - scheduler_scripts
-    skip_prefixes = ("test_", "debug_", "nova_agent_")
-    undocumented = {s for s in undocumented if not any(s.startswith(p) for p in skip_prefixes)}
-    if undocumented:
-        info.append(f"{len(undocumented)} scripts on disk not in scheduler:")
-        for s in sorted(undocumented):
-            info.append(f"  - {s}")
-
-    return issues, info, len(on_disk), 0, len(scheduler_refs)
-
-
-def audit_services():
-    issues = []
-    ok = []
-
-    for port, svc in sorted(EXPECTED_SERVICES.items()):
-        name = svc["name"]
-        host = svc.get("host", "127.0.0.1")
-        if _port_listening(port, host):
-            ok.append(f"{name} (:{port})")
-        else:
-            issues.append(f"{name} (:{port}) is not listening")
-
-    return issues, ok
-
-
-def audit_processes():
-    issues = []
-    ok = []
-
-    for proc in EXPECTED_PROCESSES:
-        if _process_running(proc["match"]):
-            ok.append(proc["name"])
-        else:
-            issues.append(f"{proc['name']} (`{proc['match']}`) is not running")
-
-    return issues, ok
-
-
-def audit_docs():
-    return []
+# Importable names kept for anything that used them.
+EXPECTED_SERVICES = R.EXPECTED_SERVICES
+EXPECTED_PROCESSES = R.EXPECTED_PROCESSES
+audit_scripts, audit_services, audit_processes, audit_docs = (
+    R.audit_scripts, R.audit_services, R.audit_processes, R.audit_docs)
+slack_post = R.self_audit_post
 
 
 def run_audit():
-    logging.info("Starting self-audit...")
-    all_issues = []
-    all_info = []
-
-    # 1. Script audit
-    script_issues, script_info, disk_count, mem_count, sched_count = audit_scripts()
-    all_issues.extend(script_issues)
-    all_info.extend(script_info)
-
-    # 2. Service audit
-    svc_issues, svc_ok = audit_services()
-    all_issues.extend(svc_issues)
-
-    # 3. Process audit
-    proc_issues, proc_ok = audit_processes()
-    all_issues.extend(proc_issues)
-
-    # 4. Documentation audit
-    doc_issues = audit_docs()
-    all_issues.extend(doc_issues)
-
-    # Build report
-    lines = ["*Nova Self-Audit Report*"]
-    lines.append("")
-
-    # Summary
-    lines.append(f"*Scripts:* {disk_count} on disk, {sched_count} in scheduler")
-    lines.append(f"*Services:* {len(svc_ok)}/{len(EXPECTED_SERVICES)} up — {', '.join(svc_ok) if svc_ok else 'none'}")
-    lines.append(f"*Processes:* {len(proc_ok)}/{len(EXPECTED_PROCESSES)} running — {', '.join(proc_ok) if proc_ok else 'none'}")
-
-    if all_issues:
-        lines.append("")
-        lines.append(f"*Issues ({len(all_issues)}):*")
-        for issue in all_issues:
-            lines.append(f"  !! {issue}")
-
-    if all_info:
-        lines.append("")
-        lines.append("*Info:*")
-        for info_line in all_info:
-            lines.append(f"  {info_line}")
-
-    if not all_issues and not all_info:
-        lines.append("")
-        lines.append("All clear — no discrepancies found.")
-
-    report = "\n".join(lines)
-    print(report)
-
-    # Only post to Slack if issues changed since last run (prevent spam)
-    issue_key = json.dumps(sorted(all_issues))
-    last_state = _load_last_audit_state()
-    changed = issue_key != last_state.get("last_issue_key", "")
-
-    if all_issues and changed:
-        slack_post(report)
-        logging.info(f"Self-audit complete: {len(all_issues)} issue(s) posted to Slack (new)")
-    elif all_issues:
-        logging.info(f"Self-audit complete: {len(all_issues)} issue(s), unchanged — skipping Slack")
-    else:
-        if last_state.get("last_issue_key", "") != "[]":
-            slack_post(report)
-            logging.info("Self-audit complete: all clear (issues resolved) — posted to Slack")
-        else:
-            logging.info("Self-audit complete: no issues found")
-
-    _save_audit_state({"last_issue_key": issue_key, "last_run": str(datetime.now())})
-
-    return len(all_issues)
-
-
-def slack_post(text):
-    # Migrated to the central notification bus. The audit report's first line is
-    # the title; remaining lines become the body. "!!" lines indicate services/
-    # processes down (an outage-class condition) -> critical; otherwise warning
-    # (all-clear / informational discrepancies). Repeats on a schedule, so a
-    # stable dedup_key collapses unchanged repeats centrally.
-    lines = text.split("\n")
-    title = lines[0].lstrip("*").rstrip("*").strip() or "Nova Self-Audit Report"
-    body = "\n".join(lines[1:]).strip() or None
-    level = "critical" if " !! " in text or text.strip().endswith("!!") or "!!" in text else "warning"
-    notify(title, body=body, level=level, category="health",
-           dedup_key="self-audit")
+    R._audit_log().info(f"nova_self_audit merged into nova_reconciler --self-audit on {MERGED}")
+    return R.run_audit()
 
 
 if __name__ == "__main__":
-    # Finding audit issues is a SUCCESSFUL run, not a task failure. Exiting 1 on
-    # "issues found" made the scheduler flag self_audit as "9 consecutive failures"
-    # every time it did its job (e.g. noticing plex/searxng down). Issues are already
-    # reported to Slack/log above; exit 0 on normal completion. A real crash still
-    # exits nonzero via an uncaught exception.
+    # Finding audit issues is a SUCCESSFUL run, not a task failure; a crash still exits nonzero.
     run_audit()
     sys.exit(0)

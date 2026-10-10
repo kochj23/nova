@@ -208,5 +208,17 @@ class TestFrame(unittest.TestCase):
         self.assertIn('if __name__ == "__main__":', SRC)
 
 
+
+class TestMergedWrapper(unittest.TestCase):
+    """2026-10-09 (organ audit M13): --case is a thin wrapper onto nova_buick8_log --case."""
+
+    def test_case_routes_to_buick8(self):
+        import nova_buick8_log as B8
+        with mock.patch.object(B8, "run_case", return_value=0) as rc, mock.patch("builtins.print"):
+            self.assertEqual(M.main(["--case", "7", "--dry-run"]), 0)
+        rc.assert_called_once_with(7, True)
+        self.assertIn("merged into nova_buick8_log.py on 2026-10-09", SRC)
+
+
 if __name__ == "__main__":
     unittest.main()

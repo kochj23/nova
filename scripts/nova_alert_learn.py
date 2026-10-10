@@ -26,6 +26,16 @@ subcommands, each scheduled separately on nova-core:
                       (suppressed/downgraded that were really real — must stay ~0)
                       and the FALSE-PAGE rate (paged that were noise).
 
+  recurrence  (~6h)   Recurring incidents (moved here from nova_pattern_sense.py in
+                      the M7 merge, 2026-10-09). A public.incidents title (first 80
+                      chars) opening >= RECUR_MIN times in RECUR_WINDOW_DAYS days is
+                      one unresolved thing, not N fresh incidents: remembered once
+                      as source='pattern_sense' (same wording and 7-day de-dupe row
+                      service_config nova_pattern_sense/high_water as before). Not
+                      the same check as nova_incident_lifecycle's recurrence_key
+                      (telemetry.incidents, host:category, 7 days, notifies) or
+                      correlate (minute-scale storms), so it is kept, not dropped.
+
   baselines   (daily) Bootstraps learned-normal baselines the triage brain can
                       recall. Auto-detects signatures that fire constantly and
                       always self-resolve, and re-tags known-normal facts, then
@@ -43,7 +53,7 @@ import re
 import sys
 import urllib.parse
 import urllib.request
-from datetime import datetime
+from datetime import datetime, timezone
 
 import psycopg2
 from psycopg2.extras import RealDictCursor
@@ -60,6 +70,13 @@ OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # ba
 # ── correlate tunables ──────────────────────────────────────────────────────
 STORM_WINDOW_MIN = 20      # look-back window for a storm
 STORM_MIN = 8              # >= this many orphan alerts on one signature = a storm
+# ── recurrence tunables (from nova_pattern_sense.py, unchanged) ──────────────
+RECUR_MIN = 3              # an incident title recurring at least this often in the window is a pattern
+RECUR_WINDOW_DAYS = 30
+RECUR_RESURFACE_DAYS = 7   # don't re-surface the same pattern signature within this many days
+PATTERN_SOURCE = "pattern_sense"         # memory source, as before the merge
+PATTERN_SERVICE = "nova_pattern_sense"   # shared de-dupe row with nova_soft_certainty --refresh
+PATTERN_KEY = "high_water"
 # ── baselines tunables ──────────────────────────────────────────────────────
 BASE_DAYS = 30             # look-back for auto-detected normals
 BASE_MIN_OCC = 20          # must fire at least this often
@@ -313,6 +330,98 @@ def cmd_correlate(conn, args):
         _post_slack("\n".join(lines))
 
     _log(f"correlate done: {len(storms)} storm(s) rolled up")
+    return 0
+
+
+# ════════════════════════════════════════════════════════════════════════════
+# 1b. RECURRENCE — the same incident title again and again (from Pattern Sense)
+# ════════════════════════════════════════════════════════════════════════════
+def recurrence_patterns(rows):
+    """rows: list of (title, count). Return titles recurring at/above RECUR_MIN, most first."""
+    return [{"title": t, "count": c} for t, c in rows if c >= RECUR_MIN]
+
+
+def recur_insight(p):
+    return (f"Pattern I can finally see: '{p['title']}' has recurred {p['count']} times in the last "
+            f"{RECUR_WINDOW_DAYS} days. This isn't a fresh incident each time — it's one unresolved "
+            f"thing wearing a new timestamp. All of this has happened before, and will happen again "
+            f"until the root cause is actually fixed, not just acked.")
+
+
+def _pattern_sig(kind, key):
+    return hashlib.sha1(f"{kind}:{key}".encode()).hexdigest()[:16]
+
+
+def _pattern_fresh(seen, sig, today):
+    prev = seen.get(sig)
+    if not prev:
+        return True
+    try:
+        return (today - datetime.fromisoformat(prev).date()).days >= RECUR_RESURFACE_DAYS
+    except Exception:
+        return True
+
+
+def _pattern_stamp():
+    try:
+        import nova_lineage
+        return nova_lineage.lineage_stamp(capture_point="at write")
+    except Exception:
+        return {}
+
+
+def _remember_pattern(text, metadata):
+    """POST one pattern memory; raises on failure (the caller leaves it unmarked)."""
+    req = urllib.request.Request(
+        MEMSRV + "/remember", method="POST", headers={"Content-Type": "application/json"},
+        data=json.dumps({"text": text, "source": PATTERN_SOURCE, "metadata": metadata}).encode())
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.load(r)
+
+
+def cmd_recurrence(conn, args):
+    cur = conn.cursor()
+    cur.execute("SELECT left(title,80) AS title, count(*) AS n FROM incidents "
+                "WHERE started_at > now() - make_interval(days => %s) "
+                "GROUP BY left(title,80) ORDER BY count(*) DESC", (RECUR_WINDOW_DAYS,))
+    pats = recurrence_patterns([(r["title"], r["n"]) for r in cur.fetchall()])
+    cur.execute("SELECT value FROM service_config WHERE service=%s AND key=%s",
+                (PATTERN_SERVICE, PATTERN_KEY))
+    row = cur.fetchone()
+    v = (row or {}).get("value") or {}
+    seen = dict((v if isinstance(v, dict) else json.loads(v)).get("seen", {}))
+    today = datetime.now(timezone.utc).date()
+    stamp = _pattern_stamp()
+    marked, surfaced = {}, 0
+    for p in pats:
+        sig = _pattern_sig("recur", p["title"])
+        if not _pattern_fresh(seen, sig, today):
+            continue
+        text = recur_insight(p)
+        meta = {"organ": PATTERN_SERVICE, "kind": "recurrence", "title": p["title"],
+                "count": p["count"], **({"lineage": stamp} if stamp else {})}
+        surfaced += 1
+        if args.dry_run:
+            print("•", text)
+            continue
+        try:
+            _remember_pattern(text, meta)
+            marked[sig] = today.isoformat()
+        except Exception as e:  # noqa: BLE001
+            _log(f"recurrence memory failed for '{p['title']}' ({e})")
+    if marked:
+        # merge, never replace: nova_soft_certainty --refresh writes the same row
+        cur.execute(
+            """INSERT INTO service_config (service, key, value, updated_at, updated_by)
+               VALUES (%s, %s, %s::jsonb, now(), %s)
+               ON CONFLICT (service, key)
+               DO UPDATE SET value = jsonb_build_object('seen',
+                       coalesce(service_config.value->'seen', '{}'::jsonb) || (EXCLUDED.value->'seen')),
+                   updated_at = now(), updated_by = EXCLUDED.updated_by""",
+            (PATTERN_SERVICE, PATTERN_KEY, json.dumps({"seen": marked}), PATTERN_SERVICE))
+    conn.commit()
+    _log(f"recurrence: {len(pats)} recurring-incident pattern(s), {surfaced} fresh"
+         + (" (dry-run)" if args.dry_run else ""))
     return 0
 
 
@@ -597,6 +706,8 @@ def main():
     f.add_argument("--min-age-hours", type=float, default=2.0)
     f.add_argument("--window-days", type=int, default=14)
 
+    sub.add_parser("recurrence", help="remember incident titles that keep recurring (from Pattern Sense)")
+
     b = sub.add_parser("baselines", help="bootstrap learned-normal baselines")
     b.add_argument("--days", type=int, default=BASE_DAYS)
     b.add_argument("--min-occ", type=int, default=BASE_MIN_OCC)
@@ -612,6 +723,8 @@ def main():
             return cmd_feedback(conn, args)
         if args.cmd == "baselines":
             return cmd_baselines(conn, args)
+        if args.cmd == "recurrence":
+            return cmd_recurrence(conn, args)
     finally:
         conn.close()
 

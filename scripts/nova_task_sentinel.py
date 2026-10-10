@@ -46,6 +46,18 @@ Pages at level:
 Run cadence: every 15m (task failures are not a second-by-second concern). One
 instance, on .6. Never raises out of run_once — a watchdog must not crash.
 
+--daily (organ-audit merge M2, 2026-10-09; was nova_chronic_failures.py, wish #63): any task
+with more than FAIL_PER_DAY non-success runs on each of the last DAYS full days becomes ONE
+open claude_queue item "Chronic failure: <task> — fix or retire", with the per-day counts and
+the last error tail. Same thresholds, same query, same queue session (the newest
+claude_sessions row, else 'chronic-failures'), registered in claude_sessions before the
+insert. Run once a day; it connects with nova_chronic_failures.DSN (pg-primary), so it runs
+from either host. nova_output_drift's identical-failure ("stuck loop") probe for scheduler
+tasks was retired the same day: failing tasks are reported here only.
+
+    nova_task_sentinel.py                     # 15-min sweep
+    nova_task_sentinel.py --daily [--dry-run] # chronic: fix-or-retire queue items
+
 Written by Jordan Koch.
 """
 from __future__ import annotations
@@ -365,7 +377,64 @@ def run_once(conn) -> list:
     return degraded
 
 
-def main() -> int:
+def run_daily(dry_run: bool = False) -> int:
+    """Chronic failures -> one 'fix or retire' claude_queue item per task (thresholds, SQL and
+    wording from nova_chronic_failures). Returns the number of new queue items."""
+    from datetime import date
+    import psycopg2
+    import nova_chronic_failures as cf
+
+    def log(m):
+        print(f"[task-sentinel --daily] {m}", flush=True)
+
+    conn = psycopg2.connect(cf.DSN, connect_timeout=8)
+    conn.autocommit = True
+    try:
+        cur = conn.cursor()
+        cur.execute("""SELECT task_id, (to_timestamp(ended_at/1000.0) AT TIME ZONE 'America/Los_Angeles')::date, count(*)
+                       FROM scheduler_runs WHERE status <> 'success'
+                       AND ended_at > extract(epoch from now() - interval '%s days') * 1000 GROUP BY 1, 2""",
+                    (cf.DAYS + 1,))
+        found = cf.chronic(cur.fetchall(), date.today())
+        made = 0
+        for task, counts in sorted(found.items()):
+            cur.execute("SELECT 1 FROM claude_queue WHERE description LIKE %s AND status IN %s LIMIT 1",
+                        (cf.PREFIX + task + " %", cf.OPEN))
+            if cur.fetchone():
+                log(f"{task}: already queued"); continue
+            cur.execute("SELECT status, left(coalesce(error_tail, stdout_tail, ''), 400) FROM scheduler_runs "
+                        "WHERE task_id=%s AND status <> 'success' ORDER BY ended_at DESC LIMIT 1", (task,))
+            st, tail = cur.fetchone() or ("?", "")
+            avg = sum(counts.values()) / len(counts)
+            desc = f"{cf.PREFIX}{task} — {avg:.0f} non-success runs/day for {cf.DAYS} days: fix or retire (wish #63)"
+            ctx = ("per-day: " + ", ".join(f"{d}={n}" for d, n in sorted(counts.items())) +
+                   f"\nlast status: {st}\nlast error tail: {tail}\n"
+                   "Decide: fix the cause, or retire the task (disable in scheduler yaml with a one-line reason). "
+                   "Do not just suppress the alert.")
+            if dry_run:
+                log(f"would queue: {desc}"); continue
+            cur.execute("SELECT session_id FROM claude_sessions ORDER BY started_at DESC LIMIT 1")
+            sid = (cur.fetchone() or ["chronic-failures"])[0]
+            # claude_queue.session_id has an FK to claude_sessions: register before filing
+            cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES (%s, 'active') "
+                        "ON CONFLICT (session_id) DO NOTHING", (sid,))
+            cur.execute("INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context) "
+                        "VALUES (%s, now(), now(), 'queued', 4, %s, %s)", (sid, desc, ctx))
+            made += 1; log(f"queued: {desc}")
+        log(f"{len(found)} chronic task(s), {made} new queue item(s)")
+        return made
+    finally:
+        conn.close()
+
+
+def main(argv=None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return 0
+    if "--daily" in argv:
+        run_daily(dry_run="--dry-run" in argv)
+        return 0
     import psycopg2
     conn = None
     try:

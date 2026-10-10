@@ -214,5 +214,20 @@ class TestFrame(unittest.TestCase):
         self.assertIn('if __name__ == "__main__":', SRC)
 
 
+
+class TestMergedWrapper(unittest.TestCase):
+    """2026-10-09 (organ audit M13): --run/--snapshot are thin wrappers onto nova_buick8_log."""
+
+    def test_run_and_snapshot_route_to_buick8(self):
+        import nova_buick8_log as B8
+        with mock.patch.object(B8, "run_expiry", return_value=0) as ex, \
+                mock.patch.object(B8, "run_snapshot", return_value=0) as sn, mock.patch("builtins.print"):
+            self.assertEqual(R.main(["--run", "--dry-run", "--horizon", "24"]), 0)
+            self.assertEqual(R.main(["--snapshot", "7"]), 0)
+        ex.assert_called_once_with(True, 24.0)
+        sn.assert_called_once_with(7, False)
+        self.assertIn("merged into nova_buick8_log.py on 2026-10-09", SRC)
+
+
 if __name__ == "__main__":
     unittest.main()

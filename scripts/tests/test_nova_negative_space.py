@@ -31,9 +31,9 @@ ns = _load()
 
 class _Cur:
     """Answers the detector's queries in source order: arrivals, owned BLE, wifi, stale devices,
-    humans, quiet sensors, observers."""
-    def __init__(self, arrivals=0, owned=1, wifi=1, stale=(), humans=5, quiet=(), observers=()):
-        self.answers = [[(arrivals,)], [(owned,)], [(wifi,)], list(stale), [(humans,)], list(quiet), list(observers)]
+    humans, observers. (The quiet-sensor query moved to nova_freshness_monitor on 2026-10-09.)"""
+    def __init__(self, arrivals=0, owned=1, wifi=1, stale=(), humans=5, observers=()):
+        self.answers = [[(arrivals,)], [(owned,)], [(wifi,)], list(stale), [(humans,)], list(observers)]
         self.sql, self.params = [], []
 
     def execute(self, sql, args=()):
@@ -67,14 +67,15 @@ class TestSecurity(unittest.TestCase):
 
 
 class TestPerformance(unittest.TestCase):
-    def test_many_quiet_sensors_and_observers(self):
-        old = _dt.datetime.now() - _dt.timedelta(days=2)
-        quiet = [(f"m{i}", old, _dt.timedelta(hours=9)) for i in range(5_000)]
+    def test_many_quiet_observers_and_dedup_keys(self):
         observers = [("busy", 10_000)] + [(f"o{i}", 1) for i in range(5_000)]
         t0 = time.perf_counter()
-        _, notify, _, _, _ = _run(_Cur(quiet=quiet, observers=observers))
+        _, notify, _, _, _ = _run(_Cur(observers=observers))
+        self.assertEqual(notify.call_count, 5_000)
+        keys = [ns.negspace_dedup_key("sensor_quiet", f"Presence method 'm{i}' has reported nothing for 9:00:0{i % 10}")
+                for i in range(10_000)]
         self.assertLess(time.perf_counter() - t0, 5.0)
-        self.assertEqual(notify.call_count, 10_000)
+        self.assertTrue(all(len(k) <= len("negspace:sensor_quiet:") + 80 for k in keys))
 
 
 class TestRetry(unittest.TestCase):
@@ -123,20 +124,43 @@ class TestIntegration(unittest.TestCase):
             self.assertIn(t, joined)
         self.assertIn("from nova_notify import notify", SRC)
 
+    def test_sensor_quiet_moved_to_freshness_monitor_which_reuses_alert_findings(self):
+        # merge M1 (2026-10-09): one silence detector. The check is gone from main() here ...
+        main_src = SRC.split("def main(alert):")[1]
+        self.assertNotIn("PARTITION BY method", main_src)
+        self.assertNotIn("sensor_quiet", main_src)
+        # ... and the freshness monitor raises it through THIS module's alert path
+        fsrc = (SCRIPTS / "nova_freshness_monitor.py").read_text()
+        self.assertIn("import nova_negative_space as ns", fsrc)
+        self.assertIn("ns.alert_findings(due, notify=notify_fn)", fsrc)
+
 
 class TestFunctional(unittest.TestCase):
     def test_findings_alert_with_stable_dedup_keys(self):
         last = _dt.datetime.now() - _dt.timedelta(hours=9)
-        cur = _Cur(stale=[("Alex", last)], humans=0, quiet=[("mmwave", last, _dt.timedelta(hours=9, seconds=5))])
+        cur = _Cur(stale=[("Alex", last)], humans=0)
         rc, notify, out, conn, _ = _run(cur)
         self.assertEqual(rc, 0)
         kinds = [c[1]["dedup_key"].split(":")[1] for c in notify.call_args_list]
-        self.assertEqual(kinds, ["device_no_human", "sensor_quiet"])
+        self.assertEqual(kinds, ["device_no_human"])
         self.assertTrue(all(c[1]["meta"] == {"dedup_window_s": 28800} for c in notify.call_args_list))
-        key1 = notify.call_args_list[1][1]["dedup_key"]
-        cur2 = _Cur(stale=[("Alex", last)], humans=0, quiet=[("mmwave", last, _dt.timedelta(hours=13, minutes=7))])
-        self.assertEqual(_run(cur2)[1].call_args_list[1][1]["dedup_key"], key1)   # ticking gap -> same key
         conn.close.assert_called_once()
+
+    def test_alert_findings_is_the_shared_bus_path(self):
+        # what nova_freshness_monitor calls for sensor_quiet: same source/category/key/window
+        sent = []
+        msg = lambda gap: f"Presence method 'mmwave' has reported nothing for {gap} (last: 2026-10-09 01:00)."
+        with mock.patch("sys.stdout", new_callable=io.StringIO):
+            n = ns.alert_findings([("sensor_quiet", msg("9:00:05"))], notify=lambda *a, **k: sent.append((a, k)))
+            ns.alert_findings([("sensor_quiet", msg("13:07:00"))], notify=lambda *a, **k: sent.append((a, k)))
+        self.assertEqual(n, 1)
+        (a1, k1), (_, k2) = sent
+        self.assertTrue(a1[0].startswith("Negative-space: Presence method 'mmwave'"))
+        self.assertEqual((k1["source"], k1["category"], k1["level"]), ("nova_negative_space.py", "security", "warning"))
+        self.assertEqual(k1["meta"], {"dedup_window_s": 28800})
+        self.assertEqual(k1["dedup_key"], k2["dedup_key"])          # ticking gap -> same key
+        self.assertTrue(k1["dedup_key"].startswith("negspace:sensor_quiet:"))
+        self.assertEqual(ns.alert_findings([]), 0)
 
     def test_quiet_world_and_no_alert_flag(self):
         rc, notify, out, _, _ = _run(_Cur(), alert=True)
@@ -167,9 +191,10 @@ if __name__ == "__main__":
 
 def test_sensor_quiet_judges_each_method_against_its_own_rhythm():
     """2026-10-06: the outdoor motion sensor (64 events/week, multi-day gaps) was paged as broken
-    and Nova proposed disabling it. Quiet must mean 'gap > max(6h, 1.5x its longest recent gap)'."""
+    and Nova proposed disabling it. Quiet must mean 'gap > max(6h, 1.5x its longest recent gap)'.
+    The query lives in nova_freshness_monitor since 2026-10-09 (merge M1)."""
     import pathlib, re
-    src = pathlib.Path(__file__).resolve().parent.parent.joinpath("nova_negative_space.py").read_text()
-    block = src.split("── 3. A sensor went quiet")[1].split("── 4.")[0]
+    src = pathlib.Path(__file__).resolve().parent.parent.joinpath("nova_freshness_monitor.py").read_text()
+    block = src.split("PRESENCE_QUIET_SQL = ")[1].split('"""', 2)[1]
     assert "lag(ts) OVER (PARTITION BY method ORDER BY ts)" in block
     assert re.search(r"greatest\(interval '6 hours', longest \* 1\.5\)", block)

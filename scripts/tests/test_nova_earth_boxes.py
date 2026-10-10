@@ -194,6 +194,22 @@ class TestIntegration(unittest.TestCase):
     def test_seed_is_the_four_retired_subagents(self):
         self.assertEqual(sorted(n for n, *_ in E.SEED), ["analyst", "coder", "librarian", "lookout"])
 
+    def test_merged_into_yellow_eye(self):
+        import nova_yellow_eye as Y
+        self.assertIn("merged into nova_yellow_eye on 2026-10-09", SRC)
+        self.assertIn("import nova_yellow_eye", SRC.split("def main(")[1])   # lazy: no import cycle
+        self.assertIn("--burials", Y.__doc__)
+
+    def test_local_sources_use_the_shared_readers(self):
+        with tempfile.TemporaryDirectory() as d:
+            (Path(d) / "com.nova.agent-coder.plist").write_text("on disk")
+            seen = []
+            got = E.local_sources((Path(d),), read=lambda p: seen.append(str(p)) or "cached",
+                                  crontab=lambda: "cron text")
+        self.assertEqual(got[0][2], "com.nova.agent-coder.plist\ncached")
+        self.assertIn(("studio", "crontab", "cron text"), got)
+        self.assertIn(str(E.SCHEDULER_YAML), seen)
+
     def test_findings_feed_claude_queue_with_dedup(self):
         f = E.findings([{"name": "coder", "kind": "subagent", "host": "nova-core", "place": "crontab",
                          "line": "x"}], {("coder", "2026-10-08"): 3})
@@ -232,6 +248,26 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(len(out["boxes"]), 1)
         self.assertEqual(out["filed"], [])
         self.assertFalse(any(k in s for s, _ in cur.sql for k in ("CREATE", "INSERT", "UPDATE", "DELETE")))
+
+    def test_run_uses_given_sources(self):
+        cur = FakeCur({"to_regclass": [("earth_box_burials",)],
+                       "FROM earth_box_burials": [(b["name"], "studio", "subagent", T0, b["epoch"]) for b in BURIED]})
+        with mock.patch.object(E.W, "connect", return_value=fake_conn(cur)), \
+                mock.patch.object(E, "local_sources") as ls, mock.patch.object(E, "remote_sources", return_value=[]), \
+                mock.patch.object(E, "restarts", return_value={}), mock.patch("builtins.print"):
+            out = E.run(dry=True, sources=[("studio", "scan", "nova_agent_lookout.py")])
+        ls.assert_not_called()
+        self.assertEqual([b["place"] for b in out["boxes"]], ["scan"])
+
+    def test_wrapper_forwards_to_yellow_eye(self):
+        import nova_yellow_eye as Y
+        with mock.patch.object(Y, "main", return_value=0) as ym, mock.patch("builtins.print") as pr:
+            self.assertEqual(E.main(["--run", "--dry-run"]), 0)
+            self.assertEqual(E.main(["--bury", "sentinel", "--by", "claude"]), 0)
+        self.assertEqual(ym.call_args_list[0].args[0], ["--burials", "--dry-run"])
+        self.assertEqual(ym.call_args_list[1].args[0],
+                         ["--bury", "sentinel", "--kind", "subagent", "--host", "studio", "--by", "claude"])
+        self.assertIn("merged into nova_yellow_eye on 2026-10-09", str(pr.call_args_list[0]))
 
     def test_nova_core_unreachable_still_counts_local(self):
         cur, out = self._run(False, remote=None)

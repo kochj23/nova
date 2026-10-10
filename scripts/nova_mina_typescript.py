@@ -24,7 +24,9 @@ CLI:    --case ID [--dry-run]   (dry run prints the typescript; writes nothing) 
 Config: service_config mina_typescript/out_dir (default /Volumes/nas/nova/typescripts;
         must be on /Volumes/Data or the NAS, never the boot disk)
 Tables: none (reads only; the file is the output)
-Schedule: on demand, and via the Rama Window's --snapshot.
+Schedule: on demand (`nova_buick8_log.py --case ID`; merged into the Buick 8 Logbook on
+2026-10-09, organ audit M13 — `nova_mina_typescript.py --case ID` is a thin wrapper), and via
+the Rama Window's snapshot step.
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -217,8 +219,10 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
-    if a.case:
-        return 0 if run(a.case, dry=a.dry_run) else 1
+    if a.case:   # merged into nova_buick8_log.py on 2026-10-09 (organ audit M13)
+        import nova_buick8_log as B8
+        log("merged into nova_buick8_log.py on 2026-10-09 — running its --case mode")
+        return B8.run_case(a.case, a.dry_run)
     ap.print_help()
     return 0
 

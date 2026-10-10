@@ -10,6 +10,13 @@ what's working, what it FIXED, and what still needs a human.
 Every fix passes a hard redline guard (no purchases, deletes, DB-primary surgery,
 reboots, network/DNS destruction, exfiltration). Anything it can't safely fix is
 escalated, not silently swallowed. --dry-run reports without fixing.
+
+MERGED 2026-10-09 (organ audit M4): this now runs as `nova_selfcheck.py --deep`. main() is a thin
+wrapper that delegates there. The check functions, run_checks(), format_report() and write_log()
+stay here and are what selfcheck --deep calls; the redline guard / dry-run gate is now
+nova_selfcheck.fix_gate (safe_fix delegates to it). deep_healthcheck_log is still written (nova_affect
+reads it); each check also lands in selfcheck_runs as deep-*. Report: #nova-alerts when anything
+was fixed or broken, else #nova-digest (was #nova-warning, mirrored to Discord).
 """
 import argparse
 import json
@@ -23,15 +30,15 @@ from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
+import nova_selfcheck as _sc  # noqa: E402  — the one fix gate (redline + --dry-run)
+
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 GATEWAY = "http://127.0.0.1:18792"
 PLEX_HOST = "192.168.1.2"
 OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",   # batch pool: idle 24-thread Ryzens first (2026-10-01)
                 "http://192.168.1.86:11434", "http://192.168.1.77:11434",
                 "http://192.168.1.7:11434", "http://192.168.1.6:11434"]      # .251 was the Mac mini's stale DHCP lease; it is .77
-DRY = False
-_REDLINE = re.compile(r"\b(buy|purchase|pay)\b|\b(rm|delete|drop|truncate|wipe)\b|reboot|shutdown|"
-                      r"\b(promote|failover)\b.*primary|exfiltrat|self.?replicat", re.I)
+_REDLINE = _sc._REDLINE
 
 
 def log(m): print(f"[deep-hc {datetime.now().strftime('%H:%M:%S')}] {m}", flush=True)
@@ -67,15 +74,8 @@ def result(name, ok, detail, fixed=False, fix_detail="", needs_human=False):
 
 
 def safe_fix(desc, fn):
-    """Run a fix only if it passes the redline guard and we're not in dry-run."""
-    if _REDLINE.search(desc):
-        return False, f"redline-blocked: {desc}"
-    if DRY:
-        return False, f"[dry-run] would: {desc}"
-    try:
-        return fn()
-    except Exception as e:
-        return False, f"fix error: {e}"
+    """Run a fix only if it passes the redline guard and we're not in dry-run (nova_selfcheck.fix_gate)."""
+    return _sc.fix_gate(desc, fn)
 
 
 # ── FUNCTIONAL CHECKS ─────────────────────────────────────────────────────────
@@ -139,7 +139,8 @@ def check_postgres():
         c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj", connect_timeout=8)
         c.autocommit = True; cur = c.cursor()
         cur.execute("SELECT NOT pg_is_in_recovery()"); writable = cur.fetchone()[0]
-        cur.execute("CREATE TABLE IF NOT EXISTS _hc_probe(t timestamptz); INSERT INTO _hc_probe VALUES(now()); DELETE FROM _hc_probe WHERE t < now()-interval '1 day'")
+        if not _sc.DRY:  # the write probe is the one PG write a report-only run skips
+            cur.execute("CREATE TABLE IF NOT EXISTS _hc_probe(t timestamptz); INSERT INTO _hc_probe VALUES(now()); DELETE FROM _hc_probe WHERE t < now()-interval '1 day'")
         cur.execute("SELECT count(*) FROM pg_stat_replication"); standbys = cur.fetchone()[0]
         c.close()
         if writable and standbys >= 1:
@@ -275,17 +276,18 @@ CHECKS = [check_postgres, check_nas_mounts, check_plex, check_memory, check_gate
           check_inference, check_dns, check_journal, check_scheduler, check_awakening]
 
 
-def main():
-    global DRY
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--dry-run", action="store_true")
-    DRY = ap.parse_args().dry_run
+def run_checks():
+    """Run every functional check; a crashing check becomes a needs-human result."""
     results = []
     for chk in CHECKS:
         try:
             results.append(chk())
         except Exception as e:
             results.append(result(chk.__name__, False, f"check crashed: {e}", needs_human=True))
+    return results
+
+
+def format_report(results):
     healthy = [r for r in results if r["ok"]]
     fixed = [r for r in results if not r["ok"] and r["fixed"]]
     broken = [r for r in results if not r["ok"] and not r["fixed"]]
@@ -300,17 +302,14 @@ def main():
         lines += [f"  • {r['name']}: {r['detail']}" + (f" (fix tried: {r['fix_detail']})" if r['fix_detail'] else "") for r in broken]
     if not fixed and not broken:
         lines.append("Everything up AND functional — mounts populated, recall returns, chat replies, writes land.")
-    report = "\n".join(lines)
-    log(report)
+    return "\n".join(lines)
 
-    try:
-        import nova_config
-        chan = nova_config.SLACK_ALERTS if (fixed or broken) else nova_config.SLACK_NOTIFY
-        nova_config.post_both(report, slack_channel=chan)
-    except Exception as e:
-        log(f"slack post failed: {e}")
 
-    # audit
+def write_log(results):
+    """Audit row in deep_healthcheck_log (unchanged table; nova_affect.signal_infra reads it)."""
+    healthy = [r for r in results if r["ok"]]
+    fixed = [r for r in results if not r["ok"] and r["fixed"]]
+    broken = [r for r in results if not r["ok"] and not r["fixed"]]
     try:
         import psycopg2
         c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj", connect_timeout=8)
@@ -321,8 +320,17 @@ def main():
         c.close()
     except Exception as e:
         log(f"audit write failed: {e}")
-    return 1 if broken else 0
+
+
+def main(argv=None):
+    """Thin wrapper: merged into nova_selfcheck.py --deep on 2026-10-09."""
+    ap = argparse.ArgumentParser(description="Merged into nova_selfcheck.py --deep (2026-10-09).")
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args(sys.argv[1:] if argv is None else list(argv))
+    _sc.log("nova_deep_healthcheck.py was merged into nova_selfcheck.py --deep on 2026-10-09 — delegating")
+    return _sc.main(["--deep"] + (["--dry-run"] if a.dry_run else []))
 
 
 if __name__ == "__main__":
+    sys.modules.setdefault("nova_deep_healthcheck", sys.modules[__name__])  # selfcheck --deep imports it: reuse this copy
     sys.exit(main())

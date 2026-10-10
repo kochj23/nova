@@ -78,6 +78,13 @@ class TestSecurity(unittest.TestCase):
         k, _r, dec = E.intent_reading({"jordan_state": TIRED, "allowed": False, "deferred": True}, False)
         self.assertEqual((k, dec), ("quiet.notify_window", "defer"))
 
+    def test_studio_signals_fail_open_off_the_studio(self):
+        boom = mock.Mock(side_effect=AssertionError("must not read Focus off the Studio"))
+        sig = E.jordan_signals(dict(E.DEFAULTS), _host="nova-core", _focus=boom, _screen=boom)
+        self.assertEqual(sig, {"focus": "unknown", "screen": "unknown"})
+        self.assertFalse(E.on_studio(_host="nova-core.digitalnoise.net"))
+        self.assertTrue(E.on_studio(_host="Office-M4-2.local"))
+
     def test_preconsent_only_counts_for_life_safety(self):
         self.assertFalse(E.decide("alert", ONE, jordan=CALM, nova=OK, **dict(KW, preconsent=True))["allowed"])
 
@@ -88,6 +95,28 @@ class TestPerformance(unittest.TestCase):
         for _ in range(10000):
             E.decide("alert", TWO, jordan=CALM, nova=OK, **KW)
         self.assertLess(time.monotonic() - t, 5.0)
+
+    def test_focus_read_is_cheap_and_signals_are_cached(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "Assertions.json"
+            p.write_text('{"data": [{"storeAssertionRecords": [{"assertionDetails": '
+                         '{"assertionDetailsModeIdentifier": "com.apple.focus.work"}}]}]}')
+            t = time.monotonic()
+            for _ in range(10000):
+                E.focus_mode(p)
+            self.assertLess(time.monotonic() - t, 5.0)
+        calls = {"n": 0}
+
+        def focus():
+            calls["n"] += 1
+            return "none"
+        E._SIG_CACHE.clear()
+        with mock.patch.object(E, "focus_mode", focus), mock.patch.object(E, "screen_state", lambda: "unlocked"):
+            for _ in range(50):
+                E.jordan_signals(dict(E.DEFAULTS), _host="office-m4-2")
+        self.assertEqual(calls["n"], 1)
+        E._SIG_CACHE.clear()
 
 
 class TestRetry(unittest.TestCase):
@@ -165,6 +194,42 @@ class TestUnit(unittest.TestCase):
     def test_selftest(self):
         self.assertEqual(E.selftest(), 0)
 
+    def test_focus_mode_parses_the_assertion_store(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as d:
+            p = Path(d) / "Assertions.json"
+            self.assertEqual(E.focus_mode(p), "unknown")                       # missing file
+            p.write_text('{"data": [{"storeInvalidationRecords": []}]}')
+            self.assertEqual(E.focus_mode(p), "none")                          # no active assertion
+            for mode, want in (("com.apple.donotdisturb.mode.default", "dnd"), ("com.apple.sleep.sleep-mode", "sleep"),
+                               ("com.apple.focus.work", "work"), ("com.apple.focus.gaming", "gaming")):
+                p.write_text('{"data": [{"storeAssertionRecords": [{"assertionDetails": '
+                             '{"assertionDetailsModeIdentifier": "%s"}}]}]}' % mode)
+                self.assertEqual(E.focus_mode(p), want)
+            p.write_text("{not json")
+            self.assertEqual(E.focus_mode(p), "unknown")
+
+    def test_jordan_state_keeps_its_shape_and_adds_signals(self):
+        noon = datetime(2026, 10, 9, 12, 0, tzinfo=E.TZ)
+        with mock.patch.dict(sys.modules, {"nova_relationship": None, "nova_cardinal": None}):
+            st = E.jordan_state(Cur(), now=noon, s=dict(E.DEFAULTS), _signals={"focus": "none", "screen": "unlocked"})
+            self.assertEqual(st, {"depleted": False, "reasons": [], "available": True,
+                                  "signals": {"focus": "none", "screen": "unlocked"}})
+            # DND: not available, but `depleted` (what the escalation gate reads) is unchanged by default
+            st = E.jordan_state(Cur(), now=noon, s=dict(E.DEFAULTS), _signals={"focus": "dnd", "screen": "unknown"})
+            self.assertEqual((st["depleted"], st["available"], st["reasons"]), (False, False, []))
+            # opt-in: service_config escalation/settings focus_counts_as_depleted=true
+            st = E.jordan_state(Cur(), now=noon, s=dict(E.DEFAULTS, focus_counts_as_depleted=True),
+                                _signals={"focus": "sleep", "screen": "locked"})
+            self.assertEqual((st["depleted"], st["reasons"]), (True, ["macOS Focus: sleep"]))
+            # work Focus and a locked screen are informational only
+            st = E.jordan_state(Cur(), now=noon, s=dict(E.DEFAULTS), _signals={"focus": "work", "screen": "locked"})
+            self.assertTrue(st["available"])
+            late = E.jordan_state(Cur(), now=noon.replace(hour=1), s=dict(E.DEFAULTS),
+                                  _signals={"focus": "unknown", "screen": "unknown"})
+            self.assertTrue(late["depleted"])
+            self.assertFalse(late["available"])
+
 
 class TestIntegration(unittest.TestCase):
     def test_nova_state_reads_boiler_and_gateway(self):
@@ -186,6 +251,23 @@ class TestIntegration(unittest.TestCase):
                             item=ONE, _jordan=CALM, _nova=OK)
         self.assertFalse(d["allowed"])
         self.assertEqual(rr.call_args.kwargs["channel"], "two-man")
+
+
+    def test_signals_failure_never_breaks_jordan_state(self):
+        noon = datetime(2026, 10, 9, 12, 0, tzinfo=E.TZ)
+        with mock.patch.object(E, "jordan_signals", side_effect=RuntimeError("ctypes")), \
+             mock.patch.dict(sys.modules, {"nova_relationship": None, "nova_cardinal": None}):
+            st = E.jordan_state(Cur(), now=noon, s=dict(E.DEFAULTS))
+        self.assertEqual(st["signals"], {"focus": "unknown", "screen": "unknown"})
+        self.assertTrue(st["available"])
+
+    def test_authorize_records_signals_in_escalation_log(self):
+        cur = Cur({"RETURNING id": [(3,)]})
+        jst = {"depleted": False, "reasons": [], "signals": {"focus": "dnd", "screen": "locked"}, "available": False}
+        d = E.authorize(cur, source="bodach", kind="cluster", action_class="alert", item=TWO, _jordan=jst, _nova=OK)
+        self.assertTrue(d["allowed"])                       # gate reads `depleted`, unchanged by DND by default
+        ins = next(p for s, p in cur.sql if "INSERT INTO escalation_log" in s)
+        self.assertIn('"focus": "dnd"', ins[11])
 
 
 class TestFunctional(unittest.TestCase):

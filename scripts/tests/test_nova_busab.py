@@ -144,6 +144,12 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("FROM scheduler_runs", SRC)
         self.assertIn("FROM agent_docs", SRC)
 
+    def test_merged_into_yellow_eye(self):
+        import nova_yellow_eye as Y
+        self.assertIn("merged into nova_yellow_eye on 2026-10-09", SRC)
+        self.assertIn("import nova_yellow_eye", SRC.split("def main(")[1])   # lazy: no import cycle
+        self.assertIn("--pace", Y.__doc__)
+
     def test_note_once_per_week(self):
         cur = FakeCur({"FROM claude_queue WHERE": [(3,)]})
         self.assertIsNone(B.file_note(cur, f"{B.QUEUE_PREFIX} (week of {W0}): x", "ctx"))
@@ -182,6 +188,24 @@ class TestFunctional(unittest.TestCase):
         self.assertFalse(a["recommend"])
         self.assertFalse(any("claude_queue" in s for s in writes(cur)))
         self.assertTrue(any("INSERT INTO busab_weekly" in s for s in writes(cur)))
+
+    def test_run_uses_given_births(self):
+        cur = FakeCur({"FROM scheduler_runs": [], "FROM agent_docs": []})
+        with mock.patch.object(B, "script_births") as sb, mock.patch.object(B, "scheduler_births") as eb, \
+                mock.patch.object(B.W, "connect", return_value=fake_conn(cur)), mock.patch("builtins.print"):
+            a = B.run(dry=True, week=W0, scripts={f"nova_{i}.py": at(W0) for i in range(30)}, entries={})
+        sb.assert_not_called()
+        eb.assert_not_called()
+        self.assertTrue(a["burst"] and a["recommend"])        # 30 >= max(10 x max(median 0, 1), 25) = 25
+
+    def test_wrapper_forwards_to_yellow_eye(self):
+        import nova_yellow_eye as Y
+        with mock.patch.object(Y, "main", return_value=0) as ym, mock.patch("builtins.print") as pr:
+            self.assertEqual(B.main(["--run", "--dry-run", "--week", "2026-10-07"]), 0)
+            self.assertEqual(B.main(["--show"]), 0)
+        self.assertEqual([c.args[0] for c in ym.call_args_list],
+                         [["--pace", "--dry-run", "--week", "2026-10-07"], ["--show", "--pace"]])
+        self.assertIn("merged into nova_yellow_eye on 2026-10-09", str(pr.call_args_list[0]))
 
     def test_dry_run_writes_nothing(self):
         cur, a = self._run(True)

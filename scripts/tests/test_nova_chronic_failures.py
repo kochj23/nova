@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Tests for nova_chronic_failures.py — the 7 house categories (Security, Performance, Retry, Unit,
-Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
+Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+
+Since 2026-10-09 (organ-audit merge M2) main() is a thin wrapper around
+nova_task_sentinel.py --daily; these tests drive the wrapper end to end with PG faked."""
 import importlib.util
 import os
 import re
@@ -56,6 +59,9 @@ class _Conn:
     def cursor(self):
         return self.cur
 
+    def close(self):
+        self.closed = True
+
 
 def _chronic_rows(task="prober"):
     t = date.today()          # computed at call time, never pinned
@@ -77,9 +83,11 @@ class TestSecurity(unittest.TestCase):
         self.assertIn(hostile, ins[0][1])      # the hostile name rides as a bound value
         self.assertTrue(all(hostile not in s for s, _ in cur.sql))
 
-    def test_only_write_is_claude_queue(self):
-        writes = re.findall(r"\b(INSERT INTO|UPDATE|DELETE FROM)\s+(\w+)", SRC)
-        self.assertEqual(writes, [("INSERT INTO", "claude_queue")])
+    def test_only_writes_are_session_registration_and_claude_queue(self):
+        self.assertEqual(re.findall(r"\b(INSERT INTO|UPDATE|DELETE FROM)\s+(\w+)", SRC), [])   # wrapper writes nothing itself
+        daily = (SCRIPTS / "nova_task_sentinel.py").read_text().split("def run_daily(")[1].split("\ndef ")[0]
+        writes = re.findall(r"\b(INSERT INTO|UPDATE|DELETE FROM)\s+(\w+)", daily)
+        self.assertEqual(writes, [("INSERT INTO", "claude_sessions"), ("INSERT INTO", "claude_queue")])
 
 
 class TestPerformance(unittest.TestCase):
@@ -139,6 +147,17 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(sid, "sess-1")
         self.assertTrue(desc.startswith("Chronic failure: prober"))
         self.assertIn("Traceback: boom", ctx)
+        # the queue session is registered in claude_sessions BEFORE the insert (FK)
+        order = [s.split("(")[0].strip() for s, _ in cur.sql if s.startswith("INSERT")]
+        self.assertEqual(order, ["INSERT INTO claude_sessions", "INSERT INTO claude_queue"])
+        self.assertEqual([p for s, p in cur.sql if s.startswith("INSERT INTO claude_sessions")], [("sess-1",)])
+
+    def test_wrapper_runs_task_sentinel_daily(self):
+        import nova_task_sentinel
+        with patch.object(nova_task_sentinel, "run_daily", return_value=0) as rd, \
+             patch.object(sys, "argv", ["x", "--dry-run"]):
+            cf.main()
+        rd.assert_called_once_with(dry_run=True)
 
     def test_dry_run_writes_nothing(self):
         cur = _Cur(_chronic_rows())

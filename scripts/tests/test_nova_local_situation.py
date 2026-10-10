@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Tests for nova_local_situation.py — the 7 house categories (Security, Performance, Retry, Unit,
-Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
-import importlib.util
+Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+
+2026-10-09 (organ audit M3): merged into nova_bodach_watch.py. main(minutes, alert) is now a thin
+wrapper onto Bodach's situation step, so these tests drive it through Bodach with the two-man gate
+held open (the gate itself is tested in test_nova_bodach_watch_7cat) and W.connect mocked."""
 import io
 import os
 import re
@@ -20,14 +23,9 @@ SCRIPT = SCRIPTS / "nova_local_situation.py"
 SRC = SCRIPT.read_text()
 
 
-def _load(name, path):
-    spec = importlib.util.spec_from_file_location(name, path)
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-ls = _load("ls", SCRIPT)
+import nova_local_situation as ls  # noqa: E402
+import nova_bodach_watch as B  # noqa: E402
+import nova_watch_common as W  # noqa: E402
 # Home now comes from the private service_config 'home' row; tests pin a public ZIP centroid.
 TEST_HOME = (34.169, -118.325)   # Burbank 91506 ZIP centroid (public), not the house
 HELI = ("a1b2c3", "N911LA", 12, 900, 0.8, True)
@@ -70,12 +68,15 @@ class _Conn:
         self.closed = True
 
 
-def _run(cur, minutes=20, alert=False, notify=None):
+def _run(cur, minutes=20, alert=False, notify=None, gate=None):
     conn = _Conn(cur)
     nn = types.ModuleType("nova_notify"); nn.notify = notify or MagicMock()
     out = io.StringIO()
-    with patch.object(ls.psycopg2, "connect", MagicMock(return_value=conn)), patch.dict(sys.modules, {"nova_notify": nn}), \
+    with patch.object(W, "connect", MagicMock(return_value=conn)), patch.dict(sys.modules, {"nova_notify": nn}), \
             patch.object(ls, "home_coords", MagicMock(return_value=TEST_HOME)), patch.object(ls.time, "sleep"), \
+            patch.object(B, "_camera_ok", return_value=True), \
+            patch.object(B, "_bodach_alerted_recently", return_value=False), \
+            patch.object(B, "situation_gate", return_value=gate or {"allowed": True, "reason": "test"}), \
             redirect_stdout(out):
         rc = ls.main(minutes, alert)
     return rc, out.getvalue(), conn, nn.notify
@@ -85,7 +86,7 @@ class TestSecurity(unittest.TestCase):
     def test_no_hardcoded_credentials(self):
         pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
         self.assertIsNone(pat.search(SRC))
-        self.assertNotIn("password", ls.DSN)
+        self.assertNotIn("psycopg2", SRC)          # the connection is Bodach's (W.connect) since the merge
 
     def test_interpolated_sql_only_carries_typed_numbers(self):
         # the queries are f-strings, but the only interpolations are the int window and two numeric constants;
@@ -129,14 +130,14 @@ class TestRetry(unittest.TestCase):
         notify.assert_called_once()
 
     def test_pg_connect_failure_escapes_without_alerting(self):
-        # psycopg2.connect is retried 3x with backoff; after that the error escapes (launchd re-runs) and nothing is posted
+        # W.connect retries 3x with backoff (tested in nova_watch_common); after that the error escapes
+        # (the scheduler re-runs) and nothing is posted
         nn = types.ModuleType("nova_notify"); nn.notify = MagicMock()
-        conn = MagicMock(side_effect=ls.psycopg2.OperationalError("pg down"))
-        with patch.object(ls.psycopg2, "connect", conn), patch.dict(sys.modules, {"nova_notify": nn}), \
-                patch.object(ls.time, "sleep"), redirect_stdout(io.StringIO()):
-            with self.assertRaises(ls.psycopg2.OperationalError):
+        conn = MagicMock(side_effect=RuntimeError("pg down"))
+        with patch.object(W, "connect", conn), patch.dict(sys.modules, {"nova_notify": nn}), \
+                redirect_stdout(io.StringIO()):
+            with self.assertRaises(RuntimeError):
                 ls.main(20, True)
-        self.assertEqual(conn.call_count, 3)
         nn.notify.assert_not_called()
 
 
@@ -145,6 +146,11 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(ls.miles(*TEST_HOME, *TEST_HOME), 0.0)
         self.assertAlmostEqual(ls.miles(34.0, -118.0, 35.0, -118.0), 69.09, delta=0.1)          # one degree of latitude
         self.assertAlmostEqual(ls.miles(34.169, -118.325, 33.9425, -118.408), 16.3, delta=0.5)  # home -> LAX
+
+    def test_fires_rule(self):
+        self.assertTrue(ls.fires({"score": 4, "signals": ["a", "b"]}))
+        self.assertFalse(ls.fires({"score": 4, "signals": ["a"]}))
+        self.assertFalse(ls.fires({"score": 3, "signals": ["a", "b", "c"]}))
 
     def test_constants(self):
         self.assertEqual((ls.NEAR_MI, ls.LOW_FT), (2.0, 2500))
@@ -202,6 +208,17 @@ class TestFunctional(unittest.TestCase):
     def test_without_alert_flag_the_situation_is_logged_only(self):
         rc, out, _, notify = _run(_Cur(flights=[HELI], chp=[NEAR_FIRE]), alert=False)
         self.assertIn("SITUATION: Something is happening nearby", out)
+        notify.assert_not_called()
+
+    def test_wrapper_says_where_it_went(self):
+        rc, out, _, _ = _run(_Cur())
+        self.assertIn("merged into nova_bodach_watch.py on 2026-10-09", out)
+
+    def test_two_man_gate_can_hold_the_alert(self):
+        rc, out, _, notify = _run(_Cur(flights=[HELI], chp=[NEAR_FIRE]), alert=True,
+                                  gate={"allowed": False, "reason": "Jordan depleted"})
+        self.assertIn("SITUATION:", out)
+        self.assertIn("held by the two-man rule", out)
         notify.assert_not_called()
 
     def test_error_path_notify_failure_is_logged_and_rc_stays_zero(self):

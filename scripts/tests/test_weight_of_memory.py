@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for nova_weight_of_memory.py (wish #37 "Weight of Memory"), one per house category:
-functional, security, privacy, performance, regression, integration, docs.
+functional, security, privacy, performance, regression, integration, docs. Since 2026-10-09 (M12)
+the weighing pass runs inside nova_memory_anchor.py; main() is a thin wrapper for `--weight`.
 Written by Jordan Koch (via Claude)."""
 import importlib.util
 import io
@@ -15,8 +16,30 @@ from contextlib import redirect_stdout
 from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest import mock
+from unittest.mock import patch
 
 SCRIPTS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SCRIPTS))
+
+# Offline guard: no real PG, no real memory server from this file, ever (2026-10-09: after the M12 merge an
+# unpatched weighing pass in this suite reached the live memory server; it now fails loudly instead).
+_GUARDS = []
+
+
+def _offline(*a, **k):
+    raise RuntimeError("offline test: real PG / HTTP blocked")
+
+
+def setUpModule():
+    import urllib.request
+    import psycopg2
+    for target in (patch.object(psycopg2, "connect", _offline), patch.object(urllib.request, "urlopen", _offline)):
+        target.start(); _GUARDS.append(target)
+
+
+def tearDownModule():
+    while _GUARDS:
+        _GUARDS.pop().stop()
 
 
 def _load(name, path):
@@ -288,6 +311,16 @@ class TestUnit(unittest.TestCase):
             self.assertEqual(wm.main(), 0)
         self.assertIn("heaviest set unchanged", out.getvalue())
         self.assertFalse(any("INSERT" in s for s in cur2.sql))
+        self.assertFalse(any("memory_anchors" in s for s in cur.sql + cur2.sql))   # the weighing pass alone
+
+    def test_wrapper_runs_the_anchor_weighing_pass(self):
+        import nova_memory_anchor as anchor
+        calls = []
+        with mock.patch.object(anchor, "main", lambda argv: calls.append(argv) or 0), \
+             redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(wm.main(["--dry-run"]), 0)
+        self.assertEqual(calls, [["--weight", "--dry-run"]])
+        self.assertIn("merged into nova_memory_anchor.py on 2026-10-09", out.getvalue())
 
 
 class TestFrame(unittest.TestCase):

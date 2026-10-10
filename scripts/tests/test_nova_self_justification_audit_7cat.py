@@ -226,6 +226,20 @@ class TestIntegration:
         assert "high=" in args[0] and "said soil was DOWN" in args[0]
 
 
+    def test_main_is_a_wrapper_onto_action_audit_rationale(self, capsys):
+        import nova_action_audit
+        with mock.patch.object(nova_action_audit, "main", return_value=0) as am:
+            assert J.main(["--days", "3", "--dry-run"]) == 0
+        am.assert_called_once_with(["--rationale", "--days", "3", "--dry-run"])
+        assert "merged into nova_action_audit.py --rationale on 2026-10-09" in capsys.readouterr().out
+
+    def test_action_audit_rationale_reaches_run(self):
+        import nova_action_audit
+        with mock.patch.object(J, "run", return_value=[]) as r:
+            assert nova_action_audit.main(["--rationale"]) == 0
+        r.assert_called_once_with(7, False)                  # weekly default window carried over
+
+
 # ── Functional ──────────────────────────────────────────────────────────────
 class TestFunctional:
     def test_golden_path_records_findings_and_alerts(self):
@@ -257,6 +271,21 @@ class TestFunctional:
         assert rc == 0
 
 
+    def test_dry_run_is_read_only(self):
+        cur = FakeCursor(ledger=[row()], health={"soil": ("up", "down")})
+        rc, _, _ = run_main(cur, ["--dry-run"])
+        assert rc == 0
+        assert not any(k in s for s, _ in cur.executed for k in ("CREATE", "ALTER", "INSERT", "UPDATE"))
+
+    def test_run_returns_findings(self):
+        cur = FakeCursor(ledger=[row()], health={"soil": ("up", "down")})
+        conn = mock.MagicMock()
+        conn.cursor.return_value = cur
+        with mock.patch.object(J.psycopg2, "connect", return_value=conn):
+            f = J.run(7, dry_run=True)
+        assert any(x["severity"] == "high" for x in f)
+
+
 # ── Frame ───────────────────────────────────────────────────────────────────
 class TestFrame:
     def test_imports_and_has_main(self):
@@ -271,3 +300,7 @@ class TestFrame:
         rc, _, nc = run_main(FakeCursor(), [])
         assert rc == 0
         nc.post_both.assert_not_called()
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-q", "-p", "no:cacheprovider"]))

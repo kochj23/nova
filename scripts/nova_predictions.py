@@ -742,45 +742,35 @@ def do_resolve(oc, mc, force_now=False):
 # ── REPORT ───────────────────────────────────────────────────────────────────────
 
 def do_report(oc):
-    oc.execute("""SELECT confidence, outcome, surprise FROM predictions
-                  WHERE status='resolved' AND outcome IN ('correct','incorrect','partial')""")
-    rows = oc.fetchall()
+    """Calibration report. M7 (2026-10-09): the calibration figures are no longer
+    recomputed here; they come from nova_soft_certainty's nightly pass
+    (soft_certainty_state, used only while still exact for the live table, otherwise
+    computed by the same code). Output and scoreboard rows are unchanged."""
+    import nova_soft_certainty as sc
+    d, how = sc.read_calibration(oc, high_surprise=HIGH_SURPRISE)
     oc.execute("SELECT count(*) FROM predictions WHERE status='open'")
     n_open = oc.fetchone()[0]
     oc.execute("SELECT count(*) FROM predictions WHERE status='expired_unresolvable'")
     n_unres = oc.fetchone()[0]
+    n = d["n"] if d else 0
+    log(f"report: calibration from {how}")
 
     print("\n=== PREDICTIVE SELF — CALIBRATION REPORT ===")
-    print(f"resolved(scored)={len(rows)}  open={n_open}  unresolvable={n_unres}")
-    if not rows:
+    print(f"resolved(scored)={n}  open={n_open}  unresolvable={n_unres}")
+    if not d:
         print("(no scored predictions yet — run predict, then resolve)")
         return {"resolved": 0}
 
     # Calibration by confidence decile: hit-rate (partial=0.5) vs. mean confidence.
-    buckets = {}
-    for conf, outcome, surprise in rows:
-        b = min(9, int(conf * 10))       # 0.0-0.099 -> 0 ... 0.9-1.0 -> 9
-        hit = {"correct": 1.0, "incorrect": 0.0, "partial": 0.5}[outcome]
-        buckets.setdefault(b, []).append((conf, hit, surprise or 0.0))
-
     print("\ndecile     n   mean_conf   hit_rate   gap(hit-conf)")
-    total_gap = 0.0
-    for b in sorted(buckets):
-        items = buckets[b]
-        mc_ = sum(c for c, _, _ in items) / len(items)
-        hr = sum(h for _, h, _ in items) / len(items)
-        gap = hr - mc_
-        total_gap += abs(gap) * len(items)
+    for b, cnt, mc_, hr in d["deciles"]:
         lo = b / 10.0
-        print(f"[{lo:.1f}-{lo+0.1:.1f})  {len(items):>3}    {mc_:.2f}       "
-              f"{hr:.2f}       {gap:+.2f}")
+        print(f"[{lo:.1f}-{lo+0.1:.1f})  {cnt:>3}    {mc_:.2f}       "
+              f"{hr:.2f}       {hr - mc_:+.2f}")
 
-    mean_conf = sum(c for c, _, _ in rows) / len(rows)
-    hit_rate = sum({"correct": 1.0, "incorrect": 0.0, "partial": 0.5}[o]
-                   for _, o, _ in rows) / len(rows)
-    mean_surprise = sum((s or 0.0) for _, _, s in rows) / len(rows)
-    high_rate = sum(1 for _, _, s in rows if (s or 0.0) > HIGH_SURPRISE) / len(rows)
-    mean_abs_gap = total_gap / len(rows)   # calibration error, weighted by bucket n
+    mean_conf, hit_rate = d["mean_conf"], d["hit_rate"]
+    mean_surprise, high_rate = d["mean_surprise"], d["high_surprise_rate"]
+    mean_abs_gap = d["calib_error"]   # calibration error, weighted by bucket n
 
     print(f"\noverall mean_confidence = {mean_conf:.3f}")
     print(f"overall hit_rate        = {hit_rate:.3f}")
@@ -796,9 +786,9 @@ def do_report(oc):
         "prediction_calibration_error": mean_abs_gap,
         "prediction_mean_surprise": mean_surprise,
         "prediction_high_surprise_rate": high_rate,
-    }, {"n_resolved": len(rows), "n_open": n_open, "n_unresolvable": n_unres,
+    }, {"n_resolved": n, "n_open": n_open, "n_unresolvable": n_unres,
         "verdict": verdict})
-    return {"resolved": len(rows), "hit_rate": hit_rate, "calibration_error": mean_abs_gap,
+    return {"resolved": n, "hit_rate": hit_rate, "calibration_error": mean_abs_gap,
             "mean_surprise": mean_surprise}
 
 

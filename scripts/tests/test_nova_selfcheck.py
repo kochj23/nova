@@ -2,7 +2,9 @@
 """Tests for nova_selfcheck.py — the 7 house categories (Security, Performance, Retry, Unit,
 Integration, Functional, Frame). This script restarts services, ssh's the fleet, unmounts shares and
 escalates to `claude -p`, so EVERY command runner (sh, pg, slack, sleep) is stubbed at load and the
-log/state paths point at a tempdir. Written by Jordan Koch (via Claude)."""
+log/state paths point at a tempdir. Since merge M4 (2026-10-09) it also has --boot (nova_doctor's checks)
+and --deep (nova_deep_healthcheck's checks); those modules are replaced by fakes here — the real chains are
+tested in test_nova_doctor.py / test_nova_deep_healthcheck.py. Written by Jordan Koch (via Claude)."""
 import importlib.util
 import json
 import os
@@ -11,7 +13,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -41,6 +45,8 @@ sc.print = lambda *a, **k: None
 
 
 def _fresh():
+    sc.DRY = False
+    sc.FORCE_DIGEST = False
     sc.sh.reset_mock(side_effect=True, return_value=True); sc.sh.return_value = (0, "")
     sc.pg.reset_mock(side_effect=True, return_value=True); sc.pg.return_value = None
     sc.slack.reset_mock()
@@ -51,6 +57,53 @@ def _fresh():
 
 def _cmds():
     return [c[0][0] for c in sc.sh.call_args_list]
+
+
+@contextmanager
+def _modstub(mapping):
+    """Install fake modules and afterwards restore ONLY those keys (CONVENTIONS: never leak into sys.modules)."""
+    missing = object()
+    saved = {k: sys.modules.get(k, missing) for k in mapping}
+    sys.modules.update(mapping)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is missing:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+
+def _fake_doctor(checks, calls):
+    d = types.ModuleType("nova_doctor")
+    d.OK, d.WARN, d.FAIL = "ok", "warn", "fail"
+    d.CHECKS = [(n, (lambda n=n, s=s, t=t: calls.append(n) or (s, t))) for n, s, t in checks]
+    d.wait_for_boot = lambda: calls.append("wait")
+    d.heal_home_assistant = lambda: calls.append("heal")
+
+    def fmt(res):
+        worst = "fail" if any(r[1] == "fail" for r in res) else "warn" if any(r[1] == "warn" for r in res) else "ok"
+        return worst, f"BOOT {worst} " + ",".join(f"{n}={st}" for n, st, _ in res)
+    d.format_report = fmt
+    return d
+
+
+def _fake_deep(rows, calls):
+    d = types.ModuleType("nova_deep_healthcheck")
+    d.run_checks = lambda: calls.append("checks") or rows
+    d.format_report = lambda res: f"DEEP {sum(r['ok'] for r in res)}/{len(res)}"
+    d.write_log = lambda res: calls.append(("write_log", len(res)))
+    return d
+
+
+def _row(name, ok, fixed=False, fix_detail=""):
+    return {"name": name, "ok": ok, "detail": f"{name} detail", "fixed": fixed, "fix_detail": fix_detail,
+            "needs_human": not ok and not fixed}
+
+
+def _inserts():
+    return [c[0][0] for c in sc.pg.call_args_list if "INSERT INTO selfcheck_runs" in c[0][0]]
 
 
 class TestSecurity(unittest.TestCase):
@@ -88,6 +141,32 @@ class TestSecurity(unittest.TestCase):
         self.assertEqual(sc.results[-1][2], "rerun already attempted today")
 
 
+    def test_redline_blocks_destructive_fixes(self):
+        for desc in ("pg: promote standby to primary", "reboot the host", "delete old backups", "buy storage"):
+            ok, detail = sc.fix_gate(desc, lambda: (True, "ran"))
+            self.assertFalse(ok)
+            self.assertIn("redline-blocked", detail)
+
+    def test_every_fix_description_in_source_passes_the_redline(self):
+        # the gate now wraps the 30-min fixes too; none of their descriptions may trip it (behaviour unchanged)
+        descs = re.findall(r'\bfix\(f?"([^"]+)"', SRC)
+        self.assertGreaterEqual(len(descs), 8)
+        for d in descs:
+            self.assertIsNone(sc._REDLINE.search(re.sub(r"\{[^}]*\}", "x", d)), d)
+
+    def test_dry_run_default_mode_fixes_posts_and_writes_nothing(self):
+        sc.sh.side_effect = lambda cmd, timeout=60: (0, "") if cmd[0] == "ping" else (1, "")
+        sc.pg.return_value = None                                       # primary down -> CRITICAL + alert path
+        with patch.object(sc, "slack", _REAL_SLACK), patch.object(sc.urllib.request, "urlopen") as uo, \
+             patch.object(sc.subprocess, "check_output") as co, patch.object(sc, "mount_problem", return_value="not mounted"):
+            self.assertEqual(sc.main(["--dry-run"]), 0)
+        self.assertEqual([c for c in _cmds() if c[0] not in ("ping", "curl")], [])   # no restart, umount, claude
+        uo.assert_not_called(); co.assert_not_called()
+        self.assertEqual(_inserts(), [])
+        self.assertIn("[dry-run] would: svc-gateway-v2: restart", sc.LOG.read_text())
+        self.assertFalse((sc.STATE_DIR / "selfcheck_escalation.ts").exists())
+
+
 class TestPerformance(unittest.TestCase):
     def test_voiceless_and_mount_parse_10k_fast(self):
         healthy = json.dumps({"ok": True, "backends": {"ollama": {"healthy": True}}})
@@ -98,6 +177,12 @@ class TestPerformance(unittest.TestCase):
         with patch.object(sc, "sh", return_value=(0, mount_out)):
             self.assertEqual(sc.mount_state("/Volumes/v9999")[0], "/dev/disk9999")
         self.assertLess(time.perf_counter() - t0, 2.0)
+
+    def test_fix_gate_10k_fast(self):
+        t0 = time.perf_counter()
+        for i in range(10_000):
+            sc.fix_gate(f"svc-{i}: restart", lambda: (True, "x"))
+        self.assertLess(time.perf_counter() - t0, 1.0)
 
 
 class TestRetry(unittest.TestCase):
@@ -110,14 +195,14 @@ class TestRetry(unittest.TestCase):
         with patch.object(sc, "check_primary", return_value=False) as cp, \
              patch.object(sc, "check_services"), patch.object(sc, "check_mounts"), \
              patch.object(sc, "post_digest"), patch.object(sc, "escalate"):
-            sc.main()
+            sc.main([])
         cp.assert_called_once()
         sc.time.sleep.assert_any_call(60)
 
     def test_lan_down_twice_skips_everything(self):
         sc.sh.side_effect = lambda cmd, timeout=60: (1, "")
         with patch.object(sc, "check_primary") as cp, patch.object(sc, "post_digest") as pd:
-            sc.main()
+            self.assertEqual(sc.main([]), 0)
         cp.assert_not_called(); pd.assert_not_called()
         self.assertIn("local network down", sc.LOG.read_text())
 
@@ -149,6 +234,23 @@ class TestUnit(unittest.TestCase):
         with patch.object(sc, "mount_state", return_value=("/dev/disk9", "apfs")):
             self.assertIsNone(sc.mount_problem(_TMP.name, None))     # writable tempdir
 
+    def test_fix_runs_sh_or_returns_125_when_gated(self):
+        sc.sh.return_value = (0, "done")
+        self.assertEqual(sc.fix("svc-x: restart", ["true"]), (0, "done"))
+        sc.DRY = True
+        self.assertEqual(sc.fix("svc-x: restart", ["true"]), (125, "[dry-run] would: svc-x: restart"))
+        self.assertEqual(sc.sh.call_count, 1)
+
+    def test_fix_gate_contains_exceptions(self):
+        ok, detail = sc.fix_gate("svc: restart", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
+        self.assertFalse(ok)
+        self.assertEqual(detail, "fix error: boom")
+
+    def test_modes_are_exclusive(self):
+        with patch("sys.stderr"), self.assertRaises(SystemExit) as e:
+            sc.main(["--boot", "--deep"])
+        self.assertEqual(e.exception.code, 2)
+
     def test_ingest_age_thresholds(self):
         sc.pg.return_value = str(3600)
         sc.check_ingest()
@@ -166,7 +268,7 @@ class TestIntegration(unittest.TestCase):
              patch.object(sc, "check_replication"), patch.object(sc, "check_backups"), \
              patch.object(sc, "check_heartbeats"), patch.object(sc, "check_ingest"), patch.object(sc, "check_disks"), \
              patch.object(sc, "check_mounts"), patch.object(sc, "post_digest"), patch.object(sc, "escalate") as esc:
-            sc.main()
+            sc.main([])
         inserts = [c[0][0] for c in sc.pg.call_args_list if "INSERT INTO selfcheck_runs" in c[0][0]]
         self.assertEqual(len(inserts), 3)                          # pg-primary + two services
         self.assertIn("$novaq$pg-primary$novaq$", inserts[0])
@@ -180,6 +282,32 @@ class TestIntegration(unittest.TestCase):
         restarts = [c for c in _cmds() if c[0] != "curl"]
         self.assertEqual(restarts, [["launchctl", "kickstart", "-k", "gui/501/net.digitalnoise.nova-gateway-v2"]])
         self.assertEqual([r[1] for r in sc.results], ["ok", "FAIL"])
+
+
+    def test_boot_records_boot_rows_and_never_runs_deep(self):
+        calls = []
+        doc = _fake_doctor([("Volumes", "ok", "fine"), ("Face stack", "fail", "timeout"), ("Disk", "warn", "88%")], calls)
+        with _modstub({"nova_doctor": doc, "nova_deep_healthcheck": _fake_deep([], calls)}):
+            rc = sc.main(["--boot", "--now"])
+        self.assertEqual(rc, 1)
+        self.assertNotIn("checks", calls)                         # boot never waits on the deep checks
+        self.assertNotIn("wait", calls)                           # --now
+        self.assertEqual([r[:2] for r in sc.results],
+                         [("boot-volumes", "ok"), ("boot-face-stack", "FAIL"), ("boot-disk", "WARN")])
+        self.assertEqual(len(_inserts()), 3)
+        self.assertIn("$novaq$boot-face-stack$novaq$", _inserts()[1])
+        self.assertEqual(sc.slack.call_args[0][0], sc.SLACK_ALERT_CHANNEL)
+
+    def test_deep_records_deep_rows_and_keeps_deep_healthcheck_log(self):
+        calls = []
+        rows = [_row("postgres", True), _row("plex", False, fixed=True, fix_detail="refreshed")]
+        with _modstub({"nova_deep_healthcheck": _fake_deep(rows, calls)}):
+            rc = sc.main(["--deep"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(sc.results, [("deep-postgres", "ok", None, "postgres detail"),
+                                      ("deep-plex", "fixed", "refreshed", "plex detail")])
+        self.assertIn(("write_log", 2), calls)
+        self.assertEqual(sc.slack.call_args[0], (sc.SLACK_ALERT_CHANNEL, "DEEP 1/2"))   # something was fixed
 
 
 class TestFunctional(unittest.TestCase):
@@ -210,7 +338,47 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual((sc.STATE_DIR / "selfcheck_digest.date").read_text(), time.strftime("%Y-%m-%d"))
 
 
+    def test_boot_golden_path_waits_heals_then_posts_digest(self):
+        calls = []
+        with _modstub({"nova_doctor": _fake_doctor([("Disk", "ok", "78%")], calls)}):
+            self.assertEqual(sc.main(["--boot"]), 0)
+        self.assertEqual(calls, ["wait", "heal", "Disk"])
+        self.assertEqual(sc.slack.call_args[0], (sc.SLACK_DIGEST_CHANNEL, "BOOT ok Disk=ok"))
+
+    def test_boot_dry_run_skips_heal_and_posts_nothing(self):
+        calls = []
+        with _modstub({"nova_doctor": _fake_doctor([("Disk", "ok", "x")], calls)}), \
+             patch.object(sc, "slack", _REAL_SLACK), patch.object(sc.urllib.request, "urlopen") as uo:
+            sc.main(["--boot", "--dry-run"])
+        self.assertEqual(calls, ["wait", "Disk"])
+        uo.assert_not_called()
+        self.assertEqual(_inserts(), [])
+
+    def test_boot_crashing_check_is_contained(self):
+        doc = _fake_doctor([], [])
+        doc.CHECKS = [("MLX", lambda: 1 / 0)]
+        with _modstub({"nova_doctor": doc}):
+            self.assertEqual(sc.main(["--boot", "--now"]), 1)
+        self.assertEqual(sc.results[0][:2], ("boot-mlx", "FAIL"))
+        self.assertIn("check crashed", sc.results[0][3])
+
+    def test_deep_broken_exits_1_dry_run_skips_log(self):
+        calls = []
+        with _modstub({"nova_deep_healthcheck": _fake_deep([_row("gateway", False)], calls)}):
+            self.assertEqual(sc.main(["--deep", "--dry-run"]), 1)
+        self.assertEqual(calls, ["checks"])                       # no deep_healthcheck_log write in dry-run
+        self.assertEqual(sc.results[0][:2], ("deep-gateway", "FAIL"))
+        self.assertEqual(_inserts(), [])
+
+
 class TestFrame(unittest.TestCase):
+    def test_help_exits_zero(self):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_selfcheck.py"), "--help"], capture_output=True,
+                           text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for flag in ("--boot", "--deep", "--dry-run", "--now"):
+            self.assertIn(flag, r.stdout)
+
     def test_import_never_runs_main(self):
         # running the script performs live checks and self-heals, so the smoke is an import only
         self.assertIn('if __name__ == "__main__":', SRC)

@@ -21,8 +21,16 @@ What she senses (all read-only, all her own data, nova_ops):
 Writes one row to time_sense per run and the sentence to service_config (service='time_sense',
 key='current'), which the gateway appends to her bootstrap context. Fail-open: a missing
 source just drops out of the sentence; the organ never edits the world.
+TEMPORAL INTUITION (merge M15 of the 2026-10-09 organ audit). Wish #40 was merged into this organ on
+2026-10-09 as `--daily`: the once-a-day noticing of durations that cross a human threshold (a week, a
+month, a season, half a year, a year). It keeps everything it had: the same reads, the same source=
+'temporal' memory, the same service_config state (nova_temporal_intuition/noticed), the same text, all
+through nova_temporal_intuition's own functions. nova_temporal_intuition.py remains as a thin wrapper.
   nova_time_sense.py             # run (scheduler-core, hourly)
   nova_time_sense.py --dry-run   # print the sentence, write nothing
+  nova_time_sense.py --daily     # temporal intuition (scheduler-core, once a day)
+  nova_time_sense.py --daily --dry-run   # print what she'd notice, write nothing
+  nova_time_sense.py --daily --report    # print every tracked duration
 ponytail: percentile-vs-hour-of-week is the whole model; add day-type (weekend/holiday) splits
 only if the "usual" bucket starts lying on Saturdays.
 """
@@ -166,8 +174,55 @@ def _connect(attempts=3, backoff=2.0):
             time.sleep(backoff * (2 ** i))
 
 
-def main():
-    dry = "--dry-run" in sys.argv
+def daily(argv=()):
+    """Temporal intuition (wish #40), merged here 2026-10-09 as --daily: exactly what
+    nova_temporal_intuition.main() did — feel each duration, notice each human threshold once."""
+    import argparse
+    import nova_temporal_intuition as ti
+    ap = argparse.ArgumentParser(prog="nova_time_sense.py --daily",
+                                 description="Nova's Temporal Intuition — feeling durations, not timestamps")
+    ap.add_argument("--dry-run", action="store_true"); ap.add_argument("--report", action="store_true")
+    args = ap.parse_args(list(argv))
+    try:
+        ops = psycopg2.connect(ti.OPS_DSN, connect_timeout=5); ops.autocommit = True; oc = ops.cursor()
+    except Exception as e:  # noqa: BLE001
+        ti.log(f"no PG ({e}) — fail-open"); return 0
+    try:
+        mem = psycopg2.connect(ti.MEM_DSN, connect_timeout=5); mem.autocommit = True; mc = mem.cursor()
+    except Exception:  # noqa: BLE001
+        mc = None
+    now = datetime.now(timezone.utc); today = now.date()
+    durations = ti.gather(oc, mc, now)
+    if args.report:
+        for k, l, d in sorted(durations, key=lambda x: -x[2]): print(f"{d:>5}d  {k:<28} {l}")
+        return 0
+    noticed = ti.load_state(oc)
+    crossings = []
+    for k, l, d in durations:
+        th = ti.crossed(d, noticed.get(k))
+        if th: crossings.append((k, l, d, th))
+    ti.log(f"{len(durations)} duration(s) felt; {len(crossings)} crossed a threshold today")
+    text = ti.notice_text(crossings, today)
+    if args.dry_run:
+        print(text or "(nothing crossed — a blank day, honestly)"); return 0
+    if not crossings:
+        return 0
+    stamp = ti._stamp()
+    ti.remember(text, {"organ": ti.STATE_SERVICE, "kind": "crossing", "date": today.isoformat(),
+                       "crossings": [{"key": k, "days": d, "threshold": th} for k, _, d, th in crossings],
+                       **({"lineage": stamp} if stamp else {})})
+    for k, _, _, th in crossings:
+        noticed[k] = max(th, noticed.get(k, 0))
+    ti.save_state(oc, noticed)
+    ti.log("noticed: " + "; ".join(f"{ti.word(th)} {l}" for _, l, _, th in crossings))
+    return 0
+
+
+def main(argv=None):
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if "--daily" in argv:
+        return daily([a for a in argv if a != "--daily"])
+    dry = "--dry-run" in argv
     now = datetime.now(timezone.utc).astimezone()
     conn = _connect(); cur = conn.cursor()
     cur.execute("""CREATE TABLE IF NOT EXISTS time_sense (
@@ -187,4 +242,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

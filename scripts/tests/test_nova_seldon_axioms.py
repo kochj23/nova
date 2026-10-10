@@ -158,6 +158,16 @@ class TestUnit(unittest.TestCase):
             self.assertEqual(S.selftest(), 0)
 
 
+    def test_wrapper_delegates_to_charles(self):
+        import nova_charles
+        with mock.patch.object(nova_charles, "main", return_value=0) as cm, mock.patch("builtins.print") as pr:
+            self.assertEqual(S.main(["--run", "--dry-run"]), 0)
+            self.assertEqual(S.main(["--show"]), 0)
+        self.assertEqual(cm.call_args_list[0].args[0], ["--forecasts"] + [] + ["--dry-run"])
+        self.assertEqual(cm.call_args_list[1].args[0], ["--forecasts"] + [] + ["--show"])
+        self.assertIn("merged into nova_charles.py --forecasts on 2026-10-09", pr.call_args_list[0].args[0])
+
+
 class TestIntegration(unittest.TestCase):
     def test_shared_lookup_comes_from_charles(self):
         self.assertIs(S.own_actions, C.own_actions)
@@ -174,6 +184,12 @@ class TestIntegration(unittest.TestCase):
     def test_check_block_parsed_by_predictions(self):
         self.assertIn("from nova_predictions import extract_check", SRC)
         self.assertEqual(S.SERVICE, "seldon_axioms")
+
+
+    def test_run_is_reached_through_charles(self):
+        with mock.patch.object(S, "run", return_value={}) as r, mock.patch("builtins.print"):
+            S.main(["--run"])
+        r.assert_called_once()                      # wrapper -> nova_charles --forecasts -> this module's run()
 
 
 class TestFunctional(unittest.TestCase):

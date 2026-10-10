@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Tests for nova_temporal_intuition.py — the 7 house categories (Security, Performance, Retry, Unit,
-Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
+Integration, Functional, Frame). Since 2026-10-09 (M15) this runs as `nova_time_sense.py --daily`;
+main() is a thin wrapper, so the functional tests drive it end to end through time sense.
+Written by Jordan Koch (via Claude)."""
 import importlib.util
 import io
 import json
@@ -27,8 +29,28 @@ def _load(name, path):
     return mod
 
 
-ti = _load("ti", SCRIPT)
+import nova_temporal_intuition as ti  # noqa: E402 — import-clean; the same object time sense's --daily uses
+import nova_time_sense as ts_mod  # noqa: E402
 SRC = SCRIPT.read_text()
+
+# Offline guard: no real PG, no real memory server from this file, ever (tests patch over it where needed).
+_GUARDS = []
+
+
+def _offline(*a, **k):
+    raise RuntimeError("offline test: real PG / HTTP blocked")
+
+
+def setUpModule():
+    import urllib.request
+    import psycopg2
+    for target in (mock.patch.object(psycopg2, "connect", _offline), mock.patch.object(urllib.request, "urlopen", _offline)):
+        target.start(); _GUARDS.append(target)
+
+
+def tearDownModule():
+    while _GUARDS:
+        _GUARDS.pop().stop()
 NOW = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
 
 
@@ -276,10 +298,18 @@ class TestFunctional(unittest.TestCase):
              mock.patch("urllib.request.urlopen", urlopen or default_urlopen), \
              mock.patch.object(ti, "_stamp", return_value={}), \
              mock.patch.object(ti.sys, "argv", ["nova_temporal_intuition.py", *argv]), \
-             mock.patch.object(ti, "datetime", _FrozenDT), \
+             mock.patch.object(ti, "datetime", _FrozenDT), mock.patch.object(ts_mod, "datetime", _FrozenDT), \
              redirect_stdout(io.StringIO()) as out:
             rc = ti.main()
         return rc, out.getvalue(), posted
+
+    def test_wrapper_runs_time_sense_daily(self):
+        calls = []
+        with mock.patch.object(ts_mod, "main", lambda argv: calls.append(argv) or 0), \
+             redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(ti.main(["--report"]), 0)
+        self.assertEqual(calls, [["--daily", "--report"]])
+        self.assertIn("merged into nova_time_sense.py on 2026-10-09", out.getvalue())
 
     def test_golden_path_writes_one_memory_and_advances_state(self):
         oc = _Cur(_ops_routes(**{"FROM service_config": ({"noticed": {"herd:Gaston": 30}},)}))

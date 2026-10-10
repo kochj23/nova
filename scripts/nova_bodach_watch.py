@@ -28,9 +28,19 @@ degraded, and while Jordan is depleted (late night / hard stretch / asleep) only
 Watch Bill turnover and the morning PDB (escalation_log + restraint_ledger 'two-man'). Text that could reach the journal is built
 with journal_safe() — no addresses, no bearings, no home location.
 
+Local situation (merged in 2026-10-09, organ audit M3): each live run also asks
+nova_local_situation's question over the last 20 min ("is something happening near us right
+now?": low loitering aircraft, serious CHP within 1.5 mi, >= 3 scanner transmissions, an exterior
+camera-motion spike vs the 7-day baseline; fires at score >= 4 from >= 2 signals). Its scoring is
+imported from nova_local_situation unchanged; its alert (same text, same nova_notify call, so the
+same dedup key) now goes through the same two-man rule / SPINNAKER gate as Bodach's own, with one
+source per signal type, and is skipped when Bodach itself alerted in the last 2 h (one alert per
+fact). The camera-motion query is behind the same P3 privacy gate as Bodach's motion feed.
+
 Usage:
   nova_bodach_watch.py                 # score the last 60 min, record, alert if above threshold
   nova_bodach_watch.py --dry-run       # score + print, write nothing, alert nobody
+  nova_bodach_watch.py --now [--minutes N]   # local situation right now: print only (read-only)
   nova_bodach_watch.py --calibrate     # replay 30 days, pick + store threshold, report fire count
 Written by Jordan Koch (via Claude).
 """
@@ -45,6 +55,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_watch_common as W  # noqa: E402
 import nova_spinnaker as SP  # noqa: E402
+import nova_local_situation as L  # noqa: E402  (merged 2026-10-09: its scoring, unchanged)
 
 
 try:  # P3: camera/face data serve safety or presence only, to Jordan or an internal store
@@ -86,6 +97,7 @@ SERIOUS_CHP = ("fire", "injur", "pursuit", "shots", "fatal", "pedestrian", "over
                "hit and run w", "ambulance", "1144", "1183", "20001")
 SERVICE = "bodach_watch"
 AIR_SUSTAINED = 30           # ADS-B samples of one airframe inside the 60-min window
+SITUATION_MINUTES = 20       # local situation's window ('right now'), as its scheduler entry ran it
 
 
 # ── pure scoring ────────────────────────────────────────────────────────────
@@ -280,6 +292,80 @@ def two_man(cur, w: dict) -> dict:
         return {"allowed": False, "reason": f"escalation gate unavailable ({e})", "keys": [], "spinnaker": {}}
 
 
+# ── local situation (merged from nova_local_situation.py, 2026-10-09) ───────
+
+SITUATION_SOURCES = {"air": {"id": "adsb:loiter", "type": "adsb"},
+                     "chp": {"id": "chp:cad", "type": "traffic"},
+                     "scanner": {"id": "scanner:dispatch", "type": "radio"},
+                     "motion": {"id": "camera:exterior", "type": "camera"}}
+
+
+def situation_item(res: dict) -> dict:
+    """A local-situation verdict as a SPINNAKER item: one source per signal TYPE (two aircraft
+    are one ADS-B source, not two independent feeds). Pure."""
+    kinds = sorted(set(res.get("kinds", [])))
+    return {"claim": "something is happening nearby",
+            "sources": [SITUATION_SOURCES[k] for k in kinds if k in SITUATION_SOURCES]}
+
+
+def situation_gate(cur, res: dict) -> dict:
+    """The same nova_escalation two-man gate Bodach's alert uses. Fails CLOSED."""
+    try:
+        import nova_escalation as E
+        return E.authorize(cur, source="nova_bodach_watch", kind="situation", action_class="alert",
+                           item=situation_item(res), urgent=len(set(res.get("kinds", []))) >= 3,
+                           text=W.journal_safe(L.message(res)))
+    except Exception as e:  # noqa: BLE001
+        return {"allowed": False, "reason": f"escalation gate unavailable ({e})", "keys": [], "spinnaker": {}}
+
+
+def _bodach_alerted_recently(cur, now) -> bool:
+    try:
+        cur.execute("SELECT 1 FROM bodach_scores WHERE alerted AND window_end > %s", (now - 2 * WINDOW,))
+        return cur.fetchone() is not None
+    except Exception:  # noqa: BLE001 — no table yet: nothing raised yet
+        return False
+
+
+def situation_step(cur, conn, minutes: int = SITUATION_MINUTES, alert: bool = False,
+                   bodach_alerted: bool = False) -> dict | None:
+    """Local situation's check. alert=False is read-only (--now, --dry-run). Never raises."""
+    try:
+        res = L.assess(cur, minutes, conn=conn, motion=_camera_ok("safety", "internal"))
+    except Exception as e:  # noqa: BLE001 — one broken feed never breaks Bodach's own run
+        W.log(TAG, f"local situation check failed: {e}")
+        return None
+    msg = L.report(res)
+    res["alerted"] = False
+    if not msg or not alert:
+        return res
+    if bodach_alerted or _bodach_alerted_recently(cur, W.now_utc()):
+        W.log(TAG, "local situation: Bodach already raised this stretch — not alerting twice")
+        return res
+    gate = situation_gate(cur, res)
+    if not gate.get("allowed"):
+        W.log(TAG, f"local situation held by the two-man rule: {gate.get('reason')}")
+        return res
+    try:
+        from nova_notify import notify
+        L._retry(notify, msg, level="warning", category="local", what="notify")
+        L.log("alerted")
+        res["alerted"] = True
+    except Exception as e:  # noqa: BLE001
+        L.log(f"notify failed after {L.RETRY_ATTEMPTS} attempts: {e}")
+    return res
+
+
+def run_situation(minutes: int = SITUATION_MINUTES, alert: bool = False) -> int:
+    """--now (alert=False, read-only), or the old `nova_local_situation.py --alert` path."""
+    conn = W.connect()
+    try:
+        situation_step(conn.cursor(), conn, minutes, alert=alert)
+    finally:
+        conn.close()
+    return 0
+
+
 # ── modes ───────────────────────────────────────────────────────────────────
 
 def run_live(dry_run: bool) -> int:
@@ -295,9 +381,11 @@ def run_live(dry_run: bool) -> int:
     W.log(TAG, f"score {w['score']} types {w['present']} threshold {th} fired={fired}")
     if dry_run:
         print(json.dumps({k: v for k, v in w.items() if k not in ("ws", "we")}, default=str, indent=1))
+        situation_step(cur, conn, SITUATION_MINUTES, alert=False)
         return 0
     if not any(w["strengths"].values()):
-        return 0  # nothing at all stirring: nothing to record
+        situation_step(cur, conn, SITUATION_MINUTES, alert=True)
+        return 0  # nothing at all stirring for Bodach: nothing to record
     safe = describe(w, safe=True)
     alerted = False
     if fired:
@@ -321,6 +409,7 @@ def run_live(dry_run: bool) -> int:
         "ON CONFLICT (window_end) DO NOTHING",
         (ws, we, w["score"], len(w["present"]), json.dumps(w["strengths"]),
          json.dumps(w["evidence"], default=str), safe, th, fired, bool(alerted)))
+    situation_step(cur, conn, SITUATION_MINUTES, alert=True, bodach_alerted=bool(alerted))
     return 0
 
 
@@ -373,7 +462,12 @@ def main(argv=None) -> int:
     ap.add_argument("--calibrate", action="store_true")
     ap.add_argument("--days", type=int, default=30)
     ap.add_argument("--no-write", action="store_true", help="with --calibrate: report only")
+    ap.add_argument("--now", action="store_true",
+                    help="is something happening near us right now? (local situation; read-only)")
+    ap.add_argument("--minutes", type=int, default=SITUATION_MINUTES, help="with --now: window (default 20)")
     a = ap.parse_args(argv)
+    if a.now:
+        return run_situation(a.minutes, alert=False)
     if a.calibrate:
         return run_calibrate(a.days, not a.no_write)
     return run_live(a.dry_run)

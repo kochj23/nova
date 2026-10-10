@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for nova_human_insight.py — the 7 house categories (Security, Performance, Retry, Unit,
-Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
+Integration, Functional, Frame). Since 2026-10-09 (M6) Human Insight runs as the 'insight' section of
+nova_empathy_core.py; nova_human_insight.main() is a thin wrapper. Written by Jordan Koch (via Claude)."""
 import importlib.util
 import io
 import json
@@ -11,14 +12,36 @@ import sys
 import time
 import types
 import unittest
+import urllib.request
 from collections import Counter
 from contextlib import redirect_stdout
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 
+import psycopg2
+
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+EC_SRC = (SCRIPTS / "nova_empathy_core.py").read_text()
+
+# Offline guard: no real PG, no real memory server from this file, ever (2026-10-09: a stale patch
+# target let one run of this file reach the live DB; it now fails loudly instead).
+_GUARDS = []
+
+
+def _offline(*a, **k):
+    raise RuntimeError("offline test: real PG / HTTP blocked")
+
+
+def setUpModule():
+    for target in (patch.object(psycopg2, "connect", _offline), patch.object(urllib.request, "urlopen", _offline)):
+        target.start(); _GUARDS.append(target)
+
+
+def tearDownModule():
+    while _GUARDS:
+        _GUARDS.pop().stop()
 
 
 def _load(name, path):
@@ -28,7 +51,7 @@ def _load(name, path):
     return mod
 
 
-hi = _load("hi", SCRIPTS / "nova_human_insight.py")
+import nova_human_insight as hi  # noqa: E402 — import-clean; the same object the lens's insight section uses
 SRC = (SCRIPTS / "nova_human_insight.py").read_text()
 TODAY = date(2026, 10, 5)
 
@@ -94,7 +117,7 @@ class TestSecurity(unittest.TestCase):
         self.assertIn("WHERE service=%s AND key=%s", SRC)
 
     def test_reads_only_her_own_records(self):
-        body = SRC[SRC.index("def main"):SRC.index("def demo")]
+        body = EC_SRC[EC_SRC.index("def section_insight"):EC_SRC.index("SECTIONS = {")]   # where main() runs now
         for table in ("predictions", "claude_sessions", "reach_log"):
             self.assertIn(f"FROM {table}", body)
         self.assertNotIn("gateway_traces", body)                 # no raw conversation text leaves the DB
@@ -140,15 +163,18 @@ class TestRetry(unittest.TestCase):
 
         def boom(*a, **k):
             attempts.append(1); raise OSError("pg down")
-        real_pg, real_argv = hi.psycopg2, sys.argv
-        hi.psycopg2 = types.SimpleNamespace(connect=boom); sys.argv = ["nova_human_insight.py"]
-        try:
-            with redirect_stdout(io.StringIO()) as buf:
-                self.assertEqual(hi.main(), 0)
-        finally:
-            hi.psycopg2, sys.argv = real_pg, real_argv
+        with patch.object(psycopg2, "connect", boom), redirect_stdout(io.StringIO()) as buf:
+            self.assertEqual(hi.main([]), 0)
         self.assertEqual(len(attempts), 1)
         self.assertIn("fail-open", buf.getvalue())
+
+    def test_wrapper_runs_the_lens_insight_section(self):
+        import nova_empathy_core as ec
+        calls = []
+        with patch.object(ec, "main", lambda argv: calls.append(argv) or 0), redirect_stdout(io.StringIO()) as buf:
+            self.assertEqual(hi.main(["--dry-run"]), 0)
+        self.assertEqual(calls, [["--section", "insight", "--dry-run"]])
+        self.assertIn("merged into nova_empathy_core.py on 2026-10-09", buf.getvalue())
 
 
 class TestUnit(unittest.TestCase):
@@ -197,14 +223,14 @@ class TestUnit(unittest.TestCase):
 
 class TestIntegration(unittest.TestCase):
     def _run(self, argv, cur, posted=None):
-        real_pg, real_argv = hi.psycopg2, sys.argv
-        hi.psycopg2 = types.SimpleNamespace(connect=lambda *a, **k: _Conn(cur)); sys.argv = ["nova_human_insight.py", *argv]
+        real_pg, real_argv = psycopg2.connect, sys.argv
+        psycopg2.connect = lambda *a, **k: _Conn(cur); sys.argv = ["nova_human_insight.py", *argv]
         try:
             with patch.object(hi, "remember", lambda t, m: (posted if posted is not None else []).append((t, m))), \
                     redirect_stdout(io.StringIO()) as buf:
                 rc = hi.main()
         finally:
-            hi.psycopg2, sys.argv = real_pg, real_argv
+            psycopg2.connect, sys.argv = real_pg, real_argv
         return rc, buf.getvalue()
 
     def test_dry_run_chains_the_three_signals_and_writes_nothing(self):
@@ -235,13 +261,13 @@ class TestIntegration(unittest.TestCase):
 
 class TestFunctional(unittest.TestCase):
     def _run(self, argv, cur, urlopen):
-        real_pg, real_argv = hi.psycopg2, sys.argv
-        hi.psycopg2 = types.SimpleNamespace(connect=lambda *a, **k: _Conn(cur)); sys.argv = ["nova_human_insight.py", *argv]
+        real_pg, real_argv = psycopg2.connect, sys.argv
+        psycopg2.connect = lambda *a, **k: _Conn(cur); sys.argv = ["nova_human_insight.py", *argv]
         try:
             with _urlopen(urlopen), redirect_stdout(io.StringIO()) as buf:
                 rc = hi.main()
         finally:
-            hi.psycopg2, sys.argv = real_pg, real_argv
+            psycopg2.connect, sys.argv = real_pg, real_argv
         return rc, buf.getvalue()
 
     def test_golden_path_remembers_three_insights_and_saves_high_water(self):
@@ -265,7 +291,7 @@ class TestFunctional(unittest.TestCase):
         def ok(req, timeout=0):
             posted.append(json.loads(req.data)); return _Resp({"id": 1})
         # the gate compares against the real UTC date, so pin "today" in the state to it
-        seen = {"rhythm:Fri-9": hi.datetime.now(hi.timezone.utc).date().isoformat(), "silence:held": "2026-09-01"}
+        seen = {"rhythm:Fri-9": datetime.now(timezone.utc).date().isoformat(), "silence:held": "2026-09-01"}
         cur = _world(seen=(json.dumps({"seen": seen}),))
         rc, out = self._run([], cur, ok)
         self.assertEqual(rc, 0)

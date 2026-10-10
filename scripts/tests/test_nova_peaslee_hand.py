@@ -83,6 +83,15 @@ class TestSecurity(unittest.TestCase):
         self.assertEqual(P.verify(es)[0], 1)
 
 
+class TestChainPinned(unittest.TestCase):
+    """The M9 merge (2026-10-09) must not move the chain: a fixed vector pins the hashing."""
+
+    def test_entry_hash_golden_vector(self):
+        rh = P.sha(P.canon({"id": 1, "value": "a"}))
+        self.assertEqual(P.entry_hash(P.GENESIS, "values", "1", "added", rh),
+                         "d632c0828e6698bd47e3e7e3dda407a7d2bab35f3feaf3dfafb2b786f92f8b13")
+
+
 class TestPerformance(unittest.TestCase):
     def test_chain_and_verify_10k(self):
         rows = {("values", str(i)): {"id": i, "statement": "s" * 50} for i in range(10000)}
@@ -165,6 +174,39 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(read, BOTH)
         ops = [c[2] for c in P.diff({}, now, read)]
         self.assertEqual(ops, ["added", "added"])
+
+
+class TestMergedWrapper(unittest.TestCase):
+    """Merged into nova_jade_amulet.py --values on 2026-10-09: the CLI is a thin wrapper."""
+
+    def test_cli_maps_onto_jade_values_mode(self):
+        import nova_jade_amulet as J
+        cases = {("--run",): ["--values"], ("--run", "--dry-run"): ["--values", "--dry-run"],
+                 ("--verify",): ["--values", "--verify"], ("--show",): ["--values", "--show"]}
+        for argv, want in cases.items():
+            with mock.patch.object(J, "main", return_value=0) as jm, mock.patch("builtins.print"):
+                self.assertEqual(P.main(list(argv)), 0)
+            jm.assert_called_once_with(want)
+
+    def test_verify_through_jade_calls_peaslee_own_function(self):
+        import nova_jade_amulet as J
+        cur = FakeCur()
+        conn = mock.MagicMock()
+        conn.cursor.return_value = cur
+        with mock.patch.object(J.W, "connect", return_value=conn), \
+                mock.patch.object(P, "verify_cmd", return_value=1) as vc, mock.patch("builtins.print"):
+            self.assertEqual(P.main(["--verify"]), 1)     # a broken chain still exits 1
+        vc.assert_called_once_with(cur)
+
+    def test_run_through_jade_calls_peaslee_run(self):
+        import nova_jade_amulet as J
+        cur = FakeCur()
+        conn = mock.MagicMock()
+        conn.cursor.return_value = cur
+        with mock.patch.object(J.W, "connect", return_value=conn), \
+                mock.patch.object(P, "run", return_value=0) as r, mock.patch("builtins.print"):
+            self.assertEqual(P.main(["--run", "--dry-run"]), 0)
+        r.assert_called_once_with(cur, dry=True)
 
 
 class TestFunctional(unittest.TestCase):

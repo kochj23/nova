@@ -20,23 +20,49 @@ Minimal first version:
 Read-only over everything except births and its own claude_queue item. Never blocks anything.
 Discovery helpers (scheduler_births, script_births, current_tasks) are shared with nova_busab.py.
 
-CLI:   --run [--dry-run] [--hours N]   --show   --sign TASK --row TABLE:KEY [--by NAME]   --selftest
-Table: births.  service_config: yellow_eye/owner (default "Claude").
-Schedule: daily 09:20.
+ONE LIFECYCLE REGISTRY (merge M5, 2026-10-09): birth, burial, suspension and pace of Nova's organs
+live here as modes. The absorbed scripts keep their logic, tables and queue sessions; their CLIs
+are thin wrappers that forward to these modes.
+  --births  this script's own job (above).                         births            nova-yellow-eye
+  --burials the Earth-Box Count (nova_earth_boxes.py): boxes left for every retired thing and
+            Big Brother restarts of buried names.                   earth_box_burials nova-earth-boxes
+            (+ sequence earth_box_epoch)
+  --holds   the Valdemar Register (nova_valdemar.py): .bak files, disabled plists, learned
+            suppressions, pinned models. With --oldest: the ten oldest, filed once a month.
+                                                                    valdemar_holds    nova-valdemar
+  --pace    BuSab (nova_busab.py): weekly change vs chronic failures; recommends a freeze
+            (both above their 8-week medians, or a change burst of 10x median and >= 25).
+                                                                    busab_weekly      nova-busab
+Modes combine in one run (--births --pace ...) and share one Scan: the scheduler YAML, its git
+births and the script births are read once (births + pace), and the YAML, plists and crontab once
+(births + burials). Holds reads plist names, mtimes and launchctl state, not this scan.
+
+CLI:   --births|--run [--hours N]   --burials   --bury NAME [--kind K] [--host H] [--by WHO]
+       --holds [--oldest]   --pace [--week YYYY-MM-DD]   (all take --dry-run)
+       --show [--pace]   --sign TASK --row TABLE:KEY [--by NAME]   --selftest
+Tables: births (+ the absorbed tables above).  service_config: yellow_eye/owner (default "Claude").
+Schedule: births daily 09:20; burials daily 05:20; holds Wed 04:15; holds --oldest monthly 1st
+04:20; pace Mon 09:30.
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
 
 import argparse
+import contextlib
+import importlib
 import os
 import re
 import subprocess
 import sys
-from datetime import datetime, timedelta, timezone
+import traceback
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_watch_common as W  # noqa: E402
+
+if __name__ == "__main__":   # one module object when run as a script: nova_busab imports it by name
+    sys.modules.setdefault("nova_yellow_eye", sys.modules[__name__])
 
 SCRIPTS = Path(__file__).resolve().parent
 SCHED = Path(os.environ.get("NOVA_SCHED_CONFIG") or Path.home() / ".openclaw/config/scheduler.yaml")
@@ -46,6 +72,7 @@ QUEUE_SESSION = "nova-yellow-eye"
 QUEUE_PREFIX = "Yellow Eye: "
 OPEN = ("queued", "pending", "in_progress", "claimed")
 TASK_ADD = re.compile(r"^\+  ([A-Za-z0-9_]+):\s*(#.*)?$")
+MERGED = "2026-10-09"   # merge M5: earth_boxes, valdemar and busab became modes here
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS births (
@@ -99,11 +126,12 @@ def parse_first_seen(text: str, added=TASK_ADD) -> dict:
     return out
 
 
-def current_tasks(path: Path = SCHED) -> dict:
-    """{task: script} from the live scheduler YAML ({} if unreadable)."""
+def current_tasks(path: Path = SCHED, text: str | None = None) -> dict:
+    """{task: script} from the live scheduler YAML, or from its already-read `text` ({} if unreadable)."""
     try:
         import yaml
-        return {k: (v or {}).get("script") for k, v in (yaml.safe_load(path.read_text())["tasks"] or {}).items()}
+        doc = yaml.safe_load(path.read_text() if text is None else text)
+        return {k: (v or {}).get("script") for k, v in (doc["tasks"] or {}).items()}
     except Exception as e:  # noqa: BLE001
         log(f"scheduler yaml unreadable: {e}")
         return {}
@@ -113,12 +141,12 @@ def _mtime(p: Path) -> datetime:
     return datetime.fromtimestamp(p.stat().st_mtime, timezone.utc)
 
 
-def scheduler_births(path: Path = SCHED) -> dict:
+def scheduler_births(path: Path = SCHED, tasks: dict | None = None) -> dict:
     """{task: born} for every task key ever added to the YAML; current tasks with no commit yet
-    are born at the file's mtime."""
+    are born at the file's mtime. `tasks` = current_tasks() already read (Scan)."""
     born = parse_first_seen(_git(path.parent, "log", "--reverse", "--format=@@C %cI", "-p",
                                  "--unified=0", "--", path.name))
-    for t in current_tasks(path):
+    for t in (current_tasks(path) if tasks is None else tasks):
         if t not in born and path.exists():
             born[t] = _mtime(path)
     return born
@@ -131,6 +159,52 @@ def script_births(d: Path = SCRIPTS) -> dict:
     for p in d.glob("nova_*.py"):
         born.setdefault(p.name, _mtime(p))
     return born
+
+
+def _read_text(p: Path) -> str:
+    try:
+        return Path(p).read_text(errors="replace")
+    except OSError:
+        return ""
+
+
+def organ(name: str):
+    """An absorbed module, imported on first use: nova_busab imports this module at its top, so
+    importing the absorbed modules here at load time would be circular."""
+    return importlib.import_module(name)
+
+
+class Scan:
+    """One look at the Studio's lifecycle sources, cached for every mode in this run: the scheduler
+    YAML (births, burials), its git births (births, pace), script births (pace), launchd plists,
+    crontab and Big Brother's restart list (burials). nova-core is read by burials alone."""
+
+    def __init__(self):
+        self._memo = {}
+
+    def _once(self, key, fn, *args, **kw):
+        if key not in self._memo:
+            self._memo[key] = fn(*args, **kw)
+        return self._memo[key]
+
+    def read(self, p) -> str:
+        return self._once(("read", str(p)), _read_text, p)
+
+    def tasks(self) -> dict:
+        return self._once("tasks", current_tasks, SCHED, self.read(SCHED))
+
+    def sched_births(self) -> dict:
+        return self._once("sched_births", scheduler_births, SCHED, tasks=self.tasks())
+
+    def script_births(self) -> dict:
+        return self._once("script_births", script_births)
+
+    def crontab(self) -> str:
+        return self._once("crontab", organ("nova_earth_boxes")._crontab)
+
+    def burial_sources(self) -> list:
+        E = organ("nova_earth_boxes")
+        return self._once("burial_sources", E.local_sources, E.PLIST_DIRS, read=self.read, crontab=self.crontab)
 
 
 # ── checks (pure) ───────────────────────────────────────────────────────────
@@ -197,9 +271,10 @@ def _test_corpus() -> dict:
     return out
 
 
-def assess(cur, now, hours: int = HYPERCARE_H) -> list:
-    tasks = current_tasks()
-    born = scheduler_births()
+def assess(cur, now, hours: int = HYPERCARE_H, scan: Scan | None = None) -> list:
+    scan = scan or Scan()
+    tasks = scan.tasks()
+    born = scan.sched_births()
     signed = signed_tasks(cur)
     corpus = _test_corpus()
     rows = []
@@ -270,12 +345,13 @@ def _owner(cur) -> str:
     return v if isinstance(v, str) and v else "Claude"
 
 
-def run(dry: bool = False, hours: int = HYPERCARE_H) -> list:
+def run(dry: bool = False, hours: int = HYPERCARE_H, scan: Scan | None = None) -> list:
+    """--births."""
     now = datetime.now(timezone.utc)
     conn = W.connect()
     try:
         cur = conn.cursor()
-        rows = assess(cur, now, hours)
+        rows = assess(cur, now, hours, scan)
         counts = {}
         for r in rows:
             counts[r["state"]] = counts.get(r["state"], 0) + 1
@@ -323,6 +399,39 @@ def sign(task: str, cited: str, by: str, dry: bool = False) -> int:
         conn.close()
 
 
+# ── absorbed modes (M5) ────────────────────────────────────────────────────
+
+def burials(dry: bool = False, scan: Scan | None = None) -> dict:
+    """--burials: the Earth-Box Count's run over this run's shared scan."""
+    return organ("nova_earth_boxes").run(dry=dry, sources=(scan or Scan()).burial_sources())
+
+
+def bury(name: str, kind: str, host: str, by: str) -> int:
+    """--bury: record a retirement (earth_box_burials tombstone)."""
+    E = organ("nova_earth_boxes")
+    conn = W.connect()
+    try:
+        cur = conn.cursor()
+        E.ensure_schema(cur)
+        E.bury(cur, name, kind, host, None, by)
+        E.log(f"buried {kind} {name} on {host}")
+    finally:
+        conn.close()
+    return 0
+
+
+def holds(dry: bool = False, oldest: bool = False) -> list:
+    """--holds: the Valdemar Register; with --oldest the monthly ten-oldest filing instead."""
+    V = organ("nova_valdemar")
+    return V.seven_months(dry=dry) if oldest else V.run(dry=dry)
+
+
+def pace(dry: bool = False, week=None, scan: Scan | None = None) -> dict:
+    """--pace: BuSab's weekly change-vs-reliability check over this run's shared births."""
+    scan = scan or Scan()
+    return organ("nova_busab").run(dry=dry, week=week, scripts=scan.script_births(), entries=scan.sched_births())
+
+
 def show() -> int:
     conn = W.connect()
     try:
@@ -355,32 +464,65 @@ def selftest() -> int:
     assert state_of(b, now, {"ran_ok": True, "has_rows": None}, False) == "ready"
     assert state_of(b, now, {"ran_ok": False}, False) == "unattended"
     assert state_of(b, now, {"ran_ok": False}, True) == "signed"
+    sc, calls = Scan(), []
+    sc._once("k", calls.append, 1)
+    sc._once("k", calls.append, 2)
+    assert calls == [1], calls
+    assert current_tasks(Path("x.yaml"), "tasks:\n  a:\n    script: nova_a.py\n") == {"a": "nova_a.py"}
+    with open(os.devnull, "w") as quiet, contextlib.redirect_stdout(quiet):   # absorbed selftests (pure)
+        rc = [organ(m).selftest() for m in ("nova_earth_boxes", "nova_valdemar", "nova_busab")]
+    assert rc == [0, 0, 0], rc
     print("selftest ok")
     return 0
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--run", action="store_true", help="assess births, write births, file failures")
+    m = ap.add_argument_group("modes (combine freely; one shared scan)")
+    m.add_argument("--births", action="store_true", help="assess births, write births, file failures")
+    m.add_argument("--run", action="store_true", help="same as --births (kept for the 09:20 entry)")
+    m.add_argument("--burials", action="store_true", help="Earth-Box Count: boxes and restarts of buried names")
+    m.add_argument("--holds", action="store_true", help="Valdemar Register: update the holds register")
+    m.add_argument("--oldest", action="store_true", help="with --holds: the ten oldest live holds (filed monthly)")
+    m.add_argument("--pace", action="store_true", help="BuSab: last week's change vs reliability; freeze note")
     ap.add_argument("--dry-run", action="store_true", help="print only; write nothing")
-    ap.add_argument("--hours", type=int, default=HYPERCARE_H, help="hypercare window (inspection only)")
-    ap.add_argument("--show", action="store_true", help="stored births")
+    ap.add_argument("--hours", type=int, default=HYPERCARE_H, help="--births: hypercare window (inspection only)")
+    ap.add_argument("--week", type=date.fromisoformat, help="--pace: assess the week containing this date")
+    ap.add_argument("--show", action="store_true", help="stored births (with --pace: recent busab_weekly)")
     ap.add_argument("--sign", metavar="TASK", help="sign off a birth")
     ap.add_argument("--row", help="with --sign: TABLE:KEY of one real output row")
-    ap.add_argument("--by", default="Little Mister", help="with --sign: who signs")
+    ap.add_argument("--bury", metavar="NAME", help="record a retirement (earth_box_burials tombstone)")
+    ap.add_argument("--kind", default="subagent", help="with --bury")
+    ap.add_argument("--host", default="studio", help="with --bury")
+    ap.add_argument("--by", help="who signs (--sign, default Little Mister) or buries (--bury, default jordan)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
     if a.sign:
-        return sign(a.sign, a.row or "", a.by, dry=a.dry_run)
-    if a.run:
-        run(dry=a.dry_run, hours=a.hours)
-        return 0
+        return sign(a.sign, a.row or "", a.by or "Little Mister", dry=a.dry_run)
+    if a.bury:
+        if not re.fullmatch(r"[\w.@-]{1,80}", a.bury):
+            ap.error("bad name")
+        return bury(a.bury, a.kind, a.host, a.by or "jordan")
     if a.show:
-        return show()
-    ap.print_help()
-    return 0
+        return organ("nova_busab").show() if a.pace else show()
+    scan, failed = Scan(), []
+    modes = [("births", a.births or a.run, lambda: run(dry=a.dry_run, hours=a.hours, scan=scan)),
+             ("burials", a.burials, lambda: burials(dry=a.dry_run, scan=scan)),
+             ("holds", a.holds or a.oldest, lambda: holds(dry=a.dry_run, oldest=a.oldest)),
+             ("pace", a.pace, lambda: pace(dry=a.dry_run, week=a.week, scan=scan))]
+    picked = [(n, fn) for n, on, fn in modes if on]
+    if not picked:
+        ap.print_help()
+        return 0
+    for name, fn in picked:   # one mode failing never stops the others
+        try:
+            fn()
+        except Exception:  # noqa: BLE001 — logged with its traceback, reflected in the exit code
+            log(f"--{name} failed:\n{traceback.format_exc()}")
+            failed.append(name)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":

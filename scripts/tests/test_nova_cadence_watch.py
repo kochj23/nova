@@ -56,6 +56,12 @@ class _Cur:
     def close(self):
         pass
 
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
 
 def _conn(cur):
     return MagicMock(cursor=MagicMock(return_value=cur))
@@ -146,28 +152,45 @@ class TestIntegration(unittest.TestCase):
 
 
 class TestFunctional(unittest.TestCase):
+    """Since 2026-10-09 the pass runs in nova_freshness_monitor (--learn); this script's main()
+    is a wrapper. These drive the wrapper end to end with only the DB and outbound calls faked."""
     def _rows(self):
         now = datetime.now(timezone.utc)
         return {"telemetry.soil": (now - timedelta(hours=10), 60.0, 50),       # SILENT
                 "telemetry.weather": (now - timedelta(seconds=30), 60.0, 50)}   # OK
 
-    def test_run_once_golden_path(self):
+    def _mods(self):
+        import nova_cadence_watch as real_cw
+        import nova_freshness_monitor as fm
+        return fm, real_cw
+
+    def test_wrapper_runs_the_freshness_learn_mode(self):
+        fm, _ = self._mods()
+        with patch.object(fm, "main", return_value=0) as m, redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(cw.main([]), 0)
+            self.assertEqual(cw.main(["--dry-run"]), 0)
+        self.assertEqual([c.args[0] for c in m.call_args_list], [["--learn"], ["--learn", "--dry-run"]])
+        self.assertIn("merged into nova_freshness_monitor.py (--learn) on 2026-10-09", out.getvalue())
+
+    def test_learn_pass_golden_path(self):
+        fm, rcw = self._mods()
         cur = _Cur(self._rows(), prev="OK")
-        with patch.object(cw.psycopg2, "connect", return_value=_conn(cur)), \
-             patch.object(cw, "_alert_silent") as al, patch.object(cw, "_write_silence_memory") as wm, \
+        with patch.object(fm, "_connect", return_value=_conn(cur)), \
+             patch.object(rcw, "_alert_silent") as al, patch.object(rcw, "_write_silence_memory") as wm, \
              redirect_stdout(io.StringIO()):
-            s = cw.run_once()
-        self.assertEqual([x["source"] for x in s["silent"]], ["telemetry.soil"])
-        self.assertEqual(s["ok"], 1)
-        self.assertEqual(len(s["skipped"]), len(cw.STREAMS) - 2)
+            self.assertEqual(cw.main([]), 0)
         al.assert_called_once()
+        self.assertEqual(al.call_args.args[0], "telemetry.soil")
         wm.assert_called_once()
         self.assertTrue(any("CREATE TABLE IF NOT EXISTS" in q for q, _ in cur.sql))
+        written = [p[0] for q, p in cur.sql if q.startswith("INSERT INTO cadence_state")]
+        self.assertEqual(written, ["telemetry.weather", "telemetry.soil"])
 
     def test_dry_run_writes_nothing(self):
+        fm, rcw = self._mods()
         cur = _Cur(self._rows())
-        with patch.object(cw.psycopg2, "connect", return_value=_conn(cur)), \
-             patch.object(cw, "_triage") as tr, patch.object(cw.urllib.request, "urlopen") as u, \
+        with patch.object(fm, "_connect", return_value=_conn(cur)), \
+             patch.object(rcw, "_triage") as tr, patch.object(rcw.urllib.request, "urlopen") as u, \
              redirect_stdout(io.StringIO()):
             rc = cw.main(["--dry-run"])
         self.assertEqual(rc, 0)
@@ -176,12 +199,13 @@ class TestFunctional(unittest.TestCase):
         u.assert_not_called()
 
     def test_learn_error_is_skipped(self):
+        fm, _ = self._mods()
         cur = _Cur({})
         orig = cur.execute
         cur.execute = lambda sql, params=None: (_ for _ in ()).throw(RuntimeError("no table")) \
             if "telemetry.soil" in sql else orig(sql, params)
-        with patch.object(cw.psycopg2, "connect", return_value=_conn(cur)), redirect_stdout(io.StringIO()):
-            s = cw.run_once(dry_run=True)
+        with redirect_stdout(io.StringIO()):
+            s = fm.run_cadence(_conn(cur), dry_run=True)
         self.assertIn({"source": "telemetry.soil", "why": "no table"}, s["skipped"])
 
 

@@ -29,6 +29,29 @@ def _load(name, path):
 
 gr = _load("gr", SCRIPTS / "nova_growth.py")
 SRC = (SCRIPTS / "nova_growth.py").read_text()
+import nova_soft_certainty as sc   # noqa: E402  (M7: measure_calibration reads soft certainty's pass)
+
+_REAL_SCORED, _REAL_READ = sc.scored_rows, sc.read_calibration
+_PATCHES = []
+
+
+def _padded_scored(oc, since=None):
+    # the fixtures below hand (confidence, outcome) pairs; scored_rows yields 5-tuples
+    return [tuple(r) + (None,) * (5 - len(r)) for r in _REAL_SCORED(oc, since=since)]
+
+
+def setUpModule():
+    # Most fixtures model "no fresh soft_certainty_state row" (the live path), which is
+    # what the queue-ordered _Cur answers; TestIntegration covers the stored-row path.
+    for name, fn in (("scored_rows", _padded_scored),
+                     ("read_calibration", lambda oc, high_surprise=sc.HIGH_SURPRISE:
+                      (sc.calibration_detail(sc.scored_rows(oc), high_surprise), "live"))):
+        p = patch.object(sc, name, fn); p.start(); _PATCHES.append(p)
+
+
+def tearDownModule():
+    while _PATCHES:
+        _PATCHES.pop().stop()
 NOW = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
 
 
@@ -230,6 +253,30 @@ class TestUnit(unittest.TestCase):
 
 
 class TestIntegration(unittest.TestCase):
+    def test_whole_table_calibration_comes_from_soft_certainty_state(self):
+        # M7: a fresh stored row is used as-is (no predictions scan); a stale one is not.
+        rows = [(0.8, "correct", 0.04, "self", NOW), (0.8, "incorrect", 0.64, "self", NOW),
+                (0.8, "partial", 0.09, "ops", NOW)]
+        det = {"fingerprint": sc.fingerprint_of(rows), "report": sc.calibration_detail(rows)}
+        with patch.object(sc, "read_calibration", _REAL_READ):
+            cur = _Cur([(json.dumps(det),), (3, NOW)])
+            m = gr.measure_calibration(cur)
+            self.assertEqual(m, {"n": 3, "mean_conf": 0.8, "hit_rate": 0.5, "gap": -0.3,
+                                 "abs_gap": 0.3, "calib_error": 0.3})
+            self.assertTrue(cur.executed("FROM soft_certainty_state"))
+            self.assertFalse(cur.executed("SELECT confidence, outcome"))
+            stale = _Cur([(json.dumps(det),), (4, NOW), rows[:2]])        # a 4th resolution landed since
+            m2 = gr.measure_calibration(stale)
+            self.assertTrue(stale.executed("SELECT confidence, outcome"))
+            self.assertEqual(m2["n"], 2)
+
+    def test_measure_matches_the_shared_soft_certainty_math(self):
+        rows = _overconfident_rows()
+        d = sc.calibration_detail([r + (None, None, None) for r in rows])
+        m = gr.measure_calibration(_Cur([rows]))
+        self.assertEqual(m["calib_error"], round(d["calib_error"], 3))
+        self.assertNotIn("buckets.setdefault", SRC)        # the decile math lives only in soft certainty
+
     def test_baseline_and_remeasure_are_commensurable(self):
         cand = gr.detect_calibration(_Cur([_overconfident_rows(), None]))
         re_m, cur_v, lb = gr.remeasure(_Cur([_overconfident_rows()]), cand["metric_spec"], cand["baseline"], NOW)

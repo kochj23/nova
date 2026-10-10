@@ -12,13 +12,32 @@ things failed silently. Design rule: every check must alarm on the OUTCOME
 (backup landed, memory written, heartbeat fresh) so that a wedged-but-running
 process can never look healthy.
 
-Fix policy: one automatic fix attempt per check per run; if the re-check still
-fails, escalate once per 6h to a headless `claude -p` session, and always leave
-the failure in selfcheck_runs for the digest.
+Modes (merge M4 of the 2026-10-09 organ audit absorbed nova_doctor + nova_deep_healthcheck):
+  (default)  the 30-minute outcome checks below.
+  --boot     Doctor's post-login checks (volumes, Postgres, WAL archiver, PG launchd, gateway,
+             Home Assistant, MLX, Ollama, face stack, root disk). Waits for the volumes + a
+             grace period first unless --now. Never touches the slow --deep checks.
+  --deep     the daily end-to-end functional checks (Plex libraries, recall returns, chat
+             replies, inference answers, DNS, journal feed, scheduler ratio, organs beating).
+  --dry-run  any mode: report only. No fix runs, nothing is posted, nothing is written to PG.
+Each mode runs its own check set once, so Postgres, mounts, disk, gateway and memory are each
+checked once per run; the mount definition (mount_problem) is shared by default and --boot.
+
+Fix policy (all modes): every automatic fix goes through fix_gate() — the redline guard (no
+purchases, deletes, reboots, primary failover, exfiltration) and --dry-run — one attempt per
+check per run, then re-check. Every result lands in nova_ops.selfcheck_runs (--boot rows are
+named boot-*, --deep rows deep-*), so the 07:00 digest covers all three. If a default-mode
+re-check still fails, escalate once per 6h to a headless `claude -p` session.
+
+Slack: a run's report goes to #nova-alerts when anything failed or was fixed, else to
+#nova-digest (the daily digest's channel). --deep also keeps writing deep_healthcheck_log
+(nova_affect reads it).
 """
 
+import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -30,12 +49,13 @@ PSQL = ["/opt/homebrew/bin/psql", "-h", "localhost", "-U", "kochj", "-tA"]
 STATE_DIR = Path.home() / ".openclaw" / "state"
 LOG = Path.home() / ".openclaw" / "logs" / "nova_selfcheck.log"
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
-PRIMARY = "192.168.1.2"  # SWITCHOVER 2026-09-28 14:07: back to nova-core (.2). Native PG on :5434; :5432 is the socat shim -> :5434 (what we use). Standbys .10/.7/.125 — see agent_docs db-topology.
+PRIMARY = "nova-core.digitalnoise.net"  # SWITCHOVER 2026-09-28 14:07: back to nova-core (.2). Native PG on :5434; :5432 is the socat shim -> :5434 (what we use). Standbys .10/.7/.125 — see agent_docs db-topology.
 PG_REBUILD_PENDING = STATE_DIR / "pg_rebuild_pending.json"  # {"ips":[...],"note":...}; standbys listed here are being re-seeded — do not auto-restart, do not escalate (ignored after 48h)
 SLACK_DIGEST_CHANNEL = "C0BLJLKQMMZ"   # #nova-digest
 SLACK_ALERT_CHANNEL = "C0BMK83BLFJ"    # #nova-alerts
 CLAUDE = "/opt/homebrew/bin/claude"
 ESCALATION_COOLDOWN_S = 6 * 3600
+DRY = False  # --dry-run: no fixes, no Slack, no PG writes
 
 results = []  # (check, status, action, detail)
 
@@ -69,6 +89,9 @@ def record(check, status, action=None, detail=None):
 
 
 def slack(channel, text):
+    if DRY:
+        log(f"[dry-run] would post to {channel}: {text[:200]}")
+        return
     try:
         token = subprocess.check_output(
             ["security", "find-generic-password", "-s", "nova-slack-bot-token", "-w"], text=True).strip()
@@ -81,6 +104,37 @@ def slack(channel, text):
         log(f"slack post failed: {e}")
 
 
+# ── The one fix policy ────────────────────────────────────────────────────────
+# (from nova_deep_healthcheck 2026-09-15, now applied to every mode)
+_REDLINE = re.compile(r"\b(buy|purchase|pay)\b|\b(rm|delete|drop|truncate|wipe)\b|reboot|shutdown|"
+                      r"\b(promote|failover)\b.*primary|exfiltrat|self.?replicat", re.I)
+
+
+def fix_gate(desc, fn):
+    """Run fix fn() -> (ok, detail) only if desc passes the redline guard and this is not a dry run."""
+    if _REDLINE.search(desc):
+        return False, f"redline-blocked: {desc}"
+    if DRY:
+        return False, f"[dry-run] would: {desc}"
+    try:
+        return fn()
+    except Exception as e:  # noqa: BLE001
+        return False, f"fix error: {e}"
+
+
+def fix(desc, cmd, timeout=60):
+    """sh(cmd) through fix_gate. Returns sh()'s (rc, out); a blocked or dry-run fix returns (125, reason)."""
+    ran = {}
+
+    def run():
+        ran["r"] = sh(cmd, timeout)
+        return True, desc
+    ok, detail = fix_gate(desc, run)
+    if not ok:
+        log(detail)
+    return ran.get("r", (125, detail))
+
+
 # ── Checks ────────────────────────────────────────────────────────────────────
 
 def check_primary():
@@ -89,7 +143,7 @@ def check_primary():
         return True
     # pgbouncer may be wedged while the primary itself is fine
     if pg("SELECT 1", host=PRIMARY) == "1":
-        sh(["pkill", "-HUP", "pgbouncer"])
+        fix("pg: HUP local pgbouncer", ["pkill", "-HUP", "pgbouncer"])
         time.sleep(3)
         if pg("SELECT 1") == "1":
             record("pg-primary", "fixed", "HUP pgbouncer", "primary fine, local pgbouncer was wedged")
@@ -132,8 +186,8 @@ def check_replication():
     for ip, name, cmd, tmo in STANDBYS:
         if ip in addrs or ip in pending:
             continue
-        sh(cmd, tmo)
-        fixes.append(f"restarted {name}")
+        rc, _ = fix(f"replication: restart standby {name}", cmd, tmo)
+        fixes.append(f"restarted {name}" if rc != 125 else f"[dry-run] would restart {name}")
     if fixes:
         time.sleep(20)
     addrs2 = pg("SELECT COALESCE(string_agg(client_addr::text, ','), '') FROM pg_stat_replication", host=PRIMARY) or ""
@@ -171,9 +225,13 @@ def check_backups():
     if marker.exists() and time.time() - marker.stat().st_mtime < 20 * 3600:
         record("backups", "FAIL", "rerun already attempted today", ",".join(bad))
         return
+    if DRY:  # leave today's rerun budget (the marker) untouched
+        record("backups", "FAIL", "[dry-run] would rerun backup agent on synology", ",".join(bad))
+        return
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.touch()
-    rc, out = sh(SSH + ["kochj@192.168.1.11", "/volume1/homes/kochj/nova_backup_agent.sh incremental"], 3600)
+    rc, out = fix("backups: rerun incremental backup agent on synology",
+                  SSH + ["kochj@nas.digitalnoise.net", "/volume1/homes/kochj/nova_backup_agent.sh incremental"], 3600)
     if rc == 3:
         # Agent exits 3 (stdout "LOCKED: ...") when another NAS job holds the flock — e.g. the Sunday
         # 04:30 full run, which takes most of the day. Nothing is broken; do not burn today's rerun
@@ -188,15 +246,15 @@ def check_backups():
                  for j in bad)
     record("backups", "fixed" if ok_now else "FAIL", "reran backup agent on synology",
            f"stale: {','.join(bad)}, agent rc={rc} {out[-200:]!r}. Agent reports telemetry to PG via "
-           "postgresql://kochj@192.168.1.2:5432 (+~/.pgpass on the synology); check nova_backup.log for "
+           "postgresql://kochj@nova-core.digitalnoise.net:5432 (+~/.pgpass on the synology); check nova_backup.log for "
            "'telemetry FAILED' vs real rsync failures — the backup may have succeeded while telemetry did not.")
 
 
 MESH_FIX = {
-    "nova-core": (SSH + ["kochj@192.168.1.2", "sudo -n systemctl restart nova-mesh-agent"]),
+    "nova-core": (SSH + ["kochj@nova-core.digitalnoise.net", "sudo -n systemctl restart nova-mesh-agent"]),
     "nova-core2": (SSH + ["kochj@192.168.1.86", "sudo -n systemctl restart nova-mesh-agent"]),
     "nova-core3": (SSH + ["kochj@192.168.1.5", "sudo -n systemctl restart nova-mesh-agent"]),
-    "nova-core4": (SSH + ["kochj@192.168.1.250", "sudo -n systemctl restart nova-mesh-agent"]),
+    "nova-core4": (SSH + ["kochj@nova-core.digitalnoise.net50", "sudo -n systemctl restart nova-mesh-agent"]),
     "nuk": (SSH + ["kochj@192.168.1.10", "sudo -n systemctl restart nova-mesh-agent"]),
     "tv-movies-mini": (SSH + ["kochj@192.168.1.7", "sudo -n launchctl kickstart -k system/net.digitalnoise.nova-mesh-agent"]),
     "mac-mini": (SSH + ["kochj@192.168.1.77", "launchctl kickstart -k gui/501/net.digitalnoise.nova-mesh-agent"]),  # .77 = wired (.251 is Wi-Fi); agent is a GUI LaunchAgent, not system/
@@ -216,7 +274,7 @@ def check_heartbeats():
         return
     for node in stale:
         if node in MESH_FIX:
-            sh(MESH_FIX[node], 45)
+            fix(f"heartbeats: restart mesh agent on {node}", MESH_FIX[node], 45)
     time.sleep(30)
     out2 = pg("SELECT COALESCE(string_agg(node_name, ','), '') FROM node_status "
               "WHERE last_heartbeat < now() - interval '10 minutes'") or ""
@@ -235,7 +293,8 @@ def check_ingest():
     if age_h < 6:
         record("memory-ingest", "ok", None, f"last memory {age_h:.1f}h ago")
         return
-    sh(SSH + ["kochj@192.168.1.2", "sudo -n systemctl restart nova-memory-server"], 60)
+    fix("memory-ingest: restart nova-memory-server on nova-core",
+        SSH + ["kochj@nova-core.digitalnoise.net", "sudo -n systemctl restart nova-memory-server"], 60)
     time.sleep(30)
     rc, health = sh(["curl", "-s", "-m", "8", "http://127.0.0.1:18790/health"])
     ok = rc == 0 and '"status":"ok"' in health.replace(" ", "")
@@ -246,7 +305,7 @@ def check_ingest():
 
 SERVICES = [
     ("memory-server", "http://127.0.0.1:18790/health",
-     SSH + ["kochj@192.168.1.2", "sudo -n systemctl restart nova-memory-server"]),
+     SSH + ["kochj@nova-core.digitalnoise.net", "sudo -n systemctl restart nova-memory-server"]),
     ("gateway-v2", "http://127.0.0.1:18792/health",
      ["launchctl", "kickstart", "-k", "gui/501/net.digitalnoise.nova-gateway-v2"]),
 ]
@@ -272,7 +331,7 @@ def _gateway_voiceless(out: str) -> bool:
 
 
 def check_services():
-    for name, url, fix in SERVICES:
+    for name, url, restart in SERVICES:
         rc, out = sh(["curl", "-s", "-m", "8", url])
         alive = rc == 0 and ('"ok": true' in out or '"status":"ok"' in out.replace(" ", "") or '"ok":true' in out.replace(" ", ""))
         if alive and _gateway_voiceless(out):
@@ -280,7 +339,7 @@ def check_services():
         if alive:
             record(f"svc-{name}", "ok")
             continue
-        sh(fix, 60)
+        fix(f"svc-{name}: restart", restart, 60)
         time.sleep(15)
         rc2, out2 = sh(["curl", "-s", "-m", "8", url])
         ok = rc2 == 0 and ("ok" in out2) and not _gateway_voiceless(out2)
@@ -347,8 +406,8 @@ def check_mounts():
     # the share-mount job's own umount -f could not drop the fallback from its launchd context, but a
     # plain umount from a sibling context did (this morning's fix) — try that, then let the job remount.
     for m in shares:
-        sh(["/sbin/umount", m], 20)
-    sh(["/bin/launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{SHARE_MOUNT_JOB}"], 20)
+        fix(f"mounts: unmount stale share {m}", ["/sbin/umount", m], 20)
+    fix(f"mounts: kickstart {SHARE_MOUNT_JOB}", ["/bin/launchctl", "kickstart", "-k", f"gui/{os.getuid()}/{SHARE_MOUNT_JOB}"], 20)
     time.sleep(40)
     still = {m: r for m in shares if (r := mount_problem(m, MOUNTS[m]))}
     record("mounts", "FAIL" if still else "fixed", f"umount + kickstart {SHARE_MOUNT_JOB}",
@@ -358,6 +417,9 @@ def check_mounts():
 # ── Escalation & digest ───────────────────────────────────────────────────────
 
 def escalate(failures):
+    if DRY:
+        log("[dry-run] would escalate: " + "; ".join(f"{c}: {d or s}" for c, s, a, d in failures))
+        return
     marker = STATE_DIR / "selfcheck_escalation.ts"
     if marker.exists() and time.time() - marker.stat().st_mtime < ESCALATION_COOLDOWN_S:
         log("escalation suppressed (cooldown)")
@@ -410,8 +472,86 @@ def lan_up():
     return rc == 0
 
 
-def main():
-    log("=== selfcheck run start ===")
+def persist():
+    """Write this run's results to selfcheck_runs (best effort — PG may be the thing that is down)."""
+    if DRY:
+        return
+    for check, status, action, detail in results:
+        sql = ("INSERT INTO selfcheck_runs (check_name, status, action, detail) VALUES "
+               f"($novaq${check}$novaq$, $novaq${status}$novaq$, "
+               f"$novaq${action or ''}$novaq$, $novaq${(detail or '')[:500]}$novaq$)")
+        pg(sql)
+
+
+# ── --boot (was nova_doctor.py) ───────────────────────────────────────────────
+
+def run_boot(now=False):
+    """Doctor's checks, via nova_doctor's own functions. Imported lazily: nova_doctor imports this
+    module (mount_problem) and reads the Slack token at import. Never imports the --deep checks."""
+    import nova_doctor as doc
+    if not now:
+        doc.wait_for_boot()
+        ok, detail = fix_gate("boot: restart Home Assistant once if <50% of entities available",
+                              lambda: (doc.heal_home_assistant() or True, "heal_home_assistant ran"))
+        if not ok:
+            log(detail)
+    checks = []
+    for name, fn in doc.CHECKS:
+        try:
+            checks.append((name, *fn()))
+        except Exception as e:  # noqa: BLE001
+            checks.append((name, doc.FAIL, f"check crashed: {e}"))
+    worst, report = doc.format_report(checks)
+    for name, status, detail in checks:
+        record("boot-" + name.lower().replace(" ", "-"), {doc.OK: "ok", doc.WARN: "WARN"}.get(status, "FAIL"),
+               None, detail)
+    print(report, flush=True)
+    persist()
+    slack(SLACK_ALERT_CHANNEL if worst == doc.FAIL else SLACK_DIGEST_CHANNEL, report)
+    return 1 if worst == doc.FAIL else 0
+
+
+# ── --deep (was nova_deep_healthcheck.py) ─────────────────────────────────────
+
+def run_deep():
+    """The functional checks, via nova_deep_healthcheck's own functions (their fixes go through fix_gate)."""
+    import nova_deep_healthcheck as dh
+    checks = dh.run_checks()
+    fixed = [r for r in checks if not r["ok"] and r["fixed"]]
+    broken = [r for r in checks if not r["ok"] and not r["fixed"]]
+    report = dh.format_report(checks)
+    log(report)
+    for r in checks:
+        record("deep-" + r["name"], "ok" if r["ok"] else "fixed" if r["fixed"] else "FAIL",
+               r["fix_detail"] or None, r["detail"])
+    persist()
+    if not DRY:
+        dh.write_log(checks)  # deep_healthcheck_log: nova_affect's infra_health signal reads it
+    slack(SLACK_ALERT_CHANNEL if (fixed or broken) else SLACK_DIGEST_CHANNEL, report)
+    return 1 if broken else 0
+
+
+def main(argv=()):
+    global DRY, FORCE_DIGEST
+    ap = argparse.ArgumentParser(description="Nova self-check: 30-min outcome checks (default), --boot, --deep.")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--boot", action="store_true", help="post-login checks (was nova_doctor.py --boot)")
+    mode.add_argument("--deep", action="store_true", help="daily functional checks (was nova_deep_healthcheck.py)")
+    ap.add_argument("--now", action="store_true", help="--boot: skip the wait for volumes + grace period")
+    ap.add_argument("--dry-run", action="store_true", help="report only: no fixes, no Slack, no PG writes")
+    ap.add_argument("--digest-now", action="store_true", help="post the daily digest regardless of hour/marker")
+    a = ap.parse_args(list(argv))
+    DRY = a.dry_run
+    if a.digest_now:
+        FORCE_DIGEST = True
+    results.clear()
+    if a.boot:
+        log("=== selfcheck --boot run start ===" + (" (dry-run)" if DRY else ""))
+        return run_boot(now=a.now)
+    if a.deep:
+        log("=== selfcheck --deep run start ===" + (" (dry-run)" if DRY else ""))
+        return run_deep()
+    log("=== selfcheck run start ===" + (" (dry-run)" if DRY else ""))
     # 2026-09-02: a ~3 min site network blip made the primary look dead and
     # triggered a false "manual failover required" escalation. If we can't even
     # reach the gateway, nothing here is diagnosable (and PG/Slack/claude are
@@ -420,7 +560,7 @@ def main():
         time.sleep(60)
         if not lan_up():
             log("=== local network down (gateway 192.168.1.1 unreachable) — skipping run ===")
-            return
+            return 0
         log("network blip recovered after 60s retry")
     primary_up = check_primary()
     if primary_up:
@@ -432,22 +572,20 @@ def main():
     check_services()
     check_mounts()
 
-    # persist results (best effort — PG may be the thing that is down)
-    for check, status, action, detail in results:
-        sql = ("INSERT INTO selfcheck_runs (check_name, status, action, detail) VALUES "
-               f"($novaq${check}$novaq$, $novaq${status}$novaq$, "
-               f"$novaq${action or ''}$novaq$, $novaq${(detail or '')[:500]}$novaq$)")
-        pg(sql)
+    persist()
 
     failures = [r for r in results if r[1] in ("FAIL", "CRITICAL")]
     if failures:
         escalate(failures)
-    post_digest()
+    if not DRY:
+        post_digest()
     log(f"=== selfcheck run done: {sum(1 for r in results if r[1]=='ok')} ok, "
         f"{sum(1 for r in results if r[1]=='fixed')} fixed, {len(failures)} failing ===")
+    return 0
 
 
 if __name__ == "__main__":
-    if "--digest-now" in sys.argv:
-        FORCE_DIGEST = True
-    main()
+    # nova_doctor / nova_deep_healthcheck import "nova_selfcheck"; make that resolve to THIS module
+    # (not a second copy) so DRY, results and the fix gate are shared.
+    sys.modules.setdefault("nova_selfcheck", sys.modules[__name__])
+    sys.exit(main(sys.argv[1:]))

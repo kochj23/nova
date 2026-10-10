@@ -25,8 +25,10 @@ running process to be stale, so they are skipped. The GRACE_S window absorbs the
 normal ordering where a freshly-restarted process starts a moment after the file it
 loads was written.
 
-Cadence: every 30m via launchd (net.digitalnoise.nova-daemon-staleness, StartInterval
-1800). Never raises out of run_once.
+MERGED 2026-10-09 into nova_jade_amulet.py as `--running-code` (kind running_code), run daily
+inside `nova_jade_amulet.py --all` instead of every 30 min. The sweep functions stay here and
+are what jade amulet calls; this script is now a thin wrapper for that mode. Alert category,
+dedup key (stale-code:<label>, 6 h window) and the claude_actions row are unchanged.
 
 Written by Jordan Koch.
 """
@@ -259,44 +261,33 @@ def _log_action(conn, checked: int, stale: list) -> None:
     conn.commit()
 
 
-def run_once(conn=None) -> list:
+def run_once(conn=None, dry: bool = False) -> list:
     """Sweep all managed daemons, notify (report-only) the stale ones, log. Returns
-    the list of stale reports. `conn` optional so the sweep works without a DB."""
+    the list of stale reports. `conn` optional so the sweep works without a DB.
+    dry: sweep only — no notify, no PG write."""
     daemons = discover_daemons()
     stale = []
     for info in daemons:
         rep = check_daemon(info)
         if rep:
             stale.append(rep)
-            _notify_stale(rep)
-    if conn is not None:
+            if not dry:
+                _notify_stale(rep)
+    if conn is not None and not dry:
         ensure_session(conn)
         _log_action(conn, len(daemons), stale)
     return stale
 
 
-def main() -> int:
-    conn = None
-    try:
-        import psycopg2
-        conn = psycopg2.connect(DSN)
-    except Exception:
-        conn = None  # DB optional; the check + notify still work
-    try:
-        stale = run_once(conn)
-    except Exception as e:
-        print(f"daemon_staleness: sweep failed: {e}", file=sys.stderr)
-        return 1
-    finally:
-        if conn is not None:
-            conn.close()
-    if not stale:
-        print("daemon_staleness: all daemons running current code")
-        return 0
-    print(f"daemon_staleness: {len(stale)} daemon(s) running STALE code:")
-    for r in stale:
-        print(f"  {r['label']:45} on-disk {r['newer_by_h']}h newer than pid {r['pid']}")
-    return 0
+def main(argv=None) -> int:
+    """Thin wrapper: merged into nova_jade_amulet.py --running-code on 2026-10-09."""
+    import argparse
+    ap = argparse.ArgumentParser(description="merged into nova_jade_amulet.py --running-code (2026-10-09)")
+    ap.add_argument("--dry-run", action="store_true", help="sweep only: no notify, no PG write")
+    a = ap.parse_args(argv)
+    print("daemon_staleness: merged into nova_jade_amulet.py --running-code on 2026-10-09", file=sys.stderr)
+    import nova_jade_amulet
+    return nova_jade_amulet.main(["--running-code"] + (["--dry-run"] if a.dry_run else []))
 
 
 DSN = "host=localhost dbname=nova_ops user=kochj"

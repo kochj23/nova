@@ -2,6 +2,8 @@
 """7-category tests for nova_local_situation (fused "is something happening near us?").
 Focus (2026-10-08): home coordinates come from the PRIVATE service_config 'home' row, never
 from code, and never reach a log line or an alert. Offline: no PostgreSQL, no notifier.
+2026-10-09: merged into nova_bodach_watch.py (organ audit M3); main() is a thin wrapper onto Bodach's
+situation step, driven here with W.connect mocked and the two-man gate held open.
 Written by Jordan Koch (via Claude).
 """
 import io
@@ -18,6 +20,8 @@ SCRIPTS = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(SCRIPTS))
 
 import nova_local_situation as L  # noqa: E402
+import nova_bodach_watch as B  # noqa: E402
+import nova_watch_common as W  # noqa: E402
 
 SRC = (SCRIPTS / "nova_local_situation.py").read_text()
 HOME = {"lat": 12.3456, "lon": -65.4321, "label": "test home"}   # synthetic, not the real house
@@ -70,7 +74,11 @@ def run(cur, alert=False, notify=None):
     buf = io.StringIO()
     fake_notify = mock.MagicMock() if notify is None else notify
     mod = type(sys)("nova_notify"); mod.notify = fake_notify
-    with mock.patch.object(L.psycopg2, "connect", return_value=Conn(cur)), \
+    with mock.patch.object(W, "connect", return_value=Conn(cur)), \
+            mock.patch.object(B, "_camera_ok", return_value=True), \
+            mock.patch.object(B, "_bodach_alerted_recently", return_value=False), \
+            mock.patch.object(B, "situation_gate", return_value={"allowed": True, "reason": "test"}), \
+            mock.patch.object(L.time, "sleep"), \
             mock.patch.dict(sys.modules, {"nova_notify": mod}), redirect_stdout(buf):
         rc = L.main(20, alert)
     return rc, buf.getvalue(), fake_notify
@@ -113,31 +121,28 @@ class TestPerformance(unittest.TestCase):
 
 
 class TestRetry(unittest.TestCase):
-    def test_pg_connect_retries_then_succeeds(self):
+    def test_retry_helper_backs_off_then_succeeds(self):
         calls = {"n": 0}
 
-        def flaky(*_a, **_k):
+        def flaky():
             calls["n"] += 1
             if calls["n"] < 3:
-                raise OSError("pg down")
-            return Conn(Cur())
-        with mock.patch.object(L.psycopg2, "connect", side_effect=flaky), \
-                mock.patch.object(L.time, "sleep") as sl, redirect_stdout(io.StringIO()) as out:
-            self.assertEqual(L.main(20, False), 0)
+                raise OSError("down")
+            return "ok"
+        with mock.patch.object(L.time, "sleep") as sl, redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(L._retry(flaky, what="notify"), "ok")
         self.assertEqual(calls["n"], 3)
         self.assertEqual([c.args[0] for c in sl.call_args_list], [1.0, 2.0])   # exponential backoff
         self.assertIn("attempt 1/3 failed", out.getvalue())
 
     def test_pg_connect_gives_up_loudly(self):
-        with mock.patch.object(L.psycopg2, "connect", side_effect=OSError("down")), \
-                mock.patch.object(L.time, "sleep"), redirect_stdout(io.StringIO()):
+        with mock.patch.object(W, "connect", side_effect=OSError("down")), redirect_stdout(io.StringIO()):
             with self.assertRaises(OSError):
                 L.main(20, False)
 
     def test_notify_retried_and_failure_logged(self):
         n = mock.MagicMock(side_effect=RuntimeError("slack 500"))
-        with mock.patch.object(L.time, "sleep"):
-            rc, out, _ = run(Cur(), alert=True, notify=n)
+        rc, out, _ = run(Cur(), alert=True, notify=n)
         self.assertEqual(rc, 0)
         self.assertEqual(n.call_count, 3)
         self.assertIn("notify failed after 3 attempts", out)
@@ -163,6 +168,19 @@ class TestUnit(unittest.TestCase):
 
 
 class TestIntegration(unittest.TestCase):
+    def test_assess_kinds_parallel_to_signals(self):
+        with redirect_stdout(io.StringIO()):
+            res = L.assess(Cur(), 20)
+        self.assertEqual(res["kinds"], ["air", "chp"])
+        self.assertEqual(len(res["kinds"]), len(res["signals"]))
+        self.assertTrue(L.fires(res))
+
+    def test_motion_flag_skips_camera_queries(self):
+        cur = Cur()
+        with redirect_stdout(io.StringIO()):
+            L.assess(cur, 20, motion=False)
+        self.assertFalse(any("telemetry.presence" in s for s, _ in cur.sql))
+
     def test_chp_distance_uses_config_home(self):
         rc, out, _ = run(Cur())
         self.assertIn("CHP:", out)

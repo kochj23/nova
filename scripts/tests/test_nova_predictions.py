@@ -241,6 +241,97 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(oc.sql, [])
 
 
+# ── M7 (2026-10-09): the report reads soft certainty's one calibration pass ─────
+T_RES = datetime(2026, 10, 9, 4, 5, tzinfo=timezone.utc)
+M7_ROWS = [(0.82, "correct", 0.0324, "self", T_RES), (0.85, "incorrect", 0.7225, "ops", T_RES),
+           (0.45, "partial", 0.0025, "self", T_RES), (0.47, "incorrect", 0.2209, "world", T_RES),
+           (0.93, "correct", 0.0049, "self", T_RES)]
+# GOLDEN was produced by the pre-merge do_report on M7_ROWS (2026-10-09)
+GOLDEN = """
+=== PREDICTIVE SELF — CALIBRATION REPORT ===
+resolved(scored)=5  open=2  unresolvable=1
+
+decile     n   mean_conf   hit_rate   gap(hit-conf)
+[0.4-0.5)    2    0.46       0.25       -0.21
+[0.8-0.9)    2    0.83       0.50       -0.33
+[0.9-1.0)    1    0.93       1.00       +0.07
+
+overall mean_confidence = 0.704
+overall hit_rate        = 0.500
+calibration error       = 0.232  (0 = perfectly calibrated)
+mean surprise           = 0.197
+high-surprise rate      = 0.200  (surprise > 0.4)
+verdict                 = over/under-confident
+"""
+
+
+def _report_answers(state_detail=None, live_n=5):
+    def ans(s, p):
+        if "FROM soft_certainty_state" in s:
+            return [(state_detail,)] if state_detail is not None else []
+        if "count(*), max(resolved_at)" in s:
+            return [(live_n, T_RES)]
+        if "SELECT confidence, outcome, surprise" in s:
+            return M7_ROWS
+        if "status='open'" in s:
+            return [(2,)]
+        if "expired_unresolvable" in s:
+            return [(1,)]
+        if "to_regclass" in s:
+            return [("turing_scoreboard",)]
+        return []
+    return ans
+
+
+def _run_report(ans):
+    buf = io.StringIO()
+    oc = _Cur(ans)
+    with redirect_stdout(buf):
+        ret = pr.do_report(oc)
+    out = "\n".join(l for l in buf.getvalue().splitlines() if not re.match(r"^\[[a-z]", l))
+    return oc, out, ret
+
+
+class TestReportFromSoftCertaintyM7(unittest.TestCase):
+    """Unit/Integration/Functional coverage for the M7 change to --mode report."""
+
+    def _stored(self):
+        import nova_soft_certainty as sc
+        return json.dumps({"fingerprint": sc.fingerprint_of(M7_ROWS), "report": sc.calibration_detail(M7_ROWS)})
+
+    def test_report_text_is_unchanged_golden(self):
+        oc, out, ret = _run_report(_report_answers())                    # no stored row -> computed live
+        self.assertEqual(out.strip(), GOLDEN.strip())
+        self.assertEqual(ret["resolved"], 5)
+
+    def test_stored_row_gives_identical_report_and_scoreboard_rows(self):
+        live_oc, live_out, live_ret = _run_report(_report_answers())
+        st_oc, st_out, st_ret = _run_report(_report_answers(self._stored()))
+        self.assertEqual(st_out, live_out)
+        self.assertEqual(st_ret, live_ret)
+        ins = lambda oc: [p for q, p in oc.sql if "INSERT INTO turing_scoreboard" in q]
+        self.assertEqual(ins(st_oc), ins(live_oc))
+        self.assertEqual(len(ins(st_oc)), 4)
+        self.assertFalse(any("SELECT confidence, outcome, surprise" in q for q, _ in st_oc.sql))   # no recompute
+
+    def test_stale_stored_row_is_never_reported(self):
+        oc, out, _ = _run_report(_report_answers(self._stored(), live_n=6))
+        self.assertTrue(any("SELECT confidence, outcome, surprise" in q for q, _ in oc.sql))
+        self.assertEqual(out.strip(), GOLDEN.strip())
+
+    def test_report_asks_with_its_own_surprise_threshold(self):
+        import nova_soft_certainty as sc
+        self.assertEqual(sc.HIGH_SURPRISE, pr.HIGH_SURPRISE)
+        self.assertIn("sc.read_calibration(oc, high_surprise=HIGH_SURPRISE)", SRC)
+        seg = SRC[SRC.index("def do_report"):SRC.index("def upsert_scoreboard")]
+        self.assertNotIn("buckets", seg)                                   # no second copy of the math
+
+    def test_empty_report(self):
+        oc, out, ret = _run_report(lambda s, p: [(0,)] if "count(*) FROM predictions WHERE status" in s else [])
+        self.assertEqual(ret, {"resolved": 0})
+        self.assertIn("(no scored predictions yet", out)
+
+
 class TestFrame(unittest.TestCase):
     def test_help_exits_zero(self):
         r = subprocess.run([sys.executable, str(SCRIPTS / "nova_predictions.py"), "--help"],

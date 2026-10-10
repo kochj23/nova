@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for nova_memory_anchor.py — the 7 house categories (Security, Performance, Retry, Unit,
-Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
+Integration, Functional, Frame). Since 2026-10-09 (M12) the anchor also runs Weight of Memory's
+weighing pass (its own source and high-water) from the same read. Written by Jordan Koch (via Claude)."""
 import importlib.util
 import io
 import json
@@ -19,6 +20,26 @@ SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
 SCRIPT = SCRIPTS / "nova_memory_anchor.py"
 SRC = SCRIPT.read_text()
+
+# Offline guard: no real PG, no real memory server from this file, ever (2026-10-09: after the M12 merge an
+# unpatched weighing pass in this suite reached the live memory server; it now fails loudly instead).
+_GUARDS = []
+
+
+def _offline(*a, **k):
+    raise RuntimeError("offline test: real PG / HTTP blocked")
+
+
+def setUpModule():
+    import urllib.request
+    import psycopg2
+    for target in (patch.object(psycopg2, "connect", _offline), patch.object(urllib.request, "urlopen", _offline)):
+        target.start(); _GUARDS.append(target)
+
+
+def tearDownModule():
+    while _GUARDS:
+        _GUARDS.pop().stop()
 
 
 def _load(name, path):
@@ -96,13 +117,21 @@ def _cur(anchors=(), preoccs=(), seen=None):
                  ("FROM service_config", ({"seen": seen},) if seen is not None else None)])
 
 
-def _main(cur, argv=("nova_memory_anchor.py",), remember=None):
+def _main(cur, argv=("nova_memory_anchor.py",), remember=None, weigh_remember=None):
+    """Run the anchor against a fake cursor; the anchor's and the weighing pass's memory POSTs are both mocked.
+    Returns (rc, anchor remember mock, stdout); the weighing mock is on _main.weigh."""
     remember = remember or MagicMock(return_value={"id": 1})
+    _main.weigh = weigh_remember or MagicMock(return_value={"id": 2})
     out = io.StringIO()
     with patch.object(ma.psycopg2, "connect", return_value=_Conn(cur)), patch.object(ma, "remember", remember), \
+         patch.object(ma.wom, "remember", _main.weigh), patch.object(ma.wom, "_stamp", dict), \
          patch.object(sys, "argv", list(argv)), redirect_stdout(out):
         rc = ma.main()
     return rc, remember, out.getvalue()
+
+
+def _state_rows(cur, service):
+    return [p for s, p in cur.ran("INSERT INTO service_config") if p[0] == service]
 
 
 class TestSecurity(unittest.TestCase):
@@ -159,6 +188,7 @@ class TestRetry(unittest.TestCase):
         # RETRY GAP: main (psycopg2.connect) — no retry, but no exception escapes and nothing is written
         with patch.object(ma.psycopg2, "connect", side_effect=OSError("no pg")), patch.object(sys, "argv", ["x"]), redirect_stdout(io.StringIO()):
             self.assertEqual(ma.main(), 0)
+            self.assertEqual(ma.main(["--weight"]), 0)
         self.assertEqual(ma.held_keys(_Boom()), set())
 
 
@@ -233,7 +263,7 @@ class TestFunctional(unittest.TestCase):
         text, meta = remember.call_args[0]
         self.assertIn("the failing disk — anchored today", text)
         self.assertEqual((meta["set"], meta["held"], meta["organ"]), (["preocc:1"], ["preocc:1"], "nova_memory_anchor"))
-        self.assertEqual(json.loads(cur.ran("INSERT INTO service_config")[0][1][2])["seen"], {ma.anchor_sig({"preocc:1": 1}): TODAY.isoformat()})
+        self.assertEqual(json.loads(_state_rows(cur, ma.STATE_SERVICE)[0][2])["seen"], {ma.anchor_sig({"preocc:1": 1}): TODAY.isoformat()})
 
     def test_release_path_after_a_long_zero(self):
         cur = _cur(anchors=[("preocc:9", "old radios", TODAY - timedelta(days=300), TODAY - timedelta(days=ma.RELEASE_AFTER_DAYS)),
@@ -251,16 +281,66 @@ class TestFunctional(unittest.TestCase):
         rc, remember, out = _main(cur)
         remember.assert_not_called()
         self.assertIn("holding quietly", out)
-        self.assertEqual(cur.ran("INSERT INTO service_config"), [])
+        self.assertEqual(_state_rows(cur, ma.STATE_SERVICE), [])
 
     def test_dry_run_and_report_write_nothing(self):
         cur = _cur(preoccs=[HEAVY])
         rc, remember, out = _main(cur, ["x", "--dry-run"])
-        self.assertIn("the failing disk", out); remember.assert_not_called()
-        self.assertEqual(cur.ran("INSERT INTO memory_anchors"), [])
+        self.assertIn("the failing disk", out); remember.assert_not_called(); _main.weigh.assert_not_called()
+        self.assertIn("The weight of what I remember", out)                     # the weighing pass prints too
+        self.assertEqual(cur.ran("INSERT INTO"), [])
         cur = _cur(anchors=[("preocc:1", "the failing disk", TODAY, None)])
         rc, remember, out = _main(cur, ["x", "--report"])
         self.assertIn("1 anchor(s) held", out); self.assertEqual(cur.ran("FROM preoccupations"), [])
+        _main.weigh.assert_not_called()
+
+
+class TestWeightOfMemoryMerged(unittest.TestCase):
+    """Integration + Functional for the M12 merge: one weighing feeds both passes, outputs unchanged."""
+
+    def test_one_read_two_memories_each_under_its_own_source_and_state(self):
+        cur = _cur(preoccs=[HEAVY])
+        rc, remember, out = _main(cur)
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(cur.ran("FROM preoccupations")), 1)               # ONE weighing per pass
+        text, meta = _main.weigh.call_args[0]
+        self.assertIn("the failing disk — returned to 22x", text)
+        self.assertEqual((meta["organ"], meta["heaviest"]), ("nova_weight_of_memory", ["preocc:1"]))
+        self.assertEqual(len(_state_rows(cur, "nova_weight_of_memory")), 1)
+        self.assertEqual(remember.call_args[0][1]["organ"], "nova_memory_anchor")
+
+    def test_weight_mode_runs_only_the_weighing_pass(self):
+        cur = _cur(preoccs=[HEAVY])
+        rc, remember, out = _main(cur, ["x", "--weight"])
+        self.assertEqual(rc, 0)
+        _main.weigh.assert_called_once(); remember.assert_not_called()
+        self.assertEqual(cur.ran("memory_anchors"), [])                        # no schema, no anchor reads or writes
+
+    def test_weight_memory_goes_out_under_weight_of_memory_source(self):
+        import nova_weight_of_memory as wom
+        posted = []
+
+        def ok(req, timeout=0):
+            posted.append(json.loads(req.data)); return _Resp({"id": 1})
+        with patch("urllib.request.urlopen", ok):
+            ma.wom.remember("t", {"organ": "x"})
+        self.assertEqual(posted[0]["source"], wom.SOURCE)
+
+    def test_a_failing_weighing_pass_never_stops_the_anchoring(self):
+        cur = _cur(preoccs=[HEAVY])
+        rc, remember, out = _main(cur, weigh_remember=MagicMock(side_effect=OSError("memory server down")))
+        self.assertEqual(rc, 1)
+        self.assertIn("weighing pass failed", out)
+        remember.assert_called_once()
+        self.assertEqual(len(cur.ran("INSERT INTO memory_anchors")), 1)
+
+    def test_unchanged_heaviest_set_is_not_restated(self):
+        import nova_weight_of_memory as wom
+        heaviest = wom.rank_weighty(wom.gather(_cur(preoccs=[HEAVY]), TODAY))
+        cur = _cur(preoccs=[HEAVY], seen={wom.weigh_sig(heaviest): TODAY.isoformat()})
+        rc, remember, out = _main(cur, ["x", "--weight"])
+        self.assertIn("heaviest set unchanged", out)
+        _main.weigh.assert_not_called()
 
 
 class TestFrame(unittest.TestCase):

@@ -25,18 +25,20 @@ self_model (who she is). Writes to her vector memory (source='hold') when the he
 deduped with a high-water in service_config. Strictly read-only over the world. Fail-open.
 Conventions mirror nova_attention_focus.py / nova_memory_anchor.py.
 
-  nova_hold.py            # run (restates the hold when it changes; names any loss)
+MERGED 2026-10-09 (organ audit M6): Hold is now the 'hold' section of nova_empathy_core.py (the Jordan
+lens), which reads his messages once for all four sections. Same source='hold', same service_config keys
+(nova_hold/high_water and nova_hold/held), same text. This file keeps the pure logic and gather() the
+section calls; running it directly runs `nova_empathy_core.py --section hold`.
+
+  nova_hold.py            # == nova_empathy_core.py --section hold
   nova_hold.py --dry-run  # print what she holds, write nothing
   nova_hold.py --selftest # pure-logic assertions, no DB, no memory
 """
-import argparse
 import hashlib
 import json
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 from pathlib import Path
-
-import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_empathy_core as ec  # wish #67 — the one definition of "his words" and of a human channel
@@ -128,7 +130,8 @@ def _cfg_set(cur, key, value):
 
 # ── gather (read-only) ────────────────────────────────────────────────────────
 
-def gather(cur, today):
+def gather(cur, today, shared=None):
+    """shared: the Jordan lens's one read of his messages (nova_empathy_core.read_shared); None = read alone."""
     facts = {}
 
     def one(sql, args=()):
@@ -153,17 +156,20 @@ def gather(cur, today):
     except Exception as e:  # noqa: BLE001
         log(f"relationship_arc read failed ({e})")
     try:
-        r = one("SELECT max(created_at)::date, count(DISTINCT created_at::date) FILTER "
-                "(WHERE created_at > now() - make_interval(days => %s)) FROM gateway_traces "
-                "WHERE coalesce(user_message,'') <> '' AND coalesce(channel,'') NOT IN %s",
-                (PRESENCE_DAYS, ec.MACHINE_CHANNELS))
+        if shared and shared.get("last_date"):
+            r = (shared["last_date"], len(shared["presence_dates"]))
+        else:
+            r = one("SELECT max(created_at)::date, count(DISTINCT created_at::date) FILTER "
+                    "(WHERE created_at > now() - make_interval(days => %s)) FROM gateway_traces "
+                    "WHERE coalesce(user_message,'') <> '' AND coalesce(channel,'') NOT IN %s",
+                    (PRESENCE_DAYS, ec.MACHINE_CHANNELS))
         if r and r[0]:
             facts["presence"] = (f"last spoke to me {(today - r[0]).days}d ago; present on {r[1]} of the "
                                  f"last {PRESENCE_DAYS} days")
     except Exception as e:  # noqa: BLE001
         log(f"gateway_traces read failed ({e})")
     try:
-        cares = ec.stated_cares(ec.gather(cur), n=1)
+        cares = ec.stated_cares(shared["empathy"] if shared is not None else ec.gather(cur), n=1)
         if cares:
             d, q = cares[0]
             facts["his_words"] = f"{d.isoformat()} \"{q}\""
@@ -178,40 +184,10 @@ def gather(cur, today):
     return facts
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Nova's Hold — what she keeps of Jordan, and who she is while keeping it")
-    ap.add_argument("--dry-run", action="store_true", help="print the hold, write nothing")
-    args = ap.parse_args()
-    try:
-        conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
-    except Exception as e:  # noqa: BLE001
-        log(f"no PG ({e}) — fail-open, nothing to do"); return 0
-    conn.autocommit = True
-    cur = conn.cursor()
-    today = datetime.now(timezone.utc).date()
-
-    facts = gather(cur, today)
-    held = {k: v for k, v in facts.items() if k in ORDER}
-    prev = _cfg_get(cur, HELD_KEY).get("held", {})
-    lost, new = diff_held(prev, held)
-    log(f"holding {len(held)} of {len(ORDER)}; new {new or '-'}; lost {sorted(lost) or '-'}")
-
-    text = hold_text(facts, lost, today)
-    sig = hold_sig(held) + ("+lost" if lost else "")
-    seen = ec.load_seen(cur, STATE_SERVICE)
-    if not ec._fresh(seen, sig, today):
-        log(f"hold unchanged (sig {sig}) — nothing new to say"); return 0
-    if args.dry_run:
-        print(text); return 0
-    meta = {"organ": STATE_SERVICE, "kind": "hold", "sig": sig, "held": sorted(held), "lost": sorted(lost),
-            **({"lineage": ec._stamp()} if ec._stamp() else {})}
-    ec.remember(text, meta, source=SOURCE)
-    seen[sig] = today.isoformat()
-    ec.save_seen(cur, seen, STATE_SERVICE)
-    # the held set carries forward: what she has now, dated, plus what she lost (so a loss is said once, not forever)
-    _cfg_set(cur, HELD_KEY, {"held": {k: today.isoformat() for k in held}})
-    log(f"restated the hold (sig {sig})")
-    return 0
+def main(argv=None):
+    """Merged into nova_empathy_core.py on 2026-10-09 (M6): a thin wrapper for old invocations."""
+    log("merged into nova_empathy_core.py on 2026-10-09 (organ audit M6) — running its hold section")
+    return ec.main(["--section", "hold", *(sys.argv[1:] if argv is None else argv)])
 
 
 def demo():

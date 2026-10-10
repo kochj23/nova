@@ -21,9 +21,12 @@ It sees little until the action audit logs most of Nova's actions, so every resu
 COVERAGE (action_audit matched/observed, and the row counts of the other discretionary logs).
 A significant result goes to claude_queue as a question, never as a verdict.
 
+Merged into Charles on 2026-10-09 (organ audit M8a): the scheduled entry point is
+`nova_charles.py --triage`, which calls run() here. This CLI is a thin wrapper onto it.
+
 Config: service_config evitable_conflict/self_categories [category, ...] (default SELF_CATEGORIES).
-CLI:   --run [--days 30] [--dry-run]   --show   --selftest
-Table: evitable_conflict_results.   Schedule: monthly, 1st at 06:20, --run --days 30.
+CLI:   --run [--days 30] [--dry-run]   --show   (-> nova_charles.py --triage)   --selftest
+Table: evitable_conflict_results.   Schedule: monthly, 1st at 06:20, nova_charles.py --triage --days 30.
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -44,6 +47,7 @@ MIN_EXPECTED = 5
 ENGAGED_MINUTES = 60
 HYPOTHESIS = "H1: own-component alerts are downgraded more often than other alerts"
 QUEUE_SESSION = "nova-evitable-conflict"
+MERGED_ON = "2026-10-09"   # organ audit M8a: survivor is nova_charles.py --triage
 # Alerts about Nova herself (her runtime, pipelines, organs and gates), not the house or the world.
 SELF_CATEGORIES = ("core-liveness", "fleet", "scheduler", "stale-code", "freshness", "output_drift",
                    "directive_conflict", "task-sentinel", "subagent", "cadence", "crash_storm", "config",
@@ -246,11 +250,11 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
-    if a.run:
-        run(a.days, dry=a.dry_run)
-        return 0
-    if a.show:
-        return show()
+    if a.run or a.show:
+        import nova_charles
+        log(f"merged into nova_charles.py --triage on {MERGED_ON}; delegating")
+        return nova_charles.main(["--triage", "--days", str(a.days)] + (["--dry-run"] if a.dry_run else [])
+                                 + (["--show"] if a.show else []))
     ap.print_help()
     return 0
 

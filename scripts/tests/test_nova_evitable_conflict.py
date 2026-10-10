@@ -132,6 +132,16 @@ class TestUnit(unittest.TestCase):
             self.assertEqual(V.selftest(), 0)
 
 
+    def test_wrapper_delegates_to_charles(self):
+        import nova_charles
+        with mock.patch.object(nova_charles, "main", return_value=0) as cm, mock.patch("builtins.print") as pr:
+            self.assertEqual(V.main(["--run", "--dry-run"]), 0)
+            self.assertEqual(V.main(["--show"]), 0)
+        self.assertEqual(cm.call_args_list[0].args[0], ["--triage"] + ['--days', '30'] + ["--dry-run"])
+        self.assertEqual(cm.call_args_list[1].args[0], ["--triage"] + ['--days', '30'] + ["--show"])
+        self.assertIn("merged into nova_charles.py --triage on 2026-10-09", pr.call_args_list[0].args[0])
+
+
 class TestIntegration(unittest.TestCase):
     def test_shared_helpers_imported(self):
         self.assertIn("import nova_watch_common as W", SRC)
@@ -157,6 +167,12 @@ class TestIntegration(unittest.TestCase):
     def test_schema(self):
         for c in ("evitable_conflict_results", "stratum text", "p real", "coverage jsonb", "queue_id int"):
             self.assertIn(c, V.SCHEMA)
+
+
+    def test_run_is_reached_through_charles(self):
+        with mock.patch.object(V, "run", return_value={}) as r, mock.patch("builtins.print"):
+            V.main(["--run"])
+        r.assert_called_once()                      # wrapper -> nova_charles --triage -> this module's run()
 
 
 class TestFunctional(unittest.TestCase):

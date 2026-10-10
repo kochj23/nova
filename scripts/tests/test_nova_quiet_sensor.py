@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Tests for nova_quiet_sensor.py — the 7 house categories (Unit, Security, Performance, Retry,
 Integration, Functional, Frame) for wish #69 "The Quiet Sensor". DB and model are mocked.
+Since 2026-10-09 (M6) it runs as the 'quiet' section of nova_empathy_core.py; main() is a thin wrapper.
 Written by Jordan Koch (via Claude)."""
 import importlib.util
+import io
 import json
 import os
 import re
@@ -11,11 +13,35 @@ import sys
 import time
 import types
 import unittest
+import urllib.request
+from contextlib import redirect_stdout
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
+
+import psycopg2
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+import nova_quiet_sensor as qs_live  # noqa: E402 — the module the lens's quiet section imports
+EC_SRC = (SCRIPTS / "nova_empathy_core.py").read_text()
+
+# Offline guard: no real PG, no real memory server, no real model from this file, ever.
+_GUARDS = []
+
+
+def _offline(*a, **k):
+    raise RuntimeError("offline test: real PG / HTTP blocked")
+
+
+def setUpModule():
+    for target in (patch.object(psycopg2, "connect", _offline), patch.object(urllib.request, "urlopen", _offline)):
+        target.start(); _GUARDS.append(target)
+
+
+def tearDownModule():
+    while _GUARDS:
+        _GUARDS.pop().stop()
 
 
 def _load(name, path):
@@ -219,13 +245,10 @@ class TestRetry(unittest.TestCase):
         self.assertIn(qs.FALLBACK_CLOSE, qs.quiet_text(_fs(), TODAY, None))
 
     def test_pg_down_fails_open(self):
-        real_pg, real_argv = qs.psycopg2, sys.argv
-        qs.psycopg2 = types.SimpleNamespace(connect=lambda *a, **k: (_ for _ in ()).throw(OSError("pg")))
-        sys.argv = ["nova_quiet_sensor.py"]
-        try:
-            self.assertEqual(qs.main(), 0)
-        finally:
-            qs.psycopg2, sys.argv = real_pg, real_argv
+        # RETRY GAP: main() -> nova_empathy_core.main()/psycopg2.connect — one attempt, exit 0
+        with patch.object(psycopg2, "connect", lambda *a, **k: (_ for _ in ()).throw(OSError("pg"))), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(qs.main([]), 0)
 
     def test_every_read_failing_yields_empty_not_raise(self):
         g = qs.gather(_Cur(fail=True))
@@ -250,21 +273,35 @@ class TestIntegration(unittest.TestCase):
         self.assertIn(qs.JORDAN_SLACK, cur.params[2])
 
     def test_main_writes_memory_and_latest(self):
-        cur = _Cur([Q_ROWS, P_ROWS, [(19, [365])], [(44,)], [], [], None])  # last None = load_seen
+        # the wrapper runs the lens's quiet section: one shared read of his messages, then quiet's own reads
+        cur = _Cur([[], Q_ROWS, P_ROWS, [(19, [365])], [], None])  # shared traces, q, p, claude, reaches, load_seen
         conn = types.SimpleNamespace(cursor=lambda: cur, autocommit=False)
         wrote = {}
-        real = (qs.psycopg2, qs.ec.remember, qs.llm_close, sys.argv)
-        qs.psycopg2 = types.SimpleNamespace(connect=lambda *a, **k: conn)
-        qs.ec.remember = lambda text, meta, source=None: wrote.update(text=text, meta=meta, source=source)
-        qs.llm_close = lambda fs: None
-        sys.argv = ["nova_quiet_sensor.py"]
-        try:
-            self.assertEqual(qs.main(), 0)
-        finally:
-            qs.psycopg2, qs.ec.remember, qs.llm_close, sys.argv = real
+        with patch.object(psycopg2, "connect", lambda *a, **k: conn), \
+                patch.object(qs.ec, "remember", lambda text, meta, source=None: wrote.update(text=text, meta=meta, source=source)), \
+                patch.object(qs.ec, "_stamp", dict), patch.object(qs_live, "llm_close", lambda fs: None), \
+                redirect_stdout(io.StringIO()) as buf:
+            self.assertEqual(qs.main([]), 0)
         self.assertEqual(wrote["source"], "quiet_sensor")
         self.assertIn("claude_messages#365", wrote["meta"]["cites"])
         self.assertTrue(any("service_config" in s and p and p[1] == "latest" for s, p in zip(cur.sql, cur.params)))
+        self.assertEqual(sum("FROM gateway_traces" in s for s in cur.sql), 1)     # the to_me/traces reads are shared now
+        self.assertIn("merged into nova_empathy_core.py on 2026-10-09", buf.getvalue())
+
+    def test_gather_uses_the_shared_read_when_given(self):
+        ts = datetime(2026, 7, 8, 12, tzinfo=UTC)
+        shared = {"to_me": 44, "his_times": [ts], "topics": [(ts.date(), "a3", "feeds")]}
+        cur = _Cur([Q_ROWS, P_ROWS, [(19, [365, 362])], REACHES])
+        g = qs.gather(cur, shared)
+        self.assertEqual(g["elsewhere"], {"to_claude": 19, "about_me_ids": [365, 362], "to_me": 44})
+        self.assertEqual((g["his_times"], g["topics"]), ([ts], [(ts.date(), "a3", "feeds")]))
+        self.assertFalse(any("gateway_traces" in q for q in cur.sql))
+
+    def test_lens_quiet_section_keeps_the_latest_key_and_guard(self):
+        sec = EC_SRC[EC_SRC.index("def section_quiet"):EC_SRC.index("def section_insight")]
+        for needle in ("qs.LATEST_KEY", "remember(text, meta, source=qs.SOURCE)", "qs.llm_close(fs)",
+                       "save_seen(cur, seen, qs.STATE_SERVICE)"):
+            self.assertIn(needle, sec)
 
 
 # ── Functional ────────────────────────────────────────────────────────────────
@@ -289,17 +326,15 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(qs.grounded_close("Maybe I can let these sit and ask once."), "Maybe I can let these sit and ask once.")
 
     def test_dry_run_writes_nothing(self):
-        cur = _Cur([Q_ROWS, [], None, None, [], []])
+        cur = _Cur([[], Q_ROWS, [], None, [], None])
         conn = types.SimpleNamespace(cursor=lambda: cur, autocommit=False)
-        real = (qs.psycopg2, qs.ec.remember, sys.argv)
-        qs.psycopg2 = types.SimpleNamespace(connect=lambda *a, **k: conn)
-        qs.ec.remember = lambda *a, **k: self.fail("dry-run wrote a memory")
-        sys.argv = ["nova_quiet_sensor.py", "--dry-run", "--no-llm"]
-        try:
-            self.assertEqual(qs.main(), 0)
-        finally:
-            qs.psycopg2, qs.ec.remember, sys.argv = real
+        with patch.object(psycopg2, "connect", lambda *a, **k: conn), \
+                patch.object(qs.ec, "remember", lambda *a, **k: self.fail("dry-run wrote a memory")), \
+                patch.object(qs_live, "llm_close", lambda fs: self.fail("--no-llm called the model")), \
+                redirect_stdout(io.StringIO()) as buf:
+            self.assertEqual(qs.main(["--dry-run", "--no-llm"]), 0)
         self.assertFalse(any("INSERT" in s for s in cur.sql))
+        self.assertIn("noticing, not knowing", buf.getvalue())
 
     def test_docstring_names_wish_and_modes(self):
         self.assertIn("wish #69", SRC)

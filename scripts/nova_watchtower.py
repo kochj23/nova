@@ -11,13 +11,15 @@ its data was dead — green at every layer we checked. This watches both:
      are wired (seen on a switch port) and were online recently but just dropped count as
      outages. Anything that sleeps (Apple TVs, HomeKit accessories, phones) is inventory +
      feed-only, never liveness-alerted. Confirmed with an active ping probe.
-  3. FEED FRESHNESS — a dead-man's-switch per data stream (the thing that catches wedges).
-  4. SCENE-AWARE — smart-home devices are never liveness-alerted (they get powered off by
+  3. SCENE-AWARE — smart-home devices are never liveness-alerted (they get powered off by
      scenes/by hand); they're judged by hue 'reachable' + feeds. Reachable-first.
-  5. ROOT-CAUSE COLLAPSE — a down coordinator is flagged as the likely cause of its stale
-     downstream feeds, instead of N separate alarms.
-  6. ALERT-ON-CHANGE — fire once when a problem opens, once when it clears (#nova-alerts),
-     and record a liveness time-series for the weekly Network-Health report (phase 2).
+  4. ALERT-ON-CHANGE — fire once when a device problem opens, once when it clears
+     (#nova-alerts), and record a liveness time-series for the weekly Network-Health report.
+
+FEED FRESHNESS (the per-feed dead-man's-switch that caught the Zigbee wedge) and its
+root-cause collapse moved to nova_freshness_monitor.py on 2026-10-09 (organ-audit merge M1:
+one silence detector). It keeps writing the net_liveness tier='feed' samples and the
+net_problems 'stale:<feed>' episodes; this script owns only the 'down:<mac>' episodes.
 
 (Distinct from nova_network_sentinel.py, the NMAP/IDS security-posture scanner.)
 
@@ -38,21 +40,6 @@ import nova_config
 import nova_unifi_poller as U
 
 DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
-
-# Feed dead-man's-switch: (key, SQL -> one max-timestamp, stale-after minutes, owner).
-FEEDS = [
-    ("climate:zigbee",     "SELECT max(ts) FROM telemetry.climate WHERE source='zigbee'", 30, "zigbee-coordinator"),
-    ("climate:hue_bridge", "SELECT max(ts) FROM telemetry.climate WHERE source='hue_bridge'", 30, "hue-bridge"),
-    ("climate:weather",    "SELECT max(ts) FROM telemetry.climate WHERE source='weather_station'", 20, "weather-station"),
-    ("climate:fp300",      "SELECT max(ts) FROM telemetry.climate WHERE source='fp300'", 30, None),
-    ("climate:homekit",    "SELECT max(ts) FROM telemetry.climate WHERE source='homekit'", 30, None),
-    ("weather_station",    "SELECT max(ts) FROM telemetry.weather", 20, "weather-station"),
-    ("air_quality",        "SELECT max(ts) FROM telemetry.air_quality", 45, None),
-    ("hue_light_state",    "SELECT max(polled_at) FROM public.hue_light_state", 20, "hue-bridge"),
-    ("ha_sensors",         "SELECT max(ts) FROM telemetry.ha_sensors", 20, None),
-    ("lora_mesh",          "SELECT max(last_heard) FROM telemetry.mesh_nodes", 360, None),  # last_heard, not ts (ts only advances on a brand-new node)
-    ("nas_backup",         "SELECT max(ts) FROM telemetry.backup_runs WHERE ok", 1560, "nas-backup"),  # a SUCCESSFUL nightly (ok=true) within 26h
-]
 
 # Only these tiers are liveness-alerted (and only when wired + recently-online). smart_home
 # is deliberately excluded: those get powered off by scenes/by hand — judged by feeds/hue.
@@ -147,20 +134,6 @@ def unifi_snapshot():
     return active, allu, dev_macs
 
 
-def feed_age_minutes(sql: str):
-    try:
-        with db() as c, c.cursor() as cur:
-            cur.execute(sql)
-            row = cur.fetchone()
-            if not row or row[0] is None:
-                return None
-            cur.execute("SELECT EXTRACT(EPOCH FROM (now() - %s))/60", (row[0],))
-            return cur.fetchone()[0]
-    except Exception as e:
-        log(f"feed query failed ({sql[:40]}...): {e}")
-        return None
-
-
 # --- evaluation -------------------------------------------------------------
 def evaluate():
     ensure_schema()
@@ -216,24 +189,7 @@ def evaluate():
                 problems[f"down:{r['mac']}"] = ("device_down", r["name"], r["tier"],
                     f"{r['tier']} '{r['name']}' ({r['ip']}) dropped off the network and is unreachable")
 
-    # 3) Feed freshness (catches wedges that still ping). Also logged to the
-    #    liveness time-series (tier='feed') so the weekly report can score reliability.
-    stale_by_owner = {}
-    with db() as c:
-        with c.cursor() as cur:
-            for key, sql, thresh, owner in FEEDS:
-                age = feed_age_minutes(sql)
-                fresh = age is not None and age <= thresh
-                cur.execute("INSERT INTO telemetry.net_liveness (mac,name,tier,online) "
-                            "VALUES (%s,%s,'feed',%s)", (f"feed:{key}", key, fresh))
-                if not fresh:
-                    detail = "no data ever" if age is None else f"{age:.0f} min old (> {thresh} min)"
-                    problems[f"stale:{key}"] = ("feed_stale", key, "sensor_feed", f"feed '{key}' {detail}")
-                    if owner:
-                        stale_by_owner.setdefault(owner, []).append(key)
-        c.commit()
-
-    return problems, counts, stale_by_owner
+    return problems, counts
 
 
 # --- alert-on-change --------------------------------------------------------
@@ -241,7 +197,9 @@ def reconcile_and_alert(problems, dryrun):
     new, cleared = [], []
     with db() as c:
         with c.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
-            cur.execute("SELECT key, detail FROM telemetry.net_problems WHERE status='open'")
+            # 'stale:<feed>' episodes belong to nova_freshness_monitor (since 2026-10-09)
+            cur.execute("SELECT key, detail FROM telemetry.net_problems "
+                        "WHERE status='open' AND left(key, 6) <> 'stale:'")
             open_now = {r["key"]: r["detail"] for r in cur.fetchall()}
             for key, (kind, entity, tier, detail) in problems.items():
                 if key not in open_now:
@@ -266,13 +224,11 @@ def main():
     ap.add_argument("--dryrun", action="store_true", help="evaluate + print, no alerts")
     args = ap.parse_args()
 
-    problems, counts, stale_by_owner = evaluate()
+    problems, counts = evaluate()
     log("inventory by tier: " + ", ".join(f"{k}={v}" for k, v in sorted(counts.items())))
     log(f"{len(problems)} active problem(s)")
     for key in sorted(problems):
         print(f"    - {problems[key][3]}")
-    for owner, feeds in stale_by_owner.items():
-        print(f"    * likely root cause '{owner}' -> stale: {', '.join(feeds)}")
 
     if args.dryrun:
         log("DRYRUN — no alerts sent, no problem-state written")
@@ -281,8 +237,6 @@ def main():
     new, cleared = reconcile_and_alert(problems, dryrun=False)
     if new or cleared:
         body = ["*Watchtower — network change detected*"]
-        for owner, feeds in stale_by_owner.items():
-            body.append(f"⚠️ likely root cause: *{owner}* → stale feeds: {', '.join(feeds)}")
         body += new + cleared
         try:
             nova_config.post_both("\n".join(body), slack_channel=nova_config.SLACK_ALERTS, discord_channel=None)

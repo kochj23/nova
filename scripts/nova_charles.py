@@ -25,10 +25,20 @@ a verdict, never sets a Buick 8 cause, and its subjects are Nova's processes, ne
 Shared lookup: own_actions(cur, since, until, sources) is Nova's own actions in a time window,
 used here and by nova_seldon_axioms.py (predictions that came true: was it her doing?).
 
-CLI:      --run [--dry-run] [--days N]   --show   --selftest
+"Was this me?" in three modes (merge M8a of the 2026-10-09 organ audit). Each mode keeps its own
+table, config and claude_queue behaviour; the logic of the absorbed two stays in their modules:
+  --anomalies  Charles proper (above). Table charles_runs. Weekly, Monday 07:25.
+  --forecasts  Seldon's Axioms (nova_seldon_axioms.run): resolved predictions tagged by population,
+               disclosure and self-touch, Brier per bucket. Table prediction_axioms; service_config
+               ('seldon_axioms','latest'), read by CARDINAL. Weekly, Monday 05:40.
+  --triage     The Evitable Conflict (nova_evitable_conflict.run): does alert triage downgrade her
+               own components more often, engaged vs absent? Table evitable_conflict_results.
+               Monthly, 1st 06:20, --days 30.
+
+CLI:      --anomalies | --forecasts | --triage  [--dry-run] [--days N] [--show]   --selftest
+          (--run is the old name of --anomalies)
 Table:    charles_runs (one row per run: the weekly share, by source, recurring pairs)
 Config:   service_config ('charles','settings') -> optional overrides of DEFAULTS
-Schedule: weekly, Monday 07:25 (after the 07:15 action audit).
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -267,21 +277,50 @@ def selftest() -> int:
     return 0
 
 
+def forecasts(dry: bool = False, show_only: bool = False) -> int:
+    """--forecasts: Seldon's Axioms, unchanged (prediction_axioms + service_config seldon_axioms/latest)."""
+    import nova_seldon_axioms as S   # lazy: Seldon imports this module's own_actions
+    if show_only:
+        return S.show()
+    S.run(dry=dry)
+    return 0
+
+
+def triage(days: int | None = None, dry: bool = False, show_only: bool = False) -> int:
+    """--triage: the Evitable Conflict audit, unchanged (evitable_conflict_results)."""
+    import nova_evitable_conflict as V
+    if show_only:
+        return V.show()
+    V.run(days or 30, dry=dry)
+    return 0
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--run", action="store_true", help="join anomalies to my own actions, write, file questions")
-    ap.add_argument("--dry-run", action="store_true", help="with --run: print the result, write nothing")
-    ap.add_argument("--days", type=int, help="window in days (default from settings, 30)")
-    ap.add_argument("--show", action="store_true", help="recent runs")
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--anomalies", action="store_true",
+                      help="join anomalies to my own actions, write charles_runs, file questions (weekly)")
+    mode.add_argument("--run", action="store_true", help="old name of --anomalies")
+    mode.add_argument("--forecasts", action="store_true",
+                      help="Seldon's Axioms: score resolved predictions by disclosure and self-touch (weekly)")
+    mode.add_argument("--triage", action="store_true",
+                      help="Evitable Conflict: does triage lean toward my own components? (monthly, --days 30)")
+    ap.add_argument("--dry-run", action="store_true", help="print the result, write nothing")
+    ap.add_argument("--days", type=int, help="window in days (anomalies: settings, 30; triage: 30)")
+    ap.add_argument("--show", action="store_true", help="recent results of the chosen mode (default anomalies)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
-    if a.run:
-        run(dry=a.dry_run, days=a.days)
-        return 0
+    if a.forecasts:
+        return forecasts(a.dry_run, a.show)
+    if a.triage:
+        return triage(a.days, a.dry_run, a.show)
     if a.show:
         return show()
+    if a.anomalies or a.run:
+        run(dry=a.dry_run, days=a.days)
+        return 0
     ap.print_help()
     return 0
 

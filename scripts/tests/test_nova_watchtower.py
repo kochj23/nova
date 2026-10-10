@@ -118,12 +118,6 @@ class TestPerformance(_Base):
 
 
 class TestRetry(_Base):
-    def test_feed_query_failure_fails_open(self):
-        # RETRY GAP: feed_age_minutes — one attempt; a failing query reads as "no data" (stale), never raises
-        with patch.object(wt, "db", FakeDB(fail_on="telemetry.weather")):
-            self.assertIsNone(wt.feed_age_minutes("SELECT max(ts) FROM telemetry.weather"))
-        self.assertIn("feed query failed", self.out.getvalue())
-
     def test_ping_exception_is_false(self):
         with patch.object(wt.subprocess, "run", side_effect=subprocess.TimeoutExpired("ping", 2)) as run:
             self.assertFalse(wt.ping_ok("10.0.0.9"))
@@ -131,8 +125,8 @@ class TestRetry(_Base):
 
     def test_alert_post_failure_is_logged(self):
         wt.nova_config.post_both.side_effect = RuntimeError("slack down")
-        with patch.object(wt, "evaluate", return_value=({"stale:x": ("feed_stale", "x", "sensor_feed", "feed 'x'")}, {}, {})), \
-                patch.object(wt, "reconcile_and_alert", return_value=(["🔴 feed 'x'"], [])), patch.object(sys, "argv", ["w"]):
+        with patch.object(wt, "evaluate", return_value=({"down:x": ("device_down", "x", "infra", "infra 'x'")}, {})), \
+                patch.object(wt, "reconcile_and_alert", return_value=(["🔴 infra 'x'"], [])), patch.object(sys, "argv", ["w"]):
             self.assertEqual(wt.main(), 0)
         self.assertIn("alert post failed: slack down", self.out.getvalue())
 
@@ -153,13 +147,22 @@ class TestUnit(_Base):
 
 class TestIntegration(_Base):
     def test_reconcile_opens_new_and_clears_recovered(self):
-        db = FakeDB([("status='open'", [{"key": "stale:zigbee", "detail": "feed 'zigbee' 99 min old"}])])
+        db = FakeDB([("status='open'", [{"key": "down:bb", "detail": "camera 'old' dropped"}])])
         with patch.object(wt, "db", db):
             new, cleared = wt.reconcile_and_alert({"down:aa": ("device_down", "cam", "camera", "camera 'cam' dropped")},
                                                   dryrun=False)
         self.assertEqual(new, ["🔴 camera 'cam' dropped"])
-        self.assertEqual(cleared, ["🟢 recovered: feed 'zigbee' 99 min old"])
-        self.assertEqual(db.writes("UPDATE telemetry.net_problems")[0][1], ("stale:zigbee",))
+        self.assertEqual(cleared, ["🟢 recovered: camera 'old' dropped"])
+        self.assertEqual(db.writes("UPDATE telemetry.net_problems")[0][1], ("down:bb",))
+
+    def test_feed_episodes_are_left_to_the_freshness_monitor(self):
+        # merge M1 (2026-10-09): 'stale:<feed>' rows belong to nova_freshness_monitor.record_feeds
+        db = FakeDB([("status='open'", [])])
+        with patch.object(wt, "db", db):
+            wt.reconcile_and_alert({}, dryrun=True)
+        self.assertIn("left(key, 6) <> 'stale:'", db.sql[0][0])
+        self.assertNotIn("FEEDS", SRC.split('"""', 2)[2])
+        self.assertFalse(hasattr(wt, "feed_age_minutes"))
 
     def test_dryrun_reconcile_writes_nothing(self):
         db = FakeDB([("status='open'", [])])
@@ -171,27 +174,24 @@ class TestIntegration(_Base):
 
 
 class TestFunctional(_Base):
-    def test_evaluate_flags_down_wired_device_and_stale_feed_with_root_cause(self):
+    def test_evaluate_flags_down_wired_device_only(self):
         active = {"m1": {"mac": "m1", "name": "USW-Lite-8", "ip": "10.0.0.2", "sw_port": 1}}
         rules = [("tier = ANY",
                   [{"mac": "m1", "name": "USW-Lite-8", "ip": "10.0.0.2", "tier": "infra"},
                    {"mac": "m2", "name": "SLZB-06", "ip": "10.0.0.3", "tier": "coordinator"},
                    {"mac": "m3", "name": "Garage Cam", "ip": "10.0.0.4", "tier": "camera"}]),
-                 ("EXTRACT(EPOCH", (5.0,)),
-                 ("source='zigbee'", None),               # zigbee feed: no data ever -> stale
                  ("SELECT max(", (datetime.now(),))]
         db = FakeDB(rules)
         ping = MagicMock(side_effect=lambda argv, **k: subprocess.CompletedProcess(argv, 0 if argv[-1] == "10.0.0.4" else 1))
         with patch.object(wt, "db", db), patch.object(wt, "unifi_snapshot", return_value=(active, {}, set())), \
                 patch.object(wt.subprocess, "run", ping):
-            problems, counts, stale = wt.evaluate()
-        self.assertEqual(set(problems), {"down:m2", "stale:climate:zigbee"})
-        self.assertEqual(stale, {"zigbee-coordinator": ["climate:zigbee"]})
+            problems, counts = wt.evaluate()
+        self.assertEqual(set(problems), {"down:m2"})
         self.assertEqual(counts, {"infra": 1})
+        self.assertFalse(any("telemetry.climate" in q or "'feed'" in q for q, _ in db.sql))   # feeds moved out
 
     def test_main_alerts_on_change_and_dryrun_is_silent(self):
-        probs = ({"down:m2": ("device_down", "SLZB", "coordinator", "coordinator 'SLZB' dropped")}, {"infra": 3},
-                 {"zigbee-coordinator": ["climate:zigbee"]})
+        probs = ({"down:m2": ("device_down", "SLZB", "coordinator", "coordinator 'SLZB' dropped")}, {"infra": 3})
         with patch.object(wt, "evaluate", return_value=probs), patch.object(sys, "argv", ["w", "--dryrun"]), \
                 patch.object(wt, "reconcile_and_alert") as rec:
             self.assertEqual(wt.main(), 0)
@@ -201,7 +201,8 @@ class TestFunctional(_Base):
                 patch.object(wt, "reconcile_and_alert", return_value=(["🔴 coordinator 'SLZB' dropped"], [])):
             wt.main()
         msg = wt.nova_config.post_both.call_args.args[0]
-        self.assertIn("likely root cause: *zigbee-coordinator*", msg)
+        self.assertIn("coordinator 'SLZB' dropped", msg)
+        self.assertNotIn("stale feeds", msg)
         self.assertEqual(wt.nova_config.post_both.call_args.kwargs["slack_channel"], "C_ALERTS")
 
 

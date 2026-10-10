@@ -170,6 +170,12 @@ class TestIntegration(unittest.TestCase):
         cur = FakeCur({"FROM learned_baselines": [("sig1", "nova_llm_ping", t)]})
         self.assertEqual(V.suppressions(cur), [V.hold("suppression", "learned_baselines:sig1", t, source="nova_llm_ping")])
 
+    def test_merged_into_yellow_eye(self):
+        import nova_yellow_eye as Y
+        self.assertIn("merged into nova_yellow_eye on 2026-10-09", SRC)
+        self.assertIn("import nova_yellow_eye", SRC.split("def main(")[1])   # lazy: no import cycle
+        self.assertIn("--holds", Y.__doc__)
+
     def test_write_releases_only_scanned_kinds(self):
         cur = FakeCur()
         V.write(cur, [], ["bak", "suppression"], NOW())
@@ -219,6 +225,24 @@ class TestFunctional(unittest.TestCase):
         cur, _ = self._run(V.seven_months, False, routes={"to_regclass": [("valdemar_holds",)],
                                                          "FROM valdemar_holds": rows, "SELECT 1 FROM claude_queue": [(1,)]})
         self.assertFalse(any("INSERT INTO claude_queue" in s for s, _ in cur.sql))
+
+    def test_wrapper_forwards_to_yellow_eye(self):
+        import nova_yellow_eye as Y
+        with mock.patch.object(Y, "main", return_value=0) as ym, mock.patch("builtins.print") as pr:
+            self.assertEqual(V.main(["--run", "--dry-run"]), 0)
+            self.assertEqual(V.main(["--oldest"]), 0)
+            self.assertEqual(V.main(["--run", "--oldest"]), 0)        # --run wins, as before the merge
+        self.assertEqual([c.args[0] for c in ym.call_args_list],
+                         [["--holds", "--dry-run"], ["--holds", "--oldest"], ["--holds"]])
+        self.assertIn("merged into nova_yellow_eye on 2026-10-09", str(pr.call_args_list[0]))
+
+    def test_yellow_eye_holds_mode_runs_this_register(self):
+        import nova_yellow_eye as Y
+        with mock.patch.object(V, "run", return_value=[]) as r, mock.patch.object(V, "seven_months", return_value=[]) as o:
+            Y.holds(dry=True)
+            Y.holds(dry=False, oldest=True)
+        r.assert_called_once_with(dry=True)
+        o.assert_called_once_with(dry=False)
 
     def test_ollama_down_keeps_pins(self):
         with mock.patch.object(V.W, "retry", return_value=False), mock.patch("builtins.print"):

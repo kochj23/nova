@@ -2,7 +2,11 @@
 """Tests for nova_reconciler.py — the 7 house categories (Security, Performance, Retry, Unit,
 Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
 import argparse
+import atexit
 import importlib.util
+import json
+import logging
+import tempfile
 import os
 import re
 import subprocess
@@ -33,6 +37,59 @@ rc = _load("reconciler_under_test", SCRIPT)
 COLS = ["name", "kind", "target", "extract", "dsn", "claim_re", "compare", "tolerance", "scope", "severity", "note"]
 PG_FACT = next(s for s in rc.SEEDS if s["name"] == "pg.primary.host")
 MEM_FACT = next(s for s in rc.SEEDS if s["name"] == "memory.vector_count")
+
+
+# Self audit (absorbed 2026-10-09, M14): point its paths at a throwaway $HOME.
+_TMP = tempfile.TemporaryDirectory()
+atexit.register(_TMP.cleanup)
+HOME = Path(_TMP.name)
+for _sub in (".openclaw/logs", ".openclaw/scripts", ".openclaw/config", ".openclaw/workspace/state"):
+    (HOME / _sub).mkdir(parents=True, exist_ok=True)
+rc.SCRIPTS_DIR = HOME / ".openclaw/scripts"
+rc.SCHEDULER_YAML = HOME / ".openclaw/config/scheduler.yaml"
+rc.AUDIT_STATE_FILE = HOME / ".openclaw/workspace/state/self_audit_state.json"
+rc.SELF_AUDIT_LOG = str(HOME / ".openclaw/logs/self-audit.log")
+YAML = """scheduler:
+  interval: 60
+tasks:
+  daily_news:
+    script: nova_news.py
+    enabled: true
+  old_job:
+    script: nova_gone.py
+    enabled: false
+  dream:
+    script: dream_pipeline.py
+"""
+
+
+def _fresh_log():
+    lg = logging.getLogger("nova_self_audit")
+    for h in list(lg.handlers):
+        lg.removeHandler(h)
+        h.close()
+    rc._AUDIT_LOGGER = None
+
+
+def _fs(scripts=("nova_news.py", "dream_pipeline.py"), yaml=YAML):
+    for p in rc.SCRIPTS_DIR.glob("*"):
+        p.unlink()
+    for name in scripts:
+        (rc.SCRIPTS_DIR / name).write_text("#!/usr/bin/env python3\n")
+    if yaml is None:
+        rc.SCHEDULER_YAML.unlink(missing_ok=True)
+    else:
+        rc.SCHEDULER_YAML.write_text(yaml)
+    rc.AUDIT_STATE_FILE.unlink(missing_ok=True)
+
+
+def _audit(ports=True, procs=True, post=None):
+    post = post or mock.Mock()
+    out = StringIO()
+    with mock.patch.object(rc, "_port_listening", lambda port, host="127.0.0.1": ports), \
+         mock.patch.object(rc, "_process_running", lambda m: procs), redirect_stdout(out), redirect_stderr(StringIO()):
+        n = rc.run_audit(post=post)
+    return n, out.getvalue(), post
 
 
 def _fact_row(seed):
@@ -116,6 +173,17 @@ class TestSecurity(unittest.TestCase):
             self.assertTrue(s["scope"].startswith("^") and s["scope"].endswith("$"), s["name"])
         self.assertIn("DEFAULT '$^'", rc.SCHEMA)  # a careless new fact matches nothing
 
+    def test_self_audit_pgrep_is_argv_and_hostile_yaml_is_parsed_not_executed(self):
+        evil = "x; $(id) `reboot`"
+        with mock.patch.object(rc.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+            rc._process_running(evil)
+        self.assertEqual(run.call_args.args[0], ["pgrep", "-f", evil])
+        for svc in rc.EXPECTED_SERVICES.values():
+            self.assertRegex(svc["host"], r"^(127\.0\.0\.1|192\.168\.\d+\.\d+)$")
+        _fs(yaml="tasks:\n  evil:\n    script: $(id) nova_x.py\n")
+        self.assertEqual(rc._scripts_in_scheduler(), {"evil": "$(id) nova_x.py"})
+        self.assertIn("doesn't exist", rc.audit_scripts()[0][0])
+
     def test_reports_never_rewrites_the_corpus(self):
         tables = set(re.findall(r"INSERT INTO\s+(\w+)", SRC)) | set(re.findall(r"UPDATE\s+(\w+)\s+SET", SRC)) \
             | set(re.findall(r"DELETE FROM\s+(\w+)", SRC))
@@ -137,6 +205,16 @@ class TestPerformance(unittest.TestCase):
             rc.norm_num(f"{i},000+"); rc.agrees(MEM_FACT, "2.2M", "2216095")
         self.assertLess(time.perf_counter() - t0, 2.0)
         self.assertEqual(hits, 5_000)
+
+
+    def test_self_audit_scheduler_parse_on_10k_tasks(self):
+        text = "tasks:\n" + "".join(f"  t{i}:\n    script: nova_s{i}.py\n    enabled: {'false' if i % 3 else 'true'}\n"
+                                    for i in range(10_000))
+        _fs(yaml=text)
+        t0 = time.perf_counter()
+        refs = rc._scripts_in_scheduler()
+        self.assertLess(time.perf_counter() - t0, 1.0)
+        self.assertEqual(len(refs), 3_334)
 
 
 class TestRetry(unittest.TestCase):
@@ -161,6 +239,18 @@ class TestRetry(unittest.TestCase):
              mock.patch.dict(sys.modules, {"nova_config": cfg}), redirect_stdout(StringIO()), redirect_stderr(StringIO()):
             self.assertEqual(rc.check(argparse.Namespace(quiet=True, no_slack=False)), 1)
         self.assertEqual(cfg.post_both.call_args[1]["slack_channel"], "A")
+
+
+    def test_self_audit_probes_fail_open(self):
+        # RETRY GAP: _process_running / _port_listening — one attempt each; failures read as down
+        with mock.patch.object(rc.subprocess, "run", side_effect=subprocess.TimeoutExpired("pgrep", 5)) as run:
+            self.assertFalse(rc._process_running("nova_scheduler.py"))
+        self.assertEqual(run.call_count, 1)
+        with mock.patch.object(rc.socket, "socket", side_effect=OSError("no route")):
+            self.assertFalse(rc._port_listening(18792, "192.168.1.2"))
+        rc.AUDIT_STATE_FILE.write_text("{not json")
+        self.assertEqual(rc._load_last_audit_state(), {})
+        rc.AUDIT_STATE_FILE.unlink()
 
 
 class TestUnit(unittest.TestCase):
@@ -190,6 +280,19 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(re.search(MEM_FACT["claim_re"], "877,000+ memories").group(1).strip(), "877,000")
         host = next(s for s in rc.SEEDS if s["name"] == "memory.server.host")
         self.assertEqual(re.search(host["claim_re"], "Memory server likewise runs on .2").group(1), "2")
+
+
+    def test_self_audit_scheduler_parse_and_disk_listing(self):
+        _fs()
+        self.assertEqual(rc._scripts_in_scheduler(), {"daily_news": "nova_news.py", "dream": "dream_pipeline.py"})
+        _fs(scripts=("nova_a.py", "nova_b.sh", "notes.txt"), yaml=None)
+        self.assertEqual(rc._scripts_in_scheduler(), {})
+        self.assertEqual(rc._scripts_on_disk(), {"nova_a.py", "nova_b.sh"})
+        p = HOME / "doc.md"
+        p.write_text("run nova_a.py then dream_b.sh but not test_c.py or nova_d.txt")
+        self.assertEqual(rc._scripts_in_file(p), {"nova_a.py", "dream_b.sh"})
+        self.assertEqual(rc._scripts_in_file(HOME / "nope.md"), set())
+        self.assertEqual(rc.audit_docs(), [])
 
 
 class TestIntegration(unittest.TestCase):
@@ -222,6 +325,29 @@ class TestIntegration(unittest.TestCase):
         self.assertFalse(any("FROM doc_drift WHERE status='open' AND fact_name" in s for s in cur.sql))
 
 
+    def test_self_audit_report_goes_through_the_notify_bus(self):
+        nn = types.ModuleType("nova_notify")
+        nn.notify = mock.Mock()
+        with mock.patch.dict(sys.modules, {"nova_notify": nn}):
+            rc.self_audit_post("*Nova Self-Audit Report*\n\n*Issues (1):*\n  !! Plex is not listening")
+            self.assertEqual(nn.notify.call_args.args[0], "Nova Self-Audit Report")
+            kw = nn.notify.call_args.kwargs
+            self.assertEqual((kw["level"], kw["category"], kw["dedup_key"]), ("critical", "health", "self-audit"))
+            rc.self_audit_post("*Nova Self-Audit Report*\n\nAll clear — no discrepancies found.")
+            self.assertEqual(nn.notify.call_args.kwargs["level"], "warning")
+
+    def test_self_audit_composes_scripts_services_processes(self):
+        _fs(scripts=("nova_news.py", "nova_extra.py", "nova_agent_x.py", "test_y.py", "helper.py"))
+        issues, info, disk, _, sched = rc.audit_scripts()
+        self.assertEqual(issues, ["Scheduler task `dream` references `dream_pipeline.py` but it doesn't exist"])
+        self.assertEqual((disk, sched), (5, 2))
+        self.assertEqual(info, ["1 scripts on disk not in scheduler:", "  - nova_extra.py"])
+        with mock.patch.object(rc, "_port_listening", lambda port, host="127.0.0.1": port != 11434):
+            self.assertEqual(rc.audit_services()[0], ["Ollama (:11434) is not listening"])
+        with mock.patch.object(rc, "_process_running", lambda m: m != "nova_scheduler.py"):
+            self.assertEqual(rc.audit_processes()[0], ["Scheduler (`nova_scheduler.py`) is not running"])
+
+
 class TestFunctional(unittest.TestCase):
     def test_main_check_reports_drift(self):
         cur = _Cur(facts=[_fact_row(PG_FACT)], docs=[STALE_DOC])
@@ -250,11 +376,41 @@ class TestFunctional(unittest.TestCase):
         self.assertIn("--seed", out.getvalue())
 
 
+    def test_self_audit_all_clear_then_issue_dedup(self):
+        _fresh_log()
+        _fs()
+        n, out, post = _audit()
+        self.assertEqual(n, 0)
+        self.assertIn("*Scripts:* 2 on disk, 2 in scheduler", out)
+        self.assertIn("All clear — no discrepancies found.", out)
+        self.assertEqual(json.loads(rc.AUDIT_STATE_FILE.read_text())["last_issue_key"], "[]")
+        post.assert_called_once()                         # first run: "" != "[]" -> all-clear posted
+        _audit(post=post)
+        post.assert_called_once()                         # unchanged: no repeat
+        _audit(ports=False, post=post)
+        self.assertEqual(post.call_count, 2)
+        self.assertIn("!! Ollama (:11434) is not listening", post.call_args.args[0])
+        _audit(ports=False, post=post)
+        self.assertEqual(post.call_count, 2)              # identical issue set: skipped
+        log = Path(rc.SELF_AUDIT_LOG).read_text()
+        self.assertIn("Starting self-audit...", log)
+        self.assertIn("unchanged — skipping Slack", log)
+        _fresh_log()
+
+    def test_main_self_audit_flag_exits_zero_even_with_issues(self):
+        with mock.patch.object(rc, "run_audit", return_value=5) as ra, \
+             mock.patch("psycopg2.connect", side_effect=AssertionError("self audit needs no PG")), \
+             mock.patch.object(sys, "argv", ["nova_reconciler.py", "--self-audit"]):
+            self.assertEqual(rc.main(), 0)
+        ra.assert_called_once_with()
+
+
 class TestFrame(unittest.TestCase):
     def test_help_exits_zero_without_pg(self):
         r = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, timeout=30,
                            env={**os.environ, "NOVA_TEST_QUIET": "1"})
         self.assertEqual(r.returncode, 0, r.stderr); self.assertIn("--wontfix", r.stdout)
+        self.assertIn("--self-audit", r.stdout)
 
     def test_import_never_runs_main(self):
         self.assertIn('if __name__ == "__main__":', SRC)

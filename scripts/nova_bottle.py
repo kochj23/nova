@@ -20,7 +20,9 @@ Little Mister said during the gap, and what the Jade Amulet saw change underneat
 
 Minimal first version: `--gasp --reason R` is the hook for gateway unload and scheduler-core
 handover (wiring lives in those units, not here); `--wake` turns each Continuity gap over
-6 h into one packet. Phase two (not built): the ntfy line, the Akasha autonomy cap until the
+6 h into one packet. MERGED 2026-10-09 (organ audit M11): nova_continuity.py now writes the
+wake packets itself right after it detects gaps (it calls wake() below); `--wake` here is a
+thin call into nova_continuity.wake_turnovers and no longer needs its own schedule. Phase two (not built): the ntfy line, the Akasha autonomy cap until the
 packet is acknowledged, the missing-recovery escalation, and the Verney archive tier.
 
 CLI:    --gasp --reason R [--dry-run]   --wake [--days N] [--dry-run]   --show   --selftest
@@ -300,11 +302,13 @@ def build_packet(cur, gap: tuple, d: Path | None, host: str) -> dict:
             "missed": missed, "amulet": amulet_diff(cur, host, start, end)}
 
 
-def wake(days: int = 7, dry: bool = False, cur=None) -> list:
+def wake(days: int = 7, dry: bool = False, cur=None, host: str | None = None) -> list:
+    """One wake packet (watch_turnover watch='wake' + bottle_log 'wake') per Continuity gap over
+    wake_gap_hours without one. host = whose Jade Amulet manifest to diff (default: this box)."""
     import nova_watch_bill as WB
     cur = cur or W.connect().cursor()
     cfg = config(cur)
-    host, d = socket.gethostname().split(".")[0], nas_dir(cfg)
+    host, d = host or socket.gethostname().split(".")[0], nas_dir(cfg)
     gaps = pending_gaps(cur, float(cfg["wake_gap_hours"]), days)
     log(f"{'DRY RUN ' if dry else ''}{len(gaps)} gap(s) over {cfg['wake_gap_hours']} h without a wake packet")
     packets = []
@@ -361,8 +365,10 @@ def main(argv=None) -> int:
         if a.gasp:
             gasp(a.reason, dry=a.dry_run)
             return 0
-        if a.wake:
-            wake(a.days, dry=a.dry_run)
+        if a.wake:   # merged into nova_continuity.py on 2026-10-09 (organ audit M11)
+            log("--wake merged into nova_continuity.py on 2026-10-09 — calling its wake step")
+            import nova_continuity as C
+            C.wake_turnovers(a.days, dry=a.dry_run)
             return 0
         if a.show:
             return show()

@@ -3,6 +3,7 @@
 Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
 import importlib.util
 import io
+import json
 import os
 import re
 import subprocess
@@ -10,6 +11,7 @@ import sys
 import time
 import unittest
 from contextlib import redirect_stdout
+from datetime import date, datetime, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -65,6 +67,29 @@ class _Conn:
 
 
 STATE = ("SELECT n, mean_conf, hit_rate, gap, shrink", (20, 0.63, 0.45, 0.18, 0.36))
+INJ = "2026-10-01'; SELECT pg_sleep(9); --"
+T0 = datetime(2026, 10, 8, 4, 5, tzinfo=timezone.utc)
+T1 = datetime(2026, 10, 9, 4, 5, tzinfo=timezone.utc)
+# scored_rows() shape: (confidence, outcome, surprise, domain, resolved_at)
+M7_ROWS = [(0.9, "incorrect", 0.81, "relationship", T0)] * 4 + \
+          [(0.6, "correct", 0.16, "self", T0), (0.6, "incorrect", 0.36, "self", T1),
+           (0.5, "partial", 0.0, "partial_only", T0)]
+
+
+class _Resp:
+    def __init__(self, payload):
+        self._b = json.dumps(payload).encode()
+
+    def read(self):
+        return self._b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
 RESOLVED = [(0.8, "correct"), (0.7, "incorrect"), (0.9, "partial"), (0.6, "correct"),
             (0.5, "incorrect"), (0.8, "correct"), (0.7, "incorrect"), (0.6, "partial")]
 
@@ -82,8 +107,16 @@ class TestSecurity(unittest.TestCase):
         self.assertEqual(cur.params[0], ("x'; DROP TABLE predictions; --",))
 
     def test_only_write_is_its_own_state_table(self):
-        writes = set(re.findall(r"\b(?:INSERT INTO|UPDATE|DELETE FROM)\s+([\w.]+)", SRC))
-        self.assertEqual(writes, {"soft_certainty_state"})
+        # M7: plus the Pattern Sense de-dupe row it inherited (service_config, merged never replaced)
+        writes = set(re.findall(r"\b(?:INSERT INTO|UPDATE|DELETE FROM)\s+([\w.]+)", SRC)) - {"SET"}
+        self.assertEqual(writes, {"soft_certainty_state", "service_config"})
+        self.assertIn("coalesce(service_config.value->'seen', '{}'::jsonb) || (EXCLUDED.value->'seen')", SRC)
+
+    def test_scored_rows_since_is_parameterized(self):
+        cur = _Cur()
+        sc.scored_rows(cur, since=INJ)
+        self.assertNotIn("pg_sleep", cur.sql[0])
+        self.assertEqual(cur.params[0], [INJ])
 
     def test_calibrate_rejects_garbage_input_unchanged(self):
         self.assertEqual(sc.calibrate("not a number", oc=_Cur()), "not a number")
@@ -91,6 +124,15 @@ class TestSecurity(unittest.TestCase):
 
 
 class TestPerformance(unittest.TestCase):
+    def test_calibration_detail_and_patterns_fast_on_10k(self):
+        rows = [((i % 10) / 10 + 0.05, ("correct", "incorrect", "partial")[i % 3], (i % 7) / 10,
+                 f"d{i % 50}", None) for i in range(10_000)]
+        t0 = time.perf_counter()
+        d = sc.calibration_detail(rows); dd = sc.domain_detail(rows)
+        p = sc.calibration_patterns([(r[3], r[0], r[1] == "correct") for r in rows])
+        self.assertLess(time.perf_counter() - t0, 0.5)
+        self.assertEqual((d["n"], len(dd)), (10_000, 50)); self.assertIsInstance(p, list)
+
     def test_compute_calibration_fast_on_10k_rows(self):
         rows = [(0.5 + (i % 50) / 100, ("correct", "incorrect", "partial")[i % 3]) for i in range(10_000)]
         cur = _Cur([("SELECT confidence, outcome FROM predictions", rows)])
@@ -134,7 +176,60 @@ class TestRetry(unittest.TestCase):
         self.assertTrue(conn.closed)
 
 
+class TestRetryM7(unittest.TestCase):
+    def test_miscalibration_memory_failure_fails_open_and_stays_unmarked(self):
+        # RETRY GAP: remember() — one POST, no backoff; refresh logs it, does not mark it seen,
+        # and still writes the calibration row (tried again next night).
+        cur = _Cur([("SELECT confidence, outcome FROM predictions", RESOLVED),
+                    ("SELECT confidence, outcome, surprise", M7_ROWS)])
+        with mock.patch("urllib.request.urlopen", side_effect=OSError("down")) as u, \
+             mock.patch.object(sc, "_stamp", lambda: {}), redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(sc.refresh(cur), 0)
+        self.assertEqual(u.call_count, 1)
+        self.assertIn("miscalibration memory failed", out.getvalue())
+        self.assertFalse(any("INSERT INTO service_config" in q for q in cur.sql))
+        self.assertEqual(sum("INSERT INTO soft_certainty_state" in q for q in cur.sql), 1)
+
+    def test_read_calibration_falls_back_when_state_unreadable(self):
+        cur = _Cur([("FROM soft_certainty_state", RuntimeError("no table")),
+                    ("SELECT confidence, outcome, surprise", M7_ROWS)])
+        with redirect_stdout(io.StringIO()):
+            d, how = sc.read_calibration(cur)
+        self.assertEqual((how, d["n"]), ("live", len(M7_ROWS)))
+
+
 class TestUnit(unittest.TestCase):
+    def test_calibration_detail_matches_the_report_arithmetic(self):
+        self.assertIsNone(sc.calibration_detail([]))
+        rows = [(0.8, "correct", 0.04, "a", None), (0.8, "incorrect", 0.64, "a", None),
+                (0.85, "partial", None, "b", None), (0.3, "correct", 0.49, "b", None)]
+        d = sc.calibration_detail(rows)
+        self.assertEqual(d["n"], 4)
+        self.assertAlmostEqual(d["hit_rate"], 2.5 / 4)
+        self.assertAlmostEqual(d["mean_surprise"], (0.04 + 0.64 + 0 + 0.49) / 4)
+        self.assertAlmostEqual(d["high_surprise_rate"], 2 / 4)            # 0.64, 0.49 > 0.4
+        self.assertEqual([b[:2] for b in d["deciles"]], [[3, 1], [8, 3]])
+        # decile-weighted |hit - conf|: bucket 3 -> |1-0.3|*1, bucket 8 -> |0.5-0.8167|*3
+        self.assertAlmostEqual(d["calib_error"], (0.7 + abs(0.5 - (0.8 + 0.8 + 0.85) / 3) * 3) / 4)
+
+    def test_domain_detail_is_strict_correct_incorrect(self):
+        dd = sc.domain_detail(M7_ROWS)
+        self.assertEqual(dd["relationship"], {"n": 4, "mean_conf": 0.9, "hit_rate": 0.0, "gap": 0.9})
+        self.assertNotIn("partial_only", dd)
+
+    def test_fingerprint(self):
+        self.assertEqual(sc.fingerprint_of([]), {"n": 0, "max_resolved_at": None})
+        fp = sc.fingerprint_of([(0.5, "correct", None, "x", T1), (0.5, "correct", None, "x", T0)])
+        self.assertEqual(fp, {"n": 2, "max_resolved_at": T1.isoformat()})
+
+    def test_moved_pattern_helpers(self):
+        p = sc.calibration_patterns([("self", 0.8, i < 2) for i in range(5)])[0]
+        self.assertIn("OVERconfident", sc.calib_insight(p)); self.assertIn("80%", sc.calib_insight(p))
+        self.assertEqual(sc.calibration_patterns([("cal", 0.5, i < 2) for i in range(4)]), [])
+        self.assertRegex(sc._sig("calib", "x"), r"^[0-9a-f]{16}$")
+        today = date(2026, 10, 9)
+        self.assertTrue(sc._fresh({}, "s", today)); self.assertFalse(sc._fresh({"s": "2026-10-05"}, "s", today))
+
     def test_clamp(self):
         self.assertEqual(sc._clamp(5, 0, 1), 1)
         self.assertEqual(sc._clamp(-5, 0, 1), 0)
@@ -206,6 +301,59 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(sc.current_stance(_Cur()), "")
 
 
+class TestIntegrationM7(unittest.TestCase):
+    def test_refresh_stores_the_report_figures_readers_use(self):
+        cur = _Cur([("SELECT confidence, outcome FROM predictions", RESOLVED),
+                    ("SELECT confidence, outcome, surprise", M7_ROWS)])
+        with mock.patch.object(sc, "surface_miscalibration", lambda *a, **k: 0), redirect_stdout(io.StringIO()):
+            sc.refresh(cur)
+        ins = [p for q, p in zip(cur.sql, cur.params) if "INSERT INTO soft_certainty_state" in q][0]
+        det = json.loads(ins[5])
+        self.assertEqual(det["report"], json.loads(json.dumps(sc.calibration_detail(M7_ROWS))))
+        self.assertEqual(det["fingerprint"], sc.fingerprint_of(M7_ROWS))
+        self.assertIn("relationship", det["domains"])
+        # the reader uses exactly that row while the live fingerprint still matches it
+        live = _Cur([("FROM soft_certainty_state", (ins[5],)),
+                     ("SELECT count(*), max(resolved_at)", (len(M7_ROWS), T1))])
+        d, how = sc.read_calibration(live)
+        self.assertEqual((how, d), ("state", det["report"]))
+        self.assertFalse(any("SELECT confidence, outcome, surprise" in q for q in live.sql))
+        # ...and recomputes once a new resolution has landed
+        moved = _Cur([("FROM soft_certainty_state", (ins[5],)),
+                      ("SELECT count(*), max(resolved_at)", (len(M7_ROWS) + 1, T1)),
+                      ("SELECT confidence, outcome, surprise", M7_ROWS[:2])])
+        self.assertEqual(sc.read_calibration(moved)[1], "live")
+        # a different surprise threshold never reuses the stored row
+        other = _Cur([("FROM soft_certainty_state", (ins[5],)),
+                      ("SELECT count(*), max(resolved_at)", (len(M7_ROWS), T1)),
+                      ("SELECT confidence, outcome, surprise", M7_ROWS)])
+        self.assertEqual(sc.read_calibration(other, high_surprise=0.5)[1], "live")
+
+    def test_miscalibration_memory_keeps_pattern_sense_source_and_dedupe_row(self):
+        self.assertEqual((sc.PATTERN_SOURCE, sc.PATTERN_SERVICE, sc.PATTERN_KEY),
+                         ("pattern_sense", "nova_pattern_sense", "high_water"))
+        posts = []
+
+        def fake(req, timeout=None):
+            posts.append(json.loads(req.data.decode())); return _Resp({"id": 1})
+        cur = _Cur([("FROM service_config", None)])
+        with mock.patch("urllib.request.urlopen", side_effect=fake), mock.patch.object(sc, "_stamp", lambda: {}), \
+             redirect_stdout(io.StringIO()):
+            n = sc.surface_miscalibration(cur, M7_ROWS)
+        self.assertEqual(n, 1)
+        self.assertEqual(posts[0]["source"], "pattern_sense")
+        self.assertEqual(posts[0]["metadata"]["kind"], "miscalibration")
+        self.assertEqual(posts[0]["metadata"]["organ"], "nova_pattern_sense")
+        saved = [p for q, p in zip(cur.sql, cur.params) if "INSERT INTO service_config" in q]
+        self.assertEqual(saved[0][:2], ("nova_pattern_sense", "high_water"))
+        # already surfaced within RESURFACE_DAYS -> silent
+        sig = sc._sig("calib", "relationship" + "overconfident")
+        today = sc.datetime.now(sc.timezone.utc).date().isoformat()
+        cur2 = _Cur([("FROM service_config", ({"seen": {sig: today}},))])
+        with mock.patch("urllib.request.urlopen", side_effect=AssertionError("posted")), redirect_stdout(io.StringIO()):
+            self.assertEqual(sc.surface_miscalibration(cur2, M7_ROWS), 0)
+
+
 class TestIntegration(unittest.TestCase):
     def test_refresh_chains_compute_into_insert(self):
         cur = _Cur([("SELECT confidence, outcome FROM predictions", RESOLVED)])
@@ -257,6 +405,20 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("not enough resolved predictions", out)
         self.assertFalse(any("INSERT" in s for s in cur.sql))
+
+
+class TestFunctionalM7(unittest.TestCase):
+    def test_refresh_dry_run_writes_nothing_and_posts_nothing(self):
+        cur = _Cur([("SELECT confidence, outcome FROM predictions", RESOLVED),
+                    ("SELECT confidence, outcome, surprise", M7_ROWS)])
+        with mock.patch.object(sc.psycopg2, "connect", return_value=_Conn(cur)), \
+             mock.patch.object(sc.sys, "argv", ["nova_soft_certainty.py", "--refresh", "--dry-run"]), \
+             mock.patch("urllib.request.urlopen", side_effect=AssertionError("posted")), \
+             redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(sc.main(), 0)
+        self.assertFalse(any(re.search(r"INSERT|UPDATE|CREATE", q) for q in cur.sql))
+        self.assertIn("Pattern I can finally see: on 'relationship'", out.getvalue())
+        self.assertIn('"calib_error"', out.getvalue())
 
 
 class TestFrame(unittest.TestCase):

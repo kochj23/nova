@@ -19,17 +19,22 @@ with a high-water in service_config, so a stable set of what-matters is stated o
 run. Strictly read-only over the world: it weighs, it never edits, prunes, or reprioritises
 anything. Fail-open. Conventions mirror nova_attention_focus.py / nova_human_insight.py.
 
-  nova_weight_of_memory.py            # run (writes when the heaviest set changes)
+MERGED 2026-10-09 (organ audit M12): the weighing pass now runs inside nova_memory_anchor.py, which
+already reused this weighing verbatim; one read of preoccupations serves both. Same source=
+'weight_of_memory', same service_config key (nova_weight_of_memory/high_water), same text. This file keeps
+the weighing math, gather(), text and memory/state helpers the anchor calls; running it directly runs
+`nova_memory_anchor.py --weight`.
+
+  nova_weight_of_memory.py            # == nova_memory_anchor.py --weight
   nova_weight_of_memory.py --dry-run  # print the weighing, write nothing
   nova_weight_of_memory.py --selftest # pure-logic assertions, no DB, no memory
 """
-import argparse
 import hashlib
 import json
 import sys
-from datetime import date, datetime, timezone
+from datetime import date, datetime
 
-import psycopg2
+import psycopg2  # noqa: F401 — kept: callers patch nova_weight_of_memory.psycopg2.connect (the shared module)
 
 OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
@@ -179,37 +184,13 @@ def gather(cur, today):
     return items
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Nova's Weight of Memory — what has gravity, beyond counting")
-    ap.add_argument("--dry-run", action="store_true", help="print the weighing, write nothing")
-    args = ap.parse_args()
-    try:
-        conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
-    except Exception as e:  # noqa: BLE001
-        log(f"no PG ({e}) — fail-open, nothing to do"); return 0
-    conn.autocommit = True
-    cur = conn.cursor()
-    today = datetime.now(timezone.utc).date()
-
-    items = gather(cur, today)
-    heaviest = rank_weighty(items)
-    log(f"{len(items)} held theme(s) -> {len(heaviest)} with real gravity")
-
-    text = weight_text(heaviest, today)
-    sig = weigh_sig(heaviest)
-    seen = load_seen(cur)
-    if not _fresh(seen, sig, today):
-        log(f"heaviest set unchanged (sig {sig}) — nothing new to weigh"); return 0
-    if args.dry_run:
-        print(text); return 0
-    meta = {"organ": STATE_SERVICE, "kind": "weight", "sig": sig,
-            "heaviest": [h["key"] for h in heaviest],
-            **({"lineage": _stamp()} if _stamp() else {})}
-    remember(text, meta)
-    seen[sig] = today.isoformat()
-    save_seen(cur, seen)
-    log(f"weighed a new heaviest set (sig {sig})")
-    return 0
+def main(argv=None):
+    """Merged into nova_memory_anchor.py on 2026-10-09 (M12): a thin wrapper for old invocations."""
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import nova_memory_anchor as anchor
+    log("merged into nova_memory_anchor.py on 2026-10-09 (organ audit M12) — running its weighing pass")
+    return anchor.main(["--weight", *(sys.argv[1:] if argv is None else argv)])
 
 
 def demo():

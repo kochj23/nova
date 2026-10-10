@@ -25,7 +25,11 @@ Minimal first version (weekly, Monday, for the last complete Mon-Sun week, Ameri
     agent_docs ("Open items" / "Adoption points" bullets, "BUILT DISABLED" / "not wired" lines).
 Every run writes one busab_weekly row. Least-used-organ reporting waits for version two.
 
+MERGED into nova_yellow_eye.py on 2026-10-09 (merge M5) as `--pace`: this module keeps the logic,
+thresholds, table and queue session; its CLI is a thin wrapper that forwards there.
+
 CLI:   --run [--dry-run] [--week YYYY-MM-DD]   --show   --selftest
+       (= nova_yellow_eye.py --pace [--dry-run] [--week D] / --show --pace)
 Table: busab_weekly.
 Schedule: Monday 09:30 (before the Commander's Intent review at 10:00).
 Written by Jordan Koch (via Claude).
@@ -183,9 +187,12 @@ def file_note(cur, desc: str, ctx: str):
     return cur.fetchone()[0]
 
 
-def run(dry: bool = False, week: date | None = None) -> dict:
+def run(dry: bool = False, week: date | None = None, scripts: dict | None = None,
+        entries: dict | None = None) -> dict:
+    """The weekly check. `scripts`/`entries` = births already read (nova_yellow_eye's Scan)."""
     w0 = week_of(week) if week else week_of(datetime.now(timezone.utc)) - timedelta(weeks=1)
-    scripts, entries = script_births(), scheduler_births()
+    scripts = script_births() if scripts is None else scripts
+    entries = scheduler_births() if entries is None else entries
     organs = sorted(s for s, ts in scripts.items() if week_of(ts) == w0)
     conn = W.connect()
     try:
@@ -246,23 +253,28 @@ def selftest() -> int:
 
 
 def main(argv=None) -> int:
+    """Thin wrapper (merge M5): the run lives in nova_yellow_eye --pace."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--run", action="store_true", help="assess last week, write busab_weekly, note if over budget")
+    ap.add_argument("--run", action="store_true", help="= nova_yellow_eye.py --pace")
     ap.add_argument("--dry-run", action="store_true", help="with --run: print only, write nothing")
     ap.add_argument("--week", type=date.fromisoformat, help="assess the week containing this date instead")
-    ap.add_argument("--show", action="store_true", help="recent busab_weekly rows")
+    ap.add_argument("--show", action="store_true", help="= nova_yellow_eye.py --show --pace")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
     if a.run:
-        run(dry=a.dry_run, week=a.week)
+        fwd = ["--pace"] + (["--dry-run"] if a.dry_run else []) + (["--week", a.week.isoformat()] if a.week else [])
+    elif a.show:
+        fwd = ["--show", "--pace"]
+    else:
+        ap.print_help()
         return 0
-    if a.show:
-        return show()
-    ap.print_help()
-    return 0
+    log(f"merged into nova_yellow_eye on 2026-10-09: running nova_yellow_eye {' '.join(fwd)}")
+    import nova_yellow_eye
+    return nova_yellow_eye.main(fwd)
 
 
 if __name__ == "__main__":
+    sys.modules.setdefault("nova_busab", sys.modules[__name__])   # one module object
     sys.exit(main())

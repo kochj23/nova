@@ -86,6 +86,37 @@ def _sweep(rows, configured=None, fail=()):
     return out, conn
 
 
+class _DailyCur:
+    """Answers run_daily()'s queries by substring; records every execute."""
+    def __init__(self, failing=(), queued=False, sessions=("sess-1",)):
+        from datetime import date, timedelta
+        t = date.today()
+        self.rows = [(task, t - timedelta(days=i), 9) for task in failing for i in (1, 2, 3)]
+        self.queued, self.sessions, self.sql, self._last = queued, sessions, [], ""
+
+    def execute(self, sql, params=None):
+        self.sql.append((sql, params)); self._last = sql
+
+    def fetchall(self):
+        return self.rows
+
+    def fetchone(self):
+        if "FROM claude_queue" in self._last:
+            return (1,) if self.queued else None
+        if "FROM scheduler_runs" in self._last:
+            return ("failure", "Traceback: boom")
+        if "FROM claude_sessions" in self._last:
+            return self.sessions
+        return None
+
+
+def _daily(cur, dry_run=False):
+    conn = SimpleNamespace(cursor=lambda: cur, autocommit=False, close=lambda: None)
+    with patch("psycopg2.connect", return_value=conn) as c, redirect_stdout(io.StringIO()) as out:
+        made = ts.run_daily(dry_run=dry_run)
+    return made, c, out.getvalue()
+
+
 def _rows(task, statuses, gap_h=1):
     now = ts._now_ms()
     return [(task, r["started_at"], r["status"], r["exit_code"]) for r in _runs(statuses, now, gap_h)]
@@ -115,6 +146,14 @@ class TestSecurity(unittest.TestCase):
         self.assertIn("WHERE NOT EXISTS", sql)
         self.assertEqual(params[0], params[2])
 
+    def test_daily_values_ride_as_parameters(self):
+        hostile = "x' OR '1'='1"
+        cur = _DailyCur(failing=[hostile])
+        _daily(cur)
+        self.assertTrue(all(hostile not in sql for sql, _ in cur.sql))
+        ins = [p for sql, p in cur.sql if sql.startswith("INSERT INTO claude_queue")][0]
+        self.assertIn(hostile, ins[1])
+
 
 class TestPerformance(unittest.TestCase):
     def test_classify_10k_runs(self):
@@ -124,6 +163,13 @@ class TestPerformance(unittest.TestCase):
         h = ts.classify_task(runs, now_ms=now)
         self.assertLess(time.perf_counter() - t0, 1.0)
         self.assertEqual(h["state"], "healthy")
+
+    def test_daily_with_many_chronic_tasks(self):
+        cur = _DailyCur(failing=[f"t{i}" for i in range(2_000)], queued=True)
+        t0 = time.perf_counter()
+        made, _, _ = _daily(cur)
+        self.assertLess(time.perf_counter() - t0, 3.0)
+        self.assertEqual(made, 0)                                  # all already queued: nothing new
 
 
 class TestRetry(unittest.TestCase):
@@ -141,6 +187,14 @@ class TestRetry(unittest.TestCase):
         with patch("psycopg2.connect", side_effect=OSError("pg down")), redirect_stderr(io.StringIO()) as err:
             self.assertEqual(ts.main(), 1)
         self.assertIn("sweep failed", err.getvalue())
+
+    def test_daily_connect_is_one_shot(self):
+        # RETRY GAP: run_daily/psycopg2.connect — one attempt (connect_timeout=8); tomorrow's run retries
+        with patch("psycopg2.connect", side_effect=OSError("pg down")) as c:
+            with self.assertRaises(OSError):
+                ts.run_daily()
+        self.assertEqual(c.call_count, 1)
+        self.assertEqual(c.call_args.kwargs, {"connect_timeout": 8})
 
 
 class TestUnit(unittest.TestCase):
@@ -161,6 +215,13 @@ class TestUnit(unittest.TestCase):
         self.assertIsNone(ts.schedule_interval_s(""))
         self.assertIsNone(ts.schedule_interval_s("whenever"))
 
+    def test_main_routes_daily_mode(self):
+        with patch.object(ts, "run_daily", return_value=0) as rd, patch("psycopg2.connect") as c:
+            self.assertEqual(ts.main(["--daily", "--dry-run"]), 0)
+            self.assertEqual(ts.main(["--daily"]), 0)
+        self.assertEqual([k.kwargs for k in rd.call_args_list], [{"dry_run": True}, {"dry_run": False}])
+        c.assert_not_called()                                        # the 15-min sweep did not run
+
 
 class TestIntegration(unittest.TestCase):
     def test_reads_scheduler_runs_and_pages_through_shared_bus(self):
@@ -172,6 +233,18 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual((kw["level"], kw["dedup_key"], kw["meta"]), ("warning", "task-sentinel:t1", {"dedup_window_s": 21600}))
         hb = [p for s, p in conn.cur.stmts if "INSERT INTO health_checks" in s][0]
         self.assertEqual(hb, ("up", "0 healthy, 1 degraded: t1"))
+
+    def test_daily_reuses_chronic_failures_thresholds_and_dsn(self):
+        import nova_chronic_failures as cf
+        daily = SRC.split("def run_daily(")[1].split("\ndef ")[0]
+        for use in ("cf.chronic(", "cf.DSN", "cf.PREFIX", "cf.OPEN", "cf.DAYS"):
+            self.assertIn(use, daily)
+        self.assertNotIn("FAIL_PER_DAY =", SRC)                     # thresholds imported, not copied
+        cur = _DailyCur(failing=["prober"], queued=True)
+        _, c, _ = _daily(cur)
+        self.assertEqual(c.call_args.args[0], cf.DSN)
+        self.assertEqual(cur.sql[0][1], (cf.DAYS + 1,))
+        self.assertEqual([p for s, p in cur.sql if "FROM claude_queue" in s][0], ("Chronic failure: prober %", cf.OPEN))
 
 
 class TestFunctional(unittest.TestCase):
@@ -195,6 +268,24 @@ class TestFunctional(unittest.TestCase):
             self.assertEqual(ts.main(), 0)
         self.assertIn("all tasks healthy", out.getvalue())
 
+    def test_daily_queues_one_item_after_registering_the_session(self):
+        cur = _DailyCur(failing=["prober"], sessions=None)        # no session rows at all -> 'chronic-failures'
+        made, _, out = _daily(cur)
+        self.assertEqual(made, 1)
+        inserts = [(s.split("(")[0].strip(), p) for s, p in cur.sql if s.startswith("INSERT")]
+        self.assertEqual(inserts[0], ("INSERT INTO claude_sessions", ("chronic-failures",)))
+        name, (sid, desc, ctx) = inserts[1]
+        self.assertEqual((name, sid), ("INSERT INTO claude_queue", "chronic-failures"))
+        self.assertTrue(desc.startswith("Chronic failure: prober — 9 non-success runs/day for 3 days: fix or retire"))
+        self.assertIn("Traceback: boom", ctx)
+
+    def test_daily_dry_run_writes_nothing(self):
+        cur = _DailyCur(failing=["prober"])
+        made, _, out = _daily(cur, dry_run=True)
+        self.assertEqual(made, 0)
+        self.assertFalse(any(s.startswith("INSERT") for s, _ in cur.sql))
+        self.assertIn("would queue: Chronic failure: prober", out)
+
 
 class TestFrame(unittest.TestCase):
     def test_import_never_runs_main(self):
@@ -202,6 +293,12 @@ class TestFrame(unittest.TestCase):
         r = subprocess.run([sys.executable, "-c", "import nova_task_sentinel"], cwd=str(SCRIPTS), capture_output=True,
                            text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
         self.assertEqual((r.returncode, r.stdout.strip()), (0, ""), r.stderr)
+
+    def test_help_exits_zero(self):
+        r = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, timeout=30,
+                           env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--daily", r.stdout)
 
 
 if __name__ == "__main__":

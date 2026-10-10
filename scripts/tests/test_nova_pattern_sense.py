@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Tests for nova_pattern_sense.py — the 7 house categories (Security, Performance, Retry, Unit,
-Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
+Integration, Functional, Frame). Written by Jordan Koch (via Claude).
+
+Since the M7 merge (2026-10-09) the script is a thin wrapper: miscalibration lives in
+nova_soft_certainty --refresh, recurring incidents in nova_alert_learn recurrence."""
 import importlib.util
 import json
 import os
@@ -10,7 +13,7 @@ import sys
 import time
 import unittest
 from contextlib import redirect_stdout
-from datetime import date
+from datetime import date, datetime, timezone
 from io import StringIO
 from pathlib import Path
 from unittest import mock
@@ -29,6 +32,9 @@ def _load(name, path):
 
 
 ps = _load("ps_under_test", SCRIPT)
+sc = ps._sc
+al = ps._al
+T0 = datetime(2026, 10, 8, 4, 5, tzinfo=timezone.utc)
 
 
 class _Resp:
@@ -46,9 +52,9 @@ class _Resp:
 
 
 class _Cur:
-    """Routes the organ's three reads; records every write."""
-    def __init__(self, preds=(), incs=(), seen_row=None, fail_on=None):
-        self.preds, self.incs, self.seen_row, self.fail_on = list(preds), list(incs), seen_row, fail_on
+    """Routes reads for both halves (tuple rows for soft certainty, dict rows for alert_learn)."""
+    def __init__(self, preds=(), incs=(), seen=None, fail_on=None, dict_rows=False):
+        self.preds, self.incs, self.seen, self.fail_on, self.dict_rows = list(preds), list(incs), seen, fail_on, dict_rows
         self.sql, self.params, self._last = [], [], ""
 
     def execute(self, sql, params=None):
@@ -60,22 +66,32 @@ class _Cur:
         if "FROM predictions" in self._last:
             return self.preds
         if "FROM incidents" in self._last:
-            return self.incs
+            return [{"title": t, "n": n} for t, n in self.incs]
         return []
 
     def fetchone(self):
-        return self.seen_row if "FROM service_config" in self._last else None
+        if "FROM service_config" in self._last:
+            v = {"seen": self.seen or {}}
+            return {"value": v} if self.dict_rows else (v,)
+        return None
 
 
 class _Conn:
     def __init__(self, cur):
-        self._cur = cur; self.autocommit = False
+        self._cur = cur; self.autocommit = False; self.commits = 0
 
-    def cursor(self):
+    def cursor(self, *a, **k):
         return self._cur
 
+    def commit(self):
+        self.commits += 1
 
-PREDS = [("self", 0.8, "correct")] * 2 + [("self", 0.8, "incorrect")] * 3
+    def close(self):
+        pass
+
+
+# scored_rows() shape: (confidence, outcome, surprise, domain, resolved_at)
+PREDS = [(0.8, "correct", 0.04, "self", T0)] * 2 + [(0.8, "incorrect", 0.64, "self", T0)] * 3
 INCS = [("Disk full on nas", 5), ("blip", 1)]
 
 
@@ -84,20 +100,17 @@ class TestSecurity(unittest.TestCase):
         pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
         self.assertIsNone(pat.search(SRC))
 
-    def test_only_write_is_its_own_high_water_mark(self):
-        tables = set(re.findall(r"INSERT INTO\s+(\w+)", SRC)) | set(re.findall(r"UPDATE\s+(\w+)\s+SET", SRC)) \
-            | set(re.findall(r"DELETE FROM\s+(\w+)", SRC))
-        self.assertEqual(tables, {"service_config"})
+    def test_wrapper_writes_no_sql_itself(self):
+        self.assertIsNone(re.search(r"INSERT INTO|UPDATE\s+\w+\s+SET|DELETE FROM|execute\(", SRC))
 
     def test_read_only_over_the_world_never_executes(self):
         self.assertNotIn("subprocess", SRC)
         self.assertNotIn("os.system", SRC)
 
-    def test_sql_interpolates_only_the_int_window_constant(self):
-        seg = SRC[SRC.index('cur.execute(f"SELECT left(title,80)'):SRC.index("rrows = cur.fetchall()")]
-        self.assertEqual(set(re.findall(r"\{(\w+)\}", seg)), {"RECUR_WINDOW_DAYS"})
+    def test_same_dedupe_row_and_source_as_before(self):
+        self.assertEqual((ps.SOURCE, ps.STATE_SERVICE, ps.STATE_KEY),
+                         ("pattern_sense", "nova_pattern_sense", "high_water"))
         self.assertIsInstance(ps.RECUR_WINDOW_DAYS, int)
-        self.assertEqual(ps.STATE_SERVICE, "nova_pattern_sense")
 
 
 class TestPerformance(unittest.TestCase):
@@ -112,7 +125,8 @@ class TestPerformance(unittest.TestCase):
 
 class TestRetry(unittest.TestCase):
     def test_remember_has_no_retry_and_propagates(self):
-        # RETRY GAP: remember — a single POST, no backoff; the error reaches the caller.
+        # RETRY GAP: remember — a single POST, no backoff; the error reaches the caller
+        # (surface_miscalibration catches it and leaves the pattern unmarked).
         with mock.patch("urllib.request.urlopen", side_effect=OSError("down")) as u:
             with self.assertRaises(OSError):
                 ps.remember("t", {})
@@ -120,14 +134,16 @@ class TestRetry(unittest.TestCase):
 
     def test_main_fails_open_when_pg_is_down(self):
         with mock.patch("psycopg2.connect", side_effect=OSError("no pg")), \
+             mock.patch.object(al, "_connect", side_effect=OSError("no pg")), \
              mock.patch.object(sys, "argv", ["nova_pattern_sense.py"]), redirect_stdout(StringIO()):
             self.assertEqual(ps.main(), 0)
 
 
 class TestUnit(unittest.TestCase):
     def test_selftest_passes(self):
-        with redirect_stdout(StringIO()):
+        with redirect_stdout(StringIO()) as out:
             ps.demo()
+        self.assertIn("assertions passed", out.getvalue())
 
     def test_empty_and_unknown_domain(self):
         self.assertEqual(ps.calibration_patterns([]), [])
@@ -148,65 +164,68 @@ class TestUnit(unittest.TestCase):
         self.assertTrue(ps._fresh({"s": "garbage"}, "s", today))
 
     def test_insight_text(self):
-        p = ps.calibration_patterns(PREDS_BOOL)[0]
+        p = ps.calibration_patterns([("self", 0.8, i < 2) for i in range(5)])[0]
         self.assertIn("OVERconfident", ps.calib_insight(p)); self.assertIn("80%", ps.calib_insight(p))
         self.assertIn("5 times", ps.recur_insight({"title": "Disk full", "count": 5}))
 
 
-PREDS_BOOL = [(d, c, o == "correct") for d, c, o in PREDS]
-
-
 class TestIntegration(unittest.TestCase):
+    def test_old_names_are_the_new_homes(self):
+        self.assertIs(ps.calibration_patterns, sc.calibration_patterns)
+        self.assertIs(ps.calib_insight, sc.calib_insight)
+        self.assertIs(ps.recurrence_patterns, al.recurrence_patterns)
+        self.assertIs(ps.recur_insight, al.recur_insight)
+        self.assertIs(ps.load_seen, sc.load_seen)
+        self.assertIs(ps.save_seen, sc.save_seen)
+        # the recurrence half signs patterns exactly as the old organ did, so de-dupe carries over
+        self.assertEqual(al._pattern_sig("recur", "x"), ps._sig("recur", "x"))
+
     def test_seen_roundtrip_through_service_config(self):
         cur = _Cur()
         ps.save_seen(cur, {"abc": "2026-10-05"})
         self.assertIn("INSERT INTO service_config", cur.sql[-1])
         self.assertEqual(cur.params[-1][:2], (ps.STATE_SERVICE, ps.STATE_KEY))
-        cur2 = _Cur(seen_row=(json.dumps({"seen": {"abc": "2026-10-05"}}),))
-        self.assertEqual(ps.load_seen(cur2), {"abc": "2026-10-05"})
-        self.assertEqual(ps.load_seen(_Cur(seen_row=({"seen": {"k": "v"}},))), {"k": "v"})
+        self.assertEqual(ps.load_seen(_Cur(seen={"abc": "2026-10-05"})), {"abc": "2026-10-05"})
         self.assertEqual(ps.load_seen(_Cur()), {})
-
-    def test_sig_then_fresh_gate_suppresses_resurface(self):
-        sig = ps._sig("calib", "self" + "overconfident")
-        seen = {sig: date(2026, 10, 5).isoformat()}
-        self.assertFalse(ps._fresh(seen, sig, date(2026, 10, 6)))
 
 
 class TestFunctional(unittest.TestCase):
-    def _run(self, argv, cur):
+    def _run(self, argv, cur, acur=None):
         posts = []
 
         def fake(req, timeout=None):
             posts.append((req.full_url, json.loads(req.data.decode())))
             return _Resp({"id": 1})
+        aconn = _Conn(acur or _Cur(incs=INCS, dict_rows=True))
         with mock.patch("psycopg2.connect", return_value=_Conn(cur)), \
+             mock.patch.object(al, "_connect", lambda: aconn), \
              mock.patch("urllib.request.urlopen", side_effect=fake), \
-             mock.patch.object(ps, "_stamp", lambda: {}), \
-             mock.patch.object(sys, "argv", ["nova_pattern_sense.py"] + argv), redirect_stdout(StringIO()):
+             mock.patch.object(sc, "_stamp", lambda: {}), mock.patch.object(al, "_pattern_stamp", lambda: {}), \
+             mock.patch.object(sys, "argv", ["nova_pattern_sense.py"] + argv), redirect_stdout(StringIO()) as out:
             rc = ps.main()
-        return rc, posts
+        return rc, posts, out.getvalue(), aconn._cur
 
-    def test_golden_path_remembers_and_saves_seen(self):
-        cur = _Cur(preds=PREDS, incs=INCS)
-        rc, posts = self._run([], cur)
+    def test_golden_path_delegates_both_halves(self):
+        cur = _Cur(preds=PREDS)
+        rc, posts, out, acur = self._run([], cur)
         self.assertEqual(rc, 0)
+        self.assertIn("merged on 2026-10-09", out)
         self.assertEqual(len(posts), 2)
         self.assertTrue(all(u.endswith("/remember") and b["source"] == "pattern_sense" for u, b in posts))
         self.assertEqual({b["metadata"]["kind"] for _, b in posts}, {"miscalibration", "recurrence"})
-        saved = [p for s, p in zip(cur.sql, cur.params) if "INSERT INTO service_config" in s]
-        self.assertEqual(len(saved), 1)
-        self.assertEqual(len(json.loads(saved[0][2])["seen"]), 2)
+        self.assertEqual(sum("INSERT INTO service_config" in s for s in cur.sql), 1)
+        self.assertEqual(sum("INSERT INTO service_config" in s for s in acur.sql), 1)
 
     def test_dry_run_writes_nothing(self):
-        cur = _Cur(preds=PREDS, incs=INCS)
-        rc, posts = self._run(["--dry-run"], cur)
+        cur = _Cur(preds=PREDS)
+        rc, posts, out, acur = self._run(["--dry-run"], cur)
         self.assertEqual(rc, 0); self.assertEqual(posts, [])
-        self.assertFalse(any("INSERT" in s for s in cur.sql))
+        self.assertFalse(any("INSERT" in s for s in cur.sql + acur.sql))
+        self.assertEqual(out.count("• Pattern I can finally see"), 2)
 
     def test_predictions_read_failure_is_fail_open(self):
-        cur = _Cur(preds=PREDS, incs=INCS, fail_on="FROM predictions")
-        rc, posts = self._run([], cur)
+        cur = _Cur(preds=PREDS, fail_on="FROM predictions")
+        rc, posts, _, _ = self._run([], cur)
         self.assertEqual(rc, 0)
         self.assertEqual([b["metadata"]["kind"] for _, b in posts], ["recurrence"])
 

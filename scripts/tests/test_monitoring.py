@@ -495,133 +495,31 @@ class TestHealthCheck:
 # ============================================================================
 
 class TestDeadMansSwitch:
-    """Tests for nova_dead_mans_switch.py canary/recovery logic."""
+    """nova_dead_mans_switch.py is a thin wrapper since 2026-10-09 (organ-audit merge M1): the
+    delivery check lives in nova_output_drift.py --deliveries. Its own tests:
+    tests/test_nova_dead_mans_switch.py."""
 
     @pytest.fixture(autouse=True)
     def setup_module(self, mock_nova_config, monkeypatch):
-        self.mock_config = mock_nova_config
         monkeypatch.setitem(sys.modules, "nova_config", mock_nova_config)
         if "nova_dead_mans_switch" in sys.modules:
             del sys.modules["nova_dead_mans_switch"]
         import nova_dead_mans_switch
         self.mod = nova_dead_mans_switch
 
-    def test_task_ran_today_success(self):
-        """task_ran_today returns True for task that ran today with exit 0."""
-        today = date.today().isoformat()
-        now = datetime.now().timestamp()
-        tasks = {
-            "morning_brief": {
-                "last_run": now - 3600,
-                "last_exit_code": 0,
-            }
-        }
-        result = self.mod.task_ran_today(tasks, "morning_brief")
-        assert result is True
+    def test_wrapper_calls_output_drift_deliveries(self):
+        import nova_output_drift
+        with patch.object(nova_output_drift, "main", return_value=0) as m:
+            assert self.mod.main([]) == 0
+            self.mod.main(["--dry-run"])
+        assert [c.args[0] for c in m.call_args_list] == [["--deliveries"], ["--deliveries", "--dry-run"]]
 
-    def test_task_ran_today_failure_exit_code(self):
-        """task_ran_today returns False if exit code is non-zero."""
-        now = datetime.now().timestamp()
-        tasks = {
-            "morning_brief": {
-                "last_run": now - 3600,
-                "last_exit_code": 1,
-            }
-        }
-        result = self.mod.task_ran_today(tasks, "morning_brief")
-        assert result is False
-
-    def test_task_ran_today_not_today(self):
-        """task_ran_today returns False if last_run was yesterday."""
-        yesterday = datetime.now().timestamp() - 86400
-        tasks = {
-            "morning_brief": {
-                "last_run": yesterday,
-                "last_exit_code": 0,
-            }
-        }
-        result = self.mod.task_ran_today(tasks, "morning_brief")
-        assert result is False
-
-    def test_task_ran_today_missing_task(self):
-        """task_ran_today returns False for non-existent task."""
-        result = self.mod.task_ran_today({}, "nonexistent")
-        assert result is False
-
-    def test_task_ran_today_zero_last_run(self):
-        """task_ran_today returns False when last_run is 0."""
-        tasks = {"task_a": {"last_run": 0, "last_exit_code": 0}}
-        result = self.mod.task_ran_today(tasks, "task_a")
-        assert result is False
-
-    def test_get_scheduler_tasks_handles_timeout(self):
-        """get_scheduler_tasks returns empty dict on network failure."""
-        with patch("urllib.request.urlopen", side_effect=Exception("timeout")):
-            result = self.mod.get_scheduler_tasks()
-        assert result == {}
-
-    def test_run_script_success(self, tmp_path):
-        """run_script returns True for a script that exits 0."""
-        script = tmp_path / "ok.py"
-        script.write_text("import sys; sys.exit(0)")
-        result = self.mod.run_script(script)
-        assert result is True
-
-    def test_run_script_failure(self, tmp_path):
-        """run_script returns False for a script that exits non-zero."""
-        script = tmp_path / "fail.py"
-        script.write_text("import sys; sys.exit(1)")
-        result = self.mod.run_script(script)
-        assert result is False
-
-    def test_main_skips_before_min_hour(self):
-        """Deliveries are skipped when current hour is before min_hour."""
-        now = datetime.now().timestamp()
-        tasks = {
-            "morning_brief": {"last_run": 0, "last_exit_code": 0}
-        }
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(tasks).encode()
-        mock_resp.__enter__ = lambda s: mock_resp
-        mock_resp.__exit__ = MagicMock(return_value=False)
-
-        # Set NOW_HOUR to 5 (before any delivery min_hour of 9)
-        original_hour = self.mod.NOW_HOUR
-        self.mod.NOW_HOUR = 5
-
-        with patch("urllib.request.urlopen", return_value=mock_resp), \
-             patch.object(self.mod, "run_script") as mock_run, \
-             patch.object(self.mod, "slack_post"):
-            self.mod.main()
-
-        self.mod.NOW_HOUR = original_hour
-        mock_run.assert_not_called()
-
-    def test_main_fires_missed_delivery(self):
-        """Missed deliveries trigger recovery scripts."""
-        now = datetime.now().timestamp()
-        # morning_brief didn't run today
-        tasks = {
-            "morning_brief": {"last_run": now - 86400, "last_exit_code": 0},
-            "mail_deliver_am": {"last_run": now - 3600, "last_exit_code": 0},
-        }
-        mock_resp = MagicMock()
-        mock_resp.read.return_value = json.dumps(tasks).encode()
-        mock_resp.__enter__ = lambda s: mock_resp
-        mock_resp.__exit__ = MagicMock(return_value=False)
-
-        original_hour = self.mod.NOW_HOUR
-        self.mod.NOW_HOUR = 10  # After min_hour for morning brief (9)
-
-        with patch("urllib.request.urlopen", return_value=mock_resp), \
-             patch.object(self.mod, "run_script", return_value=True) as mock_run, \
-             patch.object(self.mod, "slack_post") as mock_slack:
-            self.mod.main()
-
-        self.mod.NOW_HOUR = original_hour
-        # morning_brief should be run (missed), mail_deliver_am should not (already ran today)
-        assert mock_run.called
-        assert mock_slack.called
+    def test_missed_delivery_decision(self):
+        import nova_output_drift
+        rows = [("morning_brief", False, 4), ("mail_deliver_pm", True, 4)]
+        missed, _ = nova_output_drift.delivered(rows, 10, date.today())
+        assert missed == [("morning_brief", "Morning Brief (7am)")]
+        assert nova_output_drift.delivered(rows, 8, date.today())[0] == []      # before the 9am check hour
 
 
 # ============================================================================

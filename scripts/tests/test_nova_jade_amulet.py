@@ -61,7 +61,25 @@ PREV_ROUTES = {
 }
 
 
+STALE = {"label": "net.digitalnoise.nova-x", "script": "/x/nova_x.py", "pid": 7, "newer_by_h": 2.0}
+
+
 class TestSecurity(unittest.TestCase):
+
+    def test_running_code_dry_run_never_notifies_or_connects(self):
+        import nova_daemon_staleness as S
+        with mock.patch.object(S, "discover_daemons", return_value=[{"label": "a", "script": "/a"}]), \
+                mock.patch.object(S, "check_daemon", return_value=STALE), \
+                mock.patch.object(S, "_notify_stale") as n, mock.patch("psycopg2.connect") as pc, \
+                mock.patch("subprocess.run") as sp, mock.patch("builtins.print"):
+            self.assertEqual(J.running_code(dry=True), [STALE])
+        n.assert_not_called()
+        pc.assert_not_called()
+        sp.assert_not_called()                              # report only: never a restart
+
+    def test_peaslee_chain_logic_not_reimplemented_here(self):
+        for fn in ("def verify(", "def chain(", "def entry_hash(", "peaslee_chain (", "INSERT INTO peaslee"):
+            self.assertNotIn(fn, SRC)
 
     def test_read_actions_never_explain_a_change(self):
         import inspect
@@ -106,6 +124,22 @@ class TestPerformance(unittest.TestCase):
 
 
 class TestRetry(unittest.TestCase):
+    def test_running_code_db_down_still_sweeps(self):
+        # RETRY GAP: running_code — one psycopg2.connect, as nova_daemon_staleness had; failure -> sweep without DB
+        import nova_daemon_staleness as S
+        with mock.patch("psycopg2.connect", side_effect=RuntimeError("pg down")), \
+                mock.patch.object(S, "run_once", return_value=[]) as ro, mock.patch("builtins.print"):
+            self.assertEqual(J.running_code(), [])
+        ro.assert_called_once_with(None, dry=False)
+
+    def test_run_all_isolates_a_failing_mode(self):
+        with mock.patch.object(J, "run", side_effect=RuntimeError("ollama+pg down")), \
+                mock.patch.object(J, "running_code", return_value=[]) as rc, \
+                mock.patch.object(J, "values", return_value=0) as v, mock.patch("builtins.print"):
+            self.assertEqual(J.run_all(), 1)
+        rc.assert_called_once_with(dry=False)
+        v.assert_called_once_with("run", dry=False)
+
     def test_ollama_retries_with_backoff(self):
         calls = {"n": 0}
 
@@ -155,6 +189,22 @@ class TestUnit(unittest.TestCase):
 
 
 class TestIntegration(unittest.TestCase):
+    def test_modes_call_absorbed_modules(self):
+        self.assertIn("import nova_daemon_staleness as S", SRC)
+        self.assertIn("S.run_once(conn, dry=dry)", SRC)
+        self.assertIn("import nova_peaslee_hand as P", SRC)
+        for f in ("P.run(cur, dry=dry)", "P.verify_cmd(cur)", "P.show(cur)", "P.state_of(P.load_chain(cur))"):
+            self.assertIn(f, SRC)
+
+    def test_value_rows_from_peaslee_chain(self):
+        import nova_peaslee_hand as P
+        es = P.chain(P.GENESIS, [("values", "1", "added", {"id": 1}), ("never_do", "20", "added", {"id": 20}),
+                                 ("never_do", "20", "removed", {"id": 20})])
+        with mock.patch.object(P, "load_chain", return_value=es):
+            rows = J.value_rows(FakeCur())
+        self.assertEqual([(r["kind"], r["name"]) for r in rows], [("value_row", "values:1")])
+        self.assertEqual(rows[0]["digest"], P.sha(P.canon({"id": 1})))
+
     def test_shared_helpers_imported(self):
         self.assertIn("import nova_watch_common as W", SRC)
         self.assertIn("from nova_buick8_log import log_unexplained", SRC)
@@ -178,6 +228,52 @@ class TestIntegration(unittest.TestCase):
 
 
 class TestFunctional(unittest.TestCase):
+    def test_running_code_live_path_notifies_and_logs(self):
+        import nova_daemon_staleness as S
+        conn = mock.MagicMock()
+        with mock.patch("psycopg2.connect", return_value=conn), \
+                mock.patch.object(S, "discover_daemons", return_value=[{"label": "a", "script": "/a"}]), \
+                mock.patch.object(S, "check_daemon", return_value=STALE), \
+                mock.patch.object(S, "_notify_stale") as n, mock.patch("builtins.print") as p:
+            self.assertEqual(J.main(["--running-code"]), 0)
+        n.assert_called_once_with(STALE)
+        sql = " ".join(c[0][0] for c in conn.cursor.return_value.__enter__.return_value.execute.call_args_list)
+        self.assertIn("claude_actions", sql)
+        conn.close.assert_called_once()
+        self.assertTrue(any("1 daemon(s) running STALE" in c[0][0] for c in p.call_args_list))
+
+    def test_running_code_sweep_failure_exits_1(self):
+        import nova_daemon_staleness as S
+        with mock.patch("psycopg2.connect", side_effect=RuntimeError("x")), \
+                mock.patch.object(S, "run_once", side_effect=RuntimeError("boom")), mock.patch("builtins.print"):
+            self.assertEqual(J.main(["--running-code"]), 1)
+
+    def test_values_modes_route_to_peaslee(self):
+        import nova_peaslee_hand as P
+        cur = FakeCur()
+        with mock.patch.object(J.W, "connect", return_value=fake_conn(cur)), \
+                mock.patch.object(P, "run", return_value=0) as r, mock.patch.object(P, "verify_cmd", return_value=1) as v, \
+                mock.patch.object(P, "show", return_value=0) as sh:
+            self.assertEqual(J.main(["--values", "--dry-run"]), 0)
+            self.assertEqual(J.main(["--values", "--verify"]), 1)
+            self.assertEqual(J.main(["--values", "--show"]), 0)
+        r.assert_called_once_with(cur, dry=True)
+        v.assert_called_once_with(cur)
+        sh.assert_called_once_with(cur)
+
+    def test_all_dry_runs_every_mode(self):
+        with mock.patch.object(J, "run", return_value=[]) as r, mock.patch.object(J, "running_code", return_value=[]) as rc, \
+                mock.patch.object(J, "values", return_value=0) as v:
+            self.assertEqual(J.main(["--all", "--dry-run"]), 0)
+        r.assert_called_once_with(dry=True)
+        rc.assert_called_once_with(dry=True)
+        v.assert_called_once_with("run", dry=True)
+
+    def test_all_propagates_broken_chain(self):
+        with mock.patch.object(J, "run", return_value=[]), mock.patch.object(J, "running_code", return_value=[]), \
+                mock.patch.object(J, "values", return_value=1):
+            self.assertEqual(J.run_all(), 1)
+
     def _run(self, dry, routes):
         cur = FakeCur(routes)
         with mock.patch.object(J.W, "connect", return_value=fake_conn(cur)), \
@@ -218,6 +314,8 @@ class TestFrame(unittest.TestCase):
                            capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0)
         self.assertIn("--dry-run", r.stdout)
+        for flag in ("--running-code", "--values", "--verify", "--all"):
+            self.assertIn(flag, r.stdout)
 
     def test_import_does_not_run(self):
         self.assertIn('if __name__ == "__main__":', SRC)

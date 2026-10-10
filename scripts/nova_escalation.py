@@ -36,6 +36,9 @@ life-safety and CLOSED (held + logged) for everything else.
 
 Library: authorize(oc, source=, kind=, action_class=, item=, life_safety=, urgent=, ...) -> dict
          jordan_state(oc), nova_state(oc), molink_ask(oc, ref, text), molink_status(oc, ref)
+         jordan_state() is THE answer to "is Little Mister available?" — since 2026-10-09 (M10) it also
+         reads the Studio's macOS Focus and screen-lock state (absorbed from nova_proactive_peace and
+         nova_attention_zones, now thin wrappers), failing open to 'unknown' on any other host.
 CLI:     --status (both states now)   --log [--hours 24]   --selftest   --help
          --feedback LOG_ID --note "unneeded: ..." --by jordan   (feeds the hotwash overreach sweep)
 Written by Jordan Koch (via Claude).
@@ -61,7 +64,8 @@ SPINNAKER_RUNG = {"note": "journal", "ask": "ask", "alert": "escalate", "outward
                   "irreversible": "act"}
 DEFAULTS = {"latency_ms": 45000, "night_start": 23, "night_end": 7, "degraded_penalty": 0.25,
             "gateway_health": "http://nova-core.digitalnoise.net:18792/health",
-            "memory_health": "http://memory-server.digitalnoise.net:18790/stats"}
+            "memory_health": "http://memory-server.digitalnoise.net:18790/stats",
+            "studio_hosts": ["office-m4-2"], "focus_counts_as_depleted": False}
 CHANNEL = "two-man"
 
 SCHEMA = """
@@ -139,10 +143,103 @@ def is_late_night(now: datetime, start: int = 23, end: int = 7) -> bool:
     return h >= start or h < end
 
 
-def jordan_state(oc, now: datetime | None = None, s: dict | None = None) -> dict:
-    """{'depleted': bool, 'reasons': [...]} — tentative, never a diagnosis."""
+FOCUS_MODES = {"com.apple.donotdisturb.mode.default": "dnd", "com.apple.sleep.sleep-mode": "sleep",
+               "com.apple.focus.work": "work", "com.apple.focus.personal": "personal",
+               "com.apple.donotdisturb.mode.driving": "driving",
+               "com.apple.focus.reduce-interruptions": "reduce-interruptions"}
+UNAVAILABLE_FOCUS = ("dnd", "sleep", "driving")
+_SIG_CACHE: dict = {}
+
+
+def on_studio(s: dict | None = None, _host=None) -> bool:
+    """The Focus / screen signals are local to Little Mister's Mac Studio session."""
+    import socket
+    host = (_host if _host is not None else socket.gethostname()).split(".")[0].lower()
+    return host in [h.lower() for h in (s or DEFAULTS).get("studio_hosts", DEFAULTS["studio_hosts"])]
+
+
+def focus_mode(path: Path | None = None) -> str:
+    """macOS Focus from the DoNotDisturb assertion store (a JSON read, no subprocess).
+    -> 'none' | 'dnd' | 'sleep' | 'work' | ... | 'unknown' (unreadable)."""
+    p = path or Path.home() / "Library/DoNotDisturb/DB/Assertions.json"
+    try:
+        data = json.loads(p.read_text()).get("data") or []
+        for entry in data:
+            for rec in entry.get("storeAssertionRecords") or []:
+                mode = ((rec.get("assertionDetails") or {}).get("assertionDetailsModeIdentifier") or "")
+                return FOCUS_MODES.get(mode, mode.rsplit(".", 1)[-1] or "dnd")
+        return "none"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def screen_state() -> str:
+    """'locked' | 'unlocked' | 'unknown' from the console session dictionary (CoreGraphics via ctypes,
+    ~3 ms, no subprocess). 'unknown' off macOS or without a GUI session."""
+    try:
+        import ctypes
+        cg = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreGraphics.framework/CoreGraphics")
+        cf = ctypes.cdll.LoadLibrary("/System/Library/Frameworks/CoreFoundation.framework/CoreFoundation")
+        cg.CGSessionCopyCurrentDictionary.restype = ctypes.c_void_p
+        cf.CFDictionaryGetValue.restype = ctypes.c_void_p
+        cf.CFDictionaryGetValue.argtypes = [ctypes.c_void_p, ctypes.c_void_p]
+        cf.CFStringCreateWithCString.restype = ctypes.c_void_p
+        cf.CFStringCreateWithCString.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_uint32]
+        cf.CFBooleanGetValue.argtypes = [ctypes.c_void_p]
+        cf.CFRelease.argtypes = [ctypes.c_void_p]
+        d = cg.CGSessionCopyCurrentDictionary()
+        if not d:
+            return "unknown"
+        key = cf.CFStringCreateWithCString(None, b"CGSSessionScreenIsLocked", 0x08000100)
+        v = cf.CFDictionaryGetValue(d, key)
+        locked = bool(v) and bool(cf.CFBooleanGetValue(v))
+        cf.CFRelease(key)
+        cf.CFRelease(d)
+        return "locked" if locked else "unlocked"
+    except Exception:  # noqa: BLE001
+        return "unknown"
+
+
+def jordan_signals(s: dict | None = None, _host=None, _focus=None, _screen=None) -> dict:
+    """Studio-local signals merged from nova_proactive_peace (2026-10-09). Fail open to 'unknown'
+    off the Studio or when unreadable; cached 60 s so authorize() stays cheap."""
+    if not on_studio(s, _host):
+        return {"focus": "unknown", "screen": "unknown"}
+    if _focus or _screen:      # injected readers (tests): no cache
+        return {"focus": (_focus or focus_mode)(), "screen": (_screen or screen_state)()}
+    hit = _SIG_CACHE.get("v")
+    if hit and time.monotonic() - hit[0] < 60:
+        return dict(hit[1])
+    v = {"focus": focus_mode(), "screen": screen_state()}
+    _SIG_CACHE["v"] = (time.monotonic(), v)
+    return dict(v)
+
+
+def jordan_state(oc, now: datetime | None = None, s: dict | None = None, _signals=None) -> dict:
+    """The one answer to "is Little Mister available?" (M10, 2026-10-09: absorbs proactive peace and
+    attention zones). Tentative, never a diagnosis.
+    -> {'depleted': bool, 'reasons': [...], 'signals': {'focus', 'screen'}, 'available': bool}
+    `depleted`/`reasons` are unchanged for the escalation gate; a Focus of DND/Sleep/Driving counts
+    toward them only when service_config escalation/settings sets focus_counts_as_depleted=true.
+    `available` = not depleted and no do-not-disturb Focus."""
     now = now or datetime.now(timezone.utc)
     s = s or settings(oc)
+    try:
+        sig = _signals if _signals is not None else jordan_signals(s)
+    except Exception:  # noqa: BLE001
+        sig = {"focus": "unknown", "screen": "unknown"}
+    st = _jordan_core(oc, now, s)
+    focus_busy = sig.get("focus") in UNAVAILABLE_FOCUS
+    if focus_busy and s.get("focus_counts_as_depleted"):
+        st["reasons"].append(f"macOS Focus: {sig['focus']}")
+        st["depleted"] = True
+    st["signals"] = sig
+    st["available"] = not st["depleted"] and not focus_busy
+    return st
+
+
+def _jordan_core(oc, now: datetime, s: dict) -> dict:
+    """The pre-merge jordan_state body, unchanged."""
     reasons = []
     try:
         from nova_relationship import quiet_mode

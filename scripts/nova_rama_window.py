@@ -25,7 +25,8 @@ CLI:    --run [--dry-run] [--horizon H]   --snapshot ID [--dry-run]   --selftest
 Tables: rama_window (listed items and snapshots)
 Config: rama_window/retention_hours (seeded from defaults on the first real run);
         snapshots go to mina_typescript/out_dir
-Schedule: daily 06:15 `nova_rama_window.py --run`.
+Schedule: daily 06:15 `nova_buick8_log.py --expiry` (merged into the Buick 8 Logbook on
+2026-10-09, organ audit M13; `nova_rama_window.py --run/--snapshot` still work as thin wrappers).
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -104,7 +105,7 @@ def due(cases: list, ret: dict, now: datetime, horizon_h: float = HORIZON_H) -> 
 
 def export_cmd(item: dict, now: datetime, face_ttl_h: float) -> str:
     if item["source"] in TYPESCRIPT_SOURCES:
-        return f"python3 nova_rama_window.py --snapshot {item['case_id']}"
+        return f"python3 nova_buick8_log.py --snapshot {item['case_id']}"
     if item["source"] == "frigate":
         deadline = item["window_start"] + timedelta(hours=face_ttl_h)
         faces = ("person footage is past the face TTL: export objects and vehicles only"
@@ -259,11 +260,13 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
-    if a.snapshot:
-        return 0 if snapshot(a.snapshot, dry=a.dry_run) else 1
-    if a.run:
-        run(dry=a.dry_run, horizon_h=a.horizon)
-        return 0
+    if a.snapshot or a.run:   # merged into nova_buick8_log.py on 2026-10-09 (organ audit M13)
+        import nova_buick8_log as B8
+        log("merged into nova_buick8_log.py on 2026-10-09 — running its "
+            + ("--snapshot" if a.snapshot else "--expiry") + " mode")
+        if a.snapshot:
+            return B8.run_snapshot(a.snapshot, a.dry_run)
+        return B8.run_expiry(a.dry_run, a.horizon)
     ap.print_help()
     return 0
 

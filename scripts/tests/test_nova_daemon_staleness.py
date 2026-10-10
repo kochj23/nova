@@ -184,8 +184,8 @@ class TestRetry(unittest.TestCase):
     def test_db_unavailable_still_sweeps(self):
         with patch("psycopg2.connect", side_effect=RuntimeError("pg down")), \
              patch.object(d, "run_once", return_value=[]) as ro, patch("builtins.print"):
-            self.assertEqual(d.main(), 0)
-        ro.assert_called_once_with(None)
+            self.assertEqual(d.main([]), 0)
+        ro.assert_called_once_with(None, dry=False)
 
     def test_ensure_session_rolls_back_on_error(self):
         conn = MagicMock()
@@ -217,6 +217,12 @@ class TestUnit(unittest.TestCase):
 
 
 class TestIntegration(unittest.TestCase):
+    def test_wrapper_delegates_to_jade_amulet(self):
+        import nova_jade_amulet
+        with patch.object(nova_jade_amulet, "main", return_value=0) as jm, patch("builtins.print"):
+            self.assertEqual(d.main(["--dry-run"]), 0)
+        jm.assert_called_once_with(["--running-code", "--dry-run"])
+
     def test_notify_payload_is_deduped_per_label(self):
         import nova_notify
         with patch.object(nova_notify, "notify") as n:
@@ -243,17 +249,40 @@ class TestFunctional(unittest.TestCase):
         conn = MagicMock()
         with patch("psycopg2.connect", return_value=conn), patch.object(d, "run_once", return_value=[STALE]), \
              patch("builtins.print") as p:
-            self.assertEqual(d.main(), 0)
+            self.assertEqual(d.main([]), 0)
         conn.close.assert_called_once()
-        self.assertIn("1 daemon(s) running STALE", p.call_args_list[0][0][0])
+        out = [c[0][0] for c in p.call_args_list]
+        self.assertIn("merged into nova_jade_amulet.py --running-code on 2026-10-09", out[0])
+        self.assertTrue(any("1 daemon(s) running STALE" in o for o in out))
 
     def test_main_sweep_failure_returns_1(self):
         with patch("psycopg2.connect", side_effect=RuntimeError("x")), \
              patch.object(d, "run_once", side_effect=RuntimeError("boom")), patch("builtins.print"):
-            self.assertEqual(d.main(), 1)
+            self.assertEqual(d.main([]), 1)
+
+    def test_dry_run_notifies_and_writes_nothing(self):
+        conn = MagicMock()
+        with patch.object(d, "discover_daemons", return_value=[{"label": "a", "script": "/a"}]), \
+             patch.object(d, "check_daemon", return_value=STALE), patch.object(d, "_notify_stale") as n:
+            self.assertEqual(d.run_once(conn, dry=True), [STALE])
+        n.assert_not_called()
+        conn.cursor.assert_not_called()
+
+    def test_wrapper_dry_run_never_connects(self):
+        with patch("psycopg2.connect") as pc, patch.object(d, "run_once", return_value=[]) as ro, \
+             patch("builtins.print"):
+            self.assertEqual(d.main(["--dry-run"]), 0)
+        pc.assert_not_called()
+        ro.assert_called_once_with(None, dry=True)
 
 
 class TestFrame(unittest.TestCase):
+    def test_help_exits_0(self):
+        r = subprocess.run([sys.executable, SCRIPT, "--help"], capture_output=True, text=True, timeout=30,
+                           env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--running-code", r.stdout)
+
     def test_import_never_runs_main(self):
         self.assertIn('if __name__ == "__main__":', SRC)
         r = subprocess.run([sys.executable, "-c", "import nova_daemon_staleness"], cwd=os.path.dirname(SCRIPT),

@@ -27,6 +27,9 @@ matching claude_actions row is filed to claude_queue. Nothing is ever repaired.
           the values dropped before it existed (those need the git history).
 
 CLI:     --run [--dry-run]   --verify   --show   --selftest
+Merged 2026-10-09 into nova_jade_amulet.py as `--values` (kind value_row). Jade amulet calls this
+module's run / verify_cmd / show; every chain function below is unchanged and stays here. This
+CLI is a thin wrapper onto that mode (--selftest still runs here).
 Tables:  peaslee_chain, peaslee_roots (reads values, relationship_ledger, claude_actions)
 Config:  service_config peaslee_hand/root_dir (default the NAS nova dir; must be off the boot
          volume or the root is recorded as unwritten, never written locally)
@@ -413,10 +416,11 @@ def main(argv=None) -> int:
     if not (a.run or a.verify or a.show):
         ap.print_help()
         return 0
-    cur = W.connect().cursor()
+    log("merged into nova_jade_amulet.py --values on 2026-10-09")
+    import nova_jade_amulet
     if a.run:
-        return run(cur, dry=a.dry_run)
-    return verify_cmd(cur) if a.verify else show(cur)
+        return nova_jade_amulet.main(["--values"] + (["--dry-run"] if a.dry_run else []))
+    return nova_jade_amulet.main(["--values", "--verify" if a.verify else "--show"])
 
 
 if __name__ == "__main__":

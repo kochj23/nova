@@ -39,9 +39,34 @@ DESIGN
 Runs as its OWN launchd job (net.digitalnoise.nova-freshness-monitor, StartInterval
 900) — deliberately not under any scheduler, so the scheduler dying can't blind it.
 
+THE ONE SILENCE DETECTOR (organ-audit merge M1, 2026-10-09)
+------------------------------------------------------------
+Four organs used to ask "has this gone quiet?" about overlapping data. They now all run
+from this one entry point, one schedule, one alert per fact:
+
+  * FEEDS (was nova_watchtower.py's feed half): per-feed Streams with a WHERE filter and
+    an `owner` (the device a feed hangs off). Same SQL, same thresholds. They alert
+    through the transition logic below; several feeds of one owner going stale in the
+    same pass collapse into ONE "likely root cause" alert. Every pass still writes the
+    telemetry.net_liveness tier='feed' sample and the net_problems 'stale:<feed>' episode
+    the weekly network-health report reads. Watchtower keeps inventory + wired liveness.
+  * PRESENCE-METHOD SILENCE (was nova_negative_space.py's sensor_quiet check): same SQL
+    (each method against its own 7-day rhythm), same message, same source, category and
+    dedup key, so nova_buick8_log's feed of these events is unchanged.
+  * LEARNED CADENCE (was nova_cadence_watch.py): per-stream learned interval, written to
+    cadence_state, at most once an hour inside the normal pass, or on demand with
+    --learn. The epistemic split is a per-stream attribute: this pass only ever records
+    a source as OK or SILENT (no witness: cause unknown, never "missing"); MISSING needs
+    a third-party witness and goes through nova_cadence_watch.record_missing(). A SILENT
+    transition is not re-alerted when a tuned freshness SLA on the same table would
+    already have fired first (one alert per fact); its memory note is still written.
+  * The Dead man's switch's delivery check went to nova_output_drift.py, not here.
+
     python3 nova_freshness_monitor.py            # one pass, notify on breach, exit
     python3 nova_freshness_monitor.py --dry-run  # one pass, print report, DO NOT notify
     python3 nova_freshness_monitor.py --loop      # run forever every INTERVAL_S
+    python3 nova_freshness_monitor.py --learn     # cadence pass only (cadence_state)
+    python3 nova_freshness_monitor.py --learn --dry-run
 
 Written by Jordan Koch.
 """
@@ -109,6 +134,10 @@ class Stream:
     is_matview: bool = False     # documentation only; query path is identical
     note: str = ""
     discovered: bool = False     # True if auto-discovered rather than explicitly listed
+    where: str = ""              # optional code-defined row filter (feeds, e.g. one climate source)
+    owner: Optional[str] = None  # device a feed hangs off: stale feeds of one owner collapse
+    alert: bool = True           # False = tracked + recorded, but another stream alerts this fact
+    feed_key: Optional[str] = None  # set for watchtower feeds: net_liveness / net_problems key
 
     def dedup_key(self) -> str:
         return f"freshness:{self.name}"
@@ -166,8 +195,38 @@ EXPLICIT_STREAMS: List[Stream] = [
                 "so a quiet stretch is normal — 24h/info avoids false pages"),
 ]
 
-# Explicit (schema, table) pairs are skipped during auto-discovery so their tuned SLA wins.
-_EXPLICIT_TABLES = {(s.schema, s.table) for s in EXPLICIT_STREAMS}
+# ── Feeds (absorbed from nova_watchtower.py, 2026-10-09) ───────────────────────
+# (key, schema, table, ts col, WHERE filter, stale-after minutes, owner). Same SQL and
+# thresholds watchtower used. 'weather_station' is the same fact as the explicit
+# telemetry.weather stream (tighter SLA, critical), so it is recorded for the weekly report
+# but never alerts on its own (one alert per fact).
+_FEEDS = [
+    ("climate:zigbee",     "telemetry", "climate", "ts", "source='zigbee'", 30, "zigbee-coordinator"),
+    ("climate:hue_bridge", "telemetry", "climate", "ts", "source='hue_bridge'", 30, "hue-bridge"),
+    ("climate:weather",    "telemetry", "climate", "ts", "source='weather_station'", 20, "weather-station"),
+    ("climate:fp300",      "telemetry", "climate", "ts", "source='fp300'", 30, None),
+    ("climate:homekit",    "telemetry", "climate", "ts", "source='homekit'", 30, None),
+    ("weather_station",    "telemetry", "weather", "ts", "", 20, "weather-station"),
+    ("air_quality",        "telemetry", "air_quality", "ts", "", 45, None),
+    ("hue_light_state",    "public", "hue_light_state", "polled_at", "", 20, "hue-bridge"),
+    ("ha_sensors",         "telemetry", "ha_sensors", "ts", "", 20, None),
+    # last_heard, not ts (ts only advances on a brand-new node)
+    ("lora_mesh",          "telemetry", "mesh_nodes", "last_heard", "", 360, None),
+    # a SUCCESSFUL nightly (ok=true) within 26h
+    ("nas_backup",         "telemetry", "backup_runs", "ts", "ok", 1560, "nas-backup"),
+]
+_FEED_ALIASES = {"weather_station"}      # fact already alerted by telemetry.weather
+FEED_STREAMS: List[Stream] = [
+    Stream(f"feed:{key}", schema, table, col, "timestamptz", mins * 60, "warning",
+           where=where, owner=owner, alert=key not in _FEED_ALIASES, feed_key=key,
+           note=f"feed (was watchtower), stale after {mins} min"
+                + (f"; hangs off {owner}" if owner else ""))
+    for key, schema, table, col, where, mins, owner in _FEEDS
+]
+
+# Explicit and feed (schema, table) pairs are skipped during auto-discovery so their tuned
+# SLA wins (a feed's threshold is always tighter than the 24h discovery default).
+_EXPLICIT_TABLES = {(s.schema, s.table) for s in EXPLICIT_STREAMS + FEED_STREAMS}
 
 # Human-muted streams: still checked and state-recorded, but NEVER paged/re-escalated.
 # Use this ONLY for a stream whose staleness has a known, accepted, out-of-band cause
@@ -208,7 +267,8 @@ def age_sql(stream: Stream) -> str:
         expr = f"EXTRACT(EPOCH FROM now() - to_date(max({c}), 'YYYY-MM-DD')::timestamptz)"
     else:
         raise ValueError(f"unknown timestamp kind: {stream.kind!r}")
-    return f"SELECT {expr} FROM {ident}"
+    # `where` is code-defined (FEED_STREAMS), never user input.
+    return f"SELECT {expr} FROM {ident}" + (f" WHERE {stream.where}" if stream.where else "")
 
 
 def discover_streams(conn) -> List[Stream]:
@@ -243,8 +303,8 @@ def discover_streams(conn) -> List[Stream]:
 
 
 def build_streams(conn) -> List[Stream]:
-    """Full watch list: explicit (tuned) streams first, then auto-discovered ones."""
-    return list(EXPLICIT_STREAMS) + discover_streams(conn)
+    """Full watch list: explicit (tuned) streams, then feeds, then auto-discovered ones."""
+    return list(EXPLICIT_STREAMS) + list(FEED_STREAMS) + discover_streams(conn)
 
 
 @dataclass
@@ -423,6 +483,70 @@ def _upsert_state(conn, name, state, kind, first_ts, last_ts, num, age_s, reason
         print(f"[freshness] state upsert failed for {name}: {e}", flush=True)
 
 
+_LEVEL_RANK = {"info": 0, "warning": 1, "critical": 2}
+
+
+def collapse_by_owner(outbox: list) -> list:
+    """Root-cause collapse (carried over from watchtower): when two or more feeds that hang
+    off the same owner go stale in the same pass, send ONE alert naming the owner instead of
+    one per feed. Everything else passes through unchanged and in order. Pure."""
+    groups: dict = {}
+    for m in outbox:
+        owner = m["stream"].owner
+        if owner and m["action"] == "transition":
+            groups.setdefault(owner, []).append(m)
+    out, done = [], set()
+    for m in outbox:
+        owner = m["stream"].owner
+        grp = groups.get(owner) if owner and m["action"] == "transition" else None
+        if not grp or len(grp) < 2:
+            out.append(m)
+            continue
+        if owner in done:
+            continue
+        done.add(owner)
+        names = [g["stream"].name for g in grp]
+        out.append({
+            "stream": grp[0]["stream"], "action": "transition",
+            "title": f"Stale feeds, likely root cause: {owner}",
+            "body": (f"{len(grp)} feeds that hang off {owner} went stale together: "
+                     f"{', '.join(names)}. Check {owner} first. "
+                     + " ".join(f"[{g['stream'].name}: {_fmt_age(g['meta'].get('age_s')).strip()}]"
+                                for g in grp)),
+            "level": max((g["level"] for g in grp), key=lambda lv: _LEVEL_RANK.get(lv, 1)),
+            "dedup": f"freshness:owner:{owner}",
+            "meta": {"stream": ",".join(names), "owner": owner, "streams": names,
+                     "action": "transition"},
+        })
+    return out
+
+
+def seed_feed_states(conn, streams: List[Stream], states: dict) -> None:
+    """Handover from watchtower (2026-10-09). A feed this monitor has never seen inherits
+    watchtower's episode: an open net_problems 'stale:<feed>' row was already alerted, so it
+    stays a silent known-dead baseline; otherwise the feed starts as 'fresh', so a stale
+    reading now is news and alerts. Read-only; never raises."""
+    new = [s for s in streams if s.feed_key and s.name not in states]
+    if not new:
+        return
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key FROM telemetry.net_problems "
+                        "WHERE status='open' AND left(key, 6) = 'stale:'")
+            open_now = {row[0] for row in cur.fetchall()}
+    except Exception as e:
+        try:
+            conn.rollback()
+        except Exception:
+            pass
+        print(f"[freshness] feed handover read failed (first sight stays silent): {e}", flush=True)
+        return
+    for s in new:
+        if f"stale:{s.feed_key}" not in open_now:
+            states[s.name] = {"state": "fresh", "problem_kind": None, "first_stale_ts": None,
+                              "last_alerted_ts": None, "last_alert_num": 0}
+
+
 def run_once(conn, notify_fn: Optional[Callable] = None, dry_run: bool = False) -> dict:
     """One full pass over every stream. Returns a summary dict; never raises."""
     notify_fn = notify_fn or _notify
@@ -437,6 +561,8 @@ def run_once(conn, notify_fn: Optional[Callable] = None, dry_run: bool = False) 
     # host clock skew. In dry-run we read state to SHOW decisions but never write/notify.
     have_state = ensure_state_table(conn)
     states = load_states(conn) if have_state else {}
+    if have_state:
+        seed_feed_states(conn, streams, states)
     try:
         with conn.cursor() as cur:
             cur.execute("SELECT now()")
@@ -450,6 +576,7 @@ def run_once(conn, notify_fn: Optional[Callable] = None, dry_run: bool = False) 
         now = datetime.now(timezone.utc)
 
     actions: dict = {}   # stream_name -> action string (for the report)
+    outbox: list = []    # notifications, sent after the loop so same-owner feeds can collapse
     for r in results:
         name = r.stream.name
         prior = states.get(name)
@@ -519,13 +646,22 @@ def run_once(conn, notify_fn: Optional[Callable] = None, dry_run: bool = False) 
         else:
             continue
 
+        if not r.stream.alert:
+            # state tracked above, but another stream already alerts this same fact
+            actions[name] = f"{action}(q)"
+            continue
+        outbox.append({"stream": r.stream, "action": action, "title": title, "body": body,
+                       "level": level, "dedup": dedup,
+                       "meta": {"stream": name, "age_s": r.age_s, "sla_s": r.stream.sla_s,
+                                "kind": r.stream.kind, "action": action}})
+
+    for msg in collapse_by_owner(outbox):
         try:
-            notify_fn(title, body=body, level=level, category="freshness",
-                      source="nova_freshness_monitor.py", dedup_key=dedup,
-                      meta={"stream": name, "age_s": r.age_s, "sla_s": r.stream.sla_s,
-                            "kind": r.stream.kind, "action": action})
+            notify_fn(msg["title"], body=msg["body"], level=msg["level"], category="freshness",
+                      source="nova_freshness_monitor.py", dedup_key=msg["dedup"],
+                      meta=msg["meta"])
         except Exception as e:              # notifier must never crash us
-            print(f"[freshness] notify failed for {name}: {e}", flush=True)
+            print(f"[freshness] notify failed for {msg['meta'].get('stream')}: {e}", flush=True)
 
     emitted = [n for n, a in actions.items()
                if a in ("transition", "reescalate", "recovered")]
@@ -536,7 +672,7 @@ def run_once(conn, notify_fn: Optional[Callable] = None, dry_run: bool = False) 
           f"{' | DRY-RUN (no notifications/state writes)' if dry_run else ''}", flush=True)
     for r in sorted(results, key=lambda x: (not x.breach, x.stream.name)):
         flag = "BREACH " if r.breach else "  ok   "
-        src = "disc" if r.stream.discovered else "expl"
+        src = "disc" if r.stream.discovered else "feed" if r.stream.feed_key else "expl"
         act = actions.get(r.stream.name, "?")
         print(f"  {flag}[{src}] {r.stream.name:<42} age={_fmt_age(r.age_s):>7} "
               f"sla={_fmt_age(r.stream.sla_s):>7} act={act:<11}"
@@ -549,6 +685,245 @@ def run_once(conn, notify_fn: Optional[Callable] = None, dry_run: bool = False) 
         "emitted": emitted,
         "results": results,
     }
+
+
+def _rollback(conn) -> None:
+    try:
+        conn.rollback()
+    except Exception:
+        pass
+
+
+# ── Feeds: the weekly network-health report's time-series (was watchtower) ───────
+def record_feeds(conn, results: List[Result], dry_run: bool = False) -> dict:
+    """For every feed stream: one telemetry.net_liveness sample (tier='feed') and the
+    net_problems 'stale:<feed>' episode opened/cleared — the rows nova_network_health reads.
+    Watchtower owns the other net_problems keys ('down:<mac>'); only 'stale:' keys are
+    touched here. Never raises."""
+    feeds = [r for r in results if r.stream.feed_key]
+    out = {"opened": [], "cleared": []}
+    if dry_run or not feeds:
+        return out
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT key FROM telemetry.net_problems "
+                        "WHERE status='open' AND left(key, 6) = 'stale:'")
+            open_now = {row[0] for row in cur.fetchall()}
+            current = set()
+            for r in feeds:
+                key = r.stream.feed_key
+                pk = f"stale:{key}"
+                current.add(pk)
+                fresh = not (r.breach or r.error)
+                cur.execute("INSERT INTO telemetry.net_liveness (mac,name,tier,online) "
+                            "VALUES (%s,%s,'feed',%s)", (f"feed:{key}", key, fresh))
+                if not fresh and pk not in open_now:
+                    detail = ("no data ever" if r.age_s is None
+                              else f"{r.age_s / 60:.0f} min old (> {r.stream.sla_s // 60} min)")
+                    cur.execute(
+                        """INSERT INTO telemetry.net_problems (key,kind,entity,tier,detail)
+                           VALUES (%s,%s,%s,%s,%s) ON CONFLICT (key) DO UPDATE
+                           SET status='open', detail=EXCLUDED.detail, cleared_at=NULL, opened_at=now()""",
+                        (pk, "feed_stale", key, "sensor_feed", f"feed '{key}' {detail}"))
+                    out["opened"].append(key)
+            # clear recovered feeds, and any open episode for a feed that no longer exists
+            for pk in sorted(open_now):
+                r = next((x for x in feeds if f"stale:{x.stream.feed_key}" == pk), None)
+                if r is None or not (r.breach or r.error):
+                    cur.execute("UPDATE telemetry.net_problems SET status='cleared', cleared_at=now() "
+                                "WHERE key=%s", (pk,))
+                    out["cleared"].append(pk[6:])
+        conn.commit()
+    except Exception as e:
+        _rollback(conn)
+        print(f"[freshness] feed liveness record failed: {e}", flush=True)
+    return out
+
+
+# ── Presence-method silence (was nova_negative_space.py's sensor_quiet) ──────────
+# 2026-10-06: judge each method against its OWN rhythm. Event-driven sensors (the outdoor front
+# motion sensor, AV power) are legitimately silent for hours — 'ha_motion' was paged as broken while
+# reporting 64 times that week. Quiet now = the current gap exceeds both 6 h and 1.5x the longest
+# gap that method had between events in the past 7 days.
+PRESENCE_QUIET_SQL = """
+    WITH ev AS (
+        SELECT method, ts, ts - lag(ts) OVER (PARTITION BY method ORDER BY ts) AS between
+        FROM telemetry.presence
+        WHERE ts > now() - interval '7 days'),
+    m AS (
+        SELECT method, max(ts) AS last, now() - max(ts) AS gap,
+               coalesce(max(between), interval '0') AS longest
+        FROM ev GROUP BY 1)
+    SELECT method, last, gap FROM m
+    WHERE gap > greatest(interval '6 hours', longest * 1.5)
+    ORDER BY 3 DESC"""
+PRESENCE_DEDUP_WINDOW_S = 28800          # negative space's re-notify window (8h)
+
+
+def presence_quiet_message(method, last, gap) -> str:
+    """The exact text negative space emitted (nova_buick8_log parses it)."""
+    return (f"Presence method '{method}' has reported nothing for {str(gap).split('.')[0]} "
+            f"(last: {last:%Y-%m-%d %H:%M}). A sensor that goes silent is usually broken, "
+            f"not observing stillness.")
+
+
+def check_presence_silence(conn, dry_run: bool = False,
+                           notify_fn: Optional[Callable] = None) -> list:
+    """Presence methods that went quiet against their own rhythm. Alerts exactly as negative
+    space did (its alert_findings: source nova_negative_space.py, category security, stable
+    negspace:sensor_quiet:* key, 8h window). A finding whose key was already SENT inside the
+    window is not re-emitted (the notifier would fold it anyway), so the bus is not refilled
+    every pass. Returns [(kind, msg)]. Never raises."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute(PRESENCE_QUIET_SQL)
+            rows = cur.fetchall()
+    except Exception as e:
+        _rollback(conn)
+        print(f"[freshness] presence silence check failed: {e}", flush=True)
+        return []
+    findings = [("sensor_quiet", presence_quiet_message(m, last, gap)) for m, last, gap in rows]
+    for _, msg in findings:
+        print(f"  QUIET  [presence] {msg}", flush=True)
+    if dry_run or not findings:
+        return findings
+    try:
+        import nova_negative_space as ns
+    except Exception as e:                          # pragma: no cover - defensive
+        print(f"[freshness] negative-space helpers unavailable: {e}", flush=True)
+        return findings
+    due = []
+    for kind, msg in findings:
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT 1 FROM telemetry.events WHERE dedup_key=%s AND status='sent' "
+                            "AND ts > now() - make_interval(secs => %s) LIMIT 1",
+                            (ns.negspace_dedup_key(kind, msg), PRESENCE_DEDUP_WINDOW_S))
+                if cur.fetchone():
+                    continue
+        except Exception:
+            _rollback(conn)
+        due.append((kind, msg))
+    if due:
+        ns.alert_findings(due, notify=notify_fn)
+    return findings
+
+
+# ── Learned cadence (was nova_cadence_watch.py) ──────────────────────────────────
+CADENCE_EVERY_S = 3300                   # inside the 15-min pass, learn at most ~hourly
+
+
+def cadence_due(conn) -> bool:
+    """True when cadence_state is missing or was last written >= CADENCE_EVERY_S ago."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.cadence_state')")
+            if cur.fetchone()[0] is None:
+                return True
+            cur.execute("SELECT EXTRACT(EPOCH FROM now() - max(updated_at)) FROM cadence_state")
+            row = cur.fetchone()
+        return not row or row[0] is None or float(row[0]) >= CADENCE_EVERY_S
+    except Exception:
+        _rollback(conn)
+        return True
+
+
+def cadence_covered(source: str, threshold_s: float) -> Optional[str]:
+    """Name of the freshness stream that already alerts this source's silence first (an
+    unfiltered explicit stream on the same table whose SLA is no looser than the learned
+    threshold), or a muted stream. None means the cadence alert is the only one."""
+    if source in MUTED_STREAMS:
+        return source
+    for s in EXPLICIT_STREAMS:
+        if f"{s.schema}.{s.table}" == source and not s.where and s.sla_s <= threshold_s:
+            return s.name
+    return None
+
+
+def run_cadence(conn, dry_run: bool = False) -> dict:
+    """One learned-cadence pass over nova_cadence_watch.STREAMS (its learn/classify/upsert/
+    alert/memory functions, unchanged). Writes cadence_state; each stream's state is OK or
+    SILENT with witness=None — never MISSING. Never raises."""
+    from datetime import datetime, timezone
+    import nova_cadence_watch as cw
+    now = datetime.now(timezone.utc)
+    summary = {"checked": 0, "silent": [], "ok": 0, "skipped": []}
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('public.cadence_state')")
+            if not dry_run or cur.fetchone()[0] is None:
+                cw.ensure_schema(cur)
+        conn.commit()
+    except Exception as e:
+        _rollback(conn)
+        cw.log(f"cadence_state unavailable: {e}")
+        return summary
+
+    for table, ts_col in cw.STREAMS:
+        try:
+            with conn.cursor() as cur:
+                learned = cw.learn(cur, table, ts_col)
+        except Exception as e:
+            _rollback(conn)
+            cw.log(f"{table}: learn failed: {e}")
+            summary["skipped"].append({"source": table, "why": str(e)[:120]})
+            continue
+        if not learned:
+            summary["skipped"].append({"source": table, "why": "insufficient history"})
+            continue
+        summary["checked"] += 1
+        state, age, threshold = cw.classify(learned, now)
+        median = learned["median_gap_s"]
+        entry = {"source": table, "state": state, "witness": None, "age_s": round(age, 1),
+                 "median_gap_s": round(median, 2)}
+        detail = {"median_gap_s": round(median, 2), "observations": learned["n"],
+                  "age_s": round(age, 1), "silent_threshold_s": round(threshold, 1),
+                  "silent_factor": cw.SILENT_FACTOR}
+        if dry_run:
+            cw.log(f"{table}: state={state} witness=none age={cw._human_age(age)} "
+                   f"median={cw._human_age(median)} n={learned['n']}")
+            if state == "SILENT":
+                summary["silent"].append(entry)
+            else:
+                summary["ok"] += 1
+            continue
+        try:
+            with conn.cursor() as cur:
+                prev, transitioned = cw.upsert_cadence(cur, table, "stream", learned, state, detail)
+            conn.commit()
+        except Exception as e:
+            _rollback(conn)
+            cw.log(f"{table}: cadence_state write failed: {e}")
+            continue
+        if state == "SILENT":
+            summary["silent"].append({**entry, "since_new": transitioned})
+            if transitioned:
+                cw.log(f"{table}: → SILENT (quiet {cw._human_age(age)}, usual ~{cw._human_age(median)})")
+                covered = cadence_covered(table, threshold)
+                if covered:
+                    cw.log(f"  alert left to freshness stream {covered} (same fact, tighter SLA)")
+                else:
+                    cw._alert_silent(table, age, median, False)
+                cw._write_silence_memory(table, age, median)
+            else:
+                cw.log(f"{table}: still SILENT ({cw._human_age(age)})")
+        else:
+            summary["ok"] += 1
+            if prev == "SILENT":
+                cw.log(f"{table}: recovered → OK (fresh within cadence)")
+    cw.log(f"pass done: {summary['checked']} learned, {len(summary['silent'])} SILENT, "
+           f"{summary['ok']} OK, {len(summary['skipped'])} skipped")
+    return summary
+
+
+def run_pass(conn, dry_run: bool = False, notify_fn: Optional[Callable] = None) -> dict:
+    """The full silence-detector pass: streams + feeds (run_once), the feed time-series,
+    presence-method silence, and the learned-cadence pass when due (always in dry-run)."""
+    summary = run_once(conn, notify_fn=notify_fn, dry_run=dry_run)
+    summary["feeds"] = record_feeds(conn, summary["results"], dry_run)
+    summary["presence_quiet"] = [m for _, m in check_presence_silence(conn, dry_run, notify_fn)]
+    summary["cadence"] = run_cadence(conn, dry_run) if (dry_run or cadence_due(conn)) else None
+    return summary
 
 
 def _connect(dsn: str = DSN):
@@ -570,8 +945,22 @@ def _connect(dsn: str = DSN):
 
 def main(argv=None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
+    if "-h" in argv or "--help" in argv:
+        print(__doc__)
+        return 0
     dry_run = "--dry-run" in argv
     loop = "--loop" in argv
+
+    if "--learn" in argv:                   # cadence pass only (what nova_cadence_watch ran)
+        conn = _connect()
+        try:
+            run_cadence(conn, dry_run=dry_run)
+            return 0
+        finally:
+            try:
+                conn.close()
+            except Exception:
+                pass
 
     if loop:
         conn = None
@@ -579,7 +968,7 @@ def main(argv=None) -> int:
             try:
                 if conn is None or conn.closed:
                     conn = _connect()
-                run_once(conn, dry_run=dry_run)
+                run_pass(conn, dry_run=dry_run)
             except Exception as e:
                 print(f"[freshness] cycle error: {e}", flush=True)
                 try:
@@ -593,11 +982,14 @@ def main(argv=None) -> int:
     # default: single pass (launchd StartInterval re-invokes us every 900s)
     conn = _connect()
     try:
-        summary = run_once(conn, dry_run=dry_run)
+        summary = run_pass(conn, dry_run=dry_run)
+        cad = summary.get("cadence") or {}
         log_action(
             conn,
             description=f"freshness pass: {summary['checked']} streams, "
-                        f"breaches={summary['breaches']}, errors={summary['errors']}",
+                        f"breaches={summary['breaches']}, errors={summary['errors']}, "
+                        f"presence_quiet={len(summary['presence_quiet'])}, "
+                        f"cadence={'skipped' if not cad else str(len(cad['silent'])) + ' silent'}",
             outcome=("clean" if not summary["breaches"] and not summary["errors"]
                      else f"{len(summary['breaches'])} breach / {len(summary['errors'])} error"),
         )

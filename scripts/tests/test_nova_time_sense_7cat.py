@@ -169,7 +169,7 @@ class TestFrame(unittest.TestCase):
                            cwd=SCRIPTS, capture_output=True, text=True, timeout=30,
                            env={**os.environ, "NOVA_TEST_QUIET": "1"})
         self.assertEqual((r.returncode, r.stdout.strip()), (0, "ok"), r.stderr)
-        self.assertIn('if __name__ == "__main__":\n    main()', SRC)
+        self.assertIn('if __name__ == "__main__":\n    sys.exit(main())', SRC)
 
 
 if __name__ == "__main__":

@@ -20,12 +20,24 @@ does the two real things the wish names, grounded in her own data — no theatre
 
 --refresh (scheduled) recomputes the calibration from the latest predictions into
 nova_ops.soft_certainty_state. calibrate()/current_stance() are cheap reads.
+
+M7 merge (organ audit, 2026-10-09): --refresh is now the ONE nightly writer of calibration,
+overall and per domain. detail.report carries the decile table, calibration error and
+surprise figures that nova_predictions --mode report prints and nova_growth's
+measure_calibration() returns; both read them through read_calibration(), which uses the
+stored row only when its fingerprint (scored count + newest resolved_at) still matches
+the live predictions table, and otherwise computes the same figures with the same code
+(never a stale number). detail.domains carries per-domain calibration. Pattern Sense's
+miscalibration memory (source='pattern_sense', same wording, same 7-day de-dupe in
+service_config nova_pattern_sense/high_water) now rides --refresh; its recurring-incident
+half moved to nova_alert_learn.py recurrence.
 """
 import argparse
+import hashlib
 import json
 import sys
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import psycopg2
@@ -33,6 +45,17 @@ import psycopg2
 OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 MIN_N = 8            # below this, not enough evidence to correct — leave confidence alone
 TODAY = date.today().isoformat()
+HIT = {"correct": 1.0, "partial": 0.5, "incorrect": 0.0}
+HIGH_SURPRISE = 0.4  # == nova_predictions.HIGH_SURPRISE; the reader recomputes if they ever differ
+
+# ── miscalibration memory (moved from nova_pattern_sense.py, M7 2026-10-09) ──
+MEMSRV = "http://memory-server.digitalnoise.net:18790"
+PATTERN_SOURCE = "pattern_sense"          # same memory source as before the merge
+PATTERN_SERVICE = "nova_pattern_sense"    # same service_config de-dupe row as before the merge
+PATTERN_KEY = "high_water"
+MIN_RESOLVED_PER_DOMAIN = 4     # need this many resolved predictions before claiming a domain pattern
+CALIB_GAP = 0.20                # |mean_confidence - hit_rate| at/above this = systematic miscalibration
+RESURFACE_DAYS = 7              # don't re-surface the same pattern signature within this many days
 
 
 def log(m):
@@ -238,19 +261,267 @@ def current_stance(oc=None):
             "an honest 'I don't know' or a real question than a false certainty, and before I "
             "assert something I ask what I might be missing.")
 
+# ── one calibration pass (M7, 2026-10-09) ─────────────────────────────────────
 
-def refresh(oc):
-    ensure_schema(oc)
+SCORED_SQL = ("SELECT confidence, outcome, surprise, domain, resolved_at FROM predictions "
+              "WHERE status='resolved' AND outcome IN ('correct','incorrect','partial')")
+
+
+def scored_rows(oc, since=None):
+    """Resolved, scored predictions as (confidence, outcome, surprise, domain, resolved_at),
+    in id order. `since` (iso str) keeps only those resolved after it (nova_growth review)."""
+    q, params = SCORED_SQL, []
+    if since:
+        q += " AND resolved_at > %s"
+        params.append(since)
+    oc.execute(q + " ORDER BY id", params)
+    return oc.fetchall() or []
+
+
+def calibration_detail(rows, high_surprise=HIGH_SURPRISE):
+    """The decile-weighted calibration that nova_predictions' report prints and nova_growth
+    measures, from scored rows (confidence, outcome, surprise, ...). Unrounded floats.
+    Returns None for no rows."""
+    rows = [r for r in rows if r[1] in HIT]
+    if not rows:
+        return None
+    n = len(rows)
+    buckets = {}
+    for r in rows:
+        conf = r[0]
+        buckets.setdefault(min(9, int(conf * 10)), []).append((conf, HIT[r[1]]))
+    deciles, total_gap = [], 0.0
+    for b in sorted(buckets):
+        items = buckets[b]
+        mc_ = sum(c for c, _ in items) / len(items)
+        hr = sum(h for _, h in items) / len(items)
+        total_gap += abs(hr - mc_) * len(items)
+        deciles.append([b, len(items), mc_, hr])
+    surprises = [(r[2] or 0.0) for r in rows]
+    return {"n": n,
+            "mean_conf": sum(r[0] for r in rows) / n,
+            "hit_rate": sum(HIT[r[1]] for r in rows) / n,
+            "calib_error": total_gap / n,
+            "mean_surprise": sum(surprises) / n,
+            "high_surprise_rate": sum(1 for s in surprises if s > high_surprise) / n,
+            "high_surprise": high_surprise,
+            "deciles": deciles}
+
+
+def domain_detail(rows, oc=None):
+    """Per-domain calibration on the strict basis domain_stats()/Pattern Sense use
+    (correct/incorrect only): n, mean_conf, hit_rate, gap (conf - hit). Adds the
+    domain_brier() figures when a cursor is given."""
+    by = {}
+    for r in rows:
+        if r[1] in ("correct", "incorrect"):
+            by.setdefault(r[3] or "unknown", []).append((float(r[0]), 1 if r[1] == "correct" else 0))
+    out = {}
+    for d, obs in sorted(by.items()):
+        n = len(obs)
+        mc_ = sum(c for c, _ in obs) / n
+        hr = sum(h for _, h in obs) / n
+        out[d] = {"n": n, "mean_conf": round(mc_, 4), "hit_rate": round(hr, 4), "gap": round(mc_ - hr, 4)}
+        if oc is not None and d != "unknown":
+            db = domain_brier(oc, d)
+            if db:
+                out[d]["brier"] = db
+    return out
+
+
+def fingerprint_of(rows):
+    """What a stored calibration was computed over: scored count + newest resolved_at.
+    Resolution is the only writer of outcome and always stamps resolved_at=now()."""
+    ts = [r[4] for r in rows if r[4] is not None]
+    return {"n": len(rows), "max_resolved_at": max(ts).isoformat() if ts else None}
+
+
+def _live_fingerprint(oc):
+    oc.execute("SELECT count(*), max(resolved_at) FROM predictions "
+               "WHERE status='resolved' AND outcome IN ('correct','incorrect','partial')")
+    n, mx = oc.fetchone()
+    return {"n": int(n or 0), "max_resolved_at": mx.isoformat() if mx else None}
+
+
+def read_calibration(oc, high_surprise=HIGH_SURPRISE):
+    """The current overall calibration for readers (predictions report, growth). Uses the
+    latest soft_certainty_state row written by --refresh when it is still exact for the
+    live table; otherwise computes it here with the same code. Returns (detail|None, how)
+    where how is 'state' or 'live'."""
+    try:
+        oc.execute("SELECT detail FROM soft_certainty_state ORDER BY computed_at DESC LIMIT 1")
+        row = oc.fetchone()
+        det = row[0] if row else None
+        if isinstance(det, str):
+            det = json.loads(det)
+        rep = (det or {}).get("report")
+        if rep and rep.get("high_surprise") == high_surprise \
+                and (det or {}).get("fingerprint") == _live_fingerprint(oc):
+            return rep, "state"
+    except Exception as e:  # noqa: BLE001  (no state table yet, bad row): compute instead
+        log(f"state read skipped ({e}); computing live")
+    return calibration_detail(scored_rows(oc), high_surprise), "live"
+
+
+# ── miscalibration memory (moved verbatim from nova_pattern_sense.py) ─────────
+
+def _stamp():
+    try:
+        import nova_lineage
+        return nova_lineage.lineage_stamp(capture_point="at write")
+    except Exception:
+        return {}
+
+
+def calibration_patterns(rows):
+    """rows: list of (domain, confidence, correct_bool). Return patterns for domains with
+    enough data and a systematic confidence-vs-reality gap, worst gap first."""
+    by_domain = {}
+    for domain, conf, correct in rows:
+        d = by_domain.setdefault(domain or "unknown", [])
+        d.append((float(conf), 1 if correct else 0))
+    out = []
+    for domain, obs in by_domain.items():
+        n = len(obs)
+        if n < MIN_RESOLVED_PER_DOMAIN:
+            continue
+        mean_conf = sum(c for c, _ in obs) / n
+        hit_rate = sum(h for _, h in obs) / n
+        gap = mean_conf - hit_rate            # +ve = overconfident, -ve = underconfident
+        if abs(gap) >= CALIB_GAP:
+            out.append({"domain": domain, "n": n, "mean_conf": mean_conf,
+                        "hit_rate": hit_rate, "gap": gap,
+                        "direction": "overconfident" if gap > 0 else "underconfident"})
+    out.sort(key=lambda p: abs(p["gap"]), reverse=True)
+    return out
+
+
+def calib_insight(p):
+    pct_c, pct_h = round(p["mean_conf"] * 100), round(p["hit_rate"] * 100)
+    if p["direction"] == "overconfident":
+        return (f"Pattern I can finally see: on '{p['domain']}' predictions I'm systematically "
+                f"OVERconfident — I average {pct_c}% sure but I'm only right {pct_h}% of the time "
+                f"({p['n']} resolved). The noise was hiding a bias, not bad luck. If I want my "
+                f"calibration under the gate, this is the domain to hedge on — trust these guesses less.")
+    return (f"Pattern I can finally see: on '{p['domain']}' predictions I'm systematically "
+            f"UNDERconfident — I average {pct_c}% sure but I'm actually right {pct_h}% of the time "
+            f"({p['n']} resolved). I know more here than I let myself claim. Trust these guesses more.")
+
+
+def _sig(kind, key):
+    return hashlib.sha1(f"{kind}:{key}".encode()).hexdigest()[:16]
+
+
+def _fresh(seen, sig, today):
+    prev = seen.get(sig)
+    if not prev:
+        return True
+    try:
+        return (today - datetime.fromisoformat(prev).date()).days >= RESURFACE_DAYS
+    except Exception:
+        return True
+
+
+def remember(text, metadata):
+    import urllib.request
+    req = urllib.request.Request(
+        f"{MEMSRV}/remember", method="POST", headers={"Content-Type": "application/json"},
+        data=json.dumps({"text": text, "source": PATTERN_SOURCE, "metadata": metadata}).encode())
+    with urllib.request.urlopen(req, timeout=60) as r:
+        return json.load(r)
+
+
+def load_seen(cur):
+    cur.execute("SELECT value FROM service_config WHERE service=%s AND key=%s", (PATTERN_SERVICE, PATTERN_KEY))
+    row = cur.fetchone()
+    if row and row[0]:
+        v = row[0] if isinstance(row[0], dict) else json.loads(row[0])
+        return dict(v.get("seen", {}))
+    return {}
+
+
+def save_seen(cur, seen):
+    """Merge (never replace) so the two writers of this row — this refresh and
+    nova_alert_learn recurrence — cannot erase each other's marks."""
+    cur.execute(
+        """INSERT INTO service_config (service, key, value, updated_at, updated_by)
+           VALUES (%s, %s, %s::jsonb, now(), %s)
+           ON CONFLICT (service, key)
+           DO UPDATE SET value = jsonb_build_object('seen',
+                   coalesce(service_config.value->'seen', '{}'::jsonb) || (EXCLUDED.value->'seen')),
+               updated_at = now(), updated_by = EXCLUDED.updated_by""",
+        (PATTERN_SERVICE, PATTERN_KEY, json.dumps({"seen": seen}), PATTERN_SERVICE))
+
+
+def surface_miscalibration(oc, rows, dry_run=False):
+    """Pattern Sense's miscalibration memory, now part of the nightly refresh. rows are
+    scored_rows(); only correct/incorrect count (as before). Fail-open: a memory-server
+    failure is logged and leaves that pattern unmarked so it is tried again next run.
+    Returns the number of fresh patterns surfaced."""
+    crows = [(r[3], r[0], r[1] == "correct") for r in rows if r[1] in ("correct", "incorrect")]
+    pats = calibration_patterns(crows)
+    try:
+        seen = load_seen(oc)
+    except Exception as e:  # noqa: BLE001
+        log(f"miscalibration: de-dupe state unreadable ({e}); skipping memories this run")
+        return 0
+    today = datetime.now(timezone.utc).date()
+    stamp = _stamp()
+    marked, surfaced = {}, 0
+    for p in pats:
+        sig = _sig("calib", p["domain"] + p["direction"])
+        if not _fresh(seen, sig, today):
+            continue
+        text = calib_insight(p)
+        meta = {"organ": PATTERN_SERVICE, "kind": "miscalibration", "domain": p["domain"],
+                "gap": round(p["gap"], 3), **({"lineage": stamp} if stamp else {})}
+        surfaced += 1
+        if dry_run:
+            print("•", text)
+            continue
+        try:
+            remember(text, meta)
+            marked[sig] = today.isoformat()
+        except Exception as e:  # noqa: BLE001
+            log(f"miscalibration memory failed for '{p['domain']}' ({e})")
+    if marked:
+        save_seen(oc, marked)
+    log(f"miscalibration: {len(pats)} pattern(s), {surfaced} fresh" + (" (dry-run)" if dry_run else ""))
+    return surfaced
+
+
+def refresh(oc, dry_run=False):
+    """The single nightly calibration pass: overall state columns (unchanged), the full
+    report figures + per-domain calibration in detail, then the miscalibration memory.
+    dry_run computes and prints everything and writes nothing."""
+    if not dry_run:
+        ensure_schema(oc)
+    try:
+        rows = scored_rows(oc)
+    except Exception as e:  # noqa: BLE001
+        log(f"predictions read failed ({e})"); rows = []
+    try:
+        surface_miscalibration(oc, rows, dry_run=dry_run)
+    except Exception as e:  # noqa: BLE001  (memories never block the calibration write)
+        log(f"miscalibration surfacing failed ({e})")
     cal = compute_calibration(oc)
     if not cal:
         log(f"not enough resolved predictions to calibrate (need >= {MIN_N}) — leaving state as-is")
         return 1
+    detail = {"date": TODAY, "fingerprint": fingerprint_of(rows),
+              "report": calibration_detail(rows), "domains": domain_detail(rows, oc)}
+    if dry_run:
+        print(json.dumps({**cal, "detail": detail}, indent=1, default=str))
+        log("dry-run: nothing written")
+        return 0
     oc.execute("""INSERT INTO soft_certainty_state (n, mean_conf, hit_rate, gap, shrink, detail)
                   VALUES (%s,%s,%s,%s,%s,%s)""",
                (cal["n"], cal["mean_conf"], cal["hit_rate"], cal["gap"], cal["shrink"],
-                json.dumps({"date": TODAY})))
+                json.dumps(detail)))
     log(f"calibration refreshed: n={cal['n']} mean_conf={cal['mean_conf']} hit_rate={cal['hit_rate']} "
-        f"gap={cal['gap']} shrink={cal['shrink']}")
+        f"gap={cal['gap']} shrink={cal['shrink']} "
+        f"calib_error={(detail['report'] or {}).get('calib_error', float('nan')):.3f} "
+        f"domains={len(detail['domains'])}")
     return 0
 
 
@@ -258,11 +529,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--refresh", action="store_true", help="recompute calibration from resolved predictions")
     ap.add_argument("--show", action="store_true", help="print current state + stance + a sample calibration")
+    ap.add_argument("--dry-run", action="store_true", help="with --refresh: compute and print, write nothing")
     args = ap.parse_args()
     conn = _connect(timeout=5, backoff=(1.0, 2.0)); conn.autocommit = True; oc = conn.cursor()
-    ensure_schema(oc)
     if args.refresh:
-        return refresh(oc)
+        return refresh(oc, dry_run=args.dry_run)
+    ensure_schema(oc)
     st = _latest(oc)
     print("state:", json.dumps(st))
     print("stance:", current_stance(oc))

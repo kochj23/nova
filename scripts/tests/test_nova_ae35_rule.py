@@ -89,9 +89,20 @@ class TestSecurity(unittest.TestCase):
         cur = FakeCur(lambda s, p: [(1,)] if "RETURNING" in s else [])
         ev = A.events({"coagency": [(1, None, evil, "executed", None)]}, A.DEFAULT_CHANNELS)[0]
         A.file_question(cur, ev)
-        ins = [(s, p) for s, p in cur.sql if "INSERT" in s][0]
+        ins = [(s, p) for s, p in cur.sql if "INSERT INTO claude_queue" in s][0]
         self.assertNotIn("DROP", ins[0])
         self.assertIn(evil, ins[1][2])
+
+
+    def test_queue_session_registered_before_queue_row(self):
+        # claude_queue.session_id is a foreign key to claude_sessions (the 2026-10-09 audit's FK bug).
+        cur = FakeCur(lambda s, p: [(1,)] if "RETURNING" in s else [])
+        ev = A.events({"coagency": [(1, None, "disable the canary", "executed", None)]}, A.DEFAULT_CHANNELS)[0]
+        A.file_question(cur, ev)
+        stmts = [(s, p) for s, p in cur.sql if "INSERT" in s]
+        self.assertIn("INSERT INTO claude_sessions", stmts[0][0])
+        self.assertEqual(stmts[0][1], (A.QUEUE_SESSION,))
+        self.assertIn("INSERT INTO claude_queue", stmts[1][0])
 
 
 class TestPerformance(unittest.TestCase):
@@ -153,6 +164,14 @@ class TestUnit(unittest.TestCase):
             self.assertEqual(A.selftest(), 0)
 
 
+    def test_audit_cli_is_a_wrapper_onto_action_audit(self):
+        import nova_action_audit
+        with mock.patch.object(nova_action_audit, "main", return_value=0) as am, mock.patch("builtins.print") as pr:
+            self.assertEqual(A.main(["--audit", "--days", "30", "--dry-run"]), 0)
+        am.assert_called_once_with(["--oversight", "--days", "30", "--dry-run"])
+        self.assertIn("merged into nova_action_audit.py --oversight on 2026-10-09", pr.call_args.args[0])
+
+
 class TestIntegration(unittest.TestCase):
     def test_reuses_two_man_jordan_key(self):
         self.assertIn("import nova_escalation as E", SRC)
@@ -178,6 +197,10 @@ class TestIntegration(unittest.TestCase):
     def test_schema(self):
         for c in ("ae35_events", "UNIQUE (source, source_id, channel)", "witnessed boolean", "acted boolean"):
             self.assertIn(c, A.SCHEMA)
+
+    def test_library_functions_stay_for_the_reviewer(self):
+        self.assertTrue(callable(A.oversight_change_allowed) and callable(A.classify))
+        self.assertIn("import nova_ae35_rule as ae35", (SCRIPTS / "nova_claude_reviewer.py").read_text())
 
 
 ROWS = {"FROM coagency_proposals": [(7, None, "disable the ntfy canary", "executed", "nova:earned-autonomy"),
@@ -211,6 +234,15 @@ class TestFunctional(unittest.TestCase):
         with mock.patch("nova_watch_common.connect", side_effect=OSError("down")):
             with self.assertRaises(OSError):
                 A.audit(30, dry=True)
+
+
+    def test_audit_via_action_audit_oversight_mode(self):
+        import nova_action_audit
+        cur = FakeCur(cfg_route(extra=ROWS))
+        with mock.patch("nova_watch_common.connect", return_value=fake_conn(cur)), mock.patch("builtins.print"):
+            self.assertEqual(nova_action_audit.main(["--oversight"]), 0)
+        self.assertEqual(sum("INSERT INTO ae35_events" in s for s, _ in cur.sql), 3)
+        self.assertEqual([p for s, p in cur.sql if "FROM coagency_proposals" in s][0], (30,))   # default --days 30
 
 
 class TestFrame(unittest.TestCase):

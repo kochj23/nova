@@ -7,7 +7,7 @@ import sys
 import tempfile
 import time
 import unittest
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from unittest import mock
 
@@ -72,6 +72,12 @@ class TestSecurity(unittest.TestCase):
             self.assertEqual(Y.sign("t", "no_colon", "me"), 2)
         c.assert_not_called()
 
+    def test_bad_burial_name_rejected_before_connecting(self):
+        with mock.patch.object(Y.W, "connect") as c, mock.patch("sys.stderr"):
+            with self.assertRaises(SystemExit):
+                Y.main(["--bury", "a b;rm -rf"])
+        c.assert_not_called()
+
 
 class TestPerformance(unittest.TestCase):
     def test_parse_and_match_10k(self):
@@ -128,9 +134,32 @@ class TestUnit(unittest.TestCase):
         self.assertEqual(Y.state_of(BORN, late, {"ran_ok": True, "has_rows": None, "has_test": True}, False), "ready")
         self.assertEqual(Y.failures({"ran_ok": False, "has_rows": None, "has_test": True}), ["ran_ok"])
 
-    def test_selftest(self):
+    def test_selftest(self):   # also runs the three absorbed organs' selftests
         with mock.patch("builtins.print"):
             self.assertEqual(Y.selftest(), 0)
+
+    def test_scan_reads_each_source_once(self):
+        sc, n = Y.Scan(), {"n": 0}
+
+        def reader(p):
+            n["n"] += 1
+            return "tasks:\n  a:\n    script: nova_a.py\n"
+        with mock.patch.object(Y, "_read_text", side_effect=reader):
+            self.assertEqual(sc.tasks(), {"a": "nova_a.py"})
+            self.assertEqual(sc.read(Y.SCHED), sc.read(str(Y.SCHED)))
+        self.assertEqual(n["n"], 1)
+
+    def test_current_tasks_from_text_and_scheduler_births_from_tasks(self):
+        with mock.patch("builtins.print"):
+            self.assertEqual(Y.current_tasks(Path("x"), ""), {})
+            self.assertEqual(Y.current_tasks(Path("x"), "tasks:\n  b: {script: nova_b.py}\n"), {"b": "nova_b.py"})
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "s.yaml"
+            f.write_text("x")
+            with mock.patch.object(Y, "_git", return_value=""), mock.patch.object(Y, "current_tasks") as ct:
+                born = Y.scheduler_births(f, tasks={"t1": "nova_t.py"})
+            ct.assert_not_called()
+            self.assertEqual(list(born), ["t1"])
 
 
 class TestIntegration(unittest.TestCase):
@@ -146,6 +175,27 @@ class TestIntegration(unittest.TestCase):
         import nova_busab as B
         self.assertIs(B.scheduler_births, Y.scheduler_births)
         self.assertIs(B.script_births, Y.script_births)
+
+    def test_absorbed_modules_load_lazily_without_a_cycle(self):
+        code = ("import sys; sys.path.insert(0, %r); import nova_yellow_eye as Y; "
+                "assert not {'nova_busab', 'nova_earth_boxes', 'nova_valdemar'} & set(sys.modules); "
+                "import nova_busab as B; assert B.scheduler_births is Y.scheduler_births; "
+                "assert Y.organ('nova_busab') is B; print('ok')") % str(SCRIPTS)
+        r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.stdout.strip(), "ok", r.stderr)
+
+    def test_each_mode_keeps_its_table_and_queue_session(self):
+        import nova_busab as B
+        import nova_earth_boxes as E
+        import nova_valdemar as V
+        self.assertEqual({Y.QUEUE_SESSION, E.QUEUE_SESSION, V.QUEUE_SESSION, B.QUEUE_SESSION},
+                         {"nova-yellow-eye", "nova-earth-boxes", "nova-valdemar", "nova-busab"})
+        for mod, table in ((Y, "births"), (E, "earth_box_burials"), (V, "valdemar_holds"), (B, "busab_weekly")):
+            self.assertIn(f"CREATE TABLE IF NOT EXISTS {table}", mod.SCHEMA)
+        self.assertIn("CREATE SEQUENCE IF NOT EXISTS earth_box_epoch", E.SCHEMA)
+        for mod in (Y, E, V, B):   # sessions are registered before any claude_queue insert (2026-10-09 fix)
+            src = Path(mod.__file__).read_text()
+            self.assertLess(src.index("INSERT INTO claude_sessions"), src.index("INSERT INTO claude_queue"))
 
     def test_queue_rolls_one_item(self):
         rows = [{"task": "a", "script": "nova_a.py", "born": BORN, "checks": {"ran_ok": False}, "state": "unattended"},
@@ -196,6 +246,65 @@ class TestFunctional(unittest.TestCase):
         self.assertNotIn("unattended", {r["state"] for r in rows})
         self.assertFalse(any("claude_queue" in s for s in writes(cur)))
 
+    def test_modes_dispatch_to_the_absorbed_organs(self):
+        import nova_busab as B
+        import nova_earth_boxes as E
+        import nova_valdemar as V
+        with mock.patch.object(E, "run") as er, mock.patch.object(V, "run") as vr, \
+                mock.patch.object(V, "seven_months") as vo, mock.patch.object(B, "run") as br, \
+                mock.patch.object(Y, "run") as yr, mock.patch.object(Y, "script_births", return_value={"s": BORN}), \
+                mock.patch.object(Y, "scheduler_births", return_value={"t": BORN}), \
+                mock.patch.object(E, "local_sources", return_value=[("studio", "p", "x")]):
+            self.assertEqual(Y.main(["--burials", "--dry-run"]), 0)
+            er.assert_called_once_with(dry=True, sources=[("studio", "p", "x")])
+            self.assertEqual(Y.main(["--holds"]), 0)
+            vr.assert_called_once_with(dry=False)
+            self.assertEqual(Y.main(["--oldest", "--dry-run"]), 0)        # --oldest implies --holds
+            self.assertEqual(Y.main(["--holds", "--oldest"]), 0)
+            self.assertEqual([c.kwargs for c in vo.call_args_list], [{"dry": True}, {"dry": False}])
+            self.assertEqual(vr.call_count, 1)
+            self.assertEqual(Y.main(["--pace", "--week", "2026-10-05", "--dry-run"]), 0)
+            br.assert_called_once_with(dry=True, week=date(2026, 10, 5), scripts={"s": BORN}, entries={"t": BORN})
+            self.assertEqual(Y.main(["--run"]), 0)
+            self.assertFalse(yr.call_args.kwargs["dry"])
+
+    def test_births_and_pace_share_one_scan(self):
+        import nova_busab as B
+        cur = FakeCur({"FROM scheduler_runs": [], "FROM agent_docs": [], "to_regclass": [(None,)]})
+        with mock.patch.object(Y, "current_tasks", return_value={"a_task": "nova_a.py"}) as ct, \
+                mock.patch.object(Y, "scheduler_births", return_value={"a_task": BORN}) as sb, \
+                mock.patch.object(Y, "script_births", return_value={"nova_a.py": BORN}) as scb, \
+                mock.patch.object(B, "script_births") as b_scb, mock.patch.object(B, "scheduler_births") as b_sb, \
+                mock.patch.object(Y, "_test_corpus", return_value={}), \
+                mock.patch.object(Y.W, "connect", return_value=fake_conn(cur)), mock.patch("builtins.print"):
+            self.assertEqual(Y.main(["--births", "--pace", "--dry-run", "--week", "2026-10-05"]), 0)
+        self.assertEqual((ct.call_count, sb.call_count, scb.call_count), (1, 1, 1))
+        b_scb.assert_not_called()
+        b_sb.assert_not_called()
+        self.assertEqual(writes(cur), [])
+
+    def test_one_failing_mode_does_not_stop_the_others(self):
+        import nova_valdemar as V
+        with mock.patch.object(Y, "run", side_effect=RuntimeError("boom")), \
+                mock.patch.object(V, "run") as vr, mock.patch("builtins.print"):
+            self.assertEqual(Y.main(["--births", "--holds"]), 1)
+        vr.assert_called_once()
+
+    def test_bury_and_show_forward(self):
+        import nova_busab as B
+        import nova_earth_boxes as E
+        cur = FakeCur()
+        with mock.patch.object(Y.W, "connect", return_value=fake_conn(cur)), \
+                mock.patch.object(E, "script_hash", return_value=None), mock.patch("builtins.print"):
+            self.assertEqual(Y.main(["--bury", "sentinel"]), 0)
+        ins = [p for s, p in cur.sql if "INSERT INTO earth_box_burials" in s][0]
+        self.assertEqual((ins[0], ins[1], ins[2], ins[5]), ("sentinel", "studio", "subagent", "jordan"))
+        with mock.patch.object(B, "show", return_value=0) as bs, mock.patch.object(Y, "show", return_value=0) as ys:
+            Y.main(["--show", "--pace"])
+            Y.main(["--show"])
+        bs.assert_called_once()
+        ys.assert_called_once()
+
     def test_sign_refuses_empty_table(self):
         cur = FakeCur({"SELECT script FROM births": [("nova_none.py",)], "to_regclass": [(None,)]})
         with mock.patch.object(Y.W, "connect", return_value=fake_conn(cur)), mock.patch("builtins.print"):
@@ -214,6 +323,13 @@ class TestFrame(unittest.TestCase):
                            capture_output=True, text=True, timeout=30)
         self.assertEqual(r.returncode, 0)
         self.assertIn("--dry-run", r.stdout)
+        for mode in ("--births", "--burials", "--holds", "--oldest", "--pace", "--bury", "--week"):
+            self.assertIn(mode, r.stdout)
+
+    def test_no_mode_prints_help(self):
+        with mock.patch.object(Y.W, "connect") as c, mock.patch("sys.stdout"):
+            self.assertEqual(Y.main([]), 0)
+        c.assert_not_called()
 
     def test_import_does_not_run(self):
         self.assertIn('if __name__ == "__main__":', SRC)

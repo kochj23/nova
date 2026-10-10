@@ -27,11 +27,18 @@ Two halves:
      Result -> action_audit (one row per day). Violations -> ONE line to #nova-chat per day,
      and each violating producer is filed to the hotwash (kind 'overreach') if that organ exists.
 
-This complements, and does not duplicate, nova_self_justification_audit.py (P4): that audit
-checks the ledger's CLAIMS against an independent record; this one checks the reverse —
-observed actions that have no ledger row at all.
+One ledger audit, three modes (merge M8b of the 2026-10-09 organ audit). Each keeps its own
+table, schedule and posting rule; the logic of the absorbed two stays in their modules:
+  --complete   the daily diff above: actions with NO ledger row. Table action_audit. Daily 07:15.
+  --rationale  P4, nova_self_justification_audit.run(): the ledger's CLAIMS (stated rationale,
+               verified) vs an independent record. Table self_justification_audit, agent_docs
+               nova-self-justification-audit; its own Slack line only for a medium+ finding.
+               Weekly, Sunday 05:10, --days 7 (nova-core).
+  --oversight  the AE-35 audit, nova_ae35_rule.audit(): changes to Nova's own watchers acted on
+               without a witness. Table ae35_events; claude_queue questions. Daily 05:10, --days 30.
 
-Usage: nova_action_audit.py --audit [--dry-run] [--hours 24] | --selftest | --help
+Usage: nova_action_audit.py --complete [--hours 24] | --rationale [--days 7] | --oversight [--days 30]
+       [--dry-run] | --selftest | --help      (--audit is the old name of --complete)
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -413,16 +420,42 @@ def selftest() -> int:
     return 0
 
 
+def rationale(days: int = 7, dry_run: bool = False) -> list:
+    """--rationale: the P4 self-justification audit, unchanged."""
+    import nova_self_justification_audit as J
+    return J.run(days, dry_run)
+
+
+def oversight(days: int = 30, dry_run: bool = False) -> list:
+    """--oversight: the AE-35 watcher-change audit, unchanged."""
+    import nova_ae35_rule as AE
+    return AE.audit(days, dry=dry_run)
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--audit", action="store_true", help="diff observed actions against the ledgers")
-    ap.add_argument("--dry-run", action="store_true")
-    ap.add_argument("--hours", type=int, default=24)
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--complete", action="store_true",
+                      help="diff observed actions against the ledgers (daily; one Slack line on violations)")
+    mode.add_argument("--audit", action="store_true", help="old name of --complete")
+    mode.add_argument("--rationale", action="store_true",
+                      help="P4: stated rationale vs the objective record (weekly, --days 7)")
+    mode.add_argument("--oversight", action="store_true",
+                      help="AE-35: watcher changes acted on without a witness (daily, --days 30)")
+    ap.add_argument("--dry-run", action="store_true", help="read and print, write nothing")
+    ap.add_argument("--hours", type=int, default=24, help="--complete window")
+    ap.add_argument("--days", type=int, help="--rationale (default 7) / --oversight (default 30) window")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
-    if a.audit:
+    if a.rationale:
+        rationale(a.days or 7, a.dry_run)
+        return 0
+    if a.oversight:
+        oversight(a.days or 30, a.dry_run)
+        return 0
+    if a.complete or a.audit:
         res = audit(a.hours, a.dry_run)
         if a.dry_run:
             print(json.dumps(res, indent=1, default=str))

@@ -36,10 +36,14 @@ State store: nova_ops.cadence_state (source, expected_interval, last_seen,
 state, since, ...). Memory notes on a SILENT transition carry metadata.lineage
 (nova_lineage).
 
-Runs ~hourly on the core scheduler:
-    nova_cadence_watch.py            # one pass, learn+detect, persist, alert
-    nova_cadence_watch.py --dry-run  # report only, no writes/alerts
+MERGED 2026-10-09 (organ-audit M1): the cadence pass now runs inside
+nova_freshness_monitor.py (hourly within its 15-min launchd pass, or on demand with
+`--learn`), using the functions below unchanged. This script is a thin wrapper:
+    nova_cadence_watch.py            # = nova_freshness_monitor.py --learn
+    nova_cadence_watch.py --dry-run  # = nova_freshness_monitor.py --learn --dry-run
     nova_cadence_watch.py --report   # print current cadence_state table
+record_missing() / record_acked_lost() remain the only sanctioned writers of MISSING /
+ACKED_LOST.
 
 Written by Jordan Koch.
 """
@@ -294,72 +298,6 @@ def _alert_silent(source: str, age_s: float, median_s: float, dry_run: bool):
         log(f"  triage failed for {source}: {e}")
 
 
-# ── main pass ─────────────────────────────────────────────────────────────────────
-
-def run_once(dry_run: bool = False) -> dict:
-    now = datetime.now(timezone.utc)
-    conn = psycopg2.connect(OPS_DSN)
-    conn.autocommit = True
-    cur = conn.cursor()
-    if not dry_run:
-        ensure_schema(cur)
-    else:
-        # dry-run still needs the table to read prev-state; create if missing is a write,
-        # so guard it — read prev only if table exists.
-        cur.execute("SELECT to_regclass('public.cadence_state')")
-        if cur.fetchone()[0] is None:
-            ensure_schema(cur)
-
-    summary = {"checked": 0, "silent": [], "ok": 0, "skipped": []}
-    for table, ts_col in STREAMS:
-        try:
-            learned = learn(cur, table, ts_col)
-        except Exception as e:
-            log(f"{table}: learn failed: {e}")
-            summary["skipped"].append({"source": table, "why": str(e)[:120]})
-            continue
-        if not learned:
-            summary["skipped"].append({"source": table, "why": "insufficient history"})
-            continue
-        summary["checked"] += 1
-        state, age, threshold = classify(learned, now)
-        detail = {"median_gap_s": round(learned["median_gap_s"], 2),
-                  "observations": learned["n"], "age_s": round(age, 1),
-                  "silent_threshold_s": round(threshold, 1),
-                  "silent_factor": SILENT_FACTOR}
-        if dry_run:
-            log(f"{table}: state={state} age={_human_age(age)} "
-                f"median={_human_age(learned['median_gap_s'])} n={learned['n']}")
-            if state == "SILENT":
-                summary["silent"].append({"source": table, "age_s": round(age, 1),
-                                          "median_gap_s": round(learned['median_gap_s'], 2)})
-            else:
-                summary["ok"] += 1
-            continue
-
-        prev, transitioned = upsert_cadence(cur, table, "stream", learned, state, detail)
-        if state == "SILENT":
-            summary["silent"].append({"source": table, "age_s": round(age, 1),
-                                      "median_gap_s": round(learned['median_gap_s'], 2),
-                                      "since_new": transitioned})
-            if transitioned:
-                log(f"{table}: → SILENT (quiet {_human_age(age)}, usual ~"
-                    f"{_human_age(learned['median_gap_s'])})")
-                _alert_silent(table, age, learned["median_gap_s"], dry_run)
-                _write_silence_memory(table, age, learned["median_gap_s"])
-            else:
-                log(f"{table}: still SILENT ({_human_age(age)})")
-        else:
-            summary["ok"] += 1
-            if prev == "SILENT":
-                log(f"{table}: recovered → OK (fresh within cadence)")
-
-    cur.close(); conn.close()
-    log(f"pass done: {summary['checked']} learned, {len(summary['silent'])} SILENT, "
-        f"{summary['ok']} OK, {len(summary['skipped'])} skipped")
-    return summary
-
-
 def report():
     conn = psycopg2.connect(OPS_DSN); conn.autocommit = True
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
@@ -376,16 +314,15 @@ def report():
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser()
+    ap = argparse.ArgumentParser(description="cadence watch (merged into nova_freshness_monitor.py --learn)")
     ap.add_argument("--dry-run", action="store_true", help="learn+classify, no writes/alerts")
     ap.add_argument("--report", action="store_true", help="print cadence_state and exit")
     args = ap.parse_args(argv)
     if args.report:
         report(); return 0
-    out = run_once(dry_run=args.dry_run)
-    if args.dry_run:
-        print(json.dumps(out, indent=2, default=str))
-    return 0
+    log("merged into nova_freshness_monitor.py (--learn) on 2026-10-09; running that mode")
+    import nova_freshness_monitor
+    return nova_freshness_monitor.main(["--learn"] + (["--dry-run"] if args.dry_run else []))
 
 
 if __name__ == "__main__":

@@ -2,15 +2,22 @@
 """
 nova_doctor.py — Post-boot health self-check for the Nova stack.
 
+MERGED 2026-10-09 (organ audit M4): this now runs as `nova_selfcheck.py --boot`. main() is a thin
+wrapper that delegates there; the check functions below (CHECKS, heal_home_assistant,
+wait_for_boot, format_report) stay here and are what selfcheck --boot calls. The report now goes
+to #nova-alerts on FAIL, else #nova-digest (was #nova-bb), and every check lands in selfcheck_runs
+as boot-*.
+
 Runs the checks that, when they silently fail at boot, take Nova down:
 volumes, Postgres, gateway, MLX, the face-recognition import, WAL archiving,
 and disk capacity. Posts ONE consolidated report to Slack (#nova-bb) so a bad
 boot is visible at a glance instead of being discovered piecemeal days later.
 
-Modes:
+Modes (both delegate to nova_selfcheck.py):
   --boot   Wait for /Volumes/Data + /Volumes/MoreData to mount, give services a
-           grace period to come up, then run. (Used by the launchd boot job.)
-  (none)   Run immediately and report. (Manual / on-demand.)
+           grace period to come up, then run.   -> nova_selfcheck.py --boot
+  (none)   Run immediately and report.          -> nova_selfcheck.py --boot --now
+  --dry-run is passed through (no HA restart, no Slack, no PG writes).
 
 Exit code: 0 if all checks pass, 1 if any FAIL (WARN does not fail the run).
 Written by Jordan Koch.
@@ -267,12 +274,8 @@ def wait_for_boot():
     time.sleep(45)
 
 
-def main():
-    if "--boot" in sys.argv:
-        wait_for_boot()
-        heal_home_assistant()  # self-correct the HA-races-network boot failure
-
-    results = [(name, *fn()) for name, fn in CHECKS]
+def format_report(results):
+    """[(name, status, detail)] -> (worst status, Slack/stdout report text)."""
     worst = FAIL if any(s == FAIL for _, s, _ in results) else \
             WARN if any(s == WARN for _, s, _ in results) else OK
 
@@ -283,11 +286,21 @@ def main():
     for name, status, detail in results:
         lines.append(f"{ICON[status]} *{name}* — {detail}")
 
-    report = "\n".join(lines)
-    print(report)
-    post_slack(report)
-    return 0 if worst != FAIL else 1
+    return worst, "\n".join(lines)
+
+
+def main(argv=None):
+    """Thin wrapper: merged into nova_selfcheck.py --boot on 2026-10-09."""
+    argv = sys.argv[1:] if argv is None else list(argv)
+    if "-h" in argv or "--help" in argv:
+        print("usage: nova_doctor.py [--boot] [--dry-run]  (merged into nova_selfcheck.py --boot on 2026-10-09)")
+        return 0
+    import nova_selfcheck
+    nova_selfcheck.log("nova_doctor.py was merged into nova_selfcheck.py --boot on 2026-10-09 — delegating")
+    args = ["--boot"] + ([] if "--boot" in argv else ["--now"]) + (["--dry-run"] if "--dry-run" in argv else [])
+    return nova_selfcheck.main(args)
 
 
 if __name__ == "__main__":
+    sys.modules.setdefault("nova_doctor", sys.modules[__name__])  # selfcheck --boot imports nova_doctor: reuse this copy
     sys.exit(main())

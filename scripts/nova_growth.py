@@ -127,35 +127,23 @@ def measure_calibration(oc, since=None):
     """Decile-weighted calibration error + overall gap over resolved, SCORED
     predictions. `since` (iso str) restricts to predictions resolved after that
     instant — so review can measure ONLY what happened after a commitment was made.
-    Returns dict or None if there is nothing scored. Mirrors nova_predictions.do_report."""
-    q = ("SELECT confidence, outcome FROM predictions WHERE status='resolved' "
-         "AND outcome IN ('correct','incorrect','partial')")
-    params = []
+    Returns dict or None if there is nothing scored. Mirrors nova_predictions.do_report.
+
+    M7 (2026-10-09): no longer recomputed here. The whole-table figure is read from
+    nova_soft_certainty's nightly pass (soft_certainty_state, used only while it is still
+    exact for the live table); the `since` window is computed by the same
+    nova_soft_certainty.calibration_detail(), so the numbers are unchanged."""
+    import nova_soft_certainty as sc
     if since:
-        q += " AND resolved_at > %s"
-        params.append(since)
-    oc.execute(q, params)
-    rows = oc.fetchall()
-    if not rows:
+        d = sc.calibration_detail(sc.scored_rows(oc, since=since))
+    else:
+        d, _how = sc.read_calibration(oc)
+    if not d:
         return None
-    hit_of = {"correct": 1.0, "incorrect": 0.0, "partial": 0.5}
-    n = len(rows)
-    mean_conf = sum(c for c, _ in rows) / n
-    hit_rate = sum(hit_of[o] for _, o in rows) / n
-    # decile-weighted mean absolute gap == the same calibration error do_report prints
-    buckets = {}
-    for c, o in rows:
-        b = min(9, int(c * 10))
-        buckets.setdefault(b, []).append((c, hit_of[o]))
-    total_gap = 0.0
-    for items in buckets.values():
-        mc_ = sum(c for c, _ in items) / len(items)
-        hr = sum(h for _, h in items) / len(items)
-        total_gap += abs(hr - mc_) * len(items)
-    calib_error = total_gap / n
+    n, mean_conf, hit_rate = d["n"], d["mean_conf"], d["hit_rate"]
     return {"n": n, "mean_conf": round(mean_conf, 3), "hit_rate": round(hit_rate, 3),
             "gap": round(hit_rate - mean_conf, 3), "abs_gap": round(abs(hit_rate - mean_conf), 3),
-            "calib_error": round(calib_error, 3)}
+            "calib_error": round(d["calib_error"], 3)}
 
 
 # ── Weakness detectors ───────────────────────────────────────────────────────────

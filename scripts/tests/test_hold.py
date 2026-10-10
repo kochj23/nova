@@ -1,17 +1,42 @@
 #!/usr/bin/env python3
 """Tests for nova_hold.py — the 7 house categories (Security, Performance, Retry, Unit,
-Integration, Functional, Frame) plus the wish #68 privacy/regression/docs checks.
+Integration, Functional, Frame) plus the wish #68 privacy/regression/docs checks. Since 2026-10-09
+(M6) Hold runs as the 'hold' section of nova_empathy_core.py; nova_hold.main() is a thin wrapper.
 Written by Jordan Koch (via Claude)."""
 import importlib.util
+import io
 import re
 import sys
 import time
 import unittest
+import urllib.request
+from contextlib import redirect_stdout
 from datetime import date
 from pathlib import Path
+from unittest.mock import patch
+
+import psycopg2
 
 SCRIPTS = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(SCRIPTS))
+EC_SRC = (SCRIPTS / "nova_empathy_core.py").read_text()
+
+# Offline guard: no real PG, no real memory server from this file, ever.
+_GUARDS = []
+
+
+def _offline(*a, **k):
+    raise RuntimeError("offline test: real PG / HTTP blocked")
+
+
+def setUpModule():
+    for target in (patch.object(psycopg2, "connect", _offline), patch.object(urllib.request, "urlopen", _offline)):
+        target.start(); _GUARDS.append(target)
+
+
+def tearDownModule():
+    while _GUARDS:
+        _GUARDS.pop().stop()
 
 
 def _load(name, path):
@@ -115,7 +140,28 @@ class TestIntegration(unittest.TestCase):
         finally:
             urllib.request.urlopen = real
         self.assertEqual(seen["source"], "hold")
-        self.assertIn("ec.remember(text, meta, source=SOURCE)", SRC)
+        # since the M6 merge the write lives in the lens's hold section, still under source='hold'
+        sec = EC_SRC[EC_SRC.index("def section_hold"):EC_SRC.index("def section_quiet")]
+        self.assertIn("remember(text, meta, source=hd.SOURCE)", sec)
+        self.assertIn("save_seen(cur, seen, hd.STATE_SERVICE)", sec)
+        self.assertIn("hd._cfg_set(cur, hd.HELD_KEY", sec)
+
+    def test_wrapper_runs_the_lens_hold_section(self):
+        calls = []
+        with patch.object(hd.ec, "main", lambda argv: calls.append(argv) or 0), \
+                redirect_stdout(io.StringIO()) as buf:
+            self.assertEqual(hd.main(["--dry-run"]), 0)
+        self.assertEqual(calls, [["--section", "hold", "--dry-run"]])
+        self.assertIn("merged into nova_empathy_core.py on 2026-10-09", buf.getvalue())
+
+    def test_gather_uses_the_shared_read_when_given(self):
+        shared = {"empathy": [(date(2026, 9, 28), "We are partners.", "...")], "last_date": date(2026, 10, 3),
+                  "presence_dates": {date(2026, 10, 3), date(2026, 9, 28)}}
+        cur = _Cur([("Jordan — Sr. Manager SRE.",), None, ("I listen.",)])
+        f = hd.gather(cur, TODAY, shared)
+        self.assertFalse(any("gateway_traces" in q for q in cur.sql))      # no second read of his messages
+        self.assertEqual(f["presence"], "last spoke to me 2d ago; present on 2 of the last 30 days")
+        self.assertIn("partners", f["his_words"])
 
 
 class TestDocs(unittest.TestCase):
@@ -181,18 +227,13 @@ class TestRetry(unittest.TestCase):
         self.assertEqual(set(sources), {"hold"})
 
     def test_pg_connect_has_no_retry_but_fails_open(self):
-        # RETRY GAP: main()/psycopg2.connect — single attempt, exit 0 with nothing written
-        import types
+        # RETRY GAP: main() -> nova_empathy_core.main()/psycopg2.connect — single attempt, exit 0, nothing written
         attempts = []
 
         def boom(*a, **k):
             attempts.append(1); raise OSError("pg down")
-        real_pg, real_argv = hd.psycopg2, sys.argv
-        hd.psycopg2 = types.SimpleNamespace(connect=boom); sys.argv = ["nova_hold.py"]
-        try:
-            self.assertEqual(hd.main(), 0)
-        finally:
-            hd.psycopg2, sys.argv = real_pg, real_argv
+        with patch.object(psycopg2, "connect", boom), redirect_stdout(io.StringIO()):
+            self.assertEqual(hd.main([]), 0)
         self.assertEqual(len(attempts), 1)
 
     def test_every_source_read_fails_open_to_an_empty_hold(self):

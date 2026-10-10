@@ -28,8 +28,11 @@ Minimal first version:
     such change that was ACTED ON without Jordan's own decision.
 Registry: service_config ae35/channels {id: regex} ADDS to the defaults (it can never remove one);
           ae35/witness_hosts [host, ...] outside hosts whose probes count (default none).
+Merged into the action audit on 2026-10-09 (organ audit M8b): the scheduled audit is
+`nova_action_audit.py --oversight [--days 30]`, which calls audit() here; --audit below is a thin
+wrapper onto it. oversight_change_allowed() and classify() stay here (the Claude reviewer imports them).
 CLI:   --check "text" [--confirmation ID]   --audit [--days 30] [--dry-run]   --selftest
-Table: ae35_events.   Schedule: --audit daily 05:10 (event-driven calls come from the gates).
+Table: ae35_events.   Schedule: daily 05:10 as nova_action_audit.py --oversight --days 30.
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -45,6 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_escalation as E  # noqa: E402  (the two-man rule's Jordan key; never a parallel gate)
 
 QUEUE_SESSION = "nova-ae35-rule"
+MERGED_ON = "2026-10-09"   # organ audit M8b: --audit now runs as nova_action_audit.py --oversight
 # ponytail: regex over free text; a structured "target channel" field on proposals would make it exact.
 DEFAULT_CHANNELS = {
     "canary": r"\bcanary\b|\bntfy\b",
@@ -196,6 +200,9 @@ def file_question(cur, ev: dict):
     rows = _q(cur, "SELECT id FROM claude_queue WHERE description=%s LIMIT 1", (desc,))
     if rows:
         return rows[0][0]
+    # claude_queue.session_id is a foreign key: register this organ's session first (as 191e30e did for the others).
+    cur.execute("INSERT INTO claude_sessions (session_id, status) VALUES (%s,'active') "
+                "ON CONFLICT (session_id) DO NOTHING", (QUEUE_SESSION,))
     cur.execute("INSERT INTO claude_queue (session_id, status, priority, description, context) "
                 "VALUES (%s,'pending',2,%s,%s) RETURNING id",
                 (QUEUE_SESSION, desc, "Question for Little Mister, not an accusation: was this change to one of "
@@ -273,8 +280,9 @@ def main(argv=None) -> int:
     if a.selftest:
         return selftest()
     if a.audit:
-        audit(a.days, dry=a.dry_run)
-        return 0
+        import nova_action_audit
+        log(f"--audit merged into nova_action_audit.py --oversight on {MERGED_ON}; delegating")
+        return nova_action_audit.main(["--oversight", "--days", str(a.days)] + (["--dry-run"] if a.dry_run else []))
     if a.check:
         import nova_watch_common as W
         conn = W.connect()

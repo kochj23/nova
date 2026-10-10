@@ -12,10 +12,11 @@ The signal is ABSENCE. Specifically, the absence of a correlation that normally 
   FACE WITH NO CARRIER     a camera sees a person while no known device is present at all.
   DEVICE WITH NO HUMAN     a person's devices are home but no camera, mmWave or face has
                            seen anybody for days -> a phone left behind, or a welfare issue.
-  SENSOR WENT QUIET        a signal that reports continuously stopped reporting. A sensor
-                           that has produced nothing for hours is far more likely broken
-                           than the world having gone still — the same 'zero work is not
-                           success' rule the ingest and health checks now use.
+  OBSERVER WENT QUIET      one BLE radio silent while another in the same house is busy.
+
+The former SENSOR WENT QUIET check (a presence method silent past its own rhythm), moved to
+nova_freshness_monitor.py on 2026-10-09 (organ-audit merge M1: one silence detector). It still
+alerts through alert_findings() below, so its source, category and dedup key are unchanged.
 
 Deliberately conservative. Each rule needs a sustained window, not a single sample, because
 the cost of crying wolf is that the one real alert gets ignored.
@@ -37,6 +38,37 @@ def log(m):
 def q(cur, sql, args=()):
     cur.execute(sql, args)
     return cur.fetchall()
+
+
+def negspace_dedup_key(kind, msg):
+    """STABLE dedup key: a silent sensor stays silent, and the message's ticking duration
+    ("nothing for 5 days, 13:34:11") changed every fire, so with a NULL key this producer fired
+    196x/night — a quarter of the whole storm. Strip the volatile numbers/timestamps so every
+    re-fire of the SAME condition collapses."""
+    import re as _re
+    stable = _re.sub(r"\d[\d:.,\s-]*", "#", msg)[:80]
+    return f"negspace:{kind}:{stable}"
+
+
+def alert_findings(findings, notify=None):
+    """Raise each (kind, msg) finding on the bus. Shared with nova_freshness_monitor (which
+    runs the sensor-quiet check). Re-notify window 8h (a broken sensor doesn't need 24
+    reminders). Never raises; returns how many were sent."""
+    if not findings:
+        return 0
+    try:
+        if notify is None:
+            from nova_notify import notify
+        for kind, msg in findings:
+            notify(f"Negative-space: {msg}", level="warning", category="security",
+                   source="nova_negative_space.py",
+                   dedup_key=negspace_dedup_key(kind, msg),
+                   meta={"dedup_window_s": 28800})
+        log(f"alerted on {len(findings)} finding(s)")
+        return len(findings)
+    except Exception as e:
+        log(f"notify failed: {e}")
+        return 0
 
 
 def main(alert):
@@ -85,29 +117,7 @@ def main(alert):
                          f"detected a person in 36 hours. Either a phone was left behind, or the "
                          f"person sensors have failed."))
 
-    # ── 3. A sensor went quiet ───────────────────────────────────────────────
-    # Zero work is not success — the rule that caught the dead search-ingest today.
-    # 2026-10-06: judge each method against its OWN rhythm. Event-driven sensors (the outdoor front
-    # motion sensor, AV power) are legitimately silent for hours — 'ha_motion' was paged as broken while
-    # reporting 64 times that week, and Nova proposed disabling it (#136). Quiet now = the current gap
-    # exceeds both 6 h and 1.5x the longest gap that method had between events in the past 7 days.
-    quiet = q(cur, """
-        WITH ev AS (
-            SELECT method, ts, ts - lag(ts) OVER (PARTITION BY method ORDER BY ts) AS between
-            FROM telemetry.presence
-            WHERE ts > now() - interval '7 days'),
-        m AS (
-            SELECT method, max(ts) AS last, now() - max(ts) AS gap,
-                   coalesce(max(between), interval '0') AS longest
-            FROM ev GROUP BY 1)
-        SELECT method, last, gap FROM m
-        WHERE gap > greatest(interval '6 hours', longest * 1.5)
-        ORDER BY 3 DESC""")
-    for method, last, gap in quiet:
-        findings.append(("sensor_quiet",
-                         f"Presence method '{method}' has reported nothing for {str(gap).split('.')[0]} "
-                         f"(last: {last:%Y-%m-%d %H:%M}). A sensor that goes silent is usually broken, "
-                         f"not observing stillness."))
+    # ── 3. A sensor went quiet: moved to nova_freshness_monitor.py (2026-10-09) ──
 
     # ── 4. BLE observers disagree about the world ────────────────────────────
     # Two radios in the same house should both see traffic. One reporting nothing while the
@@ -130,23 +140,7 @@ def main(alert):
     for kind, msg in findings:
         log(f"[{kind}] {msg}")
     if findings and alert:
-        try:
-            import re as _re
-            from nova_notify import notify
-            for kind, msg in findings:
-                # STABLE dedup key: a silent sensor stays silent, and the message's ticking
-                # duration ("nothing for 5 days, 13:34:11") changed every fire, so with a NULL
-                # key this producer fired 196x/night — a quarter of the whole storm. Strip the
-                # volatile numbers/timestamps so every re-fire of the SAME condition collapses,
-                # and widen the re-notify window to 8h (a broken sensor doesn't need 24 reminders).
-                stable = _re.sub(r"\d[\d:.,\s-]*", "#", msg)[:80]
-                notify(f"Negative-space: {msg}", level="warning", category="security",
-                       source="nova_negative_space.py",
-                       dedup_key=f"negspace:{kind}:{stable}",
-                       meta={"dedup_window_s": 28800})
-            log(f"alerted on {len(findings)} finding(s)")
-        except Exception as e:
-            log(f"notify failed: {e}")
+        alert_findings(findings)
     conn.close()
     return 0
 

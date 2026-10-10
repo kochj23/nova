@@ -242,5 +242,153 @@ class TestFrame(unittest.TestCase):
         self.assertIn("Cause unknown", out.getvalue())
 
 
+# ── Case modes merged in (Rama Window --expiry, Mina's Typescript --case; 2026-10-09, organ audit M13) ──
+import nova_rama_window as R  # noqa: E402
+import nova_mina_typescript as M  # noqa: E402
+
+NOW = datetime(2026, 10, 8, 12, tzinfo=timezone.utc)
+
+
+class RouteCur:
+    """Routes SQL by keyword to canned rows; records every statement."""
+
+    def __init__(self, routes=None):
+        self.routes, self.sql, self._last = routes or {}, [], []
+
+    def execute(self, sql, params=None):
+        self.sql.append((sql, params))
+        self._last = next((list(v) for k, v in self.routes.items() if k in sql), [])
+
+    def fetchall(self):
+        return self._last
+
+    def fetchone(self):
+        return self._last[0] if self._last else None
+
+    def writes(self):
+        return [s for s, _ in self.sql if any(k in s for k in ("CREATE", "INSERT", "UPDATE", "DELETE"))]
+
+
+def open_routes():
+    """One open entry whose scanner audio expires in ~14 h of the REAL now (rama's run reads the clock)."""
+    return {"WHERE status='open'": [(33, "sensor_silence", datetime.now(timezone.utc) - timedelta(hours=10))],
+            "to_regclass": [(None,)]}
+
+
+def conn_for(cur):
+    c = mock.MagicMock()
+    c.cursor.return_value = cur
+    return c
+
+
+class TestCaseModesSecurity(unittest.TestCase):
+    def test_case_id_must_be_an_int(self):
+        with redirect_stdout(io.StringIO()), mock.patch("sys.stderr", io.StringIO()):
+            with self.assertRaises(SystemExit):
+                L.main(["--case", "1; select pg_sleep(9)"])
+
+    def test_typescript_still_refuses_the_boot_disk(self):
+        with self.assertRaises(ValueError):
+            M.safe_dir("/etc")
+
+
+class TestCaseModesPerformance(unittest.TestCase):
+    def test_expiry_ranking_10k_cases(self):
+        cases = [{"id": i, "kind": "k", "last_seen": NOW - timedelta(hours=i % 300)} for i in range(10_000)]
+        t = time.perf_counter()
+        R.due(cases, R.DEFAULT_RETENTION_H, NOW)
+        self.assertLess(time.perf_counter() - t, 2.0)
+
+
+class TestCaseModesRetry(unittest.TestCase):
+    def test_expiry_uses_the_retrying_connect(self):
+        cur = RouteCur(open_routes())
+        with mock.patch.object(W, "connect", return_value=conn_for(cur)) as c, \
+                mock.patch.object(R, "face_ttl", return_value=72.0), redirect_stdout(io.StringIO()):
+            self.assertEqual(L.run_expiry(dry_run=True), 0)
+        c.assert_called_once_with()     # W.connect: 3 tries with backoff (tested in nova_watch_common)
+
+    def test_unknown_case_fails_cleanly(self):
+        with mock.patch.object(W, "connect", return_value=conn_for(RouteCur())), redirect_stdout(io.StringIO()):
+            self.assertEqual(L.run_case(999, dry_run=True), 1)
+            self.assertEqual(L.run_snapshot(999, dry_run=True), 1)
+
+
+class TestCaseModesUnit(unittest.TestCase):
+    def test_horizon_default_is_ramas(self):
+        with mock.patch.object(R, "run") as run:
+            L.run_expiry()
+            L.run_expiry(True, 6)
+        self.assertEqual(run.call_args_list, [mock.call(dry=False, horizon_h=R.HORIZON_H),
+                                              mock.call(dry=True, horizon_h=6)])
+
+    def test_case_and_snapshot_return_codes(self):
+        with mock.patch.object(M, "run", side_effect=["text", None]), mock.patch.object(R, "snapshot", return_value="/p"):
+            self.assertEqual(L.run_case(7), 0)
+            self.assertEqual(L.run_case(8), 1)
+            self.assertEqual(L.run_snapshot(7), 0)
+
+
+class TestCaseModesIntegration(unittest.TestCase):
+    def test_modes_call_the_absorbed_modules(self):
+        src = (SCRIPTS / "nova_buick8_log.py").read_text()
+        for needle in ("import nova_rama_window as R", "R.run(", "R.snapshot(", "import nova_mina_typescript as M",
+                       "M.run("):
+            self.assertIn(needle, src)
+        self.assertNotIn("CREATE TABLE IF NOT EXISTS rama_window", src)   # the table stays Rama's
+
+    def test_queue_lines_point_at_the_survivor(self):
+        it = {"source": "syslog", "case_id": 5}
+        self.assertEqual(R.export_cmd(it, NOW, 72), "python3 nova_buick8_log.py --snapshot 5")
+
+
+class TestCaseModesFunctional(unittest.TestCase):
+    def test_expiry_records_and_queues(self):
+        cur = RouteCur(open_routes())
+        with mock.patch.object(W, "connect", return_value=conn_for(cur)), mock.patch.object(R, "face_ttl", return_value=72.0), \
+                mock.patch.object(W, "get_config", return_value={}), mock.patch.object(W, "set_config"), \
+                redirect_stdout(io.StringIO()):
+            self.assertEqual(L.main(["--expiry"]), 0)
+        self.assertTrue(any("INSERT INTO rama_window" in s for s in cur.writes()))
+        self.assertTrue(any("INSERT INTO claude_queue" in s for s in cur.writes()))
+
+    def test_expiry_dry_run_writes_nothing(self):
+        cur = RouteCur(open_routes())
+        with mock.patch.object(W, "connect", return_value=conn_for(cur)), mock.patch.object(R, "face_ttl", return_value=72.0), \
+                redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(L.main(["--expiry", "--dry-run"]), 0)
+        self.assertEqual(cur.writes(), [])
+        self.assertIn("scanner_audio", out.getvalue())
+
+    def test_case_dry_run_prints_the_typescript(self):
+        row = (7, "event_unknown", "sig", "IPS Alert unknown", NOW - timedelta(days=1), NOW, "open")
+        cur = RouteCur({"FROM unexplained_events": [row]})
+        with mock.patch.object(W, "connect", return_value=conn_for(cur)), redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(L.main(["--case", "7", "--dry-run"]), 0)
+        self.assertIn("# Typescript: Buick 8 #7", out.getvalue())
+        self.assertEqual(cur.writes(), [])
+
+
+class TestCaseModesFrame(unittest.TestCase):
+    def test_main_routes_modes(self):
+        with mock.patch.object(L, "run_expiry", return_value=0) as ex, mock.patch.object(L, "run_case", return_value=0) as ca, \
+                mock.patch.object(L, "run_snapshot", return_value=0) as sn, mock.patch.object(L, "run", return_value=0) as rn:
+            L.main(["--expiry", "--horizon", "12"])
+            L.main(["--case", "4"])
+            L.main(["--snapshot", "5", "--dry-run"])
+        ex.assert_called_once_with(False, 12.0)
+        ca.assert_called_once_with(4, False)
+        sn.assert_called_once_with(5, True)
+        rn.assert_not_called()
+
+    def test_help_lists_modes(self):
+        import subprocess
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_buick8_log.py"), "--help"],
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        for flag in ("--expiry", "--case", "--snapshot", "--horizon"):
+            self.assertIn(flag, r.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()

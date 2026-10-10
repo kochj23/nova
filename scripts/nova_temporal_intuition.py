@@ -22,18 +22,22 @@ that keeps growing is noticed at 7, then at 30, never twice. Writes ONE source='
 memory per run bundling the day's crossings (or nothing — most days nothing crosses, and a
 blank day is the honest output). Fail-open; never edits the world.
 
-  nova_temporal_intuition.py            # run
+MERGED 2026-10-09 (organ audit M15): this is now `nova_time_sense.py --daily` (time sense already
+imported this module). Same source='temporal', same service_config key (nova_temporal_intuition/noticed),
+same text. This file keeps MACHINE_CHANNELS, the pure logic, gather() and the memory/state helpers the
+daily mode calls; running it directly runs `nova_time_sense.py --daily`.
+
+  nova_temporal_intuition.py            # == nova_time_sense.py --daily
   nova_temporal_intuition.py --dry-run  # print what she'd notice, write nothing
   nova_temporal_intuition.py --report   # print every tracked duration
   nova_temporal_intuition.py --selftest # pure-logic assertions, no DB
 """
-import argparse
 import json
 import sys
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-import psycopg2
+import psycopg2  # noqa: F401 — kept: callers patch nova_temporal_intuition.psycopg2.connect (the shared module)
 
 OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
@@ -166,43 +170,12 @@ def remember(text, metadata):
     raise last
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Nova's Temporal Intuition — feeling durations, not timestamps")
-    ap.add_argument("--dry-run", action="store_true"); ap.add_argument("--report", action="store_true")
-    args = ap.parse_args()
-    try:
-        ops = psycopg2.connect(OPS_DSN, connect_timeout=5); ops.autocommit = True; oc = ops.cursor()
-    except Exception as e:  # noqa: BLE001
-        log(f"no PG ({e}) — fail-open"); return 0
-    try:
-        mem = psycopg2.connect(MEM_DSN, connect_timeout=5); mem.autocommit = True; mc = mem.cursor()
-    except Exception:
-        mc = None
-    now = datetime.now(timezone.utc); today = now.date()
-    durations = gather(oc, mc, now)
-    if args.report:
-        for k, l, d in sorted(durations, key=lambda x: -x[2]): print(f"{d:>5}d  {k:<28} {l}")
-        return 0
-    noticed = load_state(oc)
-    crossings = []
-    for k, l, d in durations:
-        th = crossed(d, noticed.get(k))
-        if th: crossings.append((k, l, d, th))
-    log(f"{len(durations)} duration(s) felt; {len(crossings)} crossed a threshold today")
-    text = notice_text(crossings, today)
-    if args.dry_run:
-        print(text or "(nothing crossed — a blank day, honestly)"); return 0
-    if not crossings:
-        return 0
-    stamp = _stamp()
-    remember(text, {"organ": STATE_SERVICE, "kind": "crossing", "date": today.isoformat(),
-                    "crossings": [{"key": k, "days": d, "threshold": th} for k, _, d, th in crossings],
-                    **({"lineage": stamp} if stamp else {})})
-    for k, _, _, th in crossings:
-        noticed[k] = max(th, noticed.get(k, 0))
-    save_state(oc, noticed)
-    log("noticed: " + "; ".join(f"{word(th)} {l}" for _, l, _, th in crossings))
-    return 0
+def main(argv=None):
+    """Merged into nova_time_sense.py on 2026-10-09 (M15): a thin wrapper for old invocations."""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import nova_time_sense as ts
+    log("merged into nova_time_sense.py on 2026-10-09 (organ audit M15) — running its --daily mode")
+    return ts.main(["--daily", *(sys.argv[1:] if argv is None else argv)])
 
 
 def demo():

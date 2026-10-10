@@ -10,6 +10,11 @@ coincides with a CHP incident a mile away and fire dispatch naming your grid, at
 it is one event and you would like to know. This computes a situation score from concurrent,
 independent signals and only speaks when several agree.
 
+MERGED 2026-10-09 (organ audit M3) into nova_bodach_watch.py: `nova_bodach_watch.py --now` asks
+the question on demand, and Bodach's 15-minute run raises this alert under its two-man rule /
+SPINNAKER gate. This module keeps the scoring (assess / fires / message / report), which Bodach
+imports; `nova_local_situation.py [--minutes N] [--alert]` is a thin wrapper onto Bodach.
+
 The design rule is the same one the infrastructure work landed on: a single signal is a
 self-report, several independent ones agreeing is a witnessed fact. One low helicopter is
 noise. A low helicopter plus a nearby incident plus scanner traffic is a situation.
@@ -22,9 +27,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
-import psycopg2
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 # Home coordinates are PRIVATE: they live in nova_ops.service_config (key 'home',
 # {"lat", "lon", "label"}), never in code, logs or any message this script sends.
 HOME_CONFIG_KEY = "home"
@@ -86,12 +89,16 @@ def miles(lat1, lon1, lat2, lon2):
     return 2 * r * math.asin(math.sqrt(a))
 
 
-def main(minutes, alert):
+SITUATION_SCORE = 4      # fire rule: score >= 4 from >= 2 signals
+SITUATION_SIGNALS = 2
+
+
+def assess(cur, minutes, conn=None, motion=True):
+    """Score the last `minutes` from the four feeds. Reads only.
+    -> {"minutes", "score", "signals": [text], "kinds": [air|chp|scanner|motion] (parallel to signals)}.
+    motion=False skips the exterior-camera query (the caller's privacy gate refused camera data)."""
     minutes = int(minutes)
-    conn = _retry(psycopg2.connect, DSN, what="pg connect")
-    conn.autocommit = True
-    cur = conn.cursor()
-    signals, score = [], 0
+    signals, kinds, score = [], [], 0
     home = home_coords(cur)
 
     # ── 1. Aircraft loitering low and close ──────────────────────────────────
@@ -108,6 +115,7 @@ def main(minutes, alert):
         kind = "HELICOPTER" if heli else "aircraft"
         signals.append(f"{kind} {call or hexid} loitering: {hits} samples, "
                        f"as low as {alt}ft, {dist:.1f}nm out")
+        kinds.append("air")
         score += 2 if heli else 1
 
     # ── 2. CHP incidents nearby ──────────────────────────────────────────────
@@ -126,6 +134,7 @@ def main(minutes, alert):
         blob = f"{typ} {loc}".lower()
         if d <= 1.5 and any(k in blob for k in SERIOUS):
             signals.append(f"CHP: {typ} at {loc} — {d:.1f} mi away")
+            kinds.append("chp")
             score += 2
 
     # ── 3. Scanner traffic mentioning our streets ────────────────────────────
@@ -138,56 +147,74 @@ def main(minutes, alert):
         n = cur.fetchone()[0]
         if n >= 3:
             signals.append(f"scanner: {n} dispatch transmissions in the window")
+            kinds.append("scanner")
             score += 1
     except Exception:
-        conn.rollback()
+        if conn is not None:
+            conn.rollback()
 
     # ── 4. Exterior motion at the property ───────────────────────────────────
-    cur.execute(f"""
-        SELECT count(*), count(DISTINCT room) FROM telemetry.presence
-        WHERE ts > now() - interval '{minutes} minutes'
-          AND method IN ('camera_vision','vehicle_vision')
-          AND room IN ('front_yard','driveway','alley','back_yard','carport','entry')""")
-    n, zones = cur.fetchone()
-    # Raw counts are meaningless — 811 detections in 2h is a normal afternoon here. Compare
-    # against this window's own 7-day baseline and only count a genuine SPIKE.
-    cur.execute(f"""
-        SELECT count(*)::float / 7 FROM telemetry.presence
-        WHERE ts > now() - interval '7 days'
-          AND ts::time BETWEEN (now() - interval '{minutes} minutes')::time AND now()::time
-          AND method IN ('camera_vision','vehicle_vision')
-          AND room IN ('front_yard','driveway','alley','back_yard','carport','entry')""")
-    baseline = cur.fetchone()[0] or 0
-    if n >= 5 and baseline and n > baseline * 2.5:
-        signals.append(f"exterior motion SPIKE: {n} detections across {zones} zone(s) "
-                       f"vs {baseline:.0f} typical for this time of day")
-        score += 2
+    if motion:
+        cur.execute(f"""
+            SELECT count(*), count(DISTINCT room) FROM telemetry.presence
+            WHERE ts > now() - interval '{minutes} minutes'
+              AND method IN ('camera_vision','vehicle_vision')
+              AND room IN ('front_yard','driveway','alley','back_yard','carport','entry')""")
+        n, zones = cur.fetchone()
+        # Raw counts are meaningless — 811 detections in 2h is a normal afternoon here. Compare
+        # against this window's own 7-day baseline and only count a genuine SPIKE.
+        cur.execute(f"""
+            SELECT count(*)::float / 7 FROM telemetry.presence
+            WHERE ts > now() - interval '7 days'
+              AND ts::time BETWEEN (now() - interval '{minutes} minutes')::time AND now()::time
+              AND method IN ('camera_vision','vehicle_vision')
+              AND room IN ('front_yard','driveway','alley','back_yard','carport','entry')""")
+        baseline = cur.fetchone()[0] or 0
+        if n >= 5 and baseline and n > baseline * 2.5:
+            signals.append(f"exterior motion SPIKE: {n} detections across {zones} zone(s) "
+                           f"vs {baseline:.0f} typical for this time of day")
+            kinds.append("motion")
+            score += 2
+    return {"minutes": minutes, "score": score, "signals": signals, "kinds": kinds}
 
-    # ── verdict ──────────────────────────────────────────────────────────────
-    log(f"situation score {score} from {len(signals)} signal(s) over {minutes} min")
-    for s in signals:
+
+def fires(res) -> bool:
+    """One signal is noise. Two independent ones agreeing is the thing worth saying out loud."""
+    return res["score"] >= SITUATION_SCORE and len(res["signals"]) >= SITUATION_SIGNALS
+
+
+def message(res) -> str:
+    return ("Something is happening nearby: " + "; ".join(res["signals"]) +
+            ". Multiple independent feeds agree, which is why this is being raised at all.")
+
+
+def report(res):
+    """Log the verdict. -> the alert message when the situation fires, else None."""
+    log(f"situation score {res['score']} from {len(res['signals'])} signal(s) over {res['minutes']} min")
+    for s in res["signals"]:
         log(f"  - {s}")
-    # One signal is noise. Two independent ones agreeing is the thing worth saying out loud.
-    if score >= 4 and len(signals) >= 2:
-        msg = ("Something is happening nearby: " + "; ".join(signals) +
-               ". Multiple independent feeds agree, which is why this is being raised at all.")
+    if fires(res):
+        msg = message(res)
         log("SITUATION: " + msg)
-        if alert:
-            try:
-                from nova_notify import notify
-                _retry(notify, msg, level="warning", category="local", what="notify")
-                log("alerted")
-            except Exception as e:
-                log(f"notify failed after {RETRY_ATTEMPTS} attempts: {e}")
-    elif signals:
+        return msg
+    if res["signals"]:
         log("below threshold — individually unremarkable, staying quiet")
-    conn.close()
-    return 0
+    return None
+
+
+def main(minutes, alert):
+    """Merged into nova_bodach_watch.py on 2026-10-09 (organ audit M3): the on-demand question is
+    `nova_bodach_watch.py --now`, and the 15-minute alert runs inside Bodach's own run under its
+    two-man rule. This wrapper stays so old callers keep working."""
+    log("merged into nova_bodach_watch.py on 2026-10-09 — running its "
+        + ("situation alert step" if alert else "--now mode"))
+    import nova_bodach_watch as B
+    return B.run_situation(int(minutes), alert=bool(alert))
 
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--minutes", type=int, default=20)  # short window: this asks 'right now'
-    ap.add_argument("--alert", action="store_true")
+    ap.add_argument("--alert", action="store_true", help="alert via Bodach's two-man gate (merged 2026-10-09)")
     a = ap.parse_args()
     sys.exit(main(a.minutes, a.alert))

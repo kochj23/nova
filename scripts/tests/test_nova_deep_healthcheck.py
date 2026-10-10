@@ -1,15 +1,21 @@
 #!/usr/bin/env python3
 """Tests for nova_deep_healthcheck.py — the 7 house categories (Security, Performance, Retry, Unit,
 Integration, Functional, Frame). Every subprocess/ssh/HTTP/PG/Slack call is mocked; NO real service
-is restarted, NO mount or DB is touched. Written by Jordan Koch (via Claude)."""
+is restarted, NO mount or DB is touched. Since merge M4 (2026-10-09) main() is a thin wrapper around
+`nova_selfcheck.py --deep` and the redline/dry-run gate is nova_selfcheck.fix_gate; the end-to-end run is
+exercised through the real nova_selfcheck module with every side effect stubbed. Written by Jordan Koch (via Claude)."""
 import importlib.util
+import io
+import json
 import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import types
 import unittest
+from contextlib import contextmanager, redirect_stdout
 from pathlib import Path
 from unittest import mock
 
@@ -26,6 +32,47 @@ def _load(name, path):
 
 hc = _load("nova_deep_healthcheck_t", SCRIPTS / "nova_deep_healthcheck.py")
 SRC = (SCRIPTS / "nova_deep_healthcheck.py").read_text()
+sc = hc._sc                      # the real nova_selfcheck module deep imports for its fix gate
+_TMP = tempfile.TemporaryDirectory()
+
+
+@contextmanager
+def _modstub(mapping):
+    """Install modules and afterwards restore ONLY those keys."""
+    missing = object()
+    saved = {k: sys.modules.get(k, missing) for k in mapping}
+    sys.modules.update(mapping)
+    try:
+        yield
+    finally:
+        for k, v in saved.items():
+            if v is missing:
+                sys.modules.pop(k, None)
+            else:
+                sys.modules[k] = v
+
+
+@contextmanager
+def _deep_run(checks, dry=False):
+    """Run `nova_selfcheck --deep` end to end over these checks: selfcheck's log/PG/shell, the Keychain read +
+    Slack HTTP call under the real selfcheck.slack(), and deep's psycopg2 audit write are all stubbed. Yields a namespace with posts / inserts / audit rows."""
+    ns = types.SimpleNamespace(posts=[], audit=[], rc=None)
+    cur = mock.MagicMock()
+    cur.execute.side_effect = lambda sql, params=None: ns.audit.append((sql, params))
+    conn = mock.MagicMock(cursor=lambda: cur)
+    with mock.patch.object(sc, "LOG", Path(_TMP.name) / "selfcheck.log"), \
+         mock.patch.object(sc, "STATE_DIR", Path(_TMP.name) / "state"), \
+         mock.patch.object(sc, "pg", mock.MagicMock(return_value=None)) as pg, \
+         mock.patch.object(sc, "sh", mock.MagicMock(return_value=(0, ""))), \
+         mock.patch.object(sc.subprocess, "check_output", return_value="xoxb-test\n"), \
+         mock.patch.object(sc.urllib.request, "urlopen",
+                           lambda req, timeout=None: ns.posts.append(tuple(json.loads(req.data).values()))), \
+         mock.patch.object(sc, "DRY", False), mock.patch.object(sc, "results", []), \
+         _modstub({"nova_deep_healthcheck": hc}), mock.patch.object(hc, "CHECKS", checks), \
+         mock.patch("psycopg2.connect", return_value=conn), redirect_stdout(io.StringIO()):
+        ns.rc = sc.main(["--deep"] + (["--dry-run"] if dry else []))
+        ns.inserts = [c[0][0] for c in pg.call_args_list if "INSERT INTO selfcheck_runs" in c[0][0]]
+        yield ns
 
 
 class TestSecurity(unittest.TestCase):
@@ -44,6 +91,11 @@ class TestSecurity(unittest.TestCase):
             ok, detail = hc.safe_fix(desc, lambda: (True, "ran"))
             self.assertFalse(ok)
             self.assertIn("redline-blocked", detail)
+
+    def test_one_gate_shared_with_selfcheck(self):
+        self.assertIs(hc._REDLINE, sc._REDLINE)
+        self.assertIn("return _sc.fix_gate(desc, fn)", SRC)
+        self.assertNotIn("DRY = False", SRC)              # no second dry-run flag to drift
 
 
 class TestPerformance(unittest.TestCase):
@@ -77,23 +129,50 @@ class TestUnit(unittest.TestCase):
 
     def test_safe_fix_dry_run_does_not_execute(self):
         ran = []
-        with mock.patch.object(hc, "DRY", True):
+        with mock.patch.object(sc, "DRY", True):
             ok, detail = hc.safe_fix("gateway: restart", lambda: ran.append(1) or (True, "x"))
         self.assertFalse(ok)
         self.assertEqual(ran, [])
         self.assertIn("[dry-run] would", detail)
 
     def test_safe_fix_runs_when_allowed(self):
-        with mock.patch.object(hc, "DRY", False):
+        with mock.patch.object(sc, "DRY", False):
             ok, detail = hc.safe_fix("gateway: restart", lambda: (True, "restarted"))
         self.assertTrue(ok)
         self.assertEqual(detail, "restarted")
 
     def test_safe_fix_catches_exceptions(self):
-        with mock.patch.object(hc, "DRY", False):
+        with mock.patch.object(sc, "DRY", False):
             ok, detail = hc.safe_fix("gateway: restart", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
         self.assertFalse(ok)
         self.assertIn("fix error", detail)
+
+
+    def test_format_report_states(self):
+        ok_only = hc.format_report([hc.result("db", True, "ok")])
+        self.assertIn("*1/1 functional*  :white_check_mark:", ok_only)
+        self.assertIn("Everything up AND functional", ok_only)
+        mixed = hc.format_report([hc.result("plex", False, "empty", fixed=True, fix_detail="refreshed"),
+                                  hc.result("dns", False, "wrong", fix_detail="[dry-run] would: x")])
+        self.assertIn(":wrench: *Fixed:*\n  • plex: empty → _refreshed_", mixed)
+        self.assertIn("  • dns: wrong (fix tried: [dry-run] would: x)", mixed)
+        self.assertNotIn(":white_check_mark:", mixed)
+
+    def test_run_checks_contains_crashes(self):
+        with mock.patch.object(hc, "CHECKS", [lambda: hc.result("a", True, "x"), lambda: 1 / 0]):
+            rows = hc.run_checks()
+        self.assertEqual([r["ok"] for r in rows], [True, False])
+        self.assertTrue(rows[1]["needs_human"])
+        self.assertIn("check crashed", rows[1]["detail"])
+
+    def test_postgres_write_probe_skipped_in_dry_run(self):
+        seen = []
+        cur = mock.MagicMock(); cur.execute.side_effect = lambda sql: seen.append(sql)
+        cur.fetchone.side_effect = [(True,), (2,)]
+        with mock.patch("psycopg2.connect", return_value=mock.MagicMock(cursor=lambda: cur)), mock.patch.object(sc, "DRY", True):
+            r = hc.check_postgres()
+        self.assertTrue(r["ok"])
+        self.assertFalse(any("_hc_probe" in q for q in seen))
 
 
 class TestIntegration(unittest.TestCase):
@@ -115,50 +194,69 @@ class TestIntegration(unittest.TestCase):
     def test_check_plex_zero_libraries_triggers_guarded_fix(self):
         with mock.patch.object(hc, "keychain", return_value="tok"), \
              mock.patch.object(hc, "get", return_value=("<MediaContainer/>", 200)), \
-             mock.patch.object(hc, "DRY", True):
+             mock.patch.object(sc, "DRY", True):
             r = hc.check_plex()
         self.assertFalse(r["ok"])
         self.assertIn("ZERO libraries", r["detail"])
         self.assertIn("[dry-run]", r["fix_detail"])  # fix was gated, nothing restarted
 
 
-class TestFunctional(unittest.TestCase):
-    def test_main_dry_run_reports_without_fixing(self):
-        posts = []
-        fake_cfg = types.SimpleNamespace(SLACK_ALERTS="C_A", SLACK_NOTIFY="C_N",
-                                         post_both=lambda msg, slack_channel=None: posts.append((msg, slack_channel)))
-        with mock.patch.object(hc, "CHECKS", [lambda: hc.result("db", True, "ok"),
-                                              lambda: hc.result("plex", False, "down", needs_human=True)]), \
-             mock.patch.dict(sys.modules, {"nova_config": fake_cfg}), \
-             mock.patch.object(hc.psycopg2 if hasattr(hc, "psycopg2") else hc, "connect", create=True,
-                               side_effect=RuntimeError("no pg")), \
-             mock.patch.object(sys, "argv", ["x", "--dry-run"]), mock.patch.object(hc, "log"):
-            rc = hc.main()
-        self.assertEqual(rc, 1)                      # one broken => exit 1
-        self.assertEqual(posts[0][1], "C_A")         # broken => alerts channel
-        self.assertIn("Needs you", posts[0][0])
+    def test_write_log_keeps_deep_healthcheck_log_shape(self):
+        audit = []
+        cur = mock.MagicMock(); cur.execute.side_effect = lambda sql, params=None: audit.append((sql, params))
+        rows = [hc.result("db", True, "ok"), hc.result("plex", False, "x", fixed=True), hc.result("dns", False, "y")]
+        with mock.patch("psycopg2.connect", return_value=mock.MagicMock(cursor=lambda: cur)):
+            hc.write_log(rows)
+        sql, params = audit[1]
+        self.assertIn("INSERT INTO deep_healthcheck_log (healthy, fixed, broken, detail) VALUES (%s,%s,%s,%s)", sql)
+        self.assertEqual(params[:3], (1, 1, 1))
+        self.assertEqual(json.loads(params[3])[0]["name"], "db")
 
-    def test_main_all_healthy_posts_to_notify(self):
-        posts = []
-        fake_cfg = types.SimpleNamespace(SLACK_ALERTS="C_A", SLACK_NOTIFY="C_N",
-                                         post_both=lambda msg, slack_channel=None: posts.append((msg, slack_channel)))
-        with mock.patch.object(hc, "CHECKS", [lambda: hc.result("db", True, "ok")]), \
-             mock.patch.dict(sys.modules, {"nova_config": fake_cfg}), \
-             mock.patch.object(sys, "argv", ["x"]), mock.patch.object(hc, "log"), \
-             mock.patch("psycopg2.connect", side_effect=RuntimeError("no pg")):
-            rc = hc.main()
-        self.assertEqual(rc, 0)
-        self.assertEqual(posts[0][1], "C_N")
-        self.assertIn("functional", posts[0][0])
+
+class TestFunctional(unittest.TestCase):
+    def test_deep_run_dry_reports_without_fixing_or_writing(self):
+        fixes = []
+        checks = [lambda: hc.result("db", True, "ok"),
+                  lambda: hc.result("plex", False, "down", *hc.safe_fix("plex: refresh", lambda: fixes.append(1) or (True, "x")))]
+        with _deep_run(checks, dry=True) as ns:
+            pass
+        self.assertEqual(ns.rc, 1)                             # one broken => exit 1
+        self.assertEqual(fixes, [])                            # selfcheck's --dry-run reached deep's fix
+        self.assertEqual(ns.posts, [])                         # dry-run posts nothing
+        self.assertEqual(ns.inserts, [])
+        self.assertEqual(ns.audit, [])                         # no deep_healthcheck_log row
+
+    def test_deep_run_broken_posts_alerts_and_logs_both_ledgers(self):
+        with _deep_run([lambda: hc.result("db", True, "ok"),
+                        lambda: hc.result("plex", False, "down", needs_human=True)]) as ns:
+            pass
+        self.assertEqual(ns.rc, 1)
+        self.assertEqual(ns.posts[0][0], sc.SLACK_ALERT_CHANNEL)
+        self.assertIn("Needs you", ns.posts[0][1])
+        self.assertEqual(len(ns.inserts), 2)
+        self.assertIn("$novaq$deep-plex$novaq$, $novaq$FAIL$novaq$", ns.inserts[1])
+        self.assertTrue(any("deep_healthcheck_log" in q for q, _ in ns.audit))
+
+    def test_deep_run_all_healthy_posts_to_digest(self):
+        with _deep_run([lambda: hc.result("db", True, "ok")]) as ns:
+            pass
+        self.assertEqual(ns.rc, 0)
+        self.assertEqual(ns.posts[0][0], sc.SLACK_DIGEST_CHANNEL)
+        self.assertIn("functional", ns.posts[0][1])
 
     def test_crashing_check_is_contained(self):
-        with mock.patch.object(hc, "CHECKS", [lambda: (_ for _ in ()).throw(RuntimeError("kaboom"))]), \
-             mock.patch.dict(sys.modules, {"nova_config": types.SimpleNamespace(
-                 SLACK_ALERTS="A", SLACK_NOTIFY="N", post_both=lambda *a, **k: None)}), \
-             mock.patch.object(sys, "argv", ["x"]), mock.patch.object(hc, "log"), \
-             mock.patch("psycopg2.connect", side_effect=RuntimeError("no pg")):
-            rc = hc.main()
-        self.assertEqual(rc, 1)
+        with _deep_run([lambda: (_ for _ in ()).throw(RuntimeError("kaboom"))]) as ns:
+            pass
+        self.assertEqual(ns.rc, 1)
+
+    def test_wrapper_delegates_to_selfcheck_deep(self):
+        seen = []
+        with mock.patch.object(sc, "LOG", Path(_TMP.name) / "selfcheck.log"), \
+             mock.patch.object(sc, "main", lambda a: seen.append(a) or 0), redirect_stdout(io.StringIO()):
+            self.assertEqual(hc.main([]), 0)
+            hc.main(["--dry-run"])
+        self.assertEqual(seen, [["--deep"], ["--deep", "--dry-run"]])
+        self.assertIn("merged into nova_selfcheck.py --deep on 2026-10-09", (Path(_TMP.name) / "selfcheck.log").read_text())
 
 
 class TestFrame(unittest.TestCase):
@@ -168,6 +266,12 @@ class TestFrame(unittest.TestCase):
                            capture_output=True, text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertNotIn("deep-hc", r.stdout)
+
+    def test_help_exits_zero(self):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_deep_healthcheck.py"), "--help"], capture_output=True,
+                           text=True, timeout=30, env={**os.environ, "NOVA_TEST_QUIET": "1"})
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("nova_selfcheck.py --deep", r.stdout)
 
 
 if __name__ == "__main__":

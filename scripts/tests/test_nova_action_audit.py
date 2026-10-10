@@ -117,6 +117,21 @@ class TestUnit(unittest.TestCase):
         self.assertEqual((len(m), len(u)), (1, 0))
 
 
+    def test_mode_dispatch(self):
+        with patch.object(A, "audit", return_value={}) as au, patch.object(A, "rationale") as ra, \
+                patch.object(A, "oversight") as ov:
+            for argv in (["--complete"], ["--audit"], ["--rationale"], ["--rationale", "--days", "3", "--dry-run"],
+                         ["--oversight"], ["--oversight", "--dry-run"]):
+                self.assertEqual(A.main(argv), 0)
+        self.assertEqual([c.args for c in au.call_args_list], [(24, False), (24, False)])
+        self.assertEqual([c.args for c in ra.call_args_list], [(7, False), (3, True)])
+        self.assertEqual([c.args for c in ov.call_args_list], [(30, False), (30, True)])
+
+    def test_modes_are_exclusive(self):
+        with patch("sys.stderr"), self.assertRaises(SystemExit):
+            A.main(["--complete", "--oversight"])
+
+
 class TestIntegration(unittest.TestCase):
     def test_reuses_bb_regex_from_self_repair_digest(self):
         self.assertIn("from nova_self_repair_digest import BB_FIX_RX, BB_TEST_RX", SRC)
@@ -139,6 +154,19 @@ class TestIntegration(unittest.TestCase):
     def test_hooks_installed_in_chokepoints(self):
         self.assertIn('_ledger_outbound("slack", slack_channel, message)', (SCRIPTS / "nova_config.py").read_text())
         self.assertIn("_ledger_outbound(recipient, text)", (SCRIPTS / "nova_imessage.py").read_text())
+
+
+    def test_absorbed_modes_call_their_modules(self):
+        import nova_ae35_rule
+        import nova_self_justification_audit
+        with patch.object(nova_self_justification_audit, "run", return_value=["f"]) as jr, \
+                patch.object(nova_ae35_rule, "audit", return_value=["e"]) as aa:
+            self.assertEqual(A.rationale(7, True), ["f"])
+            self.assertEqual(A.oversight(30, False), ["e"])
+        jr.assert_called_once_with(7, True)
+        aa.assert_called_once_with(30, dry=False)
+        self.assertIn("self_justification_audit", (SCRIPTS / "nova_self_justification_audit.py").read_text())
+        self.assertIn("ae35_events", nova_ae35_rule.SCHEMA)
 
 
 class TestFunctional(unittest.TestCase):
@@ -176,6 +204,30 @@ class TestFunctional(unittest.TestCase):
         self.assertNotIn("INSERT INTO action_audit", " ".join(c[0][0] for c in cur.execute.call_args_list))
 
 
+    def test_oversight_dry_run_writes_nothing(self):
+        conn, cur = self._cur()
+        with patch("nova_watch_common.connect", return_value=conn), patch("builtins.print"):
+            self.assertEqual(A.main(["--oversight", "--dry-run"]), 0)
+        sqls = " ".join(c[0][0] for c in cur.execute.call_args_list)
+        self.assertIn("coagency_proposals", sqls)
+        for k in ("CREATE", "INSERT", "UPDATE"):
+            self.assertNotIn(k, sqls)
+
+    def test_rationale_dry_run_writes_and_posts_nothing(self):
+        import nova_self_justification_audit as J
+        conn, cur = self._cur()
+        cur.description = []
+        posted = MagicMock()
+        with patch.object(J.psycopg2, "connect", return_value=conn), \
+                patch.dict(sys.modules, {"nova_config": MagicMock(post_both=posted)}), patch("builtins.print"):
+            self.assertEqual(A.main(["--rationale", "--dry-run"]), 0)
+        sqls = " ".join(c[0][0] for c in cur.execute.call_args_list)
+        self.assertIn("autonomy_ledger", sqls)
+        for k in ("CREATE", "INSERT", "UPDATE"):
+            self.assertNotIn(k, sqls)
+        posted.assert_not_called()
+
+
 class TestFrame(unittest.TestCase):
     def test_help_and_selftest_exit_zero(self):
         env = dict(os.environ, NOVA_TEST_QUIET="1")
@@ -186,6 +238,11 @@ class TestFrame(unittest.TestCase):
     def test_import_does_not_run_main(self):
         self.assertIn('if __name__ == "__main__":', SRC)
 
+
+    def test_help_lists_the_three_modes(self):
+        r = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, timeout=30)
+        for m in ("--complete", "--rationale", "--oversight"):
+            self.assertIn(m, r.stdout)
 
 if __name__ == "__main__":
     unittest.main()

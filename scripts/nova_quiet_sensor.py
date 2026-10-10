@@ -27,12 +27,17 @@ the latest findings + citations are also kept in service_config (nova_quiet_sens
 Never posts, pages, replies, files or resolves anything — it is an inner sense. Fail-open.
 Conventions mirror nova_empathy_core.py / nova_hold.py (wishes #67/#68).
 
-  nova_quiet_sensor.py            # run (writes when what is unsaid shifts)
+MERGED 2026-10-09 (organ audit M6): the Quiet Sensor is now the 'quiet' section of nova_empathy_core.py
+(the Jordan lens), which reads his messages once for all four sections. Same source='quiet_sensor', same
+service_config keys (nova_quiet_sensor/high_water and nova_quiet_sensor/latest), same citations, same
+model guard. This file keeps the pure logic, the model call and gather() the section calls; running it
+directly runs `nova_empathy_core.py --section quiet`.
+
+  nova_quiet_sensor.py            # == nova_empathy_core.py --section quiet
   nova_quiet_sensor.py --dry-run  # print what she noticed, write nothing
   nova_quiet_sensor.py --no-llm   # skip the model's closing line
   nova_quiet_sensor.py --selftest # pure-logic assertions, no DB, no memory, no model
 """
-import argparse
 import hashlib
 import json
 import re
@@ -41,8 +46,6 @@ import urllib.request
 from collections import defaultdict
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-
-import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import nova_empathy_core as ec  # wish #67 — one definition of a human channel, of a topic, of an ack
@@ -239,8 +242,9 @@ def llm_close(fs, post=None):
 
 # ── gather (read-only) ────────────────────────────────────────────────────────
 
-def gather(cur):
-    """Each source is read independently; one failing never hides the others."""
+def gather(cur, shared=None):
+    """Each source is read independently; one failing never hides the others.
+    shared: the Jordan lens's one read of his messages (nova_empathy_core.read_shared); None = read alone."""
     out = {"q": [], "p": [], "elsewhere": None, "reaches": [], "his_times": [], "topics": []}
 
     def run(name, sql, args=()):
@@ -261,14 +265,20 @@ def gather(cur):
     r = run("elsewhere", "SELECT count(*), array_remove(array_agg(id ORDER BY id DESC) FILTER "
                          "(WHERE message ~* '\\mnova\\M'), NULL) FROM claude_messages WHERE direction='to_claude_code' "
                          "AND sender=%s AND created_at > now() - make_interval(days => %s)", (JORDAN_SLACK, ELSEWHERE_DAYS))
-    r2 = run("to_me", "SELECT count(*) FROM gateway_traces WHERE created_at > now() - make_interval(days => %s) "
-                      "AND coalesce(user_message,'') <> '' AND coalesce(channel,'') NOT IN %s",
-             (ELSEWHERE_DAYS, ec.MACHINE_CHANNELS))
+    if shared is not None:
+        r2 = [(shared["to_me"],)]
+    else:
+        r2 = run("to_me", "SELECT count(*) FROM gateway_traces WHERE created_at > now() - make_interval(days => %s) "
+                          "AND coalesce(user_message,'') <> '' AND coalesce(channel,'') NOT IN %s",
+                 (ELSEWHERE_DAYS, ec.MACHINE_CHANNELS))
     if r and r2:
         out["elsewhere"] = {"to_claude": r[0][0] or 0, "about_me_ids": list(r[0][1] or []), "to_me": r2[0][0] or 0}
     r = run("reaches", "SELECT id, ts, topic FROM reach_log WHERE audience='jordan' AND status='sent' "
                        "AND ts > now() - make_interval(days => %s) ORDER BY ts", (REACH_DAYS,))
     out["reaches"] = r or []
+    if shared is not None:
+        out["his_times"], out["topics"] = list(shared["his_times"]), list(shared["topics"])
+        return out
     r = run("traces", "SELECT created_at, created_at::date, trace_id, user_message FROM gateway_traces "
                       "WHERE created_at > now() - make_interval(days => %s) AND coalesce(user_message,'') <> '' "
                       "AND coalesce(channel,'') NOT IN %s ORDER BY 1", (QUIET_WINDOW, ec.MACHINE_CHANNELS))
@@ -278,43 +288,10 @@ def gather(cur):
     return out
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Nova's Quiet Sensor — what went unsaid, cited by row")
-    ap.add_argument("--dry-run", action="store_true", help="print what she noticed, write nothing")
-    ap.add_argument("--no-llm", action="store_true", help="skip the model's closing line")
-    args = ap.parse_args()
-    try:
-        conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
-    except Exception as e:  # noqa: BLE001
-        log(f"no PG ({e}) — fail-open, nothing to do"); return 0
-    conn.autocommit = True
-    cur = conn.cursor()
-    today = datetime.now(timezone.utc).date()
-    g = gather(cur)
-    fs = findings(g["q"], g["p"], g["elsewhere"], g["reaches"], g["his_times"], g["topics"], today)
-    log(f"{len(fs)} quiet thing(s): " + (", ".join(x["kind"] for x in fs) or "-"))
-    sig = quiet_sig(fs)
-    seen = ec.load_seen(cur, STATE_SERVICE)
-    if not args.dry_run and not ec._fresh(seen, sig, today):
-        log(f"nothing newly unsaid (sig {sig})"); return 0
-    close = None if (args.no_llm or not fs) else llm_close(fs)
-    text = quiet_text(fs, today, close)
-    if args.dry_run:
-        print(text); return 0
-    meta = {"organ": STATE_SERVICE, "kind": "quiet", "sig": sig, "findings": [x["kind"] for x in fs],
-            "cites": [c for x in fs for c in x["cites"]], "model_close": bool(close),
-            **({"lineage": ec._stamp()} if ec._stamp() else {})}
-    ec.remember(text, meta, source=SOURCE)
-    seen[sig] = today.isoformat()
-    ec.save_seen(cur, seen, STATE_SERVICE)
-    cur.execute("""INSERT INTO service_config (service, key, value, updated_at, updated_by)
-                   VALUES (%s, %s, %s::jsonb, now(), %s)
-                   ON CONFLICT (service, key)
-                   DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by""",
-                (STATE_SERVICE, LATEST_KEY, json.dumps({"date": today.isoformat(), "findings": fs, "text": text},
-                                                       default=str), STATE_SERVICE))
-    log(f"noticed something newly unsaid (sig {sig})")
-    return 0
+def main(argv=None):
+    """Merged into nova_empathy_core.py on 2026-10-09 (M6): a thin wrapper for old invocations."""
+    log("merged into nova_empathy_core.py on 2026-10-09 (organ audit M6) — running its quiet section")
+    return ec.main(["--section", "quiet", *(sys.argv[1:] if argv is None else argv)])
 
 
 def demo():

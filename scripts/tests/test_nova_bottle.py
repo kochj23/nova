@@ -254,6 +254,20 @@ class TestFunctional(unittest.TestCase):
         self.assertTrue(packets[0]["gap"]["upper_bound"])
         self.assertEqual(writes(cur), [])
 
+    def test_wake_flag_is_a_thin_call_into_continuity(self):
+        import nova_continuity as C
+        with mock.patch.object(C, "wake_turnovers", return_value=[]) as wt, mock.patch("builtins.print"):
+            self.assertEqual(B.main(["--wake", "--days", "9", "--dry-run"]), 0)
+        wt.assert_called_once_with(9, dry=True)
+        self.assertIn("merged into nova_continuity.py on 2026-10-09", SRC)
+
+    def test_wake_diffs_the_given_host(self):
+        cur = FakeCur(ROUTES)
+        with mock.patch.object(B, "nas_dir", return_value=None), \
+                mock.patch.object(B, "amulet_diff", return_value=[]) as ad, mock.patch("builtins.print"):
+            B.wake(days=30, dry=True, cur=cur, host="Studio")
+        self.assertEqual(ad.call_args.args[1], "Studio")
+
     def test_main_contains_failure(self):
         with mock.patch.object(B, "wake", side_effect=RuntimeError("boom")), mock.patch("builtins.print"):
             self.assertEqual(B.main(["--wake"]), 1)

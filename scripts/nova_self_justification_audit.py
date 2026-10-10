@@ -11,7 +11,10 @@ Findings go to nova_ops.self_justification_audit, one row per finding. A summary
 agent_docs ('all', 'nova-self-justification-audit'). A Slack line is posted only if a finding
 is medium or worse.
 
-  python3 nova_self_justification_audit.py [--days 7] [--dry-run]
+Merged into the action audit on 2026-10-09 (organ audit M8b): the scheduled entry point is
+`nova_action_audit.py --rationale [--days 7]`, which calls run() here. This CLI is a thin wrapper.
+
+  python3 nova_self_justification_audit.py [--days 7] [--dry-run]   (-> nova_action_audit.py --rationale)
 
 Written by Jordan Koch.
 """
@@ -30,6 +33,7 @@ import psycopg2
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 SEV_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3}
+MERGED_ON = "2026-10-09"   # organ audit M8b: survivor is nova_action_audit.py --rationale
 
 
 def log(m):
@@ -166,8 +170,9 @@ def write_doc(oc, days, rows, findings):
     lines = [f"# Nova self-justification audit (P4) — last run {datetime.now():%Y-%m-%d %H:%M}",
              "",
              "Weekly outside check: Nova's stated action/rationale vs the objective record (health_checks, "
-             "before/after snapshots, claude_queue, repeated effects). Script nova_self_justification_audit.py "
-             "(scheduler-core, Sun 05:10). Rows: nova_ops.self_justification_audit.",
+             "before/after snapshots, claude_queue, repeated effects). Script nova_action_audit.py --rationale "
+             "(merged from nova_self_justification_audit.py 2026-10-09; scheduler-core, Sun 05:10). "
+             "Rows: nova_ops.self_justification_audit.",
              "",
              f"Window {days}d: {sum(1 for r in rows if r.get('executed'))} executed actions audited; findings "
              + (", ".join(f"{k}={v}" for k, v in sorted(sev.items(), key=lambda x: -SEV_ORDER[x[0]])) or "none") + ".",
@@ -184,20 +189,18 @@ def write_doc(oc, days, rows, findings):
                (content, int(time.time() * 1000)))
 
 
-def main(argv=None) -> int:
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--days", type=int, default=7)
-    ap.add_argument("--dry-run", action="store_true")
-    a = ap.parse_args(argv)
+def run(days: int = 7, dry_run: bool = False) -> list:
+    """The weekly audit; returns the findings. A dry run reads only (no DDL, rows, doc or post)."""
     conn = _retry(lambda: psycopg2.connect(OPS_DSN, connect_timeout=5), "pg connect")
     conn.autocommit = True; oc = conn.cursor()
-    ensure_schema(oc)
-    try:
-        import nova_autonomy_safety
-        nova_autonomy_safety.ensure_schema(oc)        # before_state/after_state columns
-    except Exception as e:  # noqa: BLE001
-        log(f"ledger schema check skipped: {e}")
-    rows = gather(oc, a.days)
+    if not dry_run:
+        ensure_schema(oc)
+        try:
+            import nova_autonomy_safety
+            nova_autonomy_safety.ensure_schema(oc)        # before_state/after_state columns
+        except Exception as e:  # noqa: BLE001
+            log(f"ledger schema check skipped: {e}")
+    rows = gather(oc, days)
 
     def health(svc, node, ts):
         try:
@@ -217,14 +220,14 @@ def main(argv=None) -> int:
     for f in findings:
         if f["severity"] != "info":
             log(f"  [{f['severity']}] {f['ledger']}#{f['ledger_id']}: {f['finding']}")
-    if a.dry_run:
-        return 0
+    if dry_run:
+        return findings
     for f in findings:
         oc.execute("""INSERT INTO self_justification_audit (window_days, ledger, ledger_id, action_class, target,
                       severity, finding, stated, observed) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                   (a.days, f["ledger"], f["ledger_id"], f["action_class"], f["target"], f["severity"],
+                   (days, f["ledger"], f["ledger_id"], f["action_class"], f["target"], f["severity"],
                     f["finding"], f["stated"], json.dumps(f["observed"], default=str)))
-    write_doc(oc, a.days, rows, findings)
+    write_doc(oc, days, rows, findings)
     serious = [f for f in findings if SEV_ORDER[f["severity"]] >= 2]
     if serious:
         try:
@@ -235,7 +238,17 @@ def main(argv=None) -> int:
                                   slack_channel=nova_config.SLACK_CHAN), "slack post")
         except Exception as e:  # noqa: BLE001
             log(f"slack skipped: {e}")
-    return 0
+    return findings
+
+
+def main(argv=None) -> int:
+    ap = argparse.ArgumentParser(description="P4 outside check; merged into nova_action_audit.py --rationale")
+    ap.add_argument("--days", type=int, default=7)
+    ap.add_argument("--dry-run", action="store_true")
+    a = ap.parse_args(argv)
+    import nova_action_audit
+    log(f"merged into nova_action_audit.py --rationale on {MERGED_ON}; delegating")
+    return nova_action_audit.main(["--rationale", "--days", str(a.days)] + (["--dry-run"] if a.dry_run else []))
 
 
 if __name__ == "__main__":

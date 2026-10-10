@@ -1,17 +1,43 @@
 #!/usr/bin/env python3
 """Tests for nova_empathy_core.py — the 7 house categories (Security, Performance, Retry, Unit,
-Integration, Functional, Frame) plus the wish #67 privacy/regression/docs checks.
+Integration, Functional, Frame) plus the wish #67 privacy/regression/docs checks, and the
+2026-10-09 M6 merge (the Jordan lens: empathy, hold, quiet, insight sections over one read).
 Written by Jordan Koch (via Claude)."""
 import importlib.util
+import io
 import json
 import re
 import sys
 import time
 import unittest
-from datetime import date
+import urllib.request
+from contextlib import redirect_stdout
+from datetime import date, datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
+
+import psycopg2
 
 SCRIPTS = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(SCRIPTS))
+
+# Offline guard for the whole file: no real PG, no real memory server, ever (a test that forgets a
+# patch fails loudly instead of writing into Nova's memory). Tests patch over these where they need a fake.
+_GUARDS = []
+
+
+def _offline(*a, **k):
+    raise RuntimeError("offline test: real PG / HTTP blocked")
+
+
+def setUpModule():
+    for target in (patch.object(psycopg2, "connect", _offline), patch.object(urllib.request, "urlopen", _offline)):
+        target.start(); _GUARDS.append(target)
+
+
+def tearDownModule():
+    while _GUARDS:
+        _GUARDS.pop().stop()
 
 
 def _load(name, path):
@@ -52,9 +78,20 @@ class TestSecurity(unittest.TestCase):
         self.assertIsNone(pat.search(SRC))
 
     def test_read_only_over_the_world(self):
-        body = SRC[SRC.index("def gather"):SRC.index("def main")]
+        body = SRC[SRC.index("def gather"):SRC.index("def section_empathy")]   # gather + the shared read
         for verb in ("UPDATE", "DELETE", "INSERT"):
             self.assertNotIn(verb, body)
+
+    def test_shared_read_is_parameterized(self):
+        body = SRC[SRC.index("def read_shared"):SRC.index("def section_empathy")]
+        self.assertNotIn('execute(f"', body)
+        self.assertIn("NOT IN %s", body)
+        self.assertIn("make_interval(days => %s)", body)
+
+    def test_section_names_are_an_allowlist(self):
+        self.assertEqual(list(ec.SECTIONS), ["empathy", "hold", "quiet", "insight"])
+        with self.assertRaises(SystemExit), redirect_stdout(io.StringIO()), patch("sys.stderr", io.StringIO()):
+            ec.main(["--section", "x'; SELECT 1; --"])
 
     def test_machine_channels_never_count_as_him(self):
         for ch in ("hc", "healthcheck", "cron", "claude", "general", "", None):
@@ -192,22 +229,190 @@ class TestRetry(unittest.TestCase):
         self.assertEqual(len(attempts), 1)
 
     def test_gather_failure_is_fail_open(self):
-        # RETRY GAP: gather()/gateway_traces read — one attempt; a failure ends the run cleanly
-        import types
+        # RETRY GAP: read_shared()/gateway_traces read — one attempt; the empathy section ends cleanly
+        rc, posted, out = _run(["--section", "empathy"], _World(fail=True))
+        self.assertEqual((rc, posted), (0, []))
+        self.assertIn("gateway_traces read failed", out)
 
-        class Boom:
-            def execute(self, *a): raise RuntimeError("relation missing")
+    def test_broken_db_never_raises_and_every_section_is_tried(self):
+        # RETRY GAP: the section reads are single attempts; a dead DB fails each section, never the process
+        rc, posted, out = _run([], _World(fail=True))
+        self.assertEqual(rc, 1)
+        self.assertEqual(posted, [])
+        for name in ("hold", "quiet", "insight"):
+            self.assertIn(f"section {name} failed", out)
 
-        class Conn:
-            autocommit = False
 
-            def cursor(self): return Boom()
-        real_pg, real_argv = ec.psycopg2, sys.argv
-        ec.psycopg2 = types.SimpleNamespace(connect=lambda *a, **k: Conn()); sys.argv = ["x"]
-        try:
-            self.assertEqual(ec.main(), 0)
-        finally:
-            ec.psycopg2, sys.argv = real_pg, real_argv
+# ── the Jordan lens (M6, 2026-10-09): a fake world for the four sections ──────
+
+def _trace(m, d, tid, msg, resp="ok", els=False, pres=False):
+    # (created_at, created_at::date, trace_id, user_message, response, in_empathy, in_quiet, in_elsewhere, in_presence)
+    return (datetime(2026, m, d, 12, tzinfo=timezone.utc), date(2026, m, d), tid, msg, resp, True, True, els, pres)
+
+
+TRACES = [_trace(9, 1, "t1", "which zigbee sensor should I buy", "No memory of that, stop asking"),
+          _trace(9, 2, "t2", "zigbee repeaters added"),
+          _trace(9, 3, "t3", "zigbee master bedroom firmware"),
+          _trace(9, 28, "t4", "We are partners. How can I unblock you?", els=True, pres=True),
+          _trace(10, 3, "t5", "grafana is broken please fix", els=True, pres=True)]
+
+
+class _World:
+    """Answers each section's SQL by what it asks for; records every statement."""
+
+    def __init__(self, traces=TRACES, fail=False):
+        self.traces, self.fail, self.sql, self.params = list(traces), fail, [], []
+        self._one, self._all = None, []
+
+    def execute(self, sql, params=None):
+        s = " ".join(sql.split())
+        self.sql.append(s); self.params.append(params)
+        if self.fail:
+            raise RuntimeError("relation missing")
+        one, rows = None, []
+        if "trace_id, user_message, response" in s:
+            rows = self.traces
+        elif "FROM people" in s:
+            one = ("Jordan — Sr. Manager SRE, builds Nova. More about him.",)
+        elif "FROM relationship_arc" in s:
+            one = (6, "Trust so absolute it bordered on reckless. More.",
+                   [{"date": "2026-05-16", "what_shifted": "logging everything to nova_ops. ok"}])
+        elif "FROM self_model" in s:
+            one = ("I'm becoming someone who listens more than I speak. More.",)
+        elif "kind='question'" in s:
+            rows = [(1, 106, "What was the reason the printers went offline?", date(2026, 9, 28))]
+        elif "kind='proposal'" in s:
+            rows = [(23, "99", date(2026, 9, 28))]
+        elif "FROM claude_messages" in s:
+            rows = [(19, [365])]
+        elif "FROM reach_log WHERE audience" in s:
+            rows = [(36, datetime(2026, 9, 19, 19, tzinfo=timezone.utc), "dashboard")]
+        elif "FROM predictions" in s:
+            rows = [("Jordan will ask about the printer again within 3 days.", 0.75, False)] * 4
+        elif "FROM claude_sessions" in s:
+            rows = [("Fri", 10)] * 30 + [("Mon", 11)] * 5
+        elif "FROM reach_log WHERE ts" in s:
+            rows = [("filed", 11), ("dropped", 4)]
+        self._one, self._all = one, rows
+
+    def fetchone(self):
+        return self._one
+
+    def fetchall(self):
+        return self._all
+
+    def inserts(self):
+        return {(p[0], p[1]) for s, p in zip(self.sql, self.params) if s.startswith("INSERT INTO service_config")}
+
+    def reads_of(self, table):
+        return sum(f"FROM {table}" in s for s in self.sql)
+
+
+class _Conn:
+    autocommit = False
+
+    def __init__(self, cur):
+        self.cur = cur
+
+    def cursor(self):
+        return self.cur
+
+
+def _run(argv, world, llm=None, post=None, remember_fails_for=None):
+    """Run the lens against a fake world; returns (rc, [(source, text, meta)], stdout)."""
+    import nova_human_insight as hi_mod
+    import nova_quiet_sensor as qs_mod
+    posted = []
+
+    def rem(text, meta, source=ec.SOURCE, **_):
+        if source == remember_fails_for:
+            raise OSError("memory server down")
+        posted.append((source, text, meta))
+    patches = [patch.object(psycopg2, "connect", lambda *a, **k: _Conn(world)),
+               patch.object(ec, "remember", rem), patch.object(ec, "_stamp", dict),
+               patch.object(hi_mod, "remember", lambda t, m: rem(t, m, source=hi_mod.SOURCE)),
+               patch.object(hi_mod, "_stamp", dict)]
+    patches.append(patch.object(qs_mod, "_post", post) if post else patch.object(qs_mod, "llm_close", lambda fs: llm))
+    for p in patches:
+        p.start()
+    try:
+        with redirect_stdout(io.StringIO()) as buf:
+            rc = ec.main(argv)
+    finally:
+        for p in reversed(patches):
+            p.stop()
+    return rc, posted, buf.getvalue()
+
+
+class TestJordanLens(unittest.TestCase):
+    """Integration + Functional for the merged pass (M6)."""
+
+    def test_full_pass_reads_his_messages_once_and_writes_four_sections(self):
+        w = _World()
+        rc, posted, _ = _run([], w)
+        self.assertEqual(rc, 0)
+        self.assertEqual(w.reads_of("gateway_traces"), 1)             # ONE read of the shared input
+        self.assertEqual({p[0] for p in posted}, {"empathy_core", "hold", "quiet_sensor", "human_insight"})
+        self.assertEqual(sum(p[0] == "human_insight" for p in posted), 3)
+        self.assertEqual(w.inserts(), {("nova_empathy_core", "high_water"), ("nova_hold", "high_water"),
+                                       ("nova_hold", "held"), ("nova_quiet_sensor", "high_water"),
+                                       ("nova_quiet_sensor", "latest"), ("nova_human_insight", "high_water")})
+
+    def test_each_section_keeps_its_voice_and_guards(self):
+        rc, posted, _ = _run([], _World())
+        text = {p[0]: p[1] for p in posted}
+        meta = {p[0]: p[2] for p in posted}
+        self.assertIn("'zigbee'", text["empathy_core"])
+        self.assertIn("brushed it off 1 of 3", text["empathy_core"])
+        self.assertIn("1. who he is: Jordan — Sr. Manager SRE, builds Nova.", text["hold"])
+        self.assertIn("noticing, not knowing", text["quiet_sensor"])
+        self.assertIn("[slack_prompts#1->reflection_questions#106]", text["quiet_sensor"])
+        self.assertTrue(all(c for c in meta["quiet_sensor"]["cites"]))            # every finding cited
+        self.assertEqual(meta["hold"]["organ"], "nova_hold")
+        self.assertEqual(meta["quiet_sensor"]["organ"], "nova_quiet_sensor")
+        self.assertEqual(meta["empathy_core"]["organ"], "nova_empathy_core")
+
+    def test_quiet_model_line_that_speaks_of_him_is_refused(self):
+        import nova_quiet_sensor as qs_mod
+        bad = {"message": {"content": "Maybe he is stressed and avoiding these."}}
+        rc, posted, _ = _run([], _World(), post=lambda url, body, timeout: bad)
+        quiet = [p for p in posted if p[0] == "quiet_sensor"][0]
+        self.assertIn(qs_mod.FALLBACK_CLOSE, quiet[1])
+        self.assertNotIn("stressed", quiet[1])
+        self.assertFalse(quiet[2]["model_close"])
+
+    def test_one_section_alone(self):
+        w = _World()
+        rc, posted, _ = _run(["--section", "hold"], w)
+        self.assertEqual((rc, [p[0] for p in posted]), (0, ["hold"]))
+        self.assertEqual(w.inserts(), {("nova_hold", "high_water"), ("nova_hold", "held")})
+        self.assertEqual(w.reads_of("predictions"), 0)
+
+    def test_insight_alone_never_reads_his_messages(self):
+        w = _World()
+        rc, posted, _ = _run(["--section", "insight"], w)
+        self.assertEqual(w.reads_of("gateway_traces"), 0)
+        self.assertEqual({p[0] for p in posted}, {"human_insight"})
+
+    def test_dry_run_prints_and_writes_nothing(self):
+        w = _World()
+        rc, posted, out = _run(["--dry-run", "--no-llm"], w)
+        self.assertEqual((rc, posted, w.inserts()), (0, [], set()))
+        for marker in ("Empathy core,", "Hold,", "Quiet sensor,", "• [Human insight]"):
+            self.assertIn(marker, out)
+
+    def test_a_failing_section_never_stops_the_others(self):
+        rc, posted, out = _run([], _World(), remember_fails_for="hold")
+        self.assertEqual(rc, 1)
+        self.assertIn("section hold failed", out)
+        self.assertEqual({p[0] for p in posted}, {"empathy_core", "quiet_sensor", "human_insight"})
+
+    def test_shared_read_matches_what_each_section_used_to_read(self):
+        sh = ec.read_shared(_World())
+        self.assertEqual(sh["empathy"], [(t[1], t[3], t[4]) for t in TRACES])
+        self.assertEqual(sh["topics"], [(t[1], t[2], t[3]) for t in TRACES])
+        self.assertEqual((sh["to_me"], sh["presence_dates"], sh["last_date"]),
+                         (2, {date(2026, 9, 28), date(2026, 10, 3)}, date(2026, 10, 3)))
 
 
 class TestUnit(unittest.TestCase):

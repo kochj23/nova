@@ -29,6 +29,14 @@ Usage:
     nova_buick8_log.py --backfill   # same over 30 days (idempotent)
     nova_buick8_log.py --list       # open entries, most recent first
     nova_buick8_log.py --dry-run    # print what each feeder would log, write nothing
+    nova_buick8_log.py --expiry [--horizon H] [--dry-run]   # the Rama Window (daily 06:15)
+    nova_buick8_log.py --case ID [--dry-run]                # Mina's Typescript for one entry
+    nova_buick8_log.py --snapshot ID [--dry-run]            # Rama's preservation step (typescript + rama_window row)
+
+Case modes (merged 2026-10-09, organ audit M13): the Rama Window (nova_rama_window.py) and Mina's
+Typescript (nova_mina_typescript.py) only ever worked on Buick 8 entries, so they are modes of the
+logbook now. Their code, the rama_window table, rama_window/retention_hours and
+mina_typescript/out_dir are unchanged; this module calls their functions.
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -355,13 +363,47 @@ def list_open(limit: int = 30) -> int:
     return 0
 
 
+# ── case modes (merged from the Rama Window and Mina's Typescript, 2026-10-09) ──
+
+def run_expiry(dry_run: bool = False, horizon_h: float | None = None) -> int:
+    """The Rama Window: open entries' perishable evidence ranked by time to expiry; records
+    rama_window rows and files one claude_queue line (nova_rama_window.run, unchanged)."""
+    import nova_rama_window as R
+    R.run(dry=dry_run, horizon_h=R.HORIZON_H if horizon_h is None else horizon_h)
+    return 0
+
+
+def run_case(case_id: int, dry_run: bool = False) -> int:
+    """Mina's Typescript for one entry, written to mina_typescript/out_dir (nova_mina_typescript.run)."""
+    import nova_mina_typescript as M
+    return 0 if M.run(case_id, dry=dry_run) else 1
+
+
+def run_snapshot(case_id: int, dry_run: bool = False) -> int:
+    """Rama's preservation step: the typescript plus a rama_window 'snapshot' row, so the daily
+    expiry run deletes it once the entry closes (nova_rama_window.snapshot)."""
+    import nova_rama_window as R
+    return 0 if R.snapshot(case_id, dry=dry_run) else 1
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--backfill", action="store_true", help="scan 30 days instead of 2")
     ap.add_argument("--days", type=int, default=None)
     ap.add_argument("--dry-run", action="store_true")
     ap.add_argument("--list", action="store_true")
+    ap.add_argument("--expiry", action="store_true",
+                    help="Rama Window: open entries' evidence expiring soon; record + queue")
+    ap.add_argument("--horizon", type=float, default=None, help="with --expiry: hours ahead (default 48)")
+    ap.add_argument("--case", type=int, metavar="ID", help="Mina's Typescript for one entry")
+    ap.add_argument("--snapshot", type=int, metavar="ID", help="preserve one entry's typescript (Rama step)")
     a = ap.parse_args(argv)
+    if a.expiry:
+        return run_expiry(a.dry_run, a.horizon)
+    if a.case:
+        return run_case(a.case, a.dry_run)
+    if a.snapshot:
+        return run_snapshot(a.snapshot, a.dry_run)
     if a.list:
         return list_open()
     return run(a.days or (30 if a.backfill else 2), a.dry_run)

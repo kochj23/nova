@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 """Tests for nova_doctor.py — the 7 house categories (Security, Performance, Retry, Unit,
-Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
+Integration, Functional, Frame). Since merge M4 (2026-10-09) nova_doctor.main() is a thin wrapper around
+`nova_selfcheck.py --boot`; the checks still live here and the end-to-end boot run is exercised through the
+real nova_selfcheck module with every side effect stubbed. Written by Jordan Koch (via Claude)."""
 import importlib.util
 import io
 import json
@@ -8,6 +10,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import types
 import unittest
@@ -55,6 +58,17 @@ def _load(name, path):
 
 
 doc = _load("doctor_under_test", SCRIPT)
+import nova_selfcheck as sc  # noqa: E402  (import-clean; every side effect is patched per test below)
+_TMP = tempfile.TemporaryDirectory()
+
+
+@contextmanager
+def _sc_quiet():
+    """Point the real nova_selfcheck at a tempdir and stub its PG/shell; restore everything afterwards."""
+    with patch.object(sc, "LOG", Path(_TMP.name) / "selfcheck.log"), patch.object(sc, "STATE_DIR", Path(_TMP.name) / "state"), \
+         patch.object(sc, "pg", MagicMock(return_value=None)), patch.object(sc, "sh", MagicMock(return_value=(0, ""))), \
+         patch.object(sc, "DRY", False), patch.object(sc, "results", []):
+        yield
 
 
 class _Resp:
@@ -107,14 +121,22 @@ def _ha(states):
 ALL_GREEN = [(n, doc.OK, "fine") for n, _ in doc.CHECKS]
 
 
-def _run_main(results, argv=("nova_doctor.py",), token="xoxb-test-token", slack=None):
+def _run_main(results, argv=(), slack=None):
+    """Run nova_doctor.main(argv) -> nova_selfcheck --boot end to end with these check results; Slack via the
+    real selfcheck.slack() with the Keychain read and urlopen stubbed."""
     checks = [(n, (lambda s=s, d=d: (s, d))) for n, s, d in results]
     posted = []
     slack = slack or (lambda req, timeout=None: posted.append(json.loads(req.data)) or _Resp({"ok": True}))
-    with patch.object(doc, "CHECKS", checks), patch.object(sys, "argv", list(argv)), patch.object(doc, "SLACK_TOKEN", token), \
-         patch("urllib.request.urlopen", slack), redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
-        rc = doc.main()
+    with _sc_quiet(), _modstub({"nova_doctor": doc}), patch.object(doc, "CHECKS", checks), \
+         patch.object(sc.subprocess, "check_output", return_value="xoxb-test-token\n"), \
+         patch.object(sc.urllib.request, "urlopen", slack), redirect_stdout(io.StringIO()) as out, \
+         redirect_stderr(io.StringIO()) as err:
+        rc = doc.main(list(argv))
     return rc, posted, out.getvalue(), err.getvalue()
+
+
+def _report_lines(out):
+    return out[out.index(":robot_face:"):].splitlines()
 
 
 class TestSecurity(unittest.TestCase):
@@ -130,8 +152,17 @@ class TestSecurity(unittest.TestCase):
 
     def test_slack_post_carries_the_bearer_token_only_in_the_header(self):
         rc, posted, _, _ = _run_main(ALL_GREEN)
-        self.assertEqual(posted[0]["channel"], "C_TEST_BB")
+        self.assertEqual(posted[0]["channel"], sc.SLACK_DIGEST_CHANNEL)   # one destination: selfcheck's
         self.assertNotIn("xoxb", json.dumps(posted[0]))
+
+    def test_ha_heal_goes_through_the_one_fix_gate(self):
+        ran = []
+        with _sc_quiet(), _modstub({"nova_doctor": doc}), patch.object(doc, "CHECKS", []), \
+             patch.object(doc, "wait_for_boot", lambda: None), patch.object(doc, "heal_home_assistant", lambda: ran.append(1)), \
+             patch.object(sc, "slack", MagicMock()), redirect_stdout(io.StringIO()):
+            doc.main(["--boot", "--dry-run"])
+        self.assertEqual(ran, [])                                # dry-run: no HA restart
+        self.assertIn("[dry-run] would: boot: restart Home Assistant", (Path(_TMP.name) / "selfcheck.log").read_text())
 
     def test_face_stack_canary_runs_a_fixed_command_without_a_shell(self):
         self.assertNotIn("shell=True", SRC)
@@ -146,11 +177,11 @@ class TestPerformance(unittest.TestCase):
     def test_report_assembly_for_10k_checks_is_fast(self):
         results = [(f"check{i}", (doc.OK, doc.WARN, doc.FAIL)[i % 3], f"d{i}") for i in range(10_000)]
         t0 = time.perf_counter()
-        rc, posted, out, _ = _run_main(results)
+        worst, report = doc.format_report(results)
         self.assertLess(time.perf_counter() - t0, 2.0)
-        self.assertEqual(rc, 1)
-        self.assertEqual(out.count("\n"), 10_001)      # header + one line per check
-        self.assertTrue(out.startswith(":robot_face: *Nova boot check — FAILURES*"))
+        self.assertEqual(worst, doc.FAIL)
+        self.assertEqual(report.count("\n"), 10_000)    # header + one line per check
+        self.assertTrue(report.startswith(":robot_face: *Nova boot check — FAILURES*"))
 
 
 class TestRetry(unittest.TestCase):
@@ -190,10 +221,10 @@ class TestRetry(unittest.TestCase):
             self.assertEqual(doc.check_wal_archiver(), (doc.WARN, "could not read pg_stat_archiver: refused"))
 
     def test_slack_post_failure_never_breaks_the_run(self):
-        # RETRY GAP: post_slack() — one attempt; a Slack outage is logged to stderr and main() still returns
+        # RETRY GAP: nova_selfcheck.slack() — one attempt; a Slack outage is logged and the boot run still returns
         rc, posted, out, err = _run_main(ALL_GREEN, slack=lambda req, timeout=None: (_ for _ in ()).throw(OSError("slack down")))
         self.assertEqual(rc, 0)
-        self.assertIn("slack post failed: slack down", err)
+        self.assertIn("slack post failed: slack down", out)
 
 
 class TestUnit(unittest.TestCase):
@@ -276,6 +307,18 @@ class TestIntegration(unittest.TestCase):
             doc.heal_home_assistant()
         self.assertEqual(ran, [])
 
+    def test_boot_rows_land_in_selfcheck_runs(self):
+        with _sc_quiet(), _modstub({"nova_doctor": doc}), patch.object(doc, "CHECKS", [("Face stack", lambda: (doc.FAIL, "timeout")),
+                                                                                    ("Disk", lambda: (doc.WARN, "88%"))]), \
+             patch.object(sc, "slack", MagicMock()), redirect_stdout(io.StringIO()):
+            rc = doc.main([])
+            inserts = [c[0][0] for c in sc.pg.call_args_list if "INSERT INTO selfcheck_runs" in c[0][0]]
+            self.assertEqual(sc.slack.call_args[0][0], sc.SLACK_ALERT_CHANNEL)
+        self.assertEqual(rc, 1)
+        self.assertEqual(len(inserts), 2)
+        self.assertIn("$novaq$boot-face-stack$novaq$, $novaq$FAIL$novaq$", inserts[0])
+        self.assertIn("$novaq$boot-disk$novaq$, $novaq$WARN$novaq$", inserts[1])
+
     def test_check_registry_covers_the_boot_killers(self):
         names = [n for n, _ in doc.CHECKS]
         for n in ("Volumes", "Postgres", "WAL archive", "Gateway", "MLX", "Face stack", "Disk", "Home Assistant"):
@@ -289,39 +332,52 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(len(posted), 1)
         self.assertTrue(posted[0]["text"].startswith(":robot_face: *Nova boot check — all green*\n:white_check_mark: *Volumes* — fine"))
-        self.assertEqual(posted[0]["unfurl_links"], False)
-        self.assertEqual(out.strip(), posted[0]["text"])
+        self.assertIn("merged into nova_selfcheck.py --boot on 2026-10-09", out)
+        self.assertEqual("\n".join(_report_lines(out)[:len(ALL_GREEN) + 1]), posted[0]["text"])
 
     def test_warn_does_not_fail_the_run_fail_does(self):
         rc, posted, out, _ = _run_main([("Ollama", doc.WARN, "not serving"), ("Disk", doc.OK, "x")])
         self.assertEqual(rc, 0)
         self.assertIn("warnings*", posted[0]["text"])
         self.assertIn(":warning: *Ollama* — not serving", posted[0]["text"])
+        self.assertEqual(posted[0]["channel"], sc.SLACK_DIGEST_CHANNEL)
         rc, posted, _, _ = _run_main([("Postgres", doc.FAIL, "unreachable"), ("Ollama", doc.WARN, "x")])
         self.assertEqual(rc, 1)
+        self.assertEqual(posted[0]["channel"], sc.SLACK_ALERT_CHANNEL)
         self.assertIn("FAILURES*", posted[0]["text"])
         self.assertIn(":rotating_light: *Postgres* — unreachable", posted[0]["text"])
 
     def test_boot_mode_waits_and_heals_before_checking(self):
         order = []
-        with patch.object(doc, "wait_for_boot", lambda: order.append("wait")), patch.object(doc, "heal_home_assistant", lambda: order.append("heal")), \
-             patch.object(doc, "CHECKS", [("Disk", lambda: order.append("check") or (doc.OK, "x"))]), patch.object(doc, "SLACK_TOKEN", ""), \
-             patch.object(sys, "argv", ["nova_doctor.py", "--boot"]), redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+        with _sc_quiet(), _modstub({"nova_doctor": doc}), patch.object(doc, "wait_for_boot", lambda: order.append("wait")), \
+             patch.object(doc, "heal_home_assistant", lambda: order.append("heal")), patch.object(sc, "slack", MagicMock()), \
+             patch.object(doc, "CHECKS", [("Disk", lambda: order.append("check") or (doc.OK, "x"))]), \
+             patch.object(sys, "argv", ["nova_doctor.py", "--boot"]), redirect_stdout(io.StringIO()):
             rc = doc.main()
         self.assertEqual(order, ["wait", "heal", "check"])
         self.assertEqual(rc, 0)
 
-    def test_no_token_skips_slack_and_slack_error_is_reported(self):
-        rc, posted, out, err = _run_main(ALL_GREEN, token="")
+    def test_wrapper_maps_args_onto_selfcheck_boot(self):
+        seen = []
+        with _sc_quiet(), patch.object(sc, "main", lambda a: seen.append(a) or 7), redirect_stdout(io.StringIO()):
+            self.assertEqual(doc.main([]), 7)
+            doc.main(["--boot"])
+            doc.main(["--boot", "--dry-run"])
+        self.assertEqual(seen, [["--boot", "--now"], ["--boot"], ["--boot", "--dry-run"]])
+
+    def test_failed_post_still_reports_on_stdout(self):
+        # error path: the Slack post fails -> selfcheck.slack logs it; the report is still printed and rc kept
+        rc, posted, out, err = _run_main([("Disk", doc.FAIL, "96%")],
+                                         slack=lambda req, timeout=None: (_ for _ in ()).throw(OSError("no token")))
+        self.assertEqual(rc, 1)
         self.assertEqual(posted, [])
-        self.assertIn("no Slack token; skipping post", err)
-        rc, posted, out, err = _run_main(ALL_GREEN, slack=lambda req, timeout=None: _Resp({"ok": False, "error": "channel_not_found"}))
-        self.assertIn("slack error: channel_not_found", err)
+        self.assertIn(":rotating_light: *Disk* — 96%", out)
 
 
 class TestFrame(unittest.TestCase):
     def test_import_never_runs_checks(self):
-        self.assertIn('if __name__ == "__main__":\n    sys.exit(main())', SRC)
+        self.assertIn('if __name__ == "__main__":', SRC)
+        self.assertIn("sys.exit(main())", SRC)
         code = ("import sys, types\n"
                 "cfg = types.ModuleType('nova_config'); cfg.slack_bot_token = lambda: ''; cfg.SLACK_API = ''; cfg.SLACK_BB = ''\n"
                 "sys.modules['nova_config'] = cfg\n"
@@ -330,6 +386,11 @@ class TestFrame(unittest.TestCase):
                            env={**os.environ, "NOVA_TEST_QUIET": "1"})
         self.assertEqual(r.returncode, 0, r.stderr)
         self.assertEqual(r.stdout.strip(), "10")
+
+    def test_help_does_not_run_checks(self):
+        with redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(doc.main(["--help"]), 0)
+        self.assertIn("merged into nova_selfcheck.py --boot", out.getvalue())
 
     def test_compiles(self):
         r = subprocess.run([sys.executable, "-m", "py_compile", str(SCRIPT)], capture_output=True, text=True, timeout=30)

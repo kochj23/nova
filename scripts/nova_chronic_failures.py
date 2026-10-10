@@ -6,6 +6,10 @@ shared by both schedulers) becomes ONE open claude_queue item: "Chronic failure:
 carrying the per-day counts and the last error tail. One open item per task; a closed item lets a new one
 form if the task keeps failing. Nothing else is written. --dry-run --selftest.
 Jordan 2026-10-04: approved wish #63 ("approve all the wishes and make them happen").
+
+MERGED 2026-10-09 (organ-audit merge M2): the daily run is now `nova_task_sentinel.py --daily`
+(same thresholds, query, wording and queue session). main() is a thin wrapper for it; chronic()
+and the thresholds stay here because nova_task_sentinel and nova_busab import them.
 """
 import sys, os
 from datetime import date, timedelta
@@ -30,34 +34,9 @@ def chronic(rows, today, fail_per_day=FAIL_PER_DAY, days=DAYS):
     return {t: c for t, c in per.items() if len(c) == len(want) and all(n > fail_per_day for n in c.values())}
 
 def main():
-    dry = "--dry-run" in sys.argv
-    conn = psycopg2.connect(DSN, connect_timeout=8); conn.autocommit = True; cur = conn.cursor()
-    cur.execute("""SELECT task_id, (to_timestamp(ended_at/1000.0) AT TIME ZONE 'America/Los_Angeles')::date, count(*)
-                   FROM scheduler_runs WHERE status <> 'success'
-                   AND ended_at > extract(epoch from now() - interval '%s days') * 1000 GROUP BY 1, 2""", (DAYS + 1,))
-    found = chronic(cur.fetchall(), date.today())
-    made = 0
-    for task, counts in sorted(found.items()):
-        cur.execute("SELECT 1 FROM claude_queue WHERE description LIKE %s AND status IN %s LIMIT 1", (PREFIX + task + " %", OPEN))
-        if cur.fetchone():
-            log(f"{task}: already queued"); continue
-        cur.execute("SELECT status, left(coalesce(error_tail, stdout_tail, ''), 400) FROM scheduler_runs WHERE task_id=%s "
-                    "AND status <> 'success' ORDER BY ended_at DESC LIMIT 1", (task,))
-        st, tail = cur.fetchone() or ("?", "")
-        avg = sum(counts.values()) / len(counts)
-        desc = f"{PREFIX}{task} — {avg:.0f} non-success runs/day for {DAYS} days: fix or retire (wish #63)"
-        ctx = ("per-day: " + ", ".join(f"{d}={n}" for d, n in sorted(counts.items())) +
-               f"\nlast status: {st}\nlast error tail: {tail}\n"
-               "Decide: fix the cause, or retire the task (disable in scheduler yaml with a one-line reason). "
-               "Do not just suppress the alert.")
-        if dry:
-            log(f"would queue: {desc}"); continue
-        cur.execute("SELECT session_id FROM claude_sessions ORDER BY started_at DESC LIMIT 1")
-        sid = (cur.fetchone() or ["chronic-failures"])[0]
-        cur.execute("INSERT INTO claude_queue (session_id, created_at, updated_at, status, priority, description, context) "
-                    "VALUES (%s, now(), now(), 'queued', 4, %s, %s)", (sid, desc, ctx))
-        made += 1; log(f"queued: {desc}")
-    log(f"{len(found)} chronic task(s), {made} new queue item(s)")
+    log("merged into nova_task_sentinel.py (--daily) on 2026-10-09; running that mode")
+    import nova_task_sentinel
+    nova_task_sentinel.run_daily(dry_run="--dry-run" in sys.argv)
 
 def selftest():
     t = date(2026, 10, 4); y = lambda i: t - timedelta(days=i)

@@ -22,9 +22,13 @@ Minimal first version:
     name per day, since the burial.
 Each remaining box and each day with restarts is filed to claude_queue (deduplicated).
 
+MERGED into nova_yellow_eye.py on 2026-10-09 (merge M5) as `--burials` / `--bury`: this module
+keeps the logic, table, sequence and queue session; its CLI is a thin wrapper that forwards there.
+
 CLI:     --run [--dry-run]   --bury NAME [--kind K] [--host H] [--by WHO]   --selftest
+         (= nova_yellow_eye.py --burials [--dry-run] / --bury NAME ...)
 Tables:  earth_box_burials (+ sequence earth_box_epoch). No service_config keys.
-Schedule: daily 05:20 (`nova_earth_boxes.py --run`).
+Schedule: daily 05:20 (`nova_earth_boxes.py --run`, or `nova_yellow_eye.py --burials`).
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -133,11 +137,13 @@ def restart_list(src: str) -> str:
     return m.group(1) if m else ""
 
 
-def local_sources(plist_dirs=PLIST_DIRS) -> list:
-    out = [(SEED_HOST, str(p), p.name + "\n" + _read(p))
+def local_sources(plist_dirs=PLIST_DIRS, read=None, crontab=None) -> list:
+    """`read`/`crontab` let nova_yellow_eye's shared Scan supply files it has already read."""
+    read, crontab = read or _read, crontab or _crontab
+    out = [(SEED_HOST, str(p), p.name + "\n" + read(p))
            for d in plist_dirs if d.is_dir() for p in sorted(d.glob("*.plist"))]
-    out += [(SEED_HOST, "crontab", _crontab()), (SEED_HOST, str(SCHEDULER_YAML), _read(SCHEDULER_YAML)),
-            (SEED_HOST, "big_brother SUBAGENTS", restart_list(_read(BIG_BROTHER)))]
+    out += [(SEED_HOST, "crontab", crontab()), (SEED_HOST, str(SCHEDULER_YAML), read(SCHEDULER_YAML)),
+            (SEED_HOST, "big_brother SUBAGENTS", restart_list(read(BIG_BROTHER)))]
     return out
 
 
@@ -238,7 +244,8 @@ def findings(bx: list, rs: dict) -> list:
     return out
 
 
-def run(dry: bool = False) -> dict:
+def run(dry: bool = False, sources: list | None = None) -> dict:
+    """The count. `sources` = local_sources() already read (nova_yellow_eye's Scan)."""
     conn = W.connect()
     try:
         cur = conn.cursor()
@@ -247,7 +254,7 @@ def run(dry: bool = False) -> dict:
             for n, k, t, by in SEED:
                 bury(cur, n, k, SEED_HOST, t, by)
         buried = burials(cur)
-        sources = local_sources()
+        sources = local_sources() if sources is None else sources
         remote = remote_sources()
         if remote is None:
             log(f"{NOVA_CORE} unreachable; its boxes not counted this run")
@@ -289,10 +296,11 @@ def selftest() -> int:
 
 
 def main(argv=None) -> int:
+    """Thin wrapper (merge M5): the run lives in nova_yellow_eye --burials / --bury."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--run", action="store_true", help="count boxes and restarts, file findings to claude_queue")
+    ap.add_argument("--run", action="store_true", help="= nova_yellow_eye.py --burials")
     ap.add_argument("--dry-run", action="store_true", help="with --run: print the count, write nothing")
-    ap.add_argument("--bury", metavar="NAME", help="record a retirement (tombstone row)")
+    ap.add_argument("--bury", metavar="NAME", help="= nova_yellow_eye.py --bury NAME")
     ap.add_argument("--kind", default="subagent")
     ap.add_argument("--host", default=SEED_HOST)
     ap.add_argument("--by", default="jordan")
@@ -301,23 +309,17 @@ def main(argv=None) -> int:
     if a.selftest:
         return selftest()
     if a.bury:
-        if not re.fullmatch(r"[\w.@-]{1,80}", a.bury):
-            ap.error("bad name")
-        conn = W.connect()
-        try:
-            cur = conn.cursor()
-            ensure_schema(cur)
-            bury(cur, a.bury, a.kind, a.host, None, a.by)
-            log(f"buried {a.kind} {a.bury} on {a.host}")
-        finally:
-            conn.close()
+        fwd = ["--bury", a.bury, "--kind", a.kind, "--host", a.host, "--by", a.by]
+    elif a.run:
+        fwd = ["--burials"] + (["--dry-run"] if a.dry_run else [])
+    else:
+        ap.print_help()
         return 0
-    if a.run:
-        run(dry=a.dry_run)
-        return 0
-    ap.print_help()
-    return 0
+    log(f"merged into nova_yellow_eye on 2026-10-09: running nova_yellow_eye {' '.join(fwd)}")
+    import nova_yellow_eye
+    return nova_yellow_eye.main(fwd)
 
 
 if __name__ == "__main__":
+    sys.modules.setdefault("nova_earth_boxes", sys.modules[__name__])   # one module object
     sys.exit(main())

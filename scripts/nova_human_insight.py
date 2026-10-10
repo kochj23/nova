@@ -19,17 +19,21 @@ Insights are written to her vector memory (source='human_insight'), deduped by a
 high-water in service_config, and the organ is strictly read-only over the world.
 Conventions mirror nova_pattern_sense.py (the previous granted wish).
 
-  nova_human_insight.py            # run (writes new insights to memory)
+MERGED 2026-10-09 (organ audit M6): Human Insight is now the 'insight' section of nova_empathy_core.py
+(the Jordan lens). Same source='human_insight', same service_config key (nova_human_insight/high_water),
+same insight texts. This file keeps the pure logic, the memory/state helpers the section calls; running
+it directly runs `nova_empathy_core.py --section insight`.
+
+  nova_human_insight.py            # == nova_empathy_core.py --section insight
   nova_human_insight.py --dry-run  # print insights, write nothing
   nova_human_insight.py --selftest # pure-logic assertions
 """
-import argparse
 import json
 import sys
 from collections import Counter
-from datetime import datetime, timezone
+from datetime import datetime
 
-import psycopg2
+import psycopg2  # noqa: F401 — kept: callers patch nova_human_insight.psycopg2.connect (the shared module)
 
 OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
@@ -181,63 +185,13 @@ def _fresh(seen, sig, today):
         return True
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Nova's Human Insight — read the humans from her own records")
-    ap.add_argument("--dry-run", action="store_true")
-    args = ap.parse_args()
-    try:
-        conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
-    except Exception as e:
-        log(f"no PG ({e}) — fail-open, nothing to do"); return 0
-    conn.autocommit = True
-    cur = conn.cursor()
-    today = datetime.now(timezone.utc).date()
-    found = []
-    # 1. relationship predictions
-    try:
-        cur.execute("SELECT statement, confidence, outcome='correct' FROM predictions "
-                    "WHERE domain='relationship' AND status='resolved' AND outcome IN ('correct','incorrect')")
-        for p in prediction_insights(cur.fetchall()):
-            found.append(("prediction", p["theme"], p))
-    except Exception as e:
-        log(f"predictions read failed ({e})")
-    # 2. rhythm
-    try:
-        cur.execute("SELECT to_char(started_at,'Dy'), extract(hour from started_at)::int FROM claude_sessions "
-                    "WHERE started_at > now() - interval '30 days'")
-        rows = cur.fetchall()
-        r = rhythm_insight(Counter(d for d, _ in rows), Counter(h for _, h in rows), len(rows))
-        if r:
-            found.append(("rhythm", f"{r['day']}-{r['band'][0]}", r))
-    except Exception as e:
-        log(f"sessions read failed ({e})")
-    # 3. silence
-    try:
-        cur.execute("SELECT status, count(*) FROM reach_log WHERE ts > now() - interval '30 days' GROUP BY 1")
-        c = dict(cur.fetchall())
-        s = silence_insight(c.get("filed", 0), c.get("dropped", 0), c.get("sent", 0))
-        if s:
-            found.append(("silence", "held", s))
-    except Exception as e:
-        log(f"reach_log read failed ({e})")
-    log(f"{len(found)} insight(s) derived")
-    seen = load_seen(cur); stamp = _stamp(); surfaced = 0
-    for kind, key, p in found:
-        sig = f"{kind}:{key}"
-        if not _fresh(seen, sig, today):
-            continue
-        text = insight_text(kind, p)
-        meta = {"organ": STATE_SERVICE, "kind": kind, "detail": {k: v for k, v in p.items() if not isinstance(v, tuple)},
-                **({"lineage": stamp} if stamp else {})}
-        if args.dry_run:
-            print("•", text)
-        else:
-            remember(text, meta); seen[sig] = today.isoformat()
-        surfaced += 1
-    if not args.dry_run:
-        save_seen(cur, seen)
-    log(f"surfaced {surfaced} new insight(s)")
-    return 0
+def main(argv=None):
+    """Merged into nova_empathy_core.py on 2026-10-09 (M6): a thin wrapper for old invocations."""
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import nova_empathy_core as ec
+    log("merged into nova_empathy_core.py on 2026-10-09 (organ audit M6) — running its insight section")
+    return ec.main(["--section", "insight", *(sys.argv[1:] if argv is None else argv)])
 
 
 def demo():

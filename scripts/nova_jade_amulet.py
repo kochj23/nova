@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""nova_jade_amulet.py — THE JADE AMULET: where everything Nova runs came from, and what changed.
+"""nova_jade_amulet.py — THE JADE AMULET: what is installed, what is running, and what changed.
 
 From Lovecraft's "The Hound": two collectors, St. John and the narrator, dig up a grave in a
 Holland churchyard and carry off a small amulet of carved green jade for the secret museum
@@ -18,9 +18,23 @@ Each --run writes one row per item to jade_amulet_manifest, diffs against the pr
 (added / removed / changed), and matches each change to a claude_actions row in the window that
 mentions the item. Unmatched changes go to the Buick 8 Logbook as 'substrate_change'.
 
-CLI:   --run [--dry-run]   --show   --diff   --selftest
-Table: jade_amulet_manifest (contract: the Doorstep Test reads it)
-Schedule: daily 04:30.
+Kinds (one manifest, four sources):
+  ollama_model, launchd_plist  stored in jade_amulet_manifest by --run (as above)
+  running_code   (--running-code) daemons whose live process is older than their script on disk.
+                 Merged from nova_daemon_staleness.py on 2026-10-09: same sweep, same nova_notify
+                 'stale-code' alert deduped per label (stale-code:<label>, 6 h window), same
+                 claude_actions 'staleness-check' row. Report only, never restarts. Daily, not 30-min.
+  value_row      (--values) the rules that govern her (values + never_do rows), held in Peaslee's
+                 Hand's tamper-evident hash chain (peaslee_chain, peaslee_roots, NAS root file).
+                 Merged from nova_peaslee_hand.py on 2026-10-09 as a mode only: it calls Peaslee's
+                 own run / verify_cmd / show; the chain logic lives in nova_peaslee_hand.py, unchanged.
+  --show lists the stored kinds plus value_row from the chain. --all runs --run, --running-code
+  and --values in turn (each isolated), the one daily job.
+
+CLI:   --run [--dry-run]   --show   --diff   --running-code [--dry-run]
+       --values [--dry-run | --verify | --show]   --all [--dry-run]   --selftest
+Table: jade_amulet_manifest (contract: the Doorstep Test reads it: kind 'ollama_model', name = tag, digest)
+Schedule: daily 04:30 (--all).
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
@@ -242,11 +256,76 @@ def show(only_diff: bool = False) -> int:
                 print(f"{c['change']:<8} {c['kind']:<14} {c['name']}  action={c['action_id']}")
             return 0
         print(f"snapshot {ts or 'none'}")
-        for i in sorted(items, key=lambda i: (i["kind"], i["name"])):
+        for i in sorted(items, key=lambda i: (i["kind"], i["name"])) + value_rows(cur):
             print(f"{i['kind']:<14} {(i['digest'] or '-')[:12]}  {i['name']}")
         return 0
     finally:
         conn.close()
+
+
+# ── running_code (merged from nova_daemon_staleness.py, 2026-10-09) ────────────
+
+def running_code(dry: bool = False) -> list:
+    """Daemons running code older than their script on disk. Calls the staleness module's own
+    sweep (discover, check, notify deduped per label, log to claude_actions). DB optional, as before.
+    dry: report only — no notify, no PG write."""
+    import nova_daemon_staleness as S
+    conn = None
+    if not dry:
+        try:
+            import psycopg2
+            conn = psycopg2.connect(S.DSN)   # not W.connect: _log_action uses savepoints, needs a transaction
+        except Exception:  # noqa: BLE001 — DB optional; the check + notify still work
+            conn = None
+    try:
+        stale = S.run_once(conn, dry=dry)
+    finally:
+        if conn is not None:
+            conn.close()
+    pre = "DRY RUN " if dry else ""
+    if not stale:
+        print(f"daemon_staleness: {pre}all daemons running current code")
+    else:
+        print(f"daemon_staleness: {pre}{len(stale)} daemon(s) running STALE code:")
+        for r in stale:
+            print(f"  {r['label']:45} on-disk {r['newer_by_h']}h newer than pid {r['pid']}")
+    return stale
+
+
+# ── value_row (Peaslee's Hand, merged as a mode 2026-10-09; chain logic stays in its module) ──
+
+def values(mode: str = "run", dry: bool = False) -> int:
+    """Peaslee's Hand, unchanged: mode 'run' (extend chain, write NAS root), 'verify', 'show'."""
+    import nova_peaslee_hand as P
+    cur = W.connect().cursor()
+    if mode == "verify":
+        return P.verify_cmd(cur)
+    if mode == "show":
+        return P.show(cur)
+    return P.run(cur, dry=dry)
+
+
+def value_rows(cur) -> list:
+    """value_row items as the Peaslee chain records them now (read-only)."""
+    import nova_peaslee_hand as P
+    return [{"kind": "value_row", "name": f"{t}:{k}", "version": None,
+             "digest": P.sha(P.canon(row)), "origin": "peaslee_chain"}
+            for (t, k), row in sorted(P.state_of(P.load_chain(cur)).items())]
+
+
+def run_all(dry: bool = False) -> int:
+    """The daily job: manifest, running code, values. One failing never stops the others."""
+    rc = 0
+    for name, fn in (("manifest", lambda: run(dry=dry)), ("running_code", lambda: running_code(dry=dry)),
+                     ("values", lambda: values("run", dry=dry))):
+        try:
+            out = fn()
+            if isinstance(out, int) and out:
+                rc = 1
+        except Exception as e:  # noqa: BLE001 — isolate each mode
+            log(f"{name} failed: {e}")
+            rc = 1
+    return rc
 
 
 def selftest() -> int:
@@ -269,13 +348,31 @@ def selftest() -> int:
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--run", action="store_true", help="snapshot, diff, write, report unmatched changes")
-    ap.add_argument("--dry-run", action="store_true", help="with --run: print snapshot and diff, write nothing")
-    ap.add_argument("--show", action="store_true", help="latest snapshot")
+    ap.add_argument("--dry-run", action="store_true",
+                    help="with --run/--running-code/--values/--all: report only, write or notify nothing")
+    ap.add_argument("--show", action="store_true", help="latest snapshot (with --values: Peaslee's roots)")
     ap.add_argument("--diff", action="store_true", help="diff of the last two stored snapshots")
+    ap.add_argument("--running-code", action="store_true",
+                    help="daemons running older code than their script on disk (was nova_daemon_staleness)")
+    ap.add_argument("--values", action="store_true",
+                    help="Peaslee's Hand: hash the rules, extend the chain, write the root off-host")
+    ap.add_argument("--verify", action="store_true", help="with --values: recompute the chain, check off-host roots")
+    ap.add_argument("--all", action="store_true", help="--run, --running-code and --values in turn (daily job)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
+    if a.all:
+        return run_all(dry=a.dry_run)
+    if a.values:
+        return values("verify" if a.verify else "show" if a.show else "run", dry=a.dry_run)
+    if a.running_code:
+        try:
+            running_code(dry=a.dry_run)
+        except Exception as e:  # noqa: BLE001 — as nova_daemon_staleness did: report, exit 1
+            print(f"daemon_staleness: sweep failed: {e}", file=sys.stderr)
+            return 1
+        return 0
     if a.run:
         run(dry=a.dry_run)
         return 0

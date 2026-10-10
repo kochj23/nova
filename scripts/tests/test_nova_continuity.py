@@ -161,10 +161,12 @@ class TestFunctional(unittest.TestCase):
         dets["detect_deploys"].side_effect = lambda oc_, st: st.update(last_deploy_sha="abc")
         with patch.object(nc.psycopg2, "connect", return_value=conn), \
              patch.multiple(nc, **dets), patch.object(nc, "current_continuity_note", return_value="I paused once."), \
+             patch.object(nc, "wake_turnovers", return_value=[]) as wk, \
              redirect_stdout(io.StringIO()) as out:
             self.assertEqual(nc.main(), 0)
         for d in dets.values():
             d.assert_called_once()
+        wk.assert_called_once_with(cur=oc)        # merged from nova_bottle --wake (2026-10-09)
         save = [c for c in oc.execute.call_args_list if "INSERT INTO service_config" in c[0][0]]
         self.assertEqual(json.loads(save[0][0][1][2]), {"last_deploy_sha": "abc"})
         self.assertIn("errored (continuing)", out.getvalue())
@@ -194,6 +196,136 @@ class TestFrame(unittest.TestCase):
         with patch.object(nc.psycopg2, "connect") as c:
             _load()
         c.assert_not_called()
+
+
+# ── Wake packets merged in from nova_bottle.py --wake (2026-10-09, organ audit M11) ──
+import nova_bottle  # noqa: E402
+
+
+class _Cur:
+    def __init__(self, rows=None, boom=False):
+        self.rows, self.boom, self.sql = list(rows or []), boom, []
+
+    def execute(self, sql, params=None):
+        self.sql.append((sql, params))
+        if self.boom:
+            raise RuntimeError("pg down")
+
+    def fetchone(self):
+        return self.rows.pop(0) if self.rows else None
+
+
+class TestWakeSecurity(unittest.TestCase):
+    def test_wake_adds_no_actuator_and_redline_assert_still_holds(self):
+        for name in ("restart_service", "copy_self", "replicate", "promote"):
+            self.assertFalse(hasattr(nc, name))
+        self.assertNotIn("ssh", SRC.split("def wake_turnovers")[1].split("\ndef ")[0])
+
+    def test_amulet_host_sql_has_no_interpolation(self):
+        cur = _Cur([("x",), ("Studio",)])
+        nc.amulet_host(cur)
+        self.assertTrue(all(p is None for _, p in cur.sql))
+        self.assertFalse(any("{" in s for s, _ in cur.sql))
+
+
+class TestWakePerformance(unittest.TestCase):
+    def test_days_parse_10k(self):
+        t0 = time.perf_counter()
+        for i in range(10_000):
+            nc._days(["x", "--wake", "--days", str(i)])
+        self.assertLess(time.perf_counter() - t0, 0.5)
+
+
+class TestWakeRetry(unittest.TestCase):
+    def test_wake_failure_is_contained_in_main(self):
+        # RETRY GAP: wake_turnovers — single attempt per 6-hourly run; a failure is logged and the next run retries
+        conn = MagicMock()
+        conn.cursor.return_value.fetchone.return_value = None
+        with patch.object(nc.psycopg2, "connect", return_value=conn), \
+             patch.multiple(nc, detect_gateway_restart=MagicMock(), detect_pg_failover=MagicMock(),
+                            detect_deploys=MagicMock(), detect_schedule_gap=MagicMock()), \
+             patch.object(nc, "current_continuity_note", return_value=""), \
+             patch.object(nc, "wake_turnovers", side_effect=RuntimeError("nas gone")), \
+             redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(nc.main(), 0)
+        self.assertIn("wake packets errored (continuing): nas gone", out.getvalue())
+
+    def test_amulet_host_pg_error_is_none(self):
+        self.assertIsNone(nc.amulet_host(_Cur(boom=True)))
+
+
+class TestWakeUnit(unittest.TestCase):
+    def test_amulet_host_shapes(self):
+        self.assertIsNone(nc.amulet_host(_Cur([(None,)])))                 # table absent
+        self.assertIsNone(nc.amulet_host(_Cur([("jade_amulet_manifest",)])))   # empty table
+        self.assertEqual(nc.amulet_host(_Cur([("jade_amulet_manifest",), ("Studio",)])), "Studio")
+
+    def test_days_arg(self):
+        self.assertEqual(nc._days(["--wake"]), 7)
+        self.assertEqual(nc._days(["--wake", "--days", "30"]), 30)
+        self.assertEqual(nc._days(["--days", "x"]), 7)
+
+
+class TestWakeIntegration(unittest.TestCase):
+    def test_wake_turnovers_calls_bottle_wake_with_amulet_host(self):
+        cur = MagicMock()
+        with patch.object(nova_bottle, "wake", return_value=[{"watch": "wake"}]) as w, \
+             patch.object(nc, "amulet_host", return_value="Studio"):
+            self.assertEqual(nc.wake_turnovers(14, dry=True, cur=cur), [{"watch": "wake"}])
+        w.assert_called_once_with(14, dry=True, cur=cur, host="Studio")
+
+    def test_same_turnover_row_shape(self):
+        # the packet writer is the Bottle's own (watch_turnover watch='wake' + bottle_log 'wake')
+        bsrc = (SCRIPTS / "nova_bottle.py").read_text()
+        self.assertIn("WB.save_turnover(cur, p, text)", bsrc)
+        self.assertIn('"watch": "wake"', bsrc)
+
+
+class TestWakeFunctional(unittest.TestCase):
+    def test_gap_over_six_hours_becomes_one_wake_turnover(self):
+        from datetime import timedelta
+        t0 = datetime(2026, 10, 1, 12, tzinfo=timezone.utc)
+        gap = (44, "gateway_restart", t0 + timedelta(hours=10), 36000.0, {"gap_is_upper_bound": True})
+        routes = {"to_regclass": [("bottle_log",)], "FROM continuity_log": [gap], "FROM gateway_traces": [],
+                  "FROM service_config": []}
+
+        class Cur:
+            def __init__(self):
+                self.sql, self._last = [], []
+
+            def execute(self, sql, params=None):
+                self.sql.append((sql, params))
+                self._last = next((list(v) for k, v in routes.items() if k in sql), [])
+
+            def fetchall(self):
+                return self._last
+
+            def fetchone(self):
+                return self._last[0] if self._last else None
+        cur = Cur()
+        with patch.object(nova_bottle, "nas_dir", return_value=None), \
+             patch.object(nova_bottle, "amulet_diff", return_value=[]), \
+             patch.object(nc, "amulet_host", return_value="Studio"), redirect_stdout(io.StringIO()):
+            packets = nc.wake_turnovers(30, cur=cur)
+        self.assertEqual(len(packets), 1)
+        ins = [p for s_, p in cur.sql if "INSERT INTO watch_turnover" in s_]
+        self.assertEqual(ins[0][0], "wake")
+        bl = [p for s_, p in cur.sql if "INSERT INTO bottle_log" in s_]
+        self.assertEqual((bl[0][0], bl[0][2], bl[0][3]), ("wake", "Studio", "44"))
+
+    def test_dry_run_writes_nothing(self):
+        cur = MagicMock()
+        cur.fetchall.return_value = []
+        with patch.object(nc, "amulet_host", return_value=None), redirect_stdout(io.StringIO()):
+            self.assertEqual(nc.wake_turnovers(7, dry=True, cur=cur), [])
+        self.assertFalse(any("INSERT" in c[0][0] for c in cur.execute.call_args_list))
+
+
+class TestWakeFrame(unittest.TestCase):
+    def test_cli_routes_wake_before_main(self):
+        tail = SRC.split('if __name__ == "__main__":')[1]
+        self.assertLess(tail.index("--wake"), tail.index("main()"))
+        self.assertIn('dry="--dry-run" in sys.argv', tail)
 
 
 if __name__ == "__main__":

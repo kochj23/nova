@@ -21,7 +21,11 @@ Minimal first version (Studio only):
 `--run` upserts one row per hold and marks holds no longer found as released. `--oldest`
 prints the ten oldest live holds and files them as one claude_queue item per month.
 
+MERGED into nova_yellow_eye.py on 2026-10-09 (merge M5) as `--holds` (`--holds --oldest`): this
+module keeps the logic, table and queue session; its CLI is a thin wrapper that forwards there.
+
 CLI:     --run [--dry-run]   --oldest [--dry-run]   --selftest
+         (= nova_yellow_eye.py --holds [--dry-run] / --holds --oldest [--dry-run])
 Tables:  valdemar_holds. No service_config keys.
 Schedule: weekly Wednesday 04:15 (`--run`); monthly on the 1st 04:20 (`--oldest`).
 Written by Jordan Koch (via Claude).
@@ -258,23 +262,24 @@ def selftest() -> int:
 
 
 def main(argv=None) -> int:
+    """Thin wrapper (merge M5): the run lives in nova_yellow_eye --holds [--oldest]."""
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--run", action="store_true", help="discover holds and update the register")
-    ap.add_argument("--oldest", action="store_true", help="the ten oldest live holds (files them monthly)")
+    ap.add_argument("--run", action="store_true", help="= nova_yellow_eye.py --holds")
+    ap.add_argument("--oldest", action="store_true", help="= nova_yellow_eye.py --holds --oldest")
     ap.add_argument("--dry-run", action="store_true", help="print only, write nothing")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args(argv)
     if a.selftest:
         return selftest()
-    if a.run:
-        run(dry=a.dry_run)
+    if not (a.run or a.oldest):
+        ap.print_help()
         return 0
-    if a.oldest:
-        seven_months(dry=a.dry_run)
-        return 0
-    ap.print_help()
-    return 0
+    fwd = ["--holds"] + ([] if a.run else ["--oldest"]) + (["--dry-run"] if a.dry_run else [])
+    log(f"merged into nova_yellow_eye on 2026-10-09: running nova_yellow_eye {' '.join(fwd)}")
+    import nova_yellow_eye
+    return nova_yellow_eye.main(fwd)
 
 
 if __name__ == "__main__":
+    sys.modules.setdefault("nova_valdemar", sys.modules[__name__])   # one module object
     sys.exit(main())

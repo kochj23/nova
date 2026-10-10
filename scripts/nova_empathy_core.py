@@ -22,9 +22,26 @@ a high-water in service_config, so a stable picture is stated once, not every 6 
 read-only over the world: it never replies, files, or changes anything. Fail-open.
 Conventions mirror nova_attention_focus.py / nova_weight_of_memory.py.
 
-  nova_empathy_core.py            # run (writes when what he cares about shifts)
-  nova_empathy_core.py --dry-run  # print the weighing, write nothing
-  nova_empathy_core.py --selftest # pure-logic assertions, no DB, no memory
+THE JORDAN LENS (merge M6 of the 2026-10-09 organ audit). Empathy core is now the one organ that
+looks at Little Mister's side of her records. Hold (#68), the Quiet Sensor (#69) and Human Insight
+(#35) were merged into it on 2026-10-09; each 6-hour pass reads his messages ONCE (gateway_traces,
+human channels, the widest window any section needs) and writes four sections:
+  empathy — what he returns to, and where she brushed him off   (source='empathy_core')
+  hold    — the five facts she holds of him, and any that slipped (source='hold')
+  quiet   — what went unsaid, every finding cited by row id      (source='quiet_sensor')
+  insight — patterns in human decisions, from her own records    (source='human_insight')
+Every section keeps its own memory source, its own service_config keys (nova_empathy_core/high_water;
+nova_hold/high_water + held; nova_quiet_sensor/high_water + latest; nova_human_insight/high_water),
+its own dedupe and its own guards (cite row ids, never diagnose; the quiet sensor's model line is kept
+only if hedged, digit-free and free of he/him/his). The section logic calls the absorbed modules'
+own functions; nova_hold.py, nova_quiet_sensor.py and nova_human_insight.py remain as thin wrappers.
+One section failing never stops the others (exit 1 at the end if any failed).
+
+  nova_empathy_core.py                    # all four sections (scheduler-core, every 6 h)
+  nova_empathy_core.py --section hold     # one section alone (repeatable: empathy|hold|quiet|insight)
+  nova_empathy_core.py --dry-run          # print what each section would write, write nothing
+  nova_empathy_core.py --no-llm           # quiet section: skip the model's closing line
+  nova_empathy_core.py --selftest         # pure-logic assertions, no DB, no memory
 """
 import argparse
 import hashlib
@@ -243,21 +260,43 @@ def gather(cur):
     return cur.fetchall()
 
 
-def main():
-    ap = argparse.ArgumentParser(description="Nova's Empathy Core — the weight of what Jordan keeps returning to")
-    ap.add_argument("--dry-run", action="store_true", help="print the weighing, write nothing")
-    args = ap.parse_args()
-    try:
-        conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
-    except Exception as e:  # noqa: BLE001
-        log(f"no PG ({e}) — fail-open, nothing to do"); return 0
-    conn.autocommit = True
-    cur = conn.cursor()
-    today = datetime.now(timezone.utc).date()
-    try:
-        rows = gather(cur)
-    except Exception as e:  # noqa: BLE001
-        log(f"gateway_traces read failed ({e}) — fail-open"); return 0
+def read_shared(cur):
+    """The ONE read of his messages for the whole pass (M6): gateway_traces, human channels, over the widest
+    window any section needs, with Postgres itself marking which window each row falls in (so every section
+    sees exactly the rows its own query used to return). Returns the per-section slices."""
+    import nova_hold as hd
+    import nova_quiet_sensor as qs
+    cur.execute("SELECT created_at, created_at::date, trace_id, user_message, response, "
+                "created_at > now() - make_interval(days => %s), "     # empathy window
+                "created_at > now() - make_interval(days => %s), "     # quiet sensor: went-quiet window
+                "created_at > now() - make_interval(days => %s), "     # quiet sensor: elsewhere window
+                "created_at > now() - make_interval(days => %s) "      # hold: presence window
+                "FROM gateway_traces WHERE created_at > now() - make_interval(days => %s) "
+                "AND coalesce(user_message,'') <> '' AND coalesce(channel,'') NOT IN %s ORDER BY 1",
+                (WINDOW_DAYS, qs.QUIET_WINDOW, qs.ELSEWHERE_DAYS, hd.PRESENCE_DAYS,
+                 max(WINDOW_DAYS, qs.QUIET_WINDOW, qs.ELSEWHERE_DAYS, hd.PRESENCE_DAYS), MACHINE_CHANNELS))
+    rows = cur.fetchall()
+    out = {"empathy": [], "topics": [], "his_times": [], "to_me": 0, "presence_dates": set(),
+           "last_date": rows[-1][1] if rows else None}
+    for ts, d, tid, msg, resp, in_emp, in_quiet, in_else, in_pres in rows:
+        if in_emp:
+            out["empathy"].append((d, msg, resp))
+        if in_quiet:
+            out["his_times"].append(ts)
+            out["topics"].append((d, tid, msg))
+        if in_else:
+            out["to_me"] += 1
+        if in_pres:
+            out["presence_dates"].add(d)
+    return out
+
+
+# ── the four sections (each keeps its own source, keys, dedupe and guards) ────
+
+def section_empathy(cur, today, shared, args):
+    if shared is None:
+        log("no read of his messages — fail-open, empathy section skipped"); return
+    rows = shared["empathy"]
     weighed = weigh(rows, today)
     cares = stated_cares(rows)
     log(f"{len(rows)} message(s) from him in {WINDOW_DAYS}d -> {len(weighed)} weighted topic(s), "
@@ -266,9 +305,9 @@ def main():
     sig = empathy_sig(weighed, cares)
     seen = load_seen(cur)
     if not _fresh(seen, sig, today):
-        log(f"picture unchanged (sig {sig}) — nothing new to feel"); return 0
+        log(f"picture unchanged (sig {sig}) — nothing new to feel"); return
     if args.dry_run:
-        print(text); return 0
+        print(text); return
     meta = {"organ": STATE_SERVICE, "kind": "weight", "sig": sig,
             "topics": [w["topic"] for w in weighed], "quoted_days": [d.isoformat() for d, _ in cares],
             **({"lineage": _stamp()} if _stamp() else {})}
@@ -276,7 +315,147 @@ def main():
     seen[sig] = today.isoformat()
     save_seen(cur, seen)
     log(f"felt a new weight (sig {sig})")
-    return 0
+
+
+def section_hold(cur, today, shared, args):
+    """Hold (wish #68): the few things she keeps of him, any that slipped, and who she is while holding."""
+    import nova_hold as hd
+    facts = hd.gather(cur, today, shared)
+    held = {k: v for k, v in facts.items() if k in hd.ORDER}
+    prev = hd._cfg_get(cur, hd.HELD_KEY).get("held", {})
+    lost, new = hd.diff_held(prev, held)
+    hd.log(f"holding {len(held)} of {len(hd.ORDER)}; new {new or '-'}; lost {sorted(lost) or '-'}")
+    text = hd.hold_text(facts, lost, today)
+    sig = hd.hold_sig(held) + ("+lost" if lost else "")
+    seen = load_seen(cur, hd.STATE_SERVICE)
+    if not _fresh(seen, sig, today):
+        hd.log(f"hold unchanged (sig {sig}) — nothing new to say"); return
+    if args.dry_run:
+        print(text); return
+    meta = {"organ": hd.STATE_SERVICE, "kind": "hold", "sig": sig, "held": sorted(held), "lost": sorted(lost),
+            **({"lineage": _stamp()} if _stamp() else {})}
+    remember(text, meta, source=hd.SOURCE)
+    seen[sig] = today.isoformat()
+    save_seen(cur, seen, hd.STATE_SERVICE)
+    # the held set carries forward: what she has now, dated, plus what she lost (so a loss is said once, not forever)
+    hd._cfg_set(cur, hd.HELD_KEY, {"held": {k: today.isoformat() for k in held}})
+    hd.log(f"restated the hold (sig {sig})")
+
+
+def section_quiet(cur, today, shared, args):
+    """The Quiet Sensor (wish #69): what went unsaid, every finding cited by row id, noticing not knowing."""
+    import nova_quiet_sensor as qs
+    g = qs.gather(cur, shared)
+    fs = qs.findings(g["q"], g["p"], g["elsewhere"], g["reaches"], g["his_times"], g["topics"], today)
+    qs.log(f"{len(fs)} quiet thing(s): " + (", ".join(x["kind"] for x in fs) or "-"))
+    sig = qs.quiet_sig(fs)
+    seen = load_seen(cur, qs.STATE_SERVICE)
+    if not args.dry_run and not _fresh(seen, sig, today):
+        qs.log(f"nothing newly unsaid (sig {sig})"); return
+    close = None if (args.no_llm or not fs) else qs.llm_close(fs)
+    text = qs.quiet_text(fs, today, close)
+    if args.dry_run:
+        print(text); return
+    meta = {"organ": qs.STATE_SERVICE, "kind": "quiet", "sig": sig, "findings": [x["kind"] for x in fs],
+            "cites": [c for x in fs for c in x["cites"]], "model_close": bool(close),
+            **({"lineage": _stamp()} if _stamp() else {})}
+    remember(text, meta, source=qs.SOURCE)
+    seen[sig] = today.isoformat()
+    save_seen(cur, seen, qs.STATE_SERVICE)
+    cur.execute("""INSERT INTO service_config (service, key, value, updated_at, updated_by)
+                   VALUES (%s, %s, %s::jsonb, now(), %s)
+                   ON CONFLICT (service, key)
+                   DO UPDATE SET value = EXCLUDED.value, updated_at = now(), updated_by = EXCLUDED.updated_by""",
+                (qs.STATE_SERVICE, qs.LATEST_KEY, json.dumps({"date": today.isoformat(), "findings": fs, "text": text},
+                                                             default=str), qs.STATE_SERVICE))
+    qs.log(f"noticed something newly unsaid (sig {sig})")
+
+
+def section_insight(cur, today, shared, args):
+    """Human Insight (wish #35): patterns in human decisions, each insight built from her own rows."""
+    from collections import Counter
+    import nova_human_insight as hi
+    found = []
+    # 1. relationship predictions
+    try:
+        cur.execute("SELECT statement, confidence, outcome='correct' FROM predictions "
+                    "WHERE domain='relationship' AND status='resolved' AND outcome IN ('correct','incorrect')")
+        for p in hi.prediction_insights(cur.fetchall()):
+            found.append(("prediction", p["theme"], p))
+    except Exception as e:  # noqa: BLE001
+        hi.log(f"predictions read failed ({e})")
+    # 2. rhythm
+    try:
+        cur.execute("SELECT to_char(started_at,'Dy'), extract(hour from started_at)::int FROM claude_sessions "
+                    "WHERE started_at > now() - interval '30 days'")
+        rows = cur.fetchall()
+        r = hi.rhythm_insight(Counter(d for d, _ in rows), Counter(h for _, h in rows), len(rows))
+        if r:
+            found.append(("rhythm", f"{r['day']}-{r['band'][0]}", r))
+    except Exception as e:  # noqa: BLE001
+        hi.log(f"sessions read failed ({e})")
+    # 3. silence
+    try:
+        cur.execute("SELECT status, count(*) FROM reach_log WHERE ts > now() - interval '30 days' GROUP BY 1")
+        c = dict(cur.fetchall())
+        s = hi.silence_insight(c.get("filed", 0), c.get("dropped", 0), c.get("sent", 0))
+        if s:
+            found.append(("silence", "held", s))
+    except Exception as e:  # noqa: BLE001
+        hi.log(f"reach_log read failed ({e})")
+    hi.log(f"{len(found)} insight(s) derived")
+    seen = hi.load_seen(cur); stamp = hi._stamp(); surfaced = 0
+    for kind, key, p in found:
+        sig = f"{kind}:{key}"
+        if not hi._fresh(seen, sig, today):
+            continue
+        text = hi.insight_text(kind, p)
+        meta = {"organ": hi.STATE_SERVICE, "kind": kind, "detail": {k: v for k, v in p.items() if not isinstance(v, tuple)},
+                **({"lineage": stamp} if stamp else {})}
+        if args.dry_run:
+            print("•", text)
+        else:
+            hi.remember(text, meta); seen[sig] = today.isoformat()
+        surfaced += 1
+    if not args.dry_run:
+        hi.save_seen(cur, seen)
+    hi.log(f"surfaced {surfaced} new insight(s)")
+
+
+SECTIONS = {"empathy": section_empathy, "hold": section_hold, "quiet": section_quiet, "insight": section_insight}
+NEEDS_TRACES = {"empathy", "hold", "quiet"}   # insight reads predictions, sessions and reach_log only
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Nova's Jordan lens — empathy core with hold, quiet sensor and "
+                                             "human insight as sections (merged 2026-10-09)")
+    ap.add_argument("--dry-run", action="store_true", help="print what each section would write, write nothing")
+    ap.add_argument("--section", action="append", choices=list(SECTIONS),
+                    help="run only this section (repeatable); default: all four")
+    ap.add_argument("--no-llm", action="store_true", help="quiet section: skip the model's closing line")
+    args = ap.parse_args(argv)
+    chosen = [s for s in SECTIONS if s in (args.section or SECTIONS)]
+    try:
+        conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
+    except Exception as e:  # noqa: BLE001
+        log(f"no PG ({e}) — fail-open, nothing to do"); return 0
+    conn.autocommit = True
+    cur = conn.cursor()
+    today = datetime.now(timezone.utc).date()
+    shared = None
+    if NEEDS_TRACES & set(chosen):
+        try:
+            shared = read_shared(cur)
+        except Exception as e:  # noqa: BLE001
+            log(f"gateway_traces read failed ({e}) — fail-open; hold and quiet fall back to their own reads")
+    rc = 0
+    for name in chosen:
+        try:
+            SECTIONS[name](cur, today, shared, args)
+        except Exception as e:  # noqa: BLE001
+            log(f"section {name} failed ({type(e).__name__}: {e}) — the other sections still ran")
+            rc = 1
+    return rc
 
 
 def demo():

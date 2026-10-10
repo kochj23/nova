@@ -71,12 +71,14 @@ class Cur:
         return [p for s, p in self.calls if s.startswith("INSERT INTO bodach_scores")]
 
 
-def run_live(w, cur, notify, *, dry_run=False, threshold=2.0):
+def run_live(w, cur, notify, *, dry_run=False, threshold=2.0, situation=None):
     fake_feeds = mock.MagicMock()
     fake_feeds.return_value.window.return_value = w
     conn = mock.MagicMock()
     conn.cursor.return_value = cur
+    situation = situation or mock.MagicMock(return_value=None)   # the merged local-situation step
     with mock.patch.object(W, "connect", return_value=conn), mock.patch.object(W, "ensure_schema"), \
+            mock.patch.object(B, "situation_step", situation), \
             mock.patch.object(W, "get_config", return_value=threshold), \
             mock.patch.object(W, "now_utc", return_value=T0), mock.patch.object(B, "Feeds", fake_feeds), \
             mock.patch.object(W.time, "sleep"), \
@@ -367,6 +369,190 @@ class TestTwoManAdoption(unittest.TestCase):
     def test_gate_fails_closed(self):
         with mock.patch("nova_escalation.authorize", side_effect=RuntimeError("boom")):
             self.assertFalse(_REAL_TWO_MAN(Cur(), {"present": ["air", "motion"]})["allowed"])
+
+
+# ── Local situation merged in (2026-10-09, organ audit M3) ───────────────────
+import nova_local_situation as L  # noqa: E402
+
+HOME = (34.0, -118.0)
+HELI = ("a1b2c3", "N911LA", 12, 900, 0.8, True)
+PLANE = ("d4e5f6", "N103CG", 11, 1500, 0.9, False)
+NEAR_COLLISION = ("1183-Trfc Collision-Unkn Inj", "Olive Ave", "Burbank", 34.007, -118.0)   # ~0.5 mi
+
+
+class SitCur:
+    """Answers local situation's queries by keyword; records SQL."""
+    def __init__(self, flights=(), chp=(), scanner=0, presence=(0, 0), baseline=0.0, recent=False):
+        self.flights, self.chp, self.scanner = list(flights), list(chp), scanner
+        self.presence, self.baseline, self.recent = presence, baseline, recent
+        self.sql, self._rows = [], []
+
+    def execute(self, sql, params=()):
+        self.sql.append(sql)
+        if "overhead_flights" in sql:
+            self._rows = self.flights
+        elif "chp_incidents" in sql:
+            self._rows = self.chp
+        elif "FROM memories" in sql:
+            self._rows = [(self.scanner,)]
+        elif "count(DISTINCT room)" in sql:
+            self._rows = [self.presence]
+        elif "telemetry.presence" in sql:
+            self._rows = [(self.baseline,)]
+        elif "alerted AND window_end" in sql:
+            self._rows = [(1,)] if self.recent else []
+        else:
+            self._rows = []
+
+    def fetchall(self):
+        return list(self._rows)
+
+    def fetchone(self):
+        return self._rows[0] if self._rows else None
+
+
+def sit(cur, *, alert=True, bodach_alerted=False, gate=None, notify=None, camera=True):
+    notify = notify or mock.MagicMock(return_value=True)
+    gate = gate or {"allowed": True, "reason": "test", "keys": ["reasoning", "sensors"]}
+    with mock.patch.object(L, "home_coords", return_value=HOME), mock.patch.object(L.time, "sleep"), \
+            mock.patch.object(B, "_camera_ok", return_value=camera), \
+            mock.patch.object(B, "situation_gate", return_value=gate) as g, \
+            mock.patch.dict(sys.modules, {"nova_notify": mock.MagicMock(notify=notify)}), \
+            redirect_stdout(io.StringIO()) as out:
+        res = B.situation_step(cur, mock.MagicMock(), 20, alert=alert, bodach_alerted=bodach_alerted)
+    return res, notify, g, out.getvalue()
+
+
+class TestSituationSecurity(unittest.TestCase):
+    def test_gate_text_is_journal_safe(self):
+        res = {"kinds": ["chp", "air"], "signals": ["CHP: Fire at 480 Riverside Drive — 0.4 mi away", "x"],
+               "score": 4, "minutes": 20}
+        with mock.patch("nova_escalation.authorize", return_value={"allowed": True}) as auth:
+            B.situation_gate(Cur(), res)
+        self.assertNotIn("480 Riverside Drive", auth.call_args.kwargs["text"])
+
+    def test_camera_query_skipped_when_privacy_guard_refuses(self):
+        cur = SitCur(presence=(40, 3), baseline=2.0)
+        res, *_ = sit(cur, alert=False, camera=False)
+        self.assertFalse(any("telemetry.presence" in q for q in cur.sql))
+        self.assertNotIn("motion", res["kinds"])
+
+    def test_situation_sql_is_read_only(self):
+        cur = SitCur(flights=[HELI], chp=[NEAR_COLLISION])
+        sit(cur, alert=False)
+        self.assertTrue(all(q.strip().startswith("SELECT") for q in cur.sql))
+
+
+class TestSituationPerformance(unittest.TestCase):
+    def test_situation_item_10k_kinds(self):
+        t = time.perf_counter()
+        it = B.situation_item({"kinds": ["air", "chp", "scanner", "motion"] * 2500})
+        self.assertLess(time.perf_counter() - t, 0.5)
+        self.assertEqual(len(it["sources"]), 4)
+
+
+class TestSituationRetry(unittest.TestCase):
+    def test_notify_retried_three_times_then_logged(self):
+        notify = mock.MagicMock(side_effect=RuntimeError("bus down"))
+        res, n, _, out = sit(SitCur(flights=[HELI], chp=[NEAR_COLLISION]), notify=notify)
+        self.assertEqual(n.call_count, 3)
+        self.assertFalse(res["alerted"])
+        self.assertIn("notify failed after 3 attempts", out)
+
+    def test_assess_failure_never_breaks_bodach(self):
+        with mock.patch.object(L, "assess", side_effect=RuntimeError("pg")), redirect_stdout(io.StringIO()):
+            self.assertIsNone(B.situation_step(SitCur(), None, 20, alert=True))
+
+    def test_gate_fails_closed(self):
+        with mock.patch("nova_escalation.authorize", side_effect=RuntimeError("boom")):
+            self.assertFalse(B.situation_gate(Cur(), {"kinds": ["air", "chp"], "signals": []})["allowed"])
+
+
+class TestSituationUnit(unittest.TestCase):
+    def test_two_aircraft_are_one_source(self):
+        it = B.situation_item({"kinds": ["air", "air", "chp"]})
+        self.assertEqual([x["id"] for x in it["sources"]], ["adsb:loiter", "chp:cad"])
+        self.assertEqual(B.SP.assess(B.situation_item({"kinds": ["air", "air"]}))["independent"], 1)
+
+    def test_empty(self):
+        self.assertEqual(B.situation_item({})["sources"], [])
+
+
+class TestSituationIntegration(unittest.TestCase):
+    def test_scoring_imported_not_reimplemented(self):
+        src = (SCRIPTS / "nova_bodach_watch.py").read_text()
+        self.assertIn("import nova_local_situation as L", src)
+        self.assertIn("L.assess(", src)
+        self.assertNotIn("def assess", src)
+        self.assertNotIn("chp_incidents", src)
+
+    def test_gate_is_the_two_man_alert_gate(self):
+        with mock.patch("nova_escalation.authorize", return_value={"allowed": False}) as auth:
+            B.situation_gate(Cur(), {"kinds": ["air", "chp", "motion"], "signals": ["a"], "score": 5, "minutes": 20})
+        kw = auth.call_args.kwargs
+        self.assertEqual((kw["source"], kw["kind"], kw["action_class"], kw["urgent"]),
+                         ("nova_bodach_watch", "situation", "alert", True))
+
+    def test_notify_call_unchanged_so_dedup_key_unchanged(self):
+        res, notify, _, _ = sit(SitCur(flights=[HELI], chp=[NEAR_COLLISION]))
+        self.assertTrue(res["alerted"])
+        self.assertTrue(notify.call_args.args[0].startswith("Something is happening nearby: HELICOPTER N911LA"))
+        self.assertEqual(notify.call_args.kwargs, {"level": "warning", "category": "local"})
+
+
+class TestSituationFunctional(unittest.TestCase):
+    def test_air_plus_chp_alerts_once(self):
+        res, notify, gate, out = sit(SitCur(flights=[PLANE, HELI], chp=[NEAR_COLLISION]))
+        notify.assert_called_once()
+        self.assertEqual(gate.call_count, 1)
+        self.assertIn("SITUATION:", out)
+
+    def test_held_by_gate_is_not_sent(self):
+        res, notify, _, out = sit(SitCur(flights=[HELI], chp=[NEAR_COLLISION]),
+                                  gate={"allowed": False, "reason": "SPINNAKER SINGLE_SOURCE"})
+        notify.assert_not_called()
+        self.assertIn("held by the two-man rule", out)
+
+    def test_one_alert_per_fact_when_bodach_already_spoke(self):
+        for kw in ({"bodach_alerted": True}, {}):
+            cur = SitCur(flights=[HELI], chp=[NEAR_COLLISION], recent=not kw)
+            res, notify, gate, _ = sit(cur, **kw)
+            notify.assert_not_called()
+            gate.assert_not_called()
+
+    def test_read_only_mode_never_alerts(self):
+        res, notify, gate, _ = sit(SitCur(flights=[HELI], chp=[NEAR_COLLISION]), alert=False)
+        notify.assert_not_called()
+        gate.assert_not_called()
+        self.assertEqual(res["score"], 4)
+
+    def test_run_live_runs_the_step_on_every_path(self):
+        for strengths, dry, want_alert in ((STRONG, False, True), ({k: 0 for k in STRONG}, False, True),
+                                           (STRONG, True, False)):
+            step = mock.MagicMock(return_value=None)
+            run_live(window(strengths), Cur(), mock.MagicMock(return_value=True), dry_run=dry, situation=step)
+            step.assert_called_once()
+            self.assertEqual(step.call_args.kwargs["alert"], want_alert)
+
+    def test_run_live_tells_the_step_bodach_alerted(self):
+        step = mock.MagicMock(return_value=None)
+        run_live(window(STRONG), Cur(), mock.MagicMock(return_value=True), situation=step)
+        self.assertTrue(step.call_args.kwargs["bodach_alerted"])
+
+
+class TestSituationFrame(unittest.TestCase):
+    def test_now_routes_read_only(self):
+        with mock.patch.object(B, "run_situation", return_value=0) as rs:
+            self.assertEqual(B.main(["--now"]), 0)
+            self.assertEqual(B.main(["--now", "--minutes", "45"]), 0)
+        self.assertEqual(rs.call_args_list, [mock.call(20, alert=False), mock.call(45, alert=False)])
+
+    def test_help_lists_now(self):
+        import subprocess
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_bodach_watch.py"), "--help"],
+                           capture_output=True, text=True, timeout=30)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("--now", r.stdout)
 
 
 if __name__ == "__main__":

@@ -101,6 +101,105 @@ def _grade_cur(incident=0, persisted_titles=(), acted=0):
                  ("FROM claude_actions", {"n": acted})])
 
 
+# ── recurrence (moved here from nova_pattern_sense.py, M7 2026-10-09) ─────────
+RECUR_ROWS = [{"title": "Multiple services down: searxng, tinychat", "n": 8},
+              {"title": "Disk full on nas", "n": 3}, {"title": "blip", "n": 1}]
+
+
+def _recur_cur(seen=None, incidents=None):
+    return _Cur([("FROM incidents", RECUR_ROWS if incidents is None else incidents),
+                 ("FROM service_config", {"value": {"seen": seen or {}}}),
+                 ("INSERT INTO service_config", None)])
+
+
+def _posting(posts, fail=None):
+    def fake(req, timeout=None):
+        if fail:
+            raise fail
+        posts.append((req.full_url, json.loads(req.data.decode())))
+        return _Resp({"id": 1})
+    return fake
+
+
+class TestRecurrenceM7(unittest.TestCase):
+    """The recurring-incident half of Pattern Sense, now `nova_alert_learn.py recurrence`.
+    Covers Security/Retry/Unit/Integration/Functional for the new subcommand."""
+
+    def _run(self, cur, dry_run=False, fail=None):
+        posts, conn = [], _Conn(cur)
+        with patch.object(urllib.request, "urlopen", _posting(posts, fail)), \
+                patch.object(al, "_pattern_stamp", lambda: {}), redirect_stdout(io.StringIO()) as out:
+            rc = al.cmd_recurrence(conn, _args(dry_run=dry_run))
+        return rc, posts, conn, out.getvalue()
+
+    def test_security_window_is_a_bound_parameter(self):
+        seg = SRC[SRC.index("def cmd_recurrence"):SRC.index("# 2. FEEDBACK")]
+        self.assertNotIn('execute(f"', seg)
+        cur = _recur_cur()
+        self._run(cur, dry_run=True)
+        sql, params = cur.executed("FROM incidents")[0]
+        self.assertIn("make_interval(days => %s)", sql)
+        self.assertEqual(params, (al.RECUR_WINDOW_DAYS,))
+
+    def test_unit_patterns_and_wording(self):
+        self.assertEqual(al.recurrence_patterns([("A", 3), ("B", 2)]), [{"title": "A", "count": 3}])
+        self.assertEqual(al.recurrence_patterns([]), [])
+        txt = al.recur_insight({"title": "Disk full", "count": 5})
+        self.assertTrue(txt.startswith("Pattern I can finally see: 'Disk full' has recurred 5 times in the last 30 days."))
+        self.assertIn("All of this has happened before", txt)
+        self.assertRegex(al._pattern_sig("recur", "x"), r"^[0-9a-f]{16}$")
+        today = T0.date()
+        self.assertTrue(al._pattern_fresh({}, "s", today))
+        self.assertFalse(al._pattern_fresh({"s": (today - timedelta(days=3)).isoformat()}, "s", today))
+        self.assertTrue(al._pattern_fresh({"s": "garbage"}, "s", today))
+
+    def test_integration_same_source_and_shared_dedupe_row_merged(self):
+        rc, posts, conn, _ = self._run(_recur_cur())
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(posts), 2)
+        self.assertTrue(all(u.endswith("/remember") and b["source"] == "pattern_sense" for u, b in posts))
+        self.assertEqual({b["metadata"]["kind"] for _, b in posts}, {"recurrence"})
+        self.assertEqual({b["metadata"]["organ"] for _, b in posts}, {"nova_pattern_sense"})
+        (sql, params), = conn._cur.executed("INSERT INTO service_config")
+        self.assertEqual(params[:2], ("nova_pattern_sense", "high_water"))
+        self.assertIn("coalesce(service_config.value->'seen', '{}'::jsonb) || (EXCLUDED.value->'seen')", sql)
+        self.assertEqual(len(json.loads(params[2])["seen"]), 2)
+        self.assertEqual(conn.commits, 1)
+
+    def test_functional_already_seen_is_silent_and_dry_run_writes_nothing(self):
+        today = datetime.now(timezone.utc).date().isoformat()
+        seen = {al._pattern_sig("recur", r["title"]): today for r in RECUR_ROWS}
+        rc, posts, conn, _ = self._run(_recur_cur(seen=seen))
+        self.assertEqual((rc, posts, conn._cur.executed("INSERT")), (0, [], []))
+        rc, posts, conn, out = self._run(_recur_cur(), dry_run=True)
+        self.assertEqual((rc, posts, conn._cur.executed("INSERT")), (0, [], []))
+        self.assertIn("• Pattern I can finally see: 'Multiple services down", out)
+
+    def test_retry_gap_memory_down_leaves_patterns_unmarked(self):
+        # RETRY GAP: _remember_pattern — one POST, no backoff; failure is logged, nothing is marked seen,
+        # so the next run tries again.
+        rc, posts, conn, out = self._run(_recur_cur(), fail=OSError("memory down"))
+        self.assertEqual(rc, 0)
+        self.assertIn("recurrence memory failed", out)
+        self.assertEqual(conn._cur.executed("INSERT INTO service_config"), [])
+
+    def test_functional_cli_dispatches_recurrence(self):
+        cur = _recur_cur()
+        with patch.object(al, "_connect", lambda: _Conn(cur)), \
+                patch.object(sys, "argv", ["nova_alert_learn.py", "--dry-run", "recurrence"]), \
+                patch.object(urllib.request, "urlopen", side_effect=AssertionError("posted")), \
+                redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(al.main(), 0)
+        self.assertIn("recurrence: 2 recurring-incident pattern(s), 2 fresh (dry-run)", out.getvalue())
+
+    def test_performance_patterns_10k(self):
+        rows = [(f"t{i}", i % 7) for i in range(10_000)]
+        t0 = time.perf_counter()
+        out = al.recurrence_patterns(rows)
+        self.assertLess(time.perf_counter() - t0, 0.5)
+        self.assertEqual(len(out), sum(1 for _, c in rows if c >= al.RECUR_MIN))
+
+
 class TestSecurity(unittest.TestCase):
     def test_no_hardcoded_credentials(self):
         pat = re.compile(r"(api[_-]?key|password|secret|token)\s*=\s*['\"][A-Za-z0-9+/]{16,}['\"]", re.I)
@@ -325,7 +424,7 @@ class TestFrame(unittest.TestCase):
         r = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True, timeout=30,
                            env={**os.environ, "NOVA_TEST_QUIET": "1"})
         self.assertEqual(r.returncode, 0, r.stderr)
-        for sub in ("correlate", "feedback", "baselines"):
+        for sub in ("correlate", "feedback", "baselines", "recurrence"):
             self.assertIn(sub, r.stdout)
 
     def test_import_never_runs_main(self):

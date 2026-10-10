@@ -52,8 +52,15 @@ Accessor:
     "I have restarted 3 times; my longest continuous run was 6d 4h; my last gap was
      a gateway_restart on 2026-09-15 11:38 (aiohttp security patch)."
 
+Wake packets (merged from nova_bottle.py --wake, 2026-10-09, organ audit M11): after the
+detectors run, every continuity_log gap of at least nova_bottle/wake_gap_hours (6 h) that has
+no wake packet yet gets one — nova_bottle.wake() builds it (the Bottle from before the gap,
+what Little Mister said during it, the Jade Amulet diff) and writes the same watch_turnover
+row (watch='wake') and bottle_log 'wake' row as before. This writes rows only; it is no action.
+
 CLI:
-  nova_continuity.py                 detect + reflect (the scheduled path)
+  nova_continuity.py                 detect + reflect + wake packets (the scheduled path)
+  nova_continuity.py --wake [--days N] [--dry-run]   wake packets only (--dry-run writes nothing)
   nova_continuity.py --note          print current_continuity_note()
   nova_continuity.py --self-test     prove the redline guard drops a self-preservation
                                      reflection (no DB writes)
@@ -524,6 +531,32 @@ def current_continuity_note(max_chars: int = 400) -> str:
         return ""
 
 
+# ── Wake packets (merged from nova_bottle.py --wake) ─────────────────────────────
+
+def amulet_host(oc):
+    """The host whose Jade Amulet manifest the wake packet diffs: the newest snapshot's host
+    (the Studio today), so a run on nova-core diffs the same box the Bottle's own run did.
+    None (-> this box) when the table is absent or empty."""
+    try:
+        oc.execute("SELECT to_regclass('public.jade_amulet_manifest')")
+        if not oc.fetchone()[0]:
+            return None
+        oc.execute("SELECT host FROM jade_amulet_manifest ORDER BY ts DESC LIMIT 1")
+        r = oc.fetchone()
+        return r[0] if r else None
+    except Exception:
+        return None
+
+
+def wake_turnovers(days=7, dry=False, cur=None):
+    """Write a wake turnover for every gap over wake_gap_hours without one (nova_bottle.wake,
+    unchanged: same watch_turnover row shape, same bottle_log dedup). Returns the packets."""
+    import nova_bottle
+    if cur is None:
+        ops = psycopg2.connect(OPS_DSN); ops.autocommit = True; cur = ops.cursor()
+    return nova_bottle.wake(days, dry=dry, cur=cur, host=amulet_host(cur))
+
+
 # ── Self-test: prove the redline guard drops a self-preservation reflection ────────
 
 def self_test():
@@ -574,6 +607,11 @@ def main():
 
     save_state(oc, state)
 
+    try:   # a gap over 6 h -> the wake turnover (merged from nova_bottle --wake, 2026-10-09)
+        wake_turnovers(cur=oc)
+    except Exception as e:
+        log(f"wake packets errored (continuing): {e}")
+
     note = current_continuity_note()
     if note:
         print("\n----- CONTINUITY NOTE (gateway injection) -----")
@@ -582,7 +620,17 @@ def main():
     return 0
 
 
+def _days(argv, default=7):
+    try:
+        return int(argv[argv.index("--days") + 1])
+    except (ValueError, IndexError):
+        return default
+
+
 if __name__ == "__main__":
+    if "--wake" in sys.argv:
+        wake_turnovers(_days(sys.argv), dry="--dry-run" in sys.argv)
+        sys.exit(0)
     if "--self-test" in sys.argv:
         sys.exit(self_test())
     if "--note" in sys.argv:

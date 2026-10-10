@@ -25,8 +25,16 @@ Writes: nova_ops.memory_anchors (its own table) and a source='memory_anchor' mem
 the anchored set changes (high-water dedupe in service_config). Strictly read-only over the
 world otherwise: it never edits preoccupations, projects, or anything else. Fail-open.
 
-  nova_memory_anchor.py            # run (anchors/releases, writes a memory when the set changes)
-  nova_memory_anchor.py --dry-run  # print what would be held, write nothing
+WEIGHT OF MEMORY (merge M12 of the 2026-10-09 organ audit). Wish #37 was merged into this organ on
+2026-10-09: anchoring already reused its weighing verbatim, so one pass now weighs ONCE (one read of
+preoccupations) and does both jobs. The weighing pass keeps everything Weight of Memory had: its own
+source='weight_of_memory' memory, its own dedupe (nova_weight_of_memory/high_water), the same text,
+all through nova_weight_of_memory's own functions. nova_weight_of_memory.py remains as a thin wrapper
+for `--weight`. A weighing failure never stops the anchoring (exit 1 at the end).
+
+  nova_memory_anchor.py            # weigh + anchor/release (scheduler-core, every 6 h)
+  nova_memory_anchor.py --weight   # the weighing pass alone (what nova_weight_of_memory.py runs)
+  nova_memory_anchor.py --dry-run  # print what would be weighed and held, write nothing
   nova_memory_anchor.py --report   # print the anchors she currently holds
   nova_memory_anchor.py --selftest # pure-logic assertions, no DB, no memory
 """
@@ -195,11 +203,33 @@ def remember(text, metadata):
 
 # ── run ───────────────────────────────────────────────────────────────────────
 
-def main():
-    ap = argparse.ArgumentParser(description="Nova's Memory Anchor — holding what matters, not just storing it")
-    ap.add_argument("--dry-run", action="store_true", help="print what would be held, write nothing")
+def weigh_pass(cur, today, items, dry_run):
+    """Weight of Memory (wish #37), merged here 2026-10-09: names the heaviest themes under its own
+    source and high-water, exactly as nova_weight_of_memory.main() did, from the items already weighed."""
+    heaviest = wom.rank_weighty(items)
+    wom.log(f"{len(items)} held theme(s) -> {len(heaviest)} with real gravity")
+    text = wom.weight_text(heaviest, today)
+    sig = wom.weigh_sig(heaviest)
+    seen = wom.load_seen(cur)
+    if not wom._fresh(seen, sig, today):
+        wom.log(f"heaviest set unchanged (sig {sig}) — nothing new to weigh"); return
+    if dry_run:
+        print(text); return
+    meta = {"organ": wom.STATE_SERVICE, "kind": "weight", "sig": sig,
+            "heaviest": [h["key"] for h in heaviest],
+            **({"lineage": wom._stamp()} if wom._stamp() else {})}
+    wom.remember(text, meta)
+    seen[sig] = today.isoformat()
+    wom.save_seen(cur, seen)
+    wom.log(f"weighed a new heaviest set (sig {sig})")
+
+
+def main(argv=None):
+    ap = argparse.ArgumentParser(description="Nova's Memory Anchor — weighing what has gravity, holding what matters")
+    ap.add_argument("--dry-run", action="store_true", help="print what would be weighed and held, write nothing")
     ap.add_argument("--report", action="store_true", help="print the anchors currently held")
-    args = ap.parse_args()
+    ap.add_argument("--weight", action="store_true", help="run only the weighing pass (Weight of Memory, wish #37)")
+    args = ap.parse_args(argv)
     try:
         conn = psycopg2.connect(OPS_DSN, connect_timeout=5)
     except Exception as e:  # noqa: BLE001
@@ -207,15 +237,24 @@ def main():
     conn.autocommit = True
     cur = conn.cursor()
     today = datetime.now(timezone.utc).date()
-    ensure_schema(cur)
 
-    anchors = load_anchors(cur)
-    if args.report:
-        for k, a in sorted(anchors.items(), key=lambda kv: kv[1]["anchored_at"]):
-            print(f"{k:14} {a['anchored_at']}  {a['subject']}")
-        print(f"{len(anchors)} anchor(s) held"); return 0
+    if not args.weight:
+        ensure_schema(cur)
+        anchors = load_anchors(cur)
+        if args.report:
+            for k, a in sorted(anchors.items(), key=lambda kv: kv[1]["anchored_at"]):
+                print(f"{k:14} {a['anchored_at']}  {a['subject']}")
+            print(f"{len(anchors)} anchor(s) held"); return 0
 
-    items = wom.gather(cur, today)                    # the same weighing #37 uses
+    items = wom.gather(cur, today)                    # ONE weighing, used by both passes
+    rc = 0
+    try:
+        weigh_pass(cur, today, items, args.dry_run)
+    except Exception as e:  # noqa: BLE001
+        wom.log(f"weighing pass failed ({type(e).__name__}: {e})"); rc = 1
+    if args.weight:
+        return rc
+
     weights = {i["key"]: i["weight"] for i in items}
     subjects = {i["key"]: i["topic"] for i in items}
     heaviest = [h["key"] for h in wom.rank_weighty(items)]
@@ -226,7 +265,7 @@ def main():
              "anchored_at": a["anchored_at"]} for k, a in after.items()]
     text = anchor_text(held, [anchors[k]["subject"] for k in to_release], today)
     if args.dry_run:
-        print(text); return 0
+        print(text); return rc
 
     stamp = _stamp()
     for k in to_set:
@@ -240,13 +279,13 @@ def main():
     sig = anchor_sig(after)
     seen = load_seen(cur)
     if not to_set and not to_release and not _fresh(seen, sig, today):
-        log(f"anchored set unchanged (sig {sig}) — holding quietly"); return 0
+        log(f"anchored set unchanged (sig {sig}) — holding quietly"); return rc
     remember(text, {"organ": STATE_SERVICE, "kind": "anchor", "sig": sig, "held": sorted(after),
                     "set": to_set, "released": to_release, **({"lineage": stamp} if stamp else {})})
     seen[sig] = today.isoformat()
     save_seen(cur, seen)
     log(f"stated what she holds (sig {sig})")
-    return 0
+    return rc
 
 
 def demo():

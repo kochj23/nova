@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for nova_time_sense.py — the 7 house categories (Security, Performance, Retry, Unit,
-Integration, Functional, Frame). Written by Jordan Koch (via Claude)."""
+Integration, Functional, Frame), plus the 2026-10-09 M15 merge: temporal intuition as `--daily`.
+Written by Jordan Koch (via Claude)."""
 import importlib.util
 import io
 import json
@@ -29,6 +30,25 @@ def _load(name, path):
 
 ts = _load("ts", SCRIPT)
 SRC = SCRIPT.read_text()
+
+# Offline guard: no real PG, no real memory server from this file, ever (tests patch over it where needed).
+_GUARDS = []
+
+
+def _offline(*a, **k):
+    raise RuntimeError("offline test: real PG / HTTP blocked")
+
+
+def setUpModule():
+    import urllib.request
+    import psycopg2
+    for target in (mock.patch.object(psycopg2, "connect", _offline), mock.patch.object(urllib.request, "urlopen", _offline)):
+        target.start(); _GUARDS.append(target)
+
+
+def tearDownModule():
+    while _GUARDS:
+        _GUARDS.pop().stop()
 # a Tuesday afternoon, fixed offset so "%a %H" is deterministic
 NOW = datetime(2026, 10, 6, 15, 0, tzinfo=timezone(timedelta(hours=-7)))
 
@@ -300,6 +320,91 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(sum(s.startswith("INSERT INTO time_sense") for s in cur.sql), 1)
 
 
+class _Resp:
+    def __init__(self, payload):
+        self._b = json.dumps(payload).encode()
+
+    def read(self):
+        return self._b
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FrozenDaily(datetime):
+    @classmethod
+    def now(cls, tz=None):
+        n = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
+        return n.astimezone(tz) if tz else n.replace(tzinfo=None)
+
+
+class TestDaily(unittest.TestCase):
+    """Integration + Functional for `--daily` (temporal intuition, merged 2026-10-09)."""
+
+    def _run(self, argv, oc, urlopen=None, mem_rows=()):
+        import nova_temporal_intuition as ti
+        posted = []
+
+        def ok(req, timeout=None):
+            posted.append(json.loads(req.data.decode())); return _Resp({"id": 1})
+
+        def connect(dsn, **k):
+            if "nova_memories" in dsn:
+                return _Conn(_Cur([("FROM memories", list(mem_rows))]))
+            return _Conn(oc)
+        with mock.patch.object(ts.psycopg2, "connect", side_effect=connect), \
+             mock.patch("urllib.request.urlopen", urlopen or ok), mock.patch.object(ti, "_stamp", return_value={}), \
+             mock.patch.object(ts, "datetime", _FrozenDaily), redirect_stdout(io.StringIO()) as out:
+            rc = ts.main(argv)
+        return rc, out.getvalue(), posted
+
+    def _ops(self, noticed=None):
+        n = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
+        return _Cur([("FROM gateway_traces", [(n - timedelta(days=8),)]), ("FROM herd_correspondents", []),
+                     ("FROM memory_anchors", []), ("FROM preoccupations", []), ("FROM projects", []),
+                     ("FROM service_config", ({"noticed": noticed},) if noticed else None)])
+
+    def test_daily_writes_one_temporal_memory_and_its_own_state(self):
+        oc = self._ops()
+        rc, out, posted = self._run(["--daily"], oc)
+        self.assertEqual(rc, 0)
+        self.assertEqual([p["source"] for p in posted], ["temporal"])
+        self.assertIn("a week now: since Little Mister last spoke to me (8 days)", posted[0]["text"])
+        self.assertEqual(posted[0]["metadata"]["organ"], "nova_temporal_intuition")
+        (p,) = [p for s_, p in zip(oc.sql, oc.params) if "INSERT INTO service_config" in s_]
+        self.assertEqual((p[0], p[1]), ("nova_temporal_intuition", "noticed"))
+        self.assertFalse(any("time_sense" in s_ for s_ in oc.sql))          # daily never touches the hourly table
+
+    def test_daily_dry_run_and_report_write_nothing(self):
+        oc = self._ops()
+        rc, out, posted = self._run(["--daily", "--dry-run"], oc)
+        self.assertEqual((rc, posted), (0, []))
+        self.assertIn("a week now", out)
+        self.assertFalse(any("INSERT" in s_ for s_ in oc.sql))
+        rc, out, posted = self._run(["--report", "--daily"], self._ops())
+        self.assertRegex(out, r"\s+8d\s+jordan:voice")
+
+    def test_daily_blank_day_and_pg_down_fail_open(self):
+        rc, out, posted = self._run(["--daily"], self._ops(noticed={"jordan:voice": 7}))
+        self.assertEqual((rc, posted), (0, []))
+        with mock.patch.object(ts.psycopg2, "connect", side_effect=OSError("pg down")), \
+             redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(ts.main(["--daily"]), 0)                          # RETRY GAP: daily connect, one attempt
+        self.assertIn("fail-open", out.getvalue())
+
+    def test_hourly_run_never_takes_the_daily_path(self):
+        with mock.patch.object(ts, "daily", side_effect=AssertionError("daily ran")), \
+             mock.patch.object(ts, "_connect", side_effect=ts.psycopg2.OperationalError("down")):
+            with self.assertRaises(ts.psycopg2.OperationalError):
+                ts.main([])
+        with mock.patch.object(ts, "daily", return_value=0) as d:
+            self.assertEqual(ts.main(["--dry-run", "--daily"]), 0)
+        d.assert_called_once_with(["--dry-run"])
+
+
 class TestFrame(unittest.TestCase):
     def test_import_smoke_exits_zero(self):
         # no --help/--selftest in this organ: importing must be side-effect free (no PG, no network)
@@ -308,7 +413,7 @@ class TestFrame(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_import_never_runs_main(self):
-        self.assertIn('if __name__ == "__main__":\n    main()', SRC)
+        self.assertIn('if __name__ == "__main__":\n    sys.exit(main())', SRC)
         with mock.patch.object(ts.psycopg2, "connect", side_effect=AssertionError("main ran")):
             _load("ts_again", SCRIPT)
 

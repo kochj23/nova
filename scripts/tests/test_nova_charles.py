@@ -163,6 +163,24 @@ class TestUnit(unittest.TestCase):
             self.assertEqual(C.selftest(), 0)
 
 
+    def test_mode_dispatch(self):
+        import nova_evitable_conflict as V
+        import nova_seldon_axioms as S
+        with mock.patch.object(C, "run") as r, mock.patch.object(S, "run") as sr, mock.patch.object(V, "run") as vr:
+            self.assertEqual(C.main(["--anomalies", "--dry-run"]), 0)
+            self.assertEqual(C.main(["--run"]), 0)               # the old name still works
+            self.assertEqual(C.main(["--forecasts", "--dry-run"]), 0)
+            self.assertEqual(C.main(["--triage"]), 0)
+            self.assertEqual(C.main(["--triage", "--days", "7", "--dry-run"]), 0)
+        self.assertEqual([c.kwargs for c in r.call_args_list], [{"dry": True, "days": None}, {"dry": False, "days": None}])
+        sr.assert_called_once_with(dry=True)
+        self.assertEqual([(c.args, c.kwargs) for c in vr.call_args_list], [((30,), {"dry": False}), ((7,), {"dry": True})])
+
+    def test_modes_are_exclusive(self):
+        with mock.patch("sys.stderr"), self.assertRaises(SystemExit):
+            C.main(["--forecasts", "--triage"])
+
+
 class TestIntegration(unittest.TestCase):
     def test_reuses_action_audit(self):
         self.assertIn("import nova_action_audit as A", SRC)
@@ -194,6 +212,26 @@ class TestIntegration(unittest.TestCase):
         seldon = (SCRIPTS / "nova_seldon_axioms.py").read_text()
         self.assertIn("from nova_charles import _q, own_actions", seldon)
         self.assertNotIn("def own_actions", seldon)
+
+
+    def test_absorbed_modes_keep_their_tables_and_keys(self):
+        import nova_evitable_conflict as V
+        import nova_seldon_axioms as S
+        self.assertIn("import nova_seldon_axioms as S", SRC)
+        self.assertIn("import nova_evitable_conflict as V", SRC)
+        self.assertEqual((S.SERVICE, V.QUEUE_SESSION, C.QUEUE_SESSION),
+                         ("seldon_axioms", "nova-evitable-conflict", "nova-charles"))
+        self.assertIn("prediction_axioms", S.SCHEMA)
+        self.assertIn("evitable_conflict_results", V.SCHEMA)
+        self.assertIn('"latest"', (SCRIPTS / "nova_seldon_axioms.py").read_text())   # CARDINAL reads it
+
+    def test_show_follows_the_mode(self):
+        import nova_evitable_conflict as V
+        import nova_seldon_axioms as S
+        with mock.patch.object(C, "show", return_value=0) as cs, mock.patch.object(S, "show", return_value=0) as ss, \
+                mock.patch.object(V, "show", return_value=0) as vs:
+            C.main(["--show"]); C.main(["--forecasts", "--show"]); C.main(["--triage", "--show"])
+        self.assertEqual((cs.call_count, ss.call_count, vs.call_count), (1, 1, 1))
 
 
 class TestFunctional(unittest.TestCase):
@@ -236,6 +274,41 @@ class TestFunctional(unittest.TestCase):
         self.assertEqual(res["points"], 0)
 
 
+    def test_triage_mode_registers_session_before_queue(self):
+        import nova_evitable_conflict as V
+        routes = {"FROM alert_triage_log t": [(True, False, 200, 180), (False, False, 400, 200),
+                                              (True, True, 100, 50), (False, True, 100, 50)],
+                  "FROM action_audit": [("2026-10-08", 1000, 900)], "SELECT (SELECT count(*)": [(1600, 10, 4, 1)],
+                  "RETURNING id": [(77,)]}
+        cur = FakeCur(routes)
+        with mock.patch.object(V.W, "connect", return_value=fake_conn(cur)), mock.patch("builtins.print"):
+            self.assertEqual(C.main(["--triage", "--days", "30"]), 0)
+        stmts = [s for s, _ in cur.sql]
+        sess = next(i for i, s in enumerate(stmts) if "INSERT INTO claude_sessions" in s)
+        queue = next(i for i, s in enumerate(stmts) if "INSERT INTO claude_queue" in s)
+        self.assertLess(sess, queue)
+        self.assertEqual(sum("INSERT INTO evitable_conflict_results" in s for s in stmts), 3)
+
+    def test_forecasts_mode_writes_axioms_and_latest(self):
+        import nova_seldon_axioms as S
+        t0 = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        pred = (7, t0, t0 + timedelta(hours=6), "The fire memory stream will stay active.", "", 0.8, "correct")
+        cur = FakeCur({"FROM predictions": [pred]})
+        with mock.patch.object(S.W, "connect", return_value=fake_conn(cur)), \
+                mock.patch.object(S, "own_actions", return_value=[]), mock.patch("builtins.print"):
+            self.assertEqual(C.main(["--forecasts"]), 0)
+        self.assertEqual(sum("INSERT INTO prediction_axioms" in s for s, _ in cur.sql), 1)
+        cfg = [p for s, p in cur.sql if "INSERT INTO service_config" in s]
+        self.assertEqual(cfg[0][:2], ("seldon_axioms", "latest"))
+
+    def test_triage_dry_run_writes_nothing(self):
+        import nova_evitable_conflict as V
+        cur = FakeCur({})
+        with mock.patch.object(V.W, "connect", return_value=fake_conn(cur)), mock.patch("builtins.print"):
+            C.main(["--triage", "--dry-run"])
+        self.assertFalse(any(k in s for s, _ in cur.sql for k in ("CREATE", "INSERT", "UPDATE")))
+
+
 class TestFrame(unittest.TestCase):
     def test_selftest_cli(self):
         r = subprocess.run([sys.executable, str(SCRIPTS / "nova_charles.py"), "--selftest"],
@@ -252,6 +325,12 @@ class TestFrame(unittest.TestCase):
         self.assertIn('if __name__ == "__main__":', SRC)
         self.assertNotIn("main()", inspect.getsource(C).split('if __name__ == "__main__":')[0].split("def main")[0])
 
+
+    def test_help_lists_the_three_modes(self):
+        r = subprocess.run([sys.executable, str(SCRIPTS / "nova_charles.py"), "--help"],
+                           capture_output=True, text=True, timeout=30)
+        for m in ("--anomalies", "--forecasts", "--triage"):
+            self.assertIn(m, r.stdout)
 
 if __name__ == "__main__":
     unittest.main()
