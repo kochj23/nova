@@ -16,7 +16,8 @@ from datetime import datetime
 
 import psycopg2
 
-MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 # Resilient native ollama across nodes (router shim unreliable for qwen3; .6 thrashes).
 LLM_MODEL = "qwen3:8b"

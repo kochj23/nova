@@ -19,6 +19,7 @@ Logs to ~/.openclaw/logs/nova_memory_quality.log
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import argparse
 import asyncio
 import logging
@@ -34,7 +35,7 @@ from nova_notify import notify
 
 # ── Config ───────────────────────────────────────────────────────────────────
 
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
+DB_DSN = _nova_dsn.pg_url("nova_memories")
 LOG_DIR = Path.home() / ".openclaw" / "logs"
 LOG_FILE = LOG_DIR / "nova_memory_quality.log"
 BATCH_SIZE = 5000

@@ -47,7 +47,8 @@ def call_llm(system: str, user: str, max_tokens: int = 8000) -> str:
         log(f"claude_generate (sonnet) failed, falling back to haiku: {e}")
         return nova_journal.call_openrouter(system, user, max_tokens=max_tokens)
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 HUGO_ROOT = Path.home() / "nova-journal"
 CONTENT_DIR = HUGO_ROOT / "content/operations"
 IMAGES_DIR = HUGO_ROOT / "static/images/operations"

@@ -39,7 +39,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 import nova_unifi_poller as U
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # Only these tiers are liveness-alerted (and only when wired + recently-online). smart_home
 # is deliberately excluded: those get powered off by scenes/by hand — judged by feeds/hue.

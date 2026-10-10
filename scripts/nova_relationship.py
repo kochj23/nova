@@ -57,6 +57,7 @@ Modes: seed | brief [--write] | interlude [--dry-run] | stretch [--dry-run] |
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
+import nova_dsn as _nova_dsn  # noqa: E402
 
 import argparse
 import hashlib
@@ -73,8 +74,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-OPS_DSN = os.environ.get("NOVA_OPS_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
-MEM_DSN = os.environ.get("NOVA_MEM_DSN", "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj")
+OPS_DSN = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
+MEM_DSN = os.environ.get("NOVA_MEM_DSN", _nova_dsn.pg_dsn("nova_memories"))
 MEMSRV = os.environ.get("NOVA_MEMSRV", "http://memory-server.digitalnoise.net:18790")
 OLLAMA_NODES = ["http://192.168.1.125:11434", "http://192.168.1.5:11434",
                 "http://192.168.1.86:11434", "http://192.168.1.77:11434",

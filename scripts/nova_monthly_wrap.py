@@ -97,7 +97,8 @@ RUN_BUDGET_S = 1800   # measured 2026-10-06: draft ~105 s, expand+check <=~6 min
 IMAGE_TIMEOUT_S = 240
 IMAGE_MAX_RETRIES = 1
 
-PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj connect_timeout=5"
+import nova_dsn as _nova_dsn  # noqa: E402
+PG_DSN = _nova_dsn.pg_dsn("nova_ops", "connect_timeout=5")
 STATE_SERVICE = "nova_monthly_wrap"
 
 _MONTH_RE = re.compile(r"^(\d{4})-(0[1-9]|1[0-2])$")

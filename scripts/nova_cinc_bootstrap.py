@@ -15,6 +15,7 @@ Usage:
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import argparse
 import json
 import os
@@ -35,7 +36,7 @@ CINC_BASE = Path("/Volumes/Data/AI/cinc")
 COOKBOOKS = CINC_BASE / "cookbooks"
 SOLO_RB = CINC_BASE / "solo.rb"
 NODES_DIR = CINC_BASE / "nodes"
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+DB_DSN = _nova_dsn.pg_url("nova_ops")
 SSH_USER = "kochj"
 CINC_INSTALL_URL = "https://omnitruck.cinc.sh/install.sh"
 

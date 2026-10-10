@@ -47,8 +47,10 @@ from datetime import datetime
 
 import psycopg2
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
-MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
+import nova_dsn as _nova_dsn  # noqa: E402
+MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 # Native ollama failover — first non-empty wins (copied from nova_unclaimed_time.py).
 # .6 thrashes models and the router shim returns empty for qwen3's thinking output,

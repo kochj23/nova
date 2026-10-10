@@ -25,7 +25,8 @@ try:
 except Exception:
     nova_notify = None
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 SOURCE = "nova-backup-monitor"
 
 # job-name prefix -> max hours since last SUCCESS before we alert

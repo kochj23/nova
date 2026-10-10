@@ -31,7 +31,8 @@ from pathlib import Path
 
 import psycopg2
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 CHANNEL = "C0AMNQ5GX70"
 BOT_USER = "U0ANKLR3SUQ"
 HUMANS = {"U049EPC2W"}            # Jordan. ONLY these users can answer or decide (2026-09-29: Nova's own

@@ -11,11 +11,12 @@ latent pass has a decided-by/decided-at/decision_note trail instead of Nova reso
   --selftest
 Scheduled on scheduler-core daily 09:10 with --post. Approved 2026-10-04.
 """
+import nova_dsn as _nova_dsn  # noqa: E402
 import sys, os, re
 from datetime import datetime
 import psycopg2
 
-OPS = os.environ.get("NOVA_OPS_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+OPS = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
 CHANNEL = "C0AMNQ5GX70"          # #nova-chat (same as proposals/questions)
 POST_PER_DAY = 2
 POST_HOURS = range(9, 18)

@@ -28,7 +28,8 @@ FFMPEG = "/opt/homebrew/bin/ffmpeg"
 WHISPER = "/opt/homebrew/bin/mlx_whisper"
 WMODEL = "mlx-community/whisper-large-v3-turbo"
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 WORK = Path.home() / ".openclaw/cache/fishbowl_cap"
 # Plex YouTube library — fishbowl streams are filed here, grouped by channel, so they appear in
 # Plex's YouTube section (Jordan 2026-08-11). Same volume the existing YouTube pipeline uses.

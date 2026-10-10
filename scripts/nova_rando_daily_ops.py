@@ -47,7 +47,8 @@ IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 OPENROUTER_MODEL = "google/gemini-2.5-flash"
 
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 
 
 def log(msg: str):
@@ -404,7 +405,7 @@ def gather_ops_data() -> dict:
 
     # 18. Memory ingestion stats for today
     try:
-        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj")
+        conn = psycopg2.connect(_nova_dsn.pg_dsn("nova_memories"))
         cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         cur.execute("""
             SELECT source, COUNT(*) as added

@@ -52,8 +52,10 @@ import psycopg2
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
-MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 
 LLM_MODEL = "qwen3:8b"

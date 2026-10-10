@@ -12,7 +12,8 @@ Written by Jordan Koch.
 """
 from datetime import datetime
 
-PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+PG_DSN = _nova_dsn.pg_dsn("nova_ops")
 
 _FIELDS = ["ts", "temp_f", "feels_like_f", "humidity", "wind_speed_mph",
            "wind_gust_mph", "wind_dir", "pressure_in", "uv_index",

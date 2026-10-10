@@ -75,6 +75,7 @@ import sys
 import time
 from dataclasses import dataclass, field
 from typing import Callable, List, Optional
+import nova_dsn as _nova_dsn  # noqa: E402
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -85,7 +86,7 @@ except Exception:                       # pragma: no cover - defensive import
     def _notify(*a, **k):               # never let a missing import kill the monitor
         return False
 
-DSN = os.environ.get("NOVA_PG_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+DSN = os.environ.get("NOVA_PG_DSN", _nova_dsn.pg_dsn("nova_ops"))
 INTERVAL_S = 900                        # matches the launchd StartInterval
 CONNECT_ATTEMPTS = 3
 CONNECT_BACKOFF_S = 2

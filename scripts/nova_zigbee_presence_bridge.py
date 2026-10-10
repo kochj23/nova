@@ -23,7 +23,8 @@ try:
 except Exception:
     notify = None
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 MQTT_HOST, MQTT_PORT = "127.0.0.1", 1883
 
 # zigbee2mqtt friendly_name -> Nova room. Add each FP300 here as it's set up.

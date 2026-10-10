@@ -25,6 +25,7 @@ Address by the scheduler every 1m. Safe to run unattended.
 Written by Jordan Koch / Nova.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import sys
 import os
 import socket
@@ -52,7 +53,7 @@ import psycopg2
 
 # ── Config ──────────────────────────────────────────────────────────────────
 
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+DB_DSN = _nova_dsn.pg_url("nova_ops")
 LOCAL_IPS = {"127.0.0.1", "localhost", "192.168.1.6", "::1"}
 HOSTNAME = socket.gethostname()
 PROBE_TIMEOUT = 4.0

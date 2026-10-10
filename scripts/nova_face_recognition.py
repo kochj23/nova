@@ -49,7 +49,8 @@ STATE_FILE = WORKSPACE / "state" / "nova_face_state.json"
 SAM_FACES_DIR = Path.home() / ".openclaw/skills/sam-faces/sam_faces"
 
 AWAY_THRESHOLD_MINUTES = 60  # Mark as "away" if not seen for this long
-PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+PG_DSN = _nova_dsn.pg_dsn("nova_ops")
 
 EXTERIOR_CAMERAS = [
     "front_door_latest.jpg",

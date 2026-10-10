@@ -11,11 +11,12 @@ Readers: nova_time_sense.py (max(last_at) -> "last spoke to me"), nova_affect.py
 Why: on 2026-10-03 affect logged '1 real conversation' and time_sense said 'last spoke 6 h ago' during an
 eight-hour Claude session. Jordan approved wish #56 on 2026-10-04. --dry-run --selftest.
 """
+import nova_dsn as _nova_dsn  # noqa: E402
 import sys, os
 import psycopg2
 
-OPS = os.environ.get("NOVA_OPS_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
-MEM = os.environ.get("NOVA_MEM_DSN", "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj")
+OPS = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
+MEM = os.environ.get("NOVA_MEM_DSN", _nova_dsn.pg_dsn("nova_memories"))
 MACHINE_CHANNELS = ("hc", "healthcheck", "test", "cron", "system", "scheduler", "internal", "selfcheck", "machine", "ingest-reaction")
 JORDAN_SLACK = "U049EPC2W"
 DDL = """CREATE TABLE IF NOT EXISTS contact_sense (

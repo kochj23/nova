@@ -14,6 +14,7 @@ Runs via scheduler every 2 minutes.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import json
 import os
 import ssl
@@ -432,7 +433,7 @@ def _feed_vehicle_presence(cam_name, raw_smart_types):
 
     try:
         import psycopg2
-        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+        conn = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"))
         conn.autocommit = True
         with conn.cursor() as cur:
             cur.execute("""

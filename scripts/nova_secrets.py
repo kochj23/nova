@@ -16,6 +16,7 @@ Env (injected by systemd from $CREDENTIALS_DIRECTORY, or exported for a shell):
   NOVA_SECRETS_DB_PASS   password for the nova_secrets PG role
   NOVA_SECRETS_DSN       e.g. "host=127.0.0.1 port=5432 dbname=nova_ops user=nova_secrets sslmode=prefer"
 """
+import nova_dsn as _nova_dsn  # noqa: E402
 import os, sys
 
 def _keychain(name):
@@ -89,12 +90,10 @@ def _connect(admin=False):
     # points at the local machine anyway.
     if admin:
         dsn = os.environ.get("NOVA_SECRETS_ADMIN_DSN",
-                             "host=pg-primary.digitalnoise.net port=5432 dbname=nova_ops "
-                             "user=kochj sslmode=prefer")
+                             _nova_dsn.pg_host_dbname("nova_ops") + " user=kochj sslmode=prefer")
     else:
         dsn = os.environ.get("NOVA_SECRETS_DSN",
-                             "host=pg-primary.digitalnoise.net port=5432 dbname=nova_ops "
-                             "user=nova_secrets sslmode=prefer")
+                             _nova_dsn.pg_host_dbname("nova_ops") + " user=nova_secrets sslmode=prefer")
     # DB password only if pg_hba requires it; local/LAN trust needs none.
     # (Protection is the master key, which is NOT in the DB — not the DB role.)
     pw = _optional_env("NOVA_SECRETS_ADMIN_PASS" if admin else "NOVA_SECRETS_DB_PASS")

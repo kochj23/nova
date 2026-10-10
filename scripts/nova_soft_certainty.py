@@ -42,7 +42,8 @@ from pathlib import Path
 
 import psycopg2
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 MIN_N = 8            # below this, not enough evidence to correct — leave confidence alone
 TODAY = date.today().isoformat()
 HIT = {"correct": 1.0, "partial": 0.5, "incorrect": 0.0}

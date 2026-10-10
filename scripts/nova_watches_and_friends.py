@@ -25,8 +25,10 @@ import nova_journal as nj          # noqa: E402
 import nova_voice                  # noqa: E402
 from nova_yt_ingest_watch import CHANNELS  # noqa: E402
 
-MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 SECTION = "watches"
 MIN_WORDS = 5000
 NEWS_PER_VIDEO, NEWS_MAX_VIDEOS = 1600, 36      # ~58k chars: under the size that hangs claude -p

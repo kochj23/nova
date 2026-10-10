@@ -22,6 +22,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+import nova_dsn as _nova_dsn  # noqa: E402
 
 sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 import nova_config
@@ -43,7 +44,7 @@ except ImportError:
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
+DB_DSN = _nova_dsn.pg_url("nova_memories")
 BATCH_SIZE = 5000
 LOG_EVERY = 10_000
 

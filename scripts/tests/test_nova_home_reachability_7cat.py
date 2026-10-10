@@ -25,7 +25,7 @@ def _live_conn():
 def test_security_dsn_comes_from_config_not_source():
     src = (SCRIPTS / "nova_home_reachability.py").read_text()
     assert "pg-primary.digitalnoise.net" not in src, "database host must not be written into the script"
-    assert "NC.pg_dsn()" in src
+    assert "_nova_dsn.pg_dsn(" in src
 
 
 def test_security_no_sql_built_from_strings():

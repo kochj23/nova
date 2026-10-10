@@ -25,7 +25,8 @@ import psycopg2
 import psycopg2.extras
 import nova_config
 
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 SSH_OPTS = ["-o", "ConnectTimeout=10", "-o", "StrictHostKeyChecking=no"]
 
 

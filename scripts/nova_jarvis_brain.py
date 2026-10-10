@@ -20,6 +20,7 @@ Runs every 2 minutes. HTTP API on port 37480.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import json
 import signal
@@ -41,7 +42,7 @@ except ImportError as e:
 sys.path.insert(0, str(Path(__file__).parent))
 
 VERSION = "1.0.0"
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+DB_DSN = _nova_dsn.pg_url("nova_ops")
 HA_URL = "http://127.0.0.1:8123"
 OLLAMA_URL = "http://127.0.0.1:11434"
 HTTP_PORT = 37480

@@ -31,7 +31,8 @@ import psycopg2
 HUGO_CONTENT = (Path.home() / "nova-journal" / "content")
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
 SOURCE = "nova_articles"
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_memories")
 
 
 def log(m):

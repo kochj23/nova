@@ -23,7 +23,8 @@ import psycopg2.extras
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_notify import notify
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 LOG_FILE = Path.home() / ".openclaw/logs/osint_nuclei_sweep.log"
 NUCLEI = str(Path.home() / "go/bin/nuclei")
 NUCLEI_SAFE_TAGS = "cves,exposures,misconfiguration,default-login,takeover,tech"

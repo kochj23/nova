@@ -27,7 +27,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
 DELAY = 22          # seconds between Reddit requests (avoid 429)
 CHUNK = 1500

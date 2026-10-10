@@ -31,7 +31,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 LOG_DIR = Path.home() / ".openclaw" / "logs"
 BB_FIX_RX = re.compile(r"→\s*(Restarted|Fixed|Killed|Cleared|Rotated|Reloaded|Remounted|Respawned|Reset|"
                        r"Removed|Recovered|Rebuilt|Truncated|Triggered|Unloaded|Re-?enabled)\b(.*)$")

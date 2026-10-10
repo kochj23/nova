@@ -14,8 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import nova_config as NC  # noqa: E402
-DSN = NC.pg_dsn()
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn()
 
 
 def digest_lines(conflicts: list, reachability: str, actions: tuple, review_errors: int) -> list:
@@ -62,7 +62,7 @@ def main(argv=None) -> int:
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args(argv)
     import psycopg2
-    conn = NC.pg_connect()
+    conn = _nova_dsn.pg_connect()
     try:
         g = gather(conn, a.hours)
     finally:

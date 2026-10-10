@@ -48,8 +48,10 @@ except Exception:  # pragma: no cover - lineage is optional
     def lineage_stamp(**kw):
         return {}
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
-MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
+import nova_dsn as _nova_dsn  # noqa: E402
+MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
 
 WINDOW_DAYS = 21          # look-back for episodes / unclaimed / drift
 AUTOBIO_MAX = 600         # default trim for the gateway accessor

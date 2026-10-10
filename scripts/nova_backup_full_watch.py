@@ -19,7 +19,8 @@ import psycopg2
 sys.path.insert(0, str(__import__("pathlib").Path(__file__).parent))
 import nova_config
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 HEARTBEAT_S = 3600          # post a "still running" line hourly
 POLL_S = 600                # check for completion every 10 min
 MAX_RUNTIME_S = 20 * 3600   # safety: give up after 20h

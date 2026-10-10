@@ -28,7 +28,8 @@ import psycopg2
 import nova_journal as nj
 import nova_voice
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # Her wheelhouse — the only lenses worth her attention. Each becomes a GitHub topic query.
 THEMES = [

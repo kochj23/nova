@@ -33,6 +33,7 @@ Video output: /Volumes/external/videos/youtube/<Channel>/Season 01/S01E{N} - <Ti
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import argparse, hashlib, json, os, random, re, signal, subprocess, sys
 import threading, time, urllib.error, urllib.parse, urllib.request
 from collections import deque
@@ -389,7 +390,7 @@ def flush_discards():
     try:
         if _discard_conn is None:
             import psycopg2
-            _discard_conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj")
+            _discard_conn = psycopg2.connect(_nova_dsn.pg_dsn("nova_memories"))
             with _discard_conn, _discard_conn.cursor() as cur:
                 cur.execute("""CREATE TABLE IF NOT EXISTS memory_discards (
                     id BIGSERIAL PRIMARY KEY, ts timestamptz DEFAULT now(),

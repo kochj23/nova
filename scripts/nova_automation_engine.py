@@ -16,6 +16,7 @@ Port: 37468 (HTTP API for status + manual triggers)
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import json
 import signal
@@ -37,7 +38,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 VERSION = "1.0.0"
 HTTP_PORT = 37468
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+DB_DSN = _nova_dsn.pg_url("nova_ops")
 PRESENCE_URL = "http://127.0.0.1:37465/occupancy"
 HUE_URL = "http://192.168.1.250:37476"  # nova_hue migrated to nova-core4/.250 2026-07-19 (was nuk/.10)
 LOG_FILE = Path.home() / ".openclaw/logs/nova_automation.log"

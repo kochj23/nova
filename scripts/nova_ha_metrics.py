@@ -22,6 +22,7 @@ Scheduler: run on a 60s interval (see report).
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import json
 import signal
@@ -39,7 +40,7 @@ except ImportError as e:
     sys.exit(1)
 
 VERSION = "1.0.0"
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+DB_DSN = _nova_dsn.pg_url("nova_ops")
 HA_URL = "http://127.0.0.1:8123"
 POLL_INTERVAL = 60          # seconds between collections
 AREA_REFRESH = 3600         # seconds between area-map refreshes

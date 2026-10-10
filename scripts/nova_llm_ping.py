@@ -26,7 +26,8 @@ import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 CHECKED_BY = "nova_llm_ping"
 CHAT_MODEL = "qwen3:8b"          # what the gateway asks Ollama for (router.py _DEFAULT_MODELS)
 MLX_CHAT_MATCH = "qwen2.5-32b-4bit"   # the --model both MLX servers run; the id is a path that differs per box, so match by name

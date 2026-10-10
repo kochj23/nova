@@ -33,7 +33,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from nova_vault7_ttp import classify_device, IOT_SSID
 import nova_config
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 ACTIVE_WINDOW = "14 days"
 
 # Risk priority + rationale per device class (Vault-7 relevance).

@@ -33,7 +33,8 @@ import psycopg2
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_ingest as ni  # noqa: E402  (shared transcribe/chunk/remember path)
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 YTDLP = "/opt/homebrew/bin/yt-dlp"
 COOKIES = Path.home() / ".openclaw/cache/yt_cookies_youtube.txt"   # Safari jar, kept fresh by nova_speaks_upload
 AUDIO_DIR = Path("/Volumes/external/nova-yt-audio")   # UNAS External share; not Plex (Jordan 2026-10-06)

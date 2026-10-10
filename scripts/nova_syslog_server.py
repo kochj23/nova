@@ -15,6 +15,7 @@ Sources: UDM Pro, Synology NAS, UniFi switches/APs, Mac Minis, etc.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import json
 import os
@@ -44,7 +45,7 @@ VERSION = "1.0.0"
 SYSLOG_PORT = 1514
 HTTP_PORT = 37462
 BIND_ADDR = "0.0.0.0"
-DB_DSN = os.environ.get("NOVA_PG_DSN", "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")  # write to PG primary on .6 (#650)
+DB_DSN = os.environ.get("NOVA_PG_DSN", _nova_dsn.pg_url("nova_ops"))  # write to PG primary on .6 (#650)
 LOG_FILE = Path.home() / ".openclaw/logs/nova_syslog.log"
 QUEUE_MAX = 10_000
 BATCH_SIZE = 100

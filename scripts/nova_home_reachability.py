@@ -16,8 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import nova_config as NC  # noqa: E402
-DSN = NC.pg_dsn()
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn()
 DARK_SHARE = 0.5          # a room is dark when fewer than half its outlets report active
 PING_HOSTS = {            # LAN devices that were answering when this was written (2026-10-09)
     "outdoor HomePod": "192.168.1.70",
@@ -80,7 +80,7 @@ def main(argv=None) -> int:
     a = ap.parse_args(argv)
     import psycopg2
     import nova_notify
-    conn = NC.pg_connect()
+    conn = _nova_dsn.pg_connect()
     try:
         rows = latest_rows(conn)
     finally:

@@ -30,7 +30,8 @@ from datetime import datetime
 
 import psycopg2
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 MQTT_HOST = "127.0.0.1"
 STOP = {"the", "and", "for", "what", "which", "does", "run", "running", "version", "firmware", "does",
         "is", "are", "on", "in", "my", "our", "a", "an", "of", "to", "device", "unit", "thing"}

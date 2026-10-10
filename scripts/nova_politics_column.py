@@ -27,8 +27,10 @@ sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 HUGO_ROOT = Path.home() / "nova-journal"
 CONTENT_DIR = HUGO_ROOT / "content" / "opinions"
 IMAGES_DIR = HUGO_ROOT / "static" / "images" / "opinions"
-MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
 OLLAMA_MODEL = os.environ.get("NOVA_COLUMN_MODEL", "qwen3:30b-a3b")
 

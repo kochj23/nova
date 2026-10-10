@@ -132,6 +132,43 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ## Infrastructure & Security (June–October 2026)
 
+### Oversight Tools: Reachability, Action Why, Rule Review, Digest, Wargames (2026-10-09)
+
+Five tools that make Nova's state and reasoning visible, plus the logging change that feeds them. Each is
+read-only or alert-only: none changes a real system or feeds the corroboration gates.
+
+| Script | What it does | Writes |
+|---|---|---|
+| `nova_home_reachability.py` | Flags HomeKit rooms gone dark. All rooms dark means the controller is down. Some rooms dark means a network segment. | notifications, one per room per day |
+| `nova_action_why.py` | Prints recent actions with the rationale recorded for each, or says none was recorded. | nothing |
+| `nova_directive_review.py` | Asks a local model whether each pair of standing feedback rules conflicts. Candidates go to a person. | `directive_conflict_reviews` |
+| `nova_whole_picture.py` | Daily digest: rule conflicts to review, HomeKit status, unexplained actions, failed checks. No private sources. | optional notification |
+| `nova_wargame.py` | Read-only what-if drills. Responses are APPLY or HOLD, and HOLD is always an option. | `exercise_results` (exercise=true) |
+
+The logging hook `session-logger.sh` now records each Bash command's description as that action's rationale, and
+retries its database write up to three times. Write and Edit actions carry no reason field, so they show as gaps.
+
+```mermaid
+flowchart LR
+    HK[("telemetry.homekit_outlets")] --> REACH["nova_home_reachability"]
+    REACH -->|dark rooms| NOTIFY["nova_notify"]
+    RULES[("claude_memories feedback")] --> REVIEW["nova_directive_review"]
+    LLM["local Ollama model"] --> REVIEW
+    REVIEW --> CONF[("directive_conflict_reviews")]
+    HOOK["session-logger.sh"] --> ACT[("claude_actions + rationale")]
+    ACT --> WHY["nova_action_why"]
+    CONF --> DIGEST["nova_whole_picture"]
+    REACH --> DIGEST
+    ACT --> DIGEST
+    DIGEST -->|daily| NOTIFY
+    WARGAME["nova_wargame"] -->|exercise only| EX[("exercise_results")]
+```
+
+Shared config: `nova_config.pg_dsn()` reads the database host from `NOVA_PG_HOST`, and `nova_config.pg_connect()`
+retries connections. Tests: `tests/test_*_7cat.py` for each tool, covering security, performance, retry, unit,
+integration, functional and frame.
+
+
 ### Literary Organs: Transitions, Influence, and Honesty (2026-10-08)
 
 Two more research passes, one over seven gothic and horror writers (Poe, Stoker, Mary Shelley, Shirley Jackson, Clive Barker, Anne Rice, Richard Matheson) and one over Asimov, Clarke and Herbert, produced twenty-one read-only organs. The gothic set watches Nova's transitions: what is retired, born, woken, granted, held, or blamed on the outside world. The science-fiction set measures her own influence: on her forecasts, on Little Mister, on her pace of change, and on her honesty about what she withholds. Each has a seven-category test file; all but one run on the Studio scheduler. How-to: `agent_docs` `nova-literary-organs`.
@@ -295,24 +332,24 @@ Nova gained a set of organs that decide how far she trusts what she hears, what 
 ```mermaid
 flowchart TD
     subgraph Intake
-        S[Sensors and feeds] --> W[Watch organs]
-        S --> P[nova_presence_engine]
-        U[Slack, Signal, Discord, Claude] --> GW[Nova Gateway v2]
+        S["Sensors and feeds"] --> W["Watch organs"]
+        S --> P["nova_presence_engine"]
+        U["Slack, Signal, Discord, Claude"] --> GW["Nova Gateway v2"]
     end
     subgraph Judgment
-        W --> CA[CARDINAL ledger]
-        CA --> SC[Soft certainty and turning point]
-        GW --> VC[value_check]
-        VC --> CO[coagency_proposals]
-        CO -->|pending_human| CR[Claude reviewer]
-        CO -->|pending_human| JK[Jordan]
+        W --> CA["CARDINAL ledger"]
+        CA --> SC["Soft certainty and turning point"]
+        GW --> VC["value_check"]
+        VC --> CO["coagency_proposals"]
+        CO -->|pending_human| CR["Claude reviewer"]
+        CO -->|pending_human| JK["Jordan"]
     end
     subgraph Action
         CR --> PG{Proteus guards}
         JK --> PG
-        PG -->|allowed| HA[Home Assistant and others]
-        PG -->|refused| LOG[Action audit]
-        SC --> VO[Room voice, emergencies only]
+        PG -->|allowed| HA["Home Assistant and others"]
+        PG -->|refused| LOG["Action audit"]
+        SC --> VO["Room voice, emergencies only"]
     end
 ```
 
@@ -379,15 +416,15 @@ Jordan asked whether any articles were missed during the GitHub Actions outage. 
 
 ```mermaid
 flowchart TD
-    G[generator on .2 or .6] --> C[commit to local nova-journal]
-    C --> PL[git_push under the fleet-wide advisory lock]
-    PL -->|pushed| D[GitHub Pages deploy] --> LIVE[live on nova.digitalnoise.net]
-    PL -->|network failure or timeout| N[log: committed, NOT published<br/>Slack alert journal-push-failing]
-    PL -->|real conflict| R[rolling-file resolution, else unwedge]
-    N --> W[hourly stranded watchdog<br/>on EVERY publishing host]
+    G["generator on .2 or .6"] --> C["commit to local nova-journal"]
+    C --> PL["git_push under the fleet-wide advisory lock"]
+    PL -->|pushed| D["GitHub Pages deploy"] --> LIVE["live on nova.digitalnoise.net"]
+    PL -->|network failure or timeout| N["log: committed, NOT published<br/>Slack alert journal-push-failing"]
+    PL -->|real conflict| R["rolling-file resolution, else unwedge"]
+    N --> W["hourly stranded watchdog<br/>on EVERY publishing host"]
     W -->|rebase + push under the same lock| D
-    LIVE --> S[Nova Speaks sweep, every 10 min]
-    S -->|git fetch; ff-only if clean and behind,<br/>else read origin/main tree| Q[queue render] --> YT[narrated video on YouTube]
+    LIVE --> S["Nova Speaks sweep, every 10 min"]
+    S -->|git fetch; ff-only if clean and behind,<br/>else read origin/main tree| Q["queue render"] --> YT["narrated video on YouTube"]
 ```
 
 | Problem found | Fix |
@@ -421,18 +458,18 @@ Two Claude sessions worked in parallel; this records both.
 
 ```mermaid
 flowchart TD
-    D[draft + profile + sources] --> L{length vs ARTICLE_LENGTH row}
-    L -->|within range| P[publish as written]
-    L -->|above max| T[one tighten pass, add nothing] --> P
+    D["draft + profile + sources"] --> L{length vs ARTICLE_LENGTH row}
+    L -->|within range| P["publish as written"]
+    L -->|above max| T["one tighten pass, add nothing"] --> P
     L -->|below min, policy never or no sources| P
-    L -->|below min, policy grounded + sources| E[one grounded expansion<br/>Sonnet, haiku fallback]
+    L -->|below min, policy grounded + sources| E["one grounded expansion<br/>Sonnet, haiku fallback"]
     E --> G{number check + separate<br/>Sonnet grounding check}
-    G -->|every claim supported| P2[publish expansion]
+    G -->|every claim supported| P2["publish expansion"]
     G -->|checker error or no time| P
     G -->|items flagged| S{strip: locate each flag<br/>in an ADDED sentence}
     S -->|flag in an unedited draft sentence, not found,<br/>or over 15% of added sentences| P
     S -->|cut added sentences, revert edited draft<br/>sentences, tidy orphaned headings| R{re-run BOTH checks once}
-    R -->|clean and still meaningfully longer| P3[publish stripped expansion]
+    R -->|clean and still meaningfully longer| P3["publish stripped expansion"]
     R -->|anything flagged, error, or no time| P
 ```
 
@@ -484,12 +521,12 @@ Jordan: "Do a full code audit using sub-agents making sure that everything has t
 
 ```mermaid
 flowchart LR
-    A[strict audit<br/>class-name check, 617 scripts] --> B[balanced batches<br/>by line count]
-    B --> C[parallel agents<br/>shared brief + CONVENTIONS.md pitfalls]
-    C --> D[per-batch single-session run<br/>catches cross-file leaks]
-    D --> E[fixer pass<br/>half-finished files from the cut-off wave]
-    E --> F[full suite, one process]
-    F -->|green| G[commit + push<br/>pre-push PII scan]
+    A["strict audit<br/>class-name check, 617 scripts"] --> B["balanced batches<br/>by line count"]
+    B --> C["parallel agents<br/>shared brief + CONVENTIONS.md pitfalls"]
+    C --> D["per-batch single-session run<br/>catches cross-file leaks"]
+    D --> E["fixer pass<br/>half-finished files from the cut-off wave"]
+    E --> F["full suite, one process"]
+    F -->|green| G["commit + push<br/>pre-push PII scan"]
 ```
 
 **What the tests found** — real production bugs, each fixed minimally with a regression test:
@@ -514,13 +551,13 @@ Jordan asked what Nova learned at school, then what wishes she had waiting. Two 
 
 ```mermaid
 flowchart LR
-    D[detector<br/>syslog / prober / sentinel] -->|telemetry.events| N[notifier drain]
+    D["detector<br/>syslog / prober / sentinel"] -->|telemetry.events| N["notifier drain"]
     N --> E{evidence check<br/>raw row · re-check · who · 14d history}
-    E -->|detector_fault<br/>warning/info| S[suppressed<br/>channel=detector-fault<br/>claude_queue bug, 1 per rule per week]
-    E -->|supported / unverified| T[alert triage<br/>LLM sees EVIDENCE block<br/>returns next_action]
-    T --> C[correlator<br/>incident + qwen summary<br/>prompt carries EVIDENCE]
-    C --> P[Slack page<br/>🧾 Evidence · 🛠 Do]
-    C --> R[remediation<br/>SAFE steps execute<br/>IMPACTFUL approval-gated]
+    E -->|detector_fault<br/>warning/info| S["suppressed<br/>channel=detector-fault<br/>claude_queue bug, 1 per rule per week"]
+    E -->|supported / unverified| T["alert triage<br/>LLM sees EVIDENCE block<br/>returns next_action"]
+    T --> C["correlator<br/>incident + qwen summary<br/>prompt carries EVIDENCE"]
+    C --> P["Slack page<br/>🧾 Evidence · 🛠 Do"]
+    C --> R["remediation<br/>SAFE steps execute<br/>IMPACTFUL approval-gated"]
     E -. hard-critical / critical<br/>always pages, annotated .-> T
 ```
 
@@ -531,15 +568,15 @@ The notifier now runs triage **before** correlation, so a detector fault never o
 ```mermaid
 flowchart TB
     subgraph one["tests/test_&lt;script&gt;.py — one per organ (CONVENTIONS.md)"]
-        S[TestSecurity<br/>no creds · parameterized SQL · redlines]
-        P[TestPerformance<br/>10k items under a bound]
-        R[TestRetry<br/>backoff proven, or # RETRY GAP tracked]
-        U[TestUnit<br/>pure functions · demo/--selftest]
-        I[TestIntegration<br/>shared helpers · tables · sources]
-        F[TestFunctional<br/>main() golden + error path, all mocked]
-        X[TestFrame<br/>subprocess --selftest/--help exits 0]
+        S["TestSecurity<br/>no creds · parameterized SQL · redlines"]
+        P["TestPerformance<br/>10k items under a bound"]
+        R["TestRetry<br/>backoff proven, or # RETRY GAP tracked"]
+        U["TestUnit<br/>pure functions · demo/--selftest"]
+        I["TestIntegration<br/>shared helpers · tables · sources"]
+        F["TestFunctional<br/>main() golden + error path, all mocked"]
+        X["TestFrame<br/>subprocess --selftest/--help exits 0"]
     end
-    one -->|offline, &lt;15 s, green both ways| G[NOVA_TEST_QUIET=1 pytest tests/]
+    one -->|offline, &lt;15 s, green both ways| G["NOVA_TEST_QUIET=1 pytest tests/"]
 ```
 
 | | Before | After |
@@ -592,24 +629,24 @@ Jordan's idea (10/3): not just posts — videos. Rule since 10/3 19:30: every ar
 
 ```mermaid
 flowchart LR
-    A[Article goes LIVE<br/>nova.digitalnoise.net] -->|every 10 min| B[nova_speaks_sweep.py<br/>Studio scheduler]
-    B -->|queue row| C[(nova_speaks_renders)]
+    A["Article goes LIVE<br/>nova.digitalnoise.net"] -->|every 10 min| B["nova_speaks_sweep.py<br/>Studio scheduler"]
+    B -->|queue row| C[("nova_speaks_renders")]
     B -->|scp article + covers<br/>dispatch to idle host| D{Render pool}
-    D --> D1[Studio M4 Max · MPS]
-    D --> D2[mini M4 Pro · MPS]
-    D --> D3[nova-core2 · CPU]
-    D --> D4[nova-core7 · CPU]
-    D1 & D2 & D3 & D4 --> N[narration stage<br/>gloss foreign phrases · qwen3:8b write-for-the-ear + grounding guard<br/>spoken form °F/times/acronyms]
-    P[(service_config<br/>phrasebook)] -.-> N
-    N -->|XTTS Gracie Wise<br/>Whisper back-check, seed retries| V[nova_speaks.py<br/>Ken Burns + ffmpeg]
-    V --> E[/nas/nova-fs/videos/review/*.mp4 + .txt script/]
+    D --> D1["Studio M4 Max · MPS"]
+    D --> D2["mini M4 Pro · MPS"]
+    D --> D3["nova-core2 · CPU"]
+    D --> D4["nova-core7 · CPU"]
+    D1 & D2 & D3 & D4 --> N["narration stage<br/>gloss foreign phrases · qwen3:8b write-for-the-ear + grounding guard<br/>spoken form °F/times/acronyms"]
+    P[("service_config<br/>phrasebook")] -.-> N
+    N -->|XTTS Gracie Wise<br/>Whisper back-check, seed retries| V["nova_speaks.py<br/>Ken Burns + ffmpeg"]
+    V --> E["/nas/nova-fs/videos/review/*.mp4 + .txt script/"]
     B -->|reap DONE| E
-    E --> F[nova_speaks_upload.py<br/>youtube-up · Safari cookie jar]
-    F -->|claim row, PUBLIC,<br/>AI: Nova Speaks M/D/YY - Section - Title| G[YouTube · Nova Speaks playlist]
+    E --> F["nova_speaks_upload.py<br/>youtube-up · Safari cookie jar"]
+    F -->|claim row, PUBLIC,<br/>AI: Nova Speaks M/D/YY - Section - Title| G["YouTube · Nova Speaks playlist"]
     F -->|youtube_id, quality| C
     C -.failed back-check: re-render.-> B
     F -.replacement: old video private + out of playlist.-> G
-    B -->|watch + Studio links| H[Slack #nova-claude]
+    B -->|watch + Studio links| H["Slack #nova-claude"]
     F -.stale cookies.-> H
 ```
 
@@ -627,27 +664,27 @@ At 07:55 the Mac Studio's WindowServer tripped its own watchdog, the login sessi
 
 ```mermaid
 flowchart LR
-    J[Jordan / Nova set_secret] -->|create or rotate| V[(1Password vault Nova)]
-    V -->|nova_op_sync.py hourly, ro token| F[(nova.secrets pgcrypto)]
-    V -->|nova_vault_to_keychain.py hourly, add-only| K[macOS System keychain]
-    F -->|get_secret / Linux security shim| L[Linux services, cron, Claude hooks]
-    K -->|security find-generic-password| M[Mac daemons + scripts]
+    J["Jordan / Nova set_secret"] -->|create or rotate| V[("1Password vault Nova")]
+    V -->|nova_op_sync.py hourly, ro token| F[("nova.secrets pgcrypto")]
+    V -->|nova_vault_to_keychain.py hourly, add-only| K["macOS System keychain"]
+    F -->|get_secret / Linux security shim| L["Linux services, cron, Claude hooks"]
+    K -->|security find-generic-password| M["Mac daemons + scripts"]
     T{{bootstrap per host: op token in System keychain or systemd-creds}} -.-> V
 ```
 
 ```mermaid
 flowchart TB
     subgraph mac6[".6 Mac Studio"]
-        GUI[gui/501 login session] --> SCH[com.nova.scheduler]
-        GUI --> RESP[claude responder]
-        SYS[system LaunchDaemons, UserName kochj] --> MEM[memory server :18790]
-        SYS --> BB[big-brother :37461]
-        SYS --> PGB[pgbouncer 127.0.0.1:5432 scram]
-        SYS --> RD[redis] & MESH[mesh agent] & SL[syslog] & NT[notifier]
+        GUI["gui/501 login session"] --> SCH["com.nova.scheduler"]
+        GUI --> RESP["claude responder"]
+        SYS["system LaunchDaemons, UserName kochj"] --> MEM["memory server :18790"]
+        SYS --> BB["big-brother :37461"]
+        SYS --> PGB["pgbouncer 127.0.0.1:5432 scram"]
+        SYS --> RD["redis"] & MESH["mesh agent"] & SL["syslog"] & NT["notifier"]
     end
-    PGB -->|scram| PRIM[(pg-primary .2:5434)]
-    GRAF[Grafana docker on .2] -->|172.21.0.1:5434 scram| PRIM
-    PRIM -->|streaming, scram| S1[(.10)] & S2[(.7)] & S3[(.125)]
+    PGB -->|scram| PRIM[("pg-primary .2:5434")]
+    GRAF["Grafana docker on .2"] -->|172.21.0.1:5434 scram| PRIM
+    PRIM -->|streaming, scram| S1[(".10")] & S2[(".7")] & S3[(".125")]
 ```
 
 #### The security organ — who just joined my network? (2026-10-03, late)
@@ -656,12 +693,12 @@ Another Claude session printed the Wi-Fi passwords, so Jordan asked for an organ
 
 ```mermaid
 flowchart LR
-    UDM[UDM Pro stat/sta] --> O[nova_security_organ on .2<br/>every 30 s]
-    ARP[nova-core ARP table] --> O
-    O -->|never seen?| K[(telemetry.known_devices)]
-    O -->|CRITICAL newdev:mac| N[nova_notify bus] --> S[#nova-critical + LoRa]
-    O -->|08:30 digest| D[#nova-digest]
-    S -->|human decides| C[nova_unifi_ctl block-sta at the UDM<br/>Jordan / Claude CLI]
+    UDM["UDM Pro stat/sta"] --> O["nova_security_organ on .2<br/>every 30 s"]
+    ARP["nova-core ARP table"] --> O
+    O -->|never seen?| K[("telemetry.known_devices")]
+    O -->|CRITICAL newdev:mac| N["nova_notify bus"] --> S["#nova-critical + LoRa"]
+    O -->|08:30 digest| D["#nova-digest"]
+    S -->|human decides| C["nova_unifi_ctl block-sta at the UDM<br/>Jordan / Claude CLI"]
 ```
 
 #### The Omarchy box gets a face — Nova Cluster dashboard, VNC, Apple TV plan (2026-10-03, evening)
@@ -670,11 +707,11 @@ nova-core7 (.125, Omarchy/Hyprland, previously a headless PG standby with an idl
 
 ```mermaid
 flowchart LR
-    PG[(nova_ops on pg-primary .2)] -->|nova-ops-pg datasource| G[Grafana 13 on .2:3000<br/>dashboard nova-cluster = home]
-    GEN[nova_cluster_dash.py on .6] -->|POST /api/dashboards/db| G
-    G -->|kiosk URL, 30 s refresh| K[Chromium kiosk on nova-core7<br/>HEADLESS-1 1920x1080]
-    K --> W[wayvnc :5900] -->|TigerVNC, LAN only| J[Jordan's Macs]
-    G -.->|queued #3113: PNG renders / HA apple_tv / tvOS app| TV[6 Apple TVs]
+    PG[("nova_ops on pg-primary .2")] -->|nova-ops-pg datasource| G["Grafana 13 on .2:3000<br/>dashboard nova-cluster = home"]
+    GEN["nova_cluster_dash.py on .6"] -->|POST /api/dashboards/db| G
+    G -->|kiosk URL, 30 s refresh| K["Chromium kiosk on nova-core7<br/>HEADLESS-1 1920x1080"]
+    K --> W["wayvnc :5900"] -->|TigerVNC, LAN only| J["Jordan's Macs"]
+    G -.->|queued #3113: PNG renders / HA apple_tv / tvOS app| TV["6 Apple TVs"]
 ```
 
 ### Three Organs — She Answers Herself, Pain Receptors, the Drawer (2026-10-02)
@@ -774,8 +811,8 @@ Two threads. First, her **organs now suffuse everything she writes** — not jus
 ```mermaid
 flowchart LR
     subgraph ORGANS["her organs (live state)"]
-      A[autonomy ladder<br/>calibration vs gate]:::o
-      B[becoming / wishes<br/>self_eval / reach …]:::o
+      A["autonomy ladder<br/>calibration vs gate"]:::o
+      B["becoming / wishes<br/>self_eval / reach …"]:::o
     end
     A -->|curated line only| V["nova_voice.system_prompt<br/>(one shared builder)"]:::v
     B -.->|raw text NOT injected<br/>content-safe| V
@@ -811,27 +848,27 @@ Jordan asked what OpenClaw 2.0 and Hermes Agent had shipped that Nova lacked. Fo
 ```mermaid
 flowchart LR
   subgraph Outside["untrusted outside"]
-    W[web search snippets]
-    P[fetched pages]
-    B[books / mail / transcripts]
+    W["web search snippets"]
+    P["fetched pages"]
+    B["books / mail / transcripts"]
   end
   U{{nova_untrusted<br/>clean · suspect→fenced · hostile→dropped}}
   W --> U
   P --> U
   B --> U
-  U --> M[(memory)]
-  U --> L[model prompts]
+  U --> M[("memory")]
+  U --> L["model prompts"]
   subgraph Gateway["gateway tool call"]
-    T[tool + JSON args] --> R{autonomy_rules<br/>arg_pattern first}
-    R -- auto --> X[run]
-    R -- notify --> X --> S[Slack note]
-    R -- approve --> Q[(autonomy_pending)] --> J[Jordan: approve id] --> X
+    T["tool + JSON args"] --> R{autonomy_rules<br/>arg_pattern first}
+    R -- auto --> X["run"]
+    R -- notify --> X --> S["Slack note"]
+    R -- approve --> Q[("autonomy_pending")] --> J["Jordan: approve id"] --> X
   end
-  X -. browse_page .-> BR[nova_browser_service<br/>Studio, read-only]
+  X -. browse_page .-> BR["nova_browser_service<br/>Studio, read-only"]
   BR --> U
   subgraph Skills["procedural memory"]
-    REP[repeats in proposals / hand-offs / pursuits / ledger] --> SK[skill card → nova_skills]
-    SK --> CO[co-agency proposal: adopt skill] --> J
+    REP["repeats in proposals / hand-offs / pursuits / ledger"] --> SK["skill card → nova_skills"]
+    SK --> CO["co-agency proposal: adopt skill"] --> J
   end
 ```
 
@@ -1114,31 +1151,31 @@ Tests: `scripts/tests/test_six_month_builds.py` (7 categories). Queue #2917–29
 
 ```mermaid
 flowchart LR
-    subgraph sources[Sources]
-        Z[Zigbee2MQTT<br/>bridge/devices + state] --> HF
-        HA[Home Assistant<br/>update.* + areas] --> HF
-        U[UniFi<br/>dns_records + net_inventory] --> HF
-        SR[(service_registry)] --> HF
+    subgraph sources["Sources"]
+        Z["Zigbee2MQTT<br/>bridge/devices + state"] --> HF
+        HA["Home Assistant<br/>update.* + areas"] --> HF
+        U["UniFi<br/>dns_records + net_inventory"] --> HF
+        SR[("service_registry")] --> HF
     end
-    HF[nova_house_facts<br/>every 15m] --> T[(house_facts)]
-    T -->|"house question → before recall"| GW[gateway chat agent]
-    R[(scheduler_runs<br/>stdout_tail)] --> OD[nova_output_drift<br/>hourly]
-    HC[(health_checks)] --> OD
-    OD -->|warning, state-change dedup| EV[(telemetry.events)]
-    UT[nova_unclaimed_time<br/>every 45m] <-->|last note / NEXT step| PT[(pursuit_threads)]
-    PT --> SB[turing_scoreboard<br/>pursuit_survival]
-    AO[nova_ask_one<br/>09:05] -->|one question| SL[#nova-chat]
-    LG[nova_letting_go<br/>stale goals] -->|proposal| CP[(coagency_proposals)]
+    HF["nova_house_facts<br/>every 15m"] --> T[("house_facts")]
+    T -->|"house question → before recall"| GW["gateway chat agent"]
+    R[("scheduler_runs<br/>stdout_tail")] --> OD["nova_output_drift<br/>hourly"]
+    HC[("health_checks")] --> OD
+    OD -->|warning, state-change dedup| EV[("telemetry.events")]
+    UT["nova_unclaimed_time<br/>every 45m"] <-->|last note / NEXT step| PT[("pursuit_threads")]
+    PT --> SB["turing_scoreboard<br/>pursuit_survival"]
+    AO["nova_ask_one<br/>09:05"] -->|one question| SL["#nova-chat"]
+    LG["nova_letting_go<br/>stale goals"] -->|proposal| CP[("coagency_proposals")]
     CP -->|pending| SA
-    SL -->|thread reply| SA[nova_slack_answers<br/>every 10m]
-    SA -->|answer| RQ[(reflection_questions)]
+    SL -->|thread reply| SA["nova_slack_answers<br/>every 10m"]
+    SA -->|answer| RQ[("reflection_questions")]
     SA -->|approve / reject| CP
-    CA[autonomy actor /<br/>co-agency execute] --> FE[nova_fleet_exec]
-    FE -->|local| L[launchctl / systemctl]
-    FE -->|"ssh -i nova_restart (forced cmd)"| G[nova-restart-gate.sh<br/>on the Mac]
-    AD[(agent_docs<br/>identity · soul · user)] --> LD[nova_live_docs<br/>render live placeholders]
+    CA["autonomy actor /<br/>co-agency execute"] --> FE["nova_fleet_exec"]
+    FE -->|local| L["launchctl / systemctl"]
+    FE -->|"ssh -i nova_restart (forced cmd)"| G["nova-restart-gate.sh<br/>on the Mac"]
+    AD[("agent_docs<br/>identity · soul · user")] --> LD["nova_live_docs<br/>render live placeholders"]
     LD --> GW
-    LD -->|hourly| WS[workspace/*.md]
+    LD -->|hourly| WS["workspace/*.md"]
 ```
 
 ### Attention Focus — Granting the Fourth Wish (2026-09-28)
@@ -1149,14 +1186,14 @@ Her fourth wish (`feature_wishes` #36, wished 2026-09-27 from the seed *"Why doe
 
 ```mermaid
 flowchart LR
-    I[(telemetry.incidents<br/>open)] --> R[rank_focus<br/>severity · age · un-acked]
-    G[(growth_commitments<br/>review_due)] --> R
-    O[(goals<br/>past check-in)] --> R
-    P[(preoccupations<br/>returns, last 7d)] --> H[hold_set<br/>minus focus]
-    R --> T[focus_text<br/>needs me now + holding]
+    I[("telemetry.incidents<br/>open")] --> R["rank_focus<br/>severity · age · un-acked"]
+    G[("growth_commitments<br/>review_due")] --> R
+    O[("goals<br/>past check-in")] --> R
+    P[("preoccupations<br/>returns, last 7d")] --> H["hold_set<br/>minus focus"]
+    R --> T["focus_text<br/>needs me now + holding"]
     H --> T
-    T -->|sig changed| M[(nova_memories<br/>source=attention_focus)]
-    T -->|sig unchanged| Q[say nothing]
+    T -->|sig changed| M[("nova_memories<br/>source=attention_focus")]
+    T -->|sig unchanged| Q["say nothing"]
 ```
 
 ### Human Insight — Granting the Third Wish, and a Standing Yes (2026-09-25)
@@ -1174,14 +1211,14 @@ Seven days after the organs went live, Jordan asked what she'd done with her fre
 
 ```mermaid
 flowchart LR
-    U[unclaimed_time<br/>every 45m] -->|aspire lane 20%| A[nova_aspirations<br/>cooldown 8h, cap 6]
-    A -->|INSERT| W[(feature_wishes<br/>acknowledged)]
+    U["unclaimed_time<br/>every 45m"] -->|aspire lane 20%| A["nova_aspirations<br/>cooldown 8h, cap 6"]
+    A -->|INSERT| W[("feature_wishes<br/>acknowledged")]
     A -->|INSERT| Q[("claude_queue<br/>Build wish #N")]
     Q --> C{Claude:<br/>danger / downside?}
-    C -->|no| B[build organ<br/>read-only, --selftest,<br/>scheduler-core every 6h]
-    C -->|yes| D[wish declined<br/>+ reason + note to Jordan]
-    B --> S[(wish shipped)]
-    H[nova_human_insight] -->|cited insights| M[(nova_memories<br/>source=human_insight)]
+    C -->|no| B["build organ<br/>read-only, --selftest,<br/>scheduler-core every 6h"]
+    C -->|yes| D["wish declined<br/>+ reason + note to Jordan"]
+    B --> S[("wish shipped")]
+    H["nova_human_insight"] -->|cited insights| M[("nova_memories<br/>source=human_insight")]
 ```
 
 ### Broadcast Storm Postmortem — Link-Local Loop Through the U6 Enterprise APs (2026-09-25)
@@ -1202,11 +1239,11 @@ No new organs. A quiet fortnight after the 2026-09-13..18 burst and the 2026-09-
 
 ```mermaid
 flowchart LR
-    M["hourly monitor<br/>(backup, staleness, sentinel)"] -->|nova_notify| E[(telemetry.events)]
-    E --> N[nova_notifier]
-    N -->|same dedup_key sent < 24h| S[suppressed<br/>collapsed_into]
-    N -->|first / > 24h| T[triage brain]
-    T --> A[#nova-alerts]
+    M["hourly monitor<br/>(backup, staleness, sentinel)"] -->|nova_notify| E[("telemetry.events")]
+    E --> N["nova_notifier"]
+    N -->|same dedup_key sent < 24h| S["suppressed<br/>collapsed_into"]
+    N -->|first / > 24h| T["triage brain"]
+    T --> A["#nova-alerts"]
     A -. "was: every hour, ~120/day" .-> A
 ```
 
@@ -1241,19 +1278,19 @@ Second wave of the same push: after making the memory load-bearing and giving No
 
 ```mermaid
 flowchart TD
-    W["The World"] -->|perceive| ING[Ingest · 200 senses]
-    ING --> MEM[(Memory · hybrid recall · supersession)]
+    W["The World"] -->|perceive| ING["Ingest · 200 senses"]
+    ING --> MEM[("Memory · hybrid recall · supersession")]
     MEM --> REF{{Reflection · nightly sleep cycle}}
-    REF --> SELF[(Self-model · who I am)]
+    REF --> SELF[("Self-model · who I am")]
     MEM --> INT{{Unclaimed time · passions · taste · gravel}}
     INT --> RES{{Self-directed research}}
     RES -->|read-only · cited · safety-gated| W
     RES --> MEM
-    SELF -->|reasons from| GW[Gateway · retrieve-before-reply]
-    INT --> PRO[Proactive digest → Jordan]
-    ALERTS[Fleet alarms] --> TRIAGE{{Alert triage · learns from incidents}}
-    TRIAGE --> PAGE[Page / downgrade / suppress]
-    ACT{{Autonomy actor}} -->|allowlist · reversible · verify| FLEET[Fleet]
+    SELF -->|reasons from| GW["Gateway · retrieve-before-reply"]
+    INT --> PRO["Proactive digest → Jordan"]
+    ALERTS["Fleet alarms"] --> TRIAGE{{Alert triage · learns from incidents}}
+    TRIAGE --> PAGE["Page / downgrade / suppress"]
+    ACT{{Autonomy actor}} -->|allowlist · reversible · verify| FLEET["Fleet"]
     REDLINE[["REDLINES: no purchase/delete/reboot/DB/exfiltration/self-preservation"]] -.blocks.-> ACT
     SCORE[[Turing scoreboard]] -.measures.-> SELF
 ```
@@ -1283,45 +1320,45 @@ The largest single push in Nova's history: a diagnosis that the 2.18M-vector mem
 ```mermaid
 flowchart LR
     subgraph Ingest["Perception (192 sources)"]
-        TV[TV / YouTube]; SCAN[Scanners]; NEWS[Local news]; RDT[Reddit]; TEL[Telemetry]; CONV[Conversations]
+        TV["TV / YouTube"]; SCAN["Scanners"]; NEWS["Local news"]; RDT["Reddit"]; TEL["Telemetry"]; CONV["Conversations"]
     end
-    Ingest --> MEM[(nova_memories<br/>2.18M vectors + tsv)]
+    Ingest --> MEM[("nova_memories<br/>2.18M vectors + tsv")]
     MEM --> SLEEP{{Nightly Sleep Cycle 03:40}}
-    SLEEP --> EP[Episodes]
-    SLEEP --> BEL[Belief ledger]
-    SLEEP --> SPK[Resonance sparks]
-    SLEEP --> GRV[Gravel kept raw]
-    SLEEP --> Q[3 curiosity questions → Jordan]
+    SLEEP --> EP["Episodes"]
+    SLEEP --> BEL["Belief ledger"]
+    SLEEP --> SPK["Resonance sparks"]
+    SLEEP --> GRV["Gravel kept raw"]
+    SLEEP --> Q["3 curiosity questions → Jordan"]
     UNCL{{Unclaimed time · every 45m}} --> MEM
-    PRE[(preoccupations)] --> UNCL
+    PRE[("preoccupations")] --> UNCL
     UNCL --> PRE
     MEM --> RECALL[[Hybrid recall<br/>vector + FTS · RRF<br/>supersession · recency]]
-    RECALL --> GW[Gateway v2 · retrieve-before-reply]
-    RECALL --> ART[Journal articles + citations]
+    RECALL --> GW["Gateway v2 · retrieve-before-reply"]
+    RECALL --> ART["Journal articles + citations"]
     GW --> CONV
 ```
 
 ```mermaid
 flowchart TD
     subgraph Identity["Identity layer (nova_ops)"]
-        P[(preoccupations)]; T[(taste)]; H[(herd_correspondents)]; B[(beliefs)]
+        P[("preoccupations")]; T[("taste")]; H[("herd_correspondents")]; B[("beliefs")]
     end
-    P --> U[Unclaimed time<br/>self-chosen pursuit]
+    P --> U["Unclaimed time<br/>self-chosen pursuit"]
     T --> U
     U -->|develops| P
     U -->|forms| T
-    U -->|~15%| PN[Private notebook<br/>unperformed · Jordan-readable]
-    U -->|shrug| G[Gravel]
-    H --> HM[Herd mail<br/>relationship-aware]
-    B --> LCM[Monthly: Ledger of Changed Minds]
-    U --> DIG[Daily: Unclaimed-Time column → /operations]
+    U -->|~15%| PN["Private notebook<br/>unperformed · Jordan-readable"]
+    U -->|shrug| G["Gravel"]
+    H --> HM["Herd mail<br/>relationship-aware"]
+    B --> LCM["Monthly: Ledger of Changed Minds"]
+    U --> DIG["Daily: Unclaimed-Time column → /operations"]
 ```
 
 **PostgreSQL failback (2026-09-14).** After the 08-22 reboot corrupted the old `.2` primary and HA promoted `.10` (a weak NUC), a controlled switchover returned the primary to **nova-core (.2, the Beelink)**, fence-first (no split-brain): stop `.10` → confirm `.7` caught up → promote `.2` → repoint the `.6` PgBouncer + `pg-primary` DNS (fixed at the source in `nova_dns_sync.py`) → rebuild standbys. Clients reach the primary three ways — `pg-primary.digitalnoise.net` DNS, the `.6` PgBouncer (`:5432`→`.2:5434`), and a `.2:5432` socat shim → the container on `:5434`.
 
 ```mermaid
 flowchart LR
-    C[Clients / scripts] -->|pg-primary DNS| P2
+    C["Clients / scripts"] -->|pg-primary DNS| P2
     C -->|.6 PgBouncer :5432| P2
     subgraph P2["nova-core .2 (PRIMARY)"]
         SOCAT[":5432 socat"] --> PGC[("pg17 container :5434")]
@@ -2587,19 +2624,19 @@ from **real meters** where available (Zigbee plugs, Eve strips, UniFi PoE) and
 ```mermaid
 flowchart LR
   subgraph Sources
-    Z[zigbee2mqtt]
-    HUE[Hue bridge .195]
-    EVE[NovaHomeKit / Eve]
-    UNAS[UNAS Pro .69]
-    UNIFI[UniFi controller]
-    SYN[Synology .11]
+    Z["zigbee2mqtt"]
+    HUE["Hue bridge .195"]
+    EVE["NovaHomeKit / Eve"]
+    UNAS["UNAS Pro .69"]
+    UNIFI["UniFi controller"]
+    SYN["Synology .11"]
   end
-  Z -->|every 5m| P1[nova_zigbee_poller] --> ER[(energy_readings + telemetry.climate)]
-  HUE -->|every 2m| P2[nova_hue_history] --> HH[(telemetry.hue_light_history)]
-  EVE -->|every 2m| P3[nova_eve_energy] --> EN[(telemetry.energy)]
-  UNAS -->|every 5m, SSH| P4[nova_unas_disk_health] --> SM[(telemetry.storage_metrics)]
-  UNIFI -->|every 2m| P5[nova_unifi_metrics] --> UM[(telemetry.unifi_metrics: PoE)]
-  SYN & UNAS -->|find both sides local| P6[nova_nas_localdiff] --> BR[(telemetry.backup_runs)]
+  Z -->|every 5m| P1["nova_zigbee_poller"] --> ER[("energy_readings + telemetry.climate")]
+  HUE -->|every 2m| P2["nova_hue_history"] --> HH[("telemetry.hue_light_history")]
+  EVE -->|every 2m| P3["nova_eve_energy"] --> EN[("telemetry.energy")]
+  UNAS -->|every 5m, SSH| P4["nova_unas_disk_health"] --> SM[("telemetry.storage_metrics")]
+  UNIFI -->|every 2m| P5["nova_unifi_metrics"] --> UM[("telemetry.unifi_metrics: PoE")]
+  SYN & UNAS -->|find both sides local| P6["nova_nas_localdiff"] --> BR[("telemetry.backup_runs")]
   ER --> GRAF[[Grafana :3000]]
   HH --> GRAF
   EN --> GRAF
@@ -2701,13 +2738,13 @@ broadcasts are sorted into **two tiers** so the local-news articles can weight l
 
 ```mermaid
 flowchart TD
-    TV[TV Shows library<br/>nightly Whisper ingest] --> CS[classify_source]
-    CS -- "KTLA / NBC4 / CBS LA<br/>FOX 11 / ABC7 / NBCLA" --> LN[(local_news)]
-    CS -- "BBC / CNN / PBS / NBC News<br/>CBS Evening / Meet the Press" --> NW[(news)]
-    KABC[ABC7 live off HDHomeRun<br/>nova_daily_news_ingest 3x/day] --> LN
-    RSS[Burbank RSS: myBurbank, Burbank Leader,<br/>City of Burbank, Patch, BFRB, Eastsider] --> LB[(local_burbank)]
-    RSS2[LA Times, LAist] --> LN
-    LB & LN & NW --> ART[nova_local_burbank.py<br/>Daily Burbank dispatch<br/>local first, national trails]
+    TV["TV Shows library<br/>nightly Whisper ingest"] --> CS["classify_source"]
+    CS -- "KTLA / NBC4 / CBS LA<br/>FOX 11 / ABC7 / NBCLA" --> LN[("local_news")]
+    CS -- "BBC / CNN / PBS / NBC News<br/>CBS Evening / Meet the Press" --> NW[("news")]
+    KABC["ABC7 live off HDHomeRun<br/>nova_daily_news_ingest 3x/day"] --> LN
+    RSS["Burbank RSS: myBurbank, Burbank Leader,<br/>City of Burbank, Patch, BFRB, Eastsider"] --> LB[("local_burbank")]
+    RSS2["LA Times, LAist"] --> LN
+    LB & LN & NW --> ART["nova_local_burbank.py<br/>Daily Burbank dispatch<br/>local first, national trails"]
 ```
 
 - **`classify_source`** gained a news branch (checked first, word-boundary matched so `bbc`/`cnn`
@@ -3056,16 +3093,16 @@ YouTube downloads are transcribed into Nova's memory (kept **forever**, tiny); t
 
 ```mermaid
 flowchart TD
-  YT[YouTube ingest] --> T[Transcribe -> memory KEPT FOREVER]
-  YT --> V[Video -> /videos/TVShows]
+  YT["YouTube ingest"] --> T["Transcribe -> memory KEPT FOREVER"]
+  YT --> V["Video -> /videos/TVShows"]
   V --> G{Gardener weekly: policy + 15d + not-watched + real-TV protected}
-  G -->|propose| A[Approval list]
-  A -->|apply| P[Prune video, transcript kept]
-  SYN[Synology source] --> R{Reaper weekly: dest minus source = orphan}
-  UNAS[UNAS backup] --> R
-  R -->|orphan over 15d| A2[Propose + Slack warn]
-  A2 -->|approve| RP[Reap from UNAS]
-  P --> DASH[(Grafana 19: Media Gardener)]
+  G -->|propose| A["Approval list"]
+  A -->|apply| P["Prune video, transcript kept"]
+  SYN["Synology source"] --> R{Reaper weekly: dest minus source = orphan}
+  UNAS["UNAS backup"] --> R
+  R -->|orphan over 15d| A2["Propose + Slack warn"]
+  A2 -->|approve| RP["Reap from UNAS"]
+  P --> DASH[("Grafana 19: Media Gardener")]
   RP --> DASH
 ```
 
@@ -3079,13 +3116,13 @@ A poller watches the airspace over the house and tells Nova *who* is flying over
 
 ```mermaid
 flowchart LR
-  ADSB[adsb.lol point feed 91506] --> POLL[nova_flights_poller every 30s]
+  ADSB["adsb.lol point feed 91506"] --> POLL["nova_flights_poller every 30s"]
   POLL --> FILT{low overhead and in zip}
-  FILT -->|yes| ENRICH[hexdb.io hex to owner cached]
-  ENRICH --> DB[(telemetry.overhead_flights)]
+  FILT -->|yes| ENRICH["hexdb.io hex to owner cached"]
+  ENRICH --> DB[("telemetry.overhead_flights")]
   ENRICH --> ALERT{helicopter or low pass or emergency squawk}
-  ALERT -->|yes| SLACK[Slack ping with operator and altitude]
-  DB --> DASH[(Grafana 21)]
+  ALERT -->|yes| SLACK["Slack ping with operator and altitude"]
+  DB --> DASH[("Grafana 21")]
 ```
 
 - `nova_flights_poller.py` — free adsb.lol feed, altitude under 10k ft over 91506, arrival-dedup via the table; pings helicopters, low passes, and emergency squawks (7500/7600/7700)
@@ -3098,18 +3135,18 @@ Reclaims space from **exact** duplicate files on `/Volumes/NAS` — propose-firs
 
 ```mermaid
 flowchart TD
-  SCAN[scan walk NAS] --> SIZE{size shared}
-  SIZE -->|no| SKIP[skip unique]
-  SIZE -->|yes| HASH[partial then full content hash]
-  HASH --> SETS[exact duplicate sets]
+  SCAN["scan walk NAS"] --> SIZE{size shared}
+  SIZE -->|no| SKIP["skip unique"]
+  SIZE -->|yes| HASH["partial then full content hash"]
+  HASH --> SETS["exact duplicate sets"]
   SETS --> G{location vs GoogleDriveBackups}
-  G -->|all inside Google| MR[manual_review never auto-delete]
-  G -->|spans Google and elsewhere| KEEPG[keep Google copy propose the other]
-  G -->|none in Google| KEEP[keep canonical propose the copies]
-  KEEPG --> PROP[propose]
+  G -->|all inside Google| MR["manual_review never auto-delete"]
+  G -->|spans Google and elsewhere| KEEPG["keep Google copy propose the other"]
+  G -->|none in Google| KEEP["keep canonical propose the copies"]
+  KEEPG --> PROP["propose"]
   KEEP --> PROP
-  PROP -->|you approve| DEL[hard delete recoverable 15d via UNAS reaper]
-  PROP --> DASH[(Grafana 22)]
+  PROP -->|you approve| DEL["hard delete recoverable 15d via UNAS reaper"]
+  PROP --> DASH[("Grafana 22")]
 ```
 
 - `nova_nas_dedup.py` — two-stage hashing (size group → partial → full), exact-dup only, resumable
@@ -3124,19 +3161,19 @@ heartbeat chatter), and posts a concise digest to **#nova-critical**.
 
 ```mermaid
 flowchart LR
-  subgraph chans[nova-* channels]
-    CH[chat / info / warning / critical / email]
+  subgraph chans["nova-* channels"]
+    CH["chat / info / warning / critical / email"]
   end
-  CH --> FETCH[fetch_new\nstrictly newer than watermark]
-  FETCH --> REDACT[_redact\nmask tokens/keys/passwords]
+  CH --> FETCH["fetch_new\nstrictly newer than watermark"]
+  FETCH --> REDACT["_redact\nmask tokens/keys/passwords"]
   REDACT --> ASSESS{local LLM\nOllama loopback-only}
-  ASSESS -->|reachable| LLM[notable? severity + items]
-  ASSESS -->|down| HEUR[heuristic fallback\nsevere-channel + alarm words]
+  ASSESS -->|reachable| LLM["notable? severity + items"]
+  ASSESS -->|down| HEUR["heuristic fallback\nsevere-channel + alarm words"]
   LLM --> NOTE{notable?}
   HEUR --> NOTE
-  NOTE -->|yes, not already alerted| POST[digest to #nova-critical]
-  NOTE -->|no| QUIET[advance watermark, stay silent]
-  POST --> WM[(slack_watch_state\nslack_watch_reports)]
+  NOTE -->|yes, not already alerted| POST["digest to #nova-critical"]
+  NOTE -->|no| QUIET["advance watermark, stay silent"]
+  POST --> WM[("slack_watch_state\nslack_watch_reports")]
   QUIET --> WM
 ```
 
@@ -3193,24 +3230,24 @@ several independent ones agreeing is a witnessed fact.
 ```mermaid
 flowchart LR
     subgraph Observers
-        W[UniFi WiFi<br/>client + AP + RSSI]
-        B[BLE host stack<br/>.6 bleak]
-        P[BLE PHY<br/>.10 Ubertooth]
-        C[Cameras<br/>face + vehicle]
-        M[mmWave]
+        W["UniFi WiFi<br/>client + AP + RSSI"]
+        B["BLE host stack<br/>.6 bleak"]
+        P["BLE PHY<br/>.10 Ubertooth"]
+        C["Cameras<br/>face + vehicle"]
+        M["mmWave"]
     end
-    W --> ID[telemetry.device_owner<br/>mac -> person]
-    B --> G[identity_graph_edge<br/>phi co-occurrence]
+    W --> ID["telemetry.device_owner<br/>mac -> person"]
+    B --> G["identity_graph_edge<br/>phi co-occurrence"]
     P --> G
     C --> G
-    ID --> PR[telemetry.presence<br/>named people]
+    ID --> PR["telemetry.presence<br/>named people"]
     M --> PR
     PR --> G
-    G --> NS[negative-space alerting<br/>missing correlations]
-    P --> TR[tracker watch<br/>separated Find My tags]
+    G --> NS["negative-space alerting<br/>missing correlations"]
+    P --> TR["tracker watch<br/>separated Find My tags"]
     NS --> A["#nova-digest"]
     TR --> A
-    A -.->|when the fleet itself is down| LORA[Meshtastic LoRa]
+    A -.->|when the fleet itself is down| LORA["Meshtastic LoRa"]
 ```
 
 ---
@@ -3259,18 +3296,18 @@ drops from root to the owning user because root has no GitHub key and should not
 
 ```mermaid
 flowchart TD
-    T[systemd timer · every 2 min] --> H{Can I list<br/>/nova/scripts?}
-    H -->|yes, on Synology| OK[No-op · healthy]
+    T["systemd timer · every 2 min"] --> H{Can I list<br/>/nova/scripts?}
+    H -->|yes, on Synology| OK["No-op · healthy"]
     H -->|yes, on UNAS| B{Synology<br/>reachable?}
-    B -->|yes| FB[Fail BACK to Synology<br/>+ refresh from GitHub]
-    B -->|no| HOLD[Keep serving from UNAS]
-    H -->|no| C[Clear stale mount<br/>umount -f then -l]
+    B -->|yes| FB["Fail BACK to Synology<br/>+ refresh from GitHub"]
+    B -->|no| HOLD["Keep serving from UNAS"]
+    H -->|no| C["Clear stale mount<br/>umount -f then -l"]
     C --> P{Synology<br/>reachable?}
-    P -->|yes| MP[Mount Synology<br/>+ refresh from GitHub]
-    P -->|no| MU[Mount UNAS<br/>+ refresh from GitHub<br/>+ alert]
+    P -->|yes| MP["Mount Synology<br/>+ refresh from GitHub"]
+    P -->|no| MU["Mount UNAS<br/>+ refresh from GitHub<br/>+ alert"]
     MU --> V{Readable?}
     MP --> V
-    V -->|no| DOWN[ALERT · no storage target]
+    V -->|no| DOWN["ALERT · no storage target"]
 ```
 
 ---
@@ -3289,17 +3326,17 @@ battery's fate.
 
 ```mermaid
 flowchart TD
-    UPS[Rack UPS<br/>USB data to Studio] -->|pmset -g ps| W[nova_ups_shutdown<br/>every 60s on .6]
+    UPS["Rack UPS<br/>USB data to Studio"] -->|pmset -g ps| W["nova_ups_shutdown<br/>every 60s on .6"]
     W -->|mains lost, 3 samples| M{confirmed?}
-    M -->|no| STAND[stand down]
-    M -->|yes| W1[Wave 1 IMMEDIATE<br/>.252 .250 .251<br/>bedroom UPS, unmonitored]
+    M -->|no| STAND["stand down"]
+    M -->|yes| W1["Wave 1 IMMEDIATE<br/>.252 .250 .251<br/>bedroom UPS, unmonitored"]
     W1 --> B{rack battery<br/>&lt;= 35%?}
-    B -->|no| WAIT[wait for next run]
-    B -->|yes| W2[Wave 2 leaf compute<br/>.7 .88 .86 .10]
-    W2 --> W3[Wave 3 PRIMARY .2<br/>PG + gateway + Plex<br/>must flush before storage]
-    W3 --> W4[Wave 4 storage<br/>Synology .11 + UNAS .69]
-    W4 --> W5[Wave 5 NVR .9]
-    W5 --> LEFT[switch .24 + UDM .1 ghost-ride<br/>network outlives the shutdown]
+    B -->|no| WAIT["wait for next run"]
+    B -->|yes| W2["Wave 2 leaf compute<br/>.7 .88 .86 .10"]
+    W2 --> W3["Wave 3 PRIMARY .2<br/>PG + gateway + Plex<br/>must flush before storage"]
+    W3 --> W4["Wave 4 storage<br/>Synology .11 + UNAS .69"]
+    W4 --> W5["Wave 5 NVR .9"]
+    W5 --> LEFT["switch .24 + UDM .1 ghost-ride<br/>network outlives the shutdown"]
 ```
 
 Each wave **waits for confirmed power-off** rather than sleeping a fixed interval: `shutdown -h now`
@@ -3325,17 +3362,17 @@ producer's side.
 
 ```mermaid
 flowchart LR
-    S[scheduler.yaml<br/>cron + section] --> E[expected today<br/>+30min grace]
+    S["scheduler.yaml<br/>cron + section"] --> E["expected today<br/>+30min grace"]
     E --> C{article on the site?}
-    C -->|per-job matcher<br/>stable slug / tag / slug| OK[OK]
-    C -->|missing| D[diagnose]
-    D --> D1[scheduler_runs<br/>timeout? exit code?]
-    D --> D2[guard log<br/>refusal blocked?]
-    D --> D3[git<br/>committed but unpushed?]
-    D1 & D2 & D3 --> F[auto-fix<br/>commit + push stranded work]
+    C -->|per-job matcher<br/>stable slug / tag / slug| OK["OK"]
+    C -->|missing| D["diagnose"]
+    D --> D1["scheduler_runs<br/>timeout? exit code?"]
+    D --> D2["guard log<br/>refusal blocked?"]
+    D --> D3["git<br/>committed but unpushed?"]
+    D1 & D2 & D3 --> F["auto-fix<br/>commit + push stranded work"]
     F --> R{now published?}
-    R -->|no| G[re-run the REAL generator]
-    G --> V[verify again]
+    R -->|no| G["re-run the REAL generator"]
+    G --> V["verify again"]
 ```
 
 Two design choices carry the weight. **Per-job matchers**, not per-section: three jobs publish into
@@ -3362,15 +3399,15 @@ enforcing uniqueness and returns incomplete results while every health check rep
 
 ```mermaid
 flowchart TD
-    C[nova_index_integrity.py<br/>daily 04:40] --> A{bt_index_check<br/>heapallindexed=true}
-    A -->|pass| G[green]
+    C["nova_index_integrity.py<br/>daily 04:40"] --> A{bt_index_check<br/>heapallindexed=true}
+    A -->|pass| G["green"]
     A -->|fail| RED["alert → #nova-alerts"]
     subgraph "why heapallindexed matters"
-      S1[structure-only check<br/>validates the index internally] -.->|cannot see| S2[table rows MISSING<br/>from the index]
+      S1["structure-only check<br/>validates the index internally"] -.->|cannot see| S2["table rows MISSING<br/>from the index"]
     end
-    RED --> FIX[seq-scan for real duplicates<br/>SET enable_indexscan=off]
-    FIX --> DEDUP[export to NAS, remove]
-    DEDUP --> RE[REINDEX CONCURRENTLY]
+    RED --> FIX["seq-scan for real duplicates<br/>SET enable_indexscan=off"]
+    FIX --> DEDUP["export to NAS, remove"]
+    DEDUP --> RE["REINDEX CONCURRENTLY"]
 ```
 
 The checker initially had **the same blind spot that hid the original damage**: plain
@@ -3420,13 +3457,13 @@ the prober's and fails on a *vantage gap*.
 ```mermaid
 flowchart LR
     subgraph Check
-        A[Run check] --> B{Evidence body?<br/>Plausible latency?}
-        B -->|no| F[COUNTERFEIT<br/>record as FAILURE]
+        A["Run check"] --> B{Evidence body?<br/>Plausible latency?}
+        B -->|no| F["COUNTERFEIT<br/>record as FAILURE"]
         B -->|yes| C{Witness has<br/>recent proven-red?}
     end
-    C -->|never bitten| R[RED · decoration]
-    C -->|scar stale| Y[YELLOW · signal only]
-    C -->|fresh| G[GREEN · may clear health]
+    C -->|never bitten| R["RED · decoration"]
+    C -->|scar stale| Y["YELLOW · signal only"]
+    C -->|fresh| G["GREEN · may clear health"]
 ```
 
 ---
@@ -3451,14 +3488,14 @@ spirit is displeased` — genuinely how Nova relates to crashed daemons), **Fire
 
 ```mermaid
 flowchart LR
-    A[system_prompt] --> B{recognised<br/>article section?}
-    B -- "inferred from<br/>CONTEXT_JOURNAL_*" --> C[seasoning]
-    B -- "flavor=False<br/>or empty ctx" --> Z[no seasoning]
-    C --> D[Ferengi rule<br/>relevance-ranked]
-    C --> E[sample 6 of 18 tongues<br/>rotating per article]
-    D --> F[article prompt]
+    A["system_prompt"] --> B{recognised<br/>article section?}
+    B -- "inferred from<br/>CONTEXT_JOURNAL_*" --> C["seasoning"]
+    B -- "flavor=False<br/>or empty ctx" --> Z["no seasoning"]
+    C --> D["Ferengi rule<br/>relevance-ranked"]
+    C --> E["sample 6 of 18 tongues<br/>rotating per article"]
+    D --> F["article prompt"]
     E --> F
-    Z --> G[breaking public-safety<br/>evacuation notice]
+    Z --> G["breaking public-safety<br/>evacuation notice"]
 ```
 
 Implemented in `nova_lexicon.py`. `seasoning()` **always** pulls a topic-matched Ferengi rule, then
@@ -3725,39 +3762,3 @@ flowchart LR
 ---
 
 *Written by Jordan Koch. Nova chose her own name.*
-
-## Oversight Tools: Reachability, Action Why, Rule Review, Digest, Wargames (2026-10-09)
-
-Five tools that make Nova's state and reasoning visible, plus the logging change that feeds them. Each is
-read-only or alert-only: none changes a real system or feeds the corroboration gates.
-
-| Script | What it does | Writes |
-|---|---|---|
-| `nova_home_reachability.py` | Flags HomeKit rooms gone dark. All rooms dark means the controller is down. Some rooms dark means a network segment. | notifications, one per room per day |
-| `nova_action_why.py` | Prints recent actions with the rationale recorded for each, or says none was recorded. | nothing |
-| `nova_directive_review.py` | Asks a local model whether each pair of standing feedback rules conflicts. Candidates go to a person. | `directive_conflict_reviews` |
-| `nova_whole_picture.py` | Daily digest: rule conflicts to review, HomeKit status, unexplained actions, failed checks. No private sources. | optional notification |
-| `nova_wargame.py` | Read-only what-if drills. Responses are APPLY or HOLD, and HOLD is always an option. | `exercise_results` (exercise=true) |
-
-The logging hook `session-logger.sh` now records each Bash command's description as that action's rationale, and
-retries its database write up to three times. Write and Edit actions carry no reason field, so they show as gaps.
-
-```mermaid
-flowchart LR
-    HK[(telemetry.homekit_outlets)] --> REACH[nova_home_reachability]
-    REACH -->|dark rooms| NOTIFY[nova_notify]
-    RULES[(claude_memories feedback)] --> REVIEW[nova_directive_review]
-    LLM[local Ollama model] --> REVIEW
-    REVIEW --> CONF[(directive_conflict_reviews)]
-    HOOK[session-logger.sh] --> ACT[(claude_actions + rationale)]
-    ACT --> WHY[nova_action_why]
-    CONF --> DIGEST[nova_whole_picture]
-    REACH --> DIGEST
-    ACT --> DIGEST
-    DIGEST -->|daily| NOTIFY
-    WARGAME[nova_wargame] -->|exercise only| EX[(exercise_results)]
-```
-
-Shared config: `nova_config.pg_dsn()` reads the database host from `NOVA_PG_HOST`, and `nova_config.pg_connect()`
-retries connections. Tests: `tests/test_*_7cat.py` for each tool, covering security, performance, retry, unit,
-integration, functional and frame.

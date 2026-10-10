@@ -40,7 +40,8 @@ import psycopg2
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 HISTORY_DAYS = 14
 RAW_WINDOW_S = 180          # source rows are written in batches; the event is emitted first
 RAW_N = 3

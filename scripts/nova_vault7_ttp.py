@@ -66,7 +66,8 @@ try:
 except Exception:
     nova_maintenance = None
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 IOT_SSID = ("KOCH-IOT", "KOCHJ-GARAGE-2.4")   # the Wi-Fi SSIDs used for IoT gear
 
 # ── Device classification (shared with the segmentation audit) ────────────────

@@ -21,7 +21,8 @@ import psycopg2.extras
 import nova_voice
 from nova_local_burbank import call_llm, publish, generate_image
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 ADSBDB = "https://api.adsbdb.com/v0/callsign/"
 ROUTE_LOOKUPS = 75   # cap external API calls (free tier courtesy)
 

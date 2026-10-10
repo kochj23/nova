@@ -13,6 +13,7 @@ Called by Big Brother's _escalate_to_claude() — not run standalone.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import json
 import os
 import socket
@@ -27,7 +28,7 @@ from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-PG_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+PG_DSN = _nova_dsn.pg_url("nova_ops")
 LOG_DIR = Path.home() / ".openclaw/logs"
 SCRIPTS_DIR = Path.home() / ".openclaw/scripts"
 BRIDGE_SESSION_ID = "claude-bridge-persistent"

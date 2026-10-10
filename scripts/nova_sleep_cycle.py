@@ -32,8 +32,10 @@ from datetime import date, datetime
 
 import psycopg2
 
-MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 # Native Ollama on .6 with think:false — the inference router's OpenAI shim
 # returns empty content for qwen3 thinking models (verified 2026-09-13), and

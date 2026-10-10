@@ -35,7 +35,8 @@ from nova_notify import notify
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 HTTP_PORT = 37474
 SCAN_HOUR = 3  # 3am local time
 

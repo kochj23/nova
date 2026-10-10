@@ -49,7 +49,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 # ── connection / host constants ──────────────────────────────────────────────
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 SYNO_HOST = "kochj@192.168.1.11"          # source of truth
 UNAS_HOST = "root@192.168.1.69"           # backup target (local find + quarantine)
 UNAS_GLOB = "/volume/*/.srv/.unifi-drive"  # resolves to the unifi-drive root (UUID varies)

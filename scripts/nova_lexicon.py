@@ -28,7 +28,8 @@ nova_voice.system_prompt): an evacuation notice is not a bit.
 import random
 import re
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # Sections where a flourish is welcome. Breaking emergency posts are handled by an
 # explicit opt-out at the system_prompt layer (flavor=False), never seasoned.

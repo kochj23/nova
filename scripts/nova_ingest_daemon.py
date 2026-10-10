@@ -18,6 +18,7 @@ Stop: kill $(cat /tmp/nova_ingest_daemon.pid)
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import logging
 import os
@@ -39,7 +40,7 @@ from nova_notify import notify as _bus_notify
 PID_FILE = Path("/tmp/nova_ingest_daemon.pid")
 POLL_INTERVAL = 60  # seconds
 INGEST_SCRIPT = Path.home() / ".openclaw/scripts/nova_ingest.py"
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+DB_DSN = _nova_dsn.pg_url("nova_ops")
 
 LOG_DIR = Path.home() / ".openclaw/logs"
 LOG_DIR.mkdir(parents=True, exist_ok=True)

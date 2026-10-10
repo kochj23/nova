@@ -16,8 +16,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import nova_config as NC  # noqa: E402
-DSN = NC.pg_dsn()
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn()
 MIN_SHARED = 2
 STOP = {"the", "a", "an", "and", "or", "to", "of", "in", "on", "for", "is", "it", "be", "this", "that", "with",
         "any", "all", "not", "no", "never", "always", "must", "do", "don", "t", "i", "you", "they", "their",
@@ -74,7 +74,7 @@ def main(argv=None) -> int:
     ap.add_argument("--notify", action="store_true", help="post the candidates to the event bus")
     a = ap.parse_args(argv)
     import psycopg2
-    conn = NC.pg_connect()
+    conn = _nova_dsn.pg_connect()
     try:
         found = candidates(load_rules(conn))
     finally:

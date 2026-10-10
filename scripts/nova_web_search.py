@@ -13,6 +13,7 @@ Usage:
   python3 nova_web_search.py "query" --store-memories --topic "ai-news"
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import json
 import subprocess
 import sys
@@ -36,7 +37,7 @@ TIMEOUT = int(os.getenv("WEBSEARCH_TIMEOUT", "10"))
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 # PostgreSQL ops logging (best-effort; never breaks search)
-PG_DSN = os.getenv("NOVA_OPS_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+PG_DSN = os.getenv("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
 
 
 def _log_search_pg(query: str, results: Optional[List[Dict]],

@@ -15,7 +15,8 @@ import subprocess
 import sys
 import time
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 SCAN_S = int(sys.argv[1]) if len(sys.argv) > 1 else 25
 OBS = socket.gethostname().split(".")[0]
 _ANSI = re.compile(r"\x1b\[[0-9;]*[A-Za-z]")

@@ -27,7 +27,8 @@ import psycopg2
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_config  # noqa: E402  (Keychain/env token, portable)
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 SLACK_CHANNEL = "C0ATAF7NZG9"  # #nova-notifications
 LOG_DIR = Path.home() / ".openclaw/logs"
 BB_LOGS = ["nova-service-monitor.err.log", "nova-system-monitor.err.log", "big-brother.err.log"]

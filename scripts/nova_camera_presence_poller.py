@@ -24,7 +24,8 @@ import psycopg2
 import psycopg2.extras
 
 VERSION = "1.0.0"
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 FRAME_DIR = Path.home() / ".openclaw/workspace/camera_frames"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_camera_presence.log"
 POLL_INTERVAL = 60

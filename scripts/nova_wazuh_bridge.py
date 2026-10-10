@@ -33,7 +33,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import psycopg2
 import psycopg2.extras
 
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 WAZUH_URL = "https://192.168.1.2:9200"   # Wazuh Indexer (single-node docker on nova-core)
 
 # (host, rule_description) pairs that are confirmed environmental noise, not

@@ -58,7 +58,8 @@ from datetime import datetime, timezone
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 LLM_MODEL = "qwen3:8b"
 # Failover order per the fleet contract: .251 and .86 first; .6 last (it thrashes

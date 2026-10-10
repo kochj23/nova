@@ -25,7 +25,8 @@ from datetime import datetime
 sys.path.insert(0, os.path.expanduser("~/.openclaw/scripts"))
 import psycopg2
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 EARN_NEAR = 3          # clean approvals at/above which a class is "close" and worth surfacing
 try:

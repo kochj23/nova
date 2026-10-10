@@ -15,7 +15,8 @@ import urllib.request
 import psycopg2
 
 EMBED_URL = "http://192.168.1.10:11434/api/embed"
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_memories")
 BATCH_COMMIT = 200
 
 

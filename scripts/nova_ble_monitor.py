@@ -53,7 +53,8 @@ from nova_notify import notify
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 LOG_FILE = Path.home() / ".openclaw/logs/ble_monitor.log"
 STATE_FILE = Path.home() / ".openclaw/workspace/state/ble_known_devices.json"
 SCAN_INTERVAL = 30

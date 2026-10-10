@@ -23,6 +23,7 @@ Usage:
                clone and was invisible to the .6 watchdog (3 articles stranded 2026-10-05).
                Combine with --dry-run to report without pushing.
 """
+import nova_dsn as _nova_dsn  # noqa: E402
 import argparse
 import datetime as dt
 import os
@@ -215,7 +216,7 @@ def diagnose(item):
     # 1. What does the scheduler say actually happened?
     try:
         import psycopg2
-        c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+        c = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"))
         cur = c.cursor()
         cur.execute("""SELECT status, exit_code, left(coalesce(error_tail,''),200)
                        FROM scheduler_runs

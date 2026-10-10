@@ -12,6 +12,7 @@ Usage:
   nova_frame_backfill.py --frames 16            # frames per video (default 24)
   (combine filters; --dry-run to preview the work-list)
 """
+import nova_dsn as _nova_dsn  # noqa: E402
 import os, sys, time, argparse, subprocess
 import psycopg2
 sys.path.insert(0, os.path.expanduser("~/.openclaw/scripts"))
@@ -22,7 +23,7 @@ EXTS = (".mp4", ".mkv", ".ts", ".m4v", ".avi", ".mov", ".wmv")
 
 
 def already_indexed():
-    conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj")
+    conn = psycopg2.connect(_nova_dsn.pg_dsn("nova_memories"))
     with conn, conn.cursor() as cur:
         cur.execute("SELECT DISTINCT metadata->>'video' FROM memories WHERE source='frame_vision'")
         return {r[0] for r in cur.fetchall() if r[0]}

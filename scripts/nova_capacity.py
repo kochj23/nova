@@ -11,6 +11,7 @@ Runs as a persistent launchd service.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import json
 import os
@@ -34,7 +35,7 @@ import nova_config
 VERSION = "1.0.0"
 HTTP_PORT = 37464
 BIND_ADDR = "0.0.0.0"
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+DB_DSN = _nova_dsn.pg_url("nova_ops")
 LOG_FILE = Path.home() / ".openclaw/logs/nova_capacity.log"
 SNAPSHOT_INTERVAL = 300
 RETENTION_DAYS = 90

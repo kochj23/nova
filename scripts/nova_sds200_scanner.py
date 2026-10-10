@@ -43,7 +43,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from pysds200 import Scanner, ScannerInfo  # noqa: E402
 
 MEM = "http://memory-server.digitalnoise.net:18790/remember"
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # --- audio segmentation knobs (16 kHz mono s16le) ---------------------------
 SR = 16000

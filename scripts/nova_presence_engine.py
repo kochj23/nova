@@ -22,6 +22,7 @@ Privacy: all local, never published.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import json
 import os
@@ -44,7 +45,7 @@ import nova_config
 
 VERSION = "1.0.0"
 HTTP_PORT = 37465
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+DB_DSN = _nova_dsn.pg_url("nova_ops")
 LOG_FILE = Path.home() / ".openclaw/logs/nova_presence.log"
 POLL_INTERVAL = 30
 

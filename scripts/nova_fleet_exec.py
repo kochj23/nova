@@ -26,7 +26,8 @@ import socket
 import subprocess
 import sys
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 RESTART_KEY = os.path.expanduser("~/.ssh/nova_restart")       # forced-command key (Linux -> Mac)
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=8", "-o", "StrictHostKeyChecking=accept-new"]
 

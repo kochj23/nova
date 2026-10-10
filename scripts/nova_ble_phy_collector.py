@@ -33,7 +33,8 @@ import psycopg2.extras
 from nova_ble_monitor import (compute_ble_fingerprint,          # identity MUST match exactly
                               compute_cross_observer_fingerprint)
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 OBSERVER = os.environ.get("NOVA_BLE_OBSERVER") or f"{socket.gethostname().split('.')[0].lower()}-phy"
 UBERTOOTH = os.environ.get("UBERTOOTH_BIN", "/usr/bin/ubertooth-btle")
 FLUSH_SECONDS = 30          # batch inserts; the radio is far chattier than the DB should be

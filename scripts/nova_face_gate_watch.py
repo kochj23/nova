@@ -20,7 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path.home() / ".openclaw/scripts"))
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 LOOKBACK_HOURS = 24
 LEAK_ALERT_THRESHOLD = 1   # notify if >=1 leak auto-cleared this run
 

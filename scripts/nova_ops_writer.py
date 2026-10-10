@@ -8,6 +8,7 @@ Connection pool is lazily initialized on first write.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import time
 import uuid
@@ -24,7 +25,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_logger import log, LOG_INFO, LOG_ERROR, LOG_WARN, LOG_DEBUG
 
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+DB_DSN = _nova_dsn.pg_url("nova_ops")
 _POOL: Optional[object] = None
 _POOL_LOCK: Optional[asyncio.Lock] = None  # created lazily inside a running loop
 _QUEUE: Optional[asyncio.Queue] = None

@@ -21,7 +21,8 @@ import psycopg2
 sys.path.insert(0, str(Path(__file__).parent))
 import nova_ingest as ni  # noqa: E402
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 UA = {"User-Agent": "NovaIngest/1.0 (personal knowledge base)"}
 QUERY = ('mediatype:texts AND (title:("field manual") OR title:("training circular") OR title:("technical manual") '
          'OR subject:("field manual") OR subject:("military training")) '

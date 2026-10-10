@@ -29,6 +29,7 @@ Usage: nova_face_retention.py [--dry-run] | --purge-person NAME --by jordan [--d
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
+import nova_dsn as _nova_dsn  # noqa: E402
 
 import argparse
 import json
@@ -43,8 +44,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-DSN = os.environ.get("NOVA_OPS_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
-MEM_DSN = os.environ.get("NOVA_MEM_DSN", "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj")
+DSN = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
+MEM_DSN = os.environ.get("NOVA_MEM_DSN", _nova_dsn.pg_dsn("nova_memories"))
 FACES = Path.home() / ".openclaw" / "workspace" / "faces"
 DEFAULT_HOUSEHOLD = {"jordan koch": "jordan", "amy mccaine": "amy", "amy": "amy"}
 DEFAULT_TTL_H = 72

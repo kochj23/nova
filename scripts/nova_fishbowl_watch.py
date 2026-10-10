@@ -16,7 +16,8 @@ from pathlib import Path
 import psycopg2
 import nova_config
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_memories")
 STATE = Path.home() / ".openclaw" / "state" / "fishbowl_watch.json"
 ALERT_CHANNEL = nova_config.SLACK_BB   # #nova-critical
 

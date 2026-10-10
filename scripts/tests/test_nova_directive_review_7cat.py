@@ -90,7 +90,7 @@ def test_retry_model_call_gives_up_and_review_records_error():
 
 
 def test_retry_connect_uses_shared_helper():
-    assert "NC.pg_connect" in (SCRIPTS / "nova_directive_review.py").read_text()
+    assert "_nova_dsn.pg_connect" in (SCRIPTS / "nova_directive_review.py").read_text()
 
 
 # ── Unit ──────────────────────────────────────────────────────────────────────

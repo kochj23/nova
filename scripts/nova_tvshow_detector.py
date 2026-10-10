@@ -7,6 +7,7 @@ A strong match to a real *networked/cable* series (close name + premiered + netw
 is almost certainly OTA/DVD content that got dumped into TVShows — irreplaceable, so
 flag it to KEEP. Writes results to /tmp/tv_matches.tsv for review. Never deletes.
 """
+import nova_dsn as _nova_dsn  # noqa: E402
 import difflib
 import json
 import re
@@ -16,7 +17,7 @@ import urllib.request
 
 import psycopg2
 
-conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+conn = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"))
 cur = conn.cursor()
 cur.execute("SELECT DISTINCT show FROM media_prune_proposals WHERE status='proposed' ORDER BY show")
 shows = [r[0] for r in cur.fetchall()]

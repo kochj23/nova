@@ -12,6 +12,7 @@ Fast because it uses the existing source index.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import sys
 import time
@@ -30,7 +31,7 @@ except ImportError:
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
+DB_DSN = _nova_dsn.pg_url("nova_memories")
 
 # ── Source → ltree Taxonomy ───────────────────────────────────────────────────
 # Keys are source values, values are ltree paths (dot-separated)

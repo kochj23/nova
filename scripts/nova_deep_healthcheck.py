@@ -18,6 +18,7 @@ nova_selfcheck.fix_gate (safe_fix delegates to it). deep_healthcheck_log is stil
 reads it); each check also lands in selfcheck_runs as deep-*. Report: #nova-alerts when anything
 was fixed or broken, else #nova-digest (was #nova-warning, mirrored to Discord).
 """
+import nova_dsn as _nova_dsn  # noqa: E402
 import argparse
 import json
 import os
@@ -136,7 +137,7 @@ def check_nas_mounts():
 def check_postgres():
     try:
         import psycopg2
-        c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj", connect_timeout=8)
+        c = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"), connect_timeout=8)
         c.autocommit = True; cur = c.cursor()
         cur.execute("SELECT NOT pg_is_in_recovery()"); writable = cur.fetchone()[0]
         if not _sc.DRY:  # the write probe is the one PG write a report-only run skips
@@ -243,7 +244,7 @@ def check_journal():
 def check_scheduler():
     try:
         import psycopg2
-        c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj", connect_timeout=8)
+        c = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"), connect_timeout=8)
         cur = c.cursor()
         cur.execute("SELECT exit_code, count(*) FROM scheduler_runs WHERE started_at/1000 > extract(epoch from now())-3600 GROUP BY 1")
         rows = dict(cur.fetchall()); c.close()
@@ -259,7 +260,7 @@ def check_awakening():
     """Are Nova's new organs actually beating?"""
     try:
         import psycopg2
-        c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj", connect_timeout=8)
+        c = psycopg2.connect(_nova_dsn.pg_dsn("nova_memories"), connect_timeout=8)
         cur = c.cursor()
         cur.execute("SELECT source, count(*) FROM memories WHERE created_at > now()-interval '26 hours' "
                     "AND source IN ('unclaimed','episodic','research','association','conversation') GROUP BY 1")
@@ -312,7 +313,7 @@ def write_log(results):
     broken = [r for r in results if not r["ok"] and not r["fixed"]]
     try:
         import psycopg2
-        c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj", connect_timeout=8)
+        c = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"), connect_timeout=8)
         c.autocommit = True; cur = c.cursor()
         cur.execute("CREATE TABLE IF NOT EXISTS deep_healthcheck_log (id bigserial PRIMARY KEY, ts timestamptz DEFAULT now(), healthy int, fixed int, broken int, detail jsonb)")
         cur.execute("INSERT INTO deep_healthcheck_log (healthy, fixed, broken, detail) VALUES (%s,%s,%s,%s)",

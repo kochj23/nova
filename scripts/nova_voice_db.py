@@ -18,7 +18,8 @@ import psycopg2
 sys.path.insert(0, os.path.expanduser("~/.openclaw/scripts"))
 from nova_voice_fingerprint import windows, diarize, top_speakers
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_memories")
 
 
 def _vec(a):

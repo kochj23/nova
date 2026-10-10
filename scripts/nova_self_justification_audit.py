@@ -31,7 +31,8 @@ from datetime import datetime, timedelta
 import psycopg2
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 SEV_ORDER = {"info": 0, "low": 1, "medium": 2, "high": 3}
 MERGED_ON = "2026-10-09"   # organ audit M8b: survivor is nova_action_audit.py --rationale
 

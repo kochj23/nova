@@ -23,7 +23,8 @@ from datetime import datetime
 
 import psycopg2
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 CHANNEL = "C0AMNQ5GX70"           # #nova-chat — the channel he actually reads and the gateway listens to
 OPEN_MAX_DAYS = 3                 # an unanswered question expires from the slot after this long
 ABOUT_HIM_RE = re.compile(r"\bjordan\b|\byou\b|\byour\b|printer|house|home|garage|master bedroom|"

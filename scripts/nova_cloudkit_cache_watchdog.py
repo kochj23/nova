@@ -44,7 +44,8 @@ ICLOUD_DRIVE = Path.home() / "Library/Mobile Documents/com~apple~CloudDocs"
 GHOSTS = ["Pictures/.com-apple-bird-noname-51289994-C7EB-4876-8464-84CB77E838AD.pkg",
           "Pictures/.com-apple-bird-noname-B59493E7-459D-48E6-BC00-26D18FB8BEB1.pkg"]
 LOG = Path.home() / ".openclaw/logs/cloudkit_cache_watchdog.log"
-DB = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB = _nova_dsn.pg_dsn("nova_ops")
 
 
 def log(msg: str):

@@ -20,7 +20,8 @@ import time
 import paho.mqtt.client as mqtt
 import psycopg2
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 MQTT_HOST, MQTT_PORT = "127.0.0.1", 1883
 EVENTS_TOPIC = "frigate/events"
 MIN_INTERVAL_S = 20  # min seconds between inserts per (camera,label)

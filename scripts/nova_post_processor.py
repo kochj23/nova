@@ -14,6 +14,7 @@ for next morning brief / proactive brief cycle.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import hashlib
 import json
 import sys
@@ -34,8 +35,8 @@ import nova_config
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
-MEMORIES_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
+OPS_DSN = _nova_dsn.pg_url("nova_ops")
+MEMORIES_DSN = _nova_dsn.pg_url("nova_memories")
 REDIS_URL = "redis://192.168.1.6:6379"
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_post_processor.log"

@@ -8,10 +8,11 @@ organ can read the others before it talks to Jordan. First consumer: nova_securi
 "new device" when a known person walked in minutes ago (a phone arriving with its owner is not an intruder
 at 03:00 levels). Read-only. --report --selftest. Approved 2026-10-04.
 """
+import nova_dsn as _nova_dsn  # noqa: E402
 import sys, os, json
 import psycopg2
 
-OPS = os.environ.get("NOVA_OPS_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+OPS = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
 VIEW = """
 CREATE OR REPLACE VIEW organ_board AS
 SELECT 'affect'::text AS organ, computed_at AS ts, label AS state,

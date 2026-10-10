@@ -47,8 +47,10 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from nova_config import post_both          # Slack (+optional Discord) post
 from nova_notify import notify             # central event bus (failures only)
 
-PG_OPS = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
-PG_MEM = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+PG_OPS = _nova_dsn.pg_dsn("nova_ops")
+import nova_dsn as _nova_dsn  # noqa: E402
+PG_MEM = _nova_dsn.pg_dsn("nova_memories")
 INGEST_API = "http://memory-server.digitalnoise.net:18790/remember"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 OLLAMA_MODEL = "qwen3-coder:30b"

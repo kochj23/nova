@@ -16,7 +16,8 @@ import nova_voice
 from nova_code_reference import code_reference_block
 from nova_notify import notify
 
-MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
 RADIUS_MI = 2.5
 
 

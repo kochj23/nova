@@ -36,7 +36,8 @@ import json
 import sys
 from datetime import datetime, timedelta, timezone
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # A check that comes back faster than this did not touch the network/disk.
 DEFAULT_MIN_MS = 5

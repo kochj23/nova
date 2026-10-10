@@ -48,6 +48,7 @@ USAGE
 """
 
 from __future__ import annotations
+import nova_dsn as _nova_dsn  # noqa: E402
 
 import ipaddress
 import os
@@ -61,7 +62,7 @@ import psycopg2.extras
 
 # ── Config (env-overridable) ────────────────────────────────────────────────
 PG_DSN = os.environ.get(
-    "NOVA_PG_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+    "NOVA_PG_DSN", _nova_dsn.pg_dsn("nova_ops")
 )
 NAMED_UNIT = os.environ.get("NOVA_NAMED_UNIT", "named")
 WINDOW_MIN = int(os.environ.get("NOVA_IOT_WINDOW_MIN", "65"))   # lookback per run

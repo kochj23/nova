@@ -25,7 +25,8 @@ except Exception:
     notify = None
 
 HOMEKIT_URL = "http://127.0.0.1:37433/api/accessories"
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 LOW_THRESHOLD = 20          # percent — warn at or below this
 WARN_THRESHOLD = 40         # info-level heads-up band (logged, not alerted)
 

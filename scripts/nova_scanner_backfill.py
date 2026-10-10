@@ -32,7 +32,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from nova_scanner_correct import correct
 import nova_config
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_memories")
 SOURCES = ("scanner", "fire", "rail")
 BATCH = 120            # rows per round — small so progress commits often & a kill loses little
 WORKERS = 6            # concurrent router calls — fast pool is 3 nodes, one shared w/ SDR; stay gentle

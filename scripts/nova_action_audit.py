@@ -42,6 +42,7 @@ Usage: nova_action_audit.py --complete [--hours 24] | --rationale [--days 7] | -
 Written by Jordan Koch (via Claude).
 """
 from __future__ import annotations
+import nova_dsn as _nova_dsn  # noqa: E402
 
 import argparse
 import hashlib
@@ -55,7 +56,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-DSN = os.environ.get("NOVA_OPS_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+DSN = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
 BOT_USER = "U0ANKLR3SUQ"
 BOT_ID = "B0AMV0K2A3E"
 WINDOW = timedelta(minutes=3)

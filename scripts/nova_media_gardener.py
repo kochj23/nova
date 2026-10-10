@@ -20,7 +20,8 @@ from datetime import datetime, timezone
 
 import psycopg2
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 WINDOW_DAYS = 15
 AVG_EP_BYTES = 350_000_000   # ~350 MB fallback when the file isn't stat-able (mount down)
 

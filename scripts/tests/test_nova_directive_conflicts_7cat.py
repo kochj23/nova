@@ -38,7 +38,7 @@ def test_performance_candidates_on_many_rules_is_bounded():
 # ── Retry ─────────────────────────────────────────────────────────────────────
 def test_retry_loader_uses_shared_retrying_connect():
     # The loader is read-only and runs once per invocation, so the shared helper's retry is the retry path.
-    assert "NC.pg_connect()" in (SCRIPTS / "nova_directive_conflicts.py").read_text()
+    assert "_nova_dsn.pg_connect(" in (SCRIPTS / "nova_directive_conflicts.py").read_text()
 
 
 # ── Unit ──────────────────────────────────────────────────────────────────────

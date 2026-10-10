@@ -59,7 +59,8 @@ log = logging.getLogger("energy_poller")
 # ── Constants ────────────────────────────────────────────────────────────────
 
 POLL_INTERVAL = 60  # seconds
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 STATE_DIR = Path.home() / ".openclaw/workspace/state"
 STATE_FILE = STATE_DIR / "eve_devices.json"
 PAIRING_FILE = STATE_DIR / "homekit_pairings.json"

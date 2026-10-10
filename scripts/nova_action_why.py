@@ -14,8 +14,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import nova_config as NC  # noqa: E402
-DSN = NC.pg_dsn()
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn()
 NO_RATIONALE = "no rationale was recorded for this action"
 
 
@@ -57,7 +57,7 @@ def main(argv=None) -> int:
     ap.add_argument("--missing-only", action="store_true", help="only actions with no recorded rationale")
     a = ap.parse_args(argv)
     import psycopg2
-    conn = NC.pg_connect()
+    conn = _nova_dsn.pg_connect()
     try:
         rows = fetch(conn, a.limit, a.target, a.missing_only)
     finally:

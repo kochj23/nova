@@ -35,7 +35,8 @@ from datetime import datetime
 
 import psycopg2  # noqa: F401 — kept: callers patch nova_human_insight.psycopg2.connect (the shared module)
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 MEMSRV = "http://memory-server.digitalnoise.net:18790"
 SOURCE = "human_insight"
 STATE_SERVICE = "nova_human_insight"

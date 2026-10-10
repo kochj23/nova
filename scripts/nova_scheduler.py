@@ -19,6 +19,7 @@ Features:
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import json
 import os
@@ -604,7 +605,7 @@ class NovaScheduler:
                 # Serve run history from nova_ops.scheduler_runs
                 try:
                     import asyncpg
-                    conn = await asyncpg.connect("postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
+                    conn = await asyncpg.connect(_nova_dsn.pg_url("nova_ops"))
                     try:
                         if path == "/runs":
                             # Last 50 runs across all tasks
@@ -633,7 +634,7 @@ class NovaScheduler:
                 # Aggregate stats per task from nova_ops view
                 try:
                     import asyncpg
-                    conn = await asyncpg.connect("postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
+                    conn = await asyncpg.connect(_nova_dsn.pg_url("nova_ops"))
                     try:
                         rows = await conn.fetch(
                             "SELECT * FROM scheduler_task_stats ORDER BY total_runs DESC"

@@ -12,6 +12,7 @@ Covers: Hue lights (43), media players (20), motion sensors, Lutron switches.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import json
 import os
@@ -31,7 +32,7 @@ except ImportError as e:
     sys.exit(1)
 
 VERSION = "1.0.0"
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+DB_DSN = _nova_dsn.pg_url("nova_ops")
 HA_URL = "http://127.0.0.1:8123"
 POLL_INTERVAL = 30
 LOG_FILE = Path.home() / ".openclaw/logs/nova_ha_poller.log"

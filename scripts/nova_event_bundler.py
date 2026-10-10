@@ -15,6 +15,7 @@ Used by:
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import json
 import sys
 from collections import defaultdict
@@ -28,7 +29,7 @@ try:
 except ImportError:
     psycopg2 = None
 
-OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+OPS_DSN = _nova_dsn.pg_url("nova_ops")
 
 
 def _query(sql, params=None):

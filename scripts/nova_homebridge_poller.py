@@ -16,7 +16,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 import psycopg2
 import psycopg2.extras
 
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 HB_URL = "http://192.168.1.10:8581"
 HB_USER = "admin"                     # the login name is not a secret; the password lives in 1Password
 HB_PASS_ITEM = "nova-homebridge-password"   # 1Password vault "Nova" (Jordan 2026-10-06: no passwords in source)

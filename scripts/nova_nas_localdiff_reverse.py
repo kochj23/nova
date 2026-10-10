@@ -44,7 +44,8 @@ import nova_config
 SYNO = "kochj@192.168.1.11"
 UNAS = "root@192.168.1.69"
 UROOT = "/volume/b37f2e84-517c-4a4f-92f0-4d642527ba17/.srv/.unifi-drive"
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 TMP = os.path.expanduser("~/.openclaw/workspace/state/nas_localdiff_reverse")
 
 # name, UNAS source (local .data scan), Synology dest (local scan + rsync target),

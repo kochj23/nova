@@ -46,7 +46,8 @@ except Exception:                       # pragma: no cover — keep module impor
     def lineage_stamp(**k): return {}
     def lineage_line(**k): return ""
 
-PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+PG_DSN = _nova_dsn.pg_dsn("nova_ops")
 HERD_DIR = Path.home() / ".openclaw/workspace/herd"
 LOG_FILE = Path.home() / ".openclaw/logs/nova_herd_profiles.log"
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"

@@ -11,6 +11,7 @@ Runs daily at 5am via scheduler.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import json
 import sys
 import urllib.request
@@ -27,7 +28,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_notify import notify
 
-OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+OPS_DSN = _nova_dsn.pg_url("nova_ops")
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
 LOG_FILE = Path.home() / ".openclaw/logs/syslog_daily_digest.log"
 

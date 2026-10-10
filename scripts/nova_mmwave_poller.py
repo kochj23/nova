@@ -14,6 +14,7 @@ Instead, Apple Home automations fire webhooks on occupancy change.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import json
 import signal
@@ -36,7 +37,7 @@ except ImportError:
 sys.path.insert(0, str(Path(__file__).parent))
 
 VERSION = "3.0.0"
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+DB_DSN = _nova_dsn.pg_url("nova_ops")
 LISTEN_PORT = 8089
 LOG_FILE = Path.home() / ".openclaw/logs/nova_mmwave.log"
 POLL_INTERVAL = 10
@@ -76,7 +77,7 @@ _sync_pool = None
 
 def get_sync_conn():
     import psycopg2
-    return psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+    return psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"))
 
 
 DB_ATTEMPTS = 3

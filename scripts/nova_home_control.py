@@ -24,6 +24,7 @@ Also importable: from nova_home_control import bose, onkyo, scenes
 Written by Jordan Koch + Nova.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import socket
 import struct
 import sys
@@ -665,7 +666,7 @@ class scenes:
         """
         try:
             import psycopg2
-            dsn = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+            dsn = _nova_dsn.pg_dsn("nova_ops")
             with psycopg2.connect(dsn) as conn:
                 with conn.cursor() as cur:
                     cur.execute(

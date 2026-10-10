@@ -43,7 +43,8 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 HERE = Path(__file__).resolve().parent
 LOG = HERE.parent / "logs" / "nova_voice_room.log"
 CACHE = Path(os.environ.get("NOVA_VOICE_CACHE", "/Volumes/Data/AI/tts/voice_room"))

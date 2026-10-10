@@ -28,7 +28,8 @@ import urllib.request
 from datetime import date
 from pathlib import Path
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 MEMSRV = "http://memory-server.digitalnoise.net:18790/stats"
 SCRIPTS = Path(__file__).resolve().parent
 WORKSPACE = Path.home() / ".openclaw" / "workspace"

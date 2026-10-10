@@ -21,7 +21,8 @@ import nova_config
 
 HEALTH_URL = "http://127.0.0.1:18790/health"
 STATE = os.path.expanduser("~/.openclaw/state/memory_health.json")
-DSN_OPS = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN_OPS = _nova_dsn.pg_dsn("nova_ops")
 
 STALL_QUEUE = 5000       # queued items above which "0 written" is a real stall
 STALL_MINUTES = 10       # min elapsed before we trust a 0-written reading

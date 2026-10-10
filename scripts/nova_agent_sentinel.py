@@ -15,6 +15,7 @@ Runs as a persistent daemon subscribed to security channels.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import glob
 import json
 import re
@@ -97,7 +98,7 @@ class SecuritySentinel(SubAgent):
         # 1. Check gateway config for unexpected cloud models
         try:
             import psycopg2
-            _conn = psycopg2.connect("postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops")
+            _conn = psycopg2.connect(_nova_dsn.pg_url("nova_ops"))
             _cur = _conn.cursor()
             _cur.execute("SELECT content FROM nova_documents WHERE category='nova_config' AND name='openclaw.json'")
             _row = _cur.fetchone()

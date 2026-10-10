@@ -9,6 +9,7 @@ Runs daily via scheduler.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import hashlib
 import json
 import sys
@@ -27,7 +28,7 @@ except ImportError:
     sys.exit(1)
 
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
-OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+OPS_DSN = _nova_dsn.pg_url("nova_ops")
 SOURCE = "claude_memory"
 LOG_FILE = Path.home() / ".openclaw/logs/claude_memory_sync.log"
 

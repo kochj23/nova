@@ -11,11 +11,12 @@ MERGED 2026-10-09 (organ-audit merge M2): the daily run is now `nova_task_sentin
 (same thresholds, query, wording and queue session). main() is a thin wrapper for it; chronic()
 and the thresholds stay here because nova_task_sentinel and nova_busab import them.
 """
+import nova_dsn as _nova_dsn  # noqa: E402
 import sys, os
 from datetime import date, timedelta
 import psycopg2
 
-DSN = os.environ.get("NOVA_OPS_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+DSN = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
 FAIL_PER_DAY = 5
 DAYS = 3
 PREFIX = "Chronic failure: "

@@ -51,7 +51,8 @@ STALE_AFTER_S = 120   # a powered printer streams frames every ~1-2s; no frame w
                       # this window means it is OFF/unreachable, NOT idle. Everything
                       # that reads self.state must gate on this so a stale last-known
                       # frame is never re-published as if it were current.
-PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+PG_DSN = _nova_dsn.pg_dsn("nova_ops")
 BUSY_STATES = {"RUNNING", "PAUSE", "PREPARE", "SLICING", "RESUMING"}
 
 

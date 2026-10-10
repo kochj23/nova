@@ -22,8 +22,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import nova_config as NC  # noqa: E402
-DSN = NC.pg_dsn()
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn()
 
 # component -> rooms it serves. "assumed" marks links not yet confirmed against the UniFi client map.
 DEPENDS = {
@@ -109,7 +109,7 @@ def main(argv=None) -> int:
     if not a.dry_run:
         import json
         import psycopg2
-        conn = NC.pg_connect()
+        conn = _nova_dsn.pg_connect()
         ensure_table(conn)
         cur = conn.cursor()
         for name, resp, r in results:

@@ -13,10 +13,11 @@ candidate). State file semantics of the wrapped service are its own business (sc
 --selftest (needs PG): proves a second candidate cannot take the lock while the first holds it.
 Approved by Jordan 2026-10-04 (essay 2026-10-03 §XIV, Phase 3).
 """
+import nova_dsn as _nova_dsn  # noqa: E402
 import os, sys, time, signal, socket, subprocess
 import psycopg2
 
-DSN = os.environ.get("NOVA_OPS_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj connect_timeout=8")
+DSN = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops", "connect_timeout=8"))
 NODE = socket.gethostname().split(".")[0]
 RETRY_S = 10            # standby: how often to try for the lock
 BEAT_S = 30             # heartbeat / liveness check cadence

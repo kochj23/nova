@@ -41,7 +41,8 @@ except Exception:  # pragma: no cover
     def resolve_url(service, path=""):
         return {"grafana": "http://192.168.1.2:3000"}.get(service, "") + path
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
 OLLAMA_URL = os.environ.get("NOVA_OLLAMA_URL", "http://127.0.0.1:11434/api/generate")
 # qwen2.5vl answers in 4s with clean JSON; qwen3-vl (a thinking model) spends its whole budget in

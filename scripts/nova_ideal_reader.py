@@ -53,7 +53,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 CONTENT = Path(os.environ.get("NOVA_JOURNAL_CONTENT", str(Path.home() / "nova-journal" / "content")))
 MAX_CUT = 0.15
 CORPUS_N = 200

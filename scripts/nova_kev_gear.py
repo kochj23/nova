@@ -42,7 +42,8 @@ try:
 except Exception:
     triage = None
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 KEV_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"
 
 # ── Curated fleet SOFTWARE / infra vendors Jordan actually runs ───────────────

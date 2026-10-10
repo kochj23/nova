@@ -33,7 +33,8 @@ import datetime
 import math
 import sys
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 
 CERT_WARN_DAYS = 14      # warn when a cert expires within this many days
 CERT_CRIT_DAYS = 3       # critical when within this many days (or already expired)

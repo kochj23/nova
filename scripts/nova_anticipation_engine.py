@@ -12,6 +12,7 @@ not just reacting to commands.
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import json
 import logging
@@ -50,7 +51,7 @@ PRESENCE_URL = "http://127.0.0.1:37465/occupancy"
 CALENDAR_URL = "http://127.0.0.1:37400/api/oneonone/meetings"
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
-PG_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+PG_DSN = _nova_dsn.pg_url("nova_ops")
 
 EVAL_INTERVAL = 60  # seconds between evaluation cycles
 DELIVERY_COOLDOWN = 1800  # 30 min default between proactive messages on same topic

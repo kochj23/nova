@@ -29,7 +29,8 @@ try:
 except Exception:
     notify = None
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 ROOT = "/Volumes/NAS"
 PROTECTED_DIRS = {"GoogleDriveBackups", "Google-Drive-kochjpar",
                   "Shared Google Drives",   # work data + Google-synced

@@ -42,7 +42,8 @@ try:
 except Exception:                                  # fail closed: redline_ok() refuses everything
     _guards = None
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # Services the actor MAY restart if health_checks shows them down. Deliberately small,
 # non-DB, non-critical. NEVER put postgres, the gateway, pgbouncer, DNS, or anything

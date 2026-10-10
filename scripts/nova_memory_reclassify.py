@@ -43,7 +43,8 @@ def _protected(src: str) -> bool:
     dreams/art). Provenance wins over topical similarity for these."""
     return bool(src) and (nova_config.is_private_source(src) or src in INTERNAL_SOURCES)
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_memories")
 MIN_TARGET = 200       # only vectors with >= this many members are reassignment targets
 MARGIN = 0.05          # move only if clearly closer to another centroid (cosine margin)
 HOMELESS_SIM = 0.30    # best cosine sim below this => homeless (new-vector candidate)

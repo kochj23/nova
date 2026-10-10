@@ -36,7 +36,8 @@ from datetime import date
 
 import psycopg2
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # Daytime window is 08:00-23:00 at ~45m (see nova_unclaimed_time.main) -> ~20 wakes/day.
 # Size the budget to roughly that, keep a small reserve untouched. Env-overridable so

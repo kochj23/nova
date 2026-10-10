@@ -37,7 +37,8 @@ REMOTE_GEN_TIMEOUT = 300        # per image once executing: FLUX dev ~57 s warm;
 REMOTE_HEALTH_TIMEOUT = 3       # /system_stats probe before committing to the LAN path
 REMOTE_POLL_S = 3
 REMOTE_MAX_POLL_ERRORS = 5      # consecutive /history failures => ComfyUI went away
-_PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj connect_timeout=3"
+import nova_dsn as _nova_dsn  # noqa: E402
+_PG_DSN = _nova_dsn.pg_dsn("nova_ops", "connect_timeout=3")
 _comfyui_url_cache = None
 
 # ── OpenRouter Image Models (primary — no PII in prompts) ─────────────────────

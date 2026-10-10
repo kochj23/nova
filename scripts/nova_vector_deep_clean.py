@@ -24,6 +24,7 @@ Algorithm:
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import argparse
 import asyncio
 import json
@@ -52,7 +53,7 @@ except ImportError:
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
+DB_DSN = _nova_dsn.pg_url("nova_memories")
 CENTROID_SAMPLE_SIZE = 100
 MISFIT_PERCENTILE = 5       # bottom 5% are misfits
 RECLASSIFY_THRESHOLD = 0.1  # must be >0.1 better to reclassify

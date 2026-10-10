@@ -47,7 +47,8 @@ NAV_TIMEOUT_MS = 30000
 MAX_CHARS_CAP = 2_000_000
 DEFAULT_CHARS = 20000
 MAX_CONCURRENCY = 3
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 BLOCKED_RESOURCE_TYPES = {"image", "media", "font", "stylesheet"}
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [browser] %(message)s")

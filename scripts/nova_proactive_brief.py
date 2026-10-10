@@ -13,6 +13,7 @@ Cron: 0 9,11,13,15,17 * * 1-5
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import json
 import sys
@@ -34,8 +35,8 @@ from nova_notify import notify
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
-MEMORIES_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
+OPS_DSN = _nova_dsn.pg_url("nova_ops")
+MEMORIES_DSN = _nova_dsn.pg_url("nova_memories")
 MEMORY_SERVER = "http://memory-server.digitalnoise.net:18790"
 STATE_DIR = Path.home() / ".openclaw" / "workspace" / "state"
 STATE_FILE = STATE_DIR / "proactive_brief_state.json"

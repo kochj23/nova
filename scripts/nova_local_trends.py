@@ -24,7 +24,8 @@ try:
 except Exception:
     sentinel = None
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 
 
 def log(m):
@@ -51,7 +52,8 @@ def _delta(this, last):
     return f"{'up' if d>0 else ('down' if d<0 else 'flat')} {abs(d)} ({'+' if d>=0 else ''}{round(100*d/last)}%)"
 
 
-MEMDB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+MEMDB_DSN = _nova_dsn.pg_dsn("nova_memories")
 _AIRWAVE_LABEL = {"scanner": "police", "fire": "fire", "fire_ops": "fire",
                   "rail": "rail", "chp": "CHP", "police_codes": "police-codes", "atc": "air-traffic"}
 

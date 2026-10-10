@@ -24,7 +24,8 @@ import psycopg2
 import nova_homekit_client as hk  # Bearer token (NovaHomeKit 51e7a91) + retry/backoff
 
 NOVAHOMEKIT_URL = "http://127.0.0.1:37433/api/accessories"
-PG_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+PG_DSN = _nova_dsn.pg_dsn("nova_ops")
 POLL_INTERVAL = 10  # seconds
 OCCUPANCY_TYPE = "Occupancy Detected"  # HomeKit char UUID 00000071-...
 

@@ -17,6 +17,7 @@ Tool mode:
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import argparse
 import asyncio
 import json
@@ -30,7 +31,7 @@ import httpx
 
 # ── Configuration ────────────────────────────────────────────────────────────
 
-DB_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_memories"
+DB_DSN = _nova_dsn.pg_url("nova_memories")
 EMBED_URL = "http://memory-server.digitalnoise.net:18790/embed"
 TABLE = "memories"
 

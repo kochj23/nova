@@ -59,7 +59,8 @@ from datetime import datetime, timezone
 import psycopg2
 import psycopg2.extras
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790/remember"
 
 # How many multiples of the learned median gap without an arrival before a

@@ -31,7 +31,8 @@ import psycopg2.extras
 sys.path.insert(0, str(Path(__file__).parent))
 from nova_notify import notify
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 BRIDGE_NODES_URL = "http://jordans-mac-mini.local:37478/nodes"
 LOG_FILE = Path.home() / ".openclaw/logs/mesh_churn_report.log"
 

@@ -20,7 +20,8 @@ import psycopg2
 
 HOST = "192.168.1.69"
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", f"root@{HOST}"]
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 POOL = "/volume/b37f2e84-517c-4a4f-92f0-4d642527ba17"
 
 # Remote one-shot: emit TSV lines for volume, raid arrays, and each disk.

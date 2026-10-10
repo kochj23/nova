@@ -27,7 +27,8 @@ try:  # room voice must never be able to break notification delivery
 except Exception:
     nova_voice_room = None
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # ── AI alert-triage brain (fail-open) ─────────────────────────────────────────
 # Right before an event is posted to Slack we ask nova_alert_triage what it turned

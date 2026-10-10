@@ -25,7 +25,8 @@ import nova_config
 SYNO = "kochj@192.168.1.11"
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15", SYNO]
 LOG = "/volume1/homes/kochj/nova_nas_diff.log"
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 POLL_S = 60
 HEARTBEAT_S = 900
 MAX_S = 4 * 3600

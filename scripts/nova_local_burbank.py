@@ -36,7 +36,8 @@ OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 ARTICLE_MODEL = "anthropic/claude-haiku-4.5"
 IMAGE_MODEL = "openai/gpt-5-image"
 PG_DSN = "dbname=nova_memories user=kochj host=pg-primary.digitalnoise.net"
-NOVA_OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+NOVA_OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 
@@ -365,7 +366,7 @@ def get_wifi_ble_summary(hours=24):
         open_ap_names = []
 
     try:
-        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+        conn = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"))
         cur = conn.cursor()
         cur.execute("""
             SELECT count(DISTINCT device_mac) FROM telemetry.bluetooth
@@ -392,7 +393,7 @@ def get_lora_summary(hours=24):
     Aggregate + a few notable named nodes; nothing sensitive."""
     import psycopg2
     try:
-        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+        conn = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"))
         cur = conn.cursor()
         cur.execute("""
             SELECT count(DISTINCT node_id),

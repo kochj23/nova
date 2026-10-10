@@ -29,6 +29,7 @@ today's behaviour when PG is unreachable (it must never silence a real alert bec
 the ledger was down), but logs that it did.
 """
 from __future__ import annotations
+import nova_dsn as _nova_dsn  # noqa: E402
 
 import json
 import sys
@@ -217,7 +218,7 @@ if __name__ == "__main__":
     import psycopg2
     for _a in range(3):
         try:
-            c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj", connect_timeout=5)
+            c = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"), connect_timeout=5)
             break
         except psycopg2.OperationalError:
             if _a == 2:

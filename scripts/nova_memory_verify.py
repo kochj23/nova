@@ -12,11 +12,12 @@ Names come only from the truth tables (lowercase, >= 4 chars); a claim is "IP wi
 Why: ".190 was the Bose soundbar for weeks; the network knew; the memory won." Approved 2026-10-04.
 --dry-run --limit N --selftest
 """
+import nova_dsn as _nova_dsn  # noqa: E402
 import re, sys, os, json
 import psycopg2
 
-OPS = os.environ.get("NOVA_OPS_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
-MEM = os.environ.get("NOVA_MEM_DSN", "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj")
+OPS = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
+MEM = os.environ.get("NOVA_MEM_DSN", _nova_dsn.pg_dsn("nova_memories"))
 IP_RE = re.compile(r"\b192\.168\.1\.(\d{1,3})\b")
 WINDOW = 60
 NOISY = ("nova_articles", "intelligence", "syslog", "alerts", "nova_journal", "security", "incident")

@@ -22,6 +22,7 @@ Integration points:
 Written by Jordan Koch (via Claude), 2026-06-04.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import json
 import os
 import subprocess
@@ -396,7 +397,7 @@ def record_to_pg(findings: dict, host_count: int):
     """Write scan results to shared_observations for ops memory."""
     try:
         import psycopg2
-        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+        conn = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"))
         conn.autocommit = True
         cur = conn.cursor()
 

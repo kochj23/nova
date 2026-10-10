@@ -43,7 +43,8 @@ import psycopg2
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
 # Calibrated 2026-10-08 against the live reading: 82 on an ordinary day (5 open doc_drift
 # rows ~21 days old = 31, 54 noisy dedup keys = 22.5, a 245-item claude_queue = 16, one
 # pending proposal = 11.5). ~1.2x an ordinary day bleeds; unresolved drift creeps ~+1/day.

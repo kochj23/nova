@@ -558,7 +558,8 @@ RETIRED_PROFILES = frozenset({"after-dark", "pilot", "art"})
 # sources -> publishes as written). LONGFORM_OVERRIDES is the in-code fallback, used
 # only when the DB is unreachable. Keep it empty: Jordan names the stories.
 LONGFORM_OVERRIDES: list = []
-LONGFORM_OVERRIDE_PG = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj connect_timeout=5"
+import nova_dsn as _nova_dsn  # noqa: E402
+LONGFORM_OVERRIDE_PG = _nova_dsn.pg_dsn("nova_ops", "connect_timeout=5")
 _LONGFORM_OVERRIDE_CACHE: list = []
 LONGFORM_MIN_GAIN = 1.25            # "meaningfully longer": >= 1.25x the draft (or >= min)
 LONGFORM_MAX_OVERSHOOT = 1.25       # an expansion past 1.25x max is padding -> rejected
@@ -1412,7 +1413,7 @@ description: "{description.replace('"', "'")}"
     if cited_memory_ids:
         try:  # provenance invariant: record what this article drew on (non-fatal)
             import psycopg2
-            _c = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+            _c = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"))
             _c.autocommit = True
             with _c.cursor() as cur:
                 for mid in cited_memory_ids[:50]:
@@ -1562,7 +1563,8 @@ def _resolve_rolling_conflicts() -> bool:
 # untracked (the 2026-07-31 local-trends bug). Every host shares pg-primary, so a PG
 # advisory lock serializes ALL journal pushes fleet-wide; writers QUEUE for it rather
 # than dropping their commit. Degrades to best-effort (unlocked) if PG is unreachable.
-_PUSH_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+_PUSH_DSN = _nova_dsn.pg_dsn("nova_ops")
 _PUSH_LOCK_KEY = 47110815  # arbitrary constant advisory-lock id for journal pushes
 
 
@@ -2181,7 +2183,7 @@ def _search_dead_alert(query: str, unresponsive: list) -> None:
     try:
         import psycopg2
         oc = psycopg2.connect(nova_config.OPS_DSN if hasattr(nova_config, "OPS_DSN")
-                              else "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj",
+                              else _nova_dsn.pg_dsn("nova_ops"),
                               connect_timeout=5)
         oc.autocommit = True
         cur = oc.cursor()
@@ -2249,7 +2251,7 @@ def self_inventory_block() -> str:
     live = []
     try:
         import psycopg2
-        oc = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj", connect_timeout=5)
+        oc = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"), connect_timeout=5)
         cur = oc.cursor()
         cur.execute("SELECT content FROM agent_docs WHERE doc_type='nova-system-map' AND agent_id='all'")
         r = cur.fetchone()
@@ -2276,7 +2278,7 @@ def self_inventory_block() -> str:
         log(f"self-inventory: PG unavailable ({e})")
     try:
         import psycopg2
-        mc = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj", connect_timeout=5)
+        mc = psycopg2.connect(_nova_dsn.pg_dsn("nova_memories"), connect_timeout=5)
         cur = mc.cursor()
         cur.execute("SELECT reltuples::bigint FROM pg_class WHERE relname='memories'")
         r = cur.fetchone()

@@ -46,7 +46,8 @@ IMAGES_DIR = HUGO_ROOT / "static" / "images" / "operations"
 # editorial generation runs on LOCAL Ollama ONLY — none of this leaves the box.
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
 OLLAMA_MODEL = "qwen3-coder:30b"
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 
 
 def log(msg):

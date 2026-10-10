@@ -16,6 +16,7 @@ Management API on port 37472: /triggers/list, /triggers/create, /triggers/test
 Written by Jordan Koch.
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import asyncio
 import json
 import signal
@@ -45,7 +46,7 @@ HTTP_PORT = 37472
 BIND_ADDR = "0.0.0.0"
 REDIS_URL = "redis://192.168.1.6:6379"
 MEMORY_URL = "http://memory-server.digitalnoise.net:18790"
-OPS_DSN = "postgresql://kochj@pg-primary.digitalnoise.net:5432/nova_ops"
+OPS_DSN = _nova_dsn.pg_url("nova_ops")
 LOG_FILE = Path.home() / ".openclaw/logs/nova_semantic_triggers.log"
 NEW_MEMORY_CHANNEL = "nova:memory:new"
 

@@ -24,7 +24,8 @@ try:
 except Exception:
     notify = None
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 # 91506 (Burbank) centroid + a radius that covers the zip.
 LAT, LON, ZIP_RADIUS_NM = 34.169, -118.325, 3.0
 ALT_CEILING_FT = 10000          # only low/overhead traffic (Jordan's pick)

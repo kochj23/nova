@@ -47,7 +47,8 @@ CLIENTS_URL = f"{CONTROLLER_BASE}/proxy/network/api/s/{SITE}/stat/sta"
 DEVICES_URL = f"{CONTROLLER_BASE}/proxy/network/api/s/{SITE}/stat/device"
 
 LOG_FILE = Path(str(Path.home()) + "/.openclaw/logs/unifi_poller.log")
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 

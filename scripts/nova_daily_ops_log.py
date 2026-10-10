@@ -37,8 +37,10 @@ from nova_notify import notify
 
 HUGO_ROOT = (Path.home() / "nova-journal")
 CONTENT_DIR = HUGO_ROOT / "content" / "operations"   # rando retired -> operations
-DB = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
-MEMDB = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB = _nova_dsn.pg_dsn("nova_ops")
+import nova_dsn as _nova_dsn  # noqa: E402
+MEMDB = _nova_dsn.pg_dsn("nova_memories")
 LOG = Path.home() / ".openclaw/logs/daily_ops_log.log"
 GH_OWNER = "kochj23"
 # Memory server /remember endpoint (operations vector). Mirrors nova_config.VECTOR_URL.

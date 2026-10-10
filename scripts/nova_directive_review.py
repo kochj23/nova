@@ -19,8 +19,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-import nova_config as NC  # noqa: E402
-DSN = NC.pg_dsn()
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn()
 OLLAMA = "http://localhost:11434/api/chat"
 DEFAULT_MODEL = "qwen3:8b"
 MAX_CHARS = 700
@@ -95,7 +95,7 @@ def review(pair: tuple, model: str = DEFAULT_MODEL, _ask=ask_model) -> dict:
 
 def connect(attempts: int = 3):
     """Connect to nova_ops with retry, so a dropped connection cannot lose a finished review."""
-    return NC.pg_connect(attempts=attempts)
+    return _nova_dsn.pg_connect(attempts=attempts)
 
 
 def ensure_table(conn) -> None:

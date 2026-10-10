@@ -14,13 +14,14 @@ Output is JSON (the chat agent narrates it in her voice; Claude reads it as-is).
 unreachable is reported as such — never guessed around.
 ponytail: deploy state uses `gh` when present (Studio) and says "unknown" elsewhere (.2 has no gh).
 """
+import nova_dsn as _nova_dsn  # noqa: E402
 import argparse, json, os, re, shutil, subprocess, sys, urllib.request
 from datetime import date, datetime, timedelta
 from pathlib import Path
 import psycopg2, psycopg2.extras
 
-OPS = os.environ.get("NOVA_OPS_DSN", "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
-MEM = os.environ.get("NOVA_MEM_DSN", "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj")
+OPS = os.environ.get("NOVA_OPS_DSN", _nova_dsn.pg_dsn("nova_ops"))
+MEM = os.environ.get("NOVA_MEM_DSN", _nova_dsn.pg_dsn("nova_memories"))
 JOURNAL = Path(os.environ.get("NOVA_JOURNAL_DIR", str(Path.home() / "nova-journal")))
 SITE = "https://nova.digitalnoise.net"
 SELF_VECTORS = ("unclaimed", "gravel", "imagination", "learning", "projects", "self_answer", "research", "association",

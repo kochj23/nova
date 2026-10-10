@@ -14,6 +14,7 @@ Since Shortcuts runs us with Home permissions, we try the XPC route first.
 Written by Jordan Koch (via Claude).
 """
 
+import nova_dsn as _nova_dsn  # noqa: E402
 import json
 import subprocess
 import sys
@@ -79,7 +80,7 @@ def read_via_shortcuts_output():
 
     try:
         import psycopg2
-        conn = psycopg2.connect("host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj")
+        conn = psycopg2.connect(_nova_dsn.pg_dsn("nova_ops"))
         cur = conn.cursor()
         # Get latest BLE readings that might include temperature data from HomePods
         cur.execute("""

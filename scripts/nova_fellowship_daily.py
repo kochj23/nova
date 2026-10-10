@@ -29,7 +29,8 @@ import nova_journal as nj
 import nova_voice
 from nova_rando_daily_ops import call_llm
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 ROTATION_STATE = Path.home() / ".openclaw" / "state" / "fellowship_rotation.json"
 
 # Every cast maps the SAME 9 hosts to the SAME underlying traits, just re-skinned per

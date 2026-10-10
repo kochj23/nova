@@ -43,7 +43,8 @@ CONTROLLER_IP = "192.168.1.1"
 CONTROLLER_BASE = f"https://{CONTROLLER_IP}"
 SITE = "default"
 API_BASE = f"{CONTROLLER_BASE}/proxy/network/api/s/{SITE}"
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 
 NOW = datetime.now(timezone.utc)
 

@@ -37,8 +37,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 import nova_config
 from nova_rando_daily_ops import call_llm
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
-MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
+import nova_dsn as _nova_dsn  # noqa: E402
+MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
 STATE_FILE = Path.home() / ".openclaw/workspace/state/email_threat_scan_seen.json"
 MEM_STATE_FILE = Path.home() / ".openclaw/workspace/state/identity_threat_scan_last.json"
 ACCOUNT = nova_config.JORDAN_DOMAIN_EMAIL

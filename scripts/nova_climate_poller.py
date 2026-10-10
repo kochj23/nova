@@ -49,7 +49,8 @@ log = logging.getLogger("climate_poller")
 # ── Constants ────────────────────────────────────────────────────────────────
 
 POLL_INTERVAL = 120  # seconds (2 minutes)
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 
 HUE_BRIDGE_SUBNET = "192.168.1"
 HUE_BRIDGE_RANGE = range(20, 51)  # .20 through .50

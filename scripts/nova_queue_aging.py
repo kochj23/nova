@@ -18,7 +18,8 @@ import sys
 
 import psycopg2
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_ops")
 
 DELETE_TERMINAL = """
 DELETE FROM claude_queue

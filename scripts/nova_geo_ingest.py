@@ -13,7 +13,8 @@ sys.path.insert(0, os.path.expanduser("~/.openclaw/scripts"))
 import nova_ingest as ni
 import psycopg2
 
-DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DSN = _nova_dsn.pg_dsn("nova_memories")
 API = "https://en.wikipedia.org/w/api.php"
 # Wikipedia's API policy wants a descriptive UA; a generic one gets rate-limited hard.
 UA = {"User-Agent": "NovaGeoIngest/1.0 (personal homelab research; https://nova.digitalnoise.net)"}

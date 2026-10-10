@@ -450,11 +450,12 @@ def post_both(message: str, slack_channel: str = SLACK_CHAN, discord_channel: st
 
 
 # ── Nova ops database (added 2026-10-09) ───────────────────────────────────────
-def pg_dsn(dbname: str = "nova_ops") -> str:
-    """psycopg2 DSN for the ops database. Host comes from NOVA_PG_HOST so the source holds no address."""
+def pg_dsn(dbname: str = "nova_ops", extra: str = "") -> str:
+    """psycopg2 DSN for the ops database. Host comes from NOVA_PG_HOST so the source holds no address.
+    extra: optional libpq options, e.g. "connect_timeout=5"."""
     import os
     host = os.environ.get("NOVA_PG_HOST", "pg-primary.digitalnoise.net")
-    return f"host={host} dbname={dbname} user=kochj"
+    return f"host={host} dbname={dbname} user=kochj" + (f" {extra}" if extra else "")
 
 
 def pg_connect(dbname: str = "nova_ops", attempts: int = 3, _sleep=None):

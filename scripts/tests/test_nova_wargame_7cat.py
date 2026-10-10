@@ -42,7 +42,7 @@ def test_performance_simulate_many_rooms_is_fast():
 
 # ── Retry ─────────────────────────────────────────────────────────────────────
 def test_retry_connection_uses_shared_helper():
-    assert "NC.pg_connect()" in (SCRIPTS / "nova_wargame.py").read_text()
+    assert "_nova_dsn.pg_connect(" in (SCRIPTS / "nova_wargame.py").read_text()
 
 
 # ── Unit ──────────────────────────────────────────────────────────────────────

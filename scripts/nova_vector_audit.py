@@ -46,7 +46,8 @@ SAMPLE_PER_VECTOR = 100
 VECTORS_PER_RUN = 15   # audit a ROTATING subset each run (least-recently-audited first) so
                        # coverage cycles across all ~200 vectors and articles don't feature the
                        # same buckets (e.g. livejournal) every single time. Full cycle ~14 runs.
-DB_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+DB_DSN = _nova_dsn.pg_dsn("nova_ops")
 
 # Video / spoken-word vectors whose transcripts naturally repeat words (dialogue, chants,
 # sports commentary, subtitles). The loose low-unique-ratio "repetitive" signal over-flags

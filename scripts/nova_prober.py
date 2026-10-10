@@ -49,8 +49,10 @@ from nova_notify import notify  # noqa: E402
 # ---------------------------------------------------------------------------
 # Config — all the real endpoints this stack must actually be able to do.
 # ---------------------------------------------------------------------------
-OPS_DSN = "host=pg-primary.digitalnoise.net dbname=nova_ops user=kochj"
-MEM_DSN = "host=pg-primary.digitalnoise.net dbname=nova_memories user=kochj"
+import nova_dsn as _nova_dsn  # noqa: E402
+OPS_DSN = _nova_dsn.pg_dsn("nova_ops")
+import nova_dsn as _nova_dsn  # noqa: E402
+MEM_DSN = _nova_dsn.pg_dsn("nova_memories")
 
 OLLAMA = "http://127.0.0.1:11434"
 EMBED_MODEL = "nomic-embed-text"
