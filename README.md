@@ -132,6 +132,47 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 
 ## Infrastructure & Security (June–October 2026)
 
+### Nova End-to-End Map (2026-10-09)
+
+`scripts/nova_build_map.py` builds a map of every subsystem from the repo, the scheduler config, the launch agents and the feed scripts, so every count is read at build time. It writes `Nova-Map.html` and `Nova-Map.md` to the Desktop (`~/Desktop/Nova-Map/`). The map covers the scheduled tasks grouped by purpose, the ingest pipeline, the article pipeline, the safety gates, the test suite and the launch jobs. Tests: `tests/test_nova_build_map_7cat.py`.
+
+```mermaid
+flowchart LR
+    subgraph SENSE["Sensors and sources"]
+        HK["HomeKit and Hue (142 scheduled tasks overall)"]
+        FEEDS["RSS and web feeds (527 URLs, 420 hosts)"]
+        LOCAL["Local scanners, radio and cameras"]
+        ARCH["Archives: books, manuals, scripture"]
+    end
+    subgraph CORE["Nova core"]
+        SCHED["Scheduler (142 tasks)"]
+        INGEST["Ingest (33 scripts)"]
+        MEM[("Memory server and PostgreSQL")]
+        ORGANS["Organs (142 tasks, grouped)"]
+        GATES["Safety gates: CARDINAL, SPINNAKER, two-man, action audit"]
+    end
+    subgraph OUT["Outputs"]
+        ART["Articles (34 publishers)"]
+        JOURNAL["nova.digitalnoise.net (Hugo, GitHub Pages)"]
+        ALERT["Alerts: Slack, Discord, Signal, LoRa"]
+        HOME["Home control (HomeKit, Hue, Lutron)"]
+    end
+    HK --> SCHED
+    FEEDS --> INGEST
+    LOCAL --> SCHED
+    ARCH --> INGEST
+    SCHED --> ORGANS
+    INGEST --> MEM
+    ORGANS --> MEM
+    MEM --> ORGANS
+    ORGANS --> GATES
+    GATES --> ART
+    GATES --> ALERT
+    GATES --> HOME
+    ART --> JOURNAL
+```
+
+
 ### Nova's Crystal Ball: the Paranoia Organ, Kept Honest (2026-10-09)
 
 Nova's Crystal Ball is the "what could happen" lens that closes news, local and security articles. It asks what
