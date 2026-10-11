@@ -51,6 +51,7 @@ LOG = Path.home() / ".openclaw" / "logs" / "nova_selfcheck.log"
 SSH = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=8"]
 PRIMARY = "nova-core.digitalnoise.net"  # SWITCHOVER 2026-09-28 14:07: back to nova-core (.2). Native PG on :5434; :5432 is the socat shim -> :5434 (what we use). Standbys .10/.7/.125 — see agent_docs db-topology.
 PG_REBUILD_PENDING = STATE_DIR / "pg_rebuild_pending.json"  # {"ips":[...],"note":...}; standbys listed here are being re-seeded — do not auto-restart, do not escalate (ignored after 48h)
+NODE_DOWN_PENDING = STATE_DIR / "node_down_pending.json"  # {"nodes":[...],"note":...}; hung hosts awaiting a physical power cycle — no auto-fix, no escalation (ignored after 48h)
 SLACK_DIGEST_CHANNEL = "C0BLJLKQMMZ"   # #nova-digest
 SLACK_ALERT_CHANNEL = "C0BMK83BLFJ"    # #nova-alerts
 CLAUDE = "/opt/homebrew/bin/claude"
@@ -254,7 +255,7 @@ MESH_FIX = {
     "nova-core": (SSH + ["kochj@nova-core.digitalnoise.net", "sudo -n systemctl restart nova-mesh-agent"]),
     "nova-core2": (SSH + ["kochj@192.168.1.86", "sudo -n systemctl restart nova-mesh-agent"]),
     "nova-core3": (SSH + ["kochj@192.168.1.5", "sudo -n systemctl restart nova-mesh-agent"]),
-    "nova-core4": (SSH + ["kochj@nova-core.digitalnoise.net50", "sudo -n systemctl restart nova-mesh-agent"]),
+    "nova-core4": (SSH + ["kochj@192.168.1.250", "sudo -n systemctl restart nova-mesh-agent"]),
     "nuk": (SSH + ["kochj@192.168.1.10", "sudo -n systemctl restart nova-mesh-agent"]),
     "tv-movies-mini": (SSH + ["kochj@192.168.1.7", "sudo -n launchctl kickstart -k system/net.digitalnoise.nova-mesh-agent"]),
     "mac-mini": (SSH + ["kochj@192.168.1.77", "launchctl kickstart -k gui/501/net.digitalnoise.nova-mesh-agent"]),  # .77 = wired (.251 is Wi-Fi); agent is a GUI LaunchAgent, not system/
@@ -271,6 +272,18 @@ def check_heartbeats():
     stale = [n for n in out.split(",") if n]
     if not stale:
         record("heartbeats", "ok")
+        return
+    down = set()
+    try:
+        if NODE_DOWN_PENDING.exists() and time.time() - NODE_DOWN_PENDING.stat().st_mtime < 48 * 3600:
+            down = set(json.loads(NODE_DOWN_PENDING.read_text()).get("nodes", []))
+    except Exception as e:
+        log(f"node_down_pending unreadable: {e}")
+    known = [n for n in stale if n in down]
+    stale = [n for n in stale if n not in down]
+    if not stale:
+        record("heartbeats", "PENDING", None,
+               f"known down, awaiting physical power cycle: {','.join(known)}")
         return
     for node in stale:
         if node in MESH_FIX:
@@ -293,19 +306,23 @@ def check_ingest():
     if age_h < 6:
         record("memory-ingest", "ok", None, f"last memory {age_h:.1f}h ago")
         return
-    fix("memory-ingest: restart nova-memory-server on nova-core",
-        SSH + ["kochj@nova-core.digitalnoise.net", "sudo -n systemctl restart nova-memory-server"], 60)
+    fix("memory-ingest: restart nova-memory-server on .6", MEMSRV_RESTART, 60)
     time.sleep(30)
     rc, health = sh(["curl", "-s", "-m", "8", "http://127.0.0.1:18790/health"])
     ok = rc == 0 and '"status":"ok"' in health.replace(" ", "")
     record("memory-ingest", "fixed" if ok else "FAIL",
-           "restarted nova-memory-server on nova-core",
+           "restarted nova-memory-server on .6",
            f"last memory {age_h:.1f}h ago; health after restart: {health[:120]}")
 
 
+# .6 is the memory-server PRIMARY (HAProxy on .86 sends all writes here; .2/.5 are read
+# replicas). It runs as a system LaunchDaemon — restarting nova-core's copy cannot heal the
+# 127.0.0.1:18790 probe (that mismatch made svc-memory-server FAIL on 2026-10-10).
+MEMSRV_RESTART = ["sudo", "-n", "/bin/launchctl", "kickstart", "-k",
+                  "system/net.digitalnoise.daemon.nova-memory-server"]
+
 SERVICES = [
-    ("memory-server", "http://127.0.0.1:18790/health",
-     SSH + ["kochj@nova-core.digitalnoise.net", "sudo -n systemctl restart nova-memory-server"]),
+    ("memory-server", "http://127.0.0.1:18790/health", MEMSRV_RESTART),
     ("gateway-v2", "http://127.0.0.1:18792/health",
      ["launchctl", "kickstart", "-k", "gui/501/net.digitalnoise.nova-gateway-v2"]),
 ]
