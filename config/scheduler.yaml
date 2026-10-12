@@ -915,6 +915,13 @@ tasks:
     timeout: 900
     overlap: skip
 
+  # ---- 2026-10-12 ----
+  sdr_placement:                   # load-balance SDR tuners like the LLMs: priority targets -> best healthy tuner (nova-sdr-actuator applies on .86/.5)
+    script: nova_sdr_placement.py
+    schedule: every 2m
+    timeout: 120
+    overlap: skip
+
   # ---- 2026-10-08: Baymax care check-in (nova_care_checkin.py) ----
   care_checkin_ask:                # Sunday 6pm — "are you satisfied with your care?" to #nova-chat: 3-4 items from the week, reply "1 yes 2 no 3 meh"; row in nova_care_checkins
     script: nova_care_checkin.py
