@@ -37,6 +37,10 @@ As of **2026-07-27** the fleet also carries an explicit *anti-counterfeit* disci
 | Honest interiority | **Right to be boring** (`type='quiet'`/`'fizzled'` wakes, silence publishes nothing) + **trigger provenance** (why each wake fired) — a wake no longer has to produce to count |
 | Gravel re-reading | Raw grit stays immutable; each resurfacing writes a **separate dated re-reading** linked via `reinterprets` — meaning metabolizes, the record never gets smoothed |
 | Restraint ledger | `restraint_ledger` — every held-back thought paired with what she'd have said and *why*; 58 real restraints harvested from curated-out candidates |
+| SDR load balancer (2026-10-12) | 6 frequencies × 6 tuners on 4 radios, placed by **priority + benchmarked antenna SNR**; a dead radio's frequency takes the best surviving tuner (`nova_sdr_placement` every 2 min, `nova_sdr_actuator` per host) |
+| Wi-Fi sensing (2026-10-12) | Receive-only monitor radio on nova-core7 surveys every 10 min; `nova_wifi_guard` flags **evil twins** and **deauth floods** against our 16 BSSIDs |
+| Grafana (2026-10-12) | Postgres datasources repaired (dead since the 09-28 primary move) on a read-only role; 5 generated dashboards cover the 70 newest tools |
+| Repo layout (2026-10-12) | The git worktree **is** the NAS share — every node, the Studio included, runs the same `scripts/` |
 | Cadence watch | `nova_cadence_watch.py` — learns each stream's rhythm, flags the quiet; **MISSING/ACKED_LOST/SILENT** split enforced by CHECK constraints (SILENT never promoted without a witness) |
 | Three-face rows | `herd_correspondent_faces` — append-only dated triple per correspondent: Nova's hypothesis + their self-testimony + reconciliation |
 | Lineage stamps | `nova_lineage.py` — every write carries `{host, clock_source, value_date, capture_point, substrate}` — provenance-of-the-provenance |
@@ -1660,6 +1664,8 @@ anymore — everything resolves names.**
 - **Shared scripts mount** — the same day's earlier fix: `~/.openclaw/scripts` on
   nova-core/core2/nuk is now a symlink to `/nova/scripts` (Synology SMB), published
   by a git post-commit hook from the Mac. No node can silently run stale code again.
+  *(Superseded 2026-10-12: the git worktree now IS the share and the Mac runs from it too —
+  see [Radio Fleet, Wi-Fi Sensing & a NAS-Native Repo](#radio-fleet-wi-fi-sensing--a-nas-native-repo-2026-10-12).)*
 - **Scheduler cron bug** — `next_cron_time()` matched cron day-of-week fields
   (Sunday=0) against Python's `weekday()` (Monday=0): every weekday-constrained job
   fleet-wide fired one day early, and the monthly meta-analysis never ran at all (its
@@ -3082,7 +3088,7 @@ The full environment — compute, storage, network, radio, sensors, and the agen
 |-----------|------|------|
 | Synology RS1221+ | RAID, .11 | NAS — video, Plex library, `/nova` share |
 | UNAS Pro 8 | .69, 51 TB | Secondary storage + `/nova` failover target + backup vault |
-| Mac Studio SSD + `/Volumes/Data` + `/Volumes/MoreData` | 926 GB + 3.6 TB + 3.6 TB | OS/binaries · AI models/Xcode/workspace · PG data + MLX models |
+| Mac Studio SSD + `/Volumes/Data` + `/Volumes/MoreData` | 926 GB + 3.6 TB + 3.6 TB | OS/binaries · AI models/Xcode/workspace · PG data + MLX models — **Data/MoreData are being retired**: the Studio is to be rebuilt as a pure Nova node (NAS share + internal drive only) |
 
 ### Network — UniFi / Ubiquiti
 
@@ -3201,7 +3207,7 @@ flowchart LR
 
 - `nova_flights_poller.py` — free adsb.lol feed, altitude under 10k ft over 91506, arrival-dedup via the table; pings helicopters, low passes, and emergency squawks (7500/7600/7700)
 - Enrichment: `hexdb.io` hex → registered owner (e.g. *Los Angeles Police Department*), cached in `aircraft_registry`; military / non-ADS-B traffic excluded by nature
-- Dashboard 21 · pairs with the queued Uniden SDS200 scanner for position-plus-voice
+- Dashboard 21 · was meant to pair with a Uniden SDS200 scanner for position-plus-voice; the SDS200 was retired 2026-10-12 (never recorded a call)
 
 ## NAS Deduplicator
 
@@ -3367,6 +3373,10 @@ mount-table entry in place while every read returns `EHOSTDOWN`. Asking "is it m
 scripts are refreshed *from git*, never from whatever the failover target happened to hold — the
 UNAS was ten days stale when it was needed. Access is a per-node read-only SSH deploy key, and git
 drops from root to the owning user because root has no GitHub key and should not get one.
+
+**2026-10-12:** the git worktree itself now lives on the share (`/Volumes/nas/nova-fs` on the
+Studio, `/nova` on Linux), so edits are live for every node on save. GitHub is still the
+recovery copy — commit and push promptly, because uncommitted edits exist only on the share.
 
 ```mermaid
 flowchart TD
@@ -3832,6 +3842,99 @@ flowchart LR
 
 ### ADT+ Matter watch
 `nova_adt_matter_watch.py` (launchd, daily) browses the LAN for Matter devices and pings Slack the day the ADT Self-Setup hub starts advertising Matter — the route to ingesting its door/window/motion sensors into Nova once ADT's firmware rollout reaches it.
+
+---
+
+## Radio Fleet, Wi-Fi Sensing & a NAS-Native Repo (2026-10-12)
+
+One day that started with "what is up with the code bugs?" and ended with a self-balancing radio
+fleet. Most of it was found by asking each subsystem to prove it was doing its job.
+
+### The outage that started it
+
+Homebrew's weekly auto-update made **Python 3.15** the default on 2026-10-11. None of Nova's packages
+were installed for it, so 37 scheduled tasks failed every run for ~30 hours, Big Brother filed ~900
+"code bug" alerts, and the scheduler dead-lettered all 37. The fix pinned `python3` back to 3.14 and
+taught `brew_autoupdate.sh` to repoint it whenever a new default Python would break Nova. Two
+second-order faults surfaced in the re-audit: launchd's cached launch constraint for the changed
+binary stopped 16 agents spawning and 37 more from respawning (all reloaded), and Big Brother kept
+re-escalating the old tracebacks hourly (it now ignores failures older than its cooldown).
+
+### Radios: audit, benchmark, then load balancing
+
+The audit found the rail capture had been tuning the **wrong radio** for months (pynrsp's
+`Mode.COMPACT` is a bare list index, and RSPduo #1 had taken that slot), `nova-rf-discovery` driving the
+garage nRSP-ST by a stale index, SDRconnect wedged for 3.5 days by a reconnect storm, the SDRplay
+API wedged on two hosts, and two processes each claiming **Master** on one RSPduo. Every antenna was
+then benchmarked across AM broadcast, HF, CB, FM, 2 m, NOAA and UHF P25, and every frequency moved
+to the antenna that hears it best. The BUR tower (airband AM) is now actually demodulated as AM.
+
+That data feeds a load balancer modelled on the LLM placement table:
+
+```mermaid
+flowchart LR
+    T["sdr_targets<br/>freq · demod · priority"] --> P["nova_sdr_placement<br/>every 2 min on .6"]
+    B["antenna_baseline_snapshots<br/>benchmarked SNR per antenna/band"] --> P
+    H["sdr_health<br/>capture really open?"] --> P
+    P -->|"live: sdr_assignments"| A86["nova_sdr_actuator .86<br/>RTL · RSPduo #1 · nRSP-ST"]
+    P -->|"live: sdr_assignments"| A5["nova_sdr_actuator .5<br/>RSPduo #2"]
+    A86 -->|"systemd drop-ins<br/>Master before Slave"| C86["captures"]
+    A5 --> C5["captures"]
+    C86 -->|health| H
+    C5 -->|health| H
+```
+
+- **Priority wins:** LAPD NE 90 · NoHo 85 · NOAA 80 · BUR tower 60 · CB 19 40 · 147.435 ham 30.
+  A dead tuner's target takes the best surviving compatible tuner, displacing the lowest priority.
+- **Damped:** a healthy target moves only for ≥ 6 dB after a 30-minute hold; flapping clients are what
+  wedged SDRconnect and the SDRplay API in the first place.
+- **Health means "opened", not "active":** a unit stuck in a wedged API looked active for days.
+- **Self-healing:** `sdrconnect-watchdog.timer`, clean WebSocket close + restart backoff on the
+  nRSP-ST client, and the actuator restarts a wedged SDRplay API (never from a Slave's unit).
+
+### Wi-Fi sensing
+
+```mermaid
+flowchart LR
+    R["nova-core7 AX200<br/>receive-only monitor mode"] -->|"airodump-ng · 60 s hop · every 10 min"| S["wifi_survey(_runs)<br/>APs · clients · deauth frames"]
+    U["UniFi controller<br/>vap_table: our 16 BSSIDs"] --> G["nova_wifi_guard<br/>every 10 min on .6"]
+    S --> G
+    G -->|"evil twin · deauth flood"| N["nova_notify + wifi_guard_findings"]
+    S --> SEC["Security Operations column<br/>(summarised on-box first)"]
+    N --> SEC
+```
+
+### One copy of the code
+
+```mermaid
+flowchart TB
+    GH["GitHub kochj23/nova<br/>recovery copy"] <-->|push| W
+    W["NAS share = git worktree<br/>/Volumes/nas/nova-fs · /nova"]
+    W --> S6[".6 Studio<br/>~/.openclaw/scripts → share"]
+    W --> L["Linux nodes<br/>~/.openclaw/scripts → /nova/scripts"]
+    HK["~/.openclaw/githooks<br/>(internal drive: SMB drops the exec bit)"] -.->|core.hooksPath| W
+    W -.->|post-commit| C4["core4 scripts-fleet<br/>(deliberately local)"]
+```
+
+nova-core had been running scripts up to months stale (357 of 704 differed) because the old publish
+hook choked on a symlink. Now every node, the Studio included, runs the share; the git hooks live on
+the internal drive because SMB drops the execute bit and git silently skipped them.
+
+### Grafana
+
+Both Postgres datasources still pointed at the Studio's old Postgres address, which has refused LAN
+connections since the primary moved to nova-core on 09-28 — every Postgres panel had been erroring.
+They now use `pg-primary:5434` as a read-only `grafana_ro` role (password from the secret store via
+`$__file`, never in git). `nova_grafana_coverage.py` generated five dashboards for the 70 newest tools:
+**Radio & Wi-Fi · Watch organs · Self & reflection · Ops & safety · Media & ingest.**
+
+### Also that day
+
+- Mac Studio moved onto the NAS share; `/Volumes/Data` and `/Volumes/MoreData` are being retired.
+- UniFi Protect nightly report fixed (cross-platform secret read + a stale 1Password value); UNVR port
+  52 errors traced to a mis-coded 1 G optic, replaced with a 10 G module.
+- ~630 GB freed: media prune (4,470 videos) and NAS dedup (11,391 duplicates).
+- Alert noise cut: SNMP Wi-Fi radio false positives, members-only YouTube retries, the SDS200 retired.
 
 ---
 
