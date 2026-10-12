@@ -7,9 +7,12 @@ and the RSPduo units aren't even on SDRconnect in production anymore (that's
 now dedicated to the garage RSP-ST). This talks to SoapySDR directly, matching
 how nova-lapd/nova-rsp-rotate actually access the hardware.
 
-Usage: nova_antenna_sweep.py <serial>
-Prints ranked SNR per antenna port per reference frequency, and writes results
-to antenna_baseline_snapshots (nova_ops) under label 'post-move-2026-07-23'.
+Usage: nova_antenna_sweep.py <soapy-args>      e.g. "driver=sdrplay,serial=180603A532"
+                                                    or "driver=rtlsdr"
+Generalized 2026-10-12 for the fleet-wide antenna benchmark: any SoapySDR device, its own
+antenna list (listAntennas), bands outside its tuning range skipped. The owning capture
+service must be stopped first (SoapySDR needs exclusive access). Prints ranked SNR per
+antenna per band and a final JSON line; the caller stores it in antenna_baseline_snapshots.
 """
 import sys
 import time
@@ -17,19 +20,20 @@ import numpy as np
 import SoapySDR
 from SoapySDR import SOAPY_SDR_RX, SOAPY_SDR_CS16
 
-SERIAL = sys.argv[1]
-ANTENNAS = ["Tuner 1 50 ohm", "Tuner 2 50 ohm"]
-# label, freq_hz, samp_rate -- 506.9375 MHz is the established UHF/P25 (police/fire)
-# reference used in the pre-move baseline; 106.7 the established VHF/FM commercial
-# reference (KROQ, always-on strong carrier, good general propagation check);
-# 146.520 MHz is the US national 2m FM simplex calling frequency -- not guaranteed
-# active, but it's the standard reference point for 2m antenna work absent a known
-# local repeater, and still gives a valid noise-floor/gain comparison between ports
-# even with no one transmitting.
+DEVICE_ARGS = sys.argv[1] if len(sys.argv) > 1 else ""
+# label, freq_hz, samp_rate -- always-on references, matching the 2026-10-12 nRSP-ST bench.
+# 506.9375 MHz is the established UHF/P25 (police/fire) reference; 106.7 the VHF/FM
+# commercial reference (KROQ); 146.520 MHz the 2m calling frequency (noise/gain comparison
+# even when idle). KFI 640 kHz / WWV / CB cover MF-HF for devices that tune that low.
 BANDS = [
-    ("UHF/police-fire (P25 506.9375)", 506_937_500, 2_000_000),
+    ("AM broadcast (KFI 640 kHz)", 640_000, 2_000_000),
+    ("HF (WWV 10 MHz)", 10_000_000, 2_000_000),
+    ("HF (WWV 15 MHz)", 15_000_000, 2_000_000),
+    ("CB ch19 27.185 MHz", 27_185_000, 2_000_000),
     ("VHF/FM broadcast (KROQ 106.7)", 106_700_000, 2_000_000),
     ("2m ham (146.520 calling freq)", 146_520_000, 2_000_000),
+    ("VHF NOAA WX 162.55", 162_550_000, 2_000_000),
+    ("UHF/police-fire (P25 506.9375)", 506_937_500, 2_000_000),
 ]
 SETTLE_S = 1.5
 CAPTURE_N = 65536
@@ -77,16 +81,24 @@ def sweep_antenna(sdr, antenna: str, freq_label: str, freq_hz: float, samp_rate:
 def main():
     # NOTE: passing a plain dict to SoapySDR.Device() fails ("no match") on this
     # binding version -- must construct from an actual enumerate() result object.
-    candidates = SoapySDR.Device.enumerate(f"driver=sdrplay,serial={SERIAL}")
-    match = next((c for c in candidates if dict(c).get("mode") == "MA"), None)
-    if match is None:
-        sys.exit(f"no Master-mode RSPduo found for serial {SERIAL}")
+    candidates = SoapySDR.Device.enumerate(DEVICE_ARGS)
+    if not candidates:
+        sys.exit(f"no SoapySDR device matches {DEVICE_ARGS!r}")
+    # RSPduo enumerates per tuner mode; Master ("MA") exposes both tuners' antenna ports.
+    match = next((c for c in candidates if dict(c).get("mode") == "MA"), candidates[0])
     sdr = SoapySDR.Device(match)
+    antennas = list(sdr.listAntennas(SOAPY_SDR_RX, 0))
+    ranges = sdr.getFrequencyRange(SOAPY_SDR_RX, 0)
+    lo, hi = min(r.minimum() for r in ranges), max(r.maximum() for r in ranges)
+    print(f"device {dict(match).get('label', DEVICE_ARGS)}: antennas={antennas} range={lo/1e6:.3f}-{hi/1e6:.0f} MHz")
     results = []
     for freq_label, freq_hz, samp_rate in BANDS:
+        if not lo <= freq_hz <= hi:
+            print(f"\n=== {freq_label} === skipped (outside tuning range)")
+            continue
         print(f"\n=== {freq_label} ===")
         band_results = []
-        for antenna in ANTENNAS:
+        for antenna in antennas:
             r = sweep_antenna(sdr, antenna, freq_label, freq_hz, samp_rate)
             band_results.append(r)
             print(f"  {antenna:16} SNR={r['snr_db']} dB  signal={r['signal_db']} dB")
@@ -98,7 +110,7 @@ def main():
     del sdr
 
     import json
-    print("\n" + json.dumps({"serial": SERIAL, "results": results}))
+    print("\n" + json.dumps({"device": DEVICE_ARGS, "antennas": antennas, "results": results}))
 
 
 if __name__ == "__main__":
