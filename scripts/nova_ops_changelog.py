@@ -142,7 +142,7 @@ def main():
         + "\n\n=== NEW INTERNET AIRWAVE FEEDS / SCANNER SOURCES (source | volume | live-since date) ===\n"
         + airwave_timeline()
         + "\n\n=== PLATFORM COMMITS SHIPPED (.openclaw, last 7d) ===\n"
-        + git_log(Path("/Volumes/Data/nova-src"), 7, "platform")  # git checkout moved off ~/.openclaw 2026-10-12 (scripts now run from the NAS share)
+        + git_log(Path("/Volumes/nas/nova-fs"), 7, "platform")  # the git worktree is the NAS share (2026-10-12)
         + "\n\n=== ARTICLES PUBLISHED THIS WEEK (/operations) — narrative reference ===\n"
         + wrap.articles_this_week()
         + "\n\n=== DETAILED ACTION LEDGER (claude_actions, last 7d — the actual things done) ===\n"

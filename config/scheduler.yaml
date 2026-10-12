@@ -922,6 +922,12 @@ tasks:
     timeout: 120
     overlap: skip
 
+  wifi_guard:                      # judge the nova-core7 passive Wi-Fi survey vs our UniFi BSSIDs: evil twins + deauth floods
+    script: nova_wifi_guard.py
+    schedule: every 10m
+    timeout: 120
+    overlap: skip
+
   # ---- 2026-10-08: Baymax care check-in (nova_care_checkin.py) ----
   care_checkin_ask:                # Sunday 6pm — "are you satisfied with your care?" to #nova-chat: 3-4 items from the week, reply "1 yes 2 no 3 meh"; row in nova_care_checkins
     script: nova_care_checkin.py
