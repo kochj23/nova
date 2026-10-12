@@ -203,12 +203,40 @@ def get_infra_context(hours: int = 24) -> dict:
     return ctx
 
 
+def get_wireless_context(hours: int = 24) -> dict:
+    """Passive Wi-Fi survey (nova_wifi_survey on nova-core7) + nova_wifi_guard findings. 2026-10-12."""
+    runs = _pg_query("""SELECT count(*) AS runs, round(avg(aps)) AS avg_aps, max(stations) AS max_stations,
+                               coalesce(sum((SELECT sum(v::int) FROM jsonb_each_text(deauth) AS e(k, v))), 0) AS deauth
+                        FROM wifi_survey_runs WHERE ts > now() - make_interval(hours => %s)""", (hours,))
+    finds = _pg_query("""SELECT kind, count(*) AS n, count(DISTINCT bssid) AS bssids FROM wifi_guard_findings
+                         WHERE ts > now() - make_interval(hours => %s) GROUP BY kind""", (hours,))
+    ctx = dict(runs[0]) if runs else {}
+    ctx["findings"] = {f["kind"]: {"events": f["n"], "bssids": f["bssids"]} for f in finds}
+    return ctx
+
+
+def get_radio_context(hours: int = 24) -> dict:
+    """SDR load balancer state (nova_sdr_placement / nova_sdr_actuator). 2026-10-12."""
+    health = _pg_query("""SELECT count(*) AS tuners, count(*) FILTER (WHERE ok) AS healthy FROM sdr_health
+                          WHERE ts > now() - interval '15 minutes'""")
+    moves = _pg_query("""SELECT count(*) AS moves FROM sdr_placement_log WHERE action = 'apply'
+                         AND ts > now() - make_interval(hours => %s)""", (hours,))
+    placed = _pg_query("""SELECT t.label, a.tuner_id FROM sdr_assignments a JOIN sdr_targets t ON t.id = a.target_id
+                          ORDER BY t.priority DESC""")
+    ctx = dict(health[0]) if health else {}
+    ctx["moves"] = moves[0]["moves"] if moves else 0
+    ctx["placements"] = {p["label"]: p["tuner_id"] for p in placed}
+    return ctx
+
+
 def get_full_context(hours: int = 24) -> dict:
     """Get complete operational context for article generation."""
     return {
         "security": get_security_context(hours),
         "syslog": get_syslog_context(hours),
         "infra": get_infra_context(hours),
+        "wireless": get_wireless_context(hours),
+        "radio": get_radio_context(hours),
         "generated_at": datetime.now().isoformat(),
         "window_hours": hours,
     }
@@ -252,6 +280,15 @@ def format_security_brief(ctx: dict) -> str:
         for e in sec["security_events"][:15]:
             lines.append(f"  - [L{e.get('rule_level', '?')}] {e.get('agent_name', '?')}: {e.get('rule_description', '?')}")
 
+    wl = ctx.get("wireless", {})
+    if wl.get("runs"):
+        lines.append(f"\nWIRELESS (passive survey, receive-only): {wl['runs']} surveys, ~{wl.get('avg_aps')} APs in range, "
+                     f"max {wl.get('max_stations')} client devices, {wl.get('deauth', 0)} deauth/disassoc frames heard")
+        if wl.get("findings"):
+            lines.append(f"  Wi-Fi guard findings: {wl['findings']}")
+        else:
+            lines.append("  Wi-Fi guard: no evil twins or deauth floods against our access points")
+
     return "\n".join(lines)
 
 
@@ -287,5 +324,12 @@ def format_infra_brief(ctx: dict) -> str:
         lines.append(f"\nShared observations ({len(infra['observations'])}):")
         for o in infra["observations"][:10]:
             lines.append(f"  - [{o.get('category')}] {o.get('observer')}: {o.get('observation', '')[:100]}")
+
+    radio = ctx.get("radio", {})
+    if radio.get("tuners"):
+        lines.append(f"\nRADIO (SDR load balancer): {radio['healthy']}/{radio['tuners']} tuners healthy, "
+                     f"{radio.get('moves', 0)} automatic frequency moves in window")
+        for label, tuner in list(radio.get("placements", {}).items())[:8]:
+            lines.append(f"  - {label} -> {tuner}")
 
     return "\n".join(lines)

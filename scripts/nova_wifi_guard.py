@@ -62,6 +62,12 @@ def main():
         print("[wifi-guard] UniFi returned no BSSIDs - refusing to judge (everything would look foreign)"); return 1
     found = evaluate(ours, survey, deauth or {}, allow)
     print(f"[wifi-guard] run {run} ({sensor}): {len(survey)} APs heard, {len(ours)} of ours known, {len(found)} finding(s)")
+    # stored so the security column (nova_ops_context) and Grafana can show them, not just Slack
+    cur.execute("CREATE TABLE IF NOT EXISTS wifi_guard_findings (ts timestamptz NOT NULL DEFAULT now(), run_id bigint, "
+                "kind text, bssid text, detail text)")
+    for kind, b, detail in found:
+        cur.execute("INSERT INTO wifi_guard_findings(run_id,kind,bssid,detail) VALUES (%s,%s,%s,%s)", (run, kind, b, detail))
+    cur.connection.commit()
     if found:
         from nova_notify import notify
         for kind, b, detail in found:
