@@ -18,7 +18,6 @@ import nova_dsn as _nova_dsn  # noqa: E402
 import json
 import os
 import ssl
-import subprocess
 import sys
 import time
 import urllib.request
@@ -55,11 +54,9 @@ ALERT_EVENTS = {"smartDetectZone", "ring", "sensorMotion"}
 
 
 def _get_password():
-    result = subprocess.run(
-        ["security", "find-generic-password", "-a", "nova", "-s", "nova-unifi-protect-api", "-w"],
-        capture_output=True, text=True
-    )
-    return result.stdout.strip()
+    # Keychain on .6, fleet secret store on Linux — nightly_protect runs on scheduler-core,
+    # where the bare `security` call returned "" and every run reported "Cannot connect to UNVR".
+    return nova_config._keychain("nova-unifi-protect-api", required=False)
 
 
 class ProtectClient:
