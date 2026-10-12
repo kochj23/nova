@@ -46,7 +46,10 @@ def render(pipeline, rows):
         return head + (f'Environment="SDR_FREQ={t["freq_hz"]/1e6:.4f}M" "SDR_LABEL={clean(t["label"])}" '
                        f'"SDR_NAC={clean(m.get("nac", ""))}"\n')
     if pipeline == "p25_slave":
-        return head + (f'Environment="RSP_MODE=SL" "RSP_FREQ={t["freq_hz"]}" "RSP_LABEL={clean(t["label"])}" '
+        # ExecStartPre= clears the legacy usbreset.conf: only the MASTER may reset the Duo -- a slave
+        # resetting it yanks the device out from under the running master (2026-10-12).
+        return head + ('ExecStartPre=\n'
+                       f'Environment="RSP_MODE=SL" "RSP_FREQ={t["freq_hz"]}" "RSP_LABEL={clean(t["label"])}" '
                        f'"RSP_NAC={clean(m.get("nac", ""))}" "RSP_LOC={clean(m.get("loc", ""))}"\n')
     if pipeline == "nrsp":
         return head + (f'Environment="NRSP_FREQ={t["freq_hz"]/1e6:.4f}" "NRSP_DEMOD={t["demod"]}" "NRSP_ANTENNA={port}" '
@@ -121,7 +124,8 @@ def main(dry):
         ok, detail = unit_health(unit, u["pipeline"], assigned)
         if not ok and u["pipeline"] in SDRPLAY:
             first = state.setdefault("sick_since", {}).setdefault(unit, now)
-            sick_sdrplay |= now - first >= HEAL_AFTER_S
+            # only a stuck MASTER/DT capture means a wedged API; a sick slave just needs its own restart
+            sick_sdrplay |= now - first >= HEAL_AFTER_S and not u["requires"]
         else:
             state.setdefault("sick_since", {}).pop(unit, None)
         print(f"[sdr-actuator] {unit:22s} {'OK  ' if ok else 'SICK'} {detail}")
@@ -165,8 +169,11 @@ def main(dry):
                 os.makedirs(os.path.dirname(path), exist_ok=True)
                 open(path, "w").write(want); reload = True
             changed.append(unit)
-        elif sh("systemctl", "is-active", unit) != "active":
-            changed.append(unit)                      # assigned but stopped -> start it
+        elif sh("systemctl", "is-active", unit) in ("inactive", "failed"):
+            changed.append(unit)                      # assigned but stopped -> start it (not 'activating')
+        elif u["requires"] and unit in state.get("sick_since", {}) and now - state["sick_since"][unit] >= HEAL_AFTER_S:
+            changed.append(unit)                      # sick slave: restart just the slave
+            state["sick_since"][unit] = now
     master_units = {units[x]["tuners"][0] for x in changed}
     for unit in list(units):                          # a slave restarts when its master did
         if units[unit]["requires"] & master_units and unit not in changed and units[unit]["rows"][0][1]:
@@ -177,8 +184,12 @@ def main(dry):
         for unit in sorted(changed, key=lambda x: bool(units[x]["requires"])):
             print(f"[sdr-actuator] restarting {unit}")
             sh("systemctl", "restart", unit)
-            if not units[unit]["requires"]:
-                time.sleep(15)                        # let a master open before its slave starts
+            if not units[unit]["requires"] and units[unit]["pipeline"] in OPENED:
+                # a slave can only attach once its master has OPENED (usbreset + open can take >15 s)
+                for _ in range(45):
+                    if unit_health(unit, units[unit]["pipeline"], True)[0]:
+                        break
+                    time.sleep(2)
         os.makedirs(os.path.dirname(STATE), exist_ok=True)
         json.dump(state, open(STATE, "w"))
     return 0

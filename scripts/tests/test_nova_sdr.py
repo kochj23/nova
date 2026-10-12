@@ -27,3 +27,8 @@ def test_single_duo_tuner_uses_master_antenna_and_unassigned_stops():
 def test_labels_cannot_break_systemd_or_fm_capture_args():
     out = A.render("nrsp", [("Antenna B", T("c", 'CB "19": test', 27185000, "AM"), {})])
     assert '"NRSP_LABEL=CB 19 test"' in out and '"NRSP_FREQ=27.1850"' in out, out
+
+
+def test_slave_never_resets_the_duo():
+    out = A.render("p25_slave", [("Tuner 1 50 ohm", T("n", "LAPD NoHo", 484962500, "P25", {"nac": "466"}), {})])
+    assert "\nExecStartPre=\n" in out and '"RSP_MODE=SL"' in out, out
