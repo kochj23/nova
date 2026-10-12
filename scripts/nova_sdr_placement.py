@@ -63,7 +63,22 @@ def place(targets, tuners, current, health, now):
                 if gain < MOVE_DB or (since and now - since < timedelta(minutes=HOLD_MIN)):
                     pick = cur
             out[t["id"]] = pick; taken.add(pick)
-        orphans = {tid for tid in out.values() if tuners[tid].get("requires") and
+        # A placed slave needs a running master. If the master tuner got nothing (e.g. its target was
+        # disabled), move the placed target that loses the least SNR onto it, rather than dropping the
+        # slave's (usually higher-priority) target. 2026-10-12: freeing 147.435 would have stranded NoHo.
+        by_id = {t["id"]: t for t in targets}
+        for sl in [tid for tid in set(out.values()) if tuners[tid].get("requires")]:
+            m = tuners[sl]["requires"]
+            if m in out.values() or m not in tuners or health.get(m) == "down":
+                continue
+            mu = tuners[m]
+            movable = [tg for tg, tu in out.items() if tu != sl and by_id[tg]["demod"] in mu["demods"]
+                       and mu["min_hz"] <= by_id[tg]["freq_hz"] <= mu["max_hz"]]
+            if movable:
+                loss = lambda tg: (score(tuners[out[tg]]["bench"], by_id[tg]["freq_hz"])
+                                   - score(mu["bench"], by_id[tg]["freq_hz"]))
+                out[min(movable, key=loss)] = m
+        orphans ={tid for tid in out.values() if tuners[tid].get("requires") and
                    (tuners[tid]["requires"] not in out.values() or health.get(tuners[tid]["requires"]) == "down")}
         if not orphans:
             return out, unplaced
@@ -228,6 +243,12 @@ def selftest():
     out, _ = place([T("p", 85, 484.9e6, "P25"), T("n", 80, 162.55e6, "NFM")], tuners, {}, {}, now)
     assert out == {"p": "s", "n": "m"}, out
     assert place([T("u", 50, 506e6, "P25")], {"x": U(["NFM", "AM"], {})}, {}, {}, now)[1] == ["u"]  # demod mismatch
+    # empty master is filled by the cheapest mover instead of dropping the slave's P25 target
+    tuners = {"m": U(["NFM", "AM"], {162.55e6: 27}), "s": U(["P25"], {}, req="m"),
+              "x": U(["NFM", "AM"], {162.55e6: 44, 27.185e6: 20}), "y": U(["NFM", "AM"], {27.185e6: 18})}
+    tg = [T("p", 85, 484.9e6, "P25"), T("n", 80, 162.55e6, "NFM"), T("c", 40, 27.185e6, "AM")]
+    out, unplaced = place(tg, tuners, {"p": ("s", old), "n": ("x", old), "c": ("y", old)}, {}, now)
+    assert out["p"] == "s" and "m" in out.values() and not unplaced, (out, unplaced)
     print("selftest ok")
 
 
