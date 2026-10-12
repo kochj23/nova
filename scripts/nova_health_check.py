@@ -2,7 +2,7 @@
 """
 nova_health_check.py — Daily self-audit for Nova's cron health.
 
-Reads cron/jobs.json, identifies broken or unreliable jobs, and posts
+Reads the unified scheduler API, identifies broken or unreliable jobs, and posts
 a Slack summary to #nova-chat. Runs at 6:45am via launchd so Jordan
 knows about problems before his day starts — not after he notices them.
 
@@ -21,7 +21,6 @@ import nova_config
 
 SLACK_TOKEN   = nova_config.slack_bot_token()
 SLACK_CHANNEL = "C0ATAF7NZG9"
-JOBS_FILE     = Path.home() / ".openclaw/cron/jobs.json"
 LOG_DIR       = Path.home() / ".openclaw/logs"
 NOVA_BOT_ID   = "U0ANKLR3SUQ"   # novaslackintegation bot user ID
 import sys as _sys
@@ -106,7 +105,9 @@ def audit_slack_deliveries() -> list[dict]:
         tasks = json.loads(resp.read())
 
         for label, task_id in DELIVERY_TASK_MAP.items():
-            task = tasks.get(task_id, {})
+            if task_id not in tasks:
+                continue  # hosted by the other scheduler (.6 vs scheduler-core); its health check covers it
+            task = tasks[task_id]
             last_run = task.get("last_run", 0)
             hours_ago = (now - last_run) / 3600 if last_run else 999
             exit_code = task.get("last_exit_code", -1)
@@ -142,80 +143,10 @@ def audit_slack_deliveries() -> list[dict]:
     return issues
 
 
-def _load_run_history(job_id: str) -> dict:
-    """Read the JSONL run file for a job and return last-run info.
-
-    Returns dict with keys: lastRunAtMs, lastRunStatus, lastDurationMs,
-    lastError, consecutiveErrors.  Falls back to empty/zero values.
-    """
-    runs_dir = JOBS_FILE.parent / "runs"
-    jsonl = runs_dir / f"{job_id}.jsonl"
-    if not jsonl.exists():
-        return {}
-
-    last_ts = 0
-    last_status = ""
-    last_dur = 0
-    last_err = ""
-    consecutive_errors = 0
-
-    try:
-        with open(jsonl) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                ts = entry.get("ts", 0)
-                if ts >= last_ts:
-                    action = entry.get("action", "")
-                    if action == "finished":
-                        last_ts = ts
-                        last_status = entry.get("status", "ok")
-                        last_dur = entry.get("durationMs", 0)
-                        last_err = entry.get("error", "")
-                    elif action == "started":
-                        # update ts even for starts so we know it attempted
-                        if ts > last_ts:
-                            last_ts = ts
-
-        # Count consecutive errors from end of file
-        entries = []
-        with open(jsonl) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    entries.append(json.loads(line))
-                except json.JSONDecodeError:
-                    pass
-        for entry in reversed(entries):
-            if entry.get("action") == "finished":
-                if entry.get("status") == "error":
-                    consecutive_errors += 1
-                else:
-                    break
-    except Exception:
-        pass
-
-    return {
-        "lastRunAtMs": last_ts,
-        "lastRunStatus": last_status,
-        "lastDurationMs": last_dur,
-        "lastError": last_err,
-        "consecutiveErrors": consecutive_errors,
-    }
-
-
 def audit_jobs() -> list[dict]:
     """Return list of issues found across all scheduled tasks.
 
-    Primary source: unified scheduler API (port 37460).
-    Fallback: legacy cron/jobs.json for old-system tasks.
+    Source: unified scheduler API (37460 on .6, 37464 for scheduler-core on Linux).
     """
     issues = []
     now = datetime.now().timestamp()
@@ -226,7 +157,7 @@ def audit_jobs() -> list[dict]:
         resp = urllib.request.urlopen(SCHEDULER_API, timeout=5)
         scheduler_tasks = json.loads(resp.read())
     except Exception as e:
-        log(f"Scheduler API unavailable: {e} — falling back to jobs.json")
+        log(f"Scheduler API unavailable: {e} — reporting as critical")
 
     if scheduler_tasks:
         for task_id, task in scheduler_tasks.items():
@@ -275,55 +206,9 @@ def audit_jobs() -> list[dict]:
                 })
         return issues
 
-    # Fallback: legacy cron/jobs.json
-    try:
-        data = json.loads(JOBS_FILE.read_text())
-    except Exception as e:
-        return [{"severity": "critical", "name": "cron/jobs.json", "reason": f"Cannot read: {e}"}]
-
-    for job in data.get("jobs", []):
-        if not job.get("enabled", True):
-            continue
-
-        name   = job.get("name", "unknown")
-        job_id = job.get("id", "")
-
-        run_info = _load_run_history(job_id) if job_id else {}
-        state  = job.get("state", {})
-        errors = run_info.get("consecutiveErrors", state.get("consecutiveErrors", 0))
-        status = run_info.get("lastRunStatus", state.get("lastRunStatus", ""))
-        dur    = run_info.get("lastDurationMs", state.get("lastDurationMs", 0))
-        last   = run_info.get("lastRunAtMs", state.get("lastRunAtMs", 0))
-        err    = run_info.get("lastError", state.get("lastError", ""))
-        hours_since = ((now * 1000) - last) / 3_600_000 if last else 999
-
-        if errors >= MAX_CONSECUTIVE_ERRORS:
-            issues.append({
-                "severity": "error",
-                "name": name,
-                "reason": f"{errors} consecutive errors — {err[:80] if err else status}",
-            })
-            continue
-
-        if status == "error":
-            issues.append({
-                "severity": "warning",
-                "name": name,
-                "reason": f"Last run failed — {err[:80] if err else '(no detail)'}",
-            })
-            continue
-
-        if (status == "ok"
-                and dur < FAST_RUN_THRESHOLD_MS
-                and name not in FAST_RUN_EXEMPT
-                and dur > 0):
-            issues.append({
-                "severity": "warning",
-                "name": name,
-                "reason": f"Completed in {dur}ms — likely did not execute (empty promise)",
-            })
-
-    return issues
+    # OpenClaw's cron/jobs.json was retired with the legacy gateway; no fallback source exists.
+    return [{"severity": "critical", "name": "scheduler API",
+             "reason": f"Unreachable at {SCHEDULER_API} — cannot audit scheduled tasks"}]
 
 
 def format_message(issues: list[dict]) -> str:

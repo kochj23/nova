@@ -32,6 +32,17 @@ UPGRADED="$(comm -13 <(echo "$BEFORE") <(echo "$AFTER") | awk '{print $1}' | sor
 N="$(echo "$UPGRADED" | wc -w | tr -d ' ')"
 echo "[$(ts)] upgraded $N formulae: ${UPGRADED:-none}"
 
+# Guard: a new default python@3.x relinks /opt/homebrew/bin/python3 to an interpreter with none of Nova's
+# packages (2026-10-11: python@3.15 broke 37 scheduler tasks). 89 LaunchAgents + the scheduler run that path,
+# so keep it on the interpreter that has them. ponytail: pinned to 3.14; move NOVA_PY when Nova's deps are installed on a newer one.
+NOVA_PY=/opt/homebrew/opt/python@3.14/bin/python3.14
+if ! /opt/homebrew/bin/python3 -c 'import psycopg2, paho, asyncpg' 2>/dev/null; then
+  echo "[$(ts)] WARN: python3 -> $(readlink /opt/homebrew/bin/python3) lacks Nova deps; repointing to $NOVA_PY"
+  ln -sfn "$NOVA_PY" /opt/homebrew/bin/python3
+  ln -sfn "${NOVA_PY%/*}/pip3.14" /opt/homebrew/bin/pip3
+  /opt/homebrew/bin/python3 -c 'import psycopg2, paho, asyncpg' && echo "[$(ts)] python3 guard: restored" || echo "[$(ts)] FAIL: python3 guard could not restore Nova deps"
+fi
+
 echo "[$(ts)] brew cleanup --prune=30"
 brew cleanup --prune=30; rc=$?; [ $rc -eq 0 ] || echo "[$(ts)] warn: cleanup rc=$rc"
 
