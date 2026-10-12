@@ -561,7 +561,7 @@
                   "type": "grafana-postgresql-datasource",
                   "uid": "nova-ops-pg"
                 },
-                "rawSql": "SELECT device_name || ' ' || metric_name AS metric, (max(metric_value) - min(metric_value))::float8 AS value FROM snmp_metrics WHERE (metric_name LIKE 'if_in_errors%' OR metric_name LIKE 'if_out_errors%') AND timestamp > now() - interval '10 minutes' GROUP BY device_name, metric_name HAVING (max(metric_value) - min(metric_value)) > 0",
+                "rawSql": "SELECT device_name || ' ' || metric_name AS metric, (max(metric_value) - min(metric_value))::float8 AS value FROM snmp_metrics m WHERE (metric_name LIKE 'if_in_errors%' OR metric_name LIKE 'if_out_errors%') AND timestamp > now() - interval '10 minutes' AND NOT EXISTS (SELECT 1 FROM snmp_metrics n WHERE n.device_name = m.device_name AND n.metric_name = 'if_name.' || split_part(m.metric_name, '.', 2) AND n.timestamp > now() - interval '1 day' AND (n.unit LIKE 'wifi%' OR n.unit LIKE 'ath%')) GROUP BY device_name, metric_name HAVING (max(metric_value) - min(metric_value)) > 0",
                 "format": "table",
                 "rawQuery": true,
                 "editorMode": "code"

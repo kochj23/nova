@@ -3829,7 +3829,11 @@ def _full_sweep():
                     runs = json.loads(rresp.read())
                     for run in (runs if isinstance(runs, list) else []):
                         if run.get("exit_code") != 0 and run.get("error_tail"):
-                            error_tail = run["error_tail"]
+                            # A failure older than the cooldown was already escalated once; a daily task
+                            # keeps that tail until its next run, so re-escalating it hourly is noise
+                            # (2026-10-12: outage-era ModuleNotFoundErrors re-posted all morning).
+                            if time.time() - run.get("started_at", 0) / 1000 < CODE_BUG_ESCALATION_COOLDOWN:
+                                error_tail = run["error_tail"]
                             break
                 except Exception:
                     pass
