@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>net.digitalnoise.nova-sds200</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/opt/homebrew/bin/python3.14</string>
+    <string>__HOME__/.openclaw/scripts/nova_sds200_scanner.py</string>
+  </array>
+  <!-- Resilient daemon: reads sds200_host from service_config, connects to the SDS200's
+       GSI metadata (UDP:50536) + RTSP audio, transcribes each transmission and files it
+       into the fire/rail/chp/scanner memory beats. Backs off (never tight-loops) while the
+       garage unit is offline, so it can run dormant until network audio is enabled. -->
+  <!-- launchd starts with a minimal PATH; the audio thread shells out to `ffmpeg` by name,
+       so put Homebrew on PATH or capture silently fails with "ffmpeg: No such file". -->
+  <key>EnvironmentVariables</key>
+  <dict><key>PATH</key><string>/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string></dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>ThrottleInterval</key><integer>30</integer>
+  <key>StandardOutPath</key><string>__HOME__/.openclaw/logs/nova-sds200.log</string>
+  <key>StandardErrorPath</key><string>__HOME__/.openclaw/logs/nova-sds200.log</string>
+</dict>
+</plist>
