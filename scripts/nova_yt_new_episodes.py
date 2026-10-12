@@ -743,6 +743,8 @@ def download_video(vid_id: str, output_path: Path) -> str:
     if r.returncode != 0:
         if "already been downloaded" in r.stdout or "has already been recorded" in r.stdout:
             return "skip"
+        if "members-only content" in r.stderr:
+            return "members"  # paywalled: not fetchable, not an error — re-seen every run, so stay quiet
         return f"error: {r.stderr[-300:]}"
     return "ok"
 
@@ -845,6 +847,9 @@ def _download_one(video: dict, show_name: str, sn: int, ep: int,
         time.sleep(DELAY_BETWEEN)
     elif result == "skip":
         log(f"  ~ already downloaded: {video['title'][:60]}")
+        results.append({"show": show_name, "title": video["title"], "status": "skip"})
+    elif result == "members":
+        log(f"  ~ members-only, skipped: {video['title'][:60]}")
         results.append({"show": show_name, "title": video["title"], "status": "skip"})
     else:
         log(f"  ✗ {result[:120]}")
