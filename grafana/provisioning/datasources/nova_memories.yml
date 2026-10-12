@@ -4,8 +4,8 @@ datasources:
     type: grafana-postgresql-datasource
     uid: nova-memories-pg
     access: proxy
-    url: 192.168.1.6:5432
-    user: kochj
+    url: pg-primary.digitalnoise.net:5434
+    user: grafana_ro
     database: nova_memories
     isDefault: false
     jsonData:
@@ -13,4 +13,6 @@ datasources:
       sslmode: disable
       postgresVersion: 1700
       timescaledb: false
+    secureJsonData:
+      password: $__file{/etc/grafana/provisioning/secrets/grafana_ro}
     editable: true
