@@ -3969,6 +3969,14 @@ They now use `pg-primary:5434` as a read-only `grafana_ro` role (password from t
 
 ## UniFi Toolkit, Rebuilt Inside Nova (2026-10-13)
 
+> **Credit: Crosstalk Solutions.** Threat Watch, Wi-Fi Stalker, Network Pulse and House Arrest, including the
+> zone-based-firewall lockdown model, the DNS-lockdown ordering checks, the neighbour-block switch ACLs and the
+> isolation matrix, are Crosstalk Solutions' ideas and design, from their open-source
+> [UI Toolkit](https://github.com/Crosstalk-Solutions/unifi-toolkit) (MIT, © 2025 Crosstalk Solutions). Nova's
+> House Arrest payloads come from their policy builder, vendored unmodified. What Nova added is the headless
+> wiring (Postgres, scheduler, nova_notify, Grafana) and the hardening listed below. If you run UniFi, go look at
+> the original, and their [YouTube channel](https://www.youtube.com/@CrosstalkSolutions). See `THIRD_PARTY_NOTICES.md`.
+
 Crosstalk Solutions' [UI Toolkit](https://github.com/Crosstalk-Solutions/unifi-toolkit) (v1.13.1, MIT) offers four tools: a dashboard, **Wi-Fi Stalker**, **Threat Watch** and **House Arrest**. Nova now has all four, headless. There is no second web app and no second admin login to the UDM; Nova reuses the poller's session, stores everything in `nova_ops`, alerts through `nova_notify`, and Grafana is the UI (**Nova — UniFi**, `nova-tools-unifi`).
 
 - **Threat Watch** (`threats`, every 5 min, nova-core): reads IDS/IPS events from the v2 `traffic-flows` API (the old `stat/ips/event` returns 404 on this firmware) into `unifi_threat_events`. `unifi_threat_ignore` (CIDR plus maximum risk) mutes noise. New high-risk events alert; any that were *not* blocked alert as critical.

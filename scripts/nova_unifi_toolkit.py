@@ -23,7 +23,10 @@ nova_notify, and Grafana draws the dashboards (nova_grafana_coverage.py group "u
                  refused; internet-cutting presets on household devices need --override-comms-guard.
                  Every write (and preview) is logged to unifi_toolkit_actions.
 
-Policy payloads come from the vendored, unmodified upstream builder (unifi_ha_policies.py, MIT).
+Credit: the features, their design and the House Arrest safety model are Crosstalk Solutions' work (UI Toolkit,
+MIT, (c) 2025 Crosstalk Solutions, https://github.com/Crosstalk-Solutions/unifi-toolkit). Policy payloads come from
+their builder, vendored unmodified (unifi_ha_policies.py); Nova adds the headless wiring and hardening.
+See THIRD_PARTY_NOTICES.md.
 Security audit of upstream: docs in agent_docs 'unifi-toolkit'.
 """
 import argparse
