@@ -38,6 +38,11 @@ GROUPS = {
                                     "safety_confirmations", "claude_reviewer_log", "self_repair_digest_log", "tma1_checks",
                                     "leader_standby", "doorstep_runs", "boiler_state", "bottle_log", "house_facts",
                                     "source_ledger", "source_ledger_history", "source_outcomes"]),
+    "unifi": ("UniFi — Threat Watch, Stalker, House Arrest", ["unifi_threat_events", "unifi_threat_ignore",
+                                                             "unifi_client_events", "unifi_client_state",
+                                                             "unifi_client_presence", "unifi_tracked_devices",
+                                                             "unifi_network_audit", "unifi_toolkit_ledger",
+                                                             "unifi_toolkit_actions"]),
     "media-ingest": ("Media & ingest", ["ia_ingest_seen", "yt_ingest_seen", "nova_speaks_hosts", "nova_speaks_renders",
                                         "nova_speaks_rewrites", "face_retention_log", "nova_voice_room_log"]),
 }
@@ -102,8 +107,56 @@ def radio_wifi_top():
     ]
 
 
+def unifi_top():
+    """Network Pulse / Threat Watch / Stalker / House Arrest views (nova_unifi_toolkit.py, 2026-10-13)."""
+    return [
+        panel("stat", "IPS events (24h)", "SELECT count(*) FROM unifi_threat_events WHERE ts > now() - interval '24 hours' "
+              "AND NOT ignored", 0, 0, 4, 4),
+        panel("stat", "High-risk, NOT blocked (24h)", "SELECT count(*) FROM unifi_threat_events WHERE ts > now() - "
+              "interval '24 hours' AND risk='high' AND action <> 'block' AND NOT ignored", 4, 0, 4, 4),
+        panel("stat", "Clients online", "SELECT count(*) FROM unifi_client_state WHERE online", 8, 0, 4, 4),
+        panel("stat", "Roams (24h)", "SELECT count(*) FROM unifi_client_events WHERE kind='roam' AND ts > now() - "
+              "interval '24 hours'", 12, 0, 4, 4),
+        panel("stat", "House Arrest rules active", "SELECT count(*) FROM unifi_toolkit_ledger WHERE kind IN "
+              "('policy','acl') AND released_at IS NULL", 16, 0, 4, 4),
+        panel("stat", "Posture findings (latest audit)", "SELECT jsonb_array_length(findings) FROM unifi_network_audit "
+              "ORDER BY ts DESC LIMIT 1", 20, 0, 4, 4),
+        panel("timeseries", "Threat Watch — IPS events by risk",
+              "SELECT $__timeGroupAlias(ts, 1h), count(*) FILTER (WHERE risk='high') AS high, count(*) FILTER "
+              "(WHERE risk='medium') AS medium, count(*) FILTER (WHERE risk='low') AS low FROM unifi_threat_events "
+              "WHERE $__timeFilter(ts) AND NOT ignored GROUP BY 1 ORDER BY 1", 0, 4, 12, 8, "time_series"),
+        panel("table", "Threat Watch — top attackers (7d)",
+              "SELECT src_ip::text AS source, max(src_country) AS cc, count(*) AS events, max(risk) AS worst, "
+              "count(*) FILTER (WHERE action <> 'block') AS not_blocked, max(ts) AS last FROM unifi_threat_events "
+              "WHERE ts > now() - interval '7 days' AND NOT ignored GROUP BY 1 ORDER BY 3 DESC LIMIT 15", 12, 4, 12, 8),
+        panel("table", "Threat Watch — latest events",
+              "SELECT ts, risk, action, left(signature, 90) AS signature, src_ip::text AS src, src_country AS cc, "
+              "dst_ip::text AS dst, dst_port FROM unifi_threat_events WHERE NOT ignored ORDER BY ts DESC LIMIT 50",
+              0, 12, 24, 8),
+        panel("timeseries", "Network Pulse — distinct clients per hour",
+              "SELECT $__timeGroupAlias(hour, 1h), count(DISTINCT mac) AS clients FROM unifi_client_presence "
+              "WHERE $__timeFilter(hour) GROUP BY 1 ORDER BY 1", 0, 20, 12, 7, "time_series"),
+        panel("table", "Network Pulse — clients per AP / port (now)",
+              "SELECT ap, count(*) AS clients, count(*) FILTER (WHERE NOT is_wired) AS wifi FROM unifi_client_state "
+              "WHERE online GROUP BY 1 ORDER BY 2 DESC", 12, 20, 12, 7),
+        panel("table", "Wi-Fi Stalker — tracked devices",
+              "SELECT t.label, t.mac, s.online, s.ap, s.essid, s.signal, s.ip, s.last_seen FROM unifi_tracked_devices t "
+              "LEFT JOIN unifi_client_state s USING (mac) ORDER BY t.label", 0, 27, 12, 7),
+        panel("table", "Wi-Fi Stalker — latest connect / roam / leave",
+              "SELECT e.ts, e.kind, coalesce(s.name, s.hostname, e.mac) AS device, e.from_ap, e.to_ap FROM "
+              "unifi_client_events e LEFT JOIN unifi_client_state s USING (mac) ORDER BY e.ts DESC LIMIT 50", 12, 27, 12, 7),
+        panel("table", "House Arrest — network posture findings (latest audit)",
+              "SELECT f->>'severity' AS severity, f->>'where' AS network, f->>'finding' AS finding, f->>'detail' AS detail "
+              "FROM (SELECT findings FROM unifi_network_audit ORDER BY ts DESC LIMIT 1) a, jsonb_array_elements(a.findings) f",
+              0, 34, 12, 7),
+        panel("table", "House Arrest — every write (and preview)",
+              "SELECT ts, action, dry_run, ok, actor, left(args::text, 120) AS args FROM unifi_toolkit_actions "
+              "ORDER BY ts DESC LIMIT 30", 12, 34, 12, 7),
+    ]
+
+
 def build(cur, key, title, tables):
-    panels = radio_wifi_top() if key == "radio-wifi" else []
+    panels = radio_wifi_top() if key == "radio-wifi" else unifi_top() if key == "unifi" else []
     y = max((p["gridPos"]["y"] + p["gridPos"]["h"] for p in panels), default=0)
     missing = []
     for t in tables:

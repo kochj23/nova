@@ -3966,3 +3966,36 @@ They now use `pg-primary:5434` as a read-only `grafana_ro` role (password from t
 ---
 
 *Written by Jordan Koch. Nova chose her own name.*
+
+## UniFi Toolkit, Rebuilt Inside Nova (2026-10-13)
+
+Crosstalk Solutions' [UI Toolkit](https://github.com/Crosstalk-Solutions/unifi-toolkit) (v1.13.1, MIT) offers four tools: a dashboard, **Wi-Fi Stalker**, **Threat Watch** and **House Arrest**. Nova now has all four, headless. There is no second web app and no second admin login to the UDM; Nova reuses the poller's session, stores everything in `nova_ops`, alerts through `nova_notify`, and Grafana is the UI (**Nova — UniFi**, `nova-tools-unifi`).
+
+- **Threat Watch** (`threats`, every 5 min, nova-core): reads IDS/IPS events from the v2 `traffic-flows` API (the old `stat/ips/event` returns 404 on this firmware) into `unifi_threat_events`. `unifi_threat_ignore` (CIDR plus maximum risk) mutes noise. New high-risk events alert; any that were *not* blocked alert as critical.
+- **Wi-Fi Stalker** (`stalk`, every 2 min): records every client's AP or switch port in `unifi_client_state`, connects, roams and departures in `unifi_client_events`, and hourly AP dwell in `unifi_client_presence`. `track add <mac> --label` puts a device on the watch list. `report <mac>` shows dwell per AP, the favourite AP, a weekday-by-hour heatmap and recent events. `block`/`unblock` go through `nova_unifi_ctl`'s guards.
+- **Network audit** (`audit`, hourly; House Arrest's read side): the upstream isolation matrix (zones, isolation, internet, mDNS, DHCP DNS, device isolation, per-SSID client isolation) and zone/isolation findings, saved to `unifi_network_audit`. Any change in that posture alerts, and so does a lockdown whose MAC has rotated or vanished.
+- **House Arrest writes** (CLI only: `lockdown`, `release`, `isolate`, `release-network`, `dns-lockdown`, `dns-release`, `wlan-isolation`, `mdns`, `dhcp-dns`): payloads come from the **vendored, unmodified** upstream builder `scripts/unifi_ha_policies.py`, whose sha256 is checked in tests. Every command is a **dry run unless `--apply`**, and every run is logged to `unifi_toolkit_actions`.
+
+**Security:** a full audit of the upstream code is in `docs/security/unifi-toolkit-audit-2026-10-13.md` (0 Critical, 2 High, 7 Medium, 10 Low, 9 Info; its default local mode has no authentication). The port closes what applies:
+- The UDM certificate is now **pinned** (TOFU, fail closed) for every script on `nova_unifi_poller`'s opener, and redirects are refused.
+- A **ledger** (`unifi_toolkit_ledger`) means release only deletes objects Nova created, and stores before-snapshots of only the fields it changes (never a WLAN passphrase).
+- Labels must be unique, ids are strictly validated, and fleet, network-gear and never-lock devices are refused.
+- Household internet cuts go through the comms guard.
+- Hostnames, SSIDs and IDS signatures are neutralised before reaching Slack.
+
+```mermaid
+flowchart LR
+    udm["UDM Pro<br/>(cert pinned)"] -->|traffic-flows IPS| tw["threats · 5 min"]
+    udm -->|stat/sta + devices| st["stalk · 2 min"]
+    udm -->|zones · policies · networks · WLANs| au["audit · hourly"]
+    tw --> te[("unifi_threat_events")]
+    st --> ce[("unifi_client_state / events / presence")]
+    au --> na[("unifi_network_audit")]
+    te & ce & na --> gf["Grafana: Nova — UniFi"]
+    tw & st & au -->|high risk · tracked device · drift · broken lockdown| nn["nova_notify → Slack"]
+    cli["CLI: lockdown / release / dns-lockdown …<br/>dry run unless --apply"] -->|guards: fleet · never-lock · comms| hb["unifi_ha_policies<br/>(vendored builder)"]
+    hb -->|marked policies| udm
+    cli --> lg[("unifi_toolkit_ledger<br/>+ actions")]
+```
+
+**First audit findings (2026-10-13):** **Guest** (VLAN 3) and **No Trust** (VLAN 2) have network isolation **off**, and Guest has mDNS forwarding on. Threat Watch's first pull showed `192.168.1.2` (nova-core) hitting ETPRO SCAN signatures on outbound port 5900 to Cloudflare and GitHub addresses on 10-11; the gateway blocked them as low risk.

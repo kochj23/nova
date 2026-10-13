@@ -107,10 +107,87 @@ _api_key = None
 
 # ── UniFi API ─────────────────────────────────────────────────────────────────
 
+# ── Certificate pin (2026-10-13, unifi-toolkit security audit UT-04) ─────────
+# The UDM's certificate is self-signed, so CA verification can't work and every call ran with
+# CERT_NONE -- anyone on the LAN path could have taken the API key. Now the SHA-256 of the UDM's
+# leaf certificate is pinned trust-on-first-use in service_config (unifi / udm_cert_sha256) and
+# every connection through _opener fails CLOSED on a mismatch. Redirects are refused too (the API
+# key header must never follow one). After a deliberate cert change:
+#   nova_unifi_poller.py --repin
+import hashlib            # noqa: E402
+import http.client        # noqa: E402
+
+PIN_SERVICE, PIN_KEY = "unifi", "udm_cert_sha256"
+_pin_cache = None
+
+
+class CertPinError(OSError):
+    pass
+
+
+def _udm_pin(observed: str) -> str:
+    """The pinned fingerprint; pins `observed` if none is stored yet (TOFU). Unreadable PG fails closed."""
+    global _pin_cache
+    if _pin_cache:
+        return _pin_cache
+    import psycopg2
+    from psycopg2.extras import Json
+    with psycopg2.connect(DB_DSN, connect_timeout=10) as conn, conn.cursor() as cur:
+        cur.execute("SELECT value FROM service_config WHERE service=%s AND key=%s", (PIN_SERVICE, PIN_KEY))
+        row = cur.fetchone()
+        if row is None:
+            cur.execute("INSERT INTO service_config (service, key, value, updated_by) VALUES (%s,%s,%s,'unifi_poller TOFU') "
+                        "ON CONFLICT (service, key) DO NOTHING", (PIN_SERVICE, PIN_KEY, Json(observed)))
+            log.warning(f"UDM certificate pinned (trust on first use): sha256 {observed}")
+            cur.execute("SELECT value FROM service_config WHERE service=%s AND key=%s", (PIN_SERVICE, PIN_KEY))
+            row = cur.fetchone()
+    _pin_cache = str(row[0])
+    return _pin_cache
+
+
+class _PinnedHTTPSConnection(http.client.HTTPSConnection):
+    def connect(self):
+        super().connect()
+        got = hashlib.sha256(self.sock.getpeercert(binary_form=True)).hexdigest()
+        try:
+            want = _udm_pin(got)
+        except Exception as e:  # noqa: BLE001
+            self.close()
+            raise CertPinError(f"UDM certificate pin unreadable ({e}) -- refusing to send credentials") from e
+        if got != want:
+            self.close()
+            raise CertPinError(f"UDM certificate CHANGED (pinned {want[:16]}…, got {got[:16]}…) -- refusing to send "
+                               "credentials. If the cert was renewed on purpose: nova_unifi_poller.py --repin")
+
+
+class _PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    def https_open(self, req):
+        return self.do_open(_PinnedHTTPSConnection, req, context=ssl_ctx)
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *a, **k):
+        return None
+
+
+def repin() -> str:
+    """Re-pin to the certificate the UDM presents right now (run only after a deliberate change)."""
+    import psycopg2
+    from psycopg2.extras import Json
+    pem = ssl.get_server_certificate((CONTROLLER_IP, 443))
+    fp = hashlib.sha256(ssl.PEM_cert_to_DER_cert(pem)).hexdigest()
+    with psycopg2.connect(DB_DSN, connect_timeout=10) as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO service_config (service, key, value, updated_by) VALUES (%s,%s,%s,'repin') "
+                    "ON CONFLICT (service, key) DO UPDATE SET value=EXCLUDED.value, updated_at=now(), updated_by='repin'",
+                    (PIN_SERVICE, PIN_KEY, Json(fp)))
+    return fp
+
+
 _cookie_jar = CookieJar()
 _opener = urllib.request.build_opener(
     urllib.request.HTTPCookieProcessor(_cookie_jar),
-    urllib.request.HTTPSHandler(context=ssl_ctx),
+    _PinnedHTTPSHandler(),
+    _NoRedirect(),
 )
 
 
@@ -398,4 +475,7 @@ def main():
 
 
 if __name__ == "__main__":
+    if "--repin" in sys.argv:
+        print(f"UDM certificate re-pinned: sha256 {repin()}")
+        sys.exit(0)
     main()
