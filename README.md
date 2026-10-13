@@ -3720,9 +3720,9 @@ section of the journal: 5,000–10,000 words in Nova's voice, then a full **Sour
   transcript-only, Fishbowl streams are also filed to Plex. A replay that YouTube hasn't finished processing
   is parked as `vod_pending` and retried every 2 h (4 attempts) instead of being marked empty — the Franchise
   Club had silently captured nothing for three weeks that way. yt-dlp's error is now logged.
-- **Generator:** `scripts/nova_watches_and_friends.py` — last 7 days; the news section (organised by story,
-  4,000–6,000 words) and the Fishbowl section (1,000–1,800 words) are separate grounded Sonnet calls, plus a
-  "Deeper Cuts" pass if the issue is under 5,000 words. Both get Jordan's ground truth from
+- **Generator:** `scripts/nova_watches_and_friends.py` — **daily** at 07:00 on nova-core since 2026-10-13 (was weekly), last 24 h; the news section (organised by story,
+  1,500–3,000 words; 4,000–6,000 with `--days 7`) and the Fishbowl section (500–1,000 / 1,000–1,800) are separate grounded Sonnet calls, plus a
+  "Deeper Cuts" pass if the issue is under 2,000 words (5,000 weekly). A day with no watch news is skipped. Both get Jordan's ground truth from
   `nova_fishbowl_summaries.KNOWN_FACTS` (who's who; Anthony Farrer is serving a 70-month federal sentence, so
   his uploads are archive, never news). Sources are built from the memory rows, never by the model.
 
@@ -3734,7 +3734,7 @@ flowchart LR
     lock --> h[("horology<br/>31 news channels")]
     lock --> f[("fishbowl<br/>26 hate-stream channels")]
     r -- replay not ready --> vp["vod_pending<br/>retry every 2 h"] --> q
-    h --> gen["nova_watches_and_friends<br/>Sun 07:00"]
+    h --> gen["nova_watches_and_friends<br/>daily 07:00"]
     f --> gen
     kf["KNOWN_FACTS"] --> gen
     gen --> site["/watches/ issue<br/>news → Fishbowl → Sources"]
