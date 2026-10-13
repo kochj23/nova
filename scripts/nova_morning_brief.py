@@ -459,7 +459,7 @@ def main():
 
     # ── Slack brief (richer, with GitHub) ──
     slack_lines = [
-        f"*🌅 Good morning, Jordan — {day_name}, {date_fmt}*",
+        f"*🌅 Morning BLUF — Good morning, Jordan — {day_name}, {date_fmt}*",
         f"🌤 *Weather:* {weather}",
         "",
     ]
