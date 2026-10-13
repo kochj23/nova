@@ -3884,8 +3884,21 @@ flowchart LR
     C5 -->|health| H
 ```
 
-- **Priority wins:** LAPD NE 90 · NoHo 85 · NOAA 80 · BUR tower 60 · CB 19 40 · 147.435 ham 30.
-  A dead tuner's target takes the best surviving compatible tuner, displacing the lowest priority.
+- **Priority wins:** LAPD NE 90 · NoHo 85 · NOAA 80 · BUR tower 60 · Burbank Police Air 55 ·
+  Burbank Emergency Interop 50. A dead tuner's target takes the best surviving compatible tuner,
+  displacing the lowest priority. CB 19 (never heard a transmission) and the 147.435 repeater
+  (moved to Broadcastify feed 14747, a 5,600 ft receiver) were disabled the same evening.
+- **Masters stay fed:** if a placed Slave's Master tuner ends up empty, the placed target that loses
+  the least SNR moves onto it instead of the Slave's (usually higher-priority) target being dropped.
+
+| Priority | Frequency | Mode | Tuner (end of 2026-10-12) |
+|---|---|---|---|
+| 90 | LAPD Northeast 506.9375 | P25 | RTL stick (.86) |
+| 85 | LAPD North Hollywood 484.9625 | P25 | RSPduo #1 Tuner 1, Slave (.86) |
+| 80 | NOAA WX 162.550 | NFM | garage nRSP-ST Antenna B |
+| 60 | BUR Tower 118.700 | AM | RSPduo #1 Tuner 2, Master (.86) |
+| 55 | Burbank Police Air 118.575 | AM | RSPduo #2 Tuner 2 (.5) |
+| 50 | Burbank Emergency Interop 155.760 | NFM | RSPduo #2 Tuner 1 (.5) |
 - **Damped:** a healthy target moves only for ≥ 6 dB after a 30-minute hold; flapping clients are what
   wedged SDRconnect and the SDRplay API in the first place.
 - **Health means "opened", not "active":** a unit stuck in a wedged API looked active for days.
@@ -3935,6 +3948,14 @@ They now use `pg-primary:5434` as a read-only `grafana_ro` role (password from t
   52 errors traced to a mis-coded 1 G optic, replaced with a 10 G module.
 - ~630 GB freed: media prune (4,470 videos) and NAS dedup (11,391 duplicates).
 - Alert noise cut: SNMP Wi-Fi radio false positives, members-only YouTube retries, the SDS200 retired.
+- **Broadcastify live feeds (CHP, Metrolink SFV, Burbank PD/Fire Icecast, 147.435) had produced nothing
+  since 2026-07-24** while their units stayed "active": the free `cdnstream1` CDN is gone, the Premium
+  login file had vanished, and the script swallowed every failure. The feed script now reads the
+  login from the secret store, backs off, and logs loudly; the units are paused until a Premium login
+  works (queue #3483). Burbank PD and Verdugo Fire are unaffected — they come through the Broadcastify
+  **Calls API** (API key, 7 groups), which has been working all along.
+- Homebrew's weekly update also broke the pinned `node` (its `simdjson` dependency moved); upgraded
+  and re-pinned, and the launchd jobs on it reloaded.
 
 ---
 
