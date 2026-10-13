@@ -3954,6 +3954,12 @@ They now use `pg-primary:5434` as a read-only `grafana_ro` role (password from t
   login from the secret store, backs off, and logs loudly; the units are paused until a Premium login
   works (queue #3483). Burbank PD and Verdugo Fire are unaffected — they come through the Broadcastify
   **Calls API** (API key, 7 groups), which has been working all along.
+- **Nova's requests: approve unless significantly risky.** Standing order from Jordan: the Claude
+  reviewer (`nova_claude_reviewer`, every 30 min) now approves Nova's wishes, skills and co-agency
+  requests by default, declines only fakes/weakened-security/duplicates, and holds for Jordan only what
+  carries significant risk (physical devices, money, other people's data, hard-to-reverse harm, or
+  Nova's own gates/values/autonomy). Slack only hears about holds. Claude approvals still don't count
+  toward Nova's earned-autonomy record.
 - Homebrew's weekly update also broke the pinned `node` (its `simdjson` dependency moved); upgraded
   and re-pinned, and the launchd jobs on it reloaded.
 
