@@ -900,6 +900,122 @@
     }
    ],
    "id": 28
+  },
+  {
+   "type": "row",
+   "title": "wifi_guard_findings",
+   "collapsed": true,
+   "gridPos": {
+    "x": 0,
+    "y": 29,
+    "w": 24,
+    "h": 1
+   },
+   "panels": [
+    {
+     "type": "table",
+     "title": "wifi_guard_findings \u2014 latest rows",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 30,
+      "w": 24,
+      "h": 8
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "rawQuery": true,
+       "editorMode": "code",
+       "format": "table",
+       "rawSql": "SELECT \"ts\", \"run_id\", left(\"kind\"::text, 120) AS \"kind\", left(\"bssid\"::text, 120) AS \"bssid\", left(\"detail\"::text, 120) AS \"detail\" FROM \"wifi_guard_findings\" ORDER BY \"ts\" DESC LIMIT 20"
+      }
+     ],
+     "options": {
+      "showHeader": true,
+      "cellHeight": "sm"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "id": 32
+    },
+    {
+     "type": "stat",
+     "title": "wifi_guard_findings \u2014 new rows (24h)",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 38,
+      "w": 6,
+      "h": 5
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "rawQuery": true,
+       "editorMode": "code",
+       "format": "table",
+       "rawSql": "SELECT count(*) FROM \"wifi_guard_findings\" WHERE \"ts\" > now() - interval '24 hours'"
+      }
+     ],
+     "options": {},
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "id": 33
+    },
+    {
+     "type": "timeseries",
+     "title": "wifi_guard_findings \u2014 rows per hour",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "gridPos": {
+      "x": 6,
+      "y": 38,
+      "w": 18,
+      "h": 5
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "rawQuery": true,
+       "editorMode": "code",
+       "format": "time_series",
+       "rawSql": "SELECT $__timeGroupAlias(\"ts\", 1h), count(*) AS rows FROM \"wifi_guard_findings\" WHERE $__timeFilter(\"ts\") GROUP BY 1 ORDER BY 1"
+      }
+     ],
+     "options": {},
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "id": 34
+    }
+   ],
+   "id": 31
   }
  ],
  "editable": true,

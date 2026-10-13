@@ -1475,11 +1475,94 @@
   },
   {
    "type": "row",
-   "title": "ae35_events",
+   "title": "threshold_ledger (no time column)",
    "collapsed": true,
    "gridPos": {
     "x": 0,
     "y": 14,
+    "w": 24,
+    "h": 1
+   },
+   "panels": [
+    {
+     "type": "table",
+     "title": "threshold_ledger \u2014 latest rows",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 15,
+      "w": 24,
+      "h": 8
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "rawQuery": true,
+       "editorMode": "code",
+       "format": "table",
+       "rawSql": "SELECT left(\"kind\"::text, 120) AS \"kind\", left(\"host\"::text, 120) AS \"host\", left(\"ident\"::text, 120) AS \"ident\", left(\"label\"::text, 120) AS \"label\", left(\"fingerprint\"::text, 120) AS \"fingerprint\", \"sender_bound\", left(\"detail\"::text, 120) AS \"detail\", left(\"invited_by\"::text, 120) AS \"invited_by\" FROM \"threshold_ledger\" LIMIT 20"
+      }
+     ],
+     "options": {
+      "showHeader": true,
+      "cellHeight": "sm"
+     },
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "id": 53
+    },
+    {
+     "type": "stat",
+     "title": "threshold_ledger \u2014 total rows",
+     "datasource": {
+      "type": "grafana-postgresql-datasource",
+      "uid": "nova-ops-pg"
+     },
+     "gridPos": {
+      "x": 0,
+      "y": 23,
+      "w": 6,
+      "h": 5
+     },
+     "targets": [
+      {
+       "refId": "A",
+       "datasource": {
+        "type": "grafana-postgresql-datasource",
+        "uid": "nova-ops-pg"
+       },
+       "rawQuery": true,
+       "editorMode": "code",
+       "format": "table",
+       "rawSql": "SELECT count(*) FROM \"threshold_ledger\""
+      }
+     ],
+     "options": {},
+     "fieldConfig": {
+      "defaults": {},
+      "overrides": []
+     },
+     "id": 54
+    }
+   ],
+   "id": 52
+  },
+  {
+   "type": "row",
+   "title": "ae35_events",
+   "collapsed": true,
+   "gridPos": {
+    "x": 0,
+    "y": 15,
     "w": 24,
     "h": 1
    },
@@ -1493,7 +1576,7 @@
      },
      "gridPos": {
       "x": 0,
-      "y": 15,
+      "y": 16,
       "w": 24,
       "h": 8
      },
@@ -1518,7 +1601,7 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 53
+     "id": 56
     },
     {
      "type": "stat",
@@ -1529,7 +1612,7 @@
      },
      "gridPos": {
       "x": 0,
-      "y": 23,
+      "y": 24,
       "w": 6,
       "h": 5
      },
@@ -1551,7 +1634,7 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 54
+     "id": 57
     },
     {
      "type": "timeseries",
@@ -1562,7 +1645,7 @@
      },
      "gridPos": {
       "x": 6,
-      "y": 23,
+      "y": 24,
       "w": 18,
       "h": 5
      },
@@ -1584,10 +1667,10 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 55
+     "id": 58
     }
    ],
-   "id": 52
+   "id": 55
   },
   {
    "type": "row",
@@ -1595,7 +1678,7 @@
    "collapsed": true,
    "gridPos": {
     "x": 0,
-    "y": 15,
+    "y": 16,
     "w": 24,
     "h": 1
    },
@@ -1609,7 +1692,7 @@
      },
      "gridPos": {
       "x": 0,
-      "y": 16,
+      "y": 17,
       "w": 24,
       "h": 8
      },
@@ -1634,7 +1717,7 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 57
+     "id": 60
     },
     {
      "type": "stat",
@@ -1645,7 +1728,7 @@
      },
      "gridPos": {
       "x": 0,
-      "y": 24,
+      "y": 25,
       "w": 6,
       "h": 5
      },
@@ -1667,7 +1750,7 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 58
+     "id": 61
     },
     {
      "type": "timeseries",
@@ -1678,7 +1761,7 @@
      },
      "gridPos": {
       "x": 6,
-      "y": 24,
+      "y": 25,
       "w": 18,
       "h": 5
      },
@@ -1700,10 +1783,10 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 59
+     "id": 62
     }
    ],
-   "id": 56
+   "id": 59
   },
   {
    "type": "row",
@@ -1711,7 +1794,7 @@
    "collapsed": true,
    "gridPos": {
     "x": 0,
-    "y": 16,
+    "y": 17,
     "w": 24,
     "h": 1
    },
@@ -1725,7 +1808,7 @@
      },
      "gridPos": {
       "x": 0,
-      "y": 17,
+      "y": 18,
       "w": 24,
       "h": 8
      },
@@ -1750,7 +1833,7 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 61
+     "id": 64
     },
     {
      "type": "stat",
@@ -1761,7 +1844,7 @@
      },
      "gridPos": {
       "x": 0,
-      "y": 25,
+      "y": 26,
       "w": 6,
       "h": 5
      },
@@ -1783,7 +1866,7 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 62
+     "id": 65
     },
     {
      "type": "timeseries",
@@ -1794,7 +1877,7 @@
      },
      "gridPos": {
       "x": 6,
-      "y": 25,
+      "y": 26,
       "w": 18,
       "h": 5
      },
@@ -1816,10 +1899,10 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 63
+     "id": 66
     }
    ],
-   "id": 60
+   "id": 63
   },
   {
    "type": "row",
@@ -1827,7 +1910,7 @@
    "collapsed": true,
    "gridPos": {
     "x": 0,
-    "y": 17,
+    "y": 18,
     "w": 24,
     "h": 1
    },
@@ -1841,7 +1924,7 @@
      },
      "gridPos": {
       "x": 0,
-      "y": 18,
+      "y": 19,
       "w": 24,
       "h": 8
      },
@@ -1866,7 +1949,7 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 65
+     "id": 68
     },
     {
      "type": "stat",
@@ -1877,7 +1960,7 @@
      },
      "gridPos": {
       "x": 0,
-      "y": 26,
+      "y": 27,
       "w": 6,
       "h": 5
      },
@@ -1899,7 +1982,7 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 66
+     "id": 69
     },
     {
      "type": "timeseries",
@@ -1910,7 +1993,7 @@
      },
      "gridPos": {
       "x": 6,
-      "y": 26,
+      "y": 27,
       "w": 18,
       "h": 5
      },
@@ -1932,10 +2015,10 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 67
+     "id": 70
     }
    ],
-   "id": 64
+   "id": 67
   },
   {
    "type": "row",
@@ -1943,7 +2026,7 @@
    "collapsed": true,
    "gridPos": {
     "x": 0,
-    "y": 18,
+    "y": 19,
     "w": 24,
     "h": 1
    },
@@ -1957,7 +2040,7 @@
      },
      "gridPos": {
       "x": 0,
-      "y": 19,
+      "y": 20,
       "w": 24,
       "h": 8
      },
@@ -1982,7 +2065,7 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 69
+     "id": 72
     },
     {
      "type": "stat",
@@ -1993,7 +2076,7 @@
      },
      "gridPos": {
       "x": 0,
-      "y": 27,
+      "y": 28,
       "w": 6,
       "h": 5
      },
@@ -2015,7 +2098,7 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 70
+     "id": 73
     },
     {
      "type": "timeseries",
@@ -2026,7 +2109,7 @@
      },
      "gridPos": {
       "x": 6,
-      "y": 27,
+      "y": 28,
       "w": 18,
       "h": 5
      },
@@ -2048,10 +2131,10 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 71
+     "id": 74
     }
    ],
-   "id": 68
+   "id": 71
   },
   {
    "type": "row",
@@ -2059,7 +2142,7 @@
    "collapsed": true,
    "gridPos": {
     "x": 0,
-    "y": 19,
+    "y": 20,
     "w": 24,
     "h": 1
    },
@@ -2073,7 +2156,7 @@
      },
      "gridPos": {
       "x": 0,
-      "y": 20,
+      "y": 21,
       "w": 24,
       "h": 8
      },
@@ -2098,7 +2181,7 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 73
+     "id": 76
     },
     {
      "type": "stat",
@@ -2109,7 +2192,7 @@
      },
      "gridPos": {
       "x": 0,
-      "y": 28,
+      "y": 29,
       "w": 6,
       "h": 5
      },
@@ -2131,7 +2214,7 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 74
+     "id": 77
     },
     {
      "type": "timeseries",
@@ -2142,7 +2225,7 @@
      },
      "gridPos": {
       "x": 6,
-      "y": 28,
+      "y": 29,
       "w": 18,
       "h": 5
      },
@@ -2164,10 +2247,10 @@
       "defaults": {},
       "overrides": []
      },
-     "id": 75
+     "id": 78
     }
    ],
-   "id": 72
+   "id": 75
   }
  ],
  "editable": true,
